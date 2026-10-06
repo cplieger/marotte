@@ -94,14 +94,8 @@ func getKiroSettings(t *testing.T, runner CLIRunner, query string) (int, map[str
 	return rec.Code, body.Settings
 }
 
-// The item: the Settings → General panel's three flags cost ONE subprocess, not
-// one each. It used to answer a single key per request off `settings <key>`, so
-// opening the panel fired three concurrent requests and three spawns of a 3 s
-// budget each.
-//
-// It also pins the value spelling across the two doors: the list document carries
-// native JSON (`true`, `false`), the per-key form carries "true (global)", and the
-// client compares against "true"/"false" without knowing which answered.
+// TestReadKiroSettings_OneSubprocessAnswersEveryKey pins one spawn for the whole panel, and
+// the value spelling across both doors (native JSON vs "true (global)").
 func TestReadKiroSettings_OneSubprocessAnswersEveryKey(t *testing.T) {
 	f := &settingsCLI{list: settingsListFixture}
 
@@ -128,10 +122,8 @@ func TestReadKiroSettings_OneSubprocessAnswersEveryKey(t *testing.T) {
 	}
 }
 
-// A build pinned to a kiro-cli without `settings list` must still fill the panel,
-// so a failed list read falls back to the per-key invocation, for the keys the
-// request named and no others. What bounds its COST is the shared deadline, not the
-// selector — an absent ?keys= names the whole allowlist.
+// TestReadKiroSettings_FallsBackPerKeyWhenTheListReadFails pins the per-key fallback for
+// exactly the keys the request named.
 func TestReadKiroSettings_FallsBackPerKeyWhenTheListReadFails(t *testing.T) {
 	f := &settingsCLI{
 		perKey: map[string]string{
@@ -182,9 +174,8 @@ func TestReadKiroSettings_AKeyTheListOmitsFallsBackAlone(t *testing.T) {
 	}
 }
 
-// Neither door answers, and the panel still renders: an empty value is what the
-// client reads as unset, which shows the control's default. Failing the request
-// would blank three checkboxes instead.
+// TestReadKiroSettings_AnUnreadableKeyAnswersEmptyRatherThanFailing pins that an unreadable
+// key answers "" (the control's default) rather than failing the panel.
 func TestReadKiroSettings_AnUnreadableKeyAnswersEmptyRatherThanFailing(t *testing.T) {
 	f := &settingsCLI{}
 
@@ -222,8 +213,8 @@ func TestReadKiroSettings_AbsentKeysAnswersTheWholeAllowlist(t *testing.T) {
 	}
 }
 
-// A key outside the allowlist is refused rather than answered, so a typo fails
-// loudly the way it did when the parameter named one key.
+// TestReadKiroSettings_RefusesARequestNamingNothingAllowed pins that a key outside the
+// allowlist is refused.
 func TestReadKiroSettings_RefusesARequestNamingNothingAllowed(t *testing.T) {
 	f := &settingsCLI{list: settingsListFixture}
 
@@ -237,13 +228,8 @@ func TestReadKiroSettings_RefusesARequestNamingNothingAllowed(t *testing.T) {
 	}
 }
 
-// A parameter this endpoint does not read is refused, not ignored.
-//
-// Ignoring one fails OPEN, because "no selection" means the whole allowlist here:
-// the selector used to be spelled `key` and take a single name, so the old spelling
-// — and any typo of the new one — would answer all six keys while the caller
-// believed it had named one. A typo in a VALUE already refuses, so a typo in a NAME
-// has to as well.
+// TestReadKiroSettings_RefusesAQueryParameterItDoesNotRead pins that an unread parameter
+// is refused, not ignored: ignoring fails OPEN to the whole allowlist.
 func TestReadKiroSettings_RefusesAQueryParameterItDoesNotRead(t *testing.T) {
 	for _, query := range []string{"?key=telemetry.enabled", "?keys=telemetry.enabled&kyes=x"} {
 		t.Run(query, func(t *testing.T) {
@@ -262,17 +248,10 @@ func TestReadKiroSettings_RefusesAQueryParameterItDoesNotRead(t *testing.T) {
 	}
 }
 
-// ONE DEADLINE FOR THE WHOLE READ. The per-key fallback is sequential and an
-// absent ?keys= means the entire allowlist, so a budget minted per spawn made the
-// cost of a degraded read a multiple of the key count — six spawns at 3 s each is
-// 18 s of the client's 30 s API timeout for one panel.
-//
-// One shared deadline is an INSTANT every spawn reports identically, where a
-// per-spawn budget computes its own from its own time.Now() and no two agree —
-// which is what makes this observable without measuring elapsed time.
+// TestReadKiroSettings_TheWholeReadSharesOneDeadline pins ONE deadline across every spawn
+// of a read; a shared deadline is an instant every spawn reports identically.
 func TestReadKiroSettings_TheWholeReadSharesOneDeadline(t *testing.T) {
-	// The list read fails, so every requested key takes the per-key door: four
-	// spawns for one request, which is the shape a per-spawn budget multiplied.
+	// The list read fails, so every key takes the per-key door: four spawns for one request.
 	f := &settingsCLI{perKey: map[string]string{
 		"hooks.showStatus":    "true (global)",
 		"telemetry.enabled":   "false (global)",
@@ -301,9 +280,7 @@ func TestReadKiroSettings_TheWholeReadSharesOneDeadline(t *testing.T) {
 	}
 }
 
-// A non-allowlisted key rides in the document kiro-cli answers (cleanup.periodDays
-// and toolSearch.enabled are both in it and neither is exposed), so the filter has
-// to run on the way out too, not only on the way in.
+// TestReadKiroSettings_DropsDocumentKeysOutsideTheAllowlist pins the filter on the way out.
 func TestReadKiroSettings_DropsDocumentKeysOutsideTheAllowlist(t *testing.T) {
 	f := &settingsCLI{list: settingsListFixture}
 
@@ -389,14 +366,8 @@ func TestParseKiroSettingsList(t *testing.T) {
 	})
 }
 
-// The overlay is what makes `settings` work at all: kiro-cli is a multi-call
-// binary and that subcommand re-execs a sibling resolved through PATH, so a spawn
-// carrying only the absolute path exits 1 with "No such file or directory".
-//
-// Asserted on the CHILD's environment rather than on kiro-cli, which this
-// container's test run does not have: the property is that the resolver's names
-// reach the process, and that they land LAST so an inherited value of the same
-// name loses.
+// TestExecCLIRunner_AppliesTheEnvironmentOverlay pins that the resolver's names reach the
+// child and land LAST, so an inherited value of the same name loses.
 func TestExecCLIRunner_AppliesTheEnvironmentOverlay(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -418,8 +389,8 @@ func TestExecCLIRunner_AppliesTheEnvironmentOverlay(t *testing.T) {
 	}
 }
 
-// A nil resolver means inherit implicitly, which is the shape with no install
-// manager wired. It must not blank the child's environment.
+// TestExecCLIRunner_NoOverlayInheritsTheParentEnvironment pins that a nil resolver does not
+// blank the child's environment.
 func TestExecCLIRunner_NoOverlayInheritsTheParentEnvironment(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -435,8 +406,7 @@ func TestExecCLIRunner_NoOverlayInheritsTheParentEnvironment(t *testing.T) {
 	if got := string(out); got != "inherited" {
 		t.Errorf("child read MAROTTE_OVERLAY_PROBE=%q, want %q", got, "inherited")
 	}
-	// Guard the premise: this test says nothing if the variable never made it
-	// into the test process either.
+	// Guard the premise: the variable must have reached the test process.
 	if os.Getenv("MAROTTE_OVERLAY_PROBE") != "inherited" {
 		t.Fatal("Setup: the probe variable is not set in the test process")
 	}

@@ -1,14 +1,6 @@
-// The server→client half of the transport: `@cplieger/sse`'s client wrapped
-// around marotte's bus. The library owns the connection (resume cursor, backoff, the
-// silence watchdog, the hidden-tab close, hold-and-drain around a wake); this module
-// owns the envelope decode into the bus, the digest subjects' version map, the
-// `revalidate` body that turns a digest answer into refetches, and the boot hydration
-// gate.
-//
-// Who holds the connection is the library's `attachToWorker` ladder: one SharedWorker
-// per browser profile (sse-worker.ts) that this tab attaches to over a port, or this
-// tab's own stream when no worker can be had. Under the host the digest is the host's,
-// one per profile, and the run this tab receives carries its verdict.
+// Who holds the connection is the library's `attachToWorker` ladder: one SharedWorker per browser
+// profile (sse-worker.ts) that this tab attaches to over a port, or this tab's own stream when no
+// worker can be had.
 
 import {
   type DigestResult,
@@ -51,16 +43,15 @@ type StatusHandler = (s: ConnectionStatus) => void;
 /** The digest's own budget, matching the server's `RouteTimeout` on `POST /api/sync`. */
 const DIGEST_TIMEOUT_MS = 10_000;
 
-/** How long the hydration gate waits for `markHydrated` before releasing what it held
- *  anyway. Generous, because it is racing three sequential HTTP round-trips (settings,
- *  whoami, the chat list) on a cold container, and the cost of expiring early is only
- *  that the store's own missing-session guards drop the frames — which is exactly the
- *  behaviour the gate replaced. */
+/** How long the hydration gate waits for `markHydrated` before releasing what it held anyway.
+ *  Generous, because it is racing three sequential HTTP round-trips (settings, whoami, the chat
+ *  list) on a cold container, and the cost of expiring early is only that the store's own
+ *  missing-session guards drop the frames — which is exactly the behaviour the gate replaced. */
 const HYDRATE_TIMEOUT_MS = 20_000;
 
-/** Ceiling on the held queue. A busy workspace's connect hook is a handful of frames,
- *  so reaching this means hydration is not coming and the stream should move rather
- *  than grow a buffer without bound. */
+/** Ceiling on the held queue. A busy workspace's connect hook is a handful of frames, so
+ *  reaching this means hydration is not coming and the stream should move rather than grow a
+ *  buffer without bound. */
 const MAX_PENDING_FRAMES = 2000;
 
 let onMsg: MsgHandler = () => {
@@ -70,15 +61,15 @@ let onStatus: StatusHandler = () => {
   /* noop */
 };
 
-/** This tab's seat: attached to the profile's worker host, or running the per-tab
- *  stream when the ladder gave up on the worker. */
+/** This tab's seat: attached to the profile's worker host, or running the per-tab stream when
+ *  the ladder gave up on the worker. */
 let attachment: TabAttachment | null = null;
 
 /** The SSE-Client tag this tab presents for the profile, whichever seat it holds. */
 let presented = "";
 
-/** A worker spawner standing in for `new SharedWorker(...)`, so a suite can attach this
- *  tab to a host it holds in the page. */
+/** A worker spawner standing in for `new SharedWorker(...)`, so a suite can attach this tab to a
+ *  host it holds in the page. */
 let spawnOverride: (() => SharedWorkerLike) | null = null;
 
 /** Whether the chat store has been populated, so a frame can find the chat it names. */
@@ -88,8 +79,8 @@ let pending: ServerEvent[] = [];
 /** Watchdog that opens the gate if hydration never reports in. */
 let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Numbers the revalidations, so a run's two run-store readers share a token no other
- *  run can match; `run-store.ts` `answeredCause` owns what the token means. */
+/** Numbers the revalidations, so a run's two run-store readers share a token no other run can
+ *  match; `run-store.ts` `answeredCause` owns what the token means. */
 let runSeq = 0;
 
 const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
@@ -120,24 +111,19 @@ function onLifecycle(ev: LifecycleEvent): void {
   }
 }
 
-// --- The hydration gate ---
-
-/** Hold every incoming frame until the chat store is populated, then release them in
- *  arrival order. The connect hook's two snapshots are sent once per connection, so a
- *  frame an empty store drops has no second chance — and ORDER is load-bearing, because
- *  an `entry_delta` released before the `entry_opened` it extends is refused as a hole.
- *  INSIDE `onFrame` rather than the library's hold, which is for revalidation, and rather
- *  than starting the stream after hydration: a fresh hello has no replay, so frames
- *  published between the `GET /api/chats` response and the stream open would be lost. */
+/** Hold every incoming frame until the chat store is populated, then release them in arrival
+ *  order. The connect hook's two snapshots are sent once per connection, so a frame an empty
+ *  store drops has no second chance — and ORDER is load-bearing, because an `entry_delta`
+ *  released before the `entry_opened` it extends is refused as a hole. */
 function holdUntilHydrated(): void {
   hydrated = false;
   pending = [];
   if (hydrateTimer !== null) {
     clearTimeout(hydrateTimer);
   }
-  // Never wedge the stream on a hydration that failed (an auth bounce, a dead
-  // /api/chats). The gate is an ordering aid, not a correctness requirement: the store's
-  // missing-session guards still hold underneath it.
+  // Never wedge the stream on a hydration that failed (an auth bounce, a dead /api/chats). The gate
+  // is an ordering aid, not a correctness requirement: the store's missing-session guards still
+  // hold underneath it.
   hydrateTimer = setTimeout(() => {
     if (!hydrated) {
       console.warn("sse: hydration did not report in, releasing held frames");
@@ -146,9 +132,9 @@ function holdUntilHydrated(): void {
   }, HYDRATE_TIMEOUT_MS);
 }
 
-/** Open the gate and drain. Idempotent, and once open it stays open — a reconnect does
- *  not re-hold, because by then the store is populated and the fresh hello's own
- *  revalidation is the recovery path. */
+/** Open the gate and drain. Idempotent, and once open it stays open — a reconnect does not
+ *  re-hold, because by then the store is populated and the fresh hello's own revalidation is the
+ *  recovery path. */
 export function markHydrated(): void {
   if (hydrateTimer !== null) {
     clearTimeout(hydrateTimer);
@@ -165,16 +151,9 @@ export function markHydrated(): void {
   }
 }
 
-// --- Frames ---
-
-/** The library's `onFrame`: decode, then apply now or hold. A throw here rejects the
- *  frame — the library advances the cursor past it and schedules `revalidate("hello")`,
- *  whose digest names whatever the dropped frame would have moved, because its stamp
- *  was never observed.
- *
- *  A frame that will not decode is SALVAGED before the throw: the turn it named is asked
- *  for over the range read, which is the same hole path a missing `seq` takes. Here rather
- *  than in a handler because a handler never sees an undecodable frame. */
+/** The library's `onFrame`: decode, then apply now or hold. A throw here rejects the frame — the
+ *  library advances the cursor past it and schedules `revalidate("hello")`, whose digest names
+ *  whatever the dropped frame would have moved, because its stamp was never observed. */
 function applyFrame(frame: Frame): void {
   let evt: ServerEvent;
   try {
@@ -186,8 +165,8 @@ function applyFrame(frame: Frame): void {
   if (!hydrated) {
     pending.push(evt);
     if (pending.length >= MAX_PENDING_FRAMES) {
-      // A queue this long means hydration is not coming. Late is better than dropped,
-      // and the store's own missing-session guards are the floor.
+      // A queue this long means hydration is not coming. Late is better than dropped, and the
+      // store's own missing-session guards are the floor.
       console.warn(`sse: ${String(pending.length)} frames held, releasing early`);
       markHydrated();
     }
@@ -196,13 +175,12 @@ function applyFrame(frame: Frame): void {
   deliver(evt);
 }
 
-/** Dispatch one envelope to the bus and THEN observe its stamp: a version is recorded
- *  after the state it certifies is applied, never before. */
+/** Dispatch one envelope to the bus and THEN observe its stamp: a version is recorded after the
+ *  state it certifies is applied, never before. */
 function deliver(evt: ServerEvent): void {
   if (evt.type === "subject_changed") {
-    // The refused frame's projection moved and nothing carried it; the action is the
-    // refetch and the stamp is deliberately NOT observed, so the digest still names it
-    // if the refetch fails.
+    // The refused frame's projection moved and nothing carried it; the action is the refetch and
+    // the stamp is deliberately NOT observed, so the digest still names it if the refetch fails.
     void runStampAction(evt.subject, nextRunToken("subject_changed"));
     return;
   }
@@ -212,13 +190,7 @@ function deliver(evt: ServerEvent): void {
   }
 }
 
-/** Whether this client holds the projection a stamp certifies. A workspace-wide subject
- *  is always held; a chat's transcript (`chat`, `live_turn`) only while its window is
- *  resident, because a frame for a chat with no window was applied to nothing, and
- *  recording its version would make the digest report `changed` for — and the action
- *  refetch — a transcript nobody is looking at, refilling what the eviction sweep
- *  bounded. A run's step turn is held while the run store holds that run's state, and a
- *  connection's pull-request inventory once the PR tab has read it. */
+/** Whether this client holds the projection a stamp certifies. */
 function projectionHeld(stamp: SubjectStamp): boolean {
   switch (stamp.kind) {
     case "chat":
@@ -236,9 +208,9 @@ function projectionHeld(stamp: SubjectStamp): boolean {
   }
 }
 
-/** The newest `seq` this client holds for a turn, which is what a `live_turn` repair asks
- *  past. `entries[i].seq === i` is the store's invariant, so the length answers it; a turn
- *  held with no entries answers `undefined`, which asks for the whole turn. */
+/** The newest `seq` this client holds for a turn, which is what a `live_turn` repair asks past.
+ *  `entries[i].seq === i` is the store's invariant, so the length answers it; a turn held with
+ *  no entries answers `undefined`, which asks for the whole turn. */
 function newestHeldSeq(chatID: string, turnID: string): number | undefined {
   const held = get(chatID)?.turns.get(turnID);
   return held === undefined || held.entries.length === 0 ? undefined : held.entries.length - 1;
@@ -258,9 +230,9 @@ function runTurnID(ref: string): string {
   return at < 0 ? "" : ref.slice(at + 1);
 }
 
-/** The turn a frame names, read off the RAW payload because nothing decoded. Three
- *  spellings, one per event shape: `turn` on a delta, a seal and the two live replaces,
- *  `entry.turn` on the three entry-bearing events, `open.turn` on `entry_opened`. */
+/** The turn a frame names, read off the RAW payload because nothing decoded. Three spellings,
+ *  one per event shape: `turn` on a delta, a seal and the two live replaces, `entry.turn` on the
+ *  three entry-bearing events, `open.turn` on `entry_opened`. */
 function rawTurnID(payload: unknown): string {
   if (typeof payload !== "object" || payload === null) {
     return "";
@@ -282,8 +254,8 @@ function rawTurnID(payload: unknown): string {
   return "";
 }
 
-/** The workflow id an entry frame carries, read off the RAW payload because nothing decoded.
- *  It sits beside `turn` on every run-scoped entry frame, which is the same field
+/** The workflow id an entry frame carries, read off the RAW payload because nothing decoded. It
+ *  sits beside `turn` on every run-scoped entry frame, which is the same field
  *  `handlers/entries.ts` routes on, and is absent on a chat's. */
 function rawWorkflowID(payload: unknown): string {
   if (typeof payload !== "object" || payload === null) {
@@ -294,8 +266,8 @@ function rawWorkflowID(payload: unknown): string {
 }
 
 /** Ask for the turn an undecodable frame named, on whichever log holds it: a chat's frame
- *  carries a chat id and a run's carries an empty one plus its own `workflow_id`, and each has
- *  a range read of its own. A frame naming no turn at all is warned about and dropped. */
+ *  carries a chat id and a run's carries an empty one plus its own `workflow_id`, and each has a
+ *  range read of its own. A frame naming no turn at all is warned about and dropped. */
 function salvageUndecodable(data: string, err: unknown): void {
   let type: string;
   let chatID: string;
@@ -311,8 +283,8 @@ function salvageUndecodable(data: string, err: unknown): void {
     console.warn("sse: frame is not JSON, dropped");
     return;
   }
-  // The decoder's message names the field that refused, which is the half of the
-  // warn a reader can act on.
+  // The decoder's message names the field that refused, which is the half of the warn a reader can
+  // act on.
   const why = err instanceof Error ? err.message : String(err);
   if (turnID === "") {
     console.warn(`sse: ${type} did not decode (${why}), it named no turn to re-read`);
@@ -323,8 +295,8 @@ function salvageUndecodable(data: string, err: unknown): void {
     requestTurnRange(chatID, turnID);
     return;
   }
-  // A run's frame: the whole turn, because a frame that did not decode says nothing about
-  // what this client already holds and the run's read answers a held prefix as redeliveries.
+  // A run's frame: the whole turn, because a frame that did not decode says nothing about what this
+  // client already holds and the run's read answers a held prefix as redeliveries.
   if (workflowID !== "") {
     console.warn(
       `sse: ${type} did not decode (${why}), asking for turn ${turnID} of run ${workflowID}`,
@@ -335,17 +307,14 @@ function salvageUndecodable(data: string, err: unknown): void {
   console.warn(`sse: ${type} did not decode (${why}), turn ${turnID} named no chat and no run`);
 }
 
-// --- Revalidation ---
-
 function nextRunToken(cause: string): string {
   return `${cause}:${String(++runSeq)}`;
 }
 
-/** The refetch a moved subject earns (the design's action column), as a promise the
- *  revalidation awaits. `pending` and `status` reach the client only through the connect
- *  hook, so their action is a fresh hello — the caller runs that LAST, after every other
- *  refetch has settled, which is why this returns `false` for them instead of
- *  reconnecting itself. */
+/** The refetch a moved subject earns (the design's action column), as a promise the revalidation
+ *  awaits. `pending` and `status` reach the client only through the connect hook, so their
+ *  action is a fresh hello — the caller runs that LAST, after every other refetch has settled,
+ *  which is why this returns `false` for them instead of reconnecting itself. */
 function runStampAction(
   stamp: SubjectStamp | undefined,
   token: string,
@@ -362,11 +331,9 @@ function runStampAction(
     case "chat":
       return loadMessages(stamp.ref, undefined, signal).then(() => false);
     case "live_turn": {
-      // The ref is a TURN id, so the repair is that turn's range read rather than the whole
-      // window: a turn whose version moved is one this client holds entries for, and the
-      // read asks for the entries past the newest `seq` it has. Asking for the WHOLE turn
-      // instead offers the seat an entry at a position the store already holds, which it
-      // refuses.
+      // The ref is a TURN id, so the repair is that turn's range read rather than the whole window:
+      // a turn whose version moved is one this client holds entries for, and the read asks for the
+      // entries past the newest `seq` it has.
       const chatID = chatHoldingTurn(stamp.ref);
       if (chatID !== "") {
         requestTurnRange(chatID, stamp.ref, newestHeldSeq(chatID, stamp.ref));
@@ -374,13 +341,9 @@ function runStampAction(
       return Promise.resolve(false);
     }
     case "run_turn": {
-      // A step's turn moved or closed, and the repair is that turn's range read — the twin of
-      // the `live_turn` arm above over the run's own log, asking past the newest `seq` this
-      // client holds. A `gone` verdict runs the same read, which is what brings in the tail
-      // and the `turn_close` for a turn that closed while this client was away; the store
-      // drops the stamp when that `turn_close` lands. The run's own state is NOT re-read
-      // here: the stamp certifies the turn's entries, and a node whose status moved has its
-      // own `run_progress` frame.
+      // A step's turn moved or closed, and the repair is that turn's range read — the twin of the
+      // `live_turn` arm above over the run's own log, asking past the newest `seq` this client
+      // holds.
       const workflowID = runTurnWorkflow(stamp.ref);
       const turnID = runTurnID(stamp.ref);
       if (workflowID !== "" && turnID !== "") {
@@ -389,8 +352,8 @@ function runStampAction(
       return Promise.resolve(false);
     }
     case "runs":
-      // The tree state a `run_progress` applies has no subject of its own, so the
-      // lease set moving is the one signal that the trees may have moved too.
+      // The tree state a `run_progress` applies has no subject of its own, so the lease set moving
+      // is the one signal that the trees may have moved too.
       invalidateCachedRuns(token);
       return rebuildLiveRuns(token, signal).then(() => false);
     case "catalog":
@@ -411,15 +374,15 @@ function runStampAction(
   }
 }
 
-/** Whether a run's cause is the page coming back, which is when the active view whose
- *  kind has no digest subject refreshes. */
+/** Whether a run's cause is the page coming back, which is when the active view whose kind has
+ *  no digest subject refreshes. */
 function isWake(cause: RevalidateContext["cause"]): boolean {
   return cause === "visible" || cause === "pageshow" || cause === "online";
 }
 
-/** The action column over one digest verdict, whoever performed the digest. Every fetch
- *  takes `signal`, so `stop()` and the revalidation timeout cancel them and
- *  `reconnect()` does not. Resolves to whether `pending` or `status` moved. */
+/** The action column over one digest verdict, whoever performed the digest. Every fetch takes
+ *  `signal`, so `stop()` and the revalidation timeout cancel them and `reconnect()` does not.
+ *  Resolves to whether `pending` or `status` moved. */
 async function applyVerdict(
   changed: readonly State[],
   removed: readonly Removed[],
@@ -431,8 +394,8 @@ async function applyVerdict(
   const work: Promise<boolean>[] = [];
   const fetched = new Set<string>();
   const refetch = (kind: string, ref: string): void => {
-    // BY KIND: a `chat` is a window GET and a `live_turn` is one turn's range read, so the
-    // two no longer collapse onto each other. A subject named twice still earns one.
+    // BY KIND: a `chat` is a window GET and a `live_turn` is one turn's range read, so the two no
+    // longer collapse onto each other. A subject named twice still earns one.
     const key = `${kind}\0${ref}`;
     if (fetched.has(key)) {
       return;
@@ -446,53 +409,43 @@ async function applyVerdict(
   for (const entry of removed) {
     versions.forget(entry);
     if (entry.kind === "chat") {
-      // The chat is gone on the server: the same local drop its `chat_deleted` frame
-      // would have run, through the same door.
       onMsg({ type: "chat_deleted", chat_id: "", payload: { id: entry.ref } });
     } else if (entry.kind === "live_turn") {
-      // That turn is no longer open. The range read is what brings its `turn_close` in,
-      // which is the entry every settled surface reads; the ref is the turn id.
+      // That turn is no longer open. The range read is what brings its `turn_close` in, which is
+      // the entry every settled surface reads; the ref is the turn id.
       refetch("live_turn", entry.ref);
     } else if (entry.kind === "run_turn") {
-      // A step's turn closed while this client was away, which is what stops it reading as
-      // live for the tab's life: the stamp is forgotten above and the run is re-read.
+      // A step's turn closed while this client was away, which is what stops it reading as live for
+      // the tab's life: the stamp is forgotten above and the run is re-read.
       refetch("run_turn", entry.ref);
     }
   }
-  // Every GET first; the hello the caller may run cancels nothing that is still in
-  // flight. A loader that failed reports through its own surface and leaves its subject
-  // at the old version, so the next digest names it again.
+  // Every GET first; the hello the caller may run cancels nothing that is still in flight.
   const settled = await Promise.allSettled(work);
   return settled.some((r) => r.status === "fulfilled" && r.value);
 }
 
-/** The last step of the per-tab stream's run when `pending` or `status` moved: those
- *  two sets reach a client only through a hello's connect hook, so the stream connects
- *  again with no cursor and the fresh hello carries both. NEVER when this run is itself
- *  a hello's: that hello's hook is already behind the run, held until it settles, so its
- *  `pending` reads as moved against the snapshot it is about to deliver, and
- *  reconnecting here would discard the held snapshot and repeat forever. Under the
- *  worker host the same decision is the host's (`sse-worker-host.ts`), taken once for
- *  the profile's stream rather than once per tab. */
+/** The last step of the per-tab stream's run when `pending` or `status` moved: those two sets
+ *  reach a client only through a hello's connect hook, so the stream connects again with no
+ *  cursor and the fresh hello carries both. */
 function helloIfMoved(ctx: RevalidateContext, moved: boolean): void {
   if (moved && ctx.cause !== "hello") {
     attachment?.reconnect({ resetCursor: true });
   }
 }
 
-/** The per-tab stream's `revalidate`: this tab owns the connection and the map it
- *  digests. */
+/** The per-tab stream's `revalidate`: this tab owns the connection and the map it digests. */
 async function revalidate(ctx: RevalidateContext): Promise<void> {
   if (isWake(ctx.cause)) {
-    // FIRST: the active view whose kind has no digest subject (a run tree, a file
-    // listing) refreshes on wake as it always has, and it would otherwise stay stale
-    // until the reader switched tabs.
+    // FIRST: the active view whose kind has no digest subject (a run tree, a file listing)
+    // refreshes on wake as it always has, and it would otherwise stay stale until the reader
+    // switched tabs.
     emitBus(BUS_PAGE_RESUMED);
   }
   if (ctx.full) {
-    // The map was just cleared by a new epoch: nothing held can be asked about, so the
-    // whole projection is re-read. The fresh hello's own hook frames follow and carry
-    // the pending and waiting-status sets.
+    // The map was just cleared by a new epoch: nothing held can be asked about, so the whole
+    // projection is re-read. The fresh hello's own hook frames follow and carry the pending and
+    // waiting-status sets.
     emitBus(BUS_RECONCILE, { cause: `full:${ctx.cause}`, signal: ctx.signal });
     return;
   }
@@ -504,8 +457,8 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
   }
   const result: DigestResult = await digest.check(snapshot, ctx.signal);
   if (result.kind === "must_refetch") {
-    // Bind FIRST, so the loaders the reconcile runs refill the map at the new epoch
-    // instead of being refused as stale.
+    // Bind FIRST, so the loaders the reconcile runs refill the map at the new epoch instead of
+    // being refused as stale.
     versions.bind(result.epoch);
     emitBus(BUS_RECONCILE, { cause: "must_refetch", signal: ctx.signal });
     return;
@@ -513,14 +466,10 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
   helloIfMoved(ctx, await applyVerdict(result.changed, result.removed, ctx.cause, ctx.signal));
 }
 
-/** The body the worker host routes to this tab (`revalidate_run`). The host digested
- *  for the profile and the context carries its verdict; this tab's map follows the
- *  host's epoch, and an epoch that dropped what this tab held makes the run full. The
- *  run's cause is the PROFILE's, so the wake refresh runs only in a visible tab. The
- *  verdict is the profile's too: the host's map is the union of every tab's stamps and
- *  forgets nothing, so a subject this tab does not hold (never loaded here, or evicted
- *  since) is dropped, not refetched; its activation refetches it anyway. A removed chat
- *  is applied whatever this tab holds, because its drop is a workspace-list fact. */
+/** The body the worker host routes to this tab (`revalidate_run`). The host digested for the
+ *  profile and the context carries its verdict; this tab's map follows the host's epoch, and an
+ *  epoch that dropped what this tab held makes the run full. The run's cause is the PROFILE's,
+ *  so the wake refresh runs only in a visible tab. */
 async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
   const versions = versionMap();
   const dropped = ctx.epoch === null ? 0 : versions.bind(ctx.epoch);
@@ -538,19 +487,17 @@ async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
   await applyVerdict(changed, removed, ctx.cause, ctx.signal);
 }
 
-// --- The module's public API ---
-
-/** Whether this page can take the worker path: the engine has SharedWorker and the
- *  build shipped a worker script. The library's own presence test is overridden so the
- *  second condition folds in. */
+/** Whether this page can take the worker path: the engine has SharedWorker and the build shipped
+ *  a worker script. The library's own presence test is overridden so the second condition folds
+ *  in. */
 function workerAvailable(): boolean {
   const scope = globalThis as { readonly SharedWorker?: unknown };
   return typeof scope.SharedWorker !== "undefined" && __SSE_WORKER_URL__ !== "";
 }
 
-/** Construct the profile's worker by its content-hashed URL. The same three options on
- *  every construction, first spawn and re-spawn alike: the constructor fires `error`
- *  and does not connect when they mismatch a live worker's at the same URL and name. */
+/** Construct the profile's worker by its content-hashed URL. The same three options on every
+ *  construction, first spawn and re-spawn alike: the constructor fires `error` and does not
+ *  connect when they mismatch a live worker's at the same URL and name. */
 function spawnWorker(): SharedWorker {
   const url = __SSE_WORKER_URL__;
   return new SharedWorker(url, {
@@ -560,8 +507,8 @@ function spawnWorker(): SharedWorker {
   });
 }
 
-/** The per-tab stream: the ladder's `fallback`, and the whole path where no worker
- *  exists. The library seeds its `SSE-Client` from the tag and starts it. */
+/** The per-tab stream: the ladder's `fallback`, and the whole path where no worker exists. The
+ *  library seeds its `SSE-Client` from the tag and starts it. */
 function createTabStream(): TabFallback {
   const versions = versionMap();
   const headers: Record<string, string> = {};
@@ -572,8 +519,8 @@ function createTabStream(): TabFallback {
     onFrame: applyFrame,
     onLifecycle,
     revalidate,
-    // The receipt for every keepalive received, carrying SSE-Client: what lets the
-    // server read a suspended or half-open profile gone at the alive window.
+    // The receipt for every keepalive received, carrying SSE-Client: what lets the server read a
+    // suspended or half-open profile gone at the alive window.
     alive: { url: "/api/events/alive" },
   });
   return { stream, versions, headers };
@@ -588,9 +535,8 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
   };
   holdUntilHydrated();
   presented = persistedTag();
-  // Every stamp this tab records is the profile's too: under the host it reaches the
-  // host's map (one digest per profile), in fallback mode the attachment's own map is
-  // this one already.
+  // Every stamp this tab records is the profile's too: under the host it reaches the host's map
+  // (one digest per profile), in fallback mode the attachment's own map is this one already.
   setObserveSink((subject, version, epoch) => {
     if (attachment?.mode() === "worker") {
       attachment.observe(subject, version, epoch);
@@ -612,11 +558,7 @@ export function presentedTag(): string {
   return presented;
 }
 
-/** Adopt the tag of the push subscription this profile holds (sse-tag.ts). Called once
- *  the registration's subscription resolves, and again when the service worker reports
- *  the browser rotated it; a tag that differs from the presented one is persisted and
- *  presented from the next connect, which the attachment makes happen once, on the
- *  profile's stream or this tab's own. */
+/** Adopt the tag of the push subscription this profile holds (sse-tag.ts). */
 export async function adoptPushSubscription(
   sub: { readonly endpoint: string } | null,
 ): Promise<void> {
@@ -626,9 +568,9 @@ export async function adoptPushSubscription(
   });
 }
 
-/** Undo `init` completely, for tests that boot the module more than once.
- *  `vi.resetModules()` cannot substitute in Browser Mode: the module map is URL-keyed, so
- *  a re-import hands back this instance with its stream live. */
+/** Undo `init` completely, for tests that boot the module more than once. `vi.resetModules()`
+ *  cannot substitute in Browser Mode: the module map is URL-keyed, so a re-import hands back
+ *  this instance with its stream live. */
 export function _resetForTest(): void {
   attachment?.detach();
   attachment = null;
@@ -655,8 +597,8 @@ export function _spawnWorkerForTest(spawn: (() => SharedWorkerLike) | null): voi
   spawnOverride = spawn;
 }
 
-/** The two reconciliation bodies, reachable for their tests without a live stream or a
- *  live worker. */
+/** The two reconciliation bodies, reachable for their tests without a live stream or a live
+ *  worker. */
 export { revalidate as _revalidateForTest, tabRevalidate as _tabRevalidateForTest };
 
 registerCleanup(() => {

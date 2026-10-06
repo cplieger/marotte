@@ -1,31 +1,6 @@
-// THE STATUS CARD'S ACCOUNT ROW IS THE CARD'S ONE LINK.
-//
-// It carries the plan and the credit meter, and clicking it opens the account page —
-// the destination the sidebar address used to hold, now attached to the number it is
-// about. Legal here and impossible on the trigger: the card is the trigger's SIBLING,
-// so a real `<a>` nests inside no button.
-//
-// FOUR CLAIMS, and none of them is checkable by a style read alone.
-//
-//   THE TARGET, by a real `elementFromPoint`. A hit test is the only thing that sees
-//   a clip, and this row is deliberately flush with a clipping card.
-//
-//   THE CONCENTRIC CORNER, measured on BOTH inline edges. `--card-radius` is the card
-//   family's derived inner corner (outer − border − inset) and it shares the card's
-//   centre only while the row is flush inside that inset on both edges. A
-//   leading-edge-only assertion would have passed the shape this replaced, where
-//   `width: 100%` plus `align-items: flex-start` on the card left the trailing edge
-//   16px short.
-//
-//   THE LADDER, as two source reads plus one computed read. The surface half is the
-//   app's aligned row recipe; the INK LIFT is required rather than decorative,
-//   because the card is a status-TINTED composite no rule can see and the plan ink
-//   fails 4.5:1 over it in three of four interaction states. The computed read is the
-//   one that fails if the deleted `.pill-account-plan` colour declaration comes back.
-//
-//   THE CARD'S NEW BLOCK POSITION, with the popup opened through `makeExpandable`
-//   rather than by clearing `hidden` — the position is written by `clampToViewport`
-//   on open, so a fixture that never opens the popup measures the closed card.
+// The status card's account row is its one link (legal: the card is the trigger's SIBLING).
+// Pinned by real hit test, both inline corners, the required ink lift over the tinted card,
+// and the block position after a real `makeExpandable` open.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -55,10 +30,10 @@ interface Card {
   footer: HTMLElement;
 }
 
-/** The whole footer, with the card as the trigger's sibling inside `.popup-anchor` —
- *  which is what `.pill-status-content`'s `bottom: calc(100% + var(--sp-1))` is
- *  anchored against, so the block-position case needs the real structure rather than
- *  a card on its own. */
+/**
+ * The whole footer, with the card as the trigger's sibling inside `.popup-anchor`, which
+ * `.pill-status-content`'s `bottom` is anchored against.
+ */
 function mountFooter(opts: { hidden?: boolean } = {}): Card & { btn: HTMLButtonElement } {
   const sidebar = document.createElement("nav");
   sidebar.id = "sidebar";
@@ -129,19 +104,15 @@ function mountFooter(opts: { hidden?: boolean } = {}): Card & { btn: HTMLButtonE
   return { card, link, plan, footer, btn };
 }
 
-/** Open the popup the way the app does. `makeExpandable` swaps the authored `.hidden`
- *  class for the `[hidden]` attribute and `clampToViewport` writes the card's block
- *  position on open — so a fixture that clears `hidden` by hand measures the CLOSED
- *  card, which is the assertion's own premise. */
+/**
+ * Open the popup the way the app does: `makeExpandable` swaps `.hidden` for `[hidden]` and
+ * `clampToViewport` positions the card on open.
+ */
 function open(btn: HTMLButtonElement, card: HTMLElement): void {
   makeExpandable(btn, card);
   btn.click();
-  // SETTLE the entry transition rather than measuring a frame of it. The card animates
-  // `transform: scale(0.4)` -> `scale(1)`, and `getBoundingClientRect` reports the
-  // SCALED box — the first version of this file measured 15.8px where the settled row
-  // is 39.6px, which is 0.4 of it, and read a 3px radius as 1.2px. Finishing the
-  // animations is deterministic where waiting on frames is not (two rAFs advanced the
-  // transition's clock by nothing at all here).
+  // Finish the entry transition: `getBoundingClientRect` reports the `scale(0.4)` box
+  // mid-animation, and finishing is deterministic where waiting on frames is not.
   for (const a of card.getAnimations()) {
     a.finish();
   }
@@ -167,11 +138,8 @@ describe("the link's target", () => {
   });
 
   it("generates no box at all while it is hidden", () => {
-    // The ORIGIN defect this change fixes: `.pill-account` declares `display: flex`,
-    // an AUTHOR declaration, and the UA sheet's `[hidden] { display: none }` loses to
-    // it — so the attribute did nothing and the empty row spent one card gap on
-    // nothing before usage loaded. `&[hidden] { display: none }` is required rather
-    // than defensive.
+    // `.pill-account`'s author `display: flex` beats the UA `[hidden]` rule, so
+    // `&[hidden] { display: none }` is required, or the empty row spends a card gap.
     const { link, card, btn } = mountFooter({ hidden: true });
     open(btn, card);
     expect(link.hidden).toBe(true);
@@ -188,8 +156,7 @@ describe("the link's corner and box", () => {
     const c = card.getBoundingClientRect();
     const cs = getComputedStyle(card);
     const l = link.getBoundingClientRect();
-    // The clip box is the card's PADDING box, so the border is what the row is flush
-    // WITH — measured per edge, because the shape this replaced was flush on one.
+    // The clip box is the card's PADDING box, so the row is flush with the border, per edge.
     const left = l.left - (c.left + parseFloat(cs.borderLeftWidth));
     const right = c.right - parseFloat(cs.borderRightWidth) - l.right;
     expect(left, `leading edge is ${left}px inside the padding box`).toBeCloseTo(0, 1);
@@ -197,9 +164,8 @@ describe("the link's corner and box", () => {
   });
 
   it("takes the card family's derived inner corner", () => {
-    // `--card-radius` = `--r-lg` − 1px − `--card-inset` = 3px, and it is concentric
-    // with the card's own corner ONLY while the row is flush inside that inset on both
-    // edges, which the case above measures.
+    // `--card-radius` = `--r-lg` − 1px − `--card-inset` = 3px, concentric only while the row
+    // is flush on both edges.
     const { card, link, btn } = mountFooter();
     open(btn, card);
     const probe = document.createElement("div");
@@ -214,11 +180,8 @@ describe("the link's corner and box", () => {
 
 describe("the card's block position", () => {
   it.each(TIERS)("puts the card's bottom one --sp-1 above the TRIGGER at %s", (tier) => {
-    // `.pill-status-content` is `bottom: calc(100% + var(--sp-1))` against
-    // `.popup-anchor`, so `100%` is the ANCHOR's height. The claim is that the anchor
-    // wraps its trigger, which is what makes the declared 4px true — measured against
-    // the trigger rather than the footer's band, so it holds at every tier and reddens
-    // if the anchor starts stretching again.
+    // `bottom: calc(100% + var(--sp-1))` is relative to the ANCHOR, so the anchor must wrap
+    // its trigger; measured against the trigger, so it holds at every tier.
     document.documentElement.dataset["pointer"] = tier;
     const { card, footer, btn } = mountFooter();
     open(btn, card);
@@ -252,9 +215,8 @@ describe("the ladder", () => {
   });
 
   it("declares the same pair one rung deeper on press", () => {
-    // A bare `a[href]` is deliberately OUT of 03-base.css's universal press, so a link
-    // styled as a row declares its own — and on touch there is no hover rule at all,
-    // so the press is the ONLY feedback a finger gets and has to carry both channels.
+    // A bare `a[href]` is outside 03-base.css's universal press, so this row declares its own;
+    // on touch the press is the only feedback.
     const body = ruleContaining(input, ".pill-account", "top").body;
     const active = /&:active\s*\{([^}]*)\}/u.exec(body);
     expect(active, "the row declares its own press").not.toBeNull();
@@ -263,12 +225,8 @@ describe("the ladder", () => {
   });
 
   it("lets the plan line INHERIT its resting ink rather than declaring it", () => {
-    // The computed read, and the one that fails if the deleted
-    // `.pill-account-plan { color: var(--c-text-secondary) }` rule comes back. That
-    // declaration restated exactly what the row inherits from `.pill-expand-content`,
-    // so deleting it changes nothing at rest — and it is what lets the ink lift above
-    // reach the plan line at all, because a declared colour wins against an inherited
-    // value and would pin the failing ink.
+    // Fails if a `.pill-account-plan { color }` rule returns: a declared colour beats the
+    // inherited one and would pin the failing ink against the lift.
     const { card, link, plan, btn } = mountFooter();
     open(btn, card);
     expect(getComputedStyle(plan).color, "the plan line reads the row's ink").toBe(
@@ -285,14 +243,8 @@ describe("the ladder", () => {
   });
 
   it("gives the external mark no colour of its own", () => {
-    // Measured requirement rather than tidiness: `--c-text-tertiary` reads 2.426/3.134
-    // on the hover wash and 1.786/2.525 on the press one over the tinted card, so a
-    // tertiary mark sits under 1.4.11's 3:1 in three of four states. Inheriting the
-    // row is the only value that passes them all, and an ABSENT declaration cannot
-    // drift.
-    // Read as SELECTORS rather than as text: this stylesheet's own comment explains
-    // why the class does not exist, so any substring test matches that comment and
-    // fails for the wrong reason. `allRules` parses, so it sees only real selectors.
+    // `--c-text-tertiary` falls under 1.4.11's 3:1 in three of four states, so the mark
+    // inherits the row. Read as SELECTORS: the stylesheet's own comment names the class.
     const selectors = allRules(input).map((r) => r.selector);
     expect(selectors.length, "the sheet parses").toBeGreaterThan(10);
     expect(

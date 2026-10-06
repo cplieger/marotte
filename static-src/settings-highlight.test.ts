@@ -1,26 +1,16 @@
-// ---------------------------------------------------------------------------
-// Tests for settings-highlight.ts (D115): the ?highlight=<id> deep link.
-//
-// What this module still owns after the scroll-and-mark primitive moved to
-// flash-target.ts: the one-shot `?highlight=` read, `openSetting`'s single path
-// (open the view, then swap the panel, push the URL and mark the control), and
-// `highlightControl`'s own `id === ""` guard — an empty id means the CALLER had
-// no target, which `flashTarget` would spend its whole frame budget failing to
-// find. The marking itself, and its failure modes, are flash-target.test.ts's.
-//
-// tabs.ts and settings-tabs.ts are mocked at the boundary: opening the Settings
-// view is a command this module issues, not behaviour it owns, and importing the
-// real tab store would drag the whole app graph into a DOM fixture that has none
-// of it.
-// ---------------------------------------------------------------------------
+// What this module still owns after the scroll-and-mark primitive moved to flash-target.ts: the
+// one-shot `?highlight=` read, `openSetting`'s single path (open the view, then swap the panel,
+// push the URL and mark the control), and `highlightControl`'s own `id === ""` guard — an empty id
+// means the CALLER had no target, which `flashTarget` would spend its whole frame budget failing to
+// find.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const mocks = vi.hoisted(() => ({
-  // Opening a singleton is a round trip, so the open RESOLVES: `openSetting`
-  // sequences the panel swap, the URL push and the highlight in its continuation,
-  // because all three address a view the open has to produce first.
+  // Opening a singleton is a round trip, so the open RESOLVES: `openSetting` sequences the panel
+  // swap, the URL push and the highlight in its continuation, because all three address a view the
+  // open has to produce first.
   openSettingsView: vi.fn(() => Promise.resolve()),
   setSettingsTab: vi.fn(),
   forceSettingsTab: vi.fn(),
@@ -85,11 +75,9 @@ describe("highlightControl", { timeout: testTimeoutFor(framesBudgetMs(25)) }, ()
 });
 
 describe("openSetting", () => {
-  // Opening the tab is a ROUND TRIP now, so everything that addresses the panel it
-  // produces runs in the open's continuation: the panel swap, the URL push and the
-  // highlight are all DOM writes against a view that has to exist first. Awaiting
-  // the promise is therefore what a caller has to do, and this case asserts the
-  // ordering rather than only the calls.
+  // Opening the tab is a ROUND TRIP now, so everything that addresses the panel it produces runs in
+  // the open's continuation: the panel swap, the URL push and the highlight are all DOM writes
+  // against a view that has to exist first.
   it("opens the Settings view, then selects the tab, pushes the URL and marks the control", async () => {
     expect.assertions(5);
     control("security-profile-list");
@@ -107,11 +95,9 @@ describe("openSetting", () => {
     expect(scrolled).toEqual(["security-profile-list"]);
   });
 
-  // ONE path, and this is what pins it: the function reads no route and takes no
-  // already-there branch, so a jump made while Settings is the active view runs the
-  // whole sequence again rather than returning early. It used to consult
-  // `getActiveTabRoute` and skip the open, which is what let a link to a named
-  // setting dismiss the panel it pointed at.
+  // ONE path, and this is what pins it: the function reads no route and takes no already-there
+  // branch, so a jump made while Settings is the active view runs the whole sequence again rather
+  // than returning early.
   it("runs the same sequence on a second call", async () => {
     control("chat-retention-days");
 
@@ -139,8 +125,8 @@ describe("flushURLHighlight", () => {
     await frames(1);
     expect(scrolled).toEqual(["flag-debug-logs"]);
 
-    // A later popstate back to the same URL must not re-flash a control the
-    // reader has already been shown.
+    // A later popstate back to the same URL must not re-flash a control the reader has already been
+    // shown.
     flushURLHighlight();
     await frames(2);
     expect(scrolled).toEqual(["flag-debug-logs"]);

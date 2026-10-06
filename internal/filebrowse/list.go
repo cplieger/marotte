@@ -3,6 +3,7 @@ package filebrowse
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -35,8 +37,6 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if reqPath == "" || reqPath == "." {
 		reqPath = "/"
 	}
-	// "/" is not a real directory in the allow-list model — it is the
-	// synthetic listing of the granted mounts.
 	if filepath.Clean("/"+reqPath) == "/" {
 		h.listMounts(w)
 		return
@@ -45,10 +45,16 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f, err := l.m.root.Open(l.rel())
+	// O_NONBLOCK so a FIFO at the path cannot park the handler in open(2);
+	// O_DIRECTORY makes it, or a file, a refusal instead.
+	f, err := l.m.root.OpenFile(l.rel(), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			httpreply.NotFound(w, "not found")
+			return
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
+			httpreply.BadRequest(w, "not a directory")
 			return
 		}
 		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
@@ -86,8 +92,6 @@ func (h *Handler) listMounts(w http.ResponseWriter) {
 		}
 		files = append(files, e)
 	}
-	// mounts are sorted longest-first for prefix matching; the UI wants
-	// them alphabetical.
 	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
 	webhttp.WriteJSON(w, map[string]any{
 		respPath:   "/",
@@ -109,9 +113,8 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, se
 		}
 		info, err := e.Info()
 		if err != nil {
-			// Races (file deleted between ReadDir and Info), EACCES on
-			// restrictive modes, and transient NFS errors land here. Debug
-			// so agent-driven directory churn doesn't create noise.
+			// Races, EACCES and transient NFS errors land here; Debug, so agent directory churn is
+			// not noise.
 			slog.Debug("filebrowse: listEntries entry stat failed",
 				"dir", logsafe.Field(resolved), "name", logsafe.Field(name), "error", logsafe.Field(err.Error()))
 			continue
@@ -127,10 +130,8 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, se
 	return files
 }
 
-// isWritable probes write access by creating and removing a zero-byte probe
-// file through the mount's kernel-confined root handle. O_EXCL plus a random
-// suffix keeps concurrent probes collision-free. The probe prefix is named
-// so a future startup sweeper can scan for ".marotte-probe-*" leftovers.
+// isWritable probes write access by creating and removing a zero-byte ".marotte-probe-*" file
+// (O_EXCL, random suffix) through the mount's kernel-confined root handle.
 func isWritable(l loc) bool {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {

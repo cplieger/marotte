@@ -1,7 +1,6 @@
 package translate
 
-// The terminal link on a tool call: where the id comes from, WHEN it is adopted
-// relative to the status fold, and what happens when the output it names is gone.
+// The terminal link on a tool call: its source, its adoption order, and a missing output.
 
 import (
 	"bytes"
@@ -11,11 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A single frame can carry both the type:"terminal" content block and `completed`,
-// so the link must be set before adoption runs — with the status fold first,
-// adoption looks up an id the tool call does not yet have and never will, and the
-// card persists an empty output. One frame carrying both is the only arrangement
-// that can tell the two orderings apart.
+// TestAdoptTerminalOutput_LinkAndCompletionInOneFrame pins the link set before adoption when
+// one frame carries both the terminal block and `completed`.
 func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 	const termID = "term-1"
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -75,9 +71,8 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	}
 }
 
-// The terminal's output WINS over anything already on the tool call, because what
-// is already there is an earlier ACP content block — a fragment of what the
-// terminal holds in full — and preferring the tool call would persist it.
+// TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment pins the terminal's full output over
+// an earlier content fragment.
 func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {
 	const termID = "term-3"
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -119,20 +114,15 @@ func TestParseToolUpdateContent_TerminalBlockContributesNoOutput(t *testing.T) {
 	}
 }
 
-// A terminal link resolving to no record is the only signal that makes this path
-// diagnosable, since an empty card is otherwise indistinguishable from a command
-// that printed nothing. The benign cases must stay silent or the signal is
-// worthless.
-//
-// Not parallel: captureSlog swaps the process-global slog default.
+// TestAdoptTerminalOutput_MissIsLogged pins the log on a link resolving to no record (the only
+// diagnostic), and silence in the benign cases. Not parallel: it swaps the slog default.
 func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 	const warning = "terminal output missing at completion"
 	tests := []struct {
 		name string
 		// terminal, when non-nil, is registered under the id the tool call links.
 		terminal *termRendered
-		// priorOutput arrives on an earlier in_progress frame: a same-frame block
-		// folds AFTER adoption, so it cannot be on the call before the miss.
+		// priorOutput arrives on an earlier frame: a same-frame block folds AFTER adoption.
 		priorOutput  string
 		linkTerminal bool
 		wantWarn     bool
@@ -189,8 +179,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 			if !tt.wantWarn {
 				return
 			}
-			// The terminal id is the only handle on the runtime-side record, and the
-			// byte count separates an empty card from a surviving fragment.
+			// The terminal id and byte count separate an empty card from a surviving fragment.
 			for _, want := range []string{
 				"terminal_id=" + termID, "tool_call_id=tc-1",
 				"chat_id=" + string(chatID), tt.wantBytes,
@@ -227,10 +216,8 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	t.Fatalf("no entry_appended{tool_call} frame was broadcast: %v", eventTypes(*events))
 }
 
-// KAS can send more than one terminal status frame for one tool call. The first
-// settles the call: its tool_result carries the duration measured from the call's
-// own start stamp, and the second frame finds no open call, so it seals nothing and
-// announces nothing — the settled result is the durable one.
+// TestHandleToolCallUpdate_ASecondTerminalFrameForASettledCallAppendsNothing pins that the
+// first terminal frame settles the call and a second appends nothing.
 func TestHandleToolCallUpdate_ASecondTerminalFrameForASettledCallAppendsNothing(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 

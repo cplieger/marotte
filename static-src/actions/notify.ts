@@ -1,6 +1,3 @@
-// Actions for push notification lifecycle.
-// ---------------------------------------------------------------------------
-
 import { defineAction, ActionError, apiAction, retryNetwork } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
 import { urlBase64ToUint8Array } from "../push-util.js";
@@ -22,13 +19,8 @@ export const unsubscribePush = apiAction<{ endpoint: string }>({
   success: false,
 });
 
-/**
- * notify.register_push — wraps the full push registration flow:
- * SW register → VAPID key fetch → pushManager.subscribe → POST subscribe.
- *
- * Dispatched when the user explicitly toggles notifications on.
- * Rollback: unchecks the toggle so the UI reflects reality on failure.
- */
+/** The full push registration (SW register → VAPID key → pushManager.subscribe → POST subscribe),
+ *  dispatched when the user toggles notifications on. Rollback unchecks the toggle. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   name: "notify.register_push",
@@ -41,10 +33,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    // Wait for the SW to become active before subscribing: pushManager.subscribe
-    // needs an activated worker, and a freshly-registered SW may still be
-    // installing/waiting (the app registers it unconditionally at boot, so this
-    // usually resolves immediately).
+    // pushManager.subscribe needs an activated worker; a fresh registration may still be installing.
     await navigator.serviceWorker.ready;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
@@ -93,7 +82,6 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       } catch {
         /* best-effort */
       }
-      // Best-effort server-side cleanup after successful POST but cancelled action.
       void apiPost(API_PUSH_UNSUBSCRIBE, {});
       throw new ActionError("cancelled", { code: "cancelled" });
     }
@@ -109,8 +97,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     return reg;
   },
   rollback: () => {
-    // Emit a custom event so the UI layer can handle the visual rollback
-    // without coupling this action to a specific DOM element ID.
+    // An event, so this action is not coupled to a DOM element id.
     document.dispatchEvent(new CustomEvent("notify:registration-failed"));
   },
   error: "Could not enable push notifications",

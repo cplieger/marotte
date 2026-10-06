@@ -1,9 +1,5 @@
-// Unit tests for the MCP discovery signal layer (mcp-state.ts): a server's
-// tools, prompts and resources are stored and read reactively by server name.
-//
-// `tools` joined the other two when KAS's config file became the source of
-// truth: the tool names are a discovery RESULT, and they used to be persisted
-// into marotte's config record as `known_tools`.
+// A server's tools, prompts and resources are stored and read reactively by server name; tools are a discovery
+// result, not persisted config.
 
 import { describe, it, expect } from "vitest";
 import { effect } from "@cplieger/reactive";
@@ -36,8 +32,7 @@ describe("discovery signals", () => {
   });
 
   it("stores tools even when the server advertises no prompts or resources", () => {
-    // The common case: most MCP servers expose tools only. The empty-value
-    // fast path must not swallow them.
+    // Most MCP servers expose tools only; the empty-value fast path must not swallow them.
     mcpState.setDiscovery("disc-tools-only", tools, [], []);
     expect(discoverySignalFor("disc-tools-only").value.tools).toEqual(tools);
   });
@@ -54,7 +49,7 @@ describe("discovery signals", () => {
   it("fires the per-server signal so a subscribed row re-renders", () => {
     let runs = 0;
     const dispose = effect(() => {
-      // Read .value to subscribe this effect to the server's discovery signal.
+      // Reading .value subscribes this effect.
       void discoverySignalFor("disc-c").value.prompts.length;
       runs++;
     });

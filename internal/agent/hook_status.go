@@ -9,25 +9,18 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// kiroSettingsPath returns the path to kiro-cli's settings file, via
-// workspace.KiroHome() so marotte and kiro-cli agree on the location
-// regardless of whether KIRO_HOME is set. That file is cli.json —
-// `kiro-cli settings <key> <value>` persists every key there, not the
-// settings.json this used to read.
+// kiroSettingsPath returns kiro-cli's settings file (cli.json, where `kiro-cli settings` persists
+// every key), via workspace.KiroHome() so both agree on the location.
 func kiroSettingsPath() string {
 	if workspace.KiroHome() == ".kiro" {
-		// Both KIRO_HOME and HOME unset: a relative path here would read from
-		// CWD/settings/cli.json. Caller treats empty as "fall through to defaults".
+		// Neither KIRO_HOME nor HOME is set: a relative path would read from CWD. Empty means defaults.
 		return ""
 	}
 	return workspace.KiroSettingsPath("cli.json")
 }
 
-// cachedBoolField reads a boolean value from a JSON file, cutting the
-// per-call cost to one os.Stat once warm. Staleness is checked via mtime AND
-// inode identity plus size, because kiro-cli publishes cli.json by rename
-// (new inode per write) and neither mtime nor size alone catches both a
-// same-mtime rename and a same-inode rewrite.
+// cachedBoolField reads a JSON boolean, costing one os.Stat once warm. Staleness checks mtime,
+// inode and size: kiro-cli publishes cli.json by rename, so no single signal catches every rewrite.
 type cachedBoolField struct {
 	id         atomicfile.FileIdentity
 	path       string
@@ -47,9 +40,7 @@ func (c *cachedBoolField) get() bool {
 		return c.defaultVal
 	}
 
-	// Never hold the lock across the stat/read/unmarshal: this is consulted per
-	// tool call, and a slow filesystem would block every caller behind one
-	// reader. Two concurrent misses may both read the file, which is benign.
+	// No lock across the read: this runs per tool call. Two concurrent misses both reading is benign.
 	info, err := os.Stat(c.path)
 	if err != nil {
 		return c.defaultVal
@@ -78,16 +69,14 @@ func (c *cachedBoolField) get() bool {
 		}
 	}
 
-	// If the file changed again in between, the pairing is stale in the safe
-	// direction: the next call stats a different generation and re-reads.
+	// A file that changed again is stale in the safe direction: the next call re-reads.
 	c.mu.Lock()
 	c.value, c.id, c.size = parsed, atomicfile.Identify(info), info.Size()
 	c.mu.Unlock()
 	return parsed
 }
 
-// hookStatusCache caches the hooks.showStatus setting from
-// ~/.kiro/settings/cli.json, invalidating on the file's identity and size.
+// hookStatusCache caches hooks.showStatus from ~/.kiro/settings/cli.json.
 type hookStatusCache struct {
 	field *cachedBoolField
 }
@@ -96,12 +85,8 @@ func newHookStatusCache(path string) *hookStatusCache {
 	return &hookStatusCache{field: newCachedBoolField(path, "hooks.showStatus", true)}
 }
 
-// IsHookStatusEnabled reads the kiro-cli hooks.showStatus setting. Returns
-// true (show hooks) on any error or when the setting is unset, matching
-// kiro-cli's own default.
-//
-// Reading marotte's own configDir would be wrong: that file uses underscore keys
-// and has no entry for this toggle.
+// IsHookStatusEnabled reads kiro-cli's hooks.showStatus setting, true on any error or when unset,
+// matching kiro-cli. marotte's own config uses different keys and holds no such entry.
 func (c *hookStatusCache) IsHookStatusEnabled() bool {
 	return c.field.get()
 }

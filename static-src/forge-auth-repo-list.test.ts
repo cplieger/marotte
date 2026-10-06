@@ -1,5 +1,3 @@
-// A connection's repository list in Sources: paging, refresh and clone state.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", async (importOriginal) => ({
@@ -34,8 +32,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// The forge list is the shared store's; routed through the mocked client so each
-// case answers it with mockResolvedValueOnce, the forge list first.
+// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -110,8 +107,7 @@ describe("forge-auth: the repository list", () => {
     };
   }
 
-  /** Paint the panel with the account's first page answering `first` (null: the
-   *  read failed) and `cloned` in the workspace, and open its repository list. */
+  /** `first` null means the read failed. */
   async function showList(first: unknown, cloned: string[] = []): Promise<HTMLElement> {
     mockedApiGet.mockImplementation(((url: string, decode: (v: unknown) => unknown) => {
       switch (url) {
@@ -135,15 +131,13 @@ describe("forge-auth: the repository list", () => {
     return [...details.querySelectorAll(".forge-account-repo-name")].map((n) => n.textContent);
   }
 
-  /** The Load more button, found by its class: its label gives way to the
-   *  outcome glyph for a moment after each press. */
+  /** Found by class: its label gives way to the outcome glyph after each press. */
   function loadMore(details: HTMLElement): HTMLButtonElement | undefined {
     return (
       details.querySelector<HTMLButtonElement>("button.forge-account-repos-load-more") ?? undefined
     );
   }
 
-  /** A fetch held until the test answers it. */
   function heldFetch(): {
     spy: ReturnType<typeof vi.fn<typeof fetch>>;
     answer: (r: Response) => void;
@@ -194,8 +188,7 @@ describe("forge-auth: the repository list", () => {
   });
 
   it("keeps Clone all and Delete all outside the control that opens the list", async () => {
-    // That control is a button to assistive technology (a `<summary>` included), so a
-    // button inside it is flattened into its name or dropped: axe's nested-interactive.
+    // A button inside a `<summary>` is flattened or dropped by assistive technology (axe nested-interactive).
     const list = await showList({ repos: [repo("one"), repo("two")] }, ["one"]);
     const toggle = list.querySelector<HTMLElement>(".forge-account-repos-summary")!;
     const cloneAll = list.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all")!;
@@ -250,7 +243,6 @@ describe("forge-auth: the repository list", () => {
     expect(names(details)).toEqual(["alice/one"]);
     await vi.waitFor(() => expect(loadMore(details)?.disabled).toBe(false), { timeout: 3000 });
 
-    // The next press clears the reason in the same frame.
     loadMore(details)!.click();
     expect(details.querySelector(".forge-account-repos-more [role='status']")?.textContent).toBe(
       "",

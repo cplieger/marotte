@@ -1,13 +1,7 @@
 package agent
 
-// Tests for mcp_oauth_relay.go: the paste-the-return-address relay that
-// rescues an MCP OAuth callback the browser could not deliver.
-//
-// The listener in these tests is a real httptest server on 127.0.0.1, so the
-// dial half is exercised end to end rather than mocked: httptest binds an
-// ephemeral loopback port, which is exactly the shape KAS's own redirect
-// listener has, and it is what relayClientFor's loopback address policy must
-// accept. A stubbed transport would have proved nothing about that policy.
+// The listener is a real httptest server on 127.0.0.1, the shape of KAS's ephemeral listener,
+// so relayClientFor's loopback policy is exercised for real.
 
 import (
 	"errors"
@@ -21,14 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/ssrf/v4"
 )
 
-// authURLFor builds the authorization URL KAS would have stored for a flow
-// whose loopback listener is at listenerURL. This is the relay's trust anchor,
-// so the fixture builds it the way KAS does — redirect_uri plus state as query
-// parameters on the provider's authorize endpoint — rather than letting a test
-// hand-pick the fields it wants to pass.
+// authURLFor builds the authorization URL KAS would store, the relay's trust anchor, the way KAS builds it.
 func authURLFor(t *testing.T, listenerURL, state string) string {
 	t.Helper()
 	lu, err := url.Parse(listenerURL)
@@ -68,10 +59,7 @@ func postRelay(t *testing.T, h *Runtime, server, pasted string) *httptest.Respon
 	return rec
 }
 
-// callbackListener stands in for KAS's redirect listener. It records the query
-// it received so a test can prove the code arrived VERBATIM — the relay's whole
-// job is to deliver the provider's parameters unaltered, and a relay that
-// re-encoded them would break the token exchange it exists to unblock.
+// callbackListener stands in for KAS's redirect listener, recording the query so a test proves the code arrived verbatim.
 type callbackListener struct {
 	srv     *httptest.Server
 	status  int
@@ -92,17 +80,13 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 	return l
 }
 
-// stageFlow puts a server into the waiting-for-authorization state with the
-// authorization URL KAS would have advertised.
+// stageFlow puts a server into waiting-for-authorization with KAS's advertised URL.
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
-	h.mcpRegistry.RecordOAuth(t.Context(), server, authURLFor(t, listenerURL, state))
+	h.mcpRegistry.RecordOAuth(t.Context(), server, marotte.MCPSource{}, authURLFor(t, listenerURL, state))
 }
 
-// relayState reads the server's latch off the registry SNAPSHOT, which is the
-// same projection /api/mcp/status serves. Reading the wire surface rather than a
-// private accessor is deliberate: "may this be pasted again" is a question the
-// client answers from that field, so the test asserts what the client would see.
+// relayState reads the latch off the registry snapshot /api/mcp/status serves, as the client would.
 func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool) {
 	t.Helper()
 	for _, s := range h.mcpRegistry.Snapshot() {
@@ -127,16 +111,13 @@ func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 	if l.gotHits != 1 {
 		t.Errorf("listener hits = %d, want exactly 1", l.gotHits)
 	}
-	// Verbatim: the code KAS's listener sees must be the code the provider
-	// issued, or the token exchange this relay exists to unblock fails.
+	// Verbatim, or the token exchange fails.
 	if l.gotCode != "the-code" {
 		t.Errorf("listener saw code %q, want %q", l.gotCode, "the-code")
 	}
 }
 
-// The relay is SINGLE USE per authorization attempt. A code is spent by the
-// first delivery, so a second paste would make KAS's own single-use rule answer
-// with an error the user cannot interpret; refusing here says what happened.
+// The relay is single use per attempt: the first delivery spends the code.
 func TestOAuthRelay_IsSingleUsePerAttempt(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(nil)
@@ -158,12 +139,8 @@ func TestOAuthRelay_IsSingleUsePerAttempt(t *testing.T) {
 	}
 }
 
-// blockingListener is KAS's redirect listener held OPEN. The first request
-// parks inside the handler until the test releases it, so the test can act while
-// a relay is genuinely in flight — the only window the two races below live in.
-// Every LATER request answers immediately and is counted, which is what makes a
-// regression report itself: a second callback that should never have been
-// replayed shows up as a second hit instead of deadlocking the test.
+// blockingListener parks the first request until released, so a test acts while a relay is in
+// flight; later requests answer at once and are counted.
 type blockingListener struct {
 	srv     *httptest.Server
 	codes   chan string
@@ -194,10 +171,7 @@ func newBlockingListener(t *testing.T, status int) *blockingListener {
 	return l
 }
 
-// waitForCallback blocks until the next callback reaches the listener and
-// returns its code. This is the synchronization the concurrency tests hang off:
-// a sleep here could land before the relay arrived, and every assertion after it
-// would then pass without the race window ever opening.
+// waitForCallback blocks until the next callback arrives: a sleep could miss the race window.
 func (l *blockingListener) waitForCallback(t *testing.T) string {
 	t.Helper()
 	select {
@@ -209,19 +183,12 @@ func (l *blockingListener) waitForCallback(t *testing.T) string {
 	}
 }
 
-// releaseAll lets every parked request answer. Idempotent so the cleanup can
-// call it after a test already did.
+// releaseAll lets every parked request answer. Idempotent.
 func (l *blockingListener) releaseAll() {
 	l.once.Do(func() { close(l.release) })
 }
 
-// The single-use rule has to be ATOMIC, and the serial test above cannot show
-// that: it starts its second paste only after the first has finished latching,
-// which a check-then-act implementation passes. Here the listener holds the
-// first relay open until a second paste has attempted entry, which is the real
-// double-click / two-device window. Both callers reading "not relayed yet" would
-// spend the same authorization code twice, and KAS's own single-use rule would
-// then answer one of them with an error the user cannot act on.
+// The single-use rule must be atomic: the listener holds the first relay open while a second paste tries.
 func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 	l := newBlockingListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(nil)
@@ -234,7 +201,7 @@ func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 		t.Fatalf("listener saw code %q, want %q", code, "the-code")
 	}
 
-	// In flight now. This is the paste that must be refused.
+	// In flight now; this paste must be refused.
 	second := postRelay(t, h, "linear", pasted)
 	l.releaseAll()
 
@@ -250,11 +217,7 @@ func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 	}
 }
 
-// An old callback's completion must not attribute itself to whatever attempt is
-// current when it lands. recordOAuth replaces the record on every new sign-in,
-// so a relay that was still out when the user restarted would otherwise mark the
-// NEW attempt as delivered: its own callback was never replayed, the paste box is
-// withheld, and the user is stranded until they start yet another sign-in.
+// An old relay's completion must not latch a newer attempt, or the new one's paste box is withheld.
 func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 	l := newBlockingListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(nil)
@@ -267,8 +230,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 		t.Fatalf("listener saw code %q, want the first attempt's %q", code, "c1")
 	}
 
-	// The user restarted the sign-in while attempt A's callback is still out:
-	// KAS advertises a new authorization URL and recordOAuth replaces the record.
+	// The user restarted: KAS advertises a new URL and recordOAuth replaces the record.
 	stageFlow(t, h, "linear", l.srv.URL, "st-two")
 	l.releaseAll()
 	if code := <-firstStatus; code != http.StatusOK {
@@ -279,7 +241,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 		t.Fatalf("relayed = %v, pending = %v; the old relay's completion latched the new attempt, whose own callback was never delivered",
 			relayed, pending)
 	}
-	// And the new attempt is still relayable, which is the user-visible half.
+	// The new attempt stays relayable.
 	rec := postRelay(t, h, "linear", pastedFor(t, l.srv.URL, "c2", "st-two"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("relaying the new attempt = %d, want 200; body %s", rec.Code, rec.Body.String())
@@ -289,9 +251,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 	}
 }
 
-// A fresh authorization attempt clears the single-use latch. recordOAuth
-// replaces the whole record, so this asserts the reset survives that rewrite —
-// without it a user who restarted a sign-in could never relay again.
+// A fresh attempt clears the latch through recordOAuth's whole-record rewrite.
 func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(nil)
@@ -311,9 +271,7 @@ func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 	}
 }
 
-// No flow in flight means no relay. This is what keeps the route from being a
-// standing lever on an HTTP surface that carries no auth of its own: with
-// nothing waiting there is no stored state to check a paste against.
+// No flow in flight means no relay: nothing to check a paste against.
 func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	for name, server := range map[string]string{
@@ -324,7 +282,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 			h := newHubWithMCPConfig(nil)
 			if server == "linear" {
 				// Connected, not awaiting authorization.
-				h.mcpRegistry.RecordConnected(t.Context(), server, nil, nil, nil)
+				h.mcpRegistry.RecordConnected(t.Context(), server, marotte.MCPSource{}, nil, nil, nil, nil)
 			}
 			rec := postRelay(t, h, server, pastedFor(t, l.srv.URL, "c", "st"))
 			if rec.Code != http.StatusConflict {
@@ -337,10 +295,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 	}
 }
 
-// A listener that REFUSES the callback leaves the attempt retryable. KAS runs
-// its own state check and its own single-use rule, so a 4xx here is most often
-// that check talking, and latching the attempt would strand the user on a
-// "already delivered" refusal for a code that was never accepted.
+// A listener refusing the callback leaves the attempt retryable: a 4xx is usually KAS's own state check.
 func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
 	l := newCallbackListener(t, http.StatusBadRequest)
 	h := newHubWithMCPConfig(nil)
@@ -356,8 +311,7 @@ func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
 	}
 }
 
-// A listener that is GONE (the flow timed out and KAS closed it) reports a
-// gateway failure rather than a success the user would wait on forever.
+// A gone listener is a gateway failure, not a success.
 func TestOAuthRelay_ADeadListenerIsAGatewayFailure(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	dead := l.srv.URL
@@ -382,8 +336,7 @@ func TestOAuthRelay_RejectsNonPOST(t *testing.T) {
 	}
 }
 
-// The authorization code must never reach the log. It is a bearer credential
-// for the duration of the exchange, and the logs ship to Loki.
+// The authorization code must never reach the log: it is a bearer credential during the exchange.
 func TestOAuthRelay_NeverLogsTheCode(t *testing.T) {
 	const secret = "super-secret-authorization-code"
 	logs := captureLogs(t)
@@ -391,10 +344,7 @@ func TestOAuthRelay_NeverLogsTheCode(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
 
-	// Three paths, and the third is the one that actually leaked. net/http wraps
-	// every transport failure in a *url.Error whose message opens with the full
-	// request URL, so logging the error verbatim put the code in Loki on exactly
-	// the path most likely to be read: the one where the relay failed.
+	// The third path is the one that leaked: *url.Error's message opens with the full request URL.
 	postRelay(t, h, "linear", pastedFor(t, l.srv.URL, secret, "st-abc"))
 
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
@@ -434,9 +384,7 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "  http://" + host + "/oauth/callback?code=abc&state=" + state + "\n",
 			want:   nil,
 		},
-		// The user's address bar may say `localhost` where KAS advertised the
-		// literal, or the reverse. Both are loopback and neither decides the
-		// dial target, so the spelling is not a refusal in either direction.
+		// `localhost` and `127.0.0.1` are both loopback; the spelling is never a refusal.
 		"a localhost paste against a 127.0.0.1 advertisement": {
 			pasted: "http://localhost:41234/oauth/callback?code=abc&state=" + state,
 			want:   nil,
@@ -453,9 +401,7 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://" + host + "/oauth/callback?code=abc&state=" + state + "&iss=https%3A%2F%2Fp.example",
 			want:   nil,
 		},
-		// relayMinPort is the FLOOR the relay accepts, not the first value it
-		// refuses, and 65535 is the last. KAS binds an ephemeral port, and the
-		// ephemeral range's edges are legitimate places for it to land.
+		// relayMinPort and 65535 are both accepted: KAS's ephemeral port can land on the range's edges.
 		"the lowest unprivileged port is accepted": {
 			pasted: "http://127.0.0.1:1024/oauth/callback?code=abc&state=" + state,
 			auth: "https://provider.example/authorize?" + url.Values{
@@ -480,14 +426,11 @@ func TestValidateRelayAddress(t *testing.T) {
 			}.Encode(),
 			want: errRelayBadPort,
 		},
-		// DEL is the top of the excluded range, and it is excluded for the same
-		// reason as CR and LF: this address is replayed into another program's
-		// HTTP handler.
+		// DEL is excluded like CR and LF.
 		"a DEL byte is refused": {
 			pasted: "http://" + host + "/oauth/callback?code=a\x7f&state=" + state,
 			want:   errRelayBadBytes,
 		},
-		// --- the address is not a loopback callback ---
 		"a remote host is refused": {
 			pasted: "http://evil.example:41234/oauth/callback?code=abc&state=" + state,
 			want:   errRelayNotLoopback,
@@ -500,21 +443,9 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://169.254.169.254:41234/oauth/callback?code=abc&state=" + state,
 			want:   errRelayNotLoopback,
 		},
-		// The ORDER is the property, which is why the expected error is the byte
-		// gate rather than the loopback gate. isLoopbackHost lowercases its input
-		// before matching an ALLOW-LIST, and a widening fold on an allow-list
-		// fails OPEN — the class that shipped a live Host-header widening in
-		// webhttp. Measured on go1.27.0 (Unicode 17.0.0): strings.ToLower maps
-		// exactly two already-assigned runes into pure ASCII, U+0130 -> "i" and
-		// U+212A -> "k", and none of this gate's three literals ("127.0.0.1",
-		// "::1", "localhost") contains an i or a k, so 0 of the ~1.11M non-ASCII
-		// one-rune substitutions across them are accepted. That makes the site
-		// provably unlaunderable on any Unicode version, not merely on this one.
-		// isPrintableASCII running FIRST is a second, independent proof (it
-		// admits 0 non-ASCII bytes at all, and url.Parse admits 0 non-ASCII runes
-		// into a scheme), and this case is what keeps the two in that order:
-		// moving the byte gate after the host check would change this error
-		// identity while leaving every other case green.
+		// The byte gate must run before isLoopbackHost, whose ToLower on an allow-list would fail open.
+		// (Measured on go1.27.0: only U+0130 and U+212A lower into ASCII, neither matches.) This
+		// case's error identity keeps the order.
 		"a non-ASCII host never reaches the loopback allow-list": {
 			pasted: "http://\u212Aocalhost:41234/oauth/callback?code=abc&state=" + state,
 			want:   errRelayBadBytes,
@@ -543,7 +474,6 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://127.0.0.1/oauth/callback?code=abc&state=" + state,
 			want:   errRelayBadPort,
 		},
-		// --- the payload is not a callback ---
 		"no code means the sign-in did not complete": {
 			pasted: "http://" + host + "/oauth/callback?state=" + state,
 			want:   errRelayNoCode,
@@ -584,7 +514,6 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://[not-an-address/oauth/callback?code=abc",
 			want:   errRelayUnparsable,
 		},
-		// --- disagreement with what KAS advertised ---
 		"a loopback port KAS never advertised is refused": {
 			pasted: "http://127.0.0.1:9999/oauth/callback?code=abc&state=" + state,
 			want:   errRelayTargetDrift,
@@ -605,7 +534,6 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://" + host + "/oauth/callback?code=abc&state=st-ab",
 			want:   errRelayStateDrift,
 		},
-		// --- the stored authorization URL cannot anchor a relay ---
 		"an authorization URL with no redirect_uri has nothing to relay to": {
 			pasted: "http://" + host + "/oauth/callback?code=abc&state=" + state,
 			auth:   "https://provider.example/authorize?state=" + state,
@@ -616,8 +544,7 @@ func TestValidateRelayAddress(t *testing.T) {
 			auth:   "https://provider.example/authorize?redirect_uri=http%3A%2F%2F" + host + "%2Foauth%2Fcallback",
 			want:   errRelayNoState,
 		},
-		// The advertisement is what gets dialed, so a stored value that is not
-		// an unprivileged loopback http address is refused rather than followed.
+		// The advertisement is dialed, so a non-loopback stored value is refused.
 		"an advertised redirect off-box is refused": {
 			pasted: "http://" + host + "/oauth/callback?code=abc&state=" + state,
 			auth: "https://provider.example/authorize?" + url.Values{
@@ -656,11 +583,8 @@ func TestValidateRelayAddress(t *testing.T) {
 	}
 }
 
-// FuzzValidateRelayAddress asserts the ACCEPTANCE INVARIANT rather than merely
-// that nothing panics: whatever the paste, an accepted address is one that is
-// safe to dial and forward. Every clause is a property the handler relies on
-// without re-checking it, so a fuzz input that satisfies the validator and
-// violates one of these is a live defect, not a curiosity.
+// FuzzValidateRelayAddress asserts the acceptance invariant: anything accepted is safe to dial
+// and forward without the handler re-checking.
 func FuzzValidateRelayAddress(f *testing.F) {
 	const authURL = "https://p.example/authorize?" +
 		"redirect_uri=http%3A%2F%2F127.0.0.1%3A41234%2Foauth%2Fcallback&state=st-abc"
@@ -686,9 +610,7 @@ func FuzzValidateRelayAddress(f *testing.F) {
 			t.Fatal("accepted but returned no URL to replay")
 		}
 
-		// 1. Only ever plain http to a loopback name, on an unprivileged port.
-		//    This is what makes the outbound dial reachable-by-design instead of
-		//    an arbitrary request the caller composed.
+		// Plain http to a loopback name on an unprivileged port.
 		if !strings.EqualFold(got.Scheme, "http") {
 			t.Errorf("accepted scheme %q, want http", got.Scheme)
 		}
@@ -700,8 +622,7 @@ func FuzzValidateRelayAddress(f *testing.F) {
 			t.Errorf("accepted port %q, want %d..65535", got.Port(), relayMinPort)
 		}
 
-		// 2. No credentials, no fragment: both would mean the paste is not the
-		//    address the browser was actually sent to.
+		// No credentials, no fragment.
 		if got.User != nil {
 			t.Error("accepted a URL carrying userinfo")
 		}
@@ -709,13 +630,12 @@ func FuzzValidateRelayAddress(f *testing.F) {
 			t.Errorf("accepted a URL carrying fragment %q", got.Fragment)
 		}
 
-		// 3. Nothing but printable ASCII survives, so the replayed request line
-		//    cannot be split or truncated by the paste.
+		// Only printable ASCII, so the request line cannot be split.
 		if !isPrintableASCII(got.String()) {
 			t.Errorf("accepted a URL that is not printable ASCII: %q", got.String())
 		}
 
-		// 4. There is a code, and every query key is one the callback uses.
+		// A code, and only callback keys.
 		q := got.Query()
 		if q.Get("code") == "" {
 			t.Error("accepted a URL with no authorization code")
@@ -726,10 +646,7 @@ func FuzzValidateRelayAddress(f *testing.F) {
 			}
 		}
 
-		// 5. THE DIAL TARGET IS KAS'S, THE QUERY IS THE PASTE'S, and nothing
-		//    crosses over. This is the injection binding: if a paste can move
-		//    the target by a single byte the route becomes a request generator,
-		//    and if the query is rewritten the code stops being the provider's.
+		// The dial target is KAS's and the query the paste's; nothing crosses over.
 		aq, aerr := url.Parse(auth)
 		if aerr != nil {
 			t.Fatalf("accepted a paste against an unparsable authorization URL %q", auth)
@@ -747,8 +664,7 @@ func FuzzValidateRelayAddress(f *testing.F) {
 		if got.User != nil || got.Fragment != "" {
 			t.Error("the advertised callback contributed userinfo or a fragment")
 		}
-		// The paste's query, unaltered. Re-parsed from the input rather than
-		// compared against got.Query(), so a rewrite would show up.
+		// Re-parsed from the input, so a rewrite would show.
 		pu, puerr := url.Parse(strings.TrimSpace(pasted))
 		if puerr != nil {
 			t.Fatalf("accepted a paste that does not parse: %q", pasted)
@@ -762,12 +678,7 @@ func FuzzValidateRelayAddress(f *testing.F) {
 	})
 }
 
-// The relay's client is pinned to the ONE port it was built for. This is the
-// invariant that replaced a transport with the port check switched off: a
-// standing client could only ever express a range, so nothing stopped a
-// validated callback on port A from being replayed to port B. Building per
-// attempt makes the allowlist exactly the port about to be dialed, and this
-// test is what would fail if that were widened back to a range.
+// TestRelayClientForPinsTheOnePort pins the client to the one port it was built for.
 func TestRelayClientForPinsTheOnePort(t *testing.T) {
 	t.Parallel()
 
@@ -785,15 +696,13 @@ func TestRelayClientForPinsTheOnePort(t *testing.T) {
 		t.Fatalf("relayClientFor(%q) error = %v, want a client", target, err)
 	}
 
-	// The port it was built for works.
 	resp, err := client.Get(target.String())
 	if err != nil {
 		t.Fatalf("GET the pinned port error = %v, want it allowed", err)
 	}
 	_ = resp.Body.Close()
 
-	// A DIFFERENT loopback port does not, even though it is loopback and
-	// unprivileged. No listener is needed: the refusal precedes the dial.
+	// A different loopback port is refused before any dial.
 	port, err := strconv.ParseUint(target.Port(), 10, 16)
 	if err != nil {
 		t.Fatalf("ParseUint(%q) error = %v", target.Port(), err)
@@ -804,17 +713,14 @@ func TestRelayClientForPinsTheOnePort(t *testing.T) {
 	if err == nil {
 		t.Fatalf("GET port %d with a client pinned to %d succeeded, want it refused", other, port)
 	}
-	// Assert the REASON, not merely that it failed. Nothing listens on the other
-	// port, so a widened allowlist still produces a connection-refused error and
-	// an `err != nil` check would pass while the pin was gone.
+	// Assert the reason: a connection-refused error would pass a widened allowlist.
 	var se *ssrf.Error
 	if !errors.As(err, &se) || se.Kind != ssrf.KindBadPort {
 		t.Errorf("GET port %d error = %v, want an ssrf KindBadPort refusal (the pin, not a dial failure)", other, err)
 	}
 }
 
-// A port parseLoopbackCallback would have rejected is rejected here too, so the
-// two layers cannot disagree about what is dialable.
+// A port parseLoopbackCallback rejects is rejected here too.
 func TestRelayClientForRefusesBadPorts(t *testing.T) {
 	t.Parallel()
 
@@ -825,11 +731,7 @@ func TestRelayClientForRefusesBadPorts(t *testing.T) {
 		{"privileged", "http://127.0.0.1:80/callback"},
 		{"port zero", "http://127.0.0.1:0/callback"},
 		{"no port", "http://127.0.0.1/callback"},
-		// NOT in this table: an unparseable port like ":notaport". url.Parse
-		// always rejects it, so the case never reached relayClientFor and
-		// asserted nothing — it passed with the port validation deleted. The
-		// refusal is real but it belongs to url.Parse, and TestValidateRelayAddress
-		// is where the parse layer is exercised.
+		// No unparseable port here: url.Parse rejects it first, so the case asserts nothing at this layer.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -844,18 +746,13 @@ func TestRelayClientForRefusesBadPorts(t *testing.T) {
 	}
 }
 
-// TestParseLoopbackCallback_LengthCap pins relayURLCap as the longest address
-// ACCEPTED rather than the first one refused. The cap bounds a paste; an
-// authorization code close to it is ordinary, so shaving a byte off the limit
-// refuses a callback that should have been relayed and the user has no way to
-// shorten it.
+// TestParseLoopbackCallback_LengthCap pins relayURLCap as the longest accepted address.
 func TestParseLoopbackCallback_LengthCap(t *testing.T) {
 	t.Parallel()
 
 	const prefix = "http://127.0.0.1:41234/oauth/callback?code="
 	atCap := prefix + strings.Repeat("a", relayURLCap-len(prefix))
-	// The fixture is only meaningful at the exact boundary, so it says so
-	// instead of trusting the arithmetic above.
+	// The fixture is only meaningful at the exact boundary.
 	if len(atCap) != relayURLCap {
 		t.Fatalf("fixture is %d bytes, want exactly relayURLCap (%d)", len(atCap), relayURLCap)
 	}
@@ -869,10 +766,7 @@ func TestParseLoopbackCallback_LengthCap(t *testing.T) {
 	}
 }
 
-// The relay's port floor is inclusive: relayMinPort is the lowest port it will
-// build a client for, not the first it refuses. KAS binds an ephemeral port and
-// the bottom of that range is a legitimate place for it to land, so a client
-// refused here is a callback that cannot be relayed at all.
+// The port floor is inclusive.
 func TestRelayClientForAcceptsTheLowestUnprivilegedPort(t *testing.T) {
 	t.Parallel()
 

@@ -7,10 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestBridgeManager_ConcurrentGetOrInsertClose exercises the race
-// between orInsert (creates a new bridge for a chatID) and close
-// (removes + stops a bridge for the same chatID). Under -race this
-// catches any missed synchronization on the bridges map.
+// TestBridgeManager_ConcurrentGetOrInsertClose races orInsert against close on one chatID under -race.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
@@ -18,7 +15,6 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	const N = 100
 	var wg sync.WaitGroup
 
-	// Inserters.
 	wg.Go(func() {
 		for i := range N {
 			chatID := marotte.ChatID("chat-" + string(rune('A'+i%5)))
@@ -26,7 +22,6 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 		}
 	})
 
-	// Closers.
 	wg.Go(func() {
 		for i := range N {
 			chatID := marotte.ChatID("chat-" + string(rune('A'+i%5)))
@@ -34,7 +29,6 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 		}
 	})
 
-	// Readers.
 	wg.Go(func() {
 		for i := range N {
 			chatID := marotte.ChatID("chat-" + string(rune('A'+i%5)))
@@ -42,7 +36,6 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 		}
 	})
 
-	// Count.
 	wg.Go(func() {
 		for range N {
 			_ = bm.count()
@@ -52,14 +45,11 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	wg.Wait()
 }
 
-// TestBridgeManager_CloseConcurrentDrain verifies that per-chat close
-// and drain don't interfere when run concurrently (e.g. a tab close
-// racing with Shutdown).
+// TestBridgeManager_CloseConcurrentDrain races per-chat close against drain (a tab close during Shutdown).
 func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
 	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 
-	// Seed bridges.
 	for i := range 20 {
 		chatID := marotte.ChatID("drain-" + string(rune('A'+i)))
 		bm.orInsert(chatID)

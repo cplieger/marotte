@@ -1,10 +1,6 @@
-// Command wire-codegen generates TypeScript interfaces, validating decoders,
-// and an SSE event→decoder registry from Go wire types using the wiregen
-// library (AST-based; github.com/cplieger/wiregen/v3). Output lands in
-// static-src/wire/ and feeds the client's typed SSE/REST decoding.
-//
-// The contract itself — the registered types, enums, name overrides and SSE
-// event table — lives in internal/wirespec. This command is the driver.
+// Command wire-codegen generates the TypeScript interfaces, validating decoders and
+// SSE event registry in static-src/wire/ from the Go wire types, using
+// github.com/cplieger/wiregen/v3. The contract lives in internal/wirespec.
 //
 // Run: go run ./cmd/wire-codegen   (from the marotte repo root)
 package main
@@ -25,19 +21,9 @@ func main() {
 	os.Exit(run())
 }
 
-// run generates the wire artifacts and returns the process exit code, so the
-// signal context's cancel runs on every path (os.Exit in main itself would skip
-// the defer).
-//
-// The context is signal.NotifyContext rather than context.Background, and that
-// is the whole reason wiregen's Generate takes one. Loading the registered
-// packages runs the `go` command as a subprocess, which on a cold module cache
-// can spend minutes fetching — and an unbounded subprocess is exactly what
-// Ctrl-C is for. With a plain background context an interrupt killed this
-// process and orphaned the load; with this one the load is cancelled and
-// Generate returns, which is how the staged output gets cleaned up rather than
-// left behind. SIGTERM is included because this also runs from the Docker build
-// and from CI, where the signal is not a keyboard.
+// run returns the exit code so the deferred cancel runs on every path. The context is a
+// signal context because loading packages runs `go` as a subprocess that can fetch for
+// minutes; an interrupt must cancel it so the staged output is cleaned up.
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -45,8 +31,7 @@ func run() int {
 	r := wirespec.Registry()
 	outDir := filepath.Join("static-src", "wire")
 	if err := r.Generate(ctx, outDir); err != nil {
-		// An interrupt is not a failure to report as one: name the signal so a
-		// cancelled run does not read as a broken registry.
+		// Name the signal so a cancelled run does not read as a broken registry.
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "wire-codegen: interrupted")
 			return 130

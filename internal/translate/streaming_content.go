@@ -1,7 +1,5 @@
 package translate
 
-// Content streaming handlers: text chunks, plans, mode updates.
-
 import (
 	"cmp"
 	"context"
@@ -22,9 +20,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != marotte.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
-	// Must run before the fold target is read: a revision re-targets routing to a
-	// new wire_turn_start turn, so a target taken first would fold this frame into
-	// the prompt's turn.
+	// Before the fold target is read: a revision re-targets routing to a new wire_turn_start turn.
 	if chunk.Meta.Kiro.AgentInitiated && !attr.Step {
 		t.bracket.ReviseTurnBinding(ctx, chatID)
 	}
@@ -35,33 +31,24 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	lane := chunk.Meta.Kiro.AgentSubtaskID
 	sayID := cmp.Or(chunk.Meta.Kiro.ReplayID, chunk.Meta.Kiro.MessageID)
 
-	// kiro-cli's security filter cancelled a tool call: this chunk is the whole
-	// notice and no session/prompt response is coming. Detected before the steer
-	// filter so the two never eat each other's text. Skipped for a step frame,
-	// where marotte issued no prompt call to release; the run ceiling catches it.
+	// kiro-cli's security-filter notice (no prompt response is coming), detected before the steer
+	// filter; skipped for a step frame (the run ceiling covers it).
 	interrupted := !isReasoning && !attr.Step && isInterruptSentinel(chunk.Content.Text)
 
-	// A chunk carrying _meta.kiro.refusal is the turn's refusal EXPLANATION rather
-	// than assistant prose, so it never reaches the fold below. REASONING chunks
-	// included: the tag is a turn-level fact and the frame's method says only which
-	// stream it arrived on, so gating the latch on the text stream would drop a
-	// refusal KAS tagged on a thought chunk and leave the turn unmarked. `interrupted`
-	// is already text-only, so interruptIfFiltered no-ops for a reasoning chunk and
-	// the two rules stay independent.
+	// A refusal-tagged chunk is the turn's EXPLANATION, never prose, on either stream: the tag is
+	// turn-level. `interrupted` is text-only, so the two rules stay independent.
 	if t.markRefusal(ctx, sc, turn, chatID, &chunk, lane, interrupted) {
 		return
 	}
 
 	text := chunk.Content.Text
 	if !isReasoning {
-		// Text only: KAS's recordSteeringAcks reads the marker from text entries and
-		// never reasoning. The carry stays with turnlog, which settles it at the seal.
+		// Text only: KAS reads markers from text entries. turnlog settles the carry at the seal.
 		var carry string
 		var acks []steerAck
 		text, carry, acks = stripSteerAcks(turn.Carry(lane), text)
 		turn.SetSteerCarry(lane, sayID, carry)
-		// BEFORE the empty-text return below: a marker closing a response usually
-		// arrives as its own delta, which is exactly the case that returns early.
+		// BEFORE the empty-text return: a closing marker usually arrives as its own delta.
 		t.appendSteerAcks(ctx, chatID, lane, attr, acks)
 		if text == "" {
 			return
@@ -82,24 +69,14 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.Ch
 	}
 	t.publishOpen(ctx, sc, turn, lane, text)
 
-	// Last, and the ordering is the contract: the notice must be in the log and on
-	// the wire before the turn ends.
+	// Last: the notice must be in the log and on the wire before the turn ends.
 	t.interruptIfFiltered(chatID, interrupted)
 }
 
-// markRefusal seals lane and latches the turn's refusal when chunk carries
-// _meta.kiro.refusal, reporting whether it consumed the frame. It serves BOTH
-// streams: a tagged reasoning chunk marks the turn and seals its lane exactly like a
-// text one, so the thinking text is dropped with the explanation rather than opening
-// a thinking entry the callout then duplicates.
-//
-// Branch on the STRUCTURAL marker and never on the words: the sentence is the
-// SERVICE's, absent from every local kiro-cli binary, and a reader can paste it into
-// a prompt, so a matcher would both rot and misfire. Sealing the lane is what keeps
-// the preceding prose in its own entry and lets whatever follows open a fresh one — a
-// refusal is not always the last thing in a turn. The lane comes off the chunk, so a
-// delegate's refusal seals the delegate's lane and not the main one, and the seal
-// settles that lane's steer carry like any other.
+// markRefusal seals lane and latches the turn's refusal when chunk carries _meta.kiro.refusal,
+// reporting whether it consumed the frame (text or reasoning alike). It branches on the
+// STRUCTURAL marker, never the words (service text a reader can paste). Sealing the chunk's
+// own lane keeps the prose before it in its own entry.
 func (t *Translator) markRefusal(
 	ctx context.Context,
 	sc entryScope,
@@ -114,23 +91,20 @@ func (t *Translator) markRefusal(
 		return false
 	}
 	sealed, err := turn.SealLane(ctx, lane)
-	// The note rides the seal's OWN frame, which is the live carrier. A failed seal
-	// returns no Sealed at all, so nothing is published and nothing is claimed.
+	// The note rides the seal's OWN frame; a failed seal publishes nothing.
 	t.publishSealedRefused(ctx, sc, sealed, refusal)
 	if err != nil {
 		appendFailed(sc, "refusal seal", err)
 		return true
 	}
-	// First-wins, so KAS's one chunk per turn needs no dedupe here and a second
-	// tagged chunk cannot relabel the turn.
+	// First-wins: a second tagged chunk cannot relabel the turn.
 	turn.SetRefusal(refusal)
 	t.interruptIfFiltered(chatID, interrupted)
 	return true
 }
 
-// interruptIfFiltered ends the turn when the chunk was kiro-cli's own tool-use
-// filter notice. One owner, because both the ordinary fold and the refusal branch
-// owe it and a branch that forgot it would leave the prompt call unreleased.
+// interruptIfFiltered ends the turn when the chunk was kiro-cli's tool-use filter notice; one
+// owner for both the fold and the refusal branch.
 func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, interrupted bool) {
 	if !interrupted {
 		return
@@ -140,11 +114,8 @@ func (t *Translator) interruptIfFiltered(chatID marotte.ChatID, interrupted bool
 	t.turnInterrupt.InterruptTurn(chatID, interruptReason)
 }
 
-// appendSteerAcks records each steer whose acknowledgement marker just closed: the
-// read the ack evidences, then what the agent said it did about it, as entries in the
-// chat's own turn — the ack is the chat's fact whichever session's chunk carried it.
-// A delegate's chunk keeps its lane; a step's chunk went to the run's log, so its ack
-// is lane-less here.
+// appendSteerAcks records each steer whose ack marker just closed: the read, then the agent's
+// statement, in the chat's own turn. A delegate's chunk keeps its lane; a step's is lane-less.
 func (t *Translator) appendSteerAcks(ctx context.Context, chatID marotte.ChatID, lane string, attr FrameAttribution, acks []steerAck) {
 	if len(acks) == 0 {
 		return
@@ -156,8 +127,7 @@ func (t *Translator) appendSteerAcks(ctx context.Context, chatID marotte.ChatID,
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		// Before the ack and never after: the read is what the ack reports, so a
-		// reader meets the steer above the agent's statement about it.
+		// The read before the ack: a reader meets the steer above the agent's statement.
 		t.steerReadByAck(ctx, chatID, lane, ack.SteerID)
 		turn, ok := t.turns.OwnTurn(chatID)
 		if !ok {
@@ -206,12 +176,8 @@ func refusalInfo(chunk *ACPChunkWire) *marotte.RefusalInfo {
 	return refusalFrom(chunk.Meta.Kiro.Refusal)
 }
 
-// refusalFrom maps KAS's refusal block onto the domain type. The explanation is
-// CARRIED rather than dropped: it duplicates the chunk's text, and the chunk's text
-// is exactly what no longer reaches the assistant entry, so this block is the only
-// copy left. It is service-supplied text on its way to a human-read surface, so it
-// takes displayText like every other such string in this package. A block with no
-// category and no recommended model still marks the turn (every field optional).
+// refusalFrom maps KAS's refusal block onto the domain type. The explanation is CARRIED (it is
+// the only copy once the chunk's text is withheld) and takes displayText. Every field is optional.
 func refusalFrom(r *ACPRefusalMeta) *marotte.RefusalInfo {
 	if r == nil {
 		return nil
@@ -272,9 +238,8 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID marotte.ChatID
 		return
 	}
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventModeChanged, chatID, marotte.ModeChangedPayload{ModeID: p.ModeID}))
-	// The header write above is the idempotence gate for both producers: a switch
-	// the reader asked for has already taken it, so KAS's echo of that same switch
-	// reaches this point with nothing changed and appends no second entry.
+	// The header write is the idempotence gate: KAS's echo of a reader's switch changes nothing
+	// and appends no second entry.
 	sw := marotte.EntryModeSwitched{From: from, To: p.ModeID, Source: marotte.ModeSwitchSourceAgent}
 	t.appendLaneless(ctx, chatID, marotte.EntryKindModeSwitched, "", sw,
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {

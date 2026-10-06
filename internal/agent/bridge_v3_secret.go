@@ -1,16 +1,8 @@
-// v3 (KAS) credential storage: the `_kiro/secret/{get,store,delete}` A→C
-// requests, answered from the process-global internal/secretstore.
-//
-// KAS owns the entire MCP OAuth flow but keeps only an in-process memory
-// copy of the results — no KAS-side file — and asks the client to hold
-// them, gated on `_meta.kiro.secretStorage` in initialize. That declaration
-// is CONDITIONAL on a store existing (marotte.StartOpts.SecretStorage):
-// declaring it without one is worse than declining, because KAS rethrows a
-// store failure into the MCP connect path.
-//
-// Keys and values are opaque here and never logged; see internal/secretstore
-// for the shape KAS derives. One store serves every bridge, because KAS's
-// key namespace is global.
+// `_kiro/secret/{get,store,delete}`, answered from internal/secretstore. KAS keeps MCP OAuth
+// results only in memory and asks the client to hold them, gated on
+// `_meta.kiro.secretStorage`, declared only when a store exists: KAS rethrows a store failure
+// into MCP connect. Keys and values are never logged; one store serves every bridge
+// because KAS's key namespace is global.
 
 package agent
 
@@ -34,20 +26,13 @@ type secretStoreParams struct {
 	Value string `json:"value"`
 }
 
-// secretGetBody is the reply to a get: `{value}`.
-//
-// A POINTER, so a miss marshals to an explicit JSON `null` rather than an
-// omitted key — KAS reads result.value and treats null as "no credential yet".
-// A typed body rather than a map also keeps the wire key in one place.
+// secretGetBody is the reply to a get. A pointer, so a miss marshals as `null`: KAS reads that as no credential yet.
 type secretGetBody struct {
 	Value *string `json:"value"`
 }
 
-// handleKiroSecretRequest answers the three `_kiro/secret/*` A→C requests.
-// Returns true when msg was one of them (so translateACPEvent stops).
-//
-// Answered synchronously because every operation is bounded and KAS can issue
-// a store followed immediately by a get on the MCP connection path.
+// handleKiroSecretRequest answers the three `_kiro/secret/*` requests, reporting whether msg
+// was one. Synchronous: KAS can store and immediately get on the connect path.
 func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:
@@ -66,16 +51,8 @@ func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID marotte.C
 	}
 }
 
-// secretGetResult answers `_kiro/secret/get` with `{value}`.
-//
-// A miss returns an explicit JSON null rather than an error or an omitted key:
-// KAS reads `result.value` and treats null as "no credential yet", which is the
-// correct first-run answer. Erroring instead would land in its catch-and-warn
-// path and mean the same thing less clearly.
-//
-// A nil store also returns null. That is the not-configured case (no configDir),
-// and reporting "absent" degrades to the pre-capability behaviour — one DCR per
-// spawn — instead of failing an MCP connect.
+// secretGetResult answers `_kiro/secret/get` with `{value}`; a miss and a nil store both
+// answer null, never an error.
 func secretGetResult(store *secretstore.Store, params json.RawMessage) secretGetBody {
 	p := decodeSecretKey(params)
 	if store == nil || p.Key == "" {
@@ -88,12 +65,8 @@ func secretGetResult(store *secretstore.Store, params json.RawMessage) secretGet
 	return secretGetBody{Value: &v}
 }
 
-// secretStoreResult answers `_kiro/secret/store` with `{}`, or an error.
-//
-// Errors are returned rather than swallowed: KAS rethrows a store failure into
-// the MCP connect path, so a failure the user can act on (a full disk, a
-// read-only volume) surfaces as a failed connect instead of a credential that
-// silently reads back empty on the next spawn.
+// secretStoreResult answers `_kiro/secret/store` with `{}`, or an error: KAS rethrows it into
+// MCP connect, so a full disk surfaces instead of an empty read-back.
 func secretStoreResult(ctx context.Context, store *secretstore.Store, params json.RawMessage) (map[string]any, error) {
 	var p secretStoreParams
 	if params != nil {
@@ -106,15 +79,12 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 		return nil, &marotte.RPCError{Code: -32602, Message: "secret/store: key is required"}
 	}
 	if store == nil {
-		// Unreachable in normal operation: a runtime with no store does not declare
-		// the capability, so KAS never asks. Reaching it means the peer called a
-		// method it was not offered, which is a protocol error and answered as
-		// one rather than reported as a successful write that never happened.
+		// Unreachable unless the peer calls a method it was not offered: answered as a protocol error.
 		slog.Warn("v3 secret store: no store configured, credential not persisted", "key", p.Key)
 		return nil, &marotte.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
 	}
 	if err := store.Set(ctx, p.Key, p.Value); err != nil {
-		// Key only — the value is a token or a client secret.
+		// Key only: the value is a secret.
 		slog.Error("v3 secret store: persist failed", "key", p.Key, "error", err)
 		return nil, &marotte.RPCError{Code: -32603, Message: "secret/store: " + err.Error()}
 	}
@@ -122,16 +92,14 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 	return map[string]any{}, nil
 }
 
-// secretDeleteResult answers `_kiro/secret/delete` with `{}`, or an error.
-// KAS rethrows a delete failure too, so the same rule as store applies.
-// Deleting an absent key succeeds — the requested post-state already holds.
+// secretDeleteResult answers `_kiro/secret/delete` with `{}`, or an error KAS rethrows. An absent key succeeds.
 func secretDeleteResult(ctx context.Context, store *secretstore.Store, params json.RawMessage) (map[string]any, error) {
 	p := decodeSecretKey(params)
 	if p.Key == "" {
 		return nil, &marotte.RPCError{Code: -32602, Message: "secret/delete: key is required"}
 	}
 	if store == nil {
-		// Nothing was ever stored, so the key is already absent.
+		// Nothing was stored, so the key is already absent.
 		return map[string]any{}, nil
 	}
 	if err := store.Delete(ctx, p.Key); err != nil {
@@ -141,8 +109,7 @@ func secretDeleteResult(ctx context.Context, store *secretstore.Store, params js
 	return map[string]any{}, nil
 }
 
-// decodeSecretKey pulls `{key}` out of a request's params, yielding an empty
-// key on absent or undecodable params so callers take their key-required path.
+// decodeSecretKey pulls `{key}` from params, yielding "" on absent or undecodable params.
 func decodeSecretKey(params json.RawMessage) secretKeyParams {
 	var p secretKeyParams
 	if params != nil {

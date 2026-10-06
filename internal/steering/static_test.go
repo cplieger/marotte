@@ -91,12 +91,11 @@ func TestWriteToolsEngine(t *testing.T) {
 			t.Errorf("writeToolsEngine output missing %q:\n%s", want, out)
 		}
 	}
-	// The catalog count moves with every refresh; a printed number goes stale.
+	// The catalog count moves with every refresh.
 	if strings.Contains(out, "~870") {
 		t.Errorf("writeToolsEngine printed the retired catalog count:\n%s", out)
 	}
-	// static/index.html's button text is "Refresh catalog"; the longer string is
-	// its aria-label, which no user sees.
+	// The button text is "Refresh catalog"; the longer string is its aria-label.
 	if strings.Contains(out, `"Refresh the tool catalog"`) {
 		t.Errorf("writeToolsEngine quoted an aria-label as the on-screen label:\n%s", out)
 	}
@@ -193,13 +192,24 @@ func TestWriteUIGuide_NotificationsPath(t *testing.T) {
 		`"Pull request checks"`,
 		`"Workflow runs"`,
 		"has no switch of its own",
-		// The one off-by-default kind, named with its reason: "why am I not getting
-		// pull-request notifications" is otherwise answerable only from source.
+		// The one off-by-default kind, named with its reason.
 		`"Pull request checks" starts OFF`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeUIGuide output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
+	var b strings.Builder
+	writeUIGuide(&b)
+	out := b.String()
+	if !strings.Contains(out, `"Load MCP tools on demand", "Memory", "Spec planning", "Inline helper agents", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
+		t.Errorf("writeUIGuide output does not list the Memory setting under Agent capabilities:\n%s", out)
+	}
+	if strings.Contains(out, "Remember things between conversations") {
+		t.Errorf("writeUIGuide output still names the removed memory setting:\n%s", out)
 	}
 }
 
@@ -290,7 +300,9 @@ func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 		"pixel dimensions or image count over its limit",
 		"unsupported or mismatched format",
 		"does not check whether the model takes images",
-		"only a PASTED image is downscaled",
+		"Every inlined image is fitted first: one over a 2000px long edge is scaled down to it",
+		"use Rewind to remove the earlier turn that carried it",
+		"Reopening the chat does not clear an image a tool returned",
 		"multi-line TEXT over 50 lines or 10,000 characters",
 		"a `resource` block whose `uri` is the file path",
 	} {
@@ -298,12 +310,16 @@ func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
 		}
 	}
-	// validationGuidance (internal/command/prompt.go) fires only on the
-	// backend's payload-validation names, none of which describes a model
-	// capability, so a refusal for that cause never carries this sentence.
+	// validationGuidance (internal/command/prompt.go) never carries this sentence.
 	for _, retired := range []string{"model without vision", "embedded the same way"} {
 		if strings.Contains(out, retired) {
 			t.Errorf("writeAttachments carries the retired phrase %q:\n%s", retired, out)
+		}
+	}
+	// Every inlined image is fitted and a tool-returned image survives a reload.
+	for _, wrong := range []string{"only a PASTED image is downscaled", "reopen the chat to"} {
+		if strings.Contains(out, wrong) {
+			t.Errorf("writeAttachments carries the false claim %q:\n%s", wrong, out)
 		}
 	}
 }
@@ -325,19 +341,34 @@ func TestWriteCapabilities(t *testing.T) {
 	var b strings.Builder
 	writeCapabilities(&b, "/cfg")
 	out := b.String()
-	for _, want := range []string{
-		"`/cfg/chats/<id>/entries.jsonl`",
-		"Undo is per TURN, not per file",
-		"no resume or retry tool",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("writeCapabilities output missing %q:\n%s", want, out)
+	if !strings.Contains(out, "`/cfg/chats/<id>/entries.jsonl`") {
+		t.Errorf("writeCapabilities output missing the chat history path:\n%s", out)
+	}
+	// Chat-only bullets live in writeChatCapabilities; a copy here would reach steps and the TUI.
+	for _, chatOnly := range []string{"Rewind", "Ctrl+F", "no resume or retry tool"} {
+		if strings.Contains(out, chatOnly) {
+			t.Errorf("writeCapabilities carries the chat-only %q:\n%s", chatOnly, out)
 		}
 	}
-	// The retired claim: marotte captures nothing, KAS snapshots only its own
-	// edit tools, and the one user affordance is Rewind.
+}
+
+func TestWriteChatCapabilities(t *testing.T) {
+	var b strings.Builder
+	writeChatCapabilities(&b)
+	out := b.String()
+	for _, want := range []string{
+		"## Chat capabilities",
+		"Undo is per TURN, not per file",
+		"no resume or retry tool",
+		"\"Search conversations…\"",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeChatCapabilities output missing %q:\n%s", want, out)
+		}
+	}
+	// marotte captures nothing per turn.
 	if strings.Contains(out, "checkpointed server-side") {
-		t.Errorf("writeCapabilities repeated the retired per-turn checkpoint claim:\n%s", out)
+		t.Errorf("writeChatCapabilities repeated the retired per-turn checkpoint claim:\n%s", out)
 	}
 }
 

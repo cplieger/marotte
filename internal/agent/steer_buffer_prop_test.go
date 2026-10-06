@@ -10,10 +10,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Any sequence of frames, commands and jobs leaves the record in a state its tables
-// describe: a turn is bound exactly when the channel is not NONE, an outstanding
-// probe exists only while PROBING, and UNCONFIRMED holds no un-owned waiting row
-// (nothing is outstanding to wait behind; a closed turn's job owns its own).
+// Any sequence leaves the record as its tables describe: a turn is bound exactly when the channel is not NONE,
+// an outstanding probe exists only while PROBING, and UNCONFIRMED holds no un-owned waiting row.
 func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 	h, _, _ := newTestHub()
 	var chats atomic.Int64
@@ -90,9 +88,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 					s.recs.SteerWaiting(chat, &marotte.SteerQueuedPayload{SteerID: res.Resend.ID, Text: res.Resend.Text})
 					s.q.OpSent(chat, op, *res.Resend, rapid.Bool().Draw(rt, "queued"), nil)
 				}
-				if end := s.q.EndOp(chat, op); end != nil {
-					s.q.Unsent(chat, op)
-				}
+				s.q.EndOp(chat, op)
 			},
 			"discard": func(rt *rapid.T) {
 				needsClear, refuse := s.q.BeginDiscard(chat, "op-d")
@@ -106,28 +102,37 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				s.q.DiscardCleared(chat, "op-d", landed)
 			},
 			"bridgeGone": func(*rapid.T) { s.recs.BridgeGone(chat) },
-			"nextParked": func(*rapid.T) { s.q.NextParked(chat) },
+			"nextParked": func(*rapid.T) { s.q.NextParked(chat, s.turnID()) },
 			"jobs": func(rt *rapid.T) {
 				for _, j := range s.spy.takeJobs() {
-					if j.Chat != chat {
-						continue
-					}
-					if j.End == nil {
+					if j.Chat == chat {
 						kasAnswers(rt, s, s.q.PlanFlush(chat))
-						continue
-					}
-					if rapid.Bool().Draw(rt, "resend") {
-						s.q.StraysCleared(chat, j.Owner, nil, true)
-						s.q.Resent(chat, j.Owner, j.End.Lead)
-						if rapid.Bool().Draw(rt, "opened") {
-							s.q.Delivered(chat, j.Owner)
-						} else {
-							s.q.Unsent(chat, j.Owner)
-						}
-					} else {
-						s.q.Unsent(chat, j.Owner)
 					}
 				}
+			},
+			"resolveEnds": func(rt *rapid.T) {
+				for _, e := range s.q.Ends(chat) {
+					if _, gone := s.q.JobRows(chat, e.Owner); gone {
+						return
+					}
+					if rapid.Bool().Draw(rt, "strayClear") {
+						s.q.StraysCleared(chat, e.Owner, s.clearKAS(), false)
+					} else {
+						s.q.Release(chat, e.Owner, true)
+					}
+					s.q.EndUnsent(chat, e.Owner)
+				}
+			},
+			"drain": func(rt *rapid.T) {
+				rows := s.q.UnsentRows(chat, false)
+				if len(rows) == 0 || !rapid.Bool().Draw(rt, "opened") {
+					return
+				}
+				keys := make([]string, 0, len(rows))
+				for _, r := range rows {
+					keys = append(keys, r.Key)
+				}
+				s.q.Delivered(chat, keys)
 			},
 		})
 	})

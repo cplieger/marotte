@@ -1,8 +1,5 @@
-//
-// Tests for the Settings -> Tools module over the v2 tools engine:
-// row rendering from the composite GET (state dots, versions, update
-// badges), the action wiring (install / pin / cascade delete), the
-// search-first add modal, and the SSE job-following output panel.
+// Settings -> Tools over the v2 engine: rows from the composite GET, the action wiring, the
+// search-first add modal and the SSE job output panel.
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
@@ -75,10 +72,8 @@ vi.mock("./actions/tools.js", () => ({
   cancelToolJob: { dispatch: mocks.cancelJobDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
 }));
-// The editor is the Advanced-configuration door's surface, and mocking the
-// opener is what keeps the whole editor graph out of this file's link: a partial
-// mock further down that graph (toast.js here) fails collection outright once it
-// is linked for real.
+// Mocking the opener keeps the editor graph out of the link: a partial mock deeper in it (toast.js)
+// fails collection.
 vi.mock("./editor-openers.js", () => ({ openFile: mocks.openFile }));
 // The rate-limit notice's door into Git -> Sources.
 vi.mock("./tabs.js", async () => ({
@@ -108,10 +103,7 @@ function mountToolsDOM(): void {
     return e;
   };
   add("button", "tool-add-btn");
-  // The two job-owning pills carry their authored face here, because JobPill
-  // CAPTURES it from the markup to restore when the job settles: an empty
-  // fixture button would test the busy face against nothing to go back to.
-  // Mirrors static/index.html — glyph, then label span, then aria-label.
+  // JobPill CAPTURES the authored face to restore on settle, so the fixture mirrors static/index.html.
   addPill("tool-update-btn", "Update all", "Update all tools");
   add("button", "tool-cancel-btn");
   addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
@@ -129,11 +121,7 @@ function mountToolsDOM(): void {
   // Mirrors index.html's classes: the button's two glyph faces are picked by
   // `.tool-search-go`, so a bare fixture button would show both at once.
   add("button", "tool-search-btn").className = "action-pill tool-search-go";
-  // The footer's permanent sentence lives in the markup and the module only
-  // toggles the apt caveat, so the fixture carries both. The caveat is seeded
-  // with a stale root claim on purpose: it is the pre-state that gives the
-  // repaint's own assertions their force, since a repaint over an empty span
-  // proves nothing about overwriting.
+  // The caveat is seeded with a stale claim so the repaint assertions prove an overwrite.
   const note = add("p", "tool-shell-note");
   note.textContent =
     "Not listed? Install it in the shell. The engine only manages what it installed.";
@@ -143,10 +131,7 @@ function mountToolsDOM(): void {
   apt.textContent =
     " Debian packages are not searchable here: apt needs root and this container has none.";
   note.appendChild(apt);
-  // Mirrors static/index.html: the order picker carries its three options,
-  // because the module reads `value` and falls back to relevance on anything
-  // it does not recognise — an optionless select would read "" and take that
-  // fallback whatever the test selected.
+  // The picker carries its options: an unrecognised `value` falls back to relevance.
   const sort = add("select", "tool-sort") as HTMLSelectElement;
   for (const value of ["relevance", "name-asc", "name-desc"]) {
     const opt = document.createElement("option");
@@ -397,8 +382,7 @@ describe("row actions", () => {
     await flush();
     await flush();
 
-    // No unforced probe: the refusal was already known, so the round trip
-    // the 409 used to buy is gone.
+    // No unforced probe: the row already names the refusal, so no 409 round trip.
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
     expect(String(mocks.confirm.mock.calls[0]?.[0])).toContain("jdtls");
     expect(mocks.deleteDispatch).toHaveBeenCalledTimes(1);
@@ -486,10 +470,7 @@ describe("add modal", () => {
     expect(mocks.closeModal).toHaveBeenCalledTimes(1);
   });
 
-  // ONE list rather than two labelled blocks. The old split put every catalog
-  // hit ahead of every Debian one whatever it scored, which is what buried the
-  // best answer; both rows still appear, each carrying its own version, so no
-  // real choice is hidden.
+  // ONE list ranked by score, each row carrying its own version.
   it("renders catalog and apt hits in one list, each row carrying its version", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
@@ -514,14 +495,8 @@ describe("add modal", () => {
     expect(byId("tool-results-count").textContent).toBe("2 shown");
   });
 
-  // Chips on their own line under the name. Inline after the name they started
-  // wherever that name ended, so a column of rows put them at as many
-  // different offsets as there were name lengths.
-  //
-  // The name is a DIRECT child of `.tool-hit-text` rather than wrapped in a
-  // `.tool-hit-title` block: that block carried no CSS rule, and `overflow` does
-  // not apply to a non-replaced inline box, so the ellipsis `.list-row-name`
-  // declares could never fire through it.
+  // Chips on their own line under the name. The name is a DIRECT child of `.tool-hit-text`: through
+  // an inline wrapper `.list-row-name`'s ellipsis could never fire.
   it("puts every row's chips in a row of their own, under the name", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
@@ -542,10 +517,7 @@ describe("add modal", () => {
     ).toEqual(["npm", "1.1.0", "LSP"]);
   });
 
-  // The order picker re-paints what is already in hand. Re-querying for it
-  // would also throw the server's relevance order away and then ask for it
-  // back, and relevance is the one order only the server can produce (it scores
-  // both corpora on one scale, and aliases never reach the client).
+  // Re-sorts what is in hand; relevance is the server's own order (one scale, aliases server-side).
   it("reorders without a second search, and relevance is the server's own order", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
@@ -601,14 +573,8 @@ describe("add modal", () => {
     );
   });
 
-  // With apt unavailable the engine returns no Debian hits at all, so silence
-  // would leave a reader unable to tell "no such package" from "this container
-  // cannot install one".
-  //
-  // Both halves are read off the FOOTER rather than the result list: the shell
-  // sentence is permanent markup at the modal's bottom, and the apt caveat is the
-  // one clause the module decides. Inside the capped scroller they scrolled away
-  // from exactly the empty result that needed them.
+  // With apt unavailable no Debian hits come back, so the footer must say why. Read off the FOOTER,
+  // outside the capped scroller.
   it("names no cause when the engine states no apt state", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false, truncated: false });
@@ -808,10 +774,7 @@ describe("add modal", () => {
     );
   });
 
-  // The bar was a debounced input alone: no button, no Enter, and nothing to
-  // press when a reader wanted the search to run now. Both immediate doors CANCEL
-  // the pending debounce rather than racing it into a second identical query,
-  // which is what the call count pins.
+  // Button and Enter CANCEL the pending debounce rather than racing a second identical query.
   it("searches on the button and on Enter, once per gesture", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({ results: [] });
@@ -1280,15 +1243,8 @@ describe("catalog refresh UI", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reconcile list keys (keyenc `join`).
-//
-// This list was ALREADY injective before the adoption: a tool name is
-// validated colon-free and unique server-side, so the `tool:<name>:` prefix
-// could not be forged. The keys are joined for uniformity with the app's other
-// composite keys, and these tests pin the encoding so a future loosening of
-// any component can't reintroduce ambiguity. Had a collision been possible the
-// effect would be a REMOUNT of the earlier duplicate on every pass (dropped
-// focus, restarted animation), never a dropped row.
+// Reconcile list keys (keyenc `join`). Already injective (names are validated colon-free and
+// unique); pinned so a loosened component cannot reintroduce ambiguity, which would REMOUNT a row.
 // ---------------------------------------------------------------------------
 
 describe("tools list keys", () => {
@@ -1320,8 +1276,8 @@ describe("tools list keys", () => {
   });
 
   it("escapes a component that carries the separator instead of shifting the split", () => {
-    // A colon in a version string would have added a component under the old
-    // array-join; escaped, the key still splits into exactly twelve.
+    // A colon in a version string would add a component under a plain join; escaped,
+    // the key still splits into exactly twelve.
     initWith(listWith([tool({ name: "odd", version: "1.0:beta" })]));
     const key = keyFor("odd");
     expect(key).toContain("1.0\\:beta");
@@ -1494,10 +1450,7 @@ describe("row honesty chips", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Real-layout guards, measured against the shipped stylesheet.
-//
-// Both defects here were geometry, so neither is reachable from a structural
-// assertion: the DOM was correct in each case and the boxes were not.
+// Real-layout guards against the shipped stylesheet: both defects were geometry.
 // ---------------------------------------------------------------------------
 
 describe("a capped result list never shrinks a row below its content", () => {
@@ -1535,10 +1488,8 @@ describe("a capped result list never shrinks a row below its content", () => {
     expect(rows).toHaveLength(12);
 
     for (const row of rows) {
-      // `.list-row` states a `min-block-size`, which REPLACES a flex item's
-      // automatic minimum size — so without `flex-shrink: 0` the row collapsed to
-      // that floor under content needing three times it, and with no `overflow`
-      // here it painted the surplus over the rows below.
+      // `.list-row`'s `min-block-size` REPLACES the automatic minimum, so without `flex-shrink: 0` the
+      // row collapses to that floor and paints over the rows below.
       expect(
         row.clientHeight,
         `${row.textContent ?? ""} overflows its own box by ${String(row.scrollHeight - row.clientHeight)}px`,
@@ -1633,10 +1584,7 @@ describe("an installed row measures the same whether or not it carries a badge",
     const chipBox = badged.querySelector<HTMLElement>(".tool-source-chip")?.getBoundingClientRect();
     expect(chipBox?.top, "the chip drops below the name").toBeGreaterThan(nameBox?.bottom ?? 0);
 
-    // And it FITS: both lines sit inside the slack this row's own 44px action
-    // buttons already force at this tier, so the column costs no extra height and
-    // the table stays uniform on a finger too. A `padding-block` here was measured
-    // taking the badged row to 56.4 against the plain one's 52.
+    // Both lines fit in the slack the row's 44px action buttons force, so the table stays uniform.
     expect(plain.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);
     expect(badged.getBoundingClientRect().height).toBeCloseTo(
       plain.getBoundingClientRect().height,
@@ -1691,11 +1639,8 @@ describe("a failed install's error text sits in the name's column", () => {
   }
 
   it.each(["fine", "coarse"])("starts the error where the name starts on a %s pointer", (tier) => {
-    // The error used to be a flex SIBLING after the flex-grown name, so it
-    // started wherever the name's box ended. In the name's own column its left
-    // edge IS the name's, on both tiers, and it takes the line under the name.
-    // A SHORT error is the discriminating input: a long one falls onto its own
-    // line because nothing else fits beside it, whatever the rule says.
+    // The error sits in the name's own column, on the line under it. A SHORT error discriminates: a
+    // long one wraps whatever the rule.
     document.documentElement.dataset["pointer"] = tier;
     const { name, error } = failedRow("download failed");
     const n = name.getBoundingClientRect();
@@ -1720,10 +1665,7 @@ describe("a failed install's error text sits in the name's column", () => {
     expect(range.getClientRects().length, "the text broke onto more than one line").toBeGreaterThan(
       1,
     );
-    // The INK, not the box: a path token longer than the column overflows the
-    // error's own box while the box itself stays inside the row, so a check on
-    // the box's right edge passes with the token painted across the version and
-    // the controls beside it.
+    // The INK, not the box: a long path token overflows the error's box while the box stays in the row.
     expect(
       error.scrollWidth,
       `${String(error.scrollWidth)}px of text in a ${String(error.clientWidth)}px box`,

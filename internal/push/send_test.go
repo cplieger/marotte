@@ -1,10 +1,5 @@
 package push
 
-// Tests for send.go: the tag log-key contract, the Send
-// preflight/debounce/preference gates, status-driven pruning, and the
-// per-subscriber push() path (size guard, RFC 8291 body assembly, ctx
-// merge, result logging).
-
 import (
 	"context"
 	"errors"
@@ -24,20 +19,9 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// TestSendFailureLogCarriesTheTagNotTheEndpoint pins the log-key contract on the
-// send-failed warn: the subscription is named by its 22-character tag, and no
-// byte of the endpoint — a capability URL — reaches the log stream, hostile
-// control bytes included.
-//
-// Runs in a synctest bubble, at the PRODUCTION retry ladder. The invalid URL
-// fails in http.NewRequestWithContext before any dial, so deliver() treats it as
-// transient and walks the full pushMaxAttempts ladder — one uniform pick over
-// [0, 1s) then one over [0, 2s) — which cost 2.03 s of real time (measured on
-// go1.27.0). Nothing here is waiting on an async effect, so this is a
-// class-(b) sleep: exactly what the bubble's synthetic clock deletes. The
-// alternative, collapsing pushRetryBase/pushRetryBudget the way the ladder tests
-// do, would have this test assert against a fixture rather than the shipped
-// budget.
+// TestSendFailureLogCarriesTheTagNotTheEndpoint pins that the send-failed warn names the
+// subscription by its tag and no byte of the endpoint (a capability URL) reaches the log.
+// It runs in a synctest bubble so the PRODUCTION retry ladder costs no real time.
 func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := capture.Default(t)
@@ -45,13 +29,12 @@ func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 		s := New(t.Context(), dir, "mailto:test@example.com")
 		defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 
-		// The control bytes make the endpoint an invalid request URL, so the
-		// send fails deterministically without any network I/O. No live socket,
-		// which is what keeps the bubble's clock able to advance.
+		// Control bytes make the URL invalid, so the send fails with no network I/O, which keeps
+		// the bubble's clock able to advance.
 		hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 		s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-		s.Send(t.Context(), "t", "b", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "t", "b", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		got, ok := rec.AttrValue("push: send failed", "tag")
 		if !ok {
@@ -72,9 +55,6 @@ func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 				return true
 			})
 		}
-		// The whole ladder ran in synthetic time, so the attempt count is now an
-		// equality against the shipped cap rather than something the test had to
-		// shorten to afford.
 		if n := rec.CountExact("push: send failed"); n != pushMaxAttempts {
 			t.Errorf("send-failed warns = %d, want pushMaxAttempts (%d)", n, pushMaxAttempts)
 		}
@@ -82,25 +62,19 @@ func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 }
 
 func TestSend_PreferenceFiltering(t *testing.T) {
-	// The permission leg below reaches the fan-out, so the client is the
-	// in-memory one and the subscription carries REAL keys. Neither was true
-	// before: encryptPayload failed on the keyless subscription and the fan-out
-	// then slept the whole production retry ladder (measured 1.11 s) while
-	// asserting nothing about the delivery. See newServiceOnTestServer.
+	// The permission leg reaches the fan-out, so the client is in-memory and the
+	// subscription carries real keys (see newServiceOnTestServer).
 	rec := &recordingHandler{}
 	s, _ := newServiceOnTestServer(t, rec)
-	// Subscribe so Send actually reaches the preflight stage;
-	// without subs the early-exit wouldn't prove the gate ran.
+	// Subscribe so Send reaches the preflight stage rather than the empty-subs early exit.
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/pref-test"))
 
-	// With agentFinished disabled, Send for agent_finished must
-	// NOT record a last-push timestamp — the preflight gate
-	// short-circuits before the stamp.
+	// With agentFinished disabled, preflight short-circuits before stamping last-push.
 	s.SetPreferences(map[marotte.PushKind]bool{
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 	s.mu.Lock()
 	_, afRecorded := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -108,16 +82,13 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		t.Error("agentFinished=false should prevent Send from recording last-push timestamp")
 	}
 
-	// The mirror for permission is deliberately the OTHER direction. There is
-	// no notify_permission setting any more, so no reachable configuration
-	// hands SetPreferences a false for this kind (see floor_test.go); asserting
-	// that the gate can silence it would pin a state the app cannot enter. What
-	// matters is that the ask gets through with the other kind switched off.
+	// Permission has no settings key (see floor_test.go), so the reachable assertion is that
+	// the ask gets through with the other kind switched off.
 	s.SetPreferences(map[marotte.PushKind]bool{
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{}, "")
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -125,11 +96,8 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		t.Error("permission push must reach the send path even with agent_finished off")
 	}
 
-	// The fan-out is now assertable, which is what the in-memory client buys
-	// over a RoundTripper stub: exactly one delivery, addressed to the
-	// SUBSCRIPTION's own host and path rather than rebased onto a listener, and
-	// carrying the RFC 8291 content coding plus the RFC 8292 VAPID header. The
-	// agent_finished leg above must contribute nothing.
+	// Exactly one delivery, to the SUBSCRIPTION's own host and path, carrying the RFC 8291
+	// content coding and the RFC 8292 VAPID header; the agent_finished leg contributes nothing.
 	got := rec.snapshot()
 	if len(got) != 1 {
 		t.Fatalf("deliveries = %d, want 1 (only the permission send passes the gate)", len(got))
@@ -147,27 +115,21 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 }
 
 func TestSend_Debounce(t *testing.T) {
-	// In-memory client: this test's subscription would otherwise be delivered
-	// over the real network if the debounce gate ever stopped refusing.
+	// In-memory client: otherwise a debounce regression would deliver over the real network.
 	s, _ := newServiceOnTestServer(t, &recordingHandler{})
 
-	// Set the agent_finished/global window to now to trigger debounce.
 	s.mu.Lock()
 	s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})] = time.Now()
 	s.mu.Unlock()
 
-	// Immediate second send should be debounced.
-	// Subscribe a dummy endpoint so Send doesn't exit early on empty subs.
 	s.Subscribe(marotte.PushSubscription{Endpoint: "https://push.example.com/debounce-test"})
 
-	// Record lastPush before Send.
 	s.mu.Lock()
 	before := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
-	// lastPush should not have been updated (debounced).
 	s.mu.Lock()
 	after := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -177,28 +139,18 @@ func TestSend_Debounce(t *testing.T) {
 	}
 }
 
-// TestSend_DebouncePerType pins the per-type debounce: a recent
-// agent_finished push must NOT suppress a permission push (or vice
-// versa) — debounce is keyed on type so the two windows are
-// independent.
+// TestSend_DebouncePerType pins that a recent agent_finished push does not suppress a
+// permission push: the windows are keyed per kind.
 func TestSend_DebouncePerType(t *testing.T) {
-	// The permission leg reaches the fan-out, so the client is the in-memory one
-	// and the subscription carries real keys: the keyless one this replaced made
-	// encryptPayload fail and the fan-out slept the production ladder (measured
-	// 0.49 s) with no delivery to assert.
 	rec := &recordingHandler{}
 	s, _ := newServiceOnTestServer(t, rec)
 
-	// Mark agent_finished as just-sent.
 	s.mu.Lock()
 	s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})] = time.Now()
 	s.mu.Unlock()
 
-	// permission's window is empty; a permission Send must update
-	// its own last-push timestamp (not blocked by the agent_finished
-	// window).
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://push.example.com/x"))
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{}, "")
 
 	s.mu.Lock()
 	permTimestamp := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
@@ -206,22 +158,18 @@ func TestSend_DebouncePerType(t *testing.T) {
 	if permTimestamp.IsZero() {
 		t.Error("permission push was suppressed by agent_finished debounce window")
 	}
-	// The suppressed agent_finished window did not cost a delivery, and the
-	// permission one bought exactly one.
 	if got := rec.snapshot(); len(got) != 1 {
 		t.Errorf("deliveries = %d, want 1 (the permission send only)", len(got))
 	}
 }
 
-// TestSend_UnknownKindRejected pins that an unknown kind is refused
-// with no persisted debounce side-effect — and, because the client is the
-// in-memory one, that the refusal happens before any delivery is attempted
-// rather than being invisible behind a failed DNS lookup.
+// TestSend_UnknownKindRejected pins that an unknown kind is refused before any delivery
+// and with no debounce side effect.
 func TestSend_UnknownKindRejected(t *testing.T) {
 	rec := &recordingHandler{}
 	s, _ := newServiceOnTestServer(t, rec)
 	s.Subscribe(marotte.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", "what-is-this", marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", "what-is-this", marotte.PushSubject{}, "")
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Errorf("an unknown kind attempted %d deliveries, want 0", len(got))
 	}
@@ -239,8 +187,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 	s.healthy = false
 	s.mu.Unlock()
 
-	// Should return immediately without panicking.
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -265,7 +212,7 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 			if tt.wantPruned && s.HasSubscribers() {
 				t.Errorf("Send did not prune subscription after %d", tt.status)
@@ -277,21 +224,9 @@ func TestSend_StatusCodePruning(t *testing.T) {
 	}
 }
 
-// TestSend_AuthRejectionNeedsAWitnessBeforePruning pins the asymmetry between
-// the two ways a push service refuses a subscription for good.
-//
-// A 404/410 is the service stating the subscription is gone, so it is pruned on
-// its own answer (TestSend_StatusCodePruning). A 401/403 states only that the
-// VAPID authorization failed, which is equally the shape of a server-side
-// mistake — a replaced keypair, a wrong audience, a skewed clock — so pruning on
-// it alone would let one such mistake delete the whole store, and the remedy is
-// a human re-subscribing on every device. The witness is another subscriber
-// accepting the SAME notification, which is proof this server's own credentials
-// work.
-//
-// The three cases are the whole decision: refused with no witness (keep),
-// refused beside a delivery (prune), and refused across the whole store (keep
-// everything, which is the mass-delete guard at N>1).
+// TestSend_AuthRejectionNeedsAWitnessBeforePruning pins the prune asymmetry: a 401/403 is
+// pruned only beside another subscriber's delivery of the same notification. Cases:
+// refused alone (keep), refused beside a delivery (prune), refused store-wide (keep all).
 func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	const (
 		witnessEP = "https://fcm.googleapis.com/fcm/send/witness"
@@ -302,8 +237,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		prunedMsg     = "push: pruning subscriptions this server has no key for"
 	)
 
-	// One handler answering by path: the in-memory client routes every host to
-	// it, so a single fan-out can be given two different answers.
+	// One handler answering by path, so a single fan-out gets two different answers.
 	answerByPath := func(refusal int) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Path, "refused") {
@@ -324,7 +258,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP}) {
 			t.Errorf("subs after a 403 with nothing delivered = %v, want the subscription kept", got)
@@ -332,8 +266,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		if n := capLog.CountExact(wholeStoreMsg); n != 1 {
 			t.Errorf("whole-store refusal logged %d times, want 1; logs = %q", n, capLog.Messages())
 		}
-		// The remedy has to ride the line: no retry and no prune fixes this
-		// state, only a person re-subscribing.
+		// The remedy must ride the line: only a person re-subscribing fixes this state.
 		if !capLog.HasAttr(wholeStoreMsg, "hint", pushResubscribeHint) {
 			t.Errorf("the whole-store refusal carried no re-subscribe remedy; logs = %q", capLog.Messages())
 		}
@@ -348,7 +281,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := remaining(s); !slices.Equal(got, []string{witnessEP}) {
 			t.Errorf("subs after one 201 and one 403 = %v, want only the delivering endpoint", got)
@@ -367,7 +300,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refused2))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP, refused2}) {
 			t.Errorf("subs after a store-wide 401 = %v, want both kept", got)
@@ -378,8 +311,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	})
 }
 
-// urgencyRecorder answers every push 201 and keeps the RFC 8030 Urgency header
-// the request carried.
+// perKindHeaderRecorder answers every push 201 and keeps the headers each request carried.
 type perKindHeaderRecorder struct {
 	mu  sync.Mutex
 	got []deliveryHeaders
@@ -407,12 +339,8 @@ func (u *perKindHeaderRecorder) snapshot() []deliveryHeaders {
 	return slices.Clone(u.got)
 }
 
-// sendOneAndRecordHeaders delivers one notification of kind and returns the
-// headers the push service saw, failing the test unless exactly one arrived.
-//
-// The kind is switched ON explicitly because these tests are about the HEADERS a
-// kind travels with rather than its default, and pr_status defaults OFF:
-// SetPreferences is a maps.Copy merge, so it patches the one kind under test.
+// sendOneAndRecordHeaders delivers one notification of kind and returns the headers the
+// push service saw. The kind is switched on explicitly because pr_status defaults off.
 func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeaders {
 	t.Helper()
 	rec := &perKindHeaderRecorder{}
@@ -420,7 +348,7 @@ func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeader
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/headers"))
 	s.SetPreferences(map[marotte.PushKind]bool{kind: true})
 
-	s.Send(t.Context(), "title", "body", kind, marotte.PushSubject{})
+	s.Send(t.Context(), "title", "body", kind, marotte.PushSubject{}, "")
 
 	got := rec.snapshot()
 	if len(got) != 1 {
@@ -430,14 +358,8 @@ func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeader
 	return got[0]
 }
 
-// TestSend_SetsUrgencyPerKind pins the RFC 8030 section 5.3 urgency each kind
-// travels with, because a push service is allowed to hold a lower-urgency
-// message back on a low-battery device and these two kinds must not be held
-// back together: a permission ask blocks the turn until it is answered, while a
-// finished turn and a pull-request verdict are chat-grade notices.
-//
-// It asserts through Send rather than push so the kind reaches the header the
-// way production sends it.
+// TestSend_SetsUrgencyPerKind pins the RFC 8030 section 5.3 urgency per kind, asserted
+// through Send so the kind reaches the header as production sends it.
 func TestSend_SetsUrgencyPerKind(t *testing.T) {
 	cases := []struct {
 		kind marotte.PushKind
@@ -456,17 +378,8 @@ func TestSend_SetsUrgencyPerKind(t *testing.T) {
 	}
 }
 
-// TestSend_SetsTTLPerKind pins the RFC 8030 section 5.2 TTL each kind travels
-// with. The header is how long a push service may hold a notification for a
-// device that is OFFLINE, so it has to be the window the notification is still
-// worth reading in: a permission ask about a turn that has since been answered
-// or cancelled is noise, while a pull request's verdict is still true tomorrow.
-// One literal for every kind — what this replaced — meant the shortest-lived
-// notice was kept for a day and the longest-lived one was capped at a day for no
-// stated reason.
-//
-// The wanted values are spelled as seconds rather than reusing ttlFor, which
-// would assert the table against itself.
+// TestSend_SetsTTLPerKind pins the RFC 8030 section 5.2 TTL per kind. Wanted values are
+// literal seconds: reusing ttlFor would assert the table against itself.
 func TestSend_SetsTTLPerKind(t *testing.T) {
 	cases := []struct {
 		kind marotte.PushKind
@@ -475,10 +388,7 @@ func TestSend_SetsTTLPerKind(t *testing.T) {
 		{marotte.PushKindPermission, "600"},
 		{marotte.PushKindAgentFinished, "3600"},
 		{marotte.PushKindPRStatus, "86400"},
-		// A run's outcome takes ttlFor's DEFAULT arm on purpose — a run that failed
-		// overnight is still worth reading in the morning, which is the same window a
-		// PR's verdict wants — so the default's coverage of this kind is asserted here
-		// rather than assumed.
+		// A run outcome takes ttlFor's DEFAULT arm, so the default's coverage is asserted here.
 		{marotte.PushKindRunOutcome, "86400"},
 	}
 	for _, tc := range cases {
@@ -491,11 +401,9 @@ func TestSend_SetsTTLPerKind(t *testing.T) {
 }
 
 func TestSend_TruncatesOversizePayload(t *testing.T) {
-	// Capture the payload the push endpoint receives.
 	var receivedPayload []byte
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The payload is encrypted, so we can't inspect it directly.
-		// Instead, verify the Send path doesn't error out.
+		// The payload is encrypted, so only the Send path's success is verifiable here.
 		w.WriteHeader(http.StatusCreated)
 	}))
 
@@ -505,28 +413,22 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	s.client = srv.Client()
 	s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-	// Build a body that exceeds pushBodyCap (3000 bytes).
 	title := "Marotte"
 	body := strings.Repeat("x", 4000)
 
-	// Send should not panic or error — it truncates internally.
-	s.Send(t.Context(), title, body, marotte.PushKindAgentFinished, marotte.PushSubject{})
+	s.Send(t.Context(), title, body, marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
-	// Verify the subscriber wasn't pruned (201 = success).
 	if !s.HasSubscribers() {
 		t.Error("subscriber was pruned after successful oversize send")
 	}
 
-	// Verify the real invariant: after truncation the *marshaled* payload
-	// (JSON envelope + escaping included) fits within pushBodyCap, so push()
-	// delivers it instead of rejecting an oversize record. Sizing on the raw
-	// title+body length — as this code once did — left the ~22-byte envelope
-	// over the cap and the notification was silently dropped.
-	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{})
+	// After truncation the MARSHALED payload (envelope and escaping included) fits pushBodyCap;
+	// sizing on raw title+body leaves the envelope over the cap and push() drops it.
+	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{}, "")
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}); n > pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, "...") {
@@ -534,34 +436,30 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 			gotBody[max(len(gotBody)-10, 0):])
 	}
 
-	_ = receivedPayload // used for documentation; encrypted payload can't be inspected
+	_ = receivedPayload
 }
 
-// TestSend_OversizeTruncationWarn verifies the truncation breadcrumb:
-// Send logs "push: payload too large, truncating" with the byte total
-// exactly when len(title)+len(body) exceeds pushBodyCap, and stays
-// quiet at or below the cap.
+// TestSend_OversizeTruncationWarn verifies the truncation warn fires exactly when the
+// payload exceeds pushBodyCap.
 func TestSend_OversizeTruncationWarn(t *testing.T) {
 	const warnMsg = "push: payload too large, truncating"
 
 	t.Run("small_does_not_warn", func(t *testing.T) {
-		// total=4 bytes is well under the cap.
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "aa", "bb", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "aa", "bb", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
 	})
 
 	t.Run("oversize_warns_with_total_bytes", func(t *testing.T) {
-		// title=10, body=4000, total=4010 — over the cap.
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
-			marotte.PushKindAgentFinished, marotte.PushSubject{})
+			marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
@@ -572,14 +470,12 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 	})
 
 	t.Run("marshaled_at_cap_does_not_warn", func(t *testing.T) {
-		// The marshaled payload size is what matters: the ~22-byte JSON
-		// envelope counts toward the cap. title=978 + body=2000 marshals to
-		// exactly pushBodyCap (3000), which is not over, so Send must not warn.
+		// title=978 + body=2000 marshals to exactly pushBodyCap: not over, so no warn.
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
-			marotte.PushKindAgentFinished, marotte.PushSubject{})
+			marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
@@ -618,11 +514,8 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	})
 }
 
-// TestPush_BodyCapacityStaysPositive verifies push computes a
-// non-negative make([]byte, 0, cap) capacity for the RFC 8291 body
-// across payload sizes (a sign error would drive the capacity negative
-// and panic). Each call reaches the forced transport error, proving it
-// traversed the body assembly without panicking.
+// TestPush_BodyCapacityStaysPositive verifies the RFC 8291 body capacity never goes
+// negative (which would panic) across payload sizes.
 func TestPush_BodyCapacityStaysPositive(t *testing.T) {
 	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
@@ -646,27 +539,14 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub marotte.PushSubscription, p
 		t.Errorf("push(%s) err = nil, want forced transport error", label)
 		return
 	}
-	// Reaching the forced transport error proves push() traversed the
-	// body assembly, so a negative-capacity panic would be on this path.
 	if !strings.Contains(err.Error(), "forced transport error") {
 		t.Errorf("push(%s) err = %v, want forced transport error", label, err)
 	}
 }
 
-// TestSend_ResultStatusLogging pins the DISPOSITION each push-service status
-// maps onto, which is what decides whether a notification is retried, dropped
-// or the subscription forgotten.
-//
-// The vocabulary is deliberately one message per disposition rather than one
-// generic "unexpected status", because each outcome needs a different reaction: a
-// permanent failure is marotte's bug to fix (error level, with a hint naming
-// whose bug it is), a retryable one is the push service's weather (warn, then
-// try again), an invalidated subscription is routine (info, prune), and an
-// authorization refusal is ambiguous about whose key is wrong (warn, and the
-// fan-out decides).
-//
-// The retry ladder is collapsed to microseconds here so the 5xx case exercises
-// the give-up path without sleeping through a real backoff.
+// TestSend_ResultStatusLogging pins the disposition (retry, drop, prune) each push-service
+// status maps onto, one log message per disposition. The retry ladder is collapsed so the
+// 5xx case reaches the give-up path quickly.
 func TestSend_ResultStatusLogging(t *testing.T) {
 	restoreBase, restoreBudget := pushRetryBase, pushRetryBudget
 	pushRetryBase, pushRetryBudget = time.Microsecond, time.Second
@@ -678,17 +558,13 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 		want   string // the log message this status must produce
 		absent string // and one it must not
 	}{
-		// 400 and 413 are ours to fix and no retry helps: the request shape is
-		// wrong, or pushBodyCap is above what the vendor accepts.
+		// 400 and 413 are ours to fix; no retry helps.
 		{"400_permanent", http.StatusBadRequest, "push: permanent delivery failure", "push: retryable status"},
 		{"413_permanent", http.StatusRequestEntityTooLarge, "push: permanent delivery failure", "push: retryable status"},
-		// An authorization refusal is its OWN disposition rather than a permanent
-		// failure, because whose key is wrong decides whether the subscription may
-		// be deleted; see TestSend_AuthRejectionNeedsAWitnessBeforePruning.
+		// An authorization refusal is its own disposition: whose key is wrong decides pruning.
 		{"401_auth_refused", http.StatusUnauthorized, "push: subscription refused as unauthorized", "push: permanent delivery failure"},
 		{"403_auth_refused", http.StatusForbidden, "push: subscription refused as unauthorized", "push: permanent delivery failure"},
-		// 429 is the row the old code got wrong: a rate limit was logged and
-		// abandoned exactly like a permanent refusal.
+		// A 429 is retryable, not permanent.
 		{"429_retryable", http.StatusTooManyRequests, "push: retryable status", "push: permanent delivery failure"},
 		{"500_retryable", http.StatusInternalServerError, "push: retryable status", "push: permanent delivery failure"},
 		{"503_retryable", http.StatusServiceUnavailable, "push: retryable status", "push: permanent delivery failure"},
@@ -707,7 +583,7 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 			if capLog.CountExact(tc.want) == 0 {
 				t.Errorf("status %d: did not log %q", tc.status, tc.want)
@@ -721,7 +597,6 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 				t.Errorf("status %d: logged %q though g.Wait() returns nil",
 					tc.status, "push: fan-out wait")
 			}
-			// A clean response body drains without error.
 			if capLog.CountExact("push: drain response body") > 0 {
 				t.Errorf("status %d: logged %q though the drain succeeded",
 					tc.status, "push: drain response body")
@@ -730,11 +605,8 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 	}
 }
 
-// TestSend_RetriesThenSucceeds pins the point of the whole classification: a
-// notification that would have been lost to one 429 is delivered.
-//
-// It also pins the attempt CAP, because a retry loop with no ceiling on a
-// service that answers 429 forever is a goroutine leak wearing a fix's clothes.
+// TestSend_RetriesThenSucceeds pins that a notification survives one 429, and the attempt
+// CAP: an uncapped loop against a 429-forever service would leak a goroutine.
 func TestSend_RetriesThenSucceeds(t *testing.T) {
 	restoreBase, restoreBudget := pushRetryBase, pushRetryBudget
 	pushRetryBase, pushRetryBudget = time.Microsecond, time.Second
@@ -757,7 +629,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := attempts.Load(); got != 2 {
 			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
@@ -780,7 +652,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := attempts.Load(); got != int32(pushMaxAttempts) {
 			t.Errorf("attempts = %d, want pushMaxAttempts (%d)", got, pushMaxAttempts)
@@ -791,8 +663,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 	})
 
 	t.Run("a_retry_past_the_budget_is_not_made", func(t *testing.T) {
-		// Retry-After longer than the notification is useful for: the delay is
-		// honoured as a REFUSAL rather than by sleeping through it.
+		// A Retry-After past the notification's usefulness is a REFUSAL, not a sleep.
 		var attempts atomic.Int32
 		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts.Add(1)
@@ -806,7 +677,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := attempts.Load(); got != 1 {
 			t.Errorf("attempts = %d, want 1 (the retry lands past the budget)", got)
@@ -816,10 +687,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		}
 	})
 	t.Run("a_first_attempt_delivery_is_not_reported_as_a_retry", func(t *testing.T) {
-		// The line exists so a reader can tell a delivery that needed the retry
-		// loop from an ordinary one. Emitting it for every success inverts that:
-		// the vendor's transient 429s become invisible in a log where every push
-		// claims to have retried.
+		// The retried line must not fire for an ordinary success, or a needed retry is invisible.
 		var attempts atomic.Int32
 		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts.Add(1)
@@ -832,7 +700,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{})
+		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
 
 		if got := attempts.Load(); got != 1 {
 			t.Fatalf("attempts = %d, want 1: this case has to deliver first try", got)
@@ -843,10 +711,8 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 	})
 }
 
-// TestParseRetryAfter covers both legal header forms plus the values a caller
-// must treat as "no instruction": absent, unparseable, zero, and a date that
-// has already passed. Each of those must yield 0 so the caller stays on its own
-// backoff schedule rather than retrying immediately or waiting forever.
+// TestParseRetryAfter covers both header forms plus the values that must yield 0 (absent,
+// unparseable, zero, a past date) so the caller keeps its own backoff.
 func TestParseRetryAfter(t *testing.T) {
 	past := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
 	future := time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)
@@ -864,23 +730,10 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 }
 
-// TestPush_MergesCancelledServiceCtx verifies that when the service
-// context is already cancelled, push merges it into the request
-// context, so a request to a blocking server is cancelled immediately
-// (context.Canceled) rather than blocking until the caller's deadline.
-//
-// The handler must NOT wait on r.Context().Done() alone. This request
-// carries a body the handler never reads, and net/http defers the
-// background read that detects a client disconnect until the body hits
-// EOF (measured on go1.27.0: unread body, no cancellation; body drained,
-// cancellation is immediate), so the request context stays live for as
-// long as the handler runs. Server.Close then waits for the handler
-// while the handler waits for Close, and the package dies on the 10-minute
-// test timeout. The request only reaches the server on the race where the
-// transport flushes it before it observes the already-cancelled context,
-// which is what made the deadlock intermittent rather than constant.
-// unblock is the test-owned exit: its cleanup registers AFTER the server's,
-// so LIFO ordering closes it before Close starts waiting.
+// TestPush_MergesCancelledServiceCtx verifies an already-cancelled service ctx cancels the
+// request at once. The handler must not wait on r.Context() alone: with an unread body,
+// net/http never detects the disconnect, so Close and the handler deadlock. unblock's
+// cleanup registers after the server's, so it runs first.
 func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	unblock := make(chan struct{})
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -896,7 +749,7 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	s.client = srv.Client()
 	sub := pushSubscriptionWithValidKeys(t, srv.URL)
 
-	s.cancel() // cancel the service ctx
+	s.cancel()
 
 	callerCtx, callerCancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer callerCancel()
@@ -910,14 +763,8 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	}
 }
 
-// TestEncryptPayload_buildsRFC8291WireBody pins the aes128gcm body
-// assembly: a valid subscription yields salt(16) || rs=4096(4) ||
-// idlen(1) || ephemeral P-256 key(65) || ciphertext(payload +
-// 1-byte 0x02 delimiter + 16-byte GCM tag). Every error gate on the success path
-// (ephemeral keygen, ECDH, salt read, key/nonce derivation, AES cipher,
-// GCM) must be skipped for valid input, so a gate inverted to return on
-// the happy path yields a nil/short body and fails the length + header
-// checks below.
+// TestEncryptPayload_buildsRFC8291WireBody pins the aes128gcm body: salt(16) || rs(4) ||
+// idlen(1) || ephemeral key(65) || ciphertext (payload + 0x02 delimiter + 16-byte tag).
 func TestEncryptPayload_buildsRFC8291WireBody(t *testing.T) {
 	sub := pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/wire")
 	payload := []byte(`{"title":"t","body":"hello"}`)
@@ -929,39 +776,30 @@ func TestEncryptPayload_buildsRFC8291WireBody(t *testing.T) {
 
 	const ephLen = 65 // P-256 uncompressed point: 0x04 || X(32) || Y(32)
 	const gcmTag = 16
-	// salt(16) + rs(4) + idlen(1) + ephemeral key + (payload + 1-byte 0x02 delimiter + tag)
 	wantLen := 16 + 4 + 1 + ephLen + (len(payload) + 1 + gcmTag)
 	if len(body) != wantLen {
 		t.Fatalf("len(body) = %d, want %d (salt+rs+idlen+ephKey+ciphertext)", len(body), wantLen)
 	}
-	// rs (record size) field is bytes 16..20, big-endian 4096 = 0x00001000.
 	if body[16] != 0x00 || body[17] != 0x00 || body[18] != 0x10 || body[19] != 0x00 {
 		t.Errorf("record-size header = % x, want 00 00 10 00 (4096)", body[16:20])
 	}
-	// idlen byte (offset 20) is the ephemeral public-key length.
 	if body[20] != ephLen {
 		t.Errorf("ephemeral key length byte = %d, want %d", body[20], ephLen)
 	}
 }
 
-// TestFitToCap_ChargesTheMarkerInsideTheCap pins the tightened budget the
-// runesafe Capped pair brought. The composition this replaced put the marker
-// OUTSIDE the byte cap, so fitToCap had to subtract the marker width from every
-// cap it asked for — spending those bytes twice and landing len(pushTruncMarker)
-// bytes short of the vendor budget on every trim. With the marker charged inside
-// the cap the arithmetic is the overflow alone, so a single pass lands the
-// marshaled payload on pushBodyCap exactly: the notification keeps every byte the
-// vendor will accept. An assertion of "at most the cap" (FuzzPayloadTruncation's
-// job) cannot see that regression return, which is why this one is exact.
+// TestFitToCap_ChargesTheMarkerInsideTheCap pins that one pass lands the marshaled payload
+// on pushBodyCap EXACTLY: a marker charged outside the cap falls short every trim, which an
+// at-most-the-cap assertion cannot see.
 func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 	title := "Marotte"
 	body := strings.Repeat("x", 4000)
 
-	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{})
+	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{}, "")
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}); n != pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n != pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, want exactly %d: the trim must spend the whole budget, marker included", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, pushTruncMarker) {
@@ -973,16 +811,12 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 	}
 }
 
-// TestFitToCap_KeepsTheBodysCRLFAxis pins which sanitize policy each field gets,
-// the property that made the local capMultiline helper exist before the library
-// offered the CR/LF-keeping axis. A notification body is legitimately multi-line,
-// so its newlines must survive the trim while every other control rune is
-// rewritten; a title is a single-line sink, so its newlines must not survive.
-// Collapsing both onto one policy is the regression this guards.
+// TestFitToCap_KeepsTheBodysCRLFAxis pins that the body keeps its newlines while the title
+// (a single-line sink) does not.
 func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 	t.Run("body keeps newlines, loses other control runes", func(t *testing.T) {
 		body := "a\x1bb\nc" + strings.Repeat("x", 4000)
-		gotTitle, gotBody, truncated := fitToCap("Marotte", body, marotte.PushSubject{})
+		gotTitle, gotBody, truncated := fitToCap("Marotte", body, marotte.PushSubject{}, "")
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 		}
@@ -992,21 +826,21 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		if strings.Contains(gotBody, "\x1b") {
 			t.Error("body kept a raw ESC; the sanitize half of the trim did not run")
 		}
-		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})
 
 	t.Run("title loses newlines", func(t *testing.T) {
 		title := "a\x1bb\nc" + strings.Repeat("y", 4000)
-		gotTitle, gotBody, truncated := fitToCap(title, "", marotte.PushSubject{})
+		gotTitle, gotBody, truncated := fitToCap(title, "", marotte.PushSubject{}, "")
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte title", len(title))
 		}
 		if strings.ContainsAny(gotTitle, "\n\r\x1b") {
 			t.Errorf("title kept a record-forging rune: %q", gotTitle[:min(len(gotTitle), 10)])
 		}
-		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})

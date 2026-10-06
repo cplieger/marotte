@@ -1,17 +1,8 @@
 package agent
 
-// Live MCP control: reconnect a wedged server, and resolve MCP
-// prompts/resources on demand, via the v3 (KAS) _kiro/mcp/* C→A requests.
-//
-// marotte's MCP config is global, but each chat bridge is a separate
-// kiro-cli acp process with its own MCP pool. reconnect fans out to ALL
-// live bridges, since a wedged/expired-OAuth server is wedged per-pool.
-// getPrompt/getResource are equivalent reads against any connected pool, so
-// they target one live bridge and return errNoLiveBridge otherwise.
-//
-// _kiro/mcp/toggle is deliberately NOT wired: it is a GLOBAL notification
-// with no serverName, so it cannot enable/disable a specific server and
-// doesn't map onto marotte's per-server enabled flag.
+// Live MCP control over KAS's _kiro/mcp/*: reconnect fans out to every live bridge (each has its
+// own pool); getPrompt/getResource read one bridge's pool. _kiro/mcp/toggle is not wired: it is
+// a global notification with no serverName.
 
 import (
 	"context"
@@ -27,28 +18,22 @@ import (
 )
 
 const (
-	// mcpReconnectTimeout bounds a single bridge's resetServer round-trip
-	// (may include an OAuth redirect). bridge.Call has no timeout of its own.
+	// mcpReconnectTimeout bounds one bridge's resetServer (may include an OAuth redirect); bridge.Call has no timeout.
 	mcpReconnectTimeout = 90 * time.Second
 	// mcpFetchTimeout bounds a getPrompt / getResource round-trip.
 	mcpFetchTimeout = 30 * time.Second
 )
 
-// errNoLiveBridge signals that no chat bridge is running, so a live MCP
-// pool operation (getPrompt / getResource) can't be served.
+// errNoLiveBridge means no chat bridge runs to serve a pool read.
 var errNoLiveBridge = errors.New("no active chat session")
 
-// keyServerName is the wire key naming the target MCP server in the
-// _kiro/mcp/* request params.
+// keyServerName is the _kiro/mcp/* params key naming the server.
 const keyServerName = "serverName"
 
-// keyExitCode is the shared wire key for a process exit code (agent
-// terminals + hook command runs).
+// keyExitCode is the wire key for a process exit code.
 const keyExitCode = "exitCode"
 
-// firstLiveBridge returns any live bridge, or nil when none are running.
-// All live bridges load the same global MCP config, so for reads any one
-// is equivalent.
+// firstLiveBridge returns one live bridge, or nil; a read answers for its pool.
 func (reg *mcpRegistry) firstLiveBridge() *sharedBridge {
 	for _, sb := range reg.bridges.all() {
 		return sb
@@ -56,22 +41,26 @@ func (reg *mcpRegistry) firstLiveBridge() *sharedBridge {
 	return nil
 }
 
-// serverEnabled reports whether name is a currently-enabled configured
-// server. A nil mcpConfig (test hubs) treats every non-empty name as valid.
-func (reg *mcpRegistry) serverEnabled(ctx context.Context, name string) bool {
+// serverReachable reports whether live control may name this server: enabled in marotte's store,
+// or reported running by KAS. A nil mcpConfig accepts any non-empty name.
+func (reg *mcpRegistry) serverReachable(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
 	if reg.config == nil {
 		return true
 	}
-	_, ok := reg.config.EnabledNames(ctx)[name]
-	return ok
+	if _, ok := reg.config.EnabledNames(ctx)[name]; ok {
+		return true
+	}
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	s, ok := reg.servers[name]
+	return ok && s.State != mcpStateDisabled
 }
 
-// reconnectServer sends _kiro/mcp/resetServer{serverName} to every live
-// bridge concurrently and returns the number of bridges targeted. Per-bridge
-// errors are logged, not fatal — a wedged bridge must not block the others.
+// reconnectServer sends _kiro/mcp/resetServer to every live bridge concurrently and returns how
+// many it targeted. Per-bridge errors are logged.
 func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) int {
 	bridges := reg.bridges.all()
 	if len(bridges) == 0 {
@@ -93,8 +82,7 @@ func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) int {
 	return len(bridges)
 }
 
-// promptFor resolves an MCP prompt via a live bridge's pool. args is always
-// sent as an object (never null) so servers with no arguments still parse.
+// promptFor resolves an MCP prompt via a live pool; args is always an object.
 func (reg *mcpRegistry) promptFor(ctx context.Context, server, promptName string, args map[string]any) (json.RawMessage, error) {
 	if args == nil {
 		args = map[string]any{}
@@ -114,8 +102,7 @@ func (reg *mcpRegistry) resourceFor(ctx context.Context, server, uri string) (js
 	})
 }
 
-// fetch runs one C→A request against the first live bridge and returns
-// its raw result. errNoLiveBridge when nothing is running.
+// fetch runs one request on the first live bridge and returns its raw result.
 func (reg *mcpRegistry) fetch(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	sb := reg.firstLiveBridge()
 	if sb == nil {
@@ -133,15 +120,11 @@ func (reg *mcpRegistry) fetch(ctx context.Context, method string, params map[str
 	return resp.Result, nil
 }
 
-// --- HTTP handlers (registered by mcpRegistry.RegisterRoutes) ---
-
 type mcpReconnectReq struct {
 	Server string `json:"server"`
 }
 
-// handleReconnect: POST /api/mcp/reconnect {server} → reconnect the named
-// server on every live bridge. Returns {"reconnected": N} (N = bridges
-// targeted; 0 when no chat is live).
+// handleReconnect serves POST /api/mcp/reconnect {server}, returning {"reconnected": N} bridges targeted.
 func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -151,7 +134,7 @@ func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) 
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	if !reg.serverEnabled(r.Context(), body.Server) {
+	if !reg.serverReachable(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
@@ -165,8 +148,7 @@ type mcpGetPromptReq struct {
 	Prompt    string         `json:"prompt"`
 }
 
-// handlePrompt: POST /api/mcp/prompt {server, prompt, arguments} →
-// the raw MCP prompt result ({messages:[...]}).
+// handlePrompt serves POST /api/mcp/prompt {server, prompt, arguments} with the raw result.
 func (reg *mcpRegistry) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -180,7 +162,7 @@ func (reg *mcpRegistry) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "prompt required")
 		return
 	}
-	if !reg.serverEnabled(r.Context(), body.Server) {
+	if !reg.serverReachable(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
@@ -197,8 +179,7 @@ type mcpGetResourceReq struct {
 	URI    string `json:"uri"`
 }
 
-// handleResource: POST /api/mcp/resource {server, uri} → the raw MCP
-// resource result ({contents:[...]}).
+// handleResource serves POST /api/mcp/resource {server, uri} with the raw result.
 func (reg *mcpRegistry) handleResource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -212,7 +193,7 @@ func (reg *mcpRegistry) handleResource(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "uri required")
 		return
 	}
-	if !reg.serverEnabled(r.Context(), body.Server) {
+	if !reg.serverReachable(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
@@ -224,9 +205,7 @@ func (reg *mcpRegistry) handleResource(w http.ResponseWriter, r *http.Request) {
 	writeMCPResult(w, res)
 }
 
-// writeMCPResult writes the raw MCP result verbatim, falling back to an
-// empty object when the server returned nothing (so the client always
-// decodes a valid object).
+// writeMCPResult writes the raw result verbatim, or {} when empty.
 func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 	if len(res) == 0 {
 		res = json.RawMessage("{}")
@@ -234,9 +213,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 	webhttp.WriteJSON(w, res)
 }
 
-// writeFetchErr maps a getPrompt/getResource failure to an HTTP status.
-// errNoLiveBridge → 409 (open a chat first); any other error → 502 with a
-// generic message (details logged, not leaked).
+// writeFetchErr maps errNoLiveBridge to 409 and anything else to a generic 502.
 func writeFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
 		httpreply.Conflict(w, "no active chat session. Open a chat to use MCP prompts and resources")

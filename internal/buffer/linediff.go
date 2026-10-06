@@ -5,33 +5,22 @@ import (
 	"strings"
 )
 
-// maxDiffCells bounds the COUNTS pass by the m×n cells it would fill. Past it the
-// answer degrades to delete-the-whole-middle / add-the-whole-middle: bounded,
-// valid and coarse. Sibling constant: diff.ts's TIME_BUDGET_CELLS, which bounds
-// the client's lineDiff — the two must agree, or the turn footer and the delegate
-// footer report different numbers for one file.
+// maxDiffCells bounds the counts pass by its m×n cells; past it the answer degrades to delete-all/add-all of the
+// middle. Must match diff.ts's TIME_BUDGET_CELLS, or the turn and delegate footers disagree.
 const maxDiffCells = 25_000_000
 
-// maxHunkCells bounds the TRACEBACK, which is a separate number because the two
-// paths bound different resources: the counts keep two rolling rows, a traceback
-// fills a dense m×n table at 8 bytes a cell, so maxDiffCells would license ~200 MB
-// for one fragment. 4M cells is ~32 MB and matches diff.ts's SPACE_THRESHOLD, the
-// point at which the client stops building a dense table too.
+// maxHunkCells bounds the traceback, whose dense table costs 8 bytes a cell: 4M cells is about 32 MB, matching
+// diff.ts's SPACE_THRESHOLD.
 const maxHunkCells = 4_000_000
 
-// lineHunk is one contiguous run of NEW-text lines a diff touched, 1-based and
-// inclusive on both ends.
+// lineHunk is one contiguous run of new-text lines a diff touched, 1-based and inclusive.
 type lineHunk struct {
 	StartLine int
 	EndLine   int
 }
 
-// splitDiffLines splits s into lines for counting: split on "\n", strip one
-// trailing "\r" per line so a CRLF-to-LF rewrite is not read as a whole-file
-// change, and drop the single empty element a final newline produces — so
-// "a\nb\n" and "a\nb" are both two lines, and "\n" is one empty line. Its
-// TypeScript twin is splitLines in static-src/diff.ts, which serves that whole
-// diff surface — the renderers as well as the counters.
+// splitDiffLines splits s into lines: on "\n", stripping one trailing "\r" so CRLF-to-LF is not a whole-file change,
+// and dropping the empty element after a final newline. Twin of splitLines in static-src/diff.ts.
 func splitDiffLines(s string) []string {
 	if s == "" {
 		return nil
@@ -48,18 +37,13 @@ func splitDiffLines(s string) []string {
 	return lines
 }
 
-// lcsLen returns the length of the longest common subsequence of a and b.
-//
-// Two rolling rows, so space is O(min(len(a), len(b))) — the counts below need
-// the LENGTH only, never the edit script, which is what keeps this linear in
-// space where a rendered diff needs a table or Hirschberg. Any LCS-optimal
-// implementation yields the same length even when it picks a different script,
-// which is what makes the Go and TypeScript halves agree by construction.
+// lcsLen returns the length of the longest common subsequence of a and b in two rolling rows. Every LCS-optimal
+// implementation yields the same length, so Go and TypeScript agree by construction.
 func lcsLen(a, b []string) int {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
-	// LCS length is symmetric, so index the rows by the shorter side.
+	// Symmetric, so the rows take the shorter side.
 	if len(b) > len(a) {
 		a, b = b, a
 	}
@@ -79,13 +63,9 @@ func lcsLen(a, b []string) int {
 	return prev[len(b)]
 }
 
-// LineDelta reports how many lines a diff added and removed.
-//
-// A real diff, not a newline count per side: KAS sends whole-file text for its
-// edit tools, so counting newlines reported the whole file as deleted and
-// re-added for a one-line change (~100x on the live volume). added =
-// len(newLines) - lcs and removed = len(oldLines) - lcs, so the LCS LENGTH is all
-// this needs; the prefix/suffix trim is what makes the whole-file case cheap.
+// LineDelta reports how many lines a diff added and removed. KAS sends whole-file text, so a newline count reported
+// whole-file churn for a one-line edit. added and removed derive from the LCS length; trimming the common prefix and
+// suffix keeps that cheap.
 func LineDelta(oldText, newText string) (added, removed int) {
 	if oldText == newText {
 		return 0, 0
@@ -105,9 +85,7 @@ func LineDelta(oldText, newText string) (added, removed int) {
 	midOld := a[p : len(a)-s]
 	midNew := b[p : len(b)-s]
 
-	// One side empty is a pure insertion or a pure deletion, and the budget
-	// fallback is the same coarse answer: nothing is common, so no LCS pass
-	// can improve on the trimmed lengths.
+	// One side empty, or over budget: nothing is common, so the trimmed lengths are the answer.
 	if len(midOld) == 0 || len(midNew) == 0 || len(midOld)*len(midNew) > maxDiffCells {
 		return len(midNew), len(midOld)
 	}
@@ -115,14 +93,8 @@ func LineDelta(oldText, newText string) (added, removed int) {
 	return len(midNew) - k, len(midOld) - k
 }
 
-// lineHunks reports the NEW-text line ranges a diff touched, in file order.
-//
-// The editor gutter's input: whole-file NewText used to mark every line of the
-// file as agent-modified, so a one-line edit painted accent dots from line 1 to
-// the end. Ranges are 1-based and inclusive, and a run that only DELETED lines
-// is reported as the single new-text line the deletion landed at — the removed
-// lines are not in the new text, so that junction is the only honest place to
-// mark. Returns nothing when the two texts are equal.
+// lineHunks reports the new-text line ranges a diff touched, in file order, for the editor gutter. A pure deletion is
+// the single new-text line it landed at. Nothing when the texts are equal.
 func lineHunks(oldText, newText string) []lineHunk {
 	if oldText == newText {
 		return nil
@@ -145,20 +117,15 @@ func lineHunks(oldText, newText string) []lineHunk {
 		return nil
 	}
 
-	// Coarse fallback: one hunk spanning the whole differing middle. Also the
-	// exact answer when one side of the middle is empty, since then the middle
-	// is a single insertion or a single deletion.
+	// Coarse fallback: one hunk over the whole middle, exact when one side is empty.
 	if len(midOld) == 0 || len(midNew) == 0 || len(midOld)*len(midNew) > maxHunkCells {
 		return []lineHunk{newRunHunk(p, p+len(midNew), len(b))}
 	}
 	return traceHunks(midOld, midNew, p, len(b))
 }
 
-// traceHunks walks a minimal edit script over the trimmed middles and groups
-// consecutive non-context steps into hunks. Dense LCS table plus a traceback,
-// under lineHunks' cell budget: a hunk needs the script, not just its length.
-// offset is how many context lines were trimmed from the front, and newLen the
-// new text's total line count (the clamp for a deletion at end of file).
+// traceHunks walks a minimal edit script over the trimmed middles and groups non-context steps into hunks, within
+// the cell budget. offset is the trimmed front context; newLen clamps a deletion at end of file.
 func traceHunks(midOld, midNew []string, offset, newLen int) []lineHunk {
 	t := denseLCS(midOld, midNew)
 	var hunks []lineHunk
@@ -169,15 +136,14 @@ func traceHunks(midOld, midNew []string, offset, newLen int) []lineHunk {
 		takeOld, takeNew := diffStep(midOld, midNew, t, i, j)
 		switch {
 		case takeOld && takeNew:
-			// A context line closes whatever run was open.
+			// A context line closes the open run.
 			if lo, hi, ok := run.flush(); ok {
 				hunks = append(hunks, newRunHunk(offset+lo, offset+hi, newLen))
 			}
 			i++
 			j++
 		case takeOld:
-			// A deletion consumes an old line and no new one, so the run stays
-			// anchored at the current new-text position.
+			// A deletion consumes no new line, so the run stays anchored.
 			run.anchor(j)
 			i++
 		default:
@@ -191,9 +157,7 @@ func traceHunks(midOld, midNew []string, offset, newLen int) []lineHunk {
 	return hunks
 }
 
-// denseLCS fills the LCS length table for a and b, bottom-up. O(len(a)*len(b))
-// space is what a traceback needs, which is why maxHunkCells bounds it and not
-// maxDiffCells.
+// denseLCS fills the LCS length table bottom-up; its O(len(a)*len(b)) space is why maxHunkCells bounds it.
 func denseLCS(a, b []string) [][]int {
 	t := make([][]int, len(a)+1)
 	for i := range t {
@@ -211,8 +175,7 @@ func denseLCS(a, b []string) [][]int {
 	return t
 }
 
-// diffStep decides one step of the traceback from position (i, j): whether it
-// consumes a line of the old side, of the new side, or of both (a context match).
+// diffStep decides one traceback step from (i, j): old, new, or both (a context match).
 func diffStep(a, b []string, t [][]int, i, j int) (takeOld, takeNew bool) {
 	if i < len(a) && j < len(b) && a[i] == b[j] {
 		return true, true
@@ -223,9 +186,7 @@ func diffStep(a, b []string, t [][]int, i, j int) (takeOld, takeNew bool) {
 	return false, true
 }
 
-// runAcc accumulates one open run of touched NEW-text lines as half-open indices.
-// A struct rather than two locals plus a closure: the closure captured the hunk
-// slice as well, which put the whole grouping rule inside one function.
+// runAcc accumulates one open run of touched new-text lines as half-open indices.
 type runAcc struct {
 	lo int
 	hi int
@@ -233,14 +194,14 @@ type runAcc struct {
 
 func (r *runAcc) reset() { r.lo, r.hi = -1, -1 }
 
-// anchor opens a run at j without consuming a new line — a deletion.
+// anchor opens a run at j without consuming a new line (a deletion).
 func (r *runAcc) anchor(j int) {
 	if r.lo < 0 {
 		r.lo, r.hi = j, j
 	}
 }
 
-// extend opens or grows a run over the new line at j — an addition.
+// extend opens or grows a run over the new line at j (an addition).
 func (r *runAcc) extend(j int) {
 	if r.lo < 0 {
 		r.lo = j
@@ -258,13 +219,11 @@ func (r *runAcc) flush() (lo, hi int, ok bool) {
 	return lo, hi, true
 }
 
-// newRunHunk turns a half-open range of NEW-text line indices into a 1-based
-// inclusive LineRange span, clamped into the new text. An empty range is a
-// deletion, marked at the line that now sits where the removed lines were.
+// newRunHunk turns a half-open new-text range into a 1-based inclusive span clamped to the new text. An empty range
+// is a deletion, marked where the removed lines were.
 func newRunHunk(lo, hi, newLen int) lineHunk {
 	if newLen <= 0 {
-		// The new text has no lines at all (the file was emptied), so line 1 is the
-		// only thing a gutter could mark.
+		// The file was emptied, so line 1 is all a gutter can mark.
 		return lineHunk{StartLine: 1, EndLine: 1}
 	}
 	start := min(lo+1, newLen)

@@ -7,29 +7,16 @@ import (
 	"time"
 )
 
-// The two handlers that shell out synchronously document a wall-clock cap. These
-// pin that the cap bounds the HANDLER, not the child.
-//
-// exec.CommandContext's default cancellation SIGKILLs the parent PID only, and a
-// forked helper inherits the stdout/stderr pipe write ends, so cmd.Run waits for
-// the LAST descendant before its output goroutines see EOF. Measured on go1.27.0
-// against this same `sleep 10` fixture under a 50ms budget: Run returned after
-// 10.001s with the default cancellation and, identically, with Setpgid alone —
-// because the group kill both handlers already carried only ran after Run had
-// returned. Reverting boundChild makes both of these fail on elapsed time.
-//
-// The assertion is deliberately on time and not only on the status code: the old
-// code produced the RIGHT status (504 / a fail-soft 200) after the wrong
-// duration, so a status-only test passed throughout and would keep passing.
+// The synchronous handlers' wall-clock caps must bound the handler, not the child. CommandContext SIGKILLs only the
+// parent and helpers inherit the pipes, so Run waits for the last descendant: on go1.27.0 with this `sleep 10`
+// fixture under 50ms, Run took 10.001s by default and with Setpgid alone. The assertion is on time because a cap
+// bound to the child returns the right status after the wrong duration.
 const (
 	// budget is the per-handler timeout the fixture configures.
 	budget = 50 * time.Millisecond
-	// childLife is how long the fake CLI lives. Two orders of magnitude above the
-	// budget so the two are impossible to confuse.
+	// childLife is how long the fake CLI lives, two orders of magnitude above the budget.
 	childLife = 10 * time.Second
-	// tolerance is the slack allowed over budget+childWaitDelay for scheduling on
-	// a loaded runner. Still far below childLife, which is what keeps this
-	// falsifiable rather than merely generous.
+	// tolerance is the scheduling slack over budget+childWaitDelay, still far below childLife so the test can fail.
 	tolerance = 2 * time.Second
 )
 
@@ -55,7 +42,7 @@ func TestHandleWhoami_ReturnsOnItsOwnBudgetNotTheChildsLifetime(t *testing.T) {
 		t.Errorf("handleWhoami returned after %v, want <= %v: the handler waited out the child "+
 			"(%v) instead of honouring WhoamiTimeout (%v)", elapsed, maxHandlerTime(), childLife, budget)
 	}
-	// Fail-soft is unchanged: still 200 with the sentinel, just on time.
+	// Fail-soft is unchanged: 200 with the sentinel, on time.
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 (fail-soft banner)", rr.Code)
 	}

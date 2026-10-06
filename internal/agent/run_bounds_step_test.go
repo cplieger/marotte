@@ -1,12 +1,8 @@
 package agent
 
-// The idle window's evidence rule is scoped to the STEP, not to the carrier chat.
-// A parallel run is several step turns on one carrier, so a chat-scoped question
-// answers true while ANY of them holds a terminal — and a step whose own tool call is
-// hung then reads as working because a sibling step is compiling, or because the
-// carrier chat's own conversation holds a shell. The link that carries the step is
-// the ACP session: the run log records it on each step's turn_open, and
-// terminal/create carries it on the wire.
+// The idle window's evidence is scoped to the step, not the carrier chat: a parallel run is several step
+// turns on one carrier. The link is the ACP session, recorded on each
+// step's turn_open and carried by terminal/create.
 
 import (
 	"encoding/json"
@@ -17,9 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// terminalsBySession is the sessions of each chat's live terminals, so a case can
-// put a terminal on one of the run's own steps and a case can put one on the carrier
-// chat and nothing else — which is the pair the scope decides between.
+// terminalsBySession is each chat's live-terminal sessions, so a case can put a terminal on a step or on the carrier alone.
 type terminalsBySession map[marotte.ChatID][]string
 
 func (t terminalsBySession) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
@@ -29,8 +23,7 @@ func (t terminalsBySession) LiveTerminalForSession(chatID marotte.ChatID, sessio
 	})
 }
 
-// openStep opens one step turn of the run on its own session, the state a
-// node_start leaves behind.
+// openStep opens one step turn on its own session, as node_start leaves it.
 func openStep(t *testing.T, h *Runtime, workflowID, nodePath, sessionID string) {
 	t.Helper()
 	if _, _, err := h.runs.log.Open(t.Context(), workflowID, nodePath, sessionID, runChatID(workflowID)); err != nil {
@@ -38,15 +31,8 @@ func openStep(t *testing.T, h *Runtime, workflowID, nodePath, sessionID string) 
 	}
 }
 
-// TestCancelExpired_AStepWaitingOnItsOwnCommandStillYields is the guard on the
-// whole unit and runs before anything else in it: a step holding a terminal on its
-// OWN session is working, and cancelling it at runIdleWindow is the regression the
-// landed run-bounds rewrite exists to prevent (run_bounds.go's cancelExpired doc).
-//
-// It is also the case that reddens if the narrowing is built on the run's step TURN
-// ids instead of their sessions — the two id spaces are disjoint (a terminal records
-// the CHAT registry's turn, while OpenSeqs hands out run-log ids), so a turn-keyed
-// version answers false for every run and never yields.
+// TestCancelExpired_AStepWaitingOnItsOwnCommandStillYields pins that a step holding a terminal on its own session
+// is working. It also catches a narrowing keyed on turn ids, a disjoint id space from the sessions.
 func TestCancelExpired_AStepWaitingOnItsOwnCommandStillYields(t *testing.T) {
 	h, _, br := newTestHub()
 	const (
@@ -75,12 +61,8 @@ func TestCancelExpired_AStepWaitingOnItsOwnCommandStillYields(t *testing.T) {
 	}
 }
 
-// TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow is the
-// parallel-step case: two step turns on one carrier, neither of them holding a
-// terminal, while the carrier chat holds one on a session that is not a step's.
-// Under the chat-scoped rule that terminal answers for the whole run, so a run
-// producing nothing was bounded by runBackstop's 36 hours instead of by the idle
-// window. Under the step-scoped rule the run is bounded at 15 minutes.
+// TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow pins that a carrier terminal on a non-step
+// session must not hold the window, or an idle run lasts the backstop instead of 15 minutes.
 func TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -89,7 +71,7 @@ func TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow(t *tes
 	h.runs.log = newRunLog(t.TempDir())
 	openStep(t, h, id, "root/a", "step-session-a")
 	openStep(t, h, id, "root/b", "step-session-b")
-	// A terminal on the carrier chat, on a session none of the run's steps names.
+	// A carrier terminal on a session no step names.
 	h.runs.terminals = terminalsBySession{runChatID(id): {"chat-session"}}
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
@@ -104,10 +86,7 @@ func TestCancelExpired_AnUnrelatedSessionOnTheCarrierDoesNotHoldTheWindow(t *tes
 	}
 }
 
-// TestStepWorking_EveryAbsenceAnswersFalse: false means no evidence of work, so the
-// bound applies. A registry that is not wired, a run this process holds no open turn
-// for, and a step whose turn_open carried no session are three ways to know nothing,
-// and each of them must bound the run rather than lift the bound.
+// TestStepWorking_EveryAbsenceAnswersFalse pins that each way of knowing nothing must bound the run.
 func TestStepWorking_EveryAbsenceAnswersFalse(t *testing.T) {
 	const id = "wf_1"
 	cases := []struct {
@@ -148,10 +127,8 @@ func TestStepWorking_EveryAbsenceAnswersFalse(t *testing.T) {
 	}
 }
 
-// TestLiveTerminalForSession_ReadsTheCreatesOwnSession pins the registry half of the
-// narrowing, which the bound cannot see through its fake: the answer is per TERMINAL,
-// so a live terminal on an unasked session and an exited one on an asked session both
-// answer false, and a session-less terminal is never a member of any set.
+// TestLiveTerminalForSession_ReadsTheCreatesOwnSession pins the per-terminal answer: an unasked live one,
+// an asked exited one and a session-less one all answer false.
 func TestLiveTerminalForSession_ReadsTheCreatesOwnSession(t *testing.T) {
 	t.Parallel()
 	const chat = marotte.ChatID("c1")

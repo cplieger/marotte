@@ -1,7 +1,5 @@
-// Package buffer tracks which LINES of a file the agent changed, and the line delta
-// one diff represents. The per-turn content accumulator lives in internal/turnlog,
-// which appends every seal to the chat's entry log rather than holding a turn in
-// memory until its closer takes it.
+// Package buffer tracks which lines of a file the agent changed and the line delta of one diff. The per-turn content
+// accumulator is internal/turnlog.
 package buffer
 
 import (
@@ -12,8 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// DefaultOutputCap is the shared byte budget for subprocess output buffers. 64 KiB covers a
-// full terminal screen at 200×50 with generous ANSI escapes, well below container limits.
+// DefaultOutputCap is the shared byte budget for subprocess output buffers: a 200×50 screen with heavy ANSI.
 const DefaultOutputCap = 64 * 1024
 
 // LineRange is a range of lines modified by the agent.
@@ -73,16 +70,8 @@ func NewLineTracker() *LineTracker {
 	return &LineTracker{data: make(map[marotte.ChatID]*chatLineState)}
 }
 
-// Record adds a line range for a file change.
-//
-// The range travels as a LineRange rather than as `startLine, endLine, turn int,
-// kind string`: three adjacent ints with no relationship the compiler can see,
-// where a transposition is silent. Swapping start and end stores an inverted
-// range the editor's changed-line gutter then paints backwards or not at all;
-// swapping either with turn corrupts the eviction key, because the heap orders
-// files by lastTurn and a line number used as a turn makes the wrong file the
-// oldest. The struct is the one the tracker stores anyway, so this also deletes
-// a field-by-field copy that could drift from it.
+// Record adds a line range for a file change. A LineRange, not three adjacent ints: a silent transposition would
+// invert the gutter range or corrupt the eviction key, since the heap orders files by lastTurn.
 func (lt *LineTracker) Record(chatID marotte.ChatID, filePath string, r LineRange) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
@@ -95,7 +84,6 @@ func (lt *LineTracker) Record(chatID marotte.ChatID, filePath string, r LineRang
 		lt.data[chatID] = state
 	}
 	if _, exists := state.ranges[filePath]; !exists && len(state.ranges) >= maxFilesPerChat {
-		// Evict oldest file via heap pop — O(log n).
 		e, _ := heap.Pop(&state.h).(*fileHeapEntry)
 		delete(state.ranges, e.path)
 		delete(state.entries, e.path)
@@ -105,7 +93,6 @@ func (lt *LineTracker) Record(chatID marotte.ChatID, filePath string, r LineRang
 		existing = existing[1:]
 	}
 	state.ranges[filePath] = append(existing, r)
-	// Update or insert heap entry.
 	if e, ok := state.entries[filePath]; ok {
 		e.lastTurn = r.Turn
 		heap.Fix(&state.h, e.index)
@@ -116,13 +103,8 @@ func (lt *LineTracker) Record(chatID marotte.ChatID, filePath string, r LineRang
 	}
 }
 
-// RecordFromDiffs extracts line ranges from tool call diffs.
-//
-// One range per DIFF HUNK, in new-text line numbers. It used to record a single
-// 1..len(NewText) range, which with KAS's whole-file NewText marked every line
-// of the file as agent-modified — so a one-line edit painted accent dots down
-// the whole editor gutter. A whole-file rewrite still yields one full-span
-// range, which is correct; see lineHunks for the deletion case.
+// RecordFromDiffs records one range per diff hunk, in new-text line numbers, so KAS's whole-file NewText does not
+// mark every line. A whole-file rewrite yields one full span.
 func (lt *LineTracker) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string) {
 	for _, d := range diffs {
 		if d.Path == "" || d.NewText == "" {
@@ -134,15 +116,8 @@ func (lt *LineTracker) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.To
 	}
 }
 
-// Get returns the line ranges for a file in a chat.
-//
-// A COPY, and it has to be one: the production
-// caller is an HTTP handler (agent/line_tracker.go) that reads the result after
-// this returns and drops the read lock, while the dispatch loop keeps calling
-// Record on the same key. Handing out the tracker's own slice made the handler's
-// read depend on Record's growth pattern — today's appends only ever write at or
-// past the returned length, so nothing overlapped, but that is a property of the
-// current eviction code rather than of this contract.
+// Get returns a copy of the line ranges for a file in a chat: the HTTP handler reads after the lock is released
+// while Record keeps appending to the same key.
 func (lt *LineTracker) Get(chatID marotte.ChatID, filePath string) []LineRange {
 	lt.mu.RLock()
 	defer lt.mu.RUnlock()

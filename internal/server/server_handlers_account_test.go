@@ -82,8 +82,7 @@ func TestHandleAccountUsageCacheHit(t *testing.T) {
 }
 
 func TestHandleAccountUsageStaleFallback(t *testing.T) {
-	// Cache is older than the TTL and the fetch fails: serve last-known
-	// marked stale rather than erroring.
+	// Older than the TTL and the fetch fails: serve last-known, marked stale.
 	f := &fakeAcctUsage{err: context.DeadlineExceeded}
 	s := &Server{accountUsage: f}
 	s.acctUsage.data = sampleUsage()
@@ -114,13 +113,8 @@ func TestHandleAccountUsageErrorNoCache(t *testing.T) {
 	}
 }
 
-// The TTL edge belongs to the expired side: a snapshot that has reached its full
-// age is refetched rather than served. The footer polls on a timer, so an edge
-// that fell the other way would keep serving the same numbers for one extra poll
-// every time the two clocks lined up.
-//
-// A synthetic clock rather than a real one: the boundary is a single instant, and
-// no real-clock test can land on it.
+// TestHandleAccountUsage_theTTLEdgeIsRefetched pins that a snapshot at exactly the TTL is
+// refetched; a synthetic clock lands on the single instant.
 func TestHandleAccountUsage_theTTLEdgeIsRefetched(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := &fakeAcctUsage{ret: sampleUsage()}

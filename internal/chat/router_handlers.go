@@ -19,8 +19,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
-// (one chat with a paged window of turns).
+// RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id} (one chat with a paged window of turns).
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	rt := NewRouter(s)
 	rt.Register(mux)
@@ -36,8 +35,7 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{"chats": headers, keySubject: stamp})
 }
 
-// handleOne serves GET /api/chats/{id}?limit=<turns>&before=<turn_id> and routes
-// /api/chats/{id}/<sub-resource> requests to their handlers.
+// handleOne serves GET /api/chats/{id}?limit=<turns>&before=<turn_id> and routes /api/chats/{id}/<sub> requests.
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
 	if rest == "" || strings.HasPrefix(rest, "/") {
@@ -53,8 +51,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to its handler.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid marotte.ChatID, sub string) {
-	// The two sub-resources that are themselves addressed: /tools/{toolCallID} and
-	// /turns/{turn}.
+	// The two addressed sub-resources: /tools/{toolCallID} and /turns/{turn}.
 	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
 		rt.handleToolCall(w, r, cid, rest)
 		return
@@ -75,12 +72,10 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	}
 }
 
-// serveChatPage serves the paged single-chat GET for /api/chats/{id}: a window of
-// whole turns off the log, the open tails inside it, the registry's liveness
-// verdict and the stamps certifying exactly those bytes. `?limit=` counts TURNS and
-// `?before=<turn_id>` pages older (no tails, the `chat` stamp alone). Tool payloads
-// are bounded to the PREVIEW budget with has_full marking what the bulk fetch
-// holds; nothing bounds the page by bytes, because a turn is never split.
+// serveChatPage serves /api/chats/{id}: a window of whole turns, its open tails, the liveness verdict and the stamps
+// certifying those bytes. `?limit=` counts turns; `?before=<turn_id>` pages older (no tails, the `chat` stamp only).
+// Tool payloads are bounded to the preview budget with has_full; a page is never bounded by bytes, since turns are
+// never split.
 func (rt *Router) serveChatPage(w http.ResponseWriter, r *http.Request, id marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -98,8 +93,7 @@ func (rt *Router) serveChatPage(w http.ResponseWriter, r *http.Request, id marot
 	page, ok, err := rt.store.Page(r.Context(), id, parseLimitParam(r), before)
 	if err != nil {
 		if before != "" {
-			// The one caller-caused failure: a cursor naming a turn this log does not
-			// hold, which a rewind can produce under a reader mid-scroll.
+			// The one caller-caused failure: a cursor naming a turn this log lacks, which a rewind can cause mid-scroll.
 			httpreply.BadRequest(w, "unknown before turn id")
 			return
 		}
@@ -121,8 +115,7 @@ func (rt *Router) serveChatPage(w http.ResponseWriter, r *http.Request, id marot
 	})
 }
 
-// nonNilEntries is entries, never nil: a nil slice marshals as `null` and the
-// generated decoder rejects `null` for an array.
+// nonNilEntries returns entries, never nil: nil marshals as `null`, which the generated decoder rejects.
 func nonNilEntries(entries []marotte.Entry) []marotte.Entry {
 	if entries == nil {
 		return []marotte.Entry{}
@@ -130,9 +123,8 @@ func nonNilEntries(entries []marotte.Entry) []marotte.Entry {
 	return entries
 }
 
-// handleTurnRange serves GET /api/chats/{id}/turns/{turn}?after=<seq>: one turn's
-// entries past `after` plus its open tails, the repair read a client runs on a seq
-// hole or a frame naming a turn it has never seen. `after` omitted is the whole turn.
+// handleTurnRange serves GET /api/chats/{id}/turns/{turn}?after=<seq>: one turn's entries past `after` plus its
+// open tails, the client's repair read for a seq hole or an unknown turn. No `after` is the whole turn.
 func (rt *Router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, turn string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -157,9 +149,7 @@ func (rt *Router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 			httpreply.NotFound(w, errMsgChatNotFound)
 			return
 		}
-		// Only an id the log holds no turn for is the caller's answer. A log that cannot be
-		// READ is this server's fault, and answering 404 for it told a client to stop asking
-		// about a turn that exists.
+		// Only a missing turn is the caller's 404; an unreadable log is the server's fault.
 		if errors.Is(err, ErrTurnNotInLog) {
 			httpreply.NotFound(w, "unknown turn")
 			return
@@ -175,12 +165,9 @@ func (rt *Router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 	})
 }
 
-// parseAfterParam reads ?after= as the seq the caller already holds and translates it
-// to the log's INCLUSIVE lower bound: from = after + 1 when present, 0 when absent,
-// which asks for the whole turn, turn_open included — no seq value can ask for that,
-// since the turn_open IS seq 0. The wire spelling stays exclusive. Anything
-// non-numeric, negative, or at the type's ceiling (where the translation would wrap
-// back onto the whole turn) is refused.
+// parseAfterParam reads ?after= as the seq the caller holds and returns the log's inclusive bound: after + 1, or 0
+// when absent for the whole turn, turn_open (seq 0) included. Non-numeric, negative, or ceiling values (where +1 would
+// wrap) are refused.
 func parseAfterParam(r *http.Request) (from uint64, ok bool) {
 	v := r.URL.Query().Get("after")
 	if v == "" {
@@ -193,10 +180,8 @@ func parseAfterParam(r *http.Request) (from uint64, ok bool) {
 	return n + 1, true
 }
 
-// handleTurns serves GET /api/chats/{id}/turns: the rail index, one row per DRAWN
-// turn and no bodies, read off the log's offset index. Server-side because the
-// client's transcript store holds a paginated window, so a rail built from resident
-// turns would grow markers as the reader scrolled up.
+// handleTurns serves GET /api/chats/{id}/turns: the rail index, one row per drawn turn, from the offset index.
+// Server-side because the client holds only a paginated window.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -221,11 +206,8 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID mar
 	webhttp.WriteJSON(w, map[string]any{"turns": rows})
 }
 
-// handleSearch serves GET /api/chats/{id}/search?q=: a session-wide lexical scan
-// over the log's SEALED entries. Server-side because the client's store is a
-// paginated window. An open entry's text is not searched: the DOM holds it, so the
-// client's own pass covers it, which is why the two counts are reported side by
-// side rather than subtracted.
+// handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the log's sealed entries, server-side for
+// the same reason. Open entries are in the DOM, searched by the client, so the two counts are reported side by side.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -244,32 +226,27 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ma
 		httpreply.ServerError(w, "chat read failed", fmt.Errorf("chat search %s: %w", logsafe.Field(string(chatID)), err))
 		return
 	}
-	// Both halves of the in-chat search must agree on the match-case toggle.
+	// Both halves of in-chat search share the match-case toggle.
 	caseSensitive := r.URL.Query().Get("case") == "1"
 	webhttp.WriteJSON(w, Search(entries, drawn, r.URL.Query().Get("q"), caseSensitive))
 }
 
-// defaultPageTurns is the turns a page carries when the caller names no limit: a
-// few screens of an ordinary conversation, and one read for the common chat.
+// defaultPageTurns is a page's turns when no limit is named: a few screens, one read for the common chat.
 const defaultPageTurns = 20
 
-// The two envelope keys every page shares; the rest are per handler.
+// The two envelope keys every page shares.
 const (
 	keyEntries = "entries"
 	keySubject = "subject"
 )
 
-// parseLimitParam returns the ?limit= page size in TURNS, honouring 1..200
-// inclusive; anything else (absent, non-numeric, out of range) falls back to the
-// default.
+// parseLimitParam returns the ?limit= page size in turns, 1..200 inclusive; anything else gets the default.
 func parseLimitParam(r *http.Request) int {
 	return clampedQueryInt(r, "limit", defaultPageTurns, 1, 200)
 }
 
-// clampedQueryInt returns the named query parameter when it parses as an integer
-// inside the inclusive [lo, hi] range, and def for anything else. Out of range
-// falls back to the DEFAULT rather than clamping, so a caller asking for something
-// unserveable cannot keep believing the number it sent.
+// clampedQueryInt returns the named query parameter when it parses inside [lo, hi], else def. Out of range takes the
+// default rather than clamping, so the caller does not keep believing its number.
 func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
 	v := r.URL.Query().Get(name)
 	if v == "" {
@@ -290,8 +267,8 @@ const (
 	exportFormatJSON
 )
 
-// handleExport serves GET /api/chats/{id}/export?format=md|json as a downloadable
-// Markdown transcript (the default) or the header plus every entry as JSON.
+// handleExport serves GET /api/chats/{id}/export?format=md|json as a download: Markdown (default) or the header plus
+// every entry as JSON.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -330,8 +307,8 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 	}
 }
 
-// parseExportFormat maps ?format= to an exportFormat: absent/md/markdown to
-// Markdown, json to raw JSON, anything else rejected so a typo fails loudly.
+// parseExportFormat maps ?format= to an exportFormat: absent/md/markdown is Markdown, json is JSON, anything else is
+// rejected.
 func parseExportFormat(v string) (exportFormat, bool) {
 	switch strings.ToLower(v) {
 	case "", "md", "markdown":
@@ -343,8 +320,7 @@ func parseExportFormat(v string) (exportFormat, bool) {
 	}
 }
 
-// loadForExport returns the chat's header and every entry of its log; false for a
-// chat with no header.
+// loadForExport returns the chat's header and every log entry; false for a chat with no header.
 func (rt *Router) loadForExport(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, []marotte.Entry, bool, error) {
 	c, ok := rt.store.Get(ctx, chatID)
 	if !ok {
@@ -360,15 +336,20 @@ func (rt *Router) loadForExport(ctx context.Context, chatID marotte.ChatID) (*ma
 	return c, entries, true, nil
 }
 
-// dispositionAttachment builds an attachment Content-Disposition value via
-// mime.FormatMediaType, which escapes anything the sanitiser left in.
+// dispositionAttachment builds an attachment Content-Disposition via mime.FormatMediaType, escaping what the
+// sanitiser left.
 func dispositionAttachment(filename string) string {
 	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 }
 
-// exportFilename builds a filesystem-safe "<name>-<id><ext>", falling back to
-// "<id><ext>" when the name is empty and "chat<ext>" when both are. The stem is
-// rune-capped, so a very long chat title cannot produce an unwieldy filename.
+// ExportDisposition is the attachment Content-Disposition for downloading chat name/id with ext appended
+// (".kiro-session.zip"), on the transcript exports' filename rule.
+func ExportDisposition(name string, id marotte.ChatID, ext string) string {
+	return dispositionAttachment(exportFilename(name, string(id), ext))
+}
+
+// exportFilename builds a filesystem-safe "<name>-<id><ext>", else "<id><ext>", else "chat<ext>". The stem is
+// rune-capped.
 func exportFilename(name, id, ext string) string {
 	const maxStem = 80
 	stem := sanitizeFilenamePart(name)
@@ -388,8 +369,7 @@ func exportFilename(name, id, ext string) string {
 	}
 }
 
-// sanitizeFilenamePart replaces control and filename-unsafe characters with
-// '_', then trims surrounding whitespace.
+// sanitizeFilenamePart replaces control and filename-unsafe characters with '_' and trims whitespace.
 func sanitizeFilenamePart(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

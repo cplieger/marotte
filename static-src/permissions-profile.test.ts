@@ -1,24 +1,4 @@
-//
 // Tests for the security-profile picker in permissions-ui.ts.
-//
-// The picker replaced a checkbox, and it inherits that checkbox's central
-// property: it must describe what is actually in force rather than what was
-// clicked. Every property below is a way it could claim otherwise.
-//
-//   - the ladder and the selection are the SERVER's, rendered not invented,
-//   - selecting a profile REPLACES the policy, and losing hand-authored rules is
-//     confirmed before anything is written,
-//   - the table is read-only unless Custom is active, and genuinely disabled
-//     rather than only dimmed,
-//   - the two doors into Custom differ by one flag: Customize seeds from the
-//     profile in force, direct selection copies nothing and leaves the file's own
-//     rules standing (it does NOT start blank — the merge preserves what the
-//     profile mechanism did not write),
-//   - an empty Custom policy says so, because it asks for everything including
-//     reading a file.
-//
-// Only the I/O edges are mocked (apiGet, the action dispatches, confirm). The real
-// DOM, the real render and the real read-back logic run.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import type { PolicyView, PolicyRule } from "./types.js";
@@ -44,9 +24,8 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened this graph and these
+  // names are imported somewhere in it. No case here calls them.
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./actions/index.js", () => ({
@@ -62,10 +41,9 @@ vi.mock("./actions/permissions.js", () => ({
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
 
-/** The ladder as the server reports it. A short stand-in for policyfile.Profiles():
- *  what matters is that the client renders the server's list in the server's ORDER,
- *  not what that list happens to hold. Custom last, loosest second-to-last, matching
- *  the real ladder's shape. */
+/** The ladder as the server reports it. A short stand-in for policyfile.Profiles(): what matters
+ *  is that the client renders the server's list in the server's ORDER, not what that list
+ *  happens to hold. Custom last, loosest second-to-last, matching the real ladder's shape. */
 const LADDER = [
   { id: "guarded", presets: ["read-workspace"] },
   { id: "read-only", presets: ["read-workspace", "read-all"] },
@@ -122,16 +100,13 @@ function customizeBtn(): HTMLButtonElement {
 function statusText(): string {
   return byId("security-profile-status").textContent ?? "";
 }
-/** The description rendered under one profile's radio. Read out of the DOM rather
- *  than imported, because profileDescription is module-private and what a reader
- *  actually sees is the rendered row. */
+/** The description rendered under one profile's radio. Read out of the DOM rather than imported,
+ *  because profileDescription is module-private and what a reader actually sees is the rendered
+ *  row. */
 function descriptionFor(id: string): string {
   return radioFor(id).closest("label")?.querySelector(".profile-desc")?.textContent ?? "";
 }
-/** The Security-profile section's hint, straight out of the shipped markup. Read
- *  from static/index.html rather than a fixture because the copy IS part of the
- *  deliverable here: a hint describing a mechanism the server no longer has is the
- *  class of defect this change exists to remove. */
+/** The Security-profile section's hint, straight out of the shipped markup. */
 function securityProfileHint(): string {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
   return doc.querySelector("#security-profile-section .section-hint")?.textContent ?? "";
@@ -151,8 +126,8 @@ async function mount(v: PolicyView): Promise<void> {
   await flush();
 }
 
-/** Click a profile radio the way a user does: the browser sets checked, then the
- *  change event fires. */
+/** Click a profile radio the way a user does: the browser sets checked, then the change event
+ *  fires. */
 async function pick(id: string): Promise<void> {
   const r = radioFor(id);
   r.checked = true;
@@ -190,10 +165,9 @@ beforeEach(() => {
 });
 
 describe("the profile ladder", () => {
-  // The ladder decides what one click grants, so policyfile owns it and the client
-  // renders it. A client that filtered or sorted this would offer a posture the
-  // server does not have, or put the loosest option in the middle of a list a
-  // reader scans from cautious to permissive.
+  // The ladder decides what one click grants, so policyfile owns it and the client renders it. A
+  // client that filtered or sorted this would offer a posture the server does not have, or put the
+  // loosest option in the middle of a list a reader scans from cautious to permissive.
   it("renders the server's ladder in the server's order", async () => {
     await mount(view("guarded"));
     expect(radios().map((r) => r.value)).toEqual(LADDER.map((p) => p.id));
@@ -210,9 +184,9 @@ describe("the profile ladder", () => {
     expect(radios()).toHaveLength(0);
   });
 
-  // Re-selecting the active profile would otherwise clear the policy and rewrite it
-  // for no reason, and on a Custom profile it would delete the user's own rules
-  // behind a confirm they did not expect to see.
+  // Re-selecting the active profile would otherwise clear the policy and rewrite it for no reason,
+  // and on a Custom profile it would delete the user's own rules behind a confirm they did not
+  // expect to see.
   it("does nothing when the profile already in force is re-selected", async () => {
     await mount(view("trusted"));
     await pick("trusted");
@@ -230,8 +204,8 @@ describe("the Customize button", () => {
     expect(customizeBtn().classList.contains("hidden")).toBe(true);
   });
 
-  // The seeding door. `seed` is the entire difference between the two ways into
-  // Custom, so it is the flag worth pinning rather than the endpoint.
+  // The seeding door. `seed` is the entire difference between the two ways into Custom, so it is
+  // the flag worth pinning rather than the endpoint.
   it("switches to Custom asking the server to seed from the profile in force", async () => {
     await mount(view("trusted"));
     customizeBtn().click();
@@ -254,13 +228,8 @@ describe("selecting a profile", () => {
     expect(profileCalls()).toEqual([{ profile: "custom", seed: false }]);
   });
 
-  // The server MERGES rather than replaces, so hand-authored rules SURVIVE the
-  // switch and keep applying beside the new profile. That is the surprise worth a
-  // confirm now — a grant outliving the posture change that was supposed to narrow
-  // it — and the count is in the message because "your rules" is not something a
-  // reader can check against the table while a modal covers it. It used to say
-  // DELETED, which the merge made false; a confirm that describes the wrong outcome
-  // is worse than none.
+  // The server MERGES rather than replaces, so hand-authored rules SURVIVE the switch and keep
+  // applying beside the new profile.
   it("warns that rules the user authored survive the switch and keep applying", async () => {
     await mount(view("custom", [userRule("shell"), userRule("fs_write")]));
     await pick("trusted");
@@ -272,8 +241,8 @@ describe("selecting a profile", () => {
     expect(message).toContain("Trusted");
     expect(message).not.toContain("DELETED");
     expect(label).toBe("Switch anyway");
-    // Still destructive styling: a grant persisting past a posture change is the
-    // security surprise that styling is for.
+    // Still destructive styling: a grant persisting past a posture change is the security surprise
+    // that styling is for.
     expect(variant).toBe("destructive");
     expect(profileCalls()).toEqual([{ profile: "trusted", seed: false }]);
   });
@@ -285,8 +254,8 @@ describe("selecting a profile", () => {
     expect(mocks.profileDispatch).not.toHaveBeenCalled();
   });
 
-  // Leaving a Custom profile that holds nothing loses nothing, so a confirm there
-  // would be a dialog that teaches the reader to click through dialogs.
+  // Leaving a Custom profile that holds nothing loses nothing, so a confirm there would be a dialog
+  // that teaches the reader to click through dialogs.
   it("does not confirm when Custom holds no rules of its own", async () => {
     await mount(view("custom"));
     await pick("guarded");
@@ -294,8 +263,8 @@ describe("selecting a profile", () => {
     expect(profileCalls()).toEqual([{ profile: "guarded", seed: false }]);
   });
 
-  // A read-only baseline rule is not the user's to lose: it comes from a scope they
-  // cannot edit, so counting it would confirm a deletion that is not happening.
+  // A read-only baseline rule is not the user's to lose: it comes from a scope they cannot edit, so
+  // counting it would confirm a deletion that is not happening.
   it("counts only rules in writable scopes as the user's own", async () => {
     await mount(
       view("custom", [
@@ -312,9 +281,8 @@ describe("selecting a profile", () => {
     expect(mocks.confirm).not.toHaveBeenCalled();
   });
 
-  // The loosest profile earns its own confirm: it is the one that grants `power`,
-  // and it must state what it cannot silence or a prompt afterwards reads as broken
-  // rather than as bounded.
+  // The loosest profile earns its own confirm: it is the one that grants `power`, and it must state
+  // what it cannot silence or a prompt afterwards reads as broken rather than as bounded.
   it("confirms the loosest profile by naming power and the prompts it keeps", async () => {
     await mount(view("guarded"));
     await pick("unrestricted");
@@ -335,9 +303,9 @@ describe("selecting a profile", () => {
     expect(mocks.profileDispatch).not.toHaveBeenCalled();
   });
 
-  // The paint comes from the server, never from the click. A refused switch that
-  // left the radio where the user put it would show a posture that is not in force,
-  // which is the class of lie this whole panel was rebuilt to stop telling.
+  // The paint comes from the server, never from the click. A refused switch that left the radio
+  // where the user put it would show a posture that is not in force, which is the class of lie this
+  // whole panel was rebuilt to stop telling.
   it("repaints from the server and reports a refused switch", async () => {
     await mount(view("guarded"));
     mocks.profileDispatch.mockResolvedValue({ error: "policy file is not writable" });
@@ -348,12 +316,10 @@ describe("selecting a profile", () => {
   });
 });
 
-// A selection REPLACES the policy across three files, and the server serializes
-// nothing: two overlapping POSTs each snapshot both writable files before writing, so
-// the second's snapshot can hold the first's rules and a failure in it then restores
-// the FIRST profile's rules under a config.json naming the second. Disabling the
-// Customize button alone left the radios, which are the controls that actually start
-// a selection — reachable by double-clicking two rungs inside one round trip.
+// A selection REPLACES the policy across three files, and the server serializes nothing: two
+// overlapping POSTs each snapshot both writable files before writing, so the second's snapshot can
+// hold the first's rules and a failure in it then restores the FIRST profile's rules under a
+// config.json naming the second.
 describe("a selection in flight", () => {
   /** A dispatch that stays pending until the returned function is called. */
   function pendingProfileWrite(): () => void {
@@ -409,10 +375,8 @@ describe("a selection in flight", () => {
 });
 
 describe("the table outside Custom", () => {
-  // With a profile in charge, a hand-edit would be a second writer of one posture
-  // and the first thing to disagree with the picker. Disabled rather than only
-  // dimmed: a dimmed control is still in the tab order and still clickable by
-  // keyboard, which is the version of this that looks locked and is not.
+  // With a profile in charge, a hand-edit would be a second writer of one posture and the first
+  // thing to disagree with the picker.
   it("disables every editing control on a named profile", async () => {
     await mount(view("trusted", [userRule("shell")]));
     expect(addRuleBtn().disabled).toBe(true);
@@ -431,9 +395,8 @@ describe("the table outside Custom", () => {
     expect(byId("native-policy-section").classList.contains("native-policy-locked")).toBe(false);
   });
 
-  // The lock runs AFTER the rows are rebuilt. Locking first would disable controls
-  // that are about to be replaced by fresh enabled ones, which looks like it works
-  // until the row count changes.
+  // The lock runs AFTER the rows are rebuilt. Locking first would disable controls that are about
+  // to be replaced by fresh enabled ones, which looks like it works until the row count changes.
   it("locks rows that the same load rebuilt", async () => {
     await mount(view("trusted", [userRule("shell"), userRule("fs_write"), userRule("mcp")]));
     const buttons = ruleRemoveButtons();
@@ -445,10 +408,9 @@ describe("the table outside Custom", () => {
 });
 
 describe("what a profile description promises", () => {
-  // read-only grants read-all, which is fs_read OUTSIDE the workspace. "Reads any
-  // file on this machine" covers that in general terms and never names the
-  // consequence, so a reader picking a rung called read-only was not told it exposes
-  // credentials.
+  // read-only grants read-all, which is fs_read OUTSIDE the workspace. "Reads any file on this
+  // machine" covers that in general terms and never names the consequence, so a reader picking a
+  // rung called read-only was not told it exposes credentials.
   it("names read-only's real escalation rather than describing it in general terms", async () => {
     await mount(view("guarded"));
     const desc = descriptionFor("read-only");
@@ -457,10 +419,9 @@ describe("what a profile description promises", () => {
     expect(desc).toContain("no prompt");
   });
 
-  // Every rung reaches workflow steps and subagents, a named rung through its presets
-  // and Custom through its files, and no rung writes a rule to disk, so a description
-  // that singled one rung out for either would push a reader up the ladder on a false
-  // premise.
+  // Every rung reaches workflow steps and subagents, a named rung through its presets and Custom
+  // through its files, and no rung writes a rule to disk, so a description that singled one rung
+  // out for either would push a reader up the ladder on a false premise.
   it("claims no step or subagent coverage and no durable rule on any rung", async () => {
     await mount(view("guarded"));
     for (const id of ["guarded", "read-only", "trusted", "unrestricted", "custom"]) {
@@ -478,8 +439,6 @@ describe("the Security profile section hint", () => {
     expect(securityProfileHint()).toContain("keep applying alongside the profile");
   });
 
-  // A selection writes no rule, so a hint describing a durable write, a replacement
-  // of the table or a step-coverage difference would describe a mechanism that is gone.
   it("claims no write, no replacement and no step-coverage difference", () => {
     const hint = securityProfileHint();
     expect(hint).not.toContain("durable");
@@ -490,9 +449,9 @@ describe("the Security profile section hint", () => {
 });
 
 describe("an empty Custom policy", () => {
-  // Custom sends no presets, so with no rules of its own the agent asks before it
-  // may even read a file. Leaving that to be discovered one prompt at a time is the
-  // same defect as a control that silently does nothing.
+  // Custom sends no presets, so with no rules of its own the agent asks before it may even read a
+  // file. Leaving that to be discovered one prompt at a time is the same defect as a control that
+  // silently does nothing.
   it("says that everything asks, including reading a file", async () => {
     await mount(view("custom"));
     expect(statusText()).toContain("no rules");
@@ -510,16 +469,13 @@ describe("an empty Custom policy", () => {
   });
 });
 
-// A `permissions_changed` frame usually changes nothing about the picker or the
-// table — KAS hot-reloads the file, and a profile write touches it twice — so a
-// repaint that rebuilt them threw away the keyboard's place and any open `<select>`
-// for no information at all. Both surfaces are keyed now: a row survives unless what
-// it renders moved. Object IDENTITY is the assertion, because a rebuilt row is
-// indistinguishable from a kept one by content.
+// A `permissions_changed` frame usually changes nothing about the picker or the table — KAS
+// hot-reloads the file, and a profile write touches it twice — so a repaint that rebuilt them threw
+// away the keyboard's place and any open `<select>` for no information at all.
 describe("a repaint keeps what it did not change", () => {
   /** Element-by-element IDENTITY. `toEqual` over two arrays of DOM nodes compares them
-   *  STRUCTURALLY, so it passes for a rebuilt row holding the same markup — the exact
-   *  thing these cases exist to detect. */
+   *  STRUCTURALLY, so it passes for a rebuilt row holding the same markup — the exact thing
+   *  these cases exist to detect. */
   function sameElements(after: readonly Element[], before: readonly Element[]): void {
     expect(after).toHaveLength(before.length);
     for (const [i, el] of before.entries()) {
@@ -568,10 +524,9 @@ describe("a repaint keeps what it did not change", () => {
     sameElements([...byId("native-policy-list").children], before);
   });
 
-  // One rule's effect moving repaints THAT row IN PLACE and leaves its neighbour
-  // untouched. In place rather than remounted, because replacing a row mid-list
-  // re-seats every row before it — a property of the shared reconcile that
-  // `permissions-ui.ts` records at the call site.
+  // One rule's effect moving repaints THAT row IN PLACE and leaves its neighbour untouched. In
+  // place rather than remounted, because replacing a row mid-list re-seats every row before it — a
+  // property of the shared reconcile that `permissions-ui.ts` records at the call site.
   it("repaints only the rule whose effect moved, in place", async () => {
     const read = userRule("fs_read");
     const shell = userRule("shell");

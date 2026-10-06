@@ -1,15 +1,10 @@
-// ---------------------------------------------------------------------------
-// Workflow-run actions: the recipe list, launch, and the four run controls.
-//
-// Cancel, pause and resume are all KAS's own verbs; marotte adds no policy
-// of its own. Cancel doubles as the tab-close gesture for a launcher-owned
-// run tab.
-// ---------------------------------------------------------------------------
+// Workflow-run actions. Cancel, pause and resume are KAS's own verbs; cancel doubles as the
+// tab-close gesture for a launcher-owned run tab.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun, invalidateRunControls } from "../run-store.js";
-import { error as toastError, success as toastSuccess } from "../toast.js";
+import { errorAbout, noticeAbout } from "./subject.js";
 import { decodeRunRetriedResponse } from "../wire/decoders.gen.js";
 import type { RunRetriedResponse } from "../wire/types.gen.js";
 import type {
@@ -20,6 +15,9 @@ import type {
   SessionListResponse,
 } from "../types.js";
 import { decodeSessionListResponse } from "../wire/decoders.gen.js";
+
+/** A run's notification subject, the `run:` key `noticeSubject` names by label. */
+const onRun = (workflowID: string): string => `run:${workflowID}`;
 
 /** The launchable recipe list, bundled + workspace. */
 export const loadRecipes = apiAction<
@@ -35,10 +33,8 @@ export const loadRecipes = apiAction<
   error: "Could not load workflows",
 });
 
-/** The current run inventory. Same endpoint as the history page, its own
- *  action: history cancels its dispatch on view teardown, and the Workflows
- *  tab's Run ⇄ Cancel state must not lose its refresh to another view's
- *  lifecycle. */
+/** The current run inventory: the history page's endpoint, but its own action, so history
+ *  cancelling its dispatch on teardown cannot cost the Workflows tab its refresh. */
 export const loadRuns = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
@@ -49,21 +45,16 @@ export const loadRuns = apiAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/sessions" }),
-  // One endpoint, one decoded shape: this and chat.load_sessions read the same
-  // reply, so a second structural claim here is the drift the generated type
-  // removes.
+  // The same reply as chat.load_sessions, so one generated decoder.
   decode: decodeSessionListResponse,
   error: false,
 });
 
-/** Launch one PARENTLESS run. The server answers 409 when the recipe already
- *  has a live run (the single-run rule); surface that message verbatim — it
- *  names the actual conflict, and the row flips to Cancel on the next refresh
- *  anyway. */
+/** Launch one PARENTLESS run. A 409 (the recipe already has a live run) is surfaced verbatim. */
 export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   name: "runs.launch",
   request: (body) => ({ method: "POST", path: "/api/runs", body }),
-  error: "Could not launch",
+  error: (_args, err) => serverSentence(err) ?? "Could not launch",
 });
 
 /** Ask a run to stop. The reply confirms the ASK — cancel is a node-boundary
@@ -75,12 +66,10 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
     method: "POST",
     path: `/api/runs/${encodeURIComponent(workflowID)}/cancel`,
   }),
-  error: "Could not cancel the run",
+  error: errorAbout(onRun, "Could not cancel the run"),
 });
 
-/** One run-control verb. All four share a shape: POST to a sub-path, no body,
- *  `{ok:true}` back. Built rather than written four times so a fifth verb is one
- *  line and cannot drift from the others. */
+/** One run-control verb: POST to a sub-path, no body, `{ok:true}` back. */
 function runControl(verb: string, errorText: string) {
   return apiAction<string, { ok: boolean }>({
     name: `runs.${verb}`,
@@ -88,40 +77,18 @@ function runControl(verb: string, errorText: string) {
       method: "POST",
       path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
     }),
-    error: errorText,
+    error: errorAbout(onRun, errorText),
   });
 }
 
-/** Stop a run at its next node boundary, keeping it resumable.
- *
- *  Like cancel, the reply confirms the ASK: KAS sets a pause flag and the
- *  in-flight node runs to completion, so the run is still `running` when this
- *  resolves. The paused state arrives as a run_progress invalidation. */
+/** Stop a run at its next node boundary, keeping it resumable. The reply confirms the ASK; the
+ *  paused state arrives as a run_progress invalidation. */
 export const pauseRun = runControl("pause", "Could not pause the run");
 
-/** Reset a failed run's failed and aborted steps (plus their ancestors) and
- *  re-drive it, keeping every completed step.
- *
- *  NOT a `runControl`, and the difference is the whole point: its reply carries
- *  the OUTCOME — which nodes were reset — where the other three genuinely have
- *  nothing to report. It used to be built by that factory and answered
- *  `{ok:true}`, so a retry that reset five nodes and one that reset none were the
- *  same result here, with no notification and no refetch on either. "Nothing
- *  happened" was what a no-op retry was designed to look like.
- *
- *  Three things it now does that the factory cannot:
- *
- *   - DECODES the reply at the boundary, so a malformed outcome fails here rather
- *     than reaching the notification as `undefined`.
- *   - REPORTS what happened, through the channel the outcome deserves: a reset of
- *     zero nodes is a no-op the reader must be told about, not a success.
- *   - REFETCHES the run and its affordance. Repainting was left to a
- *     `run_progress` frame, which a no-op retry never produces — so on exactly
- *     the outcome the reader most needs to see, the page never moved.
- *
- *  Its refusals reach the reader as the SERVER's sentence, `answerRunInput`'s
- *  rule: the server classifies a KAS refusal as a 409 naming the reason, and a
- *  static prefix in front of that contradicts it. */
+/** Reset a failed run's failed and aborted steps (plus ancestors) and re-drive it, keeping every
+ *  completed step. Not a `runControl`: it decodes the OUTCOME (which nodes were reset), reports a
+ *  zero-node reset as a no-op rather than a success, and refetches the run and its affordance,
+ *  since a no-op produces no `run_progress` frame. Refusals show the server's sentence alone. */
 export const retryRun = apiAction<string, RunRetriedResponse>({
   name: "runs.retry",
   request: (workflowID) => ({
@@ -129,44 +96,25 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
     path: `/api/runs/${encodeURIComponent(workflowID)}/retry`,
   }),
   decode: (data) => decodeRunRetriedResponse(data),
-  error: (_args, err) => serverSentence(err) ?? "Could not retry the run",
+  error: errorAbout(onRun, (_args, err) => serverSentence(err) ?? "Could not retry the run"),
   onSuccess: (res, workflowID) => {
     const notice = retryOutcomeNotice(res.retried_node_ids.length);
-    if (notice.level === "success") {
-      toastSuccess(notice.text);
-    } else {
-      toastError(notice.text);
-    }
-    // BOTH, and even on the zero-node outcome: the run's status can have moved
-    // (KAS reports it in the same reply) and the verbs it offers move with it, so
-    // a row left showing Retry after one would invite the same dead click again.
+    noticeAbout(onRun(workflowID), notice.text, notice.level);
+    // BOTH, even on a zero-node outcome: the status and the verbs it offers can have moved.
     invalidateRun(workflowID);
     invalidateRunControls(workflowID);
   },
 });
 
-/** Re-drive a paused run. Works even when the launching process is gone — KAS
- *  reloads the run from disk — which is why the button is offered on any paused
- *  run rather than only on one this browser started. */
+/** Re-drive a paused run. Works even when the launching process is gone (KAS reloads the run
+ *  from disk), so it is offered on any paused run. */
 export const resumeRun = runControl("resume", "Could not resume the run");
 
-/** Answer the question a parked workflow step asked.
- *
- *  The server claims the ask BEFORE it sends, so exactly one surface can answer it
- *  — two browser tabs and a run tab are all offered the same card. A 409 has TWO
- *  causes and the server's own sentence is what separates them, which is why this
- *  action shows that sentence alone. Somebody else got there first, or the step
- *  moved on: settled, the card retired by the `run_input_settled` frame, nothing to
- *  redo. Or the run is momentarily BETWEEN steps (a resume on its way back to the
- *  same park): the QUESTION is held rather than discarded server-side and comes back
- *  on a fresh `run_input_needed`, the WORDS are held client-side by the dock (which
- *  splices the card at the click, so the re-offered box would otherwise be empty),
- *  and the sentence says to try again.
- *
- *  NO argument-composite idempotency key, deliberately: inside that cache's window
- *  a repeated dispatch replays a cached success and never runs, and a re-sent
- *  answer must actually reach the step. The server's take-once claim is the guard,
- *  which is the same division `files.rename` learned the hard way. */
+/** Answer the question a parked workflow step asked. The server claims the ask BEFORE it sends,
+ *  so one surface wins; a 409 means settled (nothing to redo) or the run is BETWEEN steps (the
+ *  question comes back on a fresh `run_input_needed`), and only the server's sentence tells
+ *  them apart. NO argument-composite idempotency key: inside that cache's window a repeat
+ *  replays a cached success and the answer never reaches the step. */
 export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerRequest, { ok: boolean }>(
   {
     name: "runs.answer_input",
@@ -175,26 +123,18 @@ export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerReques
       path: `/api/runs/${encodeURIComponent(workflowID)}/answer`,
       body: { ask_id, text },
     }),
-    // The SERVER's sentence ALONE on the refusal that actually happens, because a
-    // prefix in front of it contradicts it. A static `error` string does not replace
-    // the server's message, it PREFIXES it (`emitErrorToast`: `${spec}: ${err.message}`
-    // — measured, and the opposite of what it looks like), so the 409 read "Couldn't
-    // send your answer to the step: that question has already been answered, or the
-    // step it belonged to has moved on" — asserting a failure and then explaining that
-    // nothing needed sending. The same prefix also leaked the library's own
-    // empty-body placeholder as "…to the step: HTTP 500".
-    error: (_args, err) => serverSentence(err) ?? "Could not send your answer to the step",
+    // The server's sentence ALONE: a static `error` string PREFIXES the message (`emitErrorToast`),
+    // which contradicts the 409's "already answered" and leaks the empty-body `HTTP 500`.
+    error: errorAbout(
+      ({ workflowID }: { workflowID: string }) => onRun(workflowID),
+      (_args, err) => serverSentence(err) ?? "Could not send your answer to the step",
+    ),
   },
 );
 
-/** The server's own error sentence, or null when there is no sentence to show.
- *
- *  `@cplieger/fetch` lifts a `{"error": "..."}` body onto `message`, and falls back
- *  to the literal `HTTP <status>` when the body was empty or unparseable — so the
- *  field is present either way and its presence proves nothing. Both of the empty
- *  cases are compared exactly rather than sniffed, because that fallback is a
- *  string the library documents rather than a shape to guess at, and a transport
- *  failure carries `status === 0` with a browser sentence about a fetch. */
+/** The server's error sentence, or null. `@cplieger/fetch` falls back to the literal
+ *  `HTTP <status>` for an empty body, and a transport failure (`status === 0`) carries a browser
+ *  sentence, so both are compared exactly. */
 function serverSentence(err: {
   readonly message: string;
   readonly status?: number;
@@ -206,13 +146,9 @@ function serverSentence(err: {
   return err.message;
 }
 
-/** Let a parked step carry on with NO answer.
- *
- *  `set_step_status running` rather than Resume, and the difference is the whole
- *  reason this verb exists: KAS's resume clears the run's pause reason and leaves
- *  the step node's `need_input` signal, so the next step execution re-parks under a
- *  different sentence. Setting the status clears the signal, and the step then runs
- *  with its own default continuation instead of the user's words. */
+/** Let a parked step carry on with NO answer. Not Resume: KAS's resume leaves the step's
+ *  `need_input` signal, so it re-parks; setting the status clears it and the step runs its
+ *  default continuation. */
 export const continueRunStep = apiAction<{ workflowID: string; nodeID: string }, { ok: boolean }>({
   name: "runs.continue_step",
   request: ({ workflowID, nodeID }) => ({
@@ -220,23 +156,51 @@ export const continueRunStep = apiAction<{ workflowID: string; nodeID: string },
     path: `/api/runs/${encodeURIComponent(workflowID)}/step`,
     body: { node_id: nodeID, status: "running" },
   }),
-  error: "Could not let the step continue",
+  error: errorAbout(({ workflowID }) => onRun(workflowID), "Could not let the step continue"),
 });
 
-/** Delete a run and its on-disk state.
- *
- *  Not a `runControl`: it is a DELETE on the run's own path rather than a POST to
- *  a sub-path, and it is the one run verb that cannot be undone. KAS cancels a
- *  non-terminal run itself before removing it, so this is legal from any status —
- *  which it has to be, because this is the only way a run leaves the History page.
- *
- *  The caller confirms first (`modals.ts`); an action cannot, and a destructive
- *  verb that fires on the first click is the shape this page must not have. */
+export const extendRunRepeat = apiAction<
+  { workflowID: string; nodeID: string; iterations: number },
+  { ok: boolean }
+>({
+  name: "runs.extend",
+  request: ({ workflowID, nodeID, iterations }) => ({
+    method: "POST",
+    path: `/api/runs/${encodeURIComponent(workflowID)}/extend`,
+    body: { node_id: nodeID, iterations },
+  }),
+  error: errorAbout(
+    ({ workflowID }) => onRun(workflowID),
+    (_args, err) => serverSentence(err) ?? "Couldn't add iterations",
+  ),
+  onSuccess: (_res, { workflowID }) => {
+    invalidateRunControls(workflowID);
+  },
+});
+
+export const finishRunRepeat = apiAction<{ workflowID: string; nodeID: string }, { ok: boolean }>({
+  name: "runs.finish_loop",
+  request: ({ workflowID, nodeID }) => ({
+    method: "POST",
+    path: `/api/runs/${encodeURIComponent(workflowID)}/finish-loop`,
+    body: { node_id: nodeID },
+  }),
+  error: errorAbout(
+    ({ workflowID }) => onRun(workflowID),
+    (_args, err) => serverSentence(err) ?? "Couldn't end the loop",
+  ),
+  onSuccess: (_res, { workflowID }) => {
+    invalidateRunControls(workflowID);
+  },
+});
+
+/** Delete a run and its on-disk state, from any status (KAS cancels a live run first). The one
+ *  run verb that cannot be undone, so the caller confirms first (`modals.ts`). */
 export const deleteRun = apiAction<string, { ok: boolean }>({
   name: "runs.delete",
   request: (workflowID) => ({
     method: "DELETE",
     path: `/api/runs/${encodeURIComponent(workflowID)}`,
   }),
-  error: "Could not delete the run",
+  error: errorAbout(onRun, "Could not delete the run"),
 });

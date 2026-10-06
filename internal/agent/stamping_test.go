@@ -1,23 +1,10 @@
 package agent
 
-// The two certification tests over the stamping rule, as go/ast walks over the
-// packages that mint or stamp: internal/agent, internal/chat (with archive),
-// internal/translate and internal/command. Both are structural on purpose: a
-// stamp whose Version came from a later read rather than from the mint is a hole
-// no behavioural test can reliably reach, and the shape is decidable.
-//
-// (i) The value test: every SubjectStamp a frame carries takes its Version from a
-// function parameter (or a field of one) or from the return of an allowlisted
-// call, the writers whose critical section minted it. A bare Current(...) or
-// BumpCounter(...) in the stamping function fails. A stamp on chat_created,
-// chat_updated or chat_deleted has kind chats; a stamp on subject_changed or
-// draft_changed has kind chat, whenever the stamp names a literal kind at all;
-// and a function that calls Mutate stamps chat at most once, the last-frame rule.
-//
-// (ii) The call-graph test: emit and streamInitialState are the only bodies that
-// publish (Publish) or write to the connection (Writer.Event); emit reaches a
-// version only through MergeStamped, and streamInitialState only through the
-// allowlisted snapshot helpers, never through Current or BumpCounter.
+// Two structural certifications over the stamping rule, as go/ast walks of the minting packages: a stamp whose
+// Version came from a later read is a hole no behavioural test reliably reaches. (i) Every SubjectStamp takes
+// its Version from a parameter or an allowlisted minting call; chats-kind on chat_created/updated/deleted,
+// chat-kind on subject_changed/draft_changed; a Mutate caller stamps chat at most once. (ii) Only emit and
+// streamInitialState publish, reaching versions only through MergeStamped or the snapshot helpers.
 
 import (
 	"go/ast"
@@ -38,9 +25,7 @@ var stampWalkPackages = []string{
 	"../command",
 }
 
-// versionSources are the calls whose return a stamp may take its Version from:
-// the store writers that mint under their lock, the Buffer mutators (each returns
-// the version write minted), and the stamped snapshot helpers.
+// versionSources are the calls a stamp may take its Version from: lock-holding store writers, Buffer mutators and stamped snapshot helpers.
 var versionSources = []string{
 	"Mutate", "Remove", "setComposer", "Reconcile", "stepTurns",
 	"MarkOverCap", "StartTurn", "SplitSegment", "AppendToolCall", "SetToolCall",
@@ -51,14 +36,8 @@ var versionSources = []string{
 	"liveRunRowsStamped", "ModesModelsStamped", "ListStamped",
 }
 
-// mintingBodies are the critical sections themselves: they call BumpCounter or
-// Current legitimately and are the functions the allowlist names, so the value
-// test exempts their bodies and checks everyone who calls them. The FOUR page
-// builders are snapshot mints: each reads its stamps under the lock that serves
-// the entries, and a live_turn or run_turn version is that turn's newest served
-// seq rather than a counter. turnRange is the run's per-turn page, stamping the
-// seq of the entries it just served under the registry's own lock — the same
-// shape as stepTurns, for one turn instead of a step path.
+// mintingBodies are the critical sections themselves, exempted while their callers are checked. The four page
+// builders read their stamps under the lock serving the entries; live_turn and run_turn versions are newest served seqs.
 var mintingBodies = []string{
 	"Mutate", "broadcastMutation", "setComposer", "Remove",
 	"MergeStamped", "SnapshotStamped", "registry", "statusStamp",
@@ -121,8 +100,7 @@ func calleeName(call *ast.CallExpr) string {
 	return ""
 }
 
-// kindOf reads the kind a stamp names: string(subject.KindChats) → "chats", or a
-// string literal.
+// kindOf reads a stamp's kind: string(subject.KindChats) → "chats", or a literal.
 func kindOf(expr ast.Expr) string {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
@@ -137,8 +115,7 @@ func kindOf(expr ast.Expr) string {
 	return ""
 }
 
-// stampExpr recognises a stamp construction: NewSubjectStamp(kind, ref, version) or
-// a SubjectStamp{...} literal (addressed or not). Returns (kind, version, ok).
+// stampExpr recognises NewSubjectStamp(kind, ref, version) or a SubjectStamp literal, returning (kind, version, ok).
 func stampExpr(expr ast.Expr) (kind string, version ast.Expr, ok bool) {
 	if u, isAddr := expr.(*ast.UnaryExpr); isAddr && u.Op == token.AND {
 		expr = u.X
@@ -168,9 +145,7 @@ func stampExpr(expr ast.Expr) (kind string, version ast.Expr, ok bool) {
 	return "", nil, false
 }
 
-// definitions maps each identifier a function body defines to the expression it
-// was defined from (the right-hand side of := or =, positionally), plus the names
-// of its parameters.
+// definitions maps each identifier a body defines to its defining expression (positional), plus parameter names.
 type definitions struct {
 	params map[string]bool
 	defs   map[string][]ast.Expr
@@ -196,7 +171,7 @@ func collectDefinitions(fn *ast.FuncDecl) definitions {
 			if len(as.Rhs) == len(as.Lhs) {
 				d.defs[id.Name] = append(d.defs[id.Name], as.Rhs[i])
 			} else if len(as.Rhs) == 1 {
-				// a, b := call() — every name comes from the one call.
+				// a, b := call(): every name comes from the one call.
 				d.defs[id.Name] = append(d.defs[id.Name], as.Rhs[0])
 			}
 		}
@@ -228,8 +203,7 @@ func versionIsHonest(expr ast.Expr, d definitions) (bool, string) {
 		}
 		return true, ""
 	case *ast.SelectorExpr:
-		// state.Version, where state is a parameter or the result of an allowlisted
-		// call (SetDraft/SetAttachments fill it under the store's lock).
+		// state.Version from a parameter or an allowlisted call's result.
 		if e.Sel.Name != "Version" {
 			return false, "Version read off a field that is not Version"
 		}
@@ -258,9 +232,7 @@ func versionIsHonest(expr ast.Expr, d definitions) (bool, string) {
 	return false, "Version is not an identifier, a field read or an allowlisted call"
 }
 
-// frameEventsOf traces X in `X.Subject = ...` to `X := marotte.NewEvent(Event*, ...)`
-// and names the Event* constants the first argument can hold: a selector directly,
-// or a local whose every definition is one.
+// frameEventsOf traces X in `X.Subject = ...` to `X := marotte.NewEvent(Event*, ...)` and names the possible Event* constants.
 func frameEventsOf(x ast.Expr, d definitions) []string {
 	id, ok := x.(*ast.Ident)
 	if !ok {
@@ -301,8 +273,7 @@ func collectStampSites(file string, fn *ast.FuncDecl, d definitions) []stampSite
 				if kind, version, isStamp := stampExpr(node.Rhs[i]); isStamp {
 					site.kind, site.version, site.built = kind, version, node.Rhs[i]
 				} else if id, isID := node.Rhs[i].(*ast.Ident); isID {
-					// frame.Subject = stamp: the stamp is a local traced to its own
-					// construction or to an allowlisted call's return.
+					// The stamp is a local traced to its construction or an allowlisted call.
 					for _, def := range d.defs[id.Name] {
 						if kind, version, isStamp := stampExpr(def); isStamp {
 							site.kind, site.version, site.built = kind, version, def
@@ -314,7 +285,7 @@ func collectStampSites(file string, fn *ast.FuncDecl, d definitions) []stampSite
 		}
 		return true
 	})
-	// A stamp built inline as an argument or a return value, not assigned to a frame.
+	// A stamp built inline as an argument or return value.
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -360,8 +331,7 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 				}
 				d := collectDefinitions(fn)
 				sites := collectStampSites(file, fn, d)
-				// A minting body IS the critical section: its bare BumpCounter is the
-				// mint, so only the kind checks apply to it.
+				// A minting body's bare BumpCounter is the mint; only the kind checks apply.
 				minting := slices.Contains(mintingBodies, fn.Name.Name)
 				if len(sites) > 0 && !minting {
 					if reads := callsAny(fn.Body, versionReads); len(reads) > 0 {
@@ -378,8 +348,7 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 							t.Errorf("%s: %s: %s", file, fn.Name.Name, why)
 						}
 					default:
-						// The whole stamp came from somewhere else: an allowlisted call's
-						// return, or a parameter's field (the refused frame's own stamp).
+						// The whole stamp came from an allowlisted call or a parameter's field.
 						if honest, _ := stampFromHonestSource(site.from, d); !honest {
 							t.Errorf("%s: %s assigns Subject from an expression that is neither a stamp construction, a parameter nor an allowlisted call", file, fn.Name.Name)
 						}
@@ -387,13 +356,8 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 					if site.kind == "chat" && site.built != nil {
 						chatStamps[site.built] = true
 					}
-					// The kind checks compare against a LITERAL kind, so a stamp
-					// taken from elsewhere carries none: emit re-uses the refused
-					// frame's own stamp off a parameter's field, and the default
-					// arm above judges such a site by its source. The exempt
-					// population is ONE, sse.go's emit, measured by deleting this
-					// guard, which reports that site and no other. A second exempt
-					// site is justified here rather than inherited.
+					// Kind checks need a literal kind; a borrowed stamp is judged by its source. The one exempt site is sse.go's
+					// emit; a second must be justified here.
 					if site.kind != "" {
 						for _, frame := range site.frames {
 							switch {
@@ -416,9 +380,7 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 	}
 }
 
-// stampFromHonestSource judges a Subject assignment whose right side is not a
-// stamp construction: an identifier defined from an allowlisted call, or a
-// parameter's own Subject field.
+// stampFromHonestSource judges a non-construction Subject assignment: from an allowlisted call, or a parameter's own Subject.
 func stampFromHonestSource(expr ast.Expr, d definitions) (bool, string) {
 	switch e := expr.(type) {
 	case *ast.Ident:

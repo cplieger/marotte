@@ -1,9 +1,6 @@
-// Starts the marotte binary named by SSE_FIXTURE for the e2e-sse project and hands its
-// origin to the tests through `inject("marotteURL")`; a no-op when the variable is unset,
-// which is how the project skips itself on a machine with no binary (the same belt the
-// library's own fixture suite wears). The binary has to be built with `-tags marotte_test`:
-// only that build mounts the SSE control surface the suite drives and honours
-// MAROTTE_TEST_PORT.
+// Starts the marotte binary named by SSE_FIXTURE and hands its origin through
+// `inject("marotteURL")`; a no-op when unset. The binary must be built with `-tags marotte_test`,
+// the only build that mounts the SSE control surface and honours MAROTTE_TEST_PORT.
 import { type ChildProcess, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -20,11 +17,8 @@ declare module "vitest" {
 const READY_TIMEOUT_MS = 20_000;
 const EXIT_TIMEOUT_MS = 10_000;
 
-// A kiro-cli that accepts the ACP spawn and never answers `initialize`. A prompt's
-// bridge then sits in its handshake budget instead of failing, so the prompt's one Mutate
-// is the ONLY chat:X mutation the fixture makes: without it a missing kiro-cli appends a
-// bridge-failure event row about 1.5 s later, a second mutation that would make the digest
-// answer `changed` for chat:X whatever the two frames were stamped with.
+// Never answers `initialize`, so the prompt's Mutate is the ONLY chat:X mutation: a missing
+// kiro-cli appends a bridge-failure row ~1.5 s later and the digest would answer `changed`.
 const STALLING_KIRO_CLI = '#!/bin/sh\ncase "$1" in acp) exec sleep 600 ;; *) exit 1 ;; esac\n';
 
 function freePort(): Promise<number> {

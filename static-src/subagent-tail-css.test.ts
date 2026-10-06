@@ -163,9 +163,9 @@ describe("a delegate's first line", () => {
     await Promise.all(tail.getAnimations().map((a) => a.finished));
     const settled = height(tail);
 
-    // Long enough to overflow the card several times over, which is the other half
-    // of the same property: the lines are `nowrap`, so length cannot become height.
-    sa.setTail([`go build ./... ${"and then some more output ".repeat(12)}`]);
+    // A rewrite that keeps the line count; how many lines a long one wraps to is
+    // `subagent-tail-wrap.test.ts`'s subject.
+    sa.setTail(["go test ./..."]);
     expect(tail.getAnimations(), "a rewrite starts no transition").toEqual([]);
     expect(height(tail), "and moves the box not at all").toBeCloseTo(settled, 1);
   });

@@ -12,8 +12,7 @@ var at = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 
 const atRFC = "2026-03-04T05:06:07Z"
 
-// A node frame must carry the node's state, so the client applies it instead of
-// answering each one with a `GET /api/runs/{id}` refetch.
+// A node frame carries the node's state, so the client applies it without a refetch.
 func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -70,8 +69,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			},
 		},
 		{
-			// A poll re-states running rather than nothing: a frame the client cannot
-			// apply costs a tree rebuild and a re-render for a value it already held.
+			// A poll re-states running: a frame the client cannot apply costs a tree rebuild.
 			name: "watch_poll names its node and re-states running, stamping neither end",
 			kind: marotte.RunProgressWatchPoll,
 			frame: kasRunNode{
@@ -97,8 +95,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 	}
 }
 
-// An empty node path is what tells the client to refetch, and these three kinds
-// cannot be expressed as a per-node patch.
+// An empty node path tells the client to refetch; these three kinds are not per-node patches.
 func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 	cases := []struct {
 		kind  marotte.RunProgressKind
@@ -141,8 +138,7 @@ func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 	}
 }
 
-// An empty path means refetch, so a node frame arriving without one must not
-// silently join the run-level kinds.
+// A node frame without a path must not silently join the run-level kinds.
 func TestRunProgress_FallsBackToTheNodeIDWithNoPath(t *testing.T) {
 	f := kasRunNode{WorkflowID: "wf1", NodeID: "coder"}
 	got := runProgress(marotte.RunProgressNodeStart, "coder", &f, at)

@@ -1,17 +1,5 @@
-// ---------------------------------------------------------------------------
-// Elicitation card: an MCP server is requesting structured input mid-tool-call
-// (MCP elicitation, forwarded by kiro-cli over ACP). Rendered in the
-// interaction dock, which owns the queue and the settle-once guard.
-//
-// Renders a form from the request's JSON-schema-shaped `requested_schema`
-// (form mode) or an "open link" affordance (url mode), collects the answer,
-// and reports {action, content} back to the dock.
-//
-// It was a centered <dialog> with a backdrop and a focus trap. Both are gone:
-// a form asking about a tool call belongs beside the transcript that explains
-// why it is being asked, and trapping focus in a non-modal region prevents the
-// user from going to read that transcript.
-// ---------------------------------------------------------------------------
+// Elicitation card: an MCP server requests structured input mid-tool-call (forwarded by kiro-cli over ACP), rendered
+// in the dock, which owns the queue and settle-once guard.
 
 import { el } from "@cplieger/reactive";
 import type { ElicitationNeededPayload, ElicitationPropertySchema } from "./types.js";
@@ -19,9 +7,7 @@ import type { ElicitationNeededPayload, ElicitationPropertySchema } from "./type
 type ElicitAction = "accept" | "decline" | "cancel";
 type SubmitFn = (action: ElicitAction, content?: Record<string, unknown>) => void;
 
-// Reading inputs back: each rendered field registers a getter that
-// returns its current value, or `undefined` when left empty (so optional
-// fields are omitted from the content object rather than sent as "").
+// Each field registers a reader; an empty optional field is omitted rather than sent as "".
 type FieldReader = () => { name: string; value: unknown; filled: boolean };
 
 /** Build the dock card for one elicitation request. */
@@ -94,7 +80,6 @@ export function buildElicitationCard(
   return el("div", { className: "dock-card dock-elicitation" }, body, fieldsEl, actions);
 }
 
-/** Render one form field and return a reader for its value. */
 function renderField(
   container: HTMLElement,
   name: string,
@@ -131,20 +116,7 @@ interface Control {
   read: () => { value: unknown; filled: boolean };
 }
 
-/** Standard JSON-Schema `format` values that have a native input type, so the
- *  browser supplies the picker, the keyboard and the validation instead of the
- *  field being a bare text box. Note `date-time` is the schema spelling and
- *  `datetime-local` the HTML one.
- *
- *  `constrained` records whether the HTML type honours `pattern`, `minLength`
- *  and `maxLength`: per HTML those three apply to `text`, `search`, `url`,
- *  `tel`, `email` and `password` only, so a date picker SILENTLY IGNORES a
- *  constraint the schema stated. Marked per entry rather than tested by format
- *  string at the use site, so a new entry has to answer for itself.
- *
- *  A Map rather than an object literal because `format` is arbitrary text off
- *  the MCP wire: a record's prototype answers for `constructor` and friends, so
- *  `table[fmt] ?? "text"` would set a stringified function as the input type. */
+/** JSON-Schema `format` values with a native input type. `date-time` is the schema spelling, `datetime-local` the HTML one. */
 const FORMAT_INPUT_TYPES = new Map<string, { type: string; constrained: boolean }>([
   ["email", { type: "email", constrained: true }],
   ["uri", { type: "url", constrained: true }],
@@ -152,36 +124,22 @@ const FORMAT_INPUT_TYPES = new Map<string, { type: string; constrained: boolean 
   ["date-time", { type: "datetime-local", constrained: false }],
 ]);
 
-/** What a `datetime-local` control's value looks like: `YYYY-MM-DDTHH:mm`, with
- *  seconds (and a fraction of one) only where `step` asks for them. */
+/** A `datetime-local` value: `YYYY-MM-DDTHH:mm`, seconds only where `step` asks. */
 const LOCAL_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(?:\.\d+)?)?$/;
 
-/** One `datetime-local` value as an RFC 3339 `date-time`.
- *
- *  JSON Schema's `date-time` format IS RFC 3339 `date-time`, which requires
- *  seconds and an offset; the control's value carries neither, so answering with
- *  it verbatim answers a schema with a value invalid against it. `datetime-local`
- *  means local time by definition, so the local offset is the reading rather than
- *  an assumption — taken from the ENTERED instant, because a date the far side of
- *  a DST boundary has a different offset from today's.
- *
- *  `format: "date"` needs none of this: a date input's `YYYY-MM-DD` is already
- *  RFC 3339 `full-date`. */
+/**
+ * A `datetime-local` value as RFC 3339 `date-time`: JSON Schema's `date-time` requires seconds and an offset, which
+ * the control's value lacks.
+ */
 function toRFC3339(value: string): string {
   const shape = LOCAL_DATE_TIME.exec(value);
   const at = new Date(value);
-  // Anything this cannot read is answered with as typed, and the EMPTY control is
-  // the case that reaches here: "" must stay "" rather than become this moment's
-  // timestamp. The two conditions catch different inputs — "" is the wrong shape,
-  // and an out-of-range field (`2026-13-01T10:00`, `2026-09-08T25:00`) passes the
-  // regex's `\d{2}` and names no instant — and inventing one for either is worse
-  // than passing the value on.
+  // Unreadable input is answered as typed; "" must stay "" rather than become now.
   if (shape === null || Number.isNaN(at.getTime())) {
     return value;
   }
   const withSeconds = shape[1] === undefined ? `${value}:00` : value;
-  // getTimezoneOffset() is the minutes to ADD to local time to reach UTC, so it
-  // is NEGATIVE east of UTC: UTC+02:00 reports -120 and renders "+02:00".
+  // getTimezoneOffset() is negative east of UTC: UTC+02:00 reports -120 and renders "+02:00".
   const offset = at.getTimezoneOffset();
   const magnitude = Math.abs(offset);
   const hh = String(Math.floor(magnitude / 60)).padStart(2, "0");
@@ -190,7 +148,6 @@ function toRFC3339(value: string): string {
 }
 
 function buildControl(name: string, schema: ElicitationPropertySchema): Control {
-  // Enum → <select>.
   if (schema.enum !== undefined && schema.enum.length > 0) {
     const sel = el(
       "select",
@@ -216,7 +173,7 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
       if (schema.default === true) {
         box.checked = true;
       }
-      // A checkbox is always "filled" (false is a valid answer).
+      // A checkbox is always filled: false is an answer.
       return { el: box, read: () => ({ value: box.checked, filled: true }) };
     }
     case "number":
@@ -244,8 +201,7 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
       };
     }
     case "array": {
-      // No structured items in the wire schema; accept comma-separated
-      // values and emit a string[]. Empty → omitted.
+      // The wire schema has no structured items: comma-separated input becomes a string[].
       const inp = el("input", {
         type: "text",
         className: "elicitation-input",
@@ -264,18 +220,14 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
       };
     }
     default: {
-      // `minLength: 0` is excluded: every string satisfies it, so it is not a
-      // constraint to lose. `maxLength: 0` is, forbidding any input at all.
+      // `minLength: 0` constrains nothing; `maxLength: 0` forbids any input.
       const stated =
         (schema.pattern !== undefined && schema.pattern !== "") ||
         (typeof schema.minLength === "number" && schema.minLength > 0) ||
         typeof schema.maxLength === "number";
       const mapped = FORMAT_INPUT_TYPES.get(schema.format ?? "");
-      // A stated constraint outranks the picker: on a type that ignores the
-      // three text constraints they are dropped without a word, so a schema
-      // pairing `format: "date"` with a `pattern` falls back to a text box and
-      // keeps enforcing it. `email` and `uri` honour all three, so they keep
-      // their native type in every case.
+      // A stated constraint outranks the picker: types ignoring `pattern`/`minLength`/`maxLength` drop them silently, so
+      // such a date falls back to a text box. `email` and `uri` honour all three.
       const inp = el("input", {
         type: mapped === undefined || (stated && !mapped.constrained) ? "text" : mapped.type,
         className: "elicitation-input",
@@ -290,10 +242,7 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
       if (typeof schema.maxLength === "number") {
         inp.maxLength = schema.maxLength;
       }
-      // HTML's value sanitization for `datetime-local` accepts no offset, so a
-      // schema-valid RFC 3339 default (`2026-09-08T14:30:00Z`) is emptied by the
-      // control and renders an empty picker. Same schema-value-versus-control-
-      // value mismatch `toRFC3339` closes on the read side; open on this one.
+      // `datetime-local` sanitization accepts no offset, so an RFC 3339 default would render an empty picker.
       if (typeof schema.default === "string") {
         inp.value = schema.default;
       }
@@ -301,9 +250,7 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
         el: inp,
         read: () => {
           const raw = inp.value;
-          // The TYPE is read off the control rather than the mapping: a UA that
-          // does not implement the picker reports `text`, and there the user
-          // typed the whole string themselves.
+          // Read off the control: a UA without the picker reports `text`, where the user typed the whole string.
           const value = inp.type === "datetime-local" ? toRFC3339(raw) : raw;
           return { value, filled: raw.trim() !== "" };
         },
@@ -312,13 +259,12 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
   }
 }
 
-/** Collect all field values. Returns null (and marks the offending field)
- *  if a required field is empty; otherwise an object of filled values. */
+/** All filled values, or null (marking the field) when a required one is empty. */
 function collect(readers: FieldReader[], container: HTMLElement): Record<string, unknown> | null {
   const required = new Set<string>();
   for (const labelEl of container.querySelectorAll<HTMLElement>(".elicitation-label")) {
     if (labelEl.textContent.endsWith(" *")) {
-      // strip the trailing " *" and recover the field name via its input
+      // Strip the trailing " *" and recover the name from its input.
       const input = labelEl.parentElement?.querySelector<HTMLElement>("[name]");
       const n = input?.getAttribute("name");
       if (n !== null && n !== undefined) {

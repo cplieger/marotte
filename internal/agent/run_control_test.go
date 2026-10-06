@@ -12,8 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// runStatuses reads the run-status vocabulary off the fixture internal/marotte and
-// internal/kascap already share, so a case is total over it rather than over a copy.
+// runStatuses reads the run-status vocabulary off the fixture internal/marotte and internal/kascap share.
 func runStatuses(t *testing.T) []marotte.RunStatus {
 	t.Helper()
 	raw, err := os.ReadFile("../marotte/testdata/run_statuses.json")
@@ -35,10 +34,7 @@ func runStatuses(t *testing.T) []marotte.RunStatus {
 	return out
 }
 
-// TestRunVerbGates pins which statuses each verb's `from` list admits. Why each row
-// is what it is lives on run_affordance.go's own table; what is worth pinning HERE is
-// cancel's unrestricted status, because it doubles as the tab-close gesture and must
-// never be the verb that fails.
+// TestRunVerbGates pins each verb's `from` list; the rationale is run_affordance.go's. Cancel stays unrestricted: it is the tab-close gesture.
 func TestRunVerbGates(t *testing.T) {
 	all := runStatuses(t)
 
@@ -55,8 +51,7 @@ func TestRunVerbGates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			for _, status := range all {
 				want := slices.Contains(tc.legal, status)
-				// An empty `from` means unrestricted, which the handler treats as
-				// "skip the pre-check entirely".
+				// An empty `from` is unrestricted: the handler skips the pre-check.
 				got := len(tc.verb.from) == 0 || slices.Contains(tc.verb.from, status)
 				if got != want {
 					t.Errorf("%s from %q: got legal=%v, want %v", tc.verb.name, status, got, want)
@@ -66,9 +61,8 @@ func TestRunVerbGates(t *testing.T) {
 	}
 }
 
-// TestRunVerbsAreWired guards the halves that can silently drift apart: a verb with no
-// issuer would 200 without doing anything, a verb with no name would log and error as the
-// empty string, and cancel losing its unrestricted status would error on a tab close.
+// TestRunVerbsAreWired pins that a verb with no issuer 200s doing nothing, one with no name logs as "", and a
+// restricted cancel errors on tab close.
 func TestRunVerbsAreWired(t *testing.T) {
 	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
@@ -78,8 +72,7 @@ func TestRunVerbsAreWired(t *testing.T) {
 			t.Errorf("run verb %q has no issuer: the route would answer ok without calling KAS", verb.name)
 		}
 	}
-	// Cancel is the tab-close gesture and must never be the verb that fails (KAS is
-	// idempotent on a terminal run); delete is the only way a row leaves History.
+	// Cancel is the tab-close gesture (KAS is idempotent on a terminal run); delete is the only way out of History.
 	for _, verb := range []runVerb{runVerbCancel, runVerbDelete} {
 		if len(verb.from) != 0 {
 			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
@@ -87,13 +80,8 @@ func TestRunVerbsAreWired(t *testing.T) {
 	}
 }
 
-// TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat.
-//
-// An AGENT-launched run has no `run:<id>` bridge and never will: KAS parents it on
-// the calling chat's session, so the LAUNCHING CHAT's bridge is the process that
-// registered it. The negative cases matter as much: a chat with no live bridge, or
-// the utility bridge, is a carrier that cannot execute the run (it denies every
-// permission ask and errors every fs call), which is worse than refusing.
+// TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat pins that KAS parents an agent run on the launching chat's
+// session, so that bridge hosts it. A dead chat or the utility bridge cannot execute the run.
 func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	setup := func(t *testing.T, parentSession string, sessions ...string) (*Runtime, *fakeBridge) {
 		t.Helper()
@@ -127,8 +115,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		}
 	})
 
-	// A chat changes session on a failed load, a model-switch fallback and empty-turn
-	// recovery, so a run launched before such a change is parented on a RETIRED id.
+	// A run launched before a session change is parented on a retired id.
 	t.Run("a run parented on a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h, _ := setup(t, "sess_old", "sess_old", "sess_current")
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -140,8 +127,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	})
 
 	t.Run("a chat with no live bridge is no carrier", func(t *testing.T) {
-		// Seeded but never opened. Resolving the chat id here and calling on nothing
-		// would panic; answering with the utility bridge would run the run toolless.
+		// Seeded but never opened: neither a nil call nor the toolless utility bridge is acceptable.
 		h, _ := setup(t, "sess_owned", "sess_owned")
 		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
 			t.Error("hostBridge returned a bridge for a chat that has none")
@@ -169,8 +155,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		}
 	})
 
-	// The whole point of the change, asserted through the real verb: the RPC reaches
-	// KAS on the bridge the chat already holds, rather than through a needless re-host.
+	// The RPC reaches KAS on the chat's own bridge, with no re-host.
 	t.Run("Pause reaches KAS through the chat's bridge", func(t *testing.T) {
 		h, br := setup(t, "sess_owned", "sess_owned")
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -203,9 +188,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	})
 }
 
-// pausedFrame builds a `_kiro/workflow/paused` notification carrying only
-// `{workflowId, pauseReason}` — the shape KAS sends for a pause it did NOT
-// classify: an interruption, a permanent failure, a need-input park.
+// pausedFrame builds `_kiro/workflow/paused` with only `{workflowId, pauseReason}`, KAS's shape for an unclassified pause.
 func pausedFrame(t *testing.T, workflowID, reason string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
@@ -217,10 +200,7 @@ func pausedFrame(t *testing.T, workflowID, reason string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Params: params}
 }
 
-// pausedFrameWithDetail builds the run-level pause frame KAS sends when it
-// CLASSIFIED the fault. The detail is a raw map rather than the `pauseDetail`
-// struct, so the fixture describes the WIRE: marshalling the very type under test
-// would let a renamed JSON tag move both sides together.
+// pausedFrameWithDetail builds KAS's classified pause frame. A raw map, so a renamed JSON tag cannot move both sides.
 func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
@@ -236,10 +216,7 @@ func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string)
 	return &marotte.RPCResponse{Params: params}
 }
 
-// pausedDriftedDetail builds the pause frame KAS would send if `pauseDetail`
-// stopped being an object — the shape change the heal must survive rather than be
-// blinded by. A string is the cheapest drift and the decoder treats every
-// non-object alike; the decode test enumerates the rest.
+// pausedDriftedDetail builds a pause frame whose `pauseDetail` is not an object, the drift the heal must survive.
 func pausedDriftedDetail(t *testing.T, workflowID, reason string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
@@ -252,9 +229,7 @@ func pausedDriftedDetail(t *testing.T, workflowID, reason string) *marotte.RPCRe
 	return &marotte.RPCResponse{Params: params}
 }
 
-// inspectDriftedDetail is the same drift on the INSPECT reply, so the heal's own
-// re-read agrees with the frame that scheduled it. Passing a drifted frame against
-// a clean inspect would assert that two gates disagree.
+// inspectDriftedDetail is the same drift on the inspect reply, so both gates see it.
 func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -271,18 +246,12 @@ func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessa
 	return raw
 }
 
-// TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt.
-//
-// `resumeInterruptedRuns` fires off `onSessionRehydrated`, so a run pausing on a
-// transient fault while its bridge is still alive has no trigger there and waits
-// for the next respawn. `_kiro/workflow/paused` arrives on the hosting bridge the
-// moment KAS parks a run, carrying the reason.
+// TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt pins that a transient pause on a live bridge has no
+// rehydrate trigger, but `_kiro/workflow/paused` arrives at once with the reason.
 func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T) {
 	const transient = "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
-	// Milliseconds rather than the real 5s backoff, so the whole path runs inside a
-	// unit test's budget. Restored by Cleanup, not defer: a defer does not run on a
-	// subtest's failure path and would leak the override into the package.
+	// Milliseconds instead of the 5s backoff. Restored by Cleanup: a defer skips a subtest's failure path.
 	fastHeal := func(t *testing.T) {
 		t.Helper()
 		prev := healBaseDelay
@@ -290,9 +259,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		t.Cleanup(func() { healBaseDelay = prev })
 	}
 
-	// The inspect reply is passed in rather than composed from a reason: the
-	// callback's re-read must agree with the FRAME, or the fixture asserts that two
-	// gates disagree.
+	// The callback's re-read must agree with the frame.
 	seedReply := func(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
@@ -350,11 +317,8 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 	})
 
-	// A step inside a `parallel` branch runs against a SHALLOW COPY of the run
-	// state, so its matching reason goes into a throwaway object and what reaches
-	// the run is a wrapper sentence KAS composes FROM the detail, which no reason
-	// arm can match. End-to-end rather than a predicate case on purpose: the
-	// predicate table cannot see a dropped wire field.
+	// A parallel branch's reason goes to a state copy and the run gets a wrapper sentence, so only the
+	// detail heals it. End to end: a predicate table cannot see a dropped wire field.
 	t.Run("a transient fault inside a parallel branch is resumed", func(t *testing.T) {
 		const wrapper = "Parallel 'phase1' is waiting on branch 'live-verify' " +
 			"(branch paused on transient error EAI_AGAIN)."
@@ -369,11 +333,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 	})
 
-	// The DEGRADATION, end to end, and it is the half a decode test cannot reach:
-	// the frame and the inspect guard behind it must BOTH survive a detail whose
-	// wire shape has changed, or the heal passes the gate and is declined by the
-	// guard. A KAS release that reshapes `pauseDetail` then costs the branch
-	// population only — every pause whose REASON says involuntary still heals.
+	// A drifted detail must pass both the frame gate and the inspect guard; only the branch population is lost.
 	t.Run("a detail whose wire shape drifted still heals off the reason", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedPauseReason))
@@ -386,10 +346,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 	})
 
-	// The other arm, kept beside it: a plain step's pause carries the matching
-	// PROSE and, for an interruption, no detail at all. Removing the reason arms
-	// once the detail arm exists would strand exactly this population, and nothing
-	// else in the suite would notice.
+	// A plain step's interruption heals off its prose with no detail; dropping the reason arms would strand it.
 	t.Run("a plain-step interruption with no detail is still resumed", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seed(t, interruptedPauseReason)
@@ -411,14 +368,12 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 			h, br := seed(t, reason)
 			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 			heal(t.Context(), "c1", pausedFrame(t, "wf_1", reason))
-			// Give a scheduled heal every chance to fire before concluding none was.
+			// Give a scheduled heal every chance to fire.
 			time.Sleep(50 * time.Millisecond)
 			if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
 				t.Errorf("resumed a run paused for %q; that overrides a decision somebody made", reason)
 			}
-			// The BUDGET, not just the outcome: "no resume happened" passes with the
-			// reason gate deleted, because the callback's own re-read refuses this
-			// fixture too. Nothing claimed means the next claim is the first.
+			// Assert the budget: the callback's re-read refuses this fixture too.
 			if attempt, _ := h.runs.claimHeal("wf_1"); attempt != 1 {
 				t.Errorf("attempt number = %d, want 1; healPaused spent a heal on a run paused "+
 					"for %q instead of declining at the reason gate", attempt, reason)
@@ -426,9 +381,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		})
 	}
 
-	// The callback re-reads the run rather than trusting the frame that scheduled
-	// it, which is what makes the untracked timer safe: a run cancelled, resumed or
-	// finished inside the backoff must not be re-driven.
+	// A run that left `paused` within the backoff must not be re-driven.
 	t.Run("a run that left the paused state inside the backoff is not resumed", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seed(t, transient)
@@ -441,10 +394,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 	})
 
-	// `observePaused` writes nothing on its success path, so with no line here the
-	// frame's very ARRIVAL has to be inferred from the `run_complete` beside it. The
-	// line's value is the reason it names, so that is what this asserts — not the
-	// sentence, which is prose.
+	// observePaused is silent on success, so a decline's line, and the reason it names, is the only trace.
 	t.Run("a declined pause names the reason it refused", func(t *testing.T) {
 		const parked = "Step requested user input via send_message."
 		fastHeal(t)
@@ -463,8 +413,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 	})
 
-	// The other half, and the reason the assertion above is not enough on its own:
-	// a line that fires on EVERY pause buries the declines it exists to surface.
+	// A line on every pause would bury the declines.
 	t.Run("a pause that IS resumed does not log a decline", func(t *testing.T) {
 		fastHeal(t)
 		logs := captureLogs(t)
@@ -491,19 +440,14 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
 			t.Error("a frame missing its addressing still reached a resume")
 		}
-		// Same reasoning as the reason-gate cases: the outcome alone is protected by a
-		// second guard, so assert nothing was claimed.
+		// The outcome has a second guard, so assert nothing was claimed.
 		if attempt, _ := h.runs.claimHeal("wf_1"); attempt != 1 {
 			t.Errorf("attempt number = %d, want 1; a frame with no chat id spent a heal", attempt)
 		}
 	})
 }
 
-// TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt.
-//
-// A heal and a pause drive each other while the fault persists, so the budget
-// stops the loop and PROGRESS refills it — without the refill a job running for
-// hours spends its three attempts on one morning blip.
+// TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt pins that the budget stops a heal/pause loop and progress refills it.
 func TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt(t *testing.T) {
 	t.Run("three attempts, then the run is left paused", func(t *testing.T) {
 		h, _, _ := newTestHub()

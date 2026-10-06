@@ -1,11 +1,5 @@
-// WHICH TURN THE READER IS IN, answered by arithmetic against a cached table. The
-// function holds no state, so it cannot freeze on a stale answer and has no
-// membership delta to lose.
-//
-// The clamp PRECEDENCE is the case to read first: both ends can hold at once, and the
-// measured position wins over the published edge verdict.
-//
-// Node environment: the table's entries are MEASUREMENTS the caller supplies.
+// WHICH TURN THE READER IS IN, answered by arithmetic against a cached table. The function holds no
+// state, so it cannot freeze on a stale answer and has no membership delta to lose.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
@@ -45,8 +39,8 @@ describe("the table", () => {
   });
 
   it("skips a card the engine reports no box for", () => {
-    // Its marker still renders and is still clickable; it simply cannot be landed
-    // on by offset until a later invalidation measures it.
+    // Its marker still renders and is still clickable; it simply cannot be landed on by offset
+    // until a later invalidation measures it.
     const offsets = buildOffsets([
       { id: "t1", top: 0 },
       { id: "t2", top: null },
@@ -75,8 +69,8 @@ describe("the table", () => {
 describe("the reading line names the turn it is in", () => {
   it("answers the turn whose top the line has passed", () => {
     const offsets = table();
-    // The line sits 200px down the scrollport, so at offset 400 it is at 600 —
-    // past t2's top and short of t3's.
+    // The line sits 200px down the scrollport, so at offset 400 it is at 600 — past t2's top and
+    // short of t3's.
     expect(activeTurnAt(400, offsets, READING, PARKED)).toBe("t2");
     expect(activeTurnAt(801, offsets, READING, PARKED)).toBe("t3");
   });
@@ -91,8 +85,8 @@ describe("the reading line names the turn it is in", () => {
   });
 
   it("answers the turn before a gap while the line is inside it", () => {
-    // Two cards 4000px apart: everything between them belongs to the earlier turn,
-    // because that is the turn whose box the reader is inside.
+    // Two cards 4000px apart: everything between them belongs to the earlier turn, because that is
+    // the turn whose box the reader is inside.
     const offsets = buildOffsets([
       { id: "t1", top: 0 },
       { id: "t2", top: 4000 },
@@ -105,12 +99,9 @@ describe("the reading line names the turn it is in", () => {
 
 describe("a card's own reflow, with no DOM change and no scroll", () => {
   it("moves the MARK once the table is rebuilt", () => {
-    // `content-visibility: auto` on `.msg-row` lets a card swap its estimated height
-    // for its real one: every top below it moves, with no mutation for
-    // `onTranscriptMutate` to see and no scroll event to re-read on. So the seam that
-    // invalidates the table (`onContentResize`) has to re-ANSWER as well as clear,
-    // and what the reader would otherwise see is the mark frozen on the turn they
-    // have left — defect 4's own shape.
+    // `content-visibility: auto` on `.msg-row` lets a card swap its estimated height for its real
+    // one: every top below it moves, with no mutation for `onTranscriptMutate` to see and no scroll
+    // event to re-read on.
     const answer = (offsets: TurnOffsets): string => activeTurnAt(500, offsets, READING, PARKED);
     const before = buildOffsets([
       { id: "t1", top: 0 },
@@ -143,9 +134,9 @@ describe("both ends clamp, and the TOP clamp wins", () => {
   });
 
   it("answers the FIRST turn at offset 0 even while the edge verdict says live", () => {
-    // The precedence case. `atLiveEdge` is a published field that can be stale;
-    // offset 0 is a position the scroller measured. Reversing the two answers "t4"
-    // — the other end of the transcript — for a reader sitting at the top.
+    // The precedence case. `atLiveEdge` is a published field that can be stale; offset 0 is a
+    // position the scroller measured. Reversing the two answers "t4" — the other end of the
+    // transcript — for a reader sitting at the top.
     expect(activeTurnAt(0, table(), READING, LIVE)).toBe("t1");
   });
 });
@@ -213,9 +204,9 @@ describe("the marker that carries the mark for an unsampled turn", () => {
   const shown = [1, 4, 8, 11, 15].map((n) => ({ n }));
 
   it("answers the marker at or below the turn", () => {
-    // A downsampled rail has a marker for one turn in two or three, so the reading
-    // line spends most of its time in a turn with no marker of its own; the mark then
-    // goes to the last marker the reader has passed.
+    // A downsampled rail has a marker for one turn in two or three, so the reading line spends most
+    // of its time in a turn with no marker of its own; the mark then goes to the last marker the
+    // reader has passed.
     expect(markerSlotFor(shown, 4)).toBe(1);
     expect(markerSlotFor(shown, 6)).toBe(1);
     expect(markerSlotFor(shown, 12)).toBe(3);

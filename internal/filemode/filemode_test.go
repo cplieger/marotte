@@ -9,15 +9,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// TestEnforceFile_VerifiesTheModeItStored pins that the returned mode is an
-// OBSERVATION of the file rather than an echo of the argument: the drift is
-// driven by an explicit widening chmod, and the enforcement is what brings it
-// back.
-//
-// The witness assertion is what keeps this honest. If the filesystem under the
-// test refuses to store 0666, there is no drift to correct and every assertion
-// below would hold vacuously — so the test declares itself INVALID instead of
-// passing.
+// TestEnforceFile_VerifiesTheModeItStored asserts that the returned mode is an observation of the file, not an
+// echo of the argument.
 func TestEnforceFile_VerifiesTheModeItStored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
@@ -92,13 +85,8 @@ func TestEnforceFile_RefusesASymlinkAtTheName(t *testing.T) {
 	}
 }
 
-// TestEnforceDir_VerifiesTheModeTheKernelStored uses the one widening a test
-// can create for real: Linux gives a directory created under a setgid parent the
-// setgid bit whether or not it was asked for. atomicfile.EnforceMode compares
-// setgid deliberately, so this is a genuine request-versus-disk difference.
-//
-// The witness skips the test as invalid if the kernel stops inheriting the bit,
-// rather than letting it pass on a filesystem where there was nothing to catch.
+// TestEnforceDir_VerifiesTheModeTheKernelStored uses the one widening a test can create for real: a
+// setgid parent gives a new directory the setgid bit unasked.
 func TestEnforceDir_VerifiesTheModeTheKernelStored(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.Chmod(parent, 0o700|os.ModeSetgid); err != nil {
@@ -182,12 +170,8 @@ func TestEnforceFile_ReportsAMissingFileAsNotExist(t *testing.T) {
 	}
 }
 
-// TestEnforceMode_SentinelIsTheLibrarysOwn documents the contract the two call
-// sites depend on: a mode the filesystem refuses to store arrives as
-// atomicfile.ErrModeNotStored, not as a generic error, so a consumer can tell a
-// widening filesystem from a permission failure. It cannot be provoked here — no
-// filesystem a test can create widens a chmod — so the assertion is that the
-// sentinel exists and is distinct from a permission error.
+// TestEnforceMode_SentinelIsTheLibrarysOwn asserts that a refused mode arrives as atomicfile.ErrModeNotStored,
+// which the call sites match.
 func TestEnforceMode_SentinelIsTheLibrarysOwn(t *testing.T) {
 	if atomicfile.ErrModeNotStored == nil {
 		t.Fatal("atomicfile.ErrModeNotStored is nil")

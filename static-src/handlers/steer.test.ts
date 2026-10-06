@@ -1,10 +1,6 @@
-// Tests for handlers/steer.ts, now TWO handlers: `steer_queued`, the server's confirmation of
-// a waiting steer, and `agent_notice`, a step's progress line on the same KAS channel.
-// A steer's transcript fact is its `steer` ENTRY, so the dock row leaves inside
-// `appendEntry` and nothing here writes one.
-// The real store is driven so the dock is observable and only the bus is mocked; these cases
-// are about the WIRE rather than the store's mechanics: frames arriving twice, out of order,
-// or on a background chat.
+// `steer_queued` (the server's confirmation of a waiting steer) and `agent_notice` (a step's line
+// on the same KAS channel). The real store, only the bus mocked; about the WIRE: duplicate,
+// out-of-order and background-chat frames. A dock row leaves on its `steer` entry.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
@@ -12,15 +8,12 @@ import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 vi.mock("../bus.js", () => createBusMock());
 
 // The notice handler's whole output is a toast at a level derived from the severity, so the
-// level IS the assertion. Mocked rather than rendered: the real module is a leaf over
-// ui-primitives and its DOM tells us nothing about the mapping under test.
-const toastInfo = vi.fn();
-const toastSuccess = vi.fn();
-const toastError = vi.fn();
-vi.mock("../toast.js", () => ({
-  info: (m: string) => toastInfo(m),
-  success: (m: string) => toastSuccess(m),
-  error: (m: string) => toastError(m),
+// message and the level ARE the assertion. Mocked rather than rendered: the real module is a
+// leaf over ui-primitives and its DOM tells us nothing about the mapping under test.
+const { toastNotice } = vi.hoisted(() => ({ toastNotice: vi.fn() }));
+vi.mock("../toast.js", async () => ({
+  ...(await import("../__test-helpers__/toast-mock.js")).toastMock(),
+  notice: toastNotice,
 }));
 
 import {
@@ -62,9 +55,7 @@ function makeSession(id: string): Session {
 beforeEach(() => {
   setSessions([makeSession("c1"), makeSession("c2")]);
   setActive("c1");
-  toastInfo.mockClear();
-  toastSuccess.mockClear();
-  toastError.mockClear();
+  toastNotice.mockClear();
 });
 
 /** Open a turn on `c1`, so a `steer` entry has somewhere to land. */
@@ -146,13 +137,9 @@ describe("steer_queued", () => {
   });
 });
 
-// The GAP, then the connect burst. `BUS_RECONCILE` forgets every chat's dock without
-// promoting anything, because the frames that resolved those steers may be among the lost
-// ones (handlers/system.test.ts pins that door; `forgetSteers` is called directly here
-// because this file's bus is mocked). What refills it is the connect replay in the same
-// burst, so a row still WAITING comes back under its own id while a DELIVERED one stays out —
-// and what says "delivered" is the `steer` entry in the log, which `recordSteerQueued`
-// checks FIRST.
+// After a gap `BUS_RECONCILE` forgets every dock (handlers/system.test.ts); the connect replay
+// refills a WAITING row under its id, and `recordSteerQueued` checks the log's `steer` entry FIRST,
+// so a DELIVERED row stays out.
 describe("a gap and then the connect replay", () => {
   it("brings a still-waiting steer back into the dock", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
@@ -230,47 +217,47 @@ describe("a gap and then the connect replay", () => {
   });
 });
 
-// The agent's own notices. They arrive on KAS's steering channel because that buffer is the
-// only inbound path into a live turn, and forwarding one as a steer carrying a severity
-// renders a line the agent wrote inside the composer's chip row, styled as something the
-// user had typed, beside a Discard button that cannot act on it.
+// Agent notices arrive on KAS's steering channel; forwarded as a steer they would render as user
+// text in the composer's chip row with a useless Discard.
 describe("agent_notice", () => {
-  it("toasts success at the success level", () => {
+  /** The [message, level] of the one notice raised. */
+  function raised(): [unknown, unknown] {
+    expect(toastNotice).toHaveBeenCalledTimes(1);
+    const [message, level] = toastNotice.mock.calls[0] ?? [];
+    return [message, level];
+  }
+
+  it("toasts success at the success level, named for its chat", () => {
     fireSSE("agent_notice", "c1", { severity: "success", text: "downloaded the picture" });
-    expect(toastSuccess).toHaveBeenCalledWith("downloaded the picture");
-    expect(toastInfo).not.toHaveBeenCalled();
-    expect(toastError).not.toHaveBeenCalled();
+    expect(raised()).toEqual(["test: downloaded the picture", "success"]);
   });
 
   it("toasts info at the info level", () => {
     fireSSE("agent_notice", "c1", { severity: "info", text: "starting pass two" });
-    expect(toastInfo).toHaveBeenCalledWith("starting pass two");
+    expect(raised()).toEqual(["test: starting pass two", "info"]);
   });
 
-  // The toast vocabulary has three levels and KAS has four, so a warning takes the error face
-  // rather than earning a fourth level for a channel that has never been seen to emit one.
-  it("gives a warning the error face", () => {
+  // A warning is amber, its own level, rather than borrowing the error face.
+  it("gives a warning the warning level", () => {
     fireSSE("agent_notice", "c1", { severity: "warning", text: "retrying the fetch" });
-    expect(toastError).toHaveBeenCalledWith("retrying the fetch");
+    expect(raised()).toEqual(["test: retrying the fetch", "warning"]);
   });
 
   it("toasts error at the error level", () => {
     fireSSE("agent_notice", "c1", { severity: "error", text: "step failed" });
-    expect(toastError).toHaveBeenCalledWith("step failed");
+    expect(raised()).toEqual(["test: step failed", "error"]);
   });
 
   // A severity a later KAS adds is still a notice worth showing, so it falls through to info
   // rather than being dropped.
   it("shows an unrecognised severity rather than dropping it", () => {
     fireSSE("agent_notice", "c1", { severity: "debug", text: "something happened" });
-    expect(toastInfo).toHaveBeenCalledWith("something happened");
+    expect(raised()).toEqual(["test: something happened", "info"]);
   });
 
   it("says nothing for an empty notice", () => {
     fireSSE("agent_notice", "c1", { severity: "info", text: "   " });
-    expect(toastInfo).not.toHaveBeenCalled();
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(toastError).not.toHaveBeenCalled();
+    expect(toastNotice).not.toHaveBeenCalled();
   });
 
   // A notice touches none of the steering state: it has no id, so there is nothing for a

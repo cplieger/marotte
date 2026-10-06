@@ -1,20 +1,5 @@
-// ---------------------------------------------------------------------------
-// What a LOCATION is allowed to mean: whether it may open the view it names, and
-// what a chat id the store holds no row for settles to.
-//
-// This is the whole of what the router used to do inline, and it moved here for
-// two reasons that are the same reason twice: `applyRoute` is a private function
-// in the composition root, so nothing it holds has a test address, and what it
-// held was not routing. Three of `settleDeepLinkedChat`'s four rules are about
-// EVIDENCE — what licenses a terminal claim, what licenses silence, and whether a
-// verdict that arrived a round trip late still describes the screen — and every one
-// of them had shipped unpinned.
-//
-// The standing principle they implement: never derive a terminal verdict from
-// data this client may simply not have yet, and never let a failure be silent.
-// A pasted link that resolves to nothing has to say something, and what it says
-// must be what the server actually established.
-// ---------------------------------------------------------------------------
+// What a location may mean: whether it may open its view, and what an unknown chat id settles to. Principle: never
+// derive a terminal verdict without the server's own answer.
 
 import { resolveUnknownChat } from "./chat.js";
 import { chatListLoaded, serverMayAnswer } from "./store-load.js";
@@ -25,11 +10,7 @@ import type { RouteOrigin } from "./router.js";
 import { getActiveTabRoute, tabIdForRoute } from "./tabs.js";
 import { error as toastError } from "./toast.js";
 
-/** What settling a deep-linked id did, for a test to read.
- *
- *  A return value rather than an inspectable side effect, because three of the
- *  four outcomes are indistinguishable from the outside: `held` and `stale` both
- *  leave the URL alone and raise nothing, and only the reason differs. */
+/** What settling did, for a test: `held` and `stale` look identical from outside. */
 export type DeepLinkOutcome =
   /** The chat exists and its tab is open. */
   | "opened"
@@ -44,27 +25,16 @@ export type DeepLinkOutcome =
   /** An answer arrived for a location the reader has since left. Dropped. */
   | "stale";
 
-/** Whether the URL still names the chat we asked about.
- *
- *  The answer arrives a round trip after the route was applied, and in that window
- *  a tab click or a back press moves the location. Replacing a NEWER location with
- *  a verdict about an older one is the same stale-answer defect the verdict itself
- *  exists to remove, one layer up — so the id is captured before the await and
- *  compared against the location as it is NOW, never re-read off the route object.
- *
- *  It is also what makes the unresolved notice bearable: a notice about a link the
- *  reader abandoned is noise, and this is what stops one. */
+/**
+ * Whether the URL still names the chat asked about. The id is captured before the await and compared to the location
+ * now, so a late verdict never replaces a newer location.
+ */
 function stillNames(id: string): boolean {
   const now = parseRoute(location.pathname, location.hash);
   return now.kind === "chat" && now.id === id;
 }
 
-/** Canonicalize a URL that names no record: point it at what is on screen.
- *
- *  `getActiveTabRoute()` rather than a literal, so the URL ends up naming the view
- *  the reader is actually looking at; the empty chat route is the fallback for a
- *  strip with nothing active, which is the same canonicalization boot performs
- *  for "/". */
+/** Points the URL at what is on screen (`getActiveTabRoute()`), else the empty chat route, as boot does for "/". */
 function canonicalize(): void {
   replaceRoute(getActiveTabRoute() ?? { kind: "chat", id: "" });
 }
@@ -77,20 +47,10 @@ export type LocationVerdict =
    *  what IS on screen and nothing is to be applied. */
   | "canonicalized";
 
-/** Whether a location may OPEN the view it names.
- *
- *  A deliberate navigation always may. Anything else may only ACTIVATE something
- *  already open, and a `history` entry and a RESTORED document load are the same
- *  case: each names a location this browser WAS at rather than one that still
- *  exists. A restored location is `active_view`'s twin — a second per-device record
- *  of the tab this screen was last on — and it is the one copy with no guard, which
- *  is why waking a device whose tabs were closed elsewhere brought them back.
- *
- *  Opening on such a location is not mere clutter: `openTab` is a server mutation,
- *  so it persists and broadcasts to every other device, and the tab reappears on all
- *  of them. `canonicalize` rather than `history.go(-1)`: skipping the entry walks
- *  back through however many dead ones sit behind it and can leave the app, while a
- *  replace consumes exactly the one location that no longer resolves. */
+/**
+ * Whether a location may open its view. A deliberate navigation may; a `history` entry or restored load may only
+ * activate something already open (`openTab` persists and broadcasts, so opening would resurrect a tab closed elsewhere).
+ */
 export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdict {
   if (origin === "deeplink" || tabIdForRoute(route) !== "") {
     return "opens";
@@ -99,23 +59,18 @@ export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdic
   return "canonicalized";
 }
 
-/** Settle a deep-linked chat id the store has no row for, by ASKING the server: the chat
- *  EXISTS and its tab opens; the SERVER says it is gone, the only thing that licenses
- *  saying so; or nobody answered, so the URL is held with a retry notice — unless the
- *  reader already holds a notice about this server. The ask gate is evidence the server
- *  cannot answer (`serverMayAnswer`): against a restarting server it stays quiet, because
- *  boot already raised "Couldn't load your chats.". The notice gate is `chatListLoaded()`:
- *  an unlatched list means boot's toast is already showing. Never rejects; the retry
- *  re-enters through the same door. */
+/**
+ * Settle a deep-linked chat id with no store row by asking the server: exists (opens), server says gone (canonicalize
+ * and say so), no answer (hold the URL, non-terminal notice with retry), or no answer already reported (silent).
+ * The ask is skipped when there is evidence the server cannot answer (`serverMayAnswer`).
+ */
 export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome> {
   if (!serverMayAnswer()) {
     return "held";
   }
   const verdict = await resolveUnknownChat(id);
   if (verdict === "opened") {
-    // `resolveUnknownChat` has already opened the tab, and a refusal there raised
-    // its own notice through the action framework — so saying anything here would
-    // be reporting one refusal twice.
+    // `resolveUnknownChat` opened the tab and raised its own refusal notice.
     return "opened";
   }
   if (!stillNames(id)) {
@@ -129,15 +84,8 @@ export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome>
   if (!chatListLoaded()) {
     return "held";
   }
-  // The URL is deliberately NOT canonicalized: holding the id is what makes the
-  // retry — and a reload, and a re-share of the same link — address the chat the
-  // reader asked for rather than the fallback they landed on.
-  //
-  // The wording claims nothing about the conversation, which is the whole point:
-  // the server failed to answer, so "no longer exists" would be exactly the
-  // terminal claim this path refuses to make. Retry re-asks the server rather
-  // than reloading the page, because a reload throws away a live SSE connection,
-  // every open tab's state and the transcript underneath, to repeat one GET.
+  // Not canonicalized, so the retry, a reload or a re-share address the asked-for chat. The words claim nothing
+  // terminal. Retry re-asks rather than reloading.
   toastError("Could not open that conversation. The server did not answer.", {
     label: "Retry",
     onClick: () => {

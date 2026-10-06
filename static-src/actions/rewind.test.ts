@@ -1,5 +1,4 @@
-// Tests for actions/rewind.ts. ONE action: rewind reverts the chat it is in.
-// The create/promote/discard trio went with the branch it existed to resolve.
+// rewind reverts the chat it is in.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -8,8 +7,7 @@ vi.mock("../toast.js", () =>
 
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
 
-// The refetch is the point of the success path, so the loader is a spy rather
-// than a real fetch: what matters is that the action asks for the page again.
+// The refetch is the success path's point, so the loader is a spy.
 vi.mock("../store-load.js", () => ({ loadMessages: vi.fn(() => Promise.resolve(true)) }));
 
 import { send as transportSend } from "../transport.js";
@@ -41,9 +39,7 @@ describe("rewind.revert", () => {
     };
     expect(cmd.type).toBe("rewind_chat");
     expect(cmd.chat_id).toBe("c-1");
-    // A message id, because that is what KAS's revert verb addresses — and it
-    // must name a user message, whose id space is shared only because marotte
-    // sends it on session/prompt.
+    // KAS's revert verb addresses a user message id (shared because marotte sends it on session/prompt).
     expect(cmd.payload.message_id).toBe("m-abc");
     expect(cmd.payload).not.toHaveProperty("turn_index");
   });
@@ -54,22 +50,12 @@ describe("rewind.revert", () => {
 
     await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
 
-    // The server's reason is appended, so a refusal KAS explained in-band ("not
-    // a user message", "Cannot revert while the agent is still running") reaches
-    // the user instead of a generic failure.
+    // The server's reason is appended, so a refusal KAS explained in-band reaches the user.
     expect(toast.error).toHaveBeenCalledWith("Could not rewind chat: boom", undefined);
   });
 
-  // A retry that reverts twice would cut a SECOND time from an
-  // already-truncated transcript and take real turns with it, which is why the
-  // idempotency key matters more here than it did for the old create action
-  // (where a duplicate merely made a spare branch).
-  //
-  // The key must be at the command's TOP level under the framework's field
-  // name, because that is the one place transport.send looks when it builds the
-  // Idempotency-Key header. This assertion used to read `request_id`, a field
-  // the action set by hand and transport.send discarded when it built the body
-  // — so it passed while nothing reached the server.
+  // A retry that reverts twice cuts again from a truncated transcript. The key must be at the
+  // command's TOP level under the framework's field name, where transport.send reads it.
   it("carries a framework idempotency key at the top level", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const { rewindChat } = await import("./rewind.js");
@@ -79,8 +65,7 @@ describe("rewind.revert", () => {
 
     const cmd = mockSend.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(cmd[IDEMPOTENCY_COMMAND_FIELD]).toBeTypeOf("string");
-    // And NOT the hand-minted envelope field it used to carry: the server's
-    // envelope has no request_id any more.
+    // The server's envelope has no request_id.
     expect(cmd["request_id"]).toBeUndefined();
   });
 
@@ -89,11 +74,8 @@ describe("rewind.revert", () => {
     expect(Object.keys(mod)).toEqual(["rewindChat"]);
   });
 
-  // Nothing on the wire tells a client that messages were REMOVED: chat_updated
-  // carries only the header, and upsertHeader merges the count as Math.max, so a
-  // shrink is discarded. Without this refetch a successful rewind rolled the
-  // files back and truncated the record while the reader kept looking at the
-  // dropped turns until a reload.
+  // Nothing on the wire says messages were REMOVED (chat_updated is header-only and upsertHeader
+  // merges the count as Math.max), so without this refetch the reader keeps the dropped turns.
   it("refetches the chat's messages after a successful rewind", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const { rewindChat } = await import("./rewind.js");
@@ -104,9 +86,7 @@ describe("rewind.revert", () => {
     expect(mockLoadMessages).toHaveBeenCalledWith("c-1");
   });
 
-  // A refusal left the record untouched server-side, so refetching would replace
-  // the reader's window with a byte-identical copy for nothing — and on the 409
-  // the transcript they are looking at is still the truth.
+  // A refusal left the record untouched, so the reader's transcript is still the truth.
   it("does not refetch when the rewind was refused", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "no bridge" });
     const { rewindChat } = await import("./rewind.js");

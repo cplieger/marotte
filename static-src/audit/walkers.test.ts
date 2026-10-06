@@ -1,10 +1,6 @@
-// The audit walkers, driven against real fixtures in a real engine. It pins what
-// each walker REPORTS, so the number a live runner prints is a number a test
-// asserted, and the INJECTION CONTRACT: the same walker run through `pageSource`,
-// the string a runner hands to `Runtime.evaluate`, must answer exactly what the
-// direct call answers. Every case is scoped to its own fixture by class prefix,
-// never to a total, because the walkers scan the whole document and the runner's
-// page is not empty.
+// Pins what each walker REPORTS, and the injection contract: run through `pageSource` (what
+// `cdp.mjs` hands `Runtime.evaluate`) each walker must answer what the direct call answers. Cases
+// scope by class prefix, since the walkers scan the whole document.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { WALKERS, pageSource } from "./walkers.js";
@@ -113,12 +109,8 @@ function run<T>(name: string, opts: Record<string, unknown> = {}): T {
   return (fn as unknown as (o: Record<string, unknown>) => T)(opts);
 }
 
-/** Call a walker the way a RUNNER does: through the serialized page source.
- *
- *  `new Function` rather than `eval` because that is the shape `Runtime.evaluate`
- *  has — one expression, its own scope, no access to this module's bindings. A
- *  helper the prelude forgot to emit therefore throws here exactly as it would in
- *  the page, which is the whole point of running the walkers this way. */
+/** Call a walker as a runner does, through the serialized page source. `new Function` has
+ *  `Runtime.evaluate`'s shape, so a helper the prelude forgot throws here as in the page. */
 function runViaSource<T>(name: string, opts: Record<string, unknown> = {}): T {
   const src = pageSource(name, opts);
   return new Function(`return ${src}`)() as T;
@@ -145,24 +137,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // MEASURED on vitest 5.0.0: Browser Mode isolates per FILE and does NOT clear
-  // `document.body` between tests — a module-scope host stays connected for every
-  // case and per-test appends accumulate. So this teardown is load-bearing rather
-  // than tidy: these walkers scan the WHOLE document, so a fixture left behind is
-  // a fixture the next case finds. It cost one red run, where an earlier test's
-  // `.fx-square` satisfied a later test asserting that class produced nothing.
+  // Load-bearing: Browser Mode (vitest 5.0.0) does not clear `document.body` between tests, and
+  // the walkers scan the WHOLE document.
   host.remove();
   sheet.remove();
   document.documentElement.style.removeProperty("--hit-floor");
   document.documentElement.style.removeProperty("--c-text-primary");
 });
 
-/** Does this `describeEl` descriptor carry exactly this class?
- *
- *  A substring test is not good enough and cost a red run: `fx-slid` is a
- *  substring of every fixture class starting with it, so a two-fixture case
- *  silently matched both. `describeEl` writes `tag#id.a.b[role=x]`, so splitting
- *  on the dot yields the class tokens. */
+/** Whether a `describeEl` descriptor (`tag#id.a.b[role=x]`) carries exactly this class; a
+ *  substring test matches `fx-slid` inside every longer fixture class. */
 const hasClass = (descriptor: string, cls: string): boolean => descriptor.split(".").includes(cls);
 
 const mismatchesFor = (
@@ -229,9 +213,7 @@ describe("control-height", () => {
        </div>`,
     );
     const r = run<ControlHeight>("control-height", { tol: 1.5 });
-    // The SPREAD is what proves the split: line 1 disagrees by 2 and line 2
-    // agrees, so a walker that folded both lines into one band would report the
-    // same single finding at a spread of 6.
+    // The SPREAD proves the split: folding both lines into one band would report a spread of 6.
     const hits = mismatchesFor(r, "fx-wrap");
     expect(hits).toHaveLength(1);
     expect(hits[0]?.spread).toBe(2);
@@ -241,11 +223,8 @@ describe("control-height", () => {
   });
 
   it("refuses to measure a small control something else answers for at its centre", () => {
-    // A control inside a closed `<details>` reports a client rect — Chromium hides
-    // that content with `content-visibility` on `::details-content` rather than by
-    // removing it from layout — while the hit test answers the `<summary>` painted
-    // over it. Reading the painted box as the target instead reported 12 of these as
-    // undersize by exactly the width of their own expander.
+    // Inside a closed `<details>` Chromium keeps the control in layout (`content-visibility` on
+    // `::details-content`) while the hit test answers the `<summary>` painted over it.
     mount(
       `<details class="fx-closed"><summary style="height:24px">s</summary>
          <button class="fx-buriedbtn" style="height:12px;width:12px"></button>
@@ -280,9 +259,8 @@ describe("control-height", () => {
   });
 
   it("takes a deliberately-small control OUT of its row and reports it as expanded", () => {
-    // The two live rows this closes: a control painted under the floor that grows
-    // its target with an expander has declared itself visually small, so it is not
-    // claiming the row's height and a sibling at the tier is not a mismatch.
+    // A control painted under the floor that grows its target with an expander declared itself
+    // small, so a sibling at the tier is not a mismatch.
     mount(
       `<div class="fx-chiprow" style="display:flex;gap:4px;align-items:center">
          <button class="fx-tier" style="height:24px;width:24px"></button>
@@ -298,8 +276,7 @@ describe("control-height", () => {
   });
 
   it("still reports the SAME row when the small control grows no target", () => {
-    // The negative half, and what keeps the rule the row rule exists for: a
-    // control merely short is a mismatch, exactly as before.
+    // Negative half: a merely short control is a mismatch.
     mount(
       `<div class="fx-shortrow" style="display:flex;gap:4px;align-items:center">
          <button class="fx-tier2" style="height:24px;width:24px"></button>
@@ -313,8 +290,7 @@ describe("control-height", () => {
   });
 
   it("still checks an EXPANDED control's target, so a broken expander is caught", () => {
-    // Being out of the row does not buy it out of the floor: the undersize half
-    // runs for both populations, so an expander that reaches nothing is reported.
+    // Out of the row, but the undersize half still runs: an expander reaching nothing is reported.
     mount(
       `<button class="fx-fakeexp" style="height:10px;width:10px;position:relative;border:0;padding:0"></button>`,
       // Absolutely positioned, so it reads as the idiom, but it grows nothing.
@@ -326,9 +302,7 @@ describe("control-height", () => {
   });
 
   it("keeps a control AT the floor in its row even when it carries an expander", () => {
-    // The exemption is for a control painted UNDER the floor. One already at the
-    // tier is claiming the row's height whatever pseudo-elements it has, so a
-    // taller sibling is still a mismatch.
+    // The exemption is for a control UNDER the floor; one at the tier claims the row's height.
     mount(
       `<div class="fx-atfloor" style="display:flex;gap:4px;align-items:center">
          <button class="fx-big" style="height:32px;width:60px"></button>
@@ -343,8 +317,7 @@ describe("control-height", () => {
   });
 
   it("requires the pseudo-element to be POSITIONED, so a glyph does not exempt", () => {
-    // A decorative `::after` in flow grows no target, so a control carrying one is
-    // an ordinary short control and its row is still a finding.
+    // An in-flow decorative `::after` grows no target.
     mount(
       `<div class="fx-decor" style="display:flex;gap:4px;align-items:center">
          <button class="fx-tier3" style="height:24px;width:24px"></button>
@@ -387,9 +360,7 @@ describe("control-height", () => {
   });
 
   it("measures under a TRANSLATED ancestor, in both spellings", () => {
-    // Both, because Chromium keeps the standalone `translate` property OFF the
-    // computed `transform` — so one fixture exercises the matrix path and the
-    // other the property path, and a rule that rejected either would be caught.
+    // Both: Chromium keeps the standalone `translate` OFF the computed `transform`.
     mount(
       `<div class="fx-moved" style="transform:translate(6px, 4px)">
          <button class="fx-slid" style="height:9px;width:9px"></button>
@@ -405,9 +376,7 @@ describe("control-height", () => {
   });
 
   it("names the two unmeasurable reasons apart, so a runner prints the right one", () => {
-    // The runners print this string verbatim. They used to hardcode "scaled
-    // ancestor" in front of it, which read as a lie over an off-screen control —
-    // the walker owns the whole sentence for that reason.
+    // The runners print this string verbatim; the walker owns the whole sentence.
     mount(
       `<div class="fx-far" style="position:fixed;inset-block-start:4000px;inset-inline-start:0">
          <button class="fx-away" style="height:9px;width:9px"></button>
@@ -426,10 +395,7 @@ describe("control-height", () => {
   });
 
   it("excludes a target IN A SENTENCE, whatever its tag, and says it did", () => {
-    // Both spellings the app ships: a prose `a[href]`, and the inline-flex BUTTON
-    // `linkify.ts` emits for a file path. Keying on the tag missed the second and
-    // reported 51 undersize findings against a chip whose stylesheet documents the
-    // exception.
+    // Both spellings the app ships: prose `a[href]` and `linkify.ts`'s inline-flex path BUTTON.
     mount(
       `<p>text <a class="fx-inline" href="#x">link</a> more</p>
        <pre>build failed at <button class="fx-chipinprose" style="display:inline-flex;height:16px;font-size:10px">a.go:1</button> and stopped</pre>`,
@@ -443,9 +409,7 @@ describe("control-height", () => {
   });
 
   it("keeps an inline control with NO surrounding text in the population", () => {
-    // The text sibling is the "in a sentence" half. Without it an inline-level
-    // control is an ordinary control that happens to be inline-level, which is most
-    // of this app's buttons — so it is still floored and still in its row.
+    // The text sibling is the "in a sentence" half; without it the control is floored and in its row.
     mount(
       `<div class="fx-nolinetext" style="display:flex">
          <button class="fx-loneinline" style="display:inline-flex;height:12px;width:12px"></button>
@@ -457,9 +421,7 @@ describe("control-height", () => {
   });
 
   it("requires INLINE-LEVEL display, so a block control beside text is still floored", () => {
-    // The other half of the predicate. Surrounding text alone is not the exception —
-    // a block-level control is not constrained by a line height, so it owns its own
-    // reach and the floor applies.
+    // A block-level control is not constrained by a line height, so the floor applies.
     mount(
       `<div class="fx-blockintext">some text
          <button class="fx-blocktiny" style="display:block;height:12px;width:12px"></button>
@@ -471,10 +433,8 @@ describe("control-height", () => {
   });
 
   it("keeps a labelled FIELD in its row even though the standard exempts its floor", () => {
-    // An `<input>` beside its label is inline-level with text around it, so WCAG
-    // exempts its target — and the app's one-height-per-row rule still applies,
-    // because that rule is about what a reader SEES and is the population the rule
-    // was written for. Two different questions, so two different gates.
+    // WCAG exempts an inline input's target, but the one-height-per-row rule (what a reader SEES)
+    // still applies: two questions, two gates.
     mount(
       `<div class="fx-formrow" style="display:flex;gap:4px;align-items:center">
          <button style="height:32px;width:60px">save</button>
@@ -488,9 +448,7 @@ describe("control-height", () => {
   });
 
   it("takes the floor from `--hit-floor` when the page declares one", () => {
-    // On `:root`, which is where `01-tokens.css` declares it and the only place
-    // the probe can inherit it from: `tokenPx` measures a box it appends to
-    // `document.body`, so a token declared on some inner element is invisible.
+    // On `:root`: `tokenPx` measures a box appended to `document.body`, so it inherits only from there.
     document.documentElement.style.setProperty("--hit-floor", "44px");
     mount(`<button class="fx-floored" style="height:30px;width:60px">x</button>`);
     const r = run<ControlHeight>("control-height", { tol: 1.5 });
@@ -518,12 +476,8 @@ describe("control-height", () => {
 });
 
 describe("radius", () => {
-  // 12px parent radius, 1px border, 4px inset -> ideal child radius 7.
-  //
-  // The child is 40px tall on purpose. The stadium exemption fires at half the
-  // child's SHORT side, so on a 20px-tall child every radius from 9.25px up is
-  // read as a deliberate shape and the too-round case becomes unreachable —
-  // measured, and it is the fixture that was wrong rather than the rule.
+  // 12px parent radius, 1px border, 4px inset -> ideal child radius 7. The child is 40px tall: the
+  // stadium exemption fires at half the short side, so a 20px child would hide the too-round case.
   const nest = (childRadius: string, cls: string): string =>
     `<div class="fx-parent" style="border:1px solid #000;border-radius:12px;padding:4px;width:80px">
        <div class="${cls}" style="border-radius:${childRadius};background:#eee;height:40px"></div>
@@ -561,12 +515,8 @@ describe("radius", () => {
   });
 
   it("measures the stadium threshold against the CHILD's short side, not the parent's", () => {
-    // Same 11px radius, same parent, two child heights. On the short child the
-    // radius is already half the box, so it is a shape; on the tall one it is a
-    // nesting decision and gets judged. Anything reading the parent's box here
-    // would answer the same for both.
-    // One parent each: two children stacked in one parent do not share a
-    // vertical inset, so the second would read anisotropic rather than round.
+    // Same radius, two child heights: a shape on the short child, a nesting on the tall one. One
+    // parent each, since stacked children do not share a vertical inset.
     mount(
       `<div class="fx-parent" style="border:1px solid #000;border-radius:12px;padding:4px;width:80px">
          <div class="fx-shortkid" style="border-radius:11px;background:#eee;height:20px"></div>
@@ -582,8 +532,7 @@ describe("radius", () => {
   });
 
   it("exempts a child sitting flush inside a clipping parent, and only a CLIPPING one", () => {
-    // The negative half is what makes this behavioral: flushness alone is not
-    // the exemption, so the same child in a parent that does not clip is judged.
+    // Negative half: the same child in a non-clipping parent is judged.
     mount(
       `<div class="fx-clip" style="border-radius:12px;overflow:hidden;padding:0;width:80px">
          <div class="fx-flush" style="border-radius:3px;background:#eee;height:20px"></div>
@@ -616,8 +565,7 @@ describe("radius", () => {
   });
 
   it("charges the corner's OWN border, so a one-sided rule is anisotropic", () => {
-    // Equal insets, unequal borders: the concentric rule subtracts inset PLUS
-    // that edge's border, so this corner is 5 in vertically and 8 horizontally.
+    // The rule subtracts inset PLUS that edge's border: 5 in vertically, 8 horizontally.
     mount(
       `<div class="fx-rail" style="border-block:1px solid #000;border-inline-start:4px solid #000;border-inline-end:4px solid #000;border-radius:12px;padding:4px;width:80px">
          <div class="fx-railchild" style="border-radius:7px;background:#eee;height:20px"></div>
@@ -654,16 +602,10 @@ describe("radius", () => {
   });
 
   it("judges only the corners where the child actually meets the parent's arc", () => {
-    // A narrow child at a wide parent's leading edge. Its TRAILING corners sit
-    // 356px in, well past where the parent's 6px arc ends, so they are not a
-    // nesting and must not be judged — without that gate both come back
-    // "anisotropic" and this shape is most of a real page.
+    // The TRAILING corners sit 356px in, past the parent's 6px arc, so they are not a nesting.
     mount(
-      // `display:flex` on the parents is load-bearing: a block parent puts an
-      // inline-block child on a text baseline, which leaves ~1px of descender
-      // space under it and makes the bottom inset differ from the top by more
-      // than the tolerance — a real asymmetry the walker is right to report, and
-      // not the thing this case is about.
+      // `display:flex` matters: a block parent puts an inline-block child on a baseline, leaving ~1px
+      // of descender space that is a real asymmetry, not this case's subject.
       `<div class="fx-wide" style="border-radius:6px;padding:4px;width:400px;background:#ddd;display:flex">
          <button class="fx-lead-ok" style="border-radius:2px;width:40px;height:20px"></button>
        </div>
@@ -681,12 +623,9 @@ describe("radius", () => {
   });
 
   it("does not judge a corner the child OVERFLOWS, which a negative inset marks", () => {
-    // The app's expandable pill card opens upward and sits above its parent's top
-    // edge, so its top insets are negative. A child outside the parent's box is
-    // not nested in that corner, so only the corners it is actually inside count.
-    // The child's radius stays well under half its short side on purpose: at 12px
-    // on a 20px-tall box the stadium exemption fires first and the gate is never
-    // reached, which is how the first version of this case passed vacuously.
+    // A child above its parent's top edge (the pill card opens upward) has negative top insets; only
+    // corners it is inside count. Its radius stays under half its short side, or the stadium
+    // exemption fires first and the case passes vacuously.
     mount(
       `<div class="fx-overflowed" style="border-radius:12px;padding:4px;width:80px;background:#ddd;position:relative">
          <div class="fx-escapee" style="border-radius:4px;background:#eee;height:40px;position:absolute;inset-block-start:-30px;inset-inline:4px"></div>
@@ -697,8 +636,7 @@ describe("radius", () => {
   });
 
   it("examines only radius-BEARING children, which is the rule's own scope", () => {
-    // A square child inside a rounded parent is the ordinary case, not a
-    // violation, so it never enters the pair set at all.
+    // A square child in a rounded parent is ordinary and never enters the pair set.
     mount(
       `<div class="fx-sqparent" style="border-radius:12px;padding:4px;width:80px;background:#ddd">
          <div class="fx-square" style="border-radius:0;background:#eee;height:20px"></div>
@@ -716,8 +654,7 @@ describe("radius", () => {
        </div>`,
     );
     const r = run<RadiusResult>("radius", { tol: 0.75 });
-    // Only the two bottom corners are a pair; the child is square there, so the
-    // finding names exactly those and never the top pair.
+    // Only the bottom corners pair, and the child is square there.
     expect(findingsFor(r, "fx-half")[0]?.corners).toBe("br,bl");
   });
 });
@@ -738,8 +675,7 @@ describe("reveal", () => {
   });
 
   it("reaches a control whose own rule hides it INSIDE a hidden container", () => {
-    // Two passes' worth of work in one call: unhiding the container is what makes
-    // the child's own `display: none` reachable.
+    // Unhiding the container makes the child's own `display: none` reachable.
     mount(
       `<div class="fx-outer" style="display:none">
          <button class="fx-inner">x</button>
@@ -752,10 +688,8 @@ describe("reveal", () => {
   });
 
   it("leaves a CLOSED dialog untouched and counts nothing for it", () => {
-    // The COUNT is the assertion that can fail. A box assertion cannot: revert
-    // lands on the UA `dialog:not([open])` rule, so the dialog stays hidden with
-    // the skip or without it — measured, and it is why the skip's stated reason
-    // is an honest `revealed` rather than modality.
+    // The COUNT is what can fail: revert lands on the UA `dialog:not([open])` rule, so the box stays
+    // hidden either way.
     mount(`<dialog class="fx-dlg"><button class="fx-in-dlg">x</button></dialog>`);
     const r = run<Reveal>("reveal");
     expect(r).toEqual({ revealed: 0, passes: 1 });
@@ -771,10 +705,7 @@ describe("reveal", () => {
   });
 
   it("counts an element it CANNOT unhide once, rather than once per pass", () => {
-    // A `<datalist>` is hidden by the UA on its tag, and `display: revert` rolls
-    // back to exactly that — measured. So it is the witness for the marker: with
-    // no marker the loop re-touches it every pass and reports 3 reveals over 3
-    // passes for one element that never moved.
+    // UA-hidden by tag, which `display: revert` restores: without the marker one element counts every pass.
     mount(`<datalist class="fx-dl"><option>x</option></datalist>`);
     const r = run<Reveal>("reveal");
     expect(r.revealed).toBe(1);
@@ -797,18 +728,15 @@ describe("contrast", () => {
   });
 
   it("reports the ratio to two decimals, against the published value for #767676", () => {
-    // #767676 on white is WCAG's own worked boundary case: 4.54:1, the darkest grey
-    // that passes. A ratio computed with the wrong luminance curve misses it.
+    // #767676 on white is WCAG's boundary case (4.54:1); a wrong luminance curve misses it.
     mount(`<div class="fx-c-edge" style="background:#fff;color:#767676;font-size:14px">x</div>`);
     const r = run<Contrast>("contrast", {});
     expect(r.passes.find((p) => hasClass(p.sel, "fx-c-edge"))?.ratio).toBe(4.54);
   });
 
   it("weights the channels per WCAG, which only a coloured ink can prove", () => {
-    // Every grey fixture in this file passes with the channels weighted equally,
-    // because R=G=B cancels the weights. These are the published ratios on white:
-    // pure blue 8.59:1 (blue carries 0.0722 of the luminance) and pure green 1.37:1
-    // (green carries 0.7152). Equal thirds put BOTH at 2.74.
+    // Greys cancel the channel weights. Published ratios on white: pure blue 8.59:1, pure green
+    // 1.37:1; equal thirds would give both 2.74.
     mount(
       `<div class="fx-c-blue" style="background:#fff;color:#0000ff;font-size:14px">blue</div>
        <div class="fx-c-green" style="background:#fff;color:#00ff00;font-size:14px">green</div>`,
@@ -827,14 +755,12 @@ describe("contrast", () => {
     const r = run<Contrast>("contrast", {});
     expect(r.passes.find((p) => hasClass(p.sel, "fx-c-big"))?.floor).toBe(3);
     expect(r.passes.find((p) => hasClass(p.sel, "fx-c-bold"))?.floor).toBe(3);
-    // Same ink, same surface, one point under the bold threshold: 4.5 applies and
-    // it fails. That pair is what proves the floor is chosen rather than constant.
+    // One point under the bold threshold: 4.5 applies, proving the floor is chosen, not constant.
     expect(findingFor(r, "fx-c-small")?.floor).toBe(4.5);
   });
 
   it("composites a SEMI-TRANSPARENT surface onto the layer beneath it", () => {
-    // The whole reason a rendered check exists beside the token gate: the ink is
-    // measured against #808080, which no declaration in the page states.
+    // Measured against #808080, which no declaration states: why a rendered check exists.
     mount(
       `<div class="fx-c-under" style="background:#000">
          <div class="fx-c-wash" style="background:rgba(255,255,255,0.5);color:#fff;font-size:14px">washed</div>
@@ -857,9 +783,7 @@ describe("contrast", () => {
   });
 
   it("falls through a transparent chain to the UA's white canvas, and says so", () => {
-    // Appended to the BODY rather than the fixture host, which is opaque so the hit
-    // tests elsewhere in this file resolve — inside it no chain can be transparent,
-    // and the walker correctly names the host instead.
+    // On the BODY: the opaque fixture host would end every chain, and the walker would name it.
     mount("");
     const bare = document.createElement("div");
     bare.className = "fx-c-bare";
@@ -877,8 +801,7 @@ describe("contrast", () => {
   });
 
   it("folds an ancestor OPACITY into the ink, which no static gate can see", () => {
-    // Black on white at 0.3 is grey on white: the token graph reads 21:1 and the
-    // reader sees 3.5:1.
+    // At 0.3 the token graph reads 21:1 and the reader sees 3.5:1.
     mount(
       `<div class="fx-c-dimbox" style="background:#fff;opacity:0.3">
          <div class="fx-c-dimtext" style="color:#000;font-size:14px">faint</div>
@@ -940,10 +863,7 @@ describe("contrast", () => {
   });
 
   it("skips text at a folded opacity of ZERO, which is not painted at all", () => {
-    // The ordinary state of a collapsed disclosure body and an unexpanded pill card.
-    // Measured on the live app before this: 10 of 15 violations were 1:1 rows for
-    // text nobody could look at, one of them 82 elements deep in a closed tool
-    // region. `--reveal` is how those surfaces get audited.
+    // A collapsed disclosure body or unexpanded pill card; `--reveal` audits those surfaces.
     mount(
       `<div class="fx-c-collapsed" style="background:#fff;opacity:0">
          <span class="fx-c-unseen" style="color:#fff;font-size:14px">invisible</span>
@@ -956,9 +876,7 @@ describe("contrast", () => {
   });
 
   it("exempts text in a DISABLED control, which 1.4.3 excuses outright", () => {
-    // "Text that is part of an inactive user interface component has no contrast
-    // requirement." This app dims a disabled control to 0.4, so its label fails on
-    // the numbers — measured live on a mid-turn Rewind at 1.84:1.
+    // WCAG: an inactive component's text has no contrast requirement; disabled dims to 0.4 here.
     mount(
       `<div style="background:#fff">
          <button class="fx-c-off" disabled style="opacity:0.4;color:#999;font-size:11px">
@@ -972,8 +890,7 @@ describe("contrast", () => {
     const r = run<Contrast>("contrast", {});
     expect(findingFor(r, "fx-c-offlabel")).toBeUndefined();
     expect(r.inactive.some((i) => hasClass(i.sel, "fx-c-offlabel"))).toBe(true);
-    // The enabled twin is identical but for `disabled`, so it still fails — which is
-    // what makes the exemption a reading of the attribute rather than of the dimming.
+    // The enabled twin still fails, so the exemption reads the attribute, not the dimming.
     expect(findingFor(r, "fx-c-onlabel")).toBeDefined();
   });
 
@@ -997,9 +914,7 @@ describe("contrast", () => {
   });
 
   it("calls the palette MIXED when a descendant resolves a different ink", () => {
-    // The theme-flip failure the runner's `--theme-settle` exists for: a subtree
-    // still on the previous palette. A custom property inherits, so a leaf can only
-    // disagree when something between it and the root re-declares the token.
+    // A subtree on the previous palette: a leaf disagrees only where something re-declares the token.
     document.documentElement.style.setProperty("--c-text-primary", "#111111");
     mount(
       `<div class="fx-c-stale" style="--c-text-primary:#eeeeee;background:#fff">
@@ -1071,9 +986,7 @@ describe("the injection contract", () => {
   });
 
   it("emits every helper a walker calls, so no page-side call is unbound", () => {
-    // The prelude binds by STRING, which no type checker can see: a helper
-    // renamed in `HELPERS` and not at its call sites throws only here and in the
-    // page. `new Function` gives it the page's scope, so the throw is the same.
+    // The prelude binds helpers by STRING: a rename missed at a call site throws only here and in the page.
     expect(() => runViaSource("radius", { tol: 0.75 })).not.toThrow();
     expect(() => runViaSource("control-height", { tol: 1.5 })).not.toThrow();
   });

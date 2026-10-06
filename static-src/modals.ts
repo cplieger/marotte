@@ -1,42 +1,23 @@
-// ---------------------------------------------------------------------------
-// Shared modal system — built on @cplieger/ui-primitives' createModal
-// (native <dialog>).
-//
-// Each modal's content element is pre-authored in index.html (id="X-modal",
-// data-modal); createModal wraps it in a <dialog class="uip-modal"> appended to
-// <body>. The platform then owns focus containment, the top layer, background
-// inerting, Escape, nested stacking, and focus-return-to-opener; createModal
-// adds ARIA wiring (auto aria-labelledby from a `-title` descendant), drag-safe
-// backdrop dismiss, the shared `is-leaving` fade-out, and an iOS-safe
-// ref-counted background scroll-lock.
-//
-// The old overlay-<div> system (initAllModals querying `.modal-overlay`, a
-// hand-rolled focus trap via a `modalTraps` WeakMap, `setupOverlayClose`
-// mousedown/mouseup dismissal, and openModal/closeModal toggling a `.hidden`
-// class) was removed in this rewrite — every one of those is now native or
-// provided by createModal.
-// ---------------------------------------------------------------------------
+// Shared modal system on @cplieger/ui-primitives' createModal (native <dialog>).
+// Each `[data-modal]` content element is pre-authored in index.html; createModal
+// wraps it in a <dialog> and owns focus, Escape, backdrop dismiss and scroll-lock.
 
 import { createModal, type ModalController } from "@cplieger/ui-primitives/modal";
 import { el } from "@cplieger/reactive";
 import { pollUntil, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
-import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import { decodeLoginOptions, decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import type { LoginOptions } from "./wire/types.gen.js";
 import { isSafeUrl } from "./utils-url.js";
 
-/** Pre-authored modal content element -> its createModal controller. */
 const controllers = new Map<HTMLElement, ModalController>();
-/** Open-order stack of content elements; closeTopModal closes the topmost. */
+/** Open order; closeTopModal closes the last. */
 const openStack: HTMLElement[] = [];
-/** Per-modal callbacks run after the modal finishes closing (via any path). */
 const closeCallbacks = new Map<HTMLElement, Set<() => void>>();
 
-/** Register a callback fired after `modal` finishes closing via ANY path
- *  (Close button, backdrop, Escape, or a programmatic close). Used for teardown
- *  that must run regardless of how the modal was dismissed — the login
- *  poll-abort and the MCP add/edit-form cleanup. Safe to call before the modal
- *  is initialised; the callback set is consulted at close time. */
+/** Run `fn` after `modal` finishes closing via ANY path (button, backdrop,
+ *  Escape, programmatic). Safe to call before the modal is initialised. */
 export function onModalClose(modal: HTMLDivElement, fn: () => void): void {
   let set = closeCallbacks.get(modal);
   if (set === undefined) {
@@ -46,8 +27,6 @@ export function onModalClose(modal: HTMLDivElement, fn: () => void): void {
   set.add(fn);
 }
 
-/** Runs once a modal has finished its fade-out: drop it from the open stack and
- *  fire any registered close callbacks. Wired as each controller's onClose. */
 function handleModalClosed(content: HTMLElement): void {
   const i = openStack.lastIndexOf(content);
   if (i !== -1) {
@@ -61,9 +40,7 @@ function handleModalClosed(content: HTMLElement): void {
   }
 }
 
-/** Lazily create (or fetch) the controller for a pre-authored modal content
- *  element. Idempotent: the controller is created once and reused, so an
- *  openModal call that races ahead of initAllModals still works. */
+/** Idempotent, so an openModal racing ahead of initAllModals still works. */
 function ensureModal(content: HTMLElement): ModalController {
   const existing = controllers.get(content);
   if (existing !== undefined) {
@@ -74,18 +51,14 @@ function ensureModal(content: HTMLElement): ModalController {
       handleModalClosed(content);
     },
   });
-  // The content is authored with `.hidden` (display:none) so it can't flash in
-  // <body> before createModal wraps it in a closed <dialog>. The <dialog> now
-  // owns visibility, so drop the class.
+  // Authored `.hidden` so it cannot flash in <body> before createModal wraps it;
+  // the <dialog> owns visibility from here.
   content.classList.remove("hidden");
   controllers.set(content, ctrl);
   wireCloseButtons(content, ctrl);
   return ctrl;
 }
 
-/** Wire any plain Close buttons (`.modal-header-row .icon-btn[aria-label=Close]`)
- *  to the controller's close(). The login modal has none; the platform +
- *  backdrop + Escape still dismiss it. */
 function wireCloseButtons(content: HTMLElement, ctrl: ModalController): void {
   for (const btn of content.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
     btn.addEventListener("click", () => {
@@ -94,24 +67,17 @@ function wireCloseButtons(content: HTMLElement, ctrl: ModalController): void {
   }
 }
 
-/** Auto-wire all pre-authored modals. Call once at startup. Each `[data-modal]`
- *  element becomes a createModal-managed <dialog>. openModal also lazily
- *  initialises its target, so this is a proactive convenience rather than a
- *  hard prerequisite. */
+/** Auto-wire every `[data-modal]` element. Optional: openModal initialises lazily. */
 export function initAllModals(): void {
   for (const content of document.querySelectorAll<HTMLElement>("[data-modal]")) {
     ensureModal(content);
   }
 }
 
-// --- Rolling output: shows last 4 lines with click-to-expand ---
-
 const EXPAND_HINT =
   '<svg class="output-expand-hint" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
 
-// Parse the constant expand-hint SVG ONCE at module load; each append imports a
-// fresh copy of the cached node rather than re-running DOMParser on every
-// output update / modal open.
+// Parsed once; each append imports a copy instead of re-running DOMParser.
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const EXPAND_HINT_NODE = new DOMParser().parseFromString(EXPAND_HINT, "text/html").body.firstChild!;
 
@@ -134,12 +100,9 @@ export class RollingOutput {
     this.bar.classList.add("hidden");
   }
 
-  /** The last 4 SOURCE lines, in a `.rolling-output-text` child that is the
-   *  clipped box. The wrapper is load-bearing: the bar draws the chrome and the
-   *  child carries the line clamp, because a clip and a padded box cannot be one
-   *  element (14-tools.css holds the measurement). A bare text node here means
-   *  nothing is capped, so the bar grows with every wrapped line. The expand
-   *  hint stays a direct child — it is `position: absolute` against the bar. */
+  /** Keeps the last 4 SOURCE lines in a `.rolling-output-text` child: the child
+   *  carries the line clamp because a clip and a padded box cannot be one element.
+   *  The expand hint stays a direct child, positioned against the bar. */
   append(text: string): void {
     this.full += (this.full !== "" ? "\n" : "") + text;
     const lines = this.full.split("\n").filter((l) => l.trim() !== "");
@@ -164,8 +127,7 @@ export class RollingOutput {
   }
 }
 
-/** Open a modal by its content element. Preserves the historical signature so
- *  callers passing `$.mcpModal` / `byId("filepicker-modal")` are unchanged. */
+/** Open a modal by its content element. */
 export function openModal(modal: HTMLDivElement): void {
   const ctrl = ensureModal(modal);
   if (!openStack.includes(modal)) {
@@ -179,10 +141,8 @@ export function closeModal(modal: HTMLDivElement): void {
   controllers.get(modal)?.close();
 }
 
-/** Close the topmost OPEN modal. Returns true if one was closed. Kept working
- *  so keys.ts's Escape handler is unchanged. The controller's doClose is
- *  idempotent, so this coexists safely with the platform's own Escape handling
- *  — if both fire, the second close is a no-op (no double fade-out, one onClose). */
+/** Close the topmost open modal; true if one closed. Idempotent, so it coexists
+ *  with the platform's own Escape handling. */
 export function closeTopModal(): boolean {
   for (let i = openStack.length - 1; i >= 0; i--) {
     const content = openStack[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
@@ -195,15 +155,9 @@ export function closeTopModal(): boolean {
   return false;
 }
 
-// --- Login modal ------------------------------------------------------------
-
-/** Active login-poll abort controller; aborted when the modal is dismissed. */
 let loginPollAbort: AbortController | null = null;
 let loginPollUnregister: (() => void) | null = null;
 
-/** Abort any in-flight login whoami poll. Wired as the login controller's
- *  onClose (via onModalClose) so ANY dismissal path — Close-less backdrop
- *  click, Escape, or the programmatic close on success — stops the poll. */
 function abortLoginPoll(): void {
   loginPollAbort?.abort();
   loginPollAbort = null;
@@ -213,6 +167,29 @@ function abortLoginPoll(): void {
 
 export function showLoginModal(): void {
   openModal($.loginModal);
+  void apiGetTyped<LoginOptions>("/api/login/options", decodeLoginOptions).then((opts) => {
+    if (opts !== null) {
+      applyLoginOptions(opts);
+    }
+  });
+}
+
+/** Offer only the sign-in doors the administrator permits and pre-fill the start
+ *  URL. An unreadable answer offers both, as kiro-cli does for a missing file. */
+export function applyLoginOptions(opts: LoginOptions): void {
+  byId<HTMLButtonElement>("modal-login-free").classList.toggle("hidden", !opts.builder_id);
+  byId<HTMLButtonElement>("modal-login-sso").classList.toggle("hidden", !opts.idc);
+  const provider = byId<HTMLInputElement>("modal-provider");
+  const region = byId<HTMLInputElement>("modal-region");
+  if (provider.value === "" && opts.idc_start_url !== undefined) {
+    provider.value = opts.idc_start_url;
+  }
+  if (region.value === "" && opts.idc_region !== undefined) {
+    region.value = opts.idc_region;
+  }
+  if (opts.idc && !opts.builder_id) {
+    byId<HTMLDivElement>("modal-sso-form").classList.remove("hidden");
+  }
 }
 
 export function hideLoginModal(): void {
@@ -220,10 +197,8 @@ export function hideLoginModal(): void {
 }
 
 export function initLoginModal(onLoggedIn: () => void): void {
-  // Abort the whoami poll on every login-modal close path. The login modal has
-  // no Close button, so dismissal is backdrop / Escape / the programmatic close
-  // on success — all funnel through the controller's onClose. This must not
-  // regress: a dismissed login must never leave a detached poll running.
+  // Every login-modal close path must stop the poll; with no Close button, all
+  // dismissals funnel through the controller's onClose.
   onModalClose($.loginModal, abortLoginPoll);
 
   const freeBtn = byId<HTMLButtonElement>("modal-login-free");
@@ -245,9 +220,7 @@ export function initLoginModal(onLoggedIn: () => void): void {
   });
 
   const submit = (): void => {
-    // Auto-prepend https:// so users can paste "amzn.awsapps.com/start"
-    // without thinking about the scheme. validateProvider on the
-    // server requires an https URL; cover that UX gap here.
+    // The server's validateProvider requires https; users paste bare hosts.
     let provider = providerInput.value.trim();
     if (provider !== "" && !/^https?:\/\//i.test(provider)) {
       provider = "https://" + provider;
@@ -263,8 +236,7 @@ export function initLoginModal(onLoggedIn: () => void): void {
 
   ssoSubmit.addEventListener("click", submit);
 
-  // Enter on either input submits. No form element wraps these so we
-  // wire keydown manually; matches the main prompt-input UX.
+  // No <form> wraps these, so Enter is wired by hand.
   const onEnter = (e: KeyboardEvent): void => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -307,9 +279,8 @@ function doLogin(
         return;
       }
       if (d.error !== undefined) {
-        // kiro-cli refuses a fresh login while a session exists; the
-        // whoami parse bug is the usual reason we end up here. Reload
-        // so checkAuthAndStart runs again with the tolerant parser.
+        // kiro-cli refuses a fresh login while a session exists (usually a whoami parse
+        // miss); reload so checkAuthAndStart re-runs with the tolerant parser.
         if (d.error === "already_logged_in") {
           status.textContent = "";
           status.append("You're already signed in. ");
@@ -359,12 +330,8 @@ function doLogin(
           AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000),
         ]);
         void (async () => {
-          // Wait-then-poll /api/whoami every 3s until it reports signed_in
-          // (terminal), the user dismisses (ctrl), or the 10-minute deadline
-          // fires — both rolled into `signal`. `signed_out` is the expected
-          // answer for most of the window and keeps polling; so does
-          // `unavailable`, which is the state that used to be indistinguishable
-          // from a sign-out and would have ended the poll at the first hiccup.
+          // Poll until signed_in, a dismiss, or the deadline. `signed_out` and
+          // `unavailable` keep polling: both are expected mid-window.
           const outcome = await pollUntil(
             (s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s),
             {
@@ -380,10 +347,9 @@ function doLogin(
             onLoggedIn();
             return;
           }
-          // Otherwise aborted: distinguish a user dismiss from the deadline.
           if (ctrl.signal.aborted) {
             return;
-          } // user dismissed
+          }
           loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
           loginPollUnregister = null;
           status.textContent = "Login timed out. Please reload and try again.";

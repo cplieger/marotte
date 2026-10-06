@@ -14,56 +14,35 @@ import (
 	"github.com/cplieger/wiregen/v3"
 )
 
-// The bug class these tests exist for: an SSE event marotte broadcasts whose
-// payload type is not in the registry, so the generator emits no decoder for
-// it, so the client hand-declares the shape in bus.ts and validates nothing at
-// runtime. It is not hypothetical — the agent-terminal trio shipped that way
-// and the SSE table still carries the comment recording it. Nothing in the
-// build catches it, because both halves compile perfectly: the Go side
-// broadcasts a struct and the TypeScript side declares an interface, and
-// neither one mentions the other.
-//
-// So the registry is walked from both ends. A payload registered but unbound
-// is a type emitted for nobody; a payload declared but unregistered is an
-// event on the wire with no contract behind it.
+// An SSE payload type missing from the registry gets no decoder, so the client hand-declares
+// its shape and both halves still compile. The registry is walked from both ends: registered
+// but unbound, and declared but unregistered.
 
-// marottePkgPath is read off a registration rather than written as a literal, so
-// renaming the package cannot leave these tests silently scanning nothing.
+// marottePkgPath is read off a registration, so a package rename cannot leave these tests
+// scanning nothing.
 var marottePkgPath = wiregen.TypeRef[marotte.ChatHeader]().PkgPath
 
-// emptySignalPayloads are the payload types deliberately absent from the
-// registry. Each is an empty struct: the event is a pure invalidation signal
-// ("something changed, refetch"), so there is no field for a generated decoder
-// to validate and the emitted TypeScript would be an empty interface behind a
-// decoder that accepts anything. The event type itself is the whole message.
-//
-// A payload only belongs here while it stays empty. Give one of them a field
-// and it needs a decoder like any other payload, which is why
-// TestPayloadExemptions_AreStillEmptyStructs fails if that happens.
+// emptySignalPayloads are payload types deliberately unregistered: empty structs for pure
+// invalidation events, with nothing to decode. TestPayloadExemptions_AreStillEmptyStructs
+// fails once one gains a field.
 var emptySignalPayloads = []string{
 	"CompactionStartedPayload",
 	"ForgesChangedPayload",
 	"HooksChangedPayload",
 	"MCPConfigChangedPayload",
+	"MCPPoolChangedPayload",
+	"PowersChangedPayload",
+	"RecipesChangedPayload",
 	"SettingsUpdatedPayload",
+	"SlashCommandsChangedPayload",
+	"SteeringIssuesChangedPayload",
 	"SubjectChangedPayload",
 }
 
-// unboundDataPayloads are payload types that DO carry data and are NOT
-// registered. This is the defect above, live, in four places: each of these is
-// broadcast by production code, and each has its shape hand-written in
-// static-src/bus.ts with no generated decoder and no runtime validation —
-// chat_status as {status?, description?}, mcp_prewarm as {package, state},
-// mode_changed as {mode_id}, working_label as {label}.
-//
-// The list is here rather than in a comment somewhere because a known gap that
-// no test names is indistinguishable from a gap nobody has noticed. Closing it
-// means registering each type, adding its SSE binding, regenerating
-// static-src/wire/, and moving the client to the generated decoder — a
-// cross-language change that lands as one commit, which is why this one only
-// pins the boundary instead of crossing it.
-//
-// Shrinking this list is the fix. Growing it requires a reason.
+// unboundDataPayloads are data-carrying payloads that are NOT registered: broadcast by
+// production code with shapes hand-written in static-src/bus.ts and no runtime validation.
+// Named here because an unnamed known gap looks like an unnoticed one. Shrinking this list
+// is the fix; growing it requires a reason.
 var unboundDataPayloads = []string{
 	"ChatStatusPayload",
 	"MCPPrewarmPayload",
@@ -71,38 +50,15 @@ var unboundDataPayloads = []string{
 	"WorkingLabelPayload",
 }
 
-// pendingClientBindings are payload types that ARE registered — so their
-// TypeScript type and decoder are generated — and deliberately have no SSE
-// binding yet.
-//
-// EMPTY, which is the state this list is for: tabs_changed's Go half landed in
-// stage 2b, its client half in stage 2c, and the binding went in with the bus.ts
-// SSEPayloads entry that makes registry.gen.ts's registration line compile.
-//
-// This list is NOT unboundDataPayloads' twin. That one names payloads with no
-// registration at all, so the client hand-writes the shape and validates nothing.
-// A member here has a generated decoder waiting; what is missing is one line in
-// each language, landing together.
-//
-// Growing it requires exactly this argument: the type is registered, and binding
-// it would break the other language's build TODAY. Nothing weaker — the two
-// tests below hold every entry to both halves of that claim.
+// pendingClientBindings are registered payload types (decoder generated) deliberately
+// without an SSE binding yet, because binding would break the other language's build
+// TODAY. Empty is its normal state; the two tests below hold every entry to that claim.
 var pendingClientBindings = []string{}
 
-// declaredMarottePayloads parses internal/marotte and returns every exported type
-// whose name ends in Payload, mapped to the field count of its struct
-// definition.
-//
-// It reads the SOURCE rather than reflecting over a hand-written list of types,
-// because the whole question is which types exist that the list does not
-// mention. Reflection can only enumerate what something already references.
-//
-// Every .go file is parsed directly rather than going through a package loader,
-// and that is deliberate rather than a shortcut: a loader resolves build tags
-// and would drop a file that does not match the current platform, while a
-// payload declared behind a build tag is on the wire wherever it does build and
-// needs a registration just the same. Excluding it here would be the loader
-// hiding exactly the case this test is for.
+// declaredMarottePayloads parses internal/marotte and returns every exported *Payload type
+// with its struct field count. It reads SOURCE because the question is what a list does
+// not mention, and parses every file directly: a loader would drop a build-tagged payload
+// that is still on the wire where it builds.
 func declaredMarottePayloads(t *testing.T) map[string]int {
 	t.Helper()
 	dir := filepath.Join("..", "marotte")
@@ -158,9 +114,8 @@ func registeredMarottePayloads(t *testing.T) []string {
 	return out
 }
 
-// TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt is the table walk: a
-// new marotte.*Payload type cannot reach the SSE wire without either a
-// registration or an explicit entry in one of the two exemption lists above.
+// TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt pins that a new marotte.*Payload
+// cannot reach the SSE wire without a registration or an exemption entry.
 func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 	declared := declaredMarottePayloads(t)
 	registered := registeredMarottePayloads(t)
@@ -179,11 +134,8 @@ func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 	}
 }
 
-// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding walks the other
-// direction. A payload in wireTypes with no entry in sseEvents is a
-// TypeScript type generated for an event no decoder is registered against —
-// the client would fall back to using it as a bare interface, which is the
-// state the registration was supposed to leave behind.
+// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding walks the other direction: a payload
+// in wireTypes with no sseEvents entry is a type generated for no decoder.
 func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 	r := Registry()
 	bound := make([]string, 0, len(r.SSEEvents))
@@ -203,10 +155,8 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 	}
 }
 
-// TestPendingClientBindings_AreRegisteredAndUnbound holds that list to its stated
-// reason from both sides. An entry that is not registered belongs in
-// unboundDataPayloads instead (a different, worse gap), and one that HAS been
-// bound has spent its exemption — leaving it would hide the next real omission.
+// TestPendingClientBindings_AreRegisteredAndUnbound holds that list to its reason: an
+// unregistered entry belongs in unboundDataPayloads, a bound one has spent its exemption.
 func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
 	registered := registeredMarottePayloads(t)
 	bound := make([]string, 0, len(Registry().SSEEvents))
@@ -225,9 +175,7 @@ func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
 	}
 }
 
-// TestRegistry_EverySSEBindingNamesARegisteredType guards the typo. TypeName
-// is a STRING, so a misspelling is not a compile error here; it becomes a
-// generator-time lookup that finds nothing.
+// TestRegistry_EverySSEBindingNamesARegisteredType guards the typo: TypeName is a string.
 func TestRegistry_EverySSEBindingNamesARegisteredType(t *testing.T) {
 	r := Registry()
 	names := make([]string, 0, len(r.Types))
@@ -243,8 +191,8 @@ func TestRegistry_EverySSEBindingNamesARegisteredType(t *testing.T) {
 	}
 }
 
-// TestRegistry_NoDuplicateSSEEventTypes pins one-decoder-per-event. Two
-// entries for one event type is a silent last-wins in the generated registry.
+// TestRegistry_NoDuplicateSSEEventTypes pins one decoder per event; a duplicate is a
+// silent last-wins.
 func TestRegistry_NoDuplicateSSEEventTypes(t *testing.T) {
 	seen := map[string]string{}
 	for _, e := range Registry().SSEEvents {
@@ -256,9 +204,7 @@ func TestRegistry_NoDuplicateSSEEventTypes(t *testing.T) {
 	}
 }
 
-// TestPayloadExemptions_AreStillEmptyStructs holds the empty-signal exemption
-// to its stated reason. The moment one of those payloads gains a field, the
-// argument for exempting it ("nothing to decode") stops being true.
+// TestPayloadExemptions_AreStillEmptyStructs fails once an exempt payload gains a field.
 func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
 	declared := declaredMarottePayloads(t)
 	for _, name := range emptySignalPayloads {
@@ -275,10 +221,8 @@ func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
 	}
 }
 
-// TestPayloadExemptions_AreNotStale stops either exemption list from rotting
-// into a place names go to be forgotten. An entry that has since been
-// registered, or whose type is gone, must leave the list — otherwise the list
-// stops describing the gap and starts hiding a fixed one.
+// TestPayloadExemptions_AreNotStale removes an exemption whose type was registered or is
+// gone, so the lists cannot hide a fixed gap.
 func TestPayloadExemptions_AreNotStale(t *testing.T) {
 	declared := declaredMarottePayloads(t)
 	registered := registeredMarottePayloads(t)
@@ -303,30 +247,11 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 	}
 }
 
-// TestRegistry_DeclaresNoTypeOrDecoderMappings is the guard for a defect that
-// has no symptom: a mapping keyed on a stdlib type name that the stdlib turns
-// into an alias.
-//
-// wiregen's TypeMappings and DecoderMappings are keyed by the resolved
-// importpath.Type that go/types reports, and go/types resolves an alias past its
-// own name. json.RawMessage was a named type in encoding/json through Go 1.26
-// and is an ALIAS for encoding/json/jsontext.Value from Go 1.27, so a consumer
-// entry spelled "encoding/json.RawMessage" — the only spelling its own source
-// ever shows — silently stopped matching on the toolchain bump: no error, and a
-// wire field emitted with the built-in fallback type instead of the mapped one.
-//
-// Measured with go/packages on go1.27.0 against marotte's own types: ToolCall.Input,
-// Recipe.Plan and RPCError.Data are each a *types.Alias whose own key is
-// "encoding/json.RawMessage" and whose resolved key is
-// "encoding/json/jsontext.Value". So the precondition is live here; what makes
-// marotte immune is that it registers no mapping at all, which is a property of
-// the registry VALUE and therefore worth asserting rather than grepping for.
-// Both artifacts regenerate byte-identically across the library fix, confirming
-// nothing depended on either map.
-//
-// If a mapping is ever needed, register BOTH spellings. wiregen v2 matches the
-// alias name too, but only when one of the maps holds it, so a single stale key
-// is still a silent miss on the next stdlib alias.
+// TestRegistry_DeclaresNoTypeOrDecoderMappings guards a symptomless defect: wiregen's
+// TypeMappings and DecoderMappings key on the alias-resolved type, and from Go 1.27
+// json.RawMessage is an ALIAS of jsontext.Value, so a "encoding/json.RawMessage" key
+// silently stops matching. marotte registers no mapping, a property of the registry value.
+// If a mapping is ever needed, register BOTH spellings.
 func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
 	r := Registry()
 	if len(r.TypeMappings) != 0 {

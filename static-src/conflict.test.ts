@@ -1,4 +1,3 @@
-// Table-driven tests for conflict.ts — parseConflicts and resolveHunk.
 import { describe, it, expect } from "vitest";
 import { parseConflicts, resolveHunk, type ConflictFile, type Resolution } from "./conflict.js";
 
@@ -73,9 +72,7 @@ describe("parseConflicts", () => {
       ].join("\n"),
       expectedHunkCount: 1,
       check(f) {
-        // The base section (ancestor content) belongs to NO side: ours
-        // stops at the ||||||| marker so a resolution can never splice
-        // the marker line or ancestor lines into the file.
+        // The diff3 base section belongs to no side: ours stops at `|||||||`, so a resolution never splices it in.
         expect(f.hunks[0]!.oursLines).toEqual(["ours"]);
         expect(f.hunks[0]!.theirsLines).toEqual(["theirs"]);
       },
@@ -279,12 +276,7 @@ describe("resolveHunk", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Marker-shaped lines in the wrong place. The parser runs over whatever the file
-// contains, and `=======` is also a Markdown H1 underline while `|||||||` is a
-// plausible table row — so a conflicted document really does carry lines that
-// look like markers outside the hunk they would belong to.
-// ---------------------------------------------------------------------------
+// Marker-shaped lines out of place: `=======` is also a Markdown H1 underline and `|||||||` a plausible table row.
 describe("parseConflicts on marker-shaped content", () => {
   it("does not look for the separator above the head marker", () => {
     const file = parseConflicts(
@@ -338,8 +330,6 @@ describe("parseConflicts on marker-shaped content", () => {
     expect(file.hunks.map((h) => h.oursLines)).toEqual([[">>>>>>> stray"]]);
   });
 
-  // Otherwise content the parser already consumed can be read a second time as
-  // the head of a hunk that is not there.
   it("resumes scanning strictly after the hunk it consumed", () => {
     const file = parseConflicts(
       [
@@ -360,15 +350,8 @@ describe("parseConflicts on marker-shaped content", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A second opener before the separator.
-//
-// git never writes one, but a document ABOUT merge conflicts, a test fixture, or
-// an already-mangled working tree does — and absorbing it into the ours side
-// makes resolveHunk splice a conflict marker back into the file, which save then
-// persists. The module's own header records that exact failure for the diff3
-// base marker, which is the precedent for treating this as a defect.
-// ---------------------------------------------------------------------------
+// A second opener before the separator (a document about conflicts, a fixture): absorbing it into ours makes
+// resolveHunk splice a marker back into the file.
 
 describe("parseConflicts with an opener inside the ours side", () => {
   const quoted = [
@@ -388,8 +371,6 @@ describe("parseConflicts with an opener inside the ours side", () => {
     }
   });
 
-  // The malformed first opener is skipped and the scan re-enters at the second,
-  // which IS a well-formed hunk head.
   it("takes the second opener as the hunk head", () => {
     const file = parseConflicts(quoted);
     expect(file.hunks.map((h) => h.startLine)).toEqual([2]);
@@ -397,9 +378,7 @@ describe("parseConflicts with an opener inside the ours side", () => {
     expect(file.hunks[0]!.theirsLines).toEqual(["theirs"]);
   });
 
-  // The guard is `sep === -1`, so a THEIRS side quoting an opener is untouched —
-  // dropping that condition would truncate a working resolution, which is
-  // strictly worse than the defect being fixed.
+  // The guard is `sep === -1`, so a theirs side quoting an opener is untouched; dropping it truncates a resolution.
   it("keeps an opener quoted in the theirs side", () => {
     const file = parseConflicts(
       ["<<<<<<< HEAD", "ours", "=======", "<<<<<<< quoted", "theirs", ">>>>>>> b", ""].join("\n"),
@@ -409,9 +388,7 @@ describe("parseConflicts with an opener inside the ours side", () => {
   });
 });
 
-// A resolution can empty a file outright — the whole file is one conflict and the
-// side the reader keeps is blank — and the editor saves whatever comes back, so
-// the trailing newline has to survive the round trip either way.
+// The whole file is one conflict and the kept side is blank: the trailing newline must survive either way.
 describe("resolveHunk on a file that is nothing but the conflict", () => {
   const body = ["<<<<<<< HEAD", "=======", "theirs", ">>>>>>> branch"];
 

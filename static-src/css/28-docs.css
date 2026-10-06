@@ -221,6 +221,20 @@
   padding: var(--sp-3);
 }
 
+.agent-run-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-2);
+}
+
+.agent-run-prompt {
+  inline-size: 100%;
+  min-inline-size: min(20rem, 100vw - 4 * var(--sp-4));
+  resize: vertical;
+  font-family: inherit;
+}
+
 .sched-picker {
   display: flex;
   flex-direction: column;
@@ -346,4 +360,89 @@
 
 .sched-actions {
   justify-content: flex-end;
+}
+
+/* --- Memories tab --------------------------------------------------------- */
+
+.memories-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.memories-head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.memories-count {
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.memories-head-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.memories-off-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+/* The checkbox sits in the row's lead slot, centred on the title line. */
+.memories-lead {
+  display: flex;
+  align-items: center;
+  padding-inline-start: var(--sp-3);
+}
+
+.memories-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.memories-content {
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.memories-detail-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.memories-field {
+  font-family: var(--font-sans);
+}
+
+.memories-field > .recipe-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.memories-textarea {
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.powers-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.powers-installed {
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
 }

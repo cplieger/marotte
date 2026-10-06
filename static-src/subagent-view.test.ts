@@ -1,13 +1,6 @@
-// ---------------------------------------------------------------------------
-// The subagent page: the eviction exemption its tab earns, the demand that ends its
-// lifetime, and the navigation between the stages of one pipeline.
-//
-// Everything here is projected out of the launching chat's ENTRY LOG: a delegate is a
-// LANE, its invocation is a `tool_call` in the issuer's lane, and the page mounts one
-// detached render per member the reader opened. So the release properties are asked of
-// `messages-blocks.ts`'s own render registry rather than of a repaint gate: a render
-// left registered under a key nothing disposes outlives its DOM.
-// ---------------------------------------------------------------------------
+// The subagent page: the eviction exemption its tab earns, the demand that ends its lifetime, and
+// navigation between stages. Release properties are asked of `messages-blocks.ts`'s render
+// registry: a render left registered outlives its DOM.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
@@ -59,10 +52,8 @@ const { clearAllEntrySigs } = await import("./store-signals.js");
 const { mountedWindow } = await import("./messages-blocks.js");
 const mockHasTab = vi.mocked(hasTab);
 
-/** The key `messages-blocks.ts` files a DETACHED render under — its own `renderIDFor`,
- *  which is not exported. Mirrored here because the release properties below can only be
- *  asked of the registry: the chat's transcript version bumps for a laned entry too, so
- *  "nothing repainted" is no longer an observable a released render can be told by. */
+/** `messages-blocks.ts`'s unexported `renderIDFor`, mirrored: the registry is the only observable
+ *  of a release. */
 function detachedRenderID(turnID: string, lane: string): string {
   return `${turnID}#${lane}`;
 }
@@ -72,14 +63,8 @@ function memberIsMounted(turnID: string, lane: string): boolean {
   return mountedWindow(detachedRenderID(turnID, lane)) !== undefined;
 }
 
-// --- The page's DEMAND input ---
-//
-// `openSubagentRefs` is what the page's lifetime hangs on: the demand effect drops the
-// mounted page once no open subagent tab names a member of the group it projects. Under
-// `{ spy: true }` it is the REAL reader answering `[]` from a projection no case here
-// ever mutates, so every scenario below would be mounting a page nothing wants. A
-// controllable fake instead, TRACKED like production's so stating a different demand
-// re-runs the effect.
+// The page's DEMAND input: a controllable fake of `openSubagentRefs`, TRACKED like production's,
+// since the real reader answers `[]` here.
 let refs: readonly string[] = [];
 const refsVersion = signal(0);
 
@@ -216,10 +201,8 @@ const REVIEW_CALL = `invoke_subagent_${DRIVER}_stage_review`;
 const PLAN = "st-plan";
 const REVIEW = "st-review";
 
-/** One `orchestrate_subagent` pipeline of two stages in one turn: the driver and both
- *  invocations in the chat's lane, each stage's own prose in its lane. This is the shape
- *  that produces the left-hand list — two selectable rows, only one of which the tab
- *  names — and the stage ids carry the driver, which is the whole pipeline join. */
+/** A two-stage `orchestrate_subagent` pipeline in one turn; the stage ids carry the driver (the
+ *  join). */
 function pipeline(
   chat: string,
   turn: string,
@@ -281,11 +264,7 @@ beforeEach(() => {
   });
 });
 
-// An open subagent tab projects its chat's transcript, so evicting that chat would
-// blank a surface someone deliberately opened. The predicate is answered from the
-// RESIDENT lanes — the delegates reachable from this chat are the lanes its entries
-// name — and a tab for a delegate whose turn is not resident was already rendering the
-// not-resident notice, so eviction changes nothing it was showing.
+// Evicting the chat an open subagent tab projects would blank it; answered from the RESIDENT lanes.
 describe("subagentTabProjectsChat", () => {
   it("exempts a chat with an open subagent tab for one of its delegates", () => {
     seedChats({ chat: "c1", turn: "t1" });
@@ -347,10 +326,7 @@ describe("subagentTabProjectsChat", () => {
   });
 });
 
-// The page's live input is the LANE, not the transcript. Nothing here ever builds a
-// transcript view, so the launching chat has no other surface at all: what puts a
-// delegate's later words on screen is this page's own subscription plus its per-member
-// refresh.
+// The page's live input is the LANE: with no transcript view, only its own subscription paints.
 describe("a delegate's prose with no transcript view anywhere", () => {
   it("renders an entry that arrives in the delegate's lane after the mount", async () => {
     const chat = "c-stream";
@@ -374,10 +350,7 @@ describe("a delegate's prose with no transcript view anywhere", () => {
   });
 });
 
-// A switch drops the previous delegate's page. It has to drop that page's RENDER with
-// it, or the render outlives its DOM: `messages-blocks.ts` answers its repaint gate as a
-// union over every registered render, so one left behind keeps claiming "still mounted"
-// for DOM nobody can see.
+// A switch must drop the previous page's RENDER: the repaint gate is a union over registered renders.
 describe("switching delegates releases the page's render", () => {
   it("unregisters the outgoing delegate's render and keeps the incoming one", async () => {
     const chat = "c-switch";
@@ -389,10 +362,7 @@ describe("switching delegates releases the page's render", () => {
     push(chat, turn, "tool_call", invocation("tc-B", "sw-B"), { id: "tc-B" });
     push(chat, turn, "text", { text: "second delegate" }, { lane: "sw-B" });
 
-    // BOTH tabs stay open across the switch, because that is what a tab switch is —
-    // and it is what keeps this a SUPERSEDE test. With only the incoming tab open the
-    // demand effect would drop the outgoing page first, and the assertions below would
-    // pass through a different mechanism than the one they name.
+    // BOTH tabs open, so this tests SUPERSEDE, not the demand effect.
     setSubagentTabs([subagentRef(chat, "sw-A"), subagentRef(chat, "sw-B")]);
     showSubagent(chat, "sw-A");
     await vi.waitFor(() => {
@@ -414,11 +384,7 @@ describe("switching delegates releases the page's render", () => {
   });
 });
 
-// The left-hand list draws every stage of the pipeline, so every row is a selectable
-// node — and the page used to project only the member its TAB named, which left each
-// sibling's transcript host permanently empty and answered the selection with a note
-// saying to open that stage's own page. These cases pin the navigation that replaced
-// it: a click renders the clicked stage IN PLACE.
+// Every stage row is selectable, so a click renders the clicked stage IN PLACE.
 describe("selecting a sibling stage in the tree", () => {
   it("renders that stage's transcript in the same sub-tab", async () => {
     const chat = "c-nav";
@@ -440,8 +406,7 @@ describe("selecting a sibling stage in the tree", () => {
     expect(review?.hidden).toBe(false);
     expect(review?.textContent).toContain("the review stage report");
     expect(plan?.hidden).toBe(true);
-    // No note at all, and in particular not the retired "this stage has its own page"
-    // dead end: the transcript is here.
+    // No note at all: the transcript is here.
     expect(emptyNoteText()).not.toContain("own page");
     expect(body().querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
   });
@@ -520,10 +485,7 @@ describe("selecting a sibling stage in the tree", () => {
     );
   });
 
-  // Every MOUNTED stage is brought up to date, not only the one on screen. A mounted
-  // body is hidden rather than removed, so refreshing just the shown one would leave a
-  // stage the reader visited frozen at the moment they left it — and going back would
-  // show a stale snapshot until the next rebuild.
+  // A hidden mounted body must stay current, or revisiting shows a stale snapshot.
   it("keeps a mounted-but-hidden stage up to date", async () => {
     const chat = "c-bg";
     const turn = "t-bg";
@@ -548,7 +510,7 @@ describe("selecting a sibling stage in the tree", () => {
   });
 
   // The release property, extended to the multi-body map: a switch to another chat
-  // disposes EVERY member's render, not just the one the old tab named.
+  // disposes EVERY member's render, not just the one the outgoing tab named.
   it("releases every mounted stage when the reader switches chat", async () => {
     const chat = "c-nav-drop";
     const turn = "t-nav-drop";
@@ -578,11 +540,8 @@ describe("selecting a sibling stage in the tree", () => {
   });
 });
 
-// DEMAND IS AN INPUT. The page's lifetime used to end only when another subagent tab
-// mounted over it, so closing the last one left the whole page and one detached render
-// per member the reader had opened registered in `messages-blocks.ts`. A second effect
-// over the open-tab set closes it, and the membership test is what makes the
-// shared-group case structural rather than a special case.
+// DEMAND IS AN INPUT: an effect over the open-tab set releases the page; the membership test makes
+// the shared-group case structural.
 describe("demand for the mounted page", () => {
   /** Both members of the pipeline, because a release that reached one render and not the
    *  other is exactly the shape a hand-written reset produces. */
@@ -613,10 +572,7 @@ describe("demand for the mounted page", () => {
     neitherStageIsMounted(turn);
   });
 
-  // The case the retired deferral named as its blocker: two stage tabs of one pipeline
-  // share ONE page, so a per-tab close handler would have to know whether any sibling
-  // still wants it. The membership test answers that structurally — a `Map.has` against
-  // the page's own projection — so nothing has to be tracked per tab.
+  // Two stage tabs share ONE page; the membership test (`Map.has` on the projection) keeps it.
   it("keeps the page when one of two stage tabs sharing its group closes", async () => {
     const chat = "c-sibling";
     const turn = "t-sibling";
@@ -681,10 +637,8 @@ describe("demand for the mounted page", () => {
     neitherStageIsMounted(turn);
   });
 
-  // Superseding is still the OTHER release path, and demand holding is not a keep rule:
-  // the outgoing group's tabs are both still open here, and its page goes anyway. The
-  // tab set does not move across the switch, so the demand effect provably does not run
-  // and `mountPage`'s own release is what is under test.
+  // Superseding is the other release path: the tab set does not move, so `mountPage`'s own release
+  // is under test.
   it("still supersedes: mounting another group's page releases the previous one", async () => {
     const chat = "c-supersede";
     const turn = "t-supersede";
@@ -713,12 +667,8 @@ describe("demand for the mounted page", () => {
     neitherStageIsMounted(turn);
   });
 
-  // Why the drop writes `shown` rather than calling the release directly. The paint
-  // effect's dependencies are `shown` and the launching chat's version, so a drop that
-  // cleared only the mounted page leaves `shown` naming the closed delegate — and that
-  // chat's next transcript entry re-runs the paint effect, re-projects, and mounts the
-  // page again for a tab that no longer exists. The demand effect cannot notice,
-  // because the tab set did not move.
+  // The drop writes `shown`: the paint effect depends on `shown` and the chat's version, so the next
+  // entry would re-mount a page for a closed tab.
   it("does not re-mount the page on the launching chat's next entry", async () => {
     const chat = "c-resurrect";
     const turn = "t-resurrect";
@@ -744,10 +694,7 @@ describe("demand for the mounted page", () => {
     neitherStageIsMounted(turn);
   });
 
-  // Why demand is a SECOND effect rather than a read added to the paint effect: the
-  // paint effect re-projects the group and repaints the page, so taking the tab set as
-  // one of its dependencies would do that on every tab open, close, pin and reorder
-  // anywhere in the app.
+  // A SECOND effect: taking the tab set in the paint effect would re-project on every tab mutation.
   it("does not re-project the group on a tab-set change that leaves the demand alone", async () => {
     const chat = "c-churn";
     const turn = "t-churn";
@@ -772,10 +719,7 @@ describe("demand for the mounted page", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The subagent kind's refresh. The page is a projection of the launching chat's
-// entries, so the chat's window is the only thing that can make it current.
-// ---------------------------------------------------------------------------
+// The page projects the launching chat's entries, so the chat's window is what refreshes it.
 
 describe("refreshSubagent delegates to the launching chat", () => {
   it("refreshes the launching chat and nothing else", () => {
@@ -790,12 +734,8 @@ describe("refreshSubagent delegates to the launching chat", () => {
 });
 
 describe("the page's own door", () => {
-  // A DEEP LINK awaits this, and the router's claim on the location is released when it
-  // settles: `app.ts`'s `subagent` branch returns the promise so no unrelated projection
-  // emit can write the restored tab's route over the URL the reader opened. Voiding the
-  // tab open here resolved that branch as soon as the CHUNK had loaded — measured on the
-  // live app, a fresh load of `/chat/{id}/subagent/{taskId}` was showing
-  // `/chat/{firstChatId}` within six seconds with the delegate's page never rendered.
+  // A DEEP LINK awaits this: `app.ts`'s `subagent` branch holds the router's claim until it settles,
+  // so no projection emit overwrites the URL the reader opened.
   it("returns the tab open, so a deep link can await it", async () => {
     let release = (): void => undefined;
     vi.mocked(openSubagentTab).mockImplementationOnce(

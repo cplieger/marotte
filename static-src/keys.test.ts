@@ -1,29 +1,6 @@
-//
-// The keydown handler itself: which keys reach the shortcut table, which ones
-// belong to the field they were typed in, and what Escape does.
-//
-// shortcuts.test.ts already covers the REGISTRY (that the reference sheet is
-// generated from it) and the bare `?`. This file covers the handler's gates,
-// which are where the module's decisions actually live:
-//
-//  1. THE MODIFIER GATE. Every row in the table requires Ctrl or Cmd, so a bare
-//     printable key must return before the loop is reached. Without that, `k`
-//     typed anywhere on the page would open a new chat.
-//  2. THE SHIFT MATCH. It is two-sided on purpose: a chord that wants Shift
-//     needs it, and a chord that does not want it must not fire when it is held,
-//     or Ctrl+Shift+K would silently mean Ctrl+K.
-//  3. THE TEXT-ENTRY CARVE-OUTS. Two chords survive a focused field and the
-//     rest do not — Ctrl+Enter (send) and Ctrl+K / Ctrl+N (new chat). Everything
-//     else belongs to the field, and taking it would swallow the browser's own
-//     binding while the user is typing.
-//  4. ESCAPE. It closes the topmost modal via the shared helper and stops there;
-//     only with nothing to close does it become the file browser's deselect.
-//     Doing both would deselect behind a dialog the user was only dismissing.
-//
-// keys.ts registers its document listener ONCE per module instance
-// (the `initialized` guard), so this file initialises it once in beforeAll and
-// clears the recording stubs per test — the same discipline shortcuts.test.ts
-// documents, and for the same reason.
+// The keydown handler's gates: the modifier gate (a bare key never reaches the table), the two-sided Shift match,
+// the text-entry carve-outs (only Ctrl+Enter and Ctrl+K/N survive a focused field), and Escape (closes the top modal
+// and stops). keys.ts listens once per module instance, so it is initialised once and stubs are cleared per test.
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 
@@ -81,10 +58,9 @@ describe("Escape", () => {
     });
     try {
       const e = press("Escape");
-      // The key was consumed by the dialog, so the page must not also see it.
+      // The dialog consumed the key, so the page must not see it.
       expect(e.defaultPrevented).toBe(true);
-      // Deselecting behind a dialog the user was only dismissing loses a
-      // selection they never touched.
+      // Deselecting behind a dialog being dismissed loses a selection the user never touched.
       expect(deselects).toBe(0);
     } finally {
       off();
@@ -100,8 +76,7 @@ describe("Escape", () => {
     try {
       const e = press("Escape");
       expect(deselects).toBe(1);
-      // Nothing was consumed, so Escape keeps whatever meaning the page has for
-      // it (leaving fullscreen, cancelling an IME composition).
+      // Nothing was consumed, so Escape keeps the page's meaning (leaving fullscreen, cancelling an IME composition).
       expect(e.defaultPrevented).toBe(false);
     } finally {
       off();
@@ -111,8 +86,7 @@ describe("Escape", () => {
 
 describe("the modifier gate", () => {
   it("ignores a registered key pressed with no modifier at all", () => {
-    // Every table row requires Ctrl or Cmd, so the gate returns before the loop.
-    // Without it, typing `k` in the page body would open a new chat.
+    // Every table row needs Ctrl or Cmd; without the gate, `k` in the page body would open a new chat.
     press("k");
     press("/");
     press(",");
@@ -122,8 +96,7 @@ describe("the modifier gate", () => {
   });
 
   it("prevents the default of a chord it handled", () => {
-    // Ctrl+K is the browser's search-bar focus on some platforms; the app claims
-    // it, so it has to say so.
+    // Ctrl+K is the browser's search-bar focus on some platforms; the app claims it.
     const e = press("k", undefined, { ctrlKey: true });
     expect(actions.newChat).toHaveBeenCalledTimes(1);
     expect(e.defaultPrevented).toBe(true);
@@ -132,8 +105,7 @@ describe("the modifier gate", () => {
 
 describe("the shift match", () => {
   it("does not fire a no-shift chord while Shift is held", () => {
-    // Ctrl+Shift+K and Ctrl+Shift+comma are different chords and belong to the
-    // browser. Matching them here would make Ctrl+Shift+K silently mean Ctrl+K.
+    // Shift chords belong to the browser; matching them would make Ctrl+Shift+K mean Ctrl+K.
     press("k", undefined, { ctrlKey: true, shiftKey: true });
     press(",", undefined, { ctrlKey: true, shiftKey: true });
     expect(actions.newChat).not.toHaveBeenCalled();
@@ -149,8 +121,7 @@ describe("a focused text field", () => {
   });
 
   it("leaves every other chord to the field it was typed in", () => {
-    // Ctrl+comma while typing belongs to the textarea (and to the browser),
-    // not to the settings panel.
+    // Ctrl+comma while typing belongs to the textarea and the browser.
     const e = press(",", composer(), { ctrlKey: true });
     expect(actions.toggleSettings).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(false);
@@ -170,10 +141,8 @@ describe("a focused text field", () => {
   });
 
   it("treats a target that is not an HTML element as no field at all", () => {
-    // An inline SVG inside a button is a real keydown target and is not text
-    // entry: it has no isContentEditable at all, so the type guard is what
-    // decides, and reading a missing property as truthy would suppress every
-    // bare-key binding on the page.
+    // An inline SVG in a button is a keydown target with no isContentEditable; reading the missing property as truthy
+    // would suppress every bare-key binding.
     const icon = document.getElementById("an-icon") as unknown as Element;
     press("?", icon);
     expect(actions.showShortcuts).toHaveBeenCalledTimes(1);
@@ -182,8 +151,7 @@ describe("a focused text field", () => {
 
 describe("the init guard", () => {
   it("registers one listener and one table however often it is initialised", () => {
-    // A second init would attach a second listener to the shared document, and
-    // every chord would then fire twice — which for `newChat` is two chats.
+    // A second listener on the shared document would fire every chord twice (two new chats).
     const second = {
       newChat: vi.fn(),
       toggleShell: vi.fn(),

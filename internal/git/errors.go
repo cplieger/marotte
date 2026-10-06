@@ -34,13 +34,9 @@ const (
 	KindNoChanges        ErrorKind = "no_changes"
 	KindGenerationFailed ErrorKind = "generation_failed"
 	KindShowFailed       ErrorKind = "show_failed"
-	// KindNotInRepo means no discovered repository owns the path, so there
-	// is no committed revision of it to show. Distinct from KindShowFailed
-	// because it is not a failure: a file in the workspace but outside every
-	// repo (or a workspace root that is not itself a repo) simply has no
-	// "before", and a client showing it as an all-add diff is CORRECT. Fold
-	// the two and a real git failure renders as "this file is brand new",
-	// silently claiming every line was added.
+	// KindNotInRepo means no discovered repository owns the path, so it has no committed revision:
+	// not a failure, and a client showing an all-add diff is correct. Kept apart from
+	// KindShowFailed so a real git failure does not render as a new file.
 	KindNotInRepo ErrorKind = "not_in_repo"
 )
 
@@ -61,32 +57,17 @@ func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
 // should surface this as empty content rather than a hard error.
 var ErrPathNotInRef = errors.New("path not found at ref")
 
-// ErrUnsafeRepoPath indicates a destructive repo operation was REFUSED because
-// the name it was given does not resolve to a directory inside the workspace:
-// an intermediate component is a symlink or not a directory, or the path escapes
-// the workspace root. Distinct from a disk failure on purpose — a refusal is the
-// operator's to fix and a disk error is not, and answering both with one generic
-// message leaves no way to tell them apart.
+// ErrUnsafeRepoPath means a destructive repo operation was REFUSED because the name does not
+// resolve to a directory inside the workspace (a symlinked or non-directory component, or an
+// escape). Distinct from a disk failure: a refusal is the operator's to fix.
 var ErrUnsafeRepoPath = errors.New("repo path is not safe to unlink")
 
-// gitShowCmd runs `git show <ref>:<path>` and classifies the error.
-// Returns ErrPathNotInRef when the file doesn't exist at the ref
-// (exit code 128 is the fatal error signal for `git show ref:path`).
-// When the ref has been validated via isValidGitRef by the caller,
-// exit 128 reliably means "path not found" — except when the
-// directory isn't a git repo at all, which is a different failure.
+// gitShowCmd runs `git show <ref>:<path>` and classifies the error: exit 128 on a validated ref is
+// ErrPathNotInRef, except when the directory is not a git repo at all.
 func gitShowCmd(ctx context.Context, dir, ref, path string) (string, error) {
-	// --no-textconv PINS the raw-blob default rather than closing an open path.
-	// `git show <ref>:<path>` is a blob dump: measured against git 2.55.0, the
-	// bare form prints the raw object and only an explicit --textconv runs a
-	// repo-supplied diff.<driver>.textconv command (TestTextconv_FixtureIsArmed
-	// asserts both halves against an armed fixture). The driver IS reachable
-	// from this subcommand, though, so the flag makes "this reads bytes, it does
-	// not invoke a program" a stated property of the call instead of one
-	// inherited from a default an untrusted repo has no say over but a future
-	// git could change. Per call site because the flag belongs to the diff
-	// family and would be rejected by the plumbing subcommands gitCmd also
-	// funnels.
+	// --no-textconv pins the raw-blob default (git 2.55.0; TestTextconv_FixtureIsArmed), so this
+	// call never runs a repo-supplied diff.<driver>.textconv. Per call site: plumbing subcommands
+	// reject the flag.
 	out, err := gitCmd(ctx, dir, "show", "--no-textconv", ref+":"+path)
 	if err == nil {
 		return out, nil

@@ -1,13 +1,6 @@
 package agent
 
-// Tests for knowledge.go: the _kiro/knowledge result parse, the path
-// resolution, the list/add/remove/reindex HTTP handlers, the method dispatch
-// each route performs, the name rule an addressable base must satisfy, and the
-// bridge-targeting invariant (knowledge is issued WITHOUT a sessionId so it hits
-// the global default store). The utility bridge that serves these calls is the
-// shared fakeBridge from newTestHub, seeded with a canned _kiro/knowledge
-// result — one per method, so a handler making two calls sees the same reply for
-// both.
+// The fake utility bridge is seeded with one canned _kiro/knowledge result per method.
 
 import (
 	"encoding/json"
@@ -16,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestParseKnowledgeResult(t *testing.T) {
@@ -106,7 +101,7 @@ func TestHandleKnowledgeList_OK(t *testing.T) {
 	if !body.Contexts[1].Indexing || body.Contexts[1].ItemsDisplay != "42%" {
 		t.Errorf("context[1] = %+v (indexing/progress not preserved)", body.Contexts[1])
 	}
-	// Bridge-targeting: show must omit sessionId (global default store).
+	// show must omit sessionId (global store).
 	params := br.paramsFor(methodKiroKnowledge)
 	if params["subcommand"] != "show" {
 		t.Errorf("subcommand = %v, want show", params["subcommand"])
@@ -145,7 +140,6 @@ func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	// Bridge-targeting + resolution + name derivation.
 	params := br.paramsFor(methodKiroKnowledge)
 	if params["subcommand"] != "add" {
 		t.Errorf("subcommand = %v, want add", params["subcommand"])
@@ -232,14 +226,7 @@ func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
 	}
 }
 
-// TestCleanKnowledgeMsg covers what a knowledge failure tells the user, which is
-// KAS's own message whenever there is one.
-//
-// The fallback is for the case KAS reports failure with nothing in `message`: an
-// empty HTTP error body renders as a dialog with no text, so the user sees that the
-// operation failed and cannot tell what to change. Substituting the sentinel for a
-// message that DOES exist is the same loss — every distinct reason ("path does not
-// exist", "already indexed") collapses into one generic line.
+// TestCleanKnowledgeMsg pins KAS's own message whenever there is one, the sentinel only for an empty one.
 func TestCleanKnowledgeMsg(t *testing.T) {
 	cases := []struct {
 		name string
@@ -260,13 +247,7 @@ func TestCleanKnowledgeMsg(t *testing.T) {
 	}
 }
 
-// TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow pins the routing half,
-// and the /api/ stand-in is what makes it a real test rather than a reading of
-// net/http: marotte registers a subtree pattern over its whole API surface, so a
-// method-scoped route that matches NOTHING loses to that fallback and never
-// reaches ServeMux's own 405 — the caller gets an Allow-less answer about a route
-// that is registered and healthy. Each pattern is method-less and dispatches
-// inside, so the refusal is the resource's own.
+// TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow pins 405 + Allow under the /api/ subtree fallback stand-in.
 func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
 	h, _, _ := newTestHub()
 	const fallbackStatus = 299 // a status no marotte handler produces
@@ -282,11 +263,12 @@ func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
 		path      string
 		wantAllow string
 	}{
-		"the collection refuses PUT":        {http.MethodPut, "/api/knowledge", "GET, POST"},
-		"the collection refuses HEAD":       {http.MethodHead, "/api/knowledge", "GET, POST"},
+		"the collection refuses PUT":        {http.MethodPut, "/api/knowledge", "GET, POST, DELETE"},
+		"the collection refuses HEAD":       {http.MethodHead, "/api/knowledge", "GET, POST, DELETE"},
 		"one base refuses GET":              {http.MethodGet, "/api/knowledge/docs", "DELETE"},
 		"the re-index route refuses GET":    {http.MethodGet, "/api/knowledge/docs/reindex", "POST"},
 		"the re-index route refuses DELETE": {http.MethodDelete, "/api/knowledge/docs/reindex", "POST"},
+		"the cancel route refuses GET":      {http.MethodGet, "/api/knowledge/docs/cancel", "POST"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -305,10 +287,7 @@ func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
 	}
 }
 
-// TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler is the
-// control on the case above: three patterns that matched nothing would answer
-// 405 for every method, so the Allow assertions alone cannot tell a dispatcher
-// from a wall.
+// TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler is the control: a wall would 405 everything.
 func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(h.stopUtilityBridge)
@@ -321,6 +300,8 @@ func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testin
 		"GET lists the collection": {http.MethodGet, "/api/knowledge"},
 		"DELETE removes one base":  {http.MethodDelete, "/api/knowledge/docs"},
 		"POST re-indexes one base": {http.MethodPost, "/api/knowledge/docs/reindex"},
+		"DELETE clears every base": {http.MethodDelete, "/api/knowledge"},
+		"POST stops an index":      {http.MethodPost, "/api/knowledge/docs/cancel"},
 	}
 	mux := http.NewServeMux()
 	h.config.registerKnowledgeRoutes(mux)
@@ -335,9 +316,7 @@ func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testin
 	}
 }
 
-// TestHandleKnowledgeReindex_ResolvesTheNameToItsPath is the whole reason the
-// route takes a name and the RPC does not: KAS's `update` requires `path` and
-// matches it against the entry's own sourcePath, so the server does the lookup.
+// TestHandleKnowledgeReindex_ResolvesTheNameToItsPath pins that KAS's `update` matches on path, so the server looks it up.
 func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(h.stopUtilityBridge)
@@ -352,7 +331,7 @@ func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	// paramsFor keeps the most recent call, which is the update the show fed.
+	// paramsFor keeps the latest call: the update the show fed.
 	params := br.paramsFor(methodKiroKnowledge)
 	if params["subcommand"] != "update" {
 		t.Errorf("subcommand = %v, want update", params["subcommand"])
@@ -368,9 +347,7 @@ func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
 	}
 }
 
-// TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds covers both misses,
-// and asserts the RPC count so a 404 cannot be reached by sending `update` with
-// an empty path and letting KAS refuse it.
+// TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds asserts the RPC count, so the 404 is never KAS's.
 func TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds(t *testing.T) {
 	tests := map[string]struct {
 		entries string
@@ -411,7 +388,7 @@ func TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds(t *testing.T) {
 func TestHandleKnowledgeReindex_MissingName(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
-	// No path value set, which is what a bare /api/knowledge//reindex produces.
+	// No path value, as a bare /api/knowledge//reindex produces.
 	h.config.handleKnowledgeReindex(rec, httptest.NewRequest(http.MethodPost, "/api/knowledge//reindex", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", rec.Code)
@@ -432,14 +409,120 @@ func TestHandleKnowledgeReindex_BridgeError(t *testing.T) {
 	}
 }
 
-// errKnowledgeProbe stands in for a bridge fault, which is the one failure the
-// reindex path reports as a 502 rather than as a verdict about the name.
+// TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID pins that a base and its re-index share a
+// name, and only the in-flight id is cancellable.
+func TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(h.stopUtilityBridge)
+	seedKnowledge(br, `{"success":true,"message":"Cancelled","entries":[`+
+		`{"name":"docs","id":"ctx12345","item_count":7,"path":"/w/docs"},`+
+		`{"name":"docs","id":"op987654","items_display":"42%","indexing":true}]}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/cancel", nil)
+	req.SetPathValue("name", "docs")
+	rec := httptest.NewRecorder()
+	h.config.handleKnowledgeCancel(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	params := br.paramsFor(methodKiroKnowledge)
+	if params["subcommand"] != "cancel" || params["operationId"] != "op987654" {
+		t.Errorf("params = %+v, want subcommand=cancel operationId=op987654", params)
+	}
+	if _, hasName := params["name"]; hasName {
+		t.Error("cancel carries no name: KAS keys it on the operation id alone")
+	}
+	if _, hasSession := params["sessionId"]; hasSession {
+		t.Error("knowledge cancel must NOT carry a sessionId")
+	}
+}
+
+// TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing asserts the RPC count, so the 404 is never an empty-id cancel.
+func TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(h.stopUtilityBridge)
+	seedKnowledge(br, `{"success":true,"entries":[{"name":"docs","id":"ctx12345","item_count":7,"path":"/w/docs"}]}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/cancel", nil)
+	req.SetPathValue("name", "docs")
+	rec := httptest.NewRecorder()
+	h.config.handleKnowledgeCancel(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+	var knowledgeCalls int
+	for _, m := range br.callLog() {
+		if m == methodKiroKnowledge {
+			knowledgeCalls++
+		}
+	}
+	if knowledgeCalls != 1 {
+		t.Errorf("_kiro/knowledge calls = %d, want 1 (the show only, no cancel)", knowledgeCalls)
+	}
+}
+
+// TestHandleKnowledgeCancel_KASRefusalIs404 covers the operation finishing between show and cancel.
+func TestHandleKnowledgeCancel_KASRefusalIs404(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(h.stopUtilityBridge)
+	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != methodKiroKnowledge {
+			return nil, nil, false
+		}
+		if params["subcommand"] == "cancel" {
+			return json.RawMessage(`{"success":false,"message":"Operation op987654 not found"}`), nil, true
+		}
+		return json.RawMessage(`{"success":true,"entries":[` +
+			`{"name":"docs","id":"op987654","items_display":"42%","indexing":true}]}`), nil, true
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/cancel", nil)
+	req.SetPathValue("name", "docs")
+	rec := httptest.NewRecorder()
+	h.config.handleKnowledgeCancel(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Operation op987654 not found") {
+		t.Errorf("body = %s, want KAS's refusal", rec.Body.String())
+	}
+}
+
+func TestHandleKnowledgeClear_SendsClearWithoutASession(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(h.stopUtilityBridge)
+	seedKnowledge(br, `{"success":true,"message":"Cleared 2 knowledge bases"}`)
+
+	rec := httptest.NewRecorder()
+	h.config.handleKnowledgeClear(rec, httptest.NewRequest(http.MethodDelete, "/api/knowledge", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	params := br.paramsFor(methodKiroKnowledge)
+	if params["subcommand"] != "clear" {
+		t.Errorf("subcommand = %v, want clear", params["subcommand"])
+	}
+	if _, hasSession := params["sessionId"]; hasSession {
+		t.Error("knowledge clear must NOT carry a sessionId")
+	}
+}
+
+func TestHandleKnowledgeClear_RefusalIsAServerError(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(h.stopUtilityBridge)
+	seedKnowledge(br, `{"success":false,"message":"store locked"}`)
+
+	rec := httptest.NewRecorder()
+	h.config.handleKnowledgeClear(rec, httptest.NewRequest(http.MethodDelete, "/api/knowledge", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// errKnowledgeProbe stands in for a bridge fault, the one reindex failure reported as 502.
 var errKnowledgeProbe = errors.New("bridge gone")
 
-// TestKnowledgeNameUnaddressable states which names the per-base routes can
-// address. The two refusals are what the route shape and canonicalAPIPath
-// respectively make unreachable; everything else is a legal free-text name, and
-// refusing more would take a name a user can already store.
+// TestKnowledgeNameUnaddressable pins the two refusals; any other free-text name is legal.
 func TestKnowledgeNameUnaddressable(t *testing.T) {
 	tests := map[string]struct {
 		name    string
@@ -455,8 +538,7 @@ func TestKnowledgeNameUnaddressable(t *testing.T) {
 		"a name holding a slash":       {"a/b", true},
 		"a name that is just a slash":  {"/", true},
 		"a name with a trailing slash": {"docs/", true},
-		// The routes trim the name they read, so a name that does not survive
-		// its own trim is one they resolve to a different string.
+		// The routes trim the name, so one that does not survive its own trim is unaddressable.
 		"a name with a trailing space": {"docs ", true},
 		"a name with a leading space":  {" docs", true},
 		"a name that is only spaces":   {"   ", true},
@@ -474,16 +556,13 @@ func TestKnowledgeNameUnaddressable(t *testing.T) {
 	}
 }
 
-// TestHandleKnowledgeAdd_RefusesAnUnaddressableName pins the refusal at ADD
-// time, which is the point of the check: a stored row nothing can remove is
-// worse than a rejected request, and DELETE takes one path segment.
+// TestHandleKnowledgeAdd_RefusesAnUnaddressableName pins the refusal at add time.
 func TestHandleKnowledgeAdd_RefusesAnUnaddressableName(t *testing.T) {
 	tests := map[string]string{
 		"a supplied name holding a slash": `{"path":"/abs/docs","name":"a/b"}`,
 		"a supplied name that is a dot":   `{"path":"/abs/docs","name":"."}`,
 		"a name derived from the root":    `{"path":"/"}`,
-		// The supplied name is trimmed before the check and the DERIVED one is
-		// not, so only a derived name can carry whitespace into the store.
+		// A supplied name is trimmed first; only a derived one can carry whitespace.
 		"a name derived with a trailing space": `{"path":"/abs/docs /"}`,
 		"a name derived with a leading space":  `{"path":"/abs/ docs"}`,
 	}

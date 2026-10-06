@@ -14,19 +14,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// Tests for httpreply.go: marotte's bare {"error":…} taxonomy, WriteRawJSON, and
-// the two logged error paths. The mechanism the helpers sit on (headers, status,
-// encode, body cap) is webhttp's and is tested there.
-
-// captureSlog swaps the default slog logger for a buffer-backed text handler
-// (Debug level, so Warn/Error/Debug are all captured) and restores the previous
-// default on cleanup. Tests using it must not call t.Parallel: it mutates the
-// process-wide default logger.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureSlog swaps the default slog logger for a buffer-backed Debug text handler and restores it
+// on cleanup.
 func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -39,8 +28,6 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return buf
 }
-
-// --- JSON helpers ---
 
 func TestNamedResponseHelpers(t *testing.T) {
 	tests := []struct {
@@ -112,8 +99,6 @@ func TestNamedResponseHelpers(t *testing.T) {
 	}
 }
 
-// --- WriteRawJSON pass-through contract ---
-
 type errWriter struct{ hdr http.Header }
 
 func (e *errWriter) Header() http.Header {
@@ -166,7 +151,6 @@ func TestWriteRawJSON_write_failure_logs_and_does_not_panic(t *testing.T) {
 		}
 	}()
 	WriteRawJSON(&errWriter{}, []byte(`{"x":1}`))
-	// A best-effort write failure is logged at Debug.
 	if !strings.Contains(buf.String(), "raw json write failed") {
 		t.Errorf("write failure: want debug log, got %q", buf.String())
 	}
@@ -179,8 +163,6 @@ func TestWriteRawJSON_no_log_on_success(t *testing.T) {
 		t.Errorf("clean write: want no log, got %q", buf.String())
 	}
 }
-
-// --- InternalError log path ---
 
 func TestInternalError_logs_cause_when_nonnil(t *testing.T) {
 	buf := captureSlog(t)
@@ -206,14 +188,8 @@ func TestInternalError_does_not_log_when_nil(t *testing.T) {
 	}
 }
 
-// --- DecodeBodyOptional ---
-
-// TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory pins the three bodies
-// this door waves through. Each leaves the response untouched, because the
-// caller's own default is the answer for all of them: an absent body is the
-// normal case, a malformed one is ignored by contract, and a body with trailing
-// data leaves the LEADING value in v (webhttp.DecodeJSONInto reports it, and
-// this door chooses not to).
+// TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory pins the three bodies this door waves
+// through, leaving the response untouched.
 func TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory(t *testing.T) {
 	type payload struct {
 		Repo string `json:"repo"`
@@ -248,18 +224,12 @@ func TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory(t *testing.T) {
 	}
 }
 
-// TestDecodeBodyOptional_RefusesAnOversizeBody pins the one body it must not
-// wave through: the server stopped reading before the value arrived, so
-// returning true would hand the caller a zero value that looks exactly like "the
-// client named nothing" — and the four git sync handlers resolve that to the
-// workspace root and run there. The Warn line is asserted because a 413 with no
-// log leaves an operator nothing to correlate.
+// TestDecodeBodyOptional_RefusesAnOversizeBody asserts that the server stopped reading before the value
+// arrived, so proceeding would act on a body it never saw.
 func TestDecodeBodyOptional_RefusesAnOversizeBody(t *testing.T) {
 	var got struct {
 		Repo string `json:"repo"`
 	}
-	// One valid JSON object longer than the cap, so the limit fires before the
-	// first value completes and the decoder never sees the repo the client sent.
 	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
 	buf := captureSlog(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/push", strings.NewReader(body))

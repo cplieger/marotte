@@ -1,7 +1,5 @@
 package agent
 
-// Tests for the one run-control table, over (status × parent × hosted).
-
 import (
 	"encoding/json"
 	"slices"
@@ -11,15 +9,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// allRunStatuses is KAS's WorkflowStatusSchema, exhaustively, so a case can be
-// total over the vocabulary rather than over the subset the table lists.
+// allRunStatuses is KAS's WorkflowStatusSchema, exhaustively.
 var allRunStatuses = []string{"running", "paused", "completed", "failed", "aborted"}
 
-// TestAffordance_VerbsByStatus pins which verbs each status accepts on a run this
-// process hosts. The table mirrors what KAS accepts: `_kiro/workflow/retry` throws
-// for any non-terminal status, `pause` means nothing once a run has stopped.
-// Cancel is offered on both live statuses and neither terminal one, so every live
-// run has a way out and a finished one offers no stop that would do nothing.
+// TestAffordance_VerbsByStatus pins each status's verbs on a hosted run, mirroring KAS; every live run can be cancelled.
 func TestAffordance_VerbsByStatus(t *testing.T) {
 	for _, tc := range []struct {
 		status string
@@ -32,7 +25,7 @@ func TestAffordance_VerbsByStatus(t *testing.T) {
 		{"aborted", []string{verbRetry}},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
-			got := affordanceOf(runFacts{status: tc.status, hosted: true})
+			got := affordanceOf(&runFacts{status: tc.status, hosted: true})
 			if !slices.Equal(got.Verbs, tc.want) {
 				t.Errorf("affordanceOf(%q, hosted) verbs = %v, want %v", tc.status, got.Verbs, tc.want)
 			}
@@ -44,10 +37,7 @@ func TestAffordance_VerbsByStatus(t *testing.T) {
 	}
 }
 
-// TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt pins that a failed or
-// aborted run offers retry whatever parents it. kiro-cli's restore pass considers
-// only a `running` or `paused` run, so nothing else recovers an aborted
-// chat-parented run: withholding retry leaves it unreachable in both products.
+// TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt pins that kiro-cli's restore pass skips aborted runs.
 func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
 	for _, status := range []string{"failed", "aborted"} {
 		for name, f := range map[string]runFacts{
@@ -56,7 +46,7 @@ func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
 			"chat-parented, chat's bridge live": {status: status, parentChat: "c1", parentName: "Nightly", hosted: true},
 		} {
 			t.Run(status+": "+name, func(t *testing.T) {
-				got := affordanceOf(f)
+				got := affordanceOf(&f)
 				if !got.permits(verbRetry) {
 					t.Errorf("a %s run does not offer retry (%v); nothing else recovers this run, "+
 						"so withholding it leaves the run unreachable", status, got.Verbs)
@@ -69,10 +59,9 @@ func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
 	}
 }
 
-// TestAffordance_PauseIsWithheldFromARunNothingHosts: KAS's pause throws for a run
-// absent from the live registry, so an unhosted pause is withheld with a reason.
+// TestAffordance_PauseIsWithheldFromARunNothingHosts pins that KAS's pause throws for an unregistered run.
 func TestAffordance_PauseIsWithheldFromARunNothingHosts(t *testing.T) {
-	got := affordanceOf(runFacts{status: "running"})
+	got := affordanceOf(&runFacts{status: "running"})
 	if got.permits(verbPause) {
 		t.Errorf("pause is offered on a run nothing hosts; its only outcome is a refusal")
 	}
@@ -80,22 +69,20 @@ func TestAffordance_PauseIsWithheldFromARunNothingHosts(t *testing.T) {
 		t.Errorf("pause was withheld with no sentence; an empty control row tells a reader " +
 			"nothing about why the run cannot be driven")
 	}
-	// Cancel reaches a run through any connection, so a live run whose engine is gone
-	// still has a way out.
+	// Cancel works through any connection.
 	if !got.permits(verbCancel) {
 		t.Errorf("cancel was withheld from a live run (%v), leaving it unstoppable", got.Verbs)
 	}
 }
 
-// TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts: a resume makes the run's
-// launching session live first, which is the state a restart leaves a run in.
+// TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts pins that resume makes the launching session live first.
 func TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts(t *testing.T) {
 	for name, f := range map[string]runFacts{
 		"parentless":    {status: string(marotte.RunStatusPaused)},
 		"chat-parented": {status: string(marotte.RunStatusPaused), parentChat: "c1", parentName: "Nightly"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := affordanceOf(f)
+			got := affordanceOf(&f)
 			if !got.permits(verbResume) {
 				t.Errorf("affordanceOf(%+v) verbs = %v, want resume offered", f, got.Verbs)
 			}
@@ -106,25 +93,23 @@ func TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts(t *testing.T) {
 	}
 }
 
-// TestAffordance_ARefusalNamesTheChatToOpen: opening the chat respawns the bridge
-// its parent session lives on, so the refusal must say which chat to open.
+// TestAffordance_ARefusalNamesTheChatToOpen pins that opening that chat respawns the parent's bridge.
 func TestAffordance_ARefusalNamesTheChatToOpen(t *testing.T) {
-	got := affordanceOf(runFacts{status: "running", parentChat: "c-abc", parentName: "Nightly publish"})
+	got := affordanceOf(&runFacts{status: "running", parentChat: "c-abc", parentName: "Nightly publish"})
 	sentence := got.refusal(verbPause)
 	if !strings.Contains(sentence, "Nightly publish") {
 		t.Errorf("the refusal = %q, want it to name the chat to open", sentence)
 	}
 
-	// A never-named chat carries an empty Name, and `open ""` is not a remedy
-	// anybody can follow, so the id is the fallback.
-	unnamedAff := affordanceOf(runFacts{status: "running", parentChat: "c-abc"})
+	// An empty name falls back to the id.
+	unnamedAff := affordanceOf(&runFacts{status: "running", parentChat: "c-abc"})
 	unnamed := unnamedAff.refusal(verbPause)
 	if !strings.Contains(unnamed, "c-abc") {
 		t.Errorf("the refusal for an unnamed chat = %q, want it to name the chat's id", unnamed)
 	}
 
-	// A parentless run has no chat to open, so its sentence must not invent one.
-	parentlessAff := affordanceOf(runFacts{status: "running"})
+	// A parentless run's sentence invents no chat.
+	parentlessAff := affordanceOf(&runFacts{status: "running"})
 	parentless := parentlessAff.refusal(verbPause)
 	if strings.Contains(parentless, "chat") && !strings.Contains(parentless, "Cancel") {
 		t.Errorf("a parentless run's refusal = %q, want it to name no chat and to name the "+
@@ -132,13 +117,11 @@ func TestAffordance_ARefusalNamesTheChatToOpen(t *testing.T) {
 	}
 }
 
-// TestAffordance_AnUnknownStatusDegradesToReadOnly: a future KAS status must
-// produce a read-only view rather than a wrong control, and no refusal either —
-// there is no sentence to offer about a state this build cannot interpret.
+// TestAffordance_AnUnknownStatusDegradesToReadOnly pins that no control and no refusal for an uninterpretable state.
 func TestAffordance_AnUnknownStatusDegradesToReadOnly(t *testing.T) {
 	for _, status := range []string{"", "cancelled", "some_future_status"} {
 		t.Run("status="+status, func(t *testing.T) {
-			got := affordanceOf(runFacts{status: status, hosted: true})
+			got := affordanceOf(&runFacts{status: status, hosted: true})
 			if len(got.Verbs) != 0 || len(got.Refused) != 0 {
 				t.Errorf("affordanceOf(%q) = %+v, want nothing offered and nothing refused", status, got)
 			}
@@ -146,12 +129,11 @@ func TestAffordance_AnUnknownStatusDegradesToReadOnly(t *testing.T) {
 	}
 }
 
-// TestAffordance_PauseAndResumeAreNeverOfferedTogether: they are opposites, so a
-// row carrying both states two contradictory things about the run.
+// TestAffordance_PauseAndResumeAreNeverOfferedTogether pins that they contradict each other.
 func TestAffordance_PauseAndResumeAreNeverOfferedTogether(t *testing.T) {
 	for _, status := range allRunStatuses {
 		for _, hosted := range []bool{true, false} {
-			got := affordanceOf(runFacts{status: status, hosted: hosted})
+			got := affordanceOf(&runFacts{status: status, hosted: hosted})
 			if got.permits(verbPause) && got.permits(verbResume) {
 				t.Errorf("status %q (hosted=%v) offers both pause and resume: %v", status, hosted, got.Verbs)
 			}
@@ -159,11 +141,8 @@ func TestAffordance_PauseAndResumeAreNeverOfferedTogether(t *testing.T) {
 	}
 }
 
-// TestAffordance_EveryOfferedVerbHasARoute guards the seam between the table and
-// the routes: a verb offered with nothing behind it answers 200 and does nothing.
-// Two names are deliberately not gated runVerbs — retry has its own handler because
-// its reply carries the outcome, and cancel doubles as the tab-close gesture, so
-// gating it would turn closing a tab whose run just finished into an error toast.
+// TestAffordance_EveryOfferedVerbHasARoute pins that an offered verb with no route answers 200 and does
+// nothing. Retry has its own handler (its reply carries the outcome); cancel is ungated because it doubles as tab close.
 func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
 	routes := map[string]runVerb{
 		runVerbCancel.name: runVerbCancel,
@@ -183,8 +162,7 @@ func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
 			if v.issue == nil {
 				t.Errorf("run verb %q has no issuer: the route would answer ok without calling KAS", verb)
 			}
-			// A verb whose absence the table can EXPLAIN must have its route consult
-			// it, or the sentence contradicts what the server accepts.
+			// A verb the table can explain must have its route consult it.
 			if len(v.from) == 0 && refusableVerb(verb) {
 				t.Errorf("run verb %q can be refused by the table but its route does not consult "+
 					"it, so the sentence would contradict what the server accepts", verb)
@@ -193,13 +171,11 @@ func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
 	}
 }
 
-// refusableVerb reports whether any (status × parent × hosted) combination has the
-// table withhold this verb with a sentence. Derived, not listed, so a verb that
-// becomes refusable later cannot slip past the assertion above.
+// refusableVerb reports whether any combination withholds verb with a sentence, derived so a newly refusable verb is covered.
 func refusableVerb(verb string) bool {
 	for _, status := range allRunStatuses {
 		for _, hosted := range []bool{true, false} {
-			aff := affordanceOf(runFacts{status: status, hosted: hosted})
+			aff := affordanceOf(&runFacts{status: status, hosted: hosted})
 			if aff.refusal(verb) != "" {
 				return true
 			}
@@ -208,9 +184,7 @@ func refusableVerb(verb string) bool {
 	return false
 }
 
-// TestChatForSession_ResolvesARunsParentWithoutALiveBridge: hostBridgeChat answers
-// only for a chat whose bridge is LIVE, which is the wrong question for a refusal —
-// a closed chat is when the reader most needs to be told which one to open.
+// TestChatForSession_ResolvesARunsParentWithoutALiveBridge pins that hostBridgeChat needs a live bridge, wrong for a refusal.
 func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	seed := func(t *testing.T, sessions ...string) *Runtime {
 		t.Helper()
@@ -235,9 +209,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 		}
 	})
 
-	// A chat changes session on a failed load, a model-switch fallback and empty-turn
-	// recovery, so a run launched before that is parented on a RETIRED id and
-	// matching only the current one would report it as parentless.
+	// A run launched before a session change is parented on a retired id in the chain.
 	t.Run("a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h := seed(t, "sess_old", "sess_current")
 		if id, _, _ := h.runs.chatForSession(t.Context(), "sess_old"); id != "c1" {
@@ -255,9 +227,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	})
 }
 
-// TestAffordance_ChatParentedRunIsHostedByItsChatsBridge: a run whose launching
-// chat is open IS hosted, even with nothing registered under its own synthetic
-// `run:<id>` key.
+// TestAffordance_ChatParentedRunIsHostedByItsChatsBridge pins that an open launching chat hosts the run with nothing under `run:<id>`.
 func TestAffordance_ChatParentedRunIsHostedByItsChatsBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{

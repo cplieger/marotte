@@ -1,20 +1,12 @@
-// A configured server's row said nothing about whether the reader had supplied a
-// credential: a row with a token and a row with none rendered the same two
-// segments (the source, and the source alone). The masked export preserves each
-// pair's NAME and the slice LENGTH, so presence was knowable all along and the
-// row simply never said it.
-//
-// Mock shape copied from mcp-origin.test.ts, which is the proven way to import
-// mcp-ui.ts: it pulls the whole actions graph in transitively and only the two
-// members it calls at module scope need replacing.
+// A configured row states whether a credential is supplied: the masked export keeps each pair's name and the slice
+// length, so presence is knowable. Mock shape as mcp-origin.test.ts.
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock(import("./actions/index.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    // registerCleanup returns its UNREGISTER function, so a bare `() => {}` is
-    // the wrong shape as well as the wrong arity.
+    // registerCleanup returns its unregister function.
     registerCleanup:
       (_fn: () => void): (() => void) =>
       () => {
@@ -49,14 +41,12 @@ function status(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
 
 describe("credentialSummary", () => {
   it("says so when the record holds nothing", () => {
-    // The whole defect: silence here is indistinguishable from an unread row, so
-    // the absence has to be stated rather than left to the empty string.
+    // Silence would be indistinguishable from an unread row, so the absence is stated.
     expect(credentialSummary(server())).toBe("no credentials");
   });
 
   it("counts a masked pair by its NAME, never its value", () => {
-    // A saved secret comes back as the mask, so a value test would report every
-    // stored credential as absent — which is the reading this row exists to fix.
+    // A saved secret returns as the mask, so a value test would read every stored credential as absent.
     expect(credentialSummary(server({ headers: pairs("Authorization") }))).toBe("1 header");
   });
 
@@ -67,28 +57,25 @@ describe("credentialSummary", () => {
   });
 
   it("skips a blank-named pair, which is the form's own empty row", () => {
-    // renderKeyPairList seeds one blank row and collectKeyPairs drops it, so a
-    // record can legitimately round-trip through a form holding one.
+    // renderKeyPairList seeds one blank row that collectKeyPairs drops, so a record can carry one.
     expect(credentialSummary(server({ headers: [{ name: "  ", value: "" }] }))).toBe(
       "no credentials",
     );
   });
 
-  it("reports an OAuth client from either half of the pair", () => {
-    // The id is not masked at all and a set secret becomes the sentinel, so
-    // either one present is evidence the reader configured a client.
+  it("reports an OAuth client from any of its members", () => {
+    // The oauth members are not masked, so either present means a configured client.
     expect(credentialSummary(server({ oauth_client_id: "abc" }))).toBe("OAuth client configured");
-    expect(credentialSummary(server({ oauth_client_secret: SECRET_MASK }))).toBe(
-      "OAuth client configured",
-    );
-    expect(credentialSummary(server({ oauth_client_id: "", oauth_client_secret: "" }))).toBe(
+    expect(
+      credentialSummary(server({ oauth_client_metadata_url: "https://example.com/c.json" })),
+    ).toBe("OAuth client configured");
+    expect(credentialSummary(server({ oauth_client_id: "", oauth_client_metadata_url: "" }))).toBe(
       "no credentials",
     );
   });
 
   it("reports every kind the record holds rather than picking one", () => {
-    // A hand-edited mcp.json can carry both, and scoping this by transport would
-    // hide half of what is on disk.
+    // A hand-edited mcp.json can carry both; scoping by transport would hide half.
     expect(
       credentialSummary(
         server({ env: pairs("A"), headers: pairs("B", "C"), oauth_client_id: "x" }),
@@ -99,8 +86,7 @@ describe("credentialSummary", () => {
 
 describe("the row's meta line", () => {
   it("puts the credential fact AHEAD of the source", () => {
-    // The line ellipsises and a URL or command is its long segment, so a
-    // source-first order clips the credential fact off the tail.
+    // The line ellipsises and the source is its long segment, so the credential fact leads.
     const meta = renderMeta(server({ headers: pairs("Authorization") }), status());
     expect(meta).toBe("1 header · https://ex/mcp");
     expect(meta.indexOf("1 header")).toBeLessThan(meta.indexOf("https://ex/mcp"));
@@ -116,16 +102,14 @@ describe("the row's meta line", () => {
   });
 
   it("names the failure without a dangling separator when KAS gave no reason", () => {
-    // The reason the server substitutes a stand-in reason: an empty one used to
-    // render as a bare em dash with nothing after it.
+    // An empty reason would render a bare em dash, so the server substitutes a stand-in.
     expect(renderMeta(server(), status({ state: "failed", error: "" }))).toBe(
       "Failed to start · no credentials · https://ex/mcp",
     );
   });
 
   it("carries no state phrase for a settled row", () => {
-    // The dot already says connected or idle, and a phrase on every row pushes
-    // the credential summary and the source out of the ellipsised track.
+    // The dot already says connected or idle; a phrase would push the rest out of the track.
     expect(renderMeta(server(), status())).toBe("no credentials · https://ex/mcp");
     expect(renderMeta(server(), status({ state: "idle" } as Partial<RuntimeStatus>))).toBe(
       "no credentials · https://ex/mcp",
@@ -139,10 +123,21 @@ describe("the row's meta line", () => {
     );
   });
 
+  it("says a row is not in use when another config defines the running server", () => {
+    // KAS runs the workspace's server under this name, so this row's facts describe nothing in use.
+    expect(
+      renderMeta(
+        server({ headers: pairs("Authorization") }),
+        status({ origin: "workspace", originRoot: "/workspace/app", shadows: true }),
+      ),
+    ).toBe("Not in use: the workspace config defines a server with this name");
+    expect(
+      renderMeta(server(), status({ origin: "power", originPower: "aws-infra", shadows: true })),
+    ).toBe("Not in use: the aws-infra Power defines a server with this name");
+  });
+
   it("reads a stdio server's source off its command", () => {
-    // Built without a `url` key rather than with an undefined one:
-    // `exactOptionalPropertyTypes` refuses an explicit undefined on an optional
-    // field, and a record carrying both is not a shape the store can hold.
+    // No `url` key: `exactOptionalPropertyTypes` refuses an explicit undefined on an optional field.
     const stdio: Server = {
       id: "id-s",
       name: "s",

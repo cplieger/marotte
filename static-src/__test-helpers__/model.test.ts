@@ -1,8 +1,5 @@
-// model.ts's own guard, and it is the `tabs-mock.test.ts` obligation applied to
-// the shape this module owns: not an export list, but the STORE INVARIANT the
-// factories derive. A fixture that violates `entries[i].seq === i` asserts nothing
-// about production, so the invariant is the factory's to keep and this is what says
-// it still does.
+// Guards the store invariant the factories derive, `entries[i].seq === i`: a fixture that
+// violates it asserts nothing about production.
 import { describe, expect, it } from "vitest";
 
 import { turnSpan } from "../block-window.js";

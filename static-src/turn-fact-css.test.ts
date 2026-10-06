@@ -1,8 +1,6 @@
-// The footer's fact slot: one fact inside the ledger trigger, clipped rather than
-// wrapped, and gated on no pointer state anywhere in the bundle — a hover cannot carry a
-// value, so a hover gate would take it from every touch device. The narrow cases are
-// measured in an IFRAME because the `…` collapse and Rewind's word live behind
-// `width <= 40rem`.
+// The footer's fact slot: one fact inside the ledger trigger, clipped not wrapped, and gated on no
+// pointer state (a hover gate would hide it from touch). Narrow cases run in an IFRAME: the `…`
+// collapse and Rewind's word live behind `width <= 40rem`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -228,7 +226,7 @@ describe("the fact sits beside the `i`", () => {
   });
 
   it("stays beside the `i` on a clean turn, where the word is empty", () => {
-    // An empty `.turn-ledger-text` used to charge the button's flex gap, which would
+    // An empty `.turn-ledger-text` must not charge the button's flex gap, which would
     // sit between the `i` and the fact as dead space.
     const { ledger, slot } = mountCard(document, { fact: "5 commands", word: "" });
     const text = ledger.querySelector<HTMLElement>(".turn-ledger-text");
@@ -330,10 +328,8 @@ describe("the slot is WITHHELD where the track cannot hold a whole fact", () => 
     return m.slot;
   }
 
-  // 302.9px is 18.93rem, the threshold; a coarse row's slot reaches the 24.2px floor
-  // there, measured inside the trigger that holds the slot. ABOVE brackets it within
-  // 4px on purpose: the query is the only thing deciding `display` here, so the reading
-  // carries no measurement noise, and a threshold widened back out fails this case.
+  // 302.9px (18.93rem) is the threshold where a coarse slot reaches the 24.2px floor. ABOVE brackets
+  // it within 4px: only the query decides `display`, so a widened threshold fails.
   const BELOW = 300;
   const ABOVE = 306;
 
@@ -347,10 +343,8 @@ describe("the slot is WITHHELD where the track cannot hold a whole fact", () => 
   });
 
   it("leaves the two shapes that keep a legible track alone", () => {
-    // A CLEAN turn's track is the row's main readout and runs 120-212px across these
-    // sizes; a non-clean turn with no Rewind has that control's width back. Hiding
-    // either is the collateral the scoping exists to avoid, so both are pinned BELOW
-    // the threshold where an unscoped rule would take them.
+    // A CLEAN turn's track and a Rewind-less footer's freed width must survive BELOW the threshold,
+    // where an unscoped rule would hide them.
     expect(cs(atContainerWidth(BELOW, { word: "", rewind: true })).display).not.toBe("none");
     expect(
       cs(atContainerWidth(BELOW, { word: "Outcome unknown", rewind: false })).display,
@@ -374,10 +368,8 @@ describe("the delegate footer's copy", () => {
 
 describe("the slot, read as source", () => {
   it("is gated on no pointer state anywhere in the shipped bundle", () => {
-    // THE GUARD AGAINST A REVEAL, sweeping the whole assembled cascade rather than
-    // 29-turns.css: a gesture gate is just as effective from another slice.
-    // `any-hover` contains `hover`, so one pattern covers the query form and the
-    // pseudo-class form, and `:focus-within` is the keyboard half of the same gate.
+    // THE GUARD AGAINST A REVEAL over the whole cascade: `any-hover` contains `hover`, so one pattern
+    // covers query and pseudo-class; `:focus-within` is the keyboard half.
     const sheet = style.sheet;
     if (sheet === null) {
       throw new Error("the mounted bundle did not parse");
@@ -392,10 +384,8 @@ describe("the slot, read as source", () => {
   });
 
   it("carries its inline gap as the trigger's own flex gap, never a grid column-gap", () => {
-    // A column gap is charged between tracks even when the next one is EMPTY, so a
-    // footer with no Rewind would hold its trailing control off the gutter. The slot
-    // sits INSIDE the trigger, so what separates it from the outcome word is that
-    // button's `gap` — one value, present exactly when the span is.
+    // A column gap is charged even before an EMPTY track, so the slot sits INSIDE the trigger, spaced by
+    // the button's `gap`.
     expect(ruleContaining(turns, ".turn-ledger-summary", "top").body).toMatch(
       /gap:\s*var\(--sp-2\)/u,
     );
@@ -406,10 +396,8 @@ describe("the slot, read as source", () => {
   });
 
   it("leaves the row's flexible track as slack, the button's own track growing to it", () => {
-    // The button shrink-wraps around the slot and the `1fr` beside it takes the
-    // remainder, which is what makes the trailing controls unpushable by construction.
-    // The slot declares no track of its own: it is a flex child of the button, not a
-    // grid item of the row.
+    // The button shrink-wraps the slot and the `1fr` takes the rest, so trailing controls cannot be
+    // pushed. The slot is a flex child, not a grid item.
     expect(ruleContaining(turns, ".turn-footer", "top").body).toMatch(
       /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto\s+auto/u,
     );

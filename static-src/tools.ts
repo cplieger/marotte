@@ -1,16 +1,8 @@
-// ---------------------------------------------------------------------------
-// Tool management (Settings -> Tools) over the v2 tools engine.
-//
-// The server owns the manifest, install state, and a single-flight job
-// queue; this module is a pure projection. Mutations return 202 with a
-// job; progress arrives over the tool_job_changed / tool_job_output
-// SSE events (the output panel is a live follower that survives
-// reloads via GET /api/tools/jobs). The add flow is search-first: the
-// catalog (compiled from the mise + aqua registries) is the browse
-// surface. There is no manual-command escape hatch: a form asking a reader to
-// author an install script is the shell with worse ergonomics, and the shell is
-// one click away. A closing note on every result set says so instead.
-// ---------------------------------------------------------------------------
+// Tool management (Settings -> Tools) over the v2 tools engine: a pure projection of the server's
+// manifest, install state and single-flight job queue. Mutations return 202 with a job; progress
+// arrives over tool_job_changed / tool_job_output (the output panel survives reloads via GET
+// /api/tools/jobs). The add flow is search-first over the mise + aqua catalog. No manual-command
+// form: the shell is one click away, and every result set's closing note says so.
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -76,11 +68,8 @@ function resultCount(shown: number, cut: boolean, matched?: number): string {
     : `${String(shown)} shown`;
 }
 
-/** Why the reply carries no Debian package, in the engine's own three states.
- *  `indexing` is PENDING rather than absent: the host has apt and the index is
- *  still being read, so the same search answers differently a moment later. An
- *  engine that states nothing leaves `apt_available` as the whole answer, and
- *  that merges the two, so the sentence names no cause. */
+/** Why the reply carries no Debian package, in the engine's three states. `indexing` is PENDING:
+ *  the same search answers differently a moment later. An engine stating nothing names no cause. */
 function aptNote(d: ToolSearchResponse): string {
   if (d.apt_state === undefined) {
     return d.apt_available ? "" : "Debian packages are not searchable right now.";
@@ -136,11 +125,8 @@ const JOB_UPDATE = "update";
 const JOB_CATALOG_REFRESH = "catalog-refresh";
 const JOB_RECONCILE = "reconcile";
 
-/** The two files the Advanced-configuration door opens. Both assume the default
- *  `KIRO_CONFIG_DIR`: `/config` is the persistent volume's mount point in the
- *  image, and the file browser lists it under that name. An operator who moves
- *  that dir leaves these two links opening a tab that reports the editor's
- *  generic load failure, which names neither the path nor the cause. */
+/** The two files the Advanced-configuration door opens, assuming the default `KIRO_CONFIG_DIR`
+ *  (`/config`, the image's volume mount). A moved dir leaves these opening a generic load failure. */
 const MANIFEST_PATH = "/config/tools.json";
 const SETTINGS_PATH = "/config/config.json";
 
@@ -150,14 +136,10 @@ function jobIsLive(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
 }
 
-/** Whether a pill carries the cancel for a job KIND, whoever launched it: the boot reconcile
- *  `internal/composition` enqueues has no pill behind it, so Apply reads as Cancel over work
- *  the reader did not start. Three kinds have a named pill; the other three are launched from
- *  a tool row (install, uninstall, disable), so their only cancel is the shared Cancel pill —
- *  exhaustive over toolbelt's six kinds. A per-tool Update rides the Update-all pill because
- *  it is the same kind of work, and splitting on `names.length` would leave that pill idle
- *  through an update. Apply enqueues a reconcile AND an update job, so Cancel here stops the
- *  install pass; the update pass is Update all's to stop. */
+/** Whether a pill carries the cancel for a job KIND, whoever launched it (a boot reconcile has no
+ *  pill behind it). Three kinds have a named pill; install, uninstall and disable cancel through the
+ *  shared Cancel pill, exhaustive over toolbelt's six kinds. A per-tool Update rides Update all.
+ *  Apply enqueues a reconcile AND an update, so Cancel here stops only the install pass. */
 function pillOwns(kind: string): boolean {
   return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH || kind === JOB_RECONCILE;
 }
@@ -173,27 +155,10 @@ interface JobPillSpec {
   busyAria: string;
 }
 
-/** An action pill that owns one job kind: it launches the work, and while that
- *  work is live it BECOMES the control that stops it — spinner for the glyph,
- *  "Cancel" for the label, one click to cancel.
- *
- *  Same shape as the composer's send button (`prompt-input.ts`: Send while idle,
- *  a stop square mid-turn) and for the same reason — the control that started
- *  the work is where a reader looks to stop it. It replaced a fourth pill that
- *  un-hid beside these three whenever ANY job was live, which cost two things:
- *  the launching pill showed no sign that its own work was running, and a bare
- *  "Cancel" sat next to three neighbours with nothing saying which it belonged
- *  to.
- *
- *  The idle face is CAPTURED from the authored markup rather than rebuilt here,
- *  so index.html stays the one place a pill's glyph and label are written.
- *
- *  Nothing here sets `disabled`. The busy face IS the cancel control, so
- *  disabling it would remove the affordance it exists to offer; the only guard
- *  is `requested`, which stops a second click re-sending a cancel already on the
- *  wire. That also subsumes the `disabled` the catalog-refresh pill used to
- *  carry for the whole life of its job: the engine's queue would accept a
- *  duplicate refresh, and a pill whose click CANCELS cannot enqueue one. */
+/** An action pill that owns one job kind: it launches the work and, while it is live, BECOMES the
+ *  control that stops it (spinner, "Cancel"), as the composer's send button does. The idle face is
+ *  CAPTURED from index.html. Nothing sets `disabled`: the busy face IS the cancel; `requested`
+ *  stops a double-sent cancel, and a pill whose click cancels cannot enqueue a duplicate. */
 class JobPill {
   private readonly idleFace: readonly Node[];
   private readonly idleAria: string;
@@ -246,10 +211,8 @@ class JobPill {
     const label = this.requested ? "Cancelling…" : "Cancel";
     const full = this.requested ? label : this.spec.busyAria;
     this.btn.replaceChildren(iconEl(ICON_SPINNER), el("span", null, label));
-    // The visible label stays one word so the pill does not resize the row it
-    // sits in; the full "Cancel the running update" reaches a screen reader as
-    // the accessible name and a pointer as the tooltip. Same split the send
-    // button uses for its own stop face.
+    // One visible word so the pill does not resize its row; the full phrase is the accessible name and
+    // tooltip.
     this.btn.setAttribute("aria-label", full);
     this.btn.setAttribute("data-tooltip", full);
     this.btn.classList.add("is-busy");
@@ -296,18 +259,9 @@ const f = {
   },
 };
 
-/** The orders the results bar offers.
- *
- *  `relevance` is the SERVER's order, adopted verbatim: the engine scores both
- *  corpora on one scale and merges them, and it is the only participant that
- *  can — aliases are not projected onto the wire, so a client re-deriving a
- *  score would rank an alias hit as a description match. The other two are
- *  presentational and the client owns them.
- *
- *  There is deliberately no `popularity`: nothing on the wire carries download
- *  counts, stars or install counts, and `featured` is a 20-entry curated list
- *  of what this product bundles rather than a measure of anything. An order
- *  named popularity would be sorting by something else. */
+/** The orders the results bar offers. `relevance` is the SERVER's, adopted verbatim: it scores both
+ *  corpora on one scale and aliases never reach the wire. No `popularity`: nothing on the wire
+ *  measures it. */
 type SortOrder = "relevance" | "name-asc" | "name-desc";
 
 function isSortOrder(v: string): v is SortOrder {
@@ -332,10 +286,8 @@ class ToolsManager {
    *  filter re-paint without a round trip. Null means the request failed,
    *  which is a different thing from an empty result set. */
   private lastSearch: ToolSearchResponse | null = null;
-  /** The trimmed query that produced `lastSearch`: an empty one makes a
-   *  no-rows reply a browse of the featured set rather than a search answer.
-   *  Read rather than the live input value, which the reader may already have
-   *  edited past the results on screen. */
+  /** The trimmed query behind `lastSearch`: empty makes a no-rows reply a featured browse. Not the
+   *  live input, which may be edited past the results. */
   private lastQuery = "";
 
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
@@ -345,14 +297,8 @@ class ToolsManager {
 
   init(): void {
     this.output = new RollingOutput($.toolUpdateOutput, "git-output-modal");
-    // Wiring a panel resets what it believes is running: it learns that from the
-    // seed in loadToolsList or from the first SSE event, never from last time.
-    // One wiring per page load, so this is a no-op in production.
-    //
-    // The pills below CAPTURE their idle face from the live DOM, so a second
-    // init() over a strip that is currently showing a Cancel face would adopt
-    // that as the face to restore. Re-mount the markup before re-wiring, or keep
-    // init() to once.
+    // Wiring resets what the panel believes is running (seed or first SSE event, never last time). The
+    // pills CAPTURE their idle face from the live DOM, so re-mount the markup before a second init().
     this.live = null;
     this.followedJob = "";
 
@@ -403,10 +349,7 @@ class ToolsManager {
       this.cancelLiveJob();
     });
 
-    // Live job following: state transitions re-render the list (rows
-    // flip installing/installed/error); output lines stream into the
-    // rolling panel. Both survive any number of Settings tab
-    // open/close cycles — subscriptions are module-lifetime.
+    // Live job following; subscriptions are module-lifetime, surviving Settings open/close.
     this.unsubscribes.push(
       onSSE("tool_job_changed", (_chat, payload) => {
         const job = payload.job;
@@ -508,18 +451,10 @@ class ToolsManager {
     f.cancel.classList.toggle("hidden", job === null || pillOwns(kind));
   }
 
-  /** Give the inventory ONE chance to report a job that started before this
-   *  module was wired. The panel is lazily initialized, so a boot reconcile or an
-   *  install a feature banner triggered can already be running when the SSE
-   *  handlers register, and nothing replays those events.
-   *
-   *  On the way IN only, and `followedJob` is the test for that: it is set by the
-   *  first job this panel hears about from any source, so a non-empty one means
-   *  the stream has already spoken and outranks a snapshot. That ordering is the
-   *  whole point — `Inventory.job` is a snapshot while the SSE is a stream, and
-   *  `loadToolsList` runs once per job event, so a GET issued while a job was
-   *  queued can resolve after the event that finished it. Adopting that answer
-   *  would strand a pill on its Cancel face with nothing left to cancel. */
+  /** Give the inventory ONE chance to report a job that started before this lazily wired module
+   *  listened. Inbound only: a set `followedJob` means the stream already spoke, and a stream outranks
+   *  a snapshot, since a GET issued while queued can resolve after the finishing event and strand a
+   *  pill on Cancel. */
   private seedLiveJob(job: Job | undefined): void {
     if (this.followedJob !== "" || job === undefined || !jobIsLive(job)) {
       return;
@@ -527,10 +462,8 @@ class ToolsManager {
     this.setLive(job);
   }
 
-  /** Cancel whatever is running. All three controls route here: the engine's
-   *  queue is single-flight, so "the live job" is unambiguous. Read from `live`
-   *  rather than from the output panel's follow target, which outlives the job it
-   *  points at — cancelling a settled job is a request with no subject. */
+  /** Cancel whatever is running; the queue is single-flight. Read from `live`, not the output panel's
+   *  follow target, which outlives its job. */
   private cancelLiveJob(): void {
     const id = this.live?.id;
     if (id === undefined) {
@@ -599,17 +532,9 @@ class ToolsManager {
       return;
     }
 
-    // THREE groups, and the first two are one list split by ONE fact the
-    // engine reports: `essential`. A pre-bundled tool is not an extra layered
-    // over the catalog — it IS a catalog entry, installed and updated by the
-    // same machinery as any other, which this app declares as necessary for it
-    // to work properly. So it sits in its own group rather than in a second
-    // mechanism, and the engine refuses to remove it (ErrEssential), which is
-    // why its row carries no bin (`toolActions`). Disable stays available: that
-    // is the honest escape hatch, and it does not lose the entry.
-    //
-    // Labels appear only when the split is real. With nothing essential the
-    // list is one unlabelled group, exactly as before.
+    // THREE groups; the first two split one list on `essential`. A pre-bundled tool IS a catalog entry
+    // the app needs, so the engine refuses its removal (ErrEssential) and its row has no bin; Disable is
+    // the escape hatch. Labels appear only when the split is real.
     const flat: ListEntry[] = [];
     const essential = d.tools.filter((t) => t.essential === true);
     const chosen = d.tools.filter((t) => t.essential !== true);
@@ -632,20 +557,9 @@ class ToolsManager {
         flat.push({ kind: "system", name: s.name, installed: s.installed });
       }
     }
-    // The Debian packages nobody here installed: what the image asked apt
-    // for, plus anything a reader or an agent added in the shell. The engine
-    // excludes apt's own auto-installed dependencies and Debian's
-    // required/important priorities, so this is the set somebody CHOSE rather
-    // than the base OS — a handful of rows, not the whole dpkg database.
-    // Read-only: no manifest row stands behind one, so nothing updates it and
-    // nothing here can remove it. A reader who wants one managed adds it by
-    // name, which creates the row.
-    //
-    // An ABSENT list and an empty one are different. Absent means apt is not
-    // this host's package manager, or the enumeration failed, and an inventory
-    // that cannot answer says nothing rather than reporting an empty box as a
-    // fact. Both render as no group, which is the one place the distinction
-    // does not need to reach the reader.
+    // Debian packages somebody CHOSE (image or shell), minus apt's auto-installed dependencies and
+    // required/important priorities. Read-only: no manifest row stands behind one. An ABSENT list means
+    // apt is not the package manager or enumeration failed; both render as no group.
     const apt = d.apt_packages ?? [];
     if (apt.length > 0) {
       flat.push({ kind: "label", label: "installed with apt, outside the engine" });
@@ -674,16 +588,8 @@ class ToolsManager {
     }
 
     reconcile(container, flat, {
-      // Every branch builds its key with keyenc `join` so the three key
-      // families stay in one namespace no component can cross into. This
-      // list was ALREADY injective before the change: a tool name is
-      // validated colon-free and unique server-side, so the `tool:<name>:`
-      // prefix could not be forged, and the label/system branches carry
-      // literals and system names. The adoption is for uniformity with the
-      // other composite keys, not a fix. Had a collision been possible, the
-      // effect would be a REMOUNT, not a lost row: reconcile walks backwards,
-      // so the earlier duplicate is re-mounted on every pass (dropped focus,
-      // restarted animation).
+      // keyenc `join` keeps the three key families in one uncrossable namespace (already injective: tool
+      // names are colon-free and unique). A collision would REMOUNT the earlier duplicate every pass.
       key: (e: ListEntry) => {
         switch (e.kind) {
           case "label":
@@ -699,26 +605,18 @@ class ToolsManager {
             return join(
               "tool",
               e.tool.name,
-              // `?? ""` where the old array form relied on Array.join
-              // coercing an absent optional field to "". Same bytes; the
-              // typed signature just makes the coercion explicit.
+              // `?? ""`: the typed signature makes the coercion of an absent
+              // optional field explicit.
               e.tool.version ?? "",
               e.tool.latest ?? "",
               String(e.tool.installed),
               String(e.tool.installing),
               String(e.tool.pin ?? false),
               String(e.tool.disabled ?? false),
-              // `dependents` is read by the disable/remove pre-flight, which
-              // reads the row's captured ToolInfo. Enabling or removing an
-              // entry elsewhere changes who depends on this one without
-              // touching any other field here, so the set has to be in the
-              // key or the pre-flight asks its question from a stale answer.
+              // The disable/remove pre-flight reads the row's captured `dependents`, which change without any
+              // other field, so they are in the key.
               (e.tool.dependents ?? []).join(","),
-              // Both drive chips rather than text, so a change to either has to
-              // remount the row. `installed` covers the usual checksum
-              // transition (empty until something is installed), but a reinstall
-              // onto a definition that gained a checksum source moves it with
-              // every other field unchanged.
+              // Chips need a remount: a reinstall onto a definition that gained a checksum source moves only this.
               e.tool.checksum ?? "",
               String(e.tool.essential ?? false),
               e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
@@ -774,11 +672,8 @@ class ToolsManager {
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
     if (t.disabled === true) {
-      // Dimming is for a TEMPLATE (a row the user has not opted into),
-      // not for "not installed". An enabled tool that is missing or
-      // whose install failed is the row that most needs attention, and
-      // it already carries a grey or red dot plus an Install/Retry
-      // button — dimming it to tertiary text argued the opposite.
+      // Dimming marks a TEMPLATE (not opted into), not "not installed": a missing or failed enabled tool
+      // needs attention.
       row.classList.add("list-row-disabled");
     }
     row.appendChild(this.toolActions(t));
@@ -876,10 +771,7 @@ class ToolsManager {
       void this.togglePin(t.name, !pinned);
     });
 
-    // No bin on a pre-bundled row: the engine refuses the removal
-    // (ErrEssential), so the control could only produce a refusal. The switch
-    // above is the escape hatch — it uninstalls the footprint and keeps the
-    // entry.
+    // No bin on a pre-bundled row: the engine refuses the removal (ErrEssential).
     const trailing: HTMLElement[] = [];
     if (t.essential !== true) {
       const delBtn = el(
@@ -892,15 +784,8 @@ class ToolsManager {
       });
       trailing.push(delBtn);
     } else {
-      // A GHOST bin, reserving the box the real one would occupy. The
-      // alignment rule below depends on the widths to the RIGHT of the switch
-      // being fixed, and a pre-bundled row that simply dropped the control
-      // would slide its switch 26px right — the same stepping column the pin's
-      // position exists to prevent, with the step now falling between the two
-      // groups. Reserving the icon's own box rather than a hardcoded width
-      // keeps the two in lockstep. `visibility: hidden` and not `display: none`
-      // for the space; `aria-hidden` and a non-button element so nothing
-      // reaches the accessibility tree or the tab order.
+      // A GHOST bin reserving the real one's box, so the switch column does not step. `visibility:
+      // hidden`, `aria-hidden`, a non-button: space, no tab stop.
       trailing.push(
         el(
           "span",
@@ -910,22 +795,9 @@ class ToolsManager {
       );
     }
 
-    // THE TRAILING ORDER IS ONE STATEMENT BECAUSE IT IS AN ALIGNMENT RULE.
-    // `.list-row-actions` is right-aligned (`margin-inline-start: auto`), so an
-    // element's x is decided by the widths to its RIGHT — which means only the
-    // controls that appear on EVERY row may sit to the right of a control whose
-    // column has to read as a column. The pin is conditional (a disabled entry
-    // has no version to pin), and it used to sit between the switch and the bin,
-    // so the switch landed 28px further right on every disabled row and the
-    // column of switches visibly stepped in and out. With the pin to its LEFT,
-    // the only thing right of the switch is the bin, which is unconditional, so
-    // the switch column is fixed. The Install/Update button inherits the
-    // variance instead, which costs nothing: it is on a minority of rows and its
-    // three labels are three different widths, so it never formed a column.
-    // It also groups better — Update and Pin are both about the version.
-    //
-    // `trailing` is that unconditional slot: the bin on a row that can be
-    // removed, a same-sized ghost on one that cannot.
+    // THE TRAILING ORDER IS AN ALIGNMENT RULE: `.list-row-actions` is right-aligned, so only controls
+    // present on EVERY row may sit right of the switch. The conditional pin goes LEFT of it; only the
+    // unconditional `trailing` slot (bin or ghost) sits right, so the switch column is fixed.
     if (disabled) {
       actions.append(toggle, ...trailing);
     } else {
@@ -944,14 +816,9 @@ class ToolsManager {
     this.loadToolsList();
   }
 
-  /** The cascade half of a destructive mutation, shared by the switch and the
-   *  bin: ask once about the set, then force one request. A row that already
-   *  names dependents asks BEFORE the request; the engine re-derives the set
-   *  under the manifest lock and still answers 409, which is what makes the
-   *  field safe to trust — a stale row is refused rather than obeyed, and that
-   *  refusal asks the same question with the engine's own set. Answers whether
-   *  anything reached the server, so a declined confirm can put a control
-   *  back. */
+  /** The cascade half of a destructive mutation, shared by switch and bin: ask once about the set,
+   *  then force one request. The engine re-derives the set under the manifest lock and answers 409 on
+   *  a stale row, which asks again with its own set. Answers whether anything reached the server. */
   private async cascade(
     dependents: readonly string[],
     ask: (deps: readonly string[]) => Promise<boolean>,
@@ -1031,10 +898,8 @@ class ToolsManager {
           ...(force ? { force: true } : {}),
         });
         if (d?.code === "essential") {
-          // The bin is withheld on a row the inventory reports essential, so
-          // reaching this means the row was rendered before the flag arrived —
-          // and the refetch below replaces that row, which is why the refusal
-          // is reported off the row rather than on it.
+          // Reaching this means the row predates the essential flag; the refetch replaces it, so the refusal
+          // is reported off the row.
           toastError(
             `${t.name} is essential to marotte and cannot be removed. Switch it off to uninstall it and keep the entry.`,
           );
@@ -1059,23 +924,10 @@ class ToolsManager {
     f.search.focus();
   }
 
-  /** Render the search: ONE relevance-ordered list of every installable hit,
-   *  catalog entries and Debian packages alike.
-   *
-   *  It was two labelled blocks, on the reasoning that the same name can appear
-   *  in both at DIFFERENT versions -- the catalog tracks upstream releases and
-   *  apt tracks the distro's candidate -- so a merged list would have to pick
-   *  one and hide a real choice. That argument was about DEDUPING rather than
-   *  merging: nothing is dropped here, and each row carries its own source and
-   *  version chip, so both options stay visible and comparable in one list.
-   *  Blocking them cost the reader the best answer, because a block boundary
-   *  outranks every score inside it: "python" put sixteen catalog tools that
-   *  merely mention Python in their descriptions above `python3`.
-   *
-   *  Uninstallable entries are never requested: the engine hides them unless a
-   *  caller opts in with `unavailable=1`, and this client deliberately does not.
-   *  A row that cannot be installed is noise in an install picker; the shell
-   *  note below is the honest answer for anything absent. */
+  /** Render the search: ONE relevance-ordered list of catalog entries and Debian packages, each row
+   *  carrying its own source and version chip so a name at two versions stays a visible choice.
+   *  Uninstallable entries are never requested (`unavailable=1` is not sent); the shell note answers
+   *  anything absent. */
   private async renderSearch(query: string): Promise<void> {
     const q = query.trim();
     const d = await searchTools.dispatch({ q });
@@ -1084,12 +936,7 @@ class ToolsManager {
     this.paintSearch();
   }
 
-  /** Paint the cached result set under the current order.
-   *
-   *  Separate from the fetch so changing the order costs no round trip: it is a
-   *  decision ABOUT a set the client already holds, and re-querying for it
-   *  would also throw the server's relevance order away and then ask for it
-   *  back. */
+  /** Paint the cached result set under the current order, so reordering costs no round trip. */
   private paintSearch(): void {
     const box = f.results;
     const d = this.lastSearch;
@@ -1134,11 +981,8 @@ class ToolsManager {
     });
   }
 
-  /** The sentence for a reply with no rows. An empty query is a browse of the
-   *  featured set, so it is not a search answer and keeps its own sentence; a
-   *  search answer is classified once. `apt_available` false means the engine
-   *  could not consult the host's package index, which is a corpus it was asked
-   *  to read and did not. */
+  /** The sentence for a reply with no rows. An empty query is a featured browse with its own
+   *  sentence. `apt_available` false means a corpus was asked for and not read. */
   private emptyAnswer(d: ToolSearchResponse): string {
     if (this.lastQuery === "") {
       return "Everything featured is already installed. Search by name.";
@@ -1158,13 +1002,8 @@ class ToolsManager {
     return [...hits].sort((a, b) => dir * a.name.localeCompare(b.name));
   }
 
-  /** The footer's one variable half; the shell sentence is permanent markup.
-   *  With the index unread the engine returns no Debian hits at all, so silence
-   *  leaves a reader unable to tell "no such package" from "that corpus was not
-   *  searched" — a fact about the RESULT SET, which is why it toggles both ways.
-   *  The sentence is written here rather than authored in the markup because it
-   *  depends on WHY the corpus went unread, which only the reply can say; the
-   *  leading space separates it from the sentence it follows in one paragraph. */
+  /** The footer's one variable half, toggled both ways: with the index unread no Debian hits come
+   *  back, so it says WHY the corpus went unread, which only the reply knows. */
   private paintShellNote(d: ToolSearchResponse): void {
     const note = aptNote(d);
     f.shellNoteApt.textContent = note === "" ? "" : ` ${note}`;
@@ -1188,11 +1027,8 @@ class ToolsManager {
       );
     });
     const source = sourceChip(hit.source);
-    // The caveat that used to sit on the Debian block head now rides the chip
-    // that carries it: an apt package is not version-managed by the engine and
-    // comes back at whatever apt offers at the next boot. With one merged list
-    // there is no group to state it on, and it is a property of the source
-    // rather than of a position in the list.
+    // The apt caveat rides the chip: an apt package is not version-managed and returns at whatever apt
+    // offers next boot.
     if (hit.apt === true) {
       source.setAttribute(
         "data-tooltip",
@@ -1216,8 +1052,7 @@ class ToolsManager {
         "div",
         { className: "tool-hit-text" },
         // A DIRECT child of the column, so it is blockified and its declared
-        // ellipsis applies. Wrapped in the `.tool-hit-title` block it used to have,
-        // it was a non-replaced inline box, which `overflow` does not apply to.
+        // ellipsis applies: `overflow` does not apply to a non-replaced inline box.
         el("span", { className: "list-row-name" }, hit.name),
         el("div", { className: "tool-hit-chips" }, ...chips),
         el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
@@ -1309,14 +1144,8 @@ function stateDot(t: ToolInfo): HTMLElement {
   });
 }
 
-/** One Debian package the engine does not manage. Shaped like the system row
- *  — a dot, a name, a right-aligned note — because it is the same kind of row:
- *  something that is present and is not this table's to change. Its note is the
- *  `apt` chip rather than the word "system", so the row says where it came
- *  from, and it carries the installed version, which is the fact a reader is
- *  here for. No controls: removing an apt package from a tools table would
- *  uninstall something the engine never installed and cannot prove nothing else
- *  needs. */
+/** One Debian package the engine does not manage, shaped like the system row: dot, name, `apt` chip,
+ *  installed version. No controls: the engine never installed it and cannot prove nothing needs it. */
 function renderAptRow(pkg: AptPackage): HTMLDivElement {
   const meta: HTMLElement[] = [el("span", { className: "tool-source-chip" }, "apt")];
   if (pkg.version !== undefined && pkg.version !== "") {
@@ -1360,25 +1189,10 @@ function sourceChip(source: string): HTMLElement {
   return el("span", { className: "tool-source-chip" }, label);
 }
 
-/** The chips a TABLE row carries, at most two: the LSP badge, and one honesty
- *  chip naming a weaker guarantee than the normal case.
- *
- *  Exactly one honesty chip, because the three conditions are mutually
- *  exclusive by construction and each one supersedes the question the next
- *  would ask. An apt package is Debian's, verified by the distro archive and
- *  reinstalled from it at every boot, so its integrity story is the distro's
- *  rather than the engine's. A self-managed entry was installed by hand, so the
- *  engine neither verified it nor updates it — that chip replaces a silence, as
- *  `updateOne` returns early for a manual source without emitting anything, and
- *  such an entry is otherwise frozen forever with no indication.
- *
- *  Everything else reads ONE fact: whether verification actually happened
- *  (`ToolInfo.Checksum`), never the source kind. Of the catalog's aqua entries
- *  402 declare a checksum and 252 do not, `node` and `go` among them, so a
- *  per-source table would be wrong for either group. A package-manager source
- *  (npm, pip, cargo, go) reports no checksum at all and earns no chip: the
- *  package manager owns verification there, and a chip on every one of those
- *  rows would say nothing. */
+/** The chips a TABLE row carries, at most two: the LSP badge and one mutually exclusive honesty chip.
+ *  An apt package's integrity is the distro's; a self-managed entry is neither verified nor updated
+ *  (`updateOne` returns silently for a manual source). Otherwise the chip reads ONE fact,
+ *  `ToolInfo.Checksum`, never the source kind; package-manager sources earn none. */
 function rowChips(t: ToolInfo): HTMLElement[] {
   const chips: HTMLElement[] = [];
   if (t.lsp === true) {
@@ -1470,15 +1284,9 @@ function reportAddFailure(err: ActionErrorLike): void {
   toastError(`Could not add tool: ${err.message}`);
 }
 
-/** Install a tool by name (creating it from the catalog if needed) and
- *  resolve once its job reaches a terminal state. Output lines stream
- *  into onLine. Shared by the forge-CLI and MCP-node install banners.
- *
- *  The SSE listeners register BEFORE the mutation is dispatched (a fast
- *  job could otherwise finish between the 202 response and listener
- *  registration, stranding the promise), buffering events until the
- *  job id is known; a post-dispatch poll of the jobs endpoint covers
- *  the remaining case of a terminal event lost to an SSE reconnect. */
+/** Install a tool by name (creating it from the catalog if needed) and resolve at its terminal
+ *  state, streaming lines into onLine. Listeners register BEFORE the dispatch, buffering until the
+ *  job id is known; a post-dispatch jobs poll covers a terminal event lost to an SSE reconnect. */
 export async function installToolAndWait(
   name: string,
   onLine: (line: string) => void,

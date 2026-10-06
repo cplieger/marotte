@@ -1,14 +1,7 @@
 package composition
 
-// The PR-status poller's shutdown, asserted through the REAL shutdown owner.
-//
-// The defect these cover: production calls Build with context.Background()
-// (main.go), and the poller was handed that context directly, so nothing stopped
-// it. App.Shutdown closed the push service and the poller kept waking once a
-// minute to consult it. The process exiting immediately afterwards is what hid it,
-// which is why a test that cancels a context it made up itself proves nothing —
-// that is the mechanism that already worked. What had to be proven is that
-// App.Shutdown reaches the loop.
+// Production calls Build with context.Background(), so the poller must stop through App.Shutdown,
+// the real shutdown owner.
 
 import (
 	"context"
@@ -27,8 +20,6 @@ func TestRunBackground_StopWaitsForTheGoroutine(t *testing.T) {
 	stop := runBackground(context.Background(), "test loop", func(ctx context.Context) {
 		close(started)
 		<-ctx.Done()
-		// A real loop unwinds work here; the sleep is what makes an unwaited
-		// stop observably different from a waited one.
 		time.Sleep(20 * time.Millisecond)
 		exited.Store(true)
 	})
@@ -42,15 +33,12 @@ func TestRunBackground_StopWaitsForTheGoroutine(t *testing.T) {
 	}
 }
 
-// TestApp_ShutdownStopsThePRStatusPoller is the finding itself. It drives
-// App.Shutdown — the function production calls — rather than a cancel the test
-// created, because the bug was precisely that App.Shutdown owned no cancel.
+// TestApp_ShutdownStopsThePRStatusPoller drives App.Shutdown — the function
+// production calls — rather than a cancel the test created, so it proves
+// App.Shutdown owns the poller's cancel.
 func TestApp_ShutdownStopsThePRStatusPoller(t *testing.T) {
 	var exited atomic.Bool
 	started := make(chan struct{})
-	// Every other App member is left nil on purpose: this asserts the poller leg of
-	// the teardown, and Shutdown treats each member as optional so one absent
-	// service cannot take the ordered teardown of the others down with it.
 	app := &App{
 		stopPRPoller: runBackground(context.Background(), "pr status poller",
 			func(ctx context.Context) {

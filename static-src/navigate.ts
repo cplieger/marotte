@@ -1,37 +1,5 @@
-// ---------------------------------------------------------------------------
-// The seams: one router from a SUBJECT in the transcript to the surface that
-// answers it.
-//
-// The depth ladder gives every tool card three answers — did it (the claim),
-// what changed (the peek), let me work with it (depth 2). This module owns that
-// third step for every subject that has one, so a call site says WHAT the user
-// clicked rather than WHICH surface to open:
-//
-//   a changed filename, a ledger row  -> openChange
-//   a card's `+N -M` stats            -> openCallDiff
-//   `Review changes` on a turn        -> openChangeSet
-//   a search hit, a path:line link    -> openAtLine
-//   a fetched URL                     -> openExternal
-//
-// Why a router and not direct imports (which is what these call sites had):
-//
-//   - The same subject appeared in four places and each picked its own opener.
-//     A changed filename in a tool card, the same filename in the turn footer's
-//     ledger, a file row in the browser and a turn-approval row in the dock are
-//     ONE intent, and they were drifting apart — the dock and the ledger already
-//     disagreed with the tool card about which diff to show.
-//   - The file browser's change decoration needs somewhere to send a click, and
-//     it is not in the transcript at all. A router is the thing it can call
-//     without importing the chat's internals.
-//   - `Review changes` had no surface, and inventing one would have broken the
-//     ladder's own rule: depth 2 lands in an EXISTING marotte surface. Routing
-//     it to the git view's changes tab is what keeps that rule true.
-//
-// NOT here: the command card's full output, which stays inside its own
-// disclosure. That is the one depth 2 that does not leave the transcript, and it
-// must not reach the shell panel — one global LIVE PTY whose next server frame
-// can interleave with or erase anything written into it.
-// ---------------------------------------------------------------------------
+// One router from a transcript SUBJECT to the surface that answers it. Never the
+// shell panel: it is a live PTY whose next frame can interleave with anything written.
 
 import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
 import {
@@ -45,23 +13,9 @@ import {
 import { isSafeURL } from "./url-safety.js";
 import { absPath } from "./workspace.js";
 
-/** Open a file's CHANGE — its diff against HEAD.
- *
- *  vs HEAD rather than the calling card's own before/after pair, and that is the
- *  honest source for a "let me look" click: the write has already landed, so the
- *  working tree IS the after state and git holds the before. A card's own pair
- *  answers the narrower "what did THIS call do", which is what its `+N −M` link
- *  is for.
- *
- *  This is the seam between the client's two path spaces, and the ONE place the
- *  crossing happens. Its callers do not agree on the form they hold and cannot
- *  be made to: three of them (the turn footer's ledger row, a tool card's
- *  filename, a turn-approval file row) carry the agent's workspace-RELATIVE
- *  path, while the file browser carries an absolute one. The editor addresses
- *  files absolutely, so every caller is normalised here rather than each
- *  learning the rule. Before this, the three relative callers produced
- *  `GET /api/file?path=hello.sh`, which the granted-roots allow-list denied with
- *  403 — so clicking a changed filename could never load its diff. */
+/** Open a file's change vs `ref`: the write already landed, so git holds the
+ *  before. The one place the two path spaces cross: a workspace-relative path is
+ *  made absolute here, or the granted-roots allow-list answers 403. */
 export function openChange(path: string, ref = "HEAD"): void {
   if (path === "") {
     return;
@@ -69,9 +23,7 @@ export function openChange(path: string, ref = "HEAD"): void {
   openFileGitDiff(absPath(path), ref);
 }
 
-/** Open a tool call's OWN before/after pair — the narrower question a card's
- *  `+N -M` link asks, against openChange's "how does this file stand vs git".
- *  A ToolDiff path is relative, so it crosses the seam openChange documents. */
+/** Open a tool call's own before/after pair. The path is relative (see openChange). */
 export function openCallDiff(path: string, oldText: string, newText: string): void {
   if (path === "") {
     return;
@@ -79,27 +31,13 @@ export function openCallDiff(path: string, oldText: string, newText: string): vo
   openFileDiff(absPath(path), oldText, newText);
 }
 
-/** Open a MULTI-FILE review — the git view's changes tab.
- *
- *  There is no turn-scoped multi-file diff viewer, deliberately: the ladder's
- *  rule is that depth 2 lands in a surface that already exists, and the git
- *  view already lists every changed file and opens each one's diff on click. A
- *  bespoke viewer would be a second changed-files list to keep in sync.
- *
- *  The honest limitation, stated: this shows the WORKING TREE's changes, not
- *  only the turn's. For the common case they are the same set — the agent just
- *  made them — and where they differ the turn's own ledger is the scoped list.
- *  Scoping the git view to a path set is a filter it does not have. */
+/** Open the git view's changes tab. Shows the WORKING TREE's changes, not only
+ *  the turn's. */
 export function openChangeSet(): void {
   void openGitView("changes");
 }
 
-/** Open the editor at a line — a search hit, or a `path:line` reference.
- *
- *  Normalised through the same seam as openChange, and for the same reason: a
- *  read card's filename and a `path:line` reference in the agent's prose are
- *  both workspace-RELATIVE, so both produced `GET /api/file?path=…` requests the
- *  granted-roots allow-list denied. An absolute path passes through. */
+/** Open the editor at a line; a relative path is normalised as in openChange. */
 export function openAtLine(path: string, line?: number): void {
   if (path === "") {
     return;
@@ -107,15 +45,8 @@ export function openAtLine(path: string, line?: number): void {
   openFile(absPath(path), line);
 }
 
-/** Open a spec's tab for `dir` (a workspace-relative spec directory), nested
- *  under `chatID`'s tab when one is given.
- *
- *  Two doors, one router: a tool card whose path is under a spec directory
- *  passes its chat, `/docs/specs` passes none. `open_tab` identifies a tab by
- *  `(kind, ref)` alone and discards `parent` on a second open, so a spec opened
- *  parentless from `/docs/specs` and then from its chat's card would land on a
- *  page with a picker; `reparent_tab` is the one mutation that reassigns the
- *  parent, and this is one of its two callers. */
+/** Open `dir`'s spec tab, nested under `chatID`'s tab when given. `open_tab`
+ *  discards `parent` on a second open, so the parent goes through `reparent_tab`. */
 export async function openSpec(dir: string, chatID?: string): Promise<void> {
   if (dir === "") {
     return;
@@ -134,11 +65,8 @@ export async function openSpec(dir: string, chatID?: string): Promise<void> {
   );
 }
 
-/** Surface a URL the agent fetched. Returns false when the URL is not safe to
- *  offer, so the caller can render plain text instead of a dead link.
- *
- *  It never auto-opens: an SSE-driven `window.open` is popup-blocked, and a
- *  transcript that opens tabs by itself is worse than one that asks. */
+/** Never auto-opens (an SSE-driven `window.open` is popup-blocked). False when the
+ *  URL is unsafe, so the caller renders plain text. */
 export function openExternal(url: string): boolean {
   if (!isSafeURL(url)) {
     return false;

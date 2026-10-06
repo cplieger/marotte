@@ -1,23 +1,6 @@
-// ---------------------------------------------------------------------------
-// The git badge's vocabulary: TWO states plus hidden, painted in the two hues a
-// developer already reads without a legend — red is broken, amber is modified.
-// That is what `.git-st-*` uses per file and what VS Code uses per file
-// (gitDecoration.deletedResourceForeground / .modifiedResourceForeground).
-//
-// Most of what this pins is the two states that are GONE. `remote` (behind
-// origin) is not a state here because nothing in this app runs `git fetch`, so
-// `behind` is stale by construction and a hue asserting it would be a claim the
-// data cannot support — VS Code reports it as a colourless `↓N` count beside a
-// sync icon, and the git panel does the same. `both` was the blend that state
-// forced into existence, and a 50/50 amber-violet mix has no interpretation for
-// a reader at all.
-//
-// Both halves live in one file because they are ONE decision: what a reader sees
-// is the derivation's answer painted by the stylesheet, so pinning either alone
-// leaves the other free to disagree. That already happened once in the other
-// direction — the badge called behind-origin violet while the panel's own
-// `.git-repo-behind` called it amber.
-// ---------------------------------------------------------------------------
+// Two states plus hidden: red is broken, amber is modified, the hues `.git-st-*` and VS Code use per file. `behind`
+// is no state (nothing fetches, so it is stale by construction). Derivation and stylesheet are one decision, so both
+// are pinned here: pinning one alone lets the other disagree.
 
 import { describe, expect, it } from "vitest";
 import { deriveState, deriveTooltip } from "./git-badge.js";
@@ -63,8 +46,7 @@ describe("git badge state", () => {
   });
 
   it("is dirty when a repo's only change is an unpushed commit", () => {
-    // `ahead` is local work the reader still owns, so it counts as dirty even
-    // though the working tree is clean.
+    // An unpushed commit is local work the reader still owns, so `ahead` is dirty on a clean tree.
     expect(deriveState({ repos: [repo({ ahead: 2 })] }, [])).toEqual({
       kind: "dirty",
       dirtyCount: 1,
@@ -72,14 +54,12 @@ describe("git badge state", () => {
   });
 
   it("stays HIDDEN for a repo that is only behind origin", () => {
-    // The retired `remote` state. `behind` never reaches the badge, because
-    // nothing here fetches, so the number is stale by construction.
+    // `behind` never reaches the badge: nothing fetches, so the number is stale.
     expect(deriveState({ repos: [repo({ behind: 7 })] }, [])).toEqual({ kind: "none" });
   });
 
   it("reports dirty-AND-behind as plain dirty, with no blended state", () => {
-    // The retired `both` state. One repo dirty, another behind: exactly the
-    // input that used to produce the amber/violet mix.
+    // One repo dirty, another behind: the input that once produced a blended state.
     expect(
       deriveState({ repos: [repo({ has_dirty: true }), repo({ repo: "lib", behind: 3 })] }, []),
     ).toEqual({ kind: "dirty", dirtyCount: 1 });
@@ -143,7 +123,6 @@ describe("git badge tooltip", () => {
 });
 
 describe("git badge paint", () => {
-  /** Every rule in the bundle whose selector list mentions the badge. */
   function badgeRules(): { selector: string; body: string }[] {
     return manifestSheets().flatMap((s) =>
       allRules(s.css).filter((r) => r.selector.includes(".git-badge")),
@@ -167,8 +146,7 @@ describe("git badge paint", () => {
   });
 
   it("reaches for the state inks, never the destructive-action palette", () => {
-    // --c-danger / --c-warning are the delete-confirm palette; a status mark takes
-    // --c-red / --c-yellow.
+    // --c-danger / --c-warning are the delete-confirm palette; a status mark takes --c-red / --c-yellow.
     const offenders = badgeRules().filter(
       (r) => r.body.includes("--c-danger") || r.body.includes("--c-warning"),
     );
@@ -183,10 +161,8 @@ describe("git badge paint", () => {
   });
 
   it("leaves the ahead and behind counts unhued", () => {
-    // They are numbers, and VS Code renders the same pair colourless. A tint
-    // here would give amber a second meaning beside "modified". `ruleContaining`
-    // rather than an exact selector match, so the two may be listed in either
-    // order and on either line.
+    // Counts stay colourless (as in VS Code): a tint would give amber a second meaning beside "modified".
+    // `ruleContaining`, so the pair may be listed in either order.
     const sheet = loadCSS("22-git-multirepo.css");
     for (const member of [".git-repo-ahead", ".git-repo-behind"]) {
       expect(ruleContaining(sheet, member).body).toContain("color: var(--c-text-secondary)");

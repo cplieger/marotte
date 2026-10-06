@@ -1,8 +1,6 @@
-// States are read off the CSSOM, not computed style: a synthetic hover drives no style
-// recalc here and `CSS.forcePseudoState` is a devtools call a test page cannot make.
-// The walk must descend into nested rules — `CSSStyleRule` is
-// not a `CSSGroupingRule` yet carries `cssRules`, so recursing only through grouping
-// rules reads a top-level selector and none of its `&:hover` children.
+// States are read off the CSSOM: synthetic hover drives no recalc and `CSS.forcePseudoState` is a
+// devtools call. The walk descends nested rules: `CSSStyleRule` carries `cssRules` without being a
+// `CSSGroupingRule`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";

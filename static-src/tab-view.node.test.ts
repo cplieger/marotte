@@ -1,20 +1,12 @@
-// The two per-kind tables and the view contract. No DOM, no store, no mocks —
-// which is the point of the module being separate: it holds the facts a factory
-// needs and nothing that needs a document.
-//
-// `.node.test.ts` rather than the default browser project deliberately: the
-// subject is DOM-FREE by design, and a test that never touches a document proves
-// that where a browser test could pass while quietly depending on one.
+// The two per-kind tables and the view contract: no DOM, store or mocks; a node test proves the
+// module DOM-free.
 
 import { describe, it, expect } from "vitest";
 import { TAB_VIEWS, TAB_ICONS } from "./tab-view.js";
 import type { TabKind } from "./types.js";
 
-// The ten kinds, written out. This list is NOT the gate — the gate is the
-// `Readonly<Record<TabKind, string>>` annotation on both tables, which is a
-// compile error the moment a kind is added to the Go const block and
-// regenerated. What the list buys is the other direction: a table that grows an
-// entry the wire does not know, and a table that disagrees with its sibling.
+// Not the gate (the `Readonly<Record<TabKind, string>>` annotation is); it catches a table entry
+// the wire does not know, or tables that disagree.
 const KINDS: readonly TabKind[] = [
   "chat",
   "editor",

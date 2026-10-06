@@ -1,14 +1,9 @@
 package marotte
 
-// Agent user-input question types (kiro-cli v3 _kiro/userInput, 2.14+).
-//
-// The agent's user_input tool asks the user a structured question mid-turn
-// (plan-mode clarifications, spec gates). Because marotte declares the
-// initialize capability _meta.kiro.userInput:true, KAS forwards the
-// question as an A→C JSON-RPC request instead of flattening it into a
-// permission prompt; the answer returns on the request id as
-// {action:"answered", answer:"<text>"} (anything else advances the agent
-// to its next phase). Mirrors the elicitation types in elicitation.go.
+// Agent user-input question types (kiro-cli 2.14+ _kiro/userInput). With
+// `_meta.kiro.userInput:true` declared, KAS forwards the agent's structured question as a JSON-RPC
+// request; the answer returns on the request id as {action:"answered", answer:"<text>"}. Mirrors
+// elicitation.go.
 
 // UserInputSubOption is one second-level choice under a UserInputOption.
 // Sub-options render as a pre-checked multi-select (the TUI's behavior);

@@ -1,19 +1,11 @@
-// ---------------------------------------------------------------------------
-// THE TURN CARD IS WHERE THE REFUSAL CALLOUT AND THE LICENCE FOOTNOTE MOUNT, and
-// design 8.7's precedence is resolved at that one site: both renderers take a
-// RESOLVED value and read no store, so the card is the only place that can prefer
-// `turn_close`'s durable half over the live one, and getting that backwards is
-// invisible to both of their own suites. A REAL paint through `mountChatView`,
-// because the subject is the WIRING rather than either renderer.
-// ---------------------------------------------------------------------------
+// The turn card is the one site that resolves `turn_close`'s durable half over the live one for the refusal
+// callout and the licence footnote; both renderers take a resolved value, so a real paint tests the wiring.
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import { makeSession } from "./__test-helpers__/model.js";
 
-// The DOM the renderer's import graph resolves at load, nested the way the page
-// nests it: the rail mounts in the positioned outer wrapper, the scroller is the
-// wrapper, and `#messages` holds one `.transcript-view` per resident chat.
+// The DOM the import graph resolves at load, nested as the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
@@ -39,8 +31,7 @@ for (const [id, tag] of [
   document.body.appendChild(e);
 }
 
-// Staged, not under test: the rail's session-wide index and the pagination door are
-// network reads, and the rewind is a dispatch whose own action has its own suite.
+// Staged, not under test: network reads, and a rewind whose action has its own suite.
 const { apiGetMock, rewindMock, confirmMock } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
   rewindMock: vi.fn(),
@@ -48,8 +39,7 @@ const { apiGetMock, rewindMock, confirmMock } = vi.hoisted(() => ({
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: apiGetMock,
-  // Present-but-inert so real-ESM linking succeeds: this graph reaches the run
-  // store and the window read, neither of which is this file's subject.
+  // Present-but-inert so real-ESM linking succeeds.
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetTypedOrError: vi.fn(),
@@ -64,10 +54,7 @@ const messages = await import("./messages.js");
 
 messages.mountChatView();
 
-// PER TEST, not once at load: the suite runs under `mockReset: true`
-// (vitest.config.ts), which clears an implementation as well as the call history —
-// so a confirm staged at module scope answers `undefined` from the second case on,
-// and the rewind never dispatches.
+// Per test: `mockReset: true` clears implementations, so a confirm staged at load answers `undefined` from case 2.
 beforeEach(() => {
   apiGetMock.mockResolvedValue({ turns: [] });
   confirmMock.mockResolvedValue(true);
@@ -83,8 +70,7 @@ function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknow
   return { id: `${turnID}-e${String(at)}`, turn: turnID, kind, seq: at, ts: at + 1, payload };
 }
 
-/** One turn the reader sent, its reply, and its close — `close` is spread onto the
- *  `turn_close` payload, so a case decides what the durable half carries. */
+/** One prompted turn, its reply and its close; `close` is spread onto the `turn_close` payload. */
 function turnEntries(id: string, close: Record<string, unknown> = {}): Entry[] {
   return [
     sealed(id, 0, "turn_open", {
@@ -97,8 +83,7 @@ function turnEntries(id: string, close: Record<string, unknown> = {}): Entry[] {
   ];
 }
 
-/** A chat holding one turn. `close` undefined leaves the turn OPEN, which is the
- *  state the store's live values answer for. */
+/** A chat holding one turn; `close` undefined leaves the turn open, the state live values answer for. */
 function stage(chatID: string, turnID: string, close?: Record<string, unknown>): void {
   const s = session(chatID);
   const entries =
@@ -115,8 +100,7 @@ function close(chatID: string, turnID: string, payload: Record<string, unknown>)
 }
 
 let seq = 0;
-/** A chat id no earlier case has used: `setActive` is a no-op for the id already
- *  active, so a reused id paints nothing and the case runs against an empty view. */
+/** A fresh chat id: `setActive` is a no-op for the active id, so a reused one paints nothing. */
 function nextChat(): string {
   seq += 1;
   return `cn${String(seq)}`;
@@ -131,8 +115,7 @@ function card(): HTMLElement {
   return el;
 }
 
-/** The card's own children, by class, in document order — which is what says the two
- *  regions sit ABOVE the ledger rather than merely existing somewhere. */
+/** The card's own children by class, in document order, so a case can assert the regions sit above the ledger. */
 function region(cls: string): { el: HTMLElement | null; index: number } {
   const c = card();
   const el = c.querySelector<HTMLElement>(`:scope > .${cls}`);
@@ -164,9 +147,8 @@ describe("the turn card's close-time regions", () => {
     expect(region("refusal-callout").el?.querySelector(".refusal-chip")?.textContent).toBe(
       "live-category",
     );
-    // The refusal bumps `shape` synchronously (the callout is an element that has to
-    // mount); the attributions bump `fact`, which `scheduleMessages` coalesces onto a
-    // microtask, so the footnote lands one tick later.
+    // The refusal bumps `shape` synchronously; the attributions bump `fact`, coalesced onto a microtask, so the
+    // footnote lands a tick later.
     await vi.waitFor(() => {
       expect(region("code-refs").el?.textContent).toContain("1 code reference");
     });
@@ -177,11 +159,8 @@ describe("the turn card's close-time regions", () => {
     await vi.waitFor(() => {
       expect(region("code-refs").el?.textContent).toContain("2 code references");
     });
-    // The CALLOUT keeps the metadata it mounted with, deliberately: the wire stamps a
-    // refusal at most once per turn, so the live half and the durable half are the same
-    // fact and `syncRefusal` leaves a mounted callout's own chip alone. What the
-    // precedence decides for it is which half MOUNTS it — case 1 covers the close-only
-    // turn — so the claim here is that the close does not take the callout away.
+    // The wire stamps a refusal at most once per turn, so `syncRefusal` leaves a mounted callout's chip alone; the
+    // claim here is only that the close does not take the callout away.
     expect(region("refusal-callout").el?.querySelector(".refusal-chip")?.textContent).toBe(
       "live-category",
     );
@@ -193,9 +172,8 @@ describe("the turn card's close-time regions", () => {
     expect(region("code-refs").el).toBeNull();
   });
 
-  // The callout's Rewind addresses the REFUSED turn's own prompt — KAS drops that
-  // prompt and everything after it — where the footer's own button addresses the
-  // NEXT turn's and keeps this one.
+  // The callout's Rewind addresses the refused turn's prompt (KAS drops it and everything after); the footer's
+  // addresses the next turn's.
   it("routes the callout's Rewind to the refused turn's own prompt", async () => {
     const chat = nextChat();
     stage(chat, "t1", { refusal: {} });

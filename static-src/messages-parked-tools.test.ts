@@ -1,17 +1,5 @@
-// ---------------------------------------------------------------------------
-// The tool layer under the multiplexer: composite tool identity, the parked
-// terminal buffer, and the refcounted run clock. All three survived the entry
-// cutover; the per-MESSAGE park half did not, so every fixture is a turn of
-// ENTRIES and every writer one of the store's own operations.
-//
-// Tool call ids are backend-authored with no cross-chat uniqueness guarantee,
-// and parked views stay RESIDENT, so two chats' identical ids share the page
-// and the card registries key on toolCallSigKey(chatID, toolID).
-//
-// REAL store, renderer and tool layer; the scroll mock is canonical (geometry
-// plays no part here) and api-client is stubbed, because the run store fetches
-// run state through it and the fake payload is what makes a run "live".
-// ---------------------------------------------------------------------------
+// Composite tool identity, the parked terminal buffer, and the refcounted run clock. Tool call ids have no
+// cross-chat uniqueness and parked views stay resident, so card registries key on toolCallSigKey(chatID, toolID).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session } from "./types.js";
@@ -19,8 +7,7 @@ import { makeSession } from "./__test-helpers__/model.js";
 import type { Turn } from "./turns.js";
 import type { Entry } from "./wire/types.gen.js";
 
-// The renderer's graph reads the shared DOM registry at module scope, and `byId`
-// throws on a missing element, so the hosts exist before any import resolves.
+// The graph reads the DOM registry at module scope and `byId` throws on a missing element.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -45,15 +32,12 @@ for (const id of [
 }
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
-// The network edge: run-store's fetch path, which is the OrError variant because the
-// store spends a failed read's STATUS. A live run answers with one running node so
-// `runIsLive` is true and the card's clock arms.
+// The run store's fetch uses the OrError variant; a live run's running node arms the card's clock.
 const apiGetOrErrorMock = vi.hoisted(() => vi.fn());
 vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: `store-load.ts` reaches these for
-  // the deep-link confirmation and the window read, and this graph includes it.
+  // Present-but-inert so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTypedOrError: vi.fn(),
   apiGetOrError: apiGetOrErrorMock,
@@ -128,10 +112,6 @@ function toolResult(turnID: string, at: number, callID: string, status = "comple
   return sealed(turnID, at, "tool_result", { status }, `${callID}:result`);
 }
 
-function turnClose(turnID: string, at: number, outcome = "completed"): Entry {
-  return sealed(turnID, at, "turn_close", { outcome });
-}
-
 /** A chat holding whole turns, the shape a page GET lands. */
 function settled(
   id: string,
@@ -157,8 +137,7 @@ function bystander(id: string): Session {
   return settled(id, [[turnOpen(t, 1, "x")]]);
 }
 
-/** Mount chats and activate the first, announcing the window as a REPLAY (the cause a
- *  fetched page carries), so no case inherits an arrival tail from its own seed. */
+/** Mount chats and activate the first, announcing a replay so no case inherits an arrival tail from its seed. */
 function seed(...sessions: Session[]): void {
   store.setSessions(sessions);
   const first = sessions[0];
@@ -176,8 +155,7 @@ function viewOf(chatID: string): HTMLElement {
   return el;
 }
 
-/** The projected turn a detached render takes. The page renders a REAL turn of the
- *  store — nothing is copied and no lane is stripped off an entry. */
+/** The projected turn a detached render takes: a real store turn, nothing copied. */
 function turnOf(chatID: string, turnID: string): Turn {
   const s = store.get(chatID);
   if (s === undefined) {
@@ -196,14 +174,12 @@ async function flushed(): Promise<void> {
 }
 
 beforeEach(() => {
-  // The multiplexer's registry persists at module scope, so earlier cases' parked
-  // views would otherwise count against the LRU budget of later ones.
+  // The multiplexer's registry persists at module scope; earlier parked views would count against the LRU.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
   apiGetOrErrorMock.mockReset();
-  // Status 0: no request reached the engine, which keeps the store's retry ladder where
-  // a settled 404 would skip it.
+  // Status 0 keeps the store's retry ladder, where a settled 404 would skip it.
   apiGetOrErrorMock.mockResolvedValue({ ok: false, status: 0, data: null, error: "" });
 });
 
@@ -217,8 +193,7 @@ afterEach(() => {
 
 describe("composite tool identity", () => {
   it("two chats with IDENTICAL tool ids park and unpark without cross-corruption", async () => {
-    // The exact id collision the composite key exists for: both chats' wire
-    // frames name the same tool_call.id.
+    // Both chats' frames name the same tool_call.id.
     const a = freshID("c-same");
     const b = freshID("c-same");
     const shared = "toolu_shared";
@@ -230,44 +205,34 @@ describe("composite tool identity", () => {
     );
     await flushed();
 
-    // Park A, mount B — both cards are on the page now, one per view.
     store.setActive(b);
     await flushed();
-    // Re-QUERIED per read rather than held: both turns are still OPEN, and
-    // `resumeTurnBody` REBUILDS an open turn's body, so a held node is detached from
-    // the unpark onward. Identity is not the subject; which chat's data lands where is.
+    // Re-queried per read: `resumeTurnBody` rebuilds an open turn's body, so a held node detaches at unpark.
     const cardA = (): HTMLElement | null =>
       viewOf(a).querySelector<HTMLElement>(`[data-tool-id="${shared}"]`);
     const cardB = (): HTMLElement | null =>
       viewOf(b).querySelector<HTMLElement>(`[data-tool-id="${shared}"]`);
     expect(cardA()).not.toBeNull();
     expect(cardB()).not.toBeNull();
-    // Both cards' pre-state, so every assertion below is about what a writer DID
-    // rather than about a slot that was empty all along.
+    // The pre-state, so the assertions below are about what a writer did.
     expect(cardA()?.dataset["outcome"]).toBe("running");
     expect(cardB()?.dataset["outcome"]).toBe("running");
 
-    // B's result lands on B's card only.
     store.appendEntry(b, toolResult(tb, 2, shared, "completed"));
     await flushed();
     expect(cardB()?.dataset["outcome"]).toBe("ok");
     expect(cardA()?.dataset["outcome"]).not.toBe("ok");
 
-    // THE KEYING ASSERTION, and it is the one that needs no freeze behind it: A's
-    // own result is appended under the SAME tool id while B is the ACTIVE chat, so
-    // B's card is live and subscribed. A shared signal would land `fail` on it.
+    // A's result arrives under the same id while B is active and subscribed; a shared signal would land `fail` on B.
     store.appendEntry(a, toolResult(ta, 2, shared, "failed"));
     await flushed();
     expect(cardB()?.dataset["outcome"]).toBe("ok");
-    // And nothing reached A's parked DOM either.
     expect(cardA()?.dataset["outcome"]).toBe("running");
 
     store.setActive(a);
     await flushed();
-    // A's card carries A's own outcome, and B's still carries B's.
     expect(cardA()?.dataset["outcome"]).toBe("fail");
     expect(cardB()?.dataset["outcome"]).toBe("ok");
-    // Both signals exist side by side under their composite keys.
     expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(a, shared))).toBeDefined();
     expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(b, shared))).toBeDefined();
   });
@@ -283,22 +248,12 @@ describe("the parked terminal buffer", () => {
     const b = freshID("c-term");
     const t = `${a}-t1`;
     const termID = freshID("term");
-    // A SETTLED turn, which is the one shape this mechanism is observable in rather
-    // than a convenience — see the hand-off closing this case.
+    // An open turn with the command running, whose body is rebuilt at unpark.
     seed(
-      settled(a, [
-        [
-          turnOpen(t, 1, "run it"),
-          toolCall(t, 1, "t-term", { terminal_id: termID }),
-          toolResult(t, 2, "t-term"),
-          turnClose(t, 3),
-        ],
-      ]),
+      settled(a, [[turnOpen(t, 1, "run it"), toolCall(t, 1, "t-term", { terminal_id: termID })]]),
       bystander(b),
     );
     await flushed();
-    // The link exists (mount claimed the terminal); live output lands in the
-    // card while active.
     appendTerminalChunk(termID, "live line\n", [], 0);
     const pre = (): string =>
       viewOf(a).querySelector(".tool-call .tool-output pre")?.textContent ?? "";
@@ -307,8 +262,7 @@ describe("the parked terminal buffer", () => {
     store.setActive(b);
     await flushed();
 
-    // Three 30 KB chunks while parked: 90 KB > the 64 KB cap, so the OLDEST
-    // drops (shell scrollback semantics — resume shows the newest output).
+    // 90 KB parked exceeds the 64 KB cap, so the oldest drops, as shell scrollback does.
     const chunk = (label: string): string =>
       `${label}${"x".repeat(30 * 1024 - label.length - 1)}\n`;
     const oldest = chunk("oldest");
@@ -319,49 +273,35 @@ describe("the parked terminal buffer", () => {
       appendTerminalChunk(termID, c, [], offset);
       offset += c.length;
     }
-    // Nothing reached the parked DOM.
     expect(pre()).toBe("live line\n");
 
     store.setActive(a);
     await flushed();
-    // Drained once: the two newest chunks landed, the oldest was dropped, and the
-    // text already on screen when the view parked is still in front of them.
+    // Drained once: the two newest chunks land after the text already on screen.
     const text = pre();
     expect(text.startsWith("live line\n")).toBe(true);
     expect(text).toContain("middle");
     expect(text).toContain("newest");
     expect(text).not.toContain("oldest");
 
-    // A second park/unpark cycle with no new output replays nothing — the
-    // buffer was consumed by the drain, not merely read.
+    // The buffer was consumed by the drain, so a second cycle replays nothing.
     store.setActive(b);
     await flushed();
     store.setActive(a);
     await flushed();
     expect(pre()).toBe(text);
 
-    // HANDED TO 4c, ROOT-CAUSED AND NOT PINNED: on an OPEN turn the buffer is
-    // DESTROYED before it can drain. `resumeView` resumes each body and only then
-    // calls `drainParkedTerminals`; a turn with no `turn_close` resumes through
-    // `rebuildTurnBody`, whose `disposeToolEffectsForChat` reaches `removeSlot`, which
-    // deletes the call's `termToTool` link AND its `parkedTermBuffers` entry. The
-    // drain then finds no link and skips the terminal. Measured as an empty `pre()`
-    // on the open-turn fixture this case first used, and it matters because an open
-    // turn is the shape a terminal normally streams in.
+    // The rebuilt card still owns the terminal.
+    appendTerminalChunk(termID, "after\n", [], offset);
+    expect(pre().endsWith("after\n")).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The refcounted run clock: one interval per WORKFLOW over the cards holding
-// it, so a park releasing the transcript's hold must not stop a clock another
-// surface still reads. The two surfaces are two DIFFERENT calls naming one run
-// — the launch in the issuer's lane, a later mention in a delegate's — which is
-// the only wire shape that can produce two cards for one run.
-// ---------------------------------------------------------------------------
+// One refcounted interval per workflow, so a park releasing the transcript's hold must not stop a clock another
+// surface still reads. Two cards for one run come only from two calls naming it in different lanes.
 
 describe("the run clock", () => {
-  /** A live run: one running leaf, started in the past, never ended — the
-   *  shape `runIsLive` and the card's clock both key on. */
+  /** A live run: one running leaf, started, never ended. */
   function liveRunPayload(wf: string): unknown {
     return {
       workflowId: wf,
@@ -393,11 +333,8 @@ describe("the run clock", () => {
       settled(a, [
         [
           turnOpen(t, 1, "run the workflow"),
-          // The launch, in the issuer's own lane: the transcript's run card.
           toolCall(t, 1, "t-launch", { workflow_id: wf, title: "Run Workflow" }),
-          // A delegate mentioning the SAME run. It renders at no position in the
-          // transcript (its lane is not the transcript's root) and is the whole
-          // body of that delegate's own page.
+          // A delegate mentioning the same run: it renders nowhere in the transcript and is the body of its own page.
           toolCall(t, 2, "t-inspect", { workflow_id: wf, title: "Inspect Workflow" }, lane),
         ],
       ]),
@@ -410,19 +347,16 @@ describe("the run clock", () => {
     const transcriptCard = viewOf(a).querySelector<HTMLElement>(".run-card");
     expect(transcriptCard).not.toBeNull();
 
-    // The second surface: the delegate's own page, rendering its lane, whose
-    // mention of `wf` holds its own clock ref.
+    // The delegate's page holds its own clock ref.
     const host = document.createElement("div");
     document.body.appendChild(host);
     blocks.buildDetachedBody(host, turnOf(a, t), a, lane, false);
     await vi.advanceTimersByTimeAsync(0);
-    // The run's elapsed is the FOOT's now (`renderFoot`, re-rendered by `tick`),
-    // so the ledger is where a card's clock is read.
+    // The run's elapsed is rendered in the foot, so the ledger is where a clock is read.
     const detachedClock = host.querySelector<HTMLElement>(".run-ledger");
     expect(detachedClock).not.toBeNull();
 
-    // Park A: the transcript card releases ITS hold; the detached surface's
-    // hold keeps the shared interval alive.
+    // Park A: the detached surface's hold keeps the shared interval alive.
     store.setActive(b);
     await flushed();
 
@@ -432,13 +366,11 @@ describe("the run clock", () => {
     expect(after).not.toBe("");
     expect(after).not.toBe(before);
 
-    // The parked transcript card's clock did NOT advance: its hold released.
     const parkedClock = viewOf(a).querySelector<HTMLElement>(".run-ledger");
     const parkedBefore = parkedClock?.textContent ?? "";
     await vi.advanceTimersByTimeAsync(2100);
     expect(parkedClock?.textContent ?? "").toBe(parkedBefore);
 
-    // Unpark: the transcript card re-arms, re-reads its cell and ticks again.
     store.setActive(a);
     await flushed();
     const resumedClock = viewOf(a).querySelector<HTMLElement>(".run-ledger");
@@ -450,23 +382,3 @@ describe("the run clock", () => {
     host.remove();
   });
 });
-
-// ---------------------------------------------------------------------------
-// THREE ORACLES DROPPED OUT LOUD: two mounted cards for ONE tool call. The old
-// suite's last describe held three cases over that shape — a park freezing the
-// transcript's card while the page's kept updating, the page's dispose leaving
-// the transcript's card managed, and a chunk reaching the live page while the
-// parked transcript waited. The shape is UNREACHABLE rather than untested:
-// `entryRenders` refuses an entry whose lane is not the render's root lane, so
-// the transcript (lane "") and a delegate's page render DISJOINT entry sets and
-// one tool_call is mountable on exactly one of them. A fixture with one tool id
-// in two lanes would be a wire shape nothing produces.
-//
-// Two lost nothing — the park freeze over a tool card is
-// `messages-parked-views.test.ts`'s, the drain-once oracle this file's own.
-// What is dropped with no home is the multimap: the second slot per (chatID,
-// toolID) and the refcounted clearing behind it. HANDED TO 4c, not pinned:
-// `mountToolCard` still comments that the transcript's card and the subagent
-// page's for one call come and go independently, which the lane predicate has
-// made false.
-// ---------------------------------------------------------------------------

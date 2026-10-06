@@ -7,21 +7,9 @@ import (
 	"testing"
 )
 
-// FuzzNewStore is the untrusted-input boundary of this package: tabs.json is
-// written by a previous build and editable by anyone with a shell in the
-// container, and it is read on the BOOT path, so a panic here is a container that
-// does not come up.
-//
-// The invariants are the store's own claims rather than crash-only, because
-// crash-only would pass for a load path that happily published a subject with an
-// unknown kind — which reaches every connected client as a switch with no case for
-// it. So every state NewStore publishes is checked against the rules Open enforces
-// at the door: bounded, unique by id, unique by subject, every kind one of the
-// eight, every ref fitting its kind. The store must also still WORK, since warn
-// and start empty is the whole posture.
-//
-// It stands alone: no sibling test has to have run first, which is what the weekly
-// fuzz run's `-run='^$'` invocation requires.
+// FuzzNewStore checks tabs.json (boot-path, hand-editable) against the store's own claims, not
+// crash-only: every published state is bounded, unique by id and by subject, with known kinds
+// and fitting refs, and the store still works. Standalone, for `-run='^$'`.
 func FuzzNewStore(f *testing.F) {
 	f.Add([]byte(`{"tabs":[{"id":"a1","kind":"chat","ref":"c-1"}],"version":3}`))
 	f.Add([]byte(`{"tabs":[],"version":0}`))
@@ -43,8 +31,7 @@ func FuzzNewStore(f *testing.F) {
 			t.Fatalf("Setup: write %s: %v", FileName, err)
 		}
 
-		// The error is the caller's warning, not a verdict: a store always comes
-		// back and it always has to be safe to use.
+		// The error is a warning; a store always comes back.
 		s, _ := NewStore(dir)
 		if s == nil {
 			t.Fatal("NewStore returned a nil store; the caller has nothing to run on")

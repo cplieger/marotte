@@ -1,55 +1,22 @@
-//
-// The out-of-page attention system's DECISIONS: the fold, the two orders it
-// depends on, the acknowledgement store, the sinks, and the raise rule.
-//
-// Deliberately the `node` project, with no DOM at all. That is the property under
-// test as much as any assertion here: every capability the sinks use arrives
-// through an injected env, so if a decision ever starts reading `document`
-// directly this file stops loading. The browser binding and the wiring are the
-// sibling attention-wiring.test.ts's subject, in the browser project.
-//
-// The premise is ASSERTED rather than assumed (see "the premise" below), because
-// the whole mechanism is an absence: in a DOM-bearing project this file would
-// import cleanly, the vi.mocks would become decoration, and every assertion
-// below would still pass while the invariant they exist to enforce went
-// unchecked. A misplacement has to fail loudly, and one explicit test is what
-// makes it do so.
-//
-// Four things here are marotte's own rather than the reference's, and each is
-// pinned because a port gets them wrong silently:
-//
-//  1. THE SEVERITY ORDER puts `input` above `failed`, inverting
-//     @cplieger/web-terminal-ui. It has to match `tabStatusFor` (store.ts), or
-//     the tab icon and the tab dot would disagree about which chat matters most.
-//  2. THE ICON MAPPING folds `waiting` onto the `input` asset, because the dot's
-//     hollow-versus-solid distinction cannot survive a 16px badge. Three
-//     variants ship; a fourth would 404.
-//  3. THE CANDIDATE SET is chats only. The list also holds editor tabs whose
-//     `dirty` mark rides the same dot element, and `dirty` reaching the count
-//     would report an unsaved file as a chat wanting attention.
-//  4. THE RAISE RULE needs both halves of "watched". Keyed on the active chat
-//     alone it swallows the cue of the one chat a single-chat user left running,
-//     which is the case these surfaces exist for.
+// The out-of-page attention system's DECISIONS (fold, orders, acknowledgement store,
+// sinks, raise rule), in the `node` project with no DOM: if a decision starts reading
+// `document` this file stops loading, and "the premise" below asserts that. The browser
+// binding is attention-wiring.test.ts's. Pinned divergences from web-terminal-ui: the
+// severity order, the icon mapping, chat-only candidates, and the two-halved raise rule.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { describe, it, expect, vi } from "vitest";
 
-// The four modules the WIRING half imports, stubbed to nothing. They are what
-// pull a DOM into the graph (tabs.ts reaches router.ts, which adds a popstate
-// listener at load), and no function under test here touches any of them. With
-// them stubbed and no `document` or `navigator` in scope at all, this file
-// loading IS the statement that every decision below arrives at its capabilities
-// through an injected env.
+// The four modules the WIRING half imports (they pull in a DOM), stubbed: this file
+// loading proves every decision takes its capabilities through an injected env.
 vi.mock("./store.js", () => ({ getActiveId: (): string => "" }));
 vi.mock("./tabs.js", () => ({
   cueCandidates: (): [] => [],
   subscribeTabCues: (): (() => void) => (): void => undefined,
   setOnTabClosed: (): void => undefined,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   get: vi.fn(() => undefined),
   getActive: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
@@ -89,60 +56,23 @@ function seen(entries: Record<string, CueStatus> = {}): Map<string, CueStatus> {
   return new Map(Object.entries(entries));
 }
 
-// ---------------------------------------------------------------------------
-// 0. The premise.
-//
-// Two mechanisms, and each covers what the other structurally cannot.
-//
-// PLACEMENT is the realm. `document` and `window` do not exist in the node
-// project, so a decision module that started reading either at load would stop
-// this file loading, and moving the file into the browser project fails on the
-// first case rather than turning all 65 below into a vacuous pass. `typeof`
-// rather than a property read, because in a browser `document` is a prototype
-// accessor: `Reflect.deleteProperty(globalThis, "document")` removes an
-// own-property shadow and restores reality. `window` is non-configurable there,
-// so no site-local shadow can express its absence either. The realm is the only
-// mechanism for those two.
-//
-// THE INVARIANT is the scan below, and it is deliberately NOT the realm. A realm
-// only answers for the globals it happens to lack, and this one lacks the wrong
-// set: measured on the Node the gate runs (v26.8.2; ts-ci pins node-version
-// '26'), `navigator` is a populated `Navigator` instance, so a module-scope
-// `navigator.setAppBadge` read would import cleanly and every assertion below
-// would still pass. `localStorage` is undefined only until a `--localstorage-file`
-// is passed, so it is the same hole queued behind a flag. The scan reads attention.ts's own module scope and asserts it
-// references nothing outside itself and executes nothing, which covers every
-// global at once and stays true whatever a runtime adds.
-//
-// The last case plants a read and watches the scan report it. Without it a
-// scanner with a bug returns an empty list forever, which is this file's own
-// failure mode rebuilt one level up.
-// ---------------------------------------------------------------------------
+// 0. The premise. PLACEMENT is the realm: no `document` or `window` in node, so a decision
+// reading either at load stops this file loading. The scan is THE INVARIANT: Node has a
+// real `navigator`, so the realm cannot rule it out; the scan asserts attention.ts's module
+// scope references nothing outside itself and executes nothing. The last case plants a
+// read and watches the scan report it.
 
 /** The decision module's path, resolved the way every fixture read in this
  *  package is (actions/lint.node.test.ts), so it survives a runner that moves
  *  process.cwd(). */
 const DECISIONS = join(import.meta.dirname, "attention.ts");
 
-/** What attention.ts reads from OUTSIDE itself when it is imported, and what it
- *  EXECUTES while doing so. Both are empty for a module whose top level is
- *  imports, literals and declarations, which is the whole invariant.
- *
- *  `globals` is every free identifier in code that runs at import: a direct
- *  `document`, `navigator`, `localStorage` or `globalThis` read. No list of
- *  global names appears anywhere here, which is the point — the set of globals a
- *  runtime provides is exactly the thing that drifted.
- *
- *  `runs` is everything that executes at import beyond reading a binding: a
- *  call, a `new`, an `await`, a tagged template, a class or enum declaration. It
- *  catches the INDIRECT read, which the first rule structurally cannot see: an
- *  IIFE's body and an imported function's body are both invisible to it, and a
- *  call into one of this file's four mocked imports has no globals to read here
- *  and would have them in production.
- *
- *  A `function` declaration is in neither set, so the entire browser-binding
- *  half of attention.ts is untouched. Type positions are skipped: a
- *  `Record<CueStatus, …>` annotation is erased before anything runs. */
+/**
+ * What attention.ts reads from OUTSIDE itself on import, and what it EXECUTES. `globals` is
+ * every free identifier in import-time code, with no list of global names. `runs` is every
+ * import-time call, `new`, `await`, tagged template, class or enum, catching the INDIRECT
+ * read. `function` declarations and type positions are in neither.
+ */
 function moduleScopeEffects(source: string): { globals: string[]; runs: string[] } {
   const sf = ts.createSourceFile(
     "attention.ts",
@@ -205,9 +135,8 @@ function moduleScopeEffects(source: string): { globals: string[]; runs: string[]
     if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) {
       return;
     }
-    // A class or enum body runs code this walk does not model (static blocks,
-    // field initializers, the extends clause), so it is reported rather than
-    // descended into. attention.ts has neither.
+    // A class or enum body runs code this walk does not model, so it is reported. attention.ts
+    // has neither.
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node) || ts.isEnumDeclaration(node)) {
       runs.push(head(node));
       return;
@@ -295,17 +224,14 @@ describe("the premise: attention.ts reads nothing from outside itself at load", 
   });
 
   it("executes nothing at import", () => {
-    // A call at module scope can read a global through a callee this scan cannot
-    // see, including one of the four mocked imports, which have no globals here
-    // and do have them in production.
+    // A module-scope call can read a global through a callee this scan cannot see.
     const { runs } = moduleScopeEffects(readFileSync(DECISIONS, "utf8"));
     expect(runs, "module scope must be imports, literals and declarations").toEqual([]);
   });
 
   it("would report a module-scope global read, so the two empty lists mean something", () => {
-    // Guard the guard. A scan with a bug returns [] forever, which is this
-    // file's own failure mode one level up. `navigator` is the plant on purpose:
-    // it is the global the realm cannot rule out.
+    // Guard the guard: a buggy scan returns [] forever. `navigator` is the global the realm
+    // cannot rule out.
     const planted = `${readFileSync(DECISIONS, "utf8")}\nconst planted = navigator.userAgent;\n`;
     const { globals } = moduleScopeEffects(planted);
     expect(globals).toHaveLength(1);
@@ -313,15 +239,9 @@ describe("the premise: attention.ts reads nothing from outside itself at load", 
   });
 });
 
-// ---------------------------------------------------------------------------
-// 1. The cue set and its two orders.
-// ---------------------------------------------------------------------------
-
 describe("the cue set", () => {
   it("holds exactly the four states that want the reader", () => {
-    // marotte's dot vocabulary is idle | working | waiting | input | failed |
-    // done | dirty. Only four of those are things to tell someone about: the
-    // other three are ongoing, absent, or an editor's business.
+    // Of marotte's dot vocabulary only these four are things to tell someone about.
     expect([...CUE_SEVERITY]).toEqual(["input", "failed", "waiting", "done"]);
   });
 
@@ -335,10 +255,7 @@ describe("the cue set", () => {
   });
 
   it("ranks a pending ask above a parked failure, unlike the reference", () => {
-    // THE divergence. web-terminal-ui ranks `failed` first; here an ask BLOCKS
-    // the turn while a failure is a result the agent will not revisit, which is
-    // the same reasoning tabStatusFor already used. Inverting this would make
-    // the tab icon name a different chat than the dot column does.
+    // THE divergence from web-terminal-ui, matching tabStatusFor (see CUE_SEVERITY).
     expect(worseCue("input", "failed")).toBe("input");
     expect(worseCue("failed", "input")).toBe("input");
   });
@@ -359,10 +276,7 @@ describe("the cue set", () => {
 
 describe("the icon mapping", () => {
   it("paints `waiting` with the `input` asset", () => {
-    // Both mean "this chat wants you", and the tab dot separates them by fill
-    // and ring at 9px. The favicon badge is 5.5 units in a 32-unit space, so it
-    // cannot carry that; sharing the asset is honest where drawing a fourth
-    // would claim a fidelity the icon does not have.
+    // The favicon badge cannot carry the dot's fill-and-ring distinction (see CUE_ICON).
     expect(cueIconName("waiting")).toBe("input");
     expect(cueIconName("input")).toBe("input");
   });
@@ -373,19 +287,14 @@ describe("the icon mapping", () => {
   });
 
   it("names only assets that ship, so no cue can 404 the tab icon", () => {
-    // static/favicon-{input,done,alert}.svg are the three that exist, guarded by
-    // favicon-variants.test.ts. A cue naming a fourth would blank the icon with
-    // nothing logged anywhere.
+    // The three shipped variants, guarded by favicon-variants.test.ts; a fourth would blank
+    // the icon silently.
     const shipped = new Set(["input", "done", "alert"]);
     for (const cue of CUE_SEVERITY) {
       expect(shipped.has(cueIconName(cue)), `${cue} names a missing asset`).toBe(true);
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// 2. The fold.
-// ---------------------------------------------------------------------------
 
 describe("summarize folds the chat tabs into one value", () => {
   it("counts nothing when nothing is latched", () => {
@@ -452,18 +361,13 @@ describe("summarize folds the chat tabs into one value", () => {
   });
 
   it("never counts the editor's dirty mark, whatever reaches it", () => {
-    // Belt for the candidate filter (tabs.ts cueCandidates): the dot element is
-    // shared with editor tabs, so `dirty` is the one non-chat state that could
-    // arrive here at all.
+    // Belt for tabs.ts cueCandidates: `dirty` is the one non-chat state that could arrive.
     expect(summarize([{ id: "editor:/a.go", status: "dirty" }], seen())).toEqual(NO_ATTENTION);
   });
 
   it("folds a RUN tab's cue into the count and the worst pick", () => {
-    // `cueCandidates` reports run tabs as well as owned chat tabs (tabs.ts), and a
-    // run's dot speaks this same vocabulary through store.ts `runStatusFor` — so a
-    // run needs no CueStatus member of its own and no arm here. This case is what
-    // says the fold takes it as one more candidate rather than a special case: it
-    // counts beside the chat and it can win the severity pick.
+    // A run tab is one more candidate speaking the same vocabulary (store.ts `runStatusFor`):
+    // it counts and can win the severity pick.
     expect(
       summarize(
         [
@@ -476,34 +380,16 @@ describe("summarize folds the chat tabs into one value", () => {
   });
 
   it("counts one per chat and never twice for the same id", () => {
-    // The count is set-valued, which is what makes it needs-no-tiebreak. Ids are
-    // unique in the tab store, and this is the assertion that the fold does not
-    // reintroduce a duplicate by, say, summing per status.
+    // Set-valued: the fold must not reintroduce a duplicate by summing per status.
     expect(summarize([{ id: "a", status: "done" }], seen()).count).toBe(1);
   });
 
-  // -------------------------------------------------------------------------
-  // What a FRESH DEVICE opens at, which is the cost of the header seed.
-  //
-  // The two latches behind `done` and `failed` used to be reachable only from a
-  // live `turn_closed` this browser observed, so the device that could raise the
-  // cue was always the device that could acknowledge it — and a device with no
-  // stored acknowledgements had every tab on `idle`, which is not a CueStatus, so
-  // it opened at (0) whatever was on disk. Seeding those latches from the chat
-  // header (store.ts `latchFieldsFor`) means a device can now inherit a verdict
-  // it never watched happen, so the count on first load is the number of open
-  // chat tabs holding a finished-or-failed turn.
-  //
-  // These cases MEASURE that rather than arguing about it: the number is the
-  // thing to ratify, and it was self-reported before this test existed.
-  // -------------------------------------------------------------------------
+  // What a FRESH DEVICE opens at: the `done` and `failed` latches seed from the chat header
+  // (store.ts `latchFieldsFor`), so the first-load count is the open chat tabs holding a
+  // finished or failed turn. Measured here rather than argued.
   it("opens at one per finished tab on a device with no acknowledgements", () => {
-    // Eight open chat tabs, and the SPLIT is the live instance's own: six
-    // `completed`, two `interrupted` (which `severityOf` grades broken, so
-    // `failed`). The one cancelled chat and the one unreadable chat have no open
-    // tab, so stopped outcomes move nothing here. A stopped turn DOES count when it
-    // has a tab: `done` is the dot for a turn that ended, whatever became of it,
-    // and this fold sees only the dot.
+    // Eight open chat tabs: six `completed`, two `interrupted` (graded `failed`). A stopped
+    // turn with a tab counts too: `done` is the dot for any turn that ended.
     const tabs = [
       { id: "t1", status: "done" },
       { id: "t2", status: "done" },
@@ -522,9 +408,7 @@ describe("summarize folds the chat tabs into one value", () => {
   });
 
   it("takes the ALERT icon as soon as one tab holds a failure", () => {
-    // `failed` outranks `done`, so a single broken turn among finished ones
-    // decides the favicon for the whole window. This is the other half of the
-    // fresh-device change: not just a count, a red icon.
+    // `failed` outranks `done`, so one broken turn decides the favicon for the whole window.
     expect(cueIconName(summarize([{ id: "a", status: "done" }], seen()).worst as CueStatus)).toBe(
       "done",
     );
@@ -542,9 +426,7 @@ describe("summarize folds the chat tabs into one value", () => {
   });
 
   it("clears as the reader visits each tab, so the count is transient", () => {
-    // The state that makes the first-load count acceptable rather than permanent:
-    // every acknowledgement is persisted per device, so the number only ever
-    // falls until a new turn ends.
+    // Acknowledgements persist per device, so the first-load count only falls.
     const tabs = [
       { id: "a", status: "done" },
       { id: "b", status: "done" },
@@ -557,9 +439,8 @@ describe("summarize folds the chat tabs into one value", () => {
   });
 
   it("counts a chat whose dot has never been written as nothing", () => {
-    // The window between `openTab` and the store effect's first sweep, and the
-    // answer for a chat the store does not know. `""` is not a cue, so a boot
-    // restore cannot spike the count before the dots are painted.
+    // `""` (an unpainted dot, an unknown chat) is not a cue, so a boot restore cannot spike
+    // the count.
     expect(
       summarize(
         [
@@ -584,10 +465,6 @@ describe("isUnseenCue is the one predicate behind both surfaces", () => {
     expect(summarize(candidates, ack).count).toBe(byPredicate);
   });
 });
-
-// ---------------------------------------------------------------------------
-// 3. The sinks.
-// ---------------------------------------------------------------------------
 
 describe("the title format", () => {
   it("puts the count FIRST, because a tab strip truncates the tail", () => {
@@ -630,9 +507,7 @@ describe("createAttention drives each sink only on a real change", () => {
   });
 
   it("touches nothing when the same value is applied again", () => {
-    // Idempotence rather than a debounce. The title doubles as the bookmark name
-    // and re-assigning an icon href makes some browsers re-fetch it, so a sweep
-    // that re-derives the same answer must be silent.
+    // Idempotence, not a debounce: a sweep re-deriving the same answer must be silent.
     const log = emptyLog();
     const surfaces = createAttention(fakeEnv(log));
     const value: Attention = { count: 2, worst: "done" };
@@ -682,10 +557,7 @@ describe("createAttention drives each sink only on a real change", () => {
   });
 
   it("still writes the title when the badge and icon are both absent", () => {
-    // The anti-ladder rule. A badge resolves on Linux where nothing is painted
-    // and Safari caches the first icon it fetched, so both can fail invisibly;
-    // the title is gated on no capability and is therefore the floor. Arranging
-    // these as a fallback chain would leave those platforms with nothing.
+    // The anti-ladder rule (see AttentionEnv): the title is gated on nothing.
     const log = emptyLog();
     createAttention(fakeEnv(log, { badge: false, icon: false })).apply({ count: 3, worst: "done" });
     expect(log.titles).toEqual(["(3) "]);
@@ -715,15 +587,9 @@ describe("iconVariantHref follows the asset generator's naming", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4. The acknowledgement store.
-// ---------------------------------------------------------------------------
-
 describe("the acknowledgement store's key", () => {
   it("lives beside the UI state rather than inside it", () => {
-    // Its own key on purpose: `marotte.ui-state` is the window's ARRANGEMENT,
-    // written on structural change, and this is written whenever a cue is
-    // observed. Different cadence, different subject.
+    // Its own key: `marotte.ui-state` is the window's arrangement, on another cadence.
     expect(CUE_SEEN_KEY).toBe("marotte.cue-seen");
     expect(CUE_SEEN_KEY).not.toBe("marotte.ui-state");
   });
@@ -747,9 +613,8 @@ describe("parseCueSeen distrusts everything it reads", () => {
   });
 
   it("refuses a JSON value that is not an object of entries", () => {
-    // A POPULATED array matters, not just an empty one: Object.entries on
-    // ["done"] yields the pair ["0", "done"], which passes every per-entry check
-    // and would land a cue for a chat called "0".
+    // A POPULATED array matters: Object.entries on ["done"] yields ["0", "done"], a cue for a
+    // chat called "0".
     for (const raw of ["[]", '["done"]', '["done","input"]', "null", '"done"', "42", "true"]) {
       expect(parseCueSeen(raw).size, `${raw} must not parse as a cue map`).toBe(0);
     }
@@ -785,9 +650,7 @@ function fakeStorage(initial: string | null = null): CueSeenStorage & { raw: () 
 
 describe("createCueSeen persists and bounds the acknowledgements", () => {
   it("starts from what the reader already dismissed", () => {
-    // The whole reason this is persisted: the latches behind every cue are
-    // rebuilt from server state on each reconnect, so without this a dismissed
-    // count came back on a phone simply returning to a backgrounded page.
+    // Latches rebuild from server state on each reconnect, so a dismissed count must persist.
     const store = createCueSeen(fakeStorage('{"a":"done"}'));
     expect(store.map().get("a")).toBe("done");
   });
@@ -817,10 +680,8 @@ describe("createCueSeen persists and bounds the acknowledgements", () => {
   });
 
   it("evicts oldest-first so the live map obeys the parser's cap", () => {
-    // A chat that vanished while the page was CLOSED leaves an entry nothing
-    // prunes. Unbounded, that eventually pushes the map past the cap and makes
-    // the parser discard whatever it read last — dropping fresh
-    // acknowledgements to keep dead ones.
+    // A chat that vanished while the page was closed leaves an entry nothing prunes; unbounded,
+    // the parser would drop fresh acknowledgements.
     const store = createCueSeen(fakeStorage());
     for (let i = 0; i <= MAX_PERSISTED_CUE_SEEN; i++) {
       store.mark(`c${String(i)}`, "done");
@@ -844,10 +705,6 @@ describe("createCueSeen persists and bounds the acknowledgements", () => {
     expect(storage.raw()).toBeNull();
   });
 });
-
-// ---------------------------------------------------------------------------
-// 5. The raise rule and the acknowledgement gestures.
-// ---------------------------------------------------------------------------
 
 interface Harness {
   applied: Attention[];
@@ -918,10 +775,7 @@ describe("the raise rule", () => {
   });
 
   it("RAISES the active chat's cue while the page is hidden", () => {
-    // Both halves of "watched" are required. Keyed on "is this the active chat"
-    // alone this swallowed the cue of the very chat the reader left running —
-    // which is the single-chat case, since one chat is necessarily active, and
-    // precisely what these surfaces exist for.
+    // Both halves of "watched": "active" alone swallows the single running chat's cue.
     const h = harness();
     h.setActive("a");
     h.setVisible(false);
@@ -973,10 +827,8 @@ describe("the raise rule", () => {
   });
 
   it("treats an unpainted tab as no information, not as a cleared cue", () => {
-    // A tab exists for a tick before the store effect paints its dot, and
-    // `tabStatusFor` answers "" for a chat the store does not know. Reading
-    // either as "the cue ended" dropped the acknowledgement on every reload,
-    // because the boot restore opens the tab before the sweep runs.
+    // Reading an unpainted dot or an unknown chat as "the cue ended" dropped the
+    // acknowledgement on every reload.
     const h = harness({ stored: '{"a":"done"}' });
     h.setCandidates([{ id: "a", status: "" }]);
     h.controller.refresh();
@@ -1032,9 +884,7 @@ describe("acknowledging what the reader can see", () => {
   });
 
   it("KEEPS the cue of a chat scrolled out of the list", () => {
-    // The case that matters most. `#tab-list` scrolls, and the forgotten
-    // background chat is precisely the one likely to be below the fold, so a
-    // wholesale clear on becoming visible would blank a cue nobody ever saw.
+    // The forgotten chat is likely below the fold, so becoming visible must not clear wholesale.
     const h = harness();
     h.setActive("");
     h.setCandidates([
@@ -1073,10 +923,8 @@ describe("acknowledging what the reader can see", () => {
   });
 
   it("acknowledges a RUN row in view, because the seen map is keyed by TAB id", () => {
-    // The claim worth pinning is the KEY, not the loop: every id here is a tab id
-    // (the rows-in-view scan reads `data-tab-id`), so a run row acknowledges
-    // exactly like a chat row and needs nothing of its own. The chat beside it
-    // keeps its cue, which is what says the run's row was the one acknowledged.
+    // Every id is a tab id (`data-tab-id`), so a run row acknowledges like a chat row; the chat
+    // beside it keeps its cue.
     const h = harness();
     h.setActive("");
     h.setCandidates([
@@ -1100,9 +948,8 @@ describe("acknowledging what the reader can see", () => {
 
 describe("switching to a chat acknowledges it", () => {
   it("acknowledges the incoming chat before the store's active id has moved", () => {
-    // The tab store announces a switch from inside its own emit, BEFORE
-    // store.setActive runs, so the refresh pass's watched-chat rule still names
-    // the OUTGOING chat at that moment. This is why the switch has its own hook.
+    // The tab store announces a switch from inside its emit, BEFORE store.setActive, so the
+    // switch needs its own hook.
     const h = harness();
     h.setActive("a");
     h.setCandidates([

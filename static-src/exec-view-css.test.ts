@@ -1,19 +1,5 @@
-// Real-layout CSS guards for the exec view's disclosures and the run card's
-// clamped step output.
-//
-// Every fact here was reported as a defect and measured before it was fixed, and
-// each one is invisible to the type checker, the linter and to a source-reading
-// test: a phantom indent, a composed rotation, a missing glyph and a clamp that
-// clips inside its own padding are all GEOMETRY. `mountAppCSS` assembles the
-// sheet in `css/MANIFEST` order the way `cmd/bundle` concatenates it, because
-// equal-specificity ties in this app are decided by that order rather than by
-// the selectors, and the browser project computes real boxes.
-//
-// Markup is hand-built to mirror the builders (`exec-view/tree.ts` `buildRow`,
-// `exec-view/page.ts` `renderInputs`, `fundamentals/run-card.ts`'s step row)
-// rather than driven through them: the subject is the stylesheet, and importing
-// the builders drags `chat.ts` and the run store in behind them for facts they
-// do not decide.
+// Real-layout guards for the exec view's disclosures and the run card's clamped step output; each fact was a measured
+// defect invisible to a source read.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { chevronEl } from "./chevron.js";
@@ -26,8 +12,7 @@ let host: HTMLElement;
 beforeAll(() => {
   styleEl = mountAppCSS();
   host = document.createElement("div");
-  // The panes are flex children of a sized page in production; a definite width
-  // here is what makes a clamped line box have somewhere to wrap.
+  // A definite width so a clamped line box can wrap.
   host.style.inlineSize = "480px";
   document.body.appendChild(host);
 });
@@ -37,9 +22,7 @@ afterAll(() => {
   host?.remove();
 });
 
-// The clamp cases below attach a real `attachClamp`, which registers the shared
-// `ResizeObserver`; releasing per case keeps one case's observation out of the next
-// one's layout. A no-op for every other case in this file.
+// Releases the shared ResizeObserver per case so one case's observation stays out of the next.
 afterEach(() => {
   releaseClampsIn(host);
 });
@@ -53,9 +36,7 @@ function css(el: Element, prop: string): string {
   return getComputedStyle(el).getPropertyValue(prop);
 }
 
-/** One `.ev-row` as `buildRow` assembles it: the twist wrapper carrying the
- *  shared chevron, the state mark, the kind slot, the text and the duration.
- *  `kids` gives the row children, which is what decides whether it is a leaf. */
+/** One `.ev-row` as `buildRow` assembles it; `kids` decides whether it is a leaf. */
 function evRow(opts: { depth: number; kids: boolean; expanded?: boolean }): HTMLElement {
   const chevron = document.createElement("span");
   chevron.className = "ev-twist";
@@ -87,8 +68,7 @@ function evRow(opts: { depth: number; kids: boolean; expanded?: boolean }): HTML
   row.style.setProperty("--ev-depth", String(opts.depth));
   row.appendChild(main);
 
-  // `paint` hides the twist and removes `aria-expanded` on a leaf, and calls
-  // `applyCollapse` (which writes both) on a row with children.
+  // `paint` hides the twist on a leaf and calls `applyCollapse` on a row with children.
   if (opts.kids) {
     chevron.hidden = false;
     const collapsed = opts.expanded !== true;
@@ -106,7 +86,6 @@ function evRow(opts: { depth: number; kids: boolean; expanded?: boolean }): HTML
   return row;
 }
 
-/** The tree pane wrapper, so the row's own rules apply in the box they ship in. */
 function evTree(...rows: HTMLElement[]): HTMLElement {
   const tree = document.createElement("div");
   tree.className = "ev-tree";
@@ -123,8 +102,7 @@ describe("a tree row with no disclosure keeps no phantom indent", () => {
     const row = evRow({ depth: 0, kids: false });
     mount(evTree(row));
     const twist = row.querySelector<HTMLElement>(".ev-twist")!;
-    // `visibility: hidden` was the shipped answer and it cannot collapse the
-    // row's own flex `gap`, which is half of the 20px.
+    // `visibility: hidden` cannot collapse the row's flex `gap`, half of the 20px.
     expect(css(twist, "display")).toBe("none");
     expect(css(twist, "visibility")).not.toBe("hidden");
     expect(twist.getBoundingClientRect().width).toBe(0);
@@ -135,12 +113,7 @@ describe("a tree row with no disclosure keeps no phantom indent", () => {
     mount(evTree(row));
     const main = row.querySelector<HTMLElement>(".ev-row-main")!;
     const glyph = row.querySelector<HTMLElement>(".ev-state")!;
-    // The content edge, not the border box: the row's leading padding IS its
-    // depth indent and is not the defect. Measured at 20px of gap before the
-    // fix (a 1rem twist box plus the row's 0.25rem gap). The border term is not
-    // padding for the arithmetic's sake — `70-selection.css` reserves a 1px
-    // edge on `.ev-row-main` so the selected border is a colour change rather
-    // than a layout shift, and it sits outside the padding box.
+    // The content edge: the leading padding is the depth indent, not the defect.
     const contentEdge =
       main.getBoundingClientRect().x +
       Number.parseFloat(css(main, "border-left-width")) +
@@ -149,8 +122,7 @@ describe("a tree row with no disclosure keeps no phantom indent", () => {
   });
 
   it("still indents a row that HAS a disclosure by its twist", () => {
-    // The other direction: collapsing the empty box must not collapse the real
-    // one, or a container's own glyph would sit where its children's do.
+    // Collapsing the empty box must not collapse a container's real one.
     const leaf = evRow({ depth: 0, kids: false });
     const container = evRow({ depth: 0, kids: true });
     mount(evTree(container, leaf));
@@ -169,8 +141,7 @@ describe("the tree's disclosure arrow follows the app's direction convention", (
       const glyph = twist.querySelector<HTMLElement>(".disclosure-chevron")!;
       const state = expanded ? "open" : "closed";
 
-      // The wrapper's own `rotate(-90deg)` is what COMPOSED with the chevron's
-      // closed -90deg to make -180deg (UP when closed, a bare RIGHT when open).
+      // The wrapper's own rotation composed with the chevron's closed -90deg.
       expect(css(twist, "transform"), `${state}: wrapper`).toBe("none");
       expect(css(glyph, "--chev-turn").trim(), `${state}: turn`).toBe(expanded ? "0deg" : "-90deg");
       expect(css(glyph, "transform"), `${state}: glyph`).toBe(
@@ -178,26 +149,14 @@ describe("the tree's disclosure arrow follows the app's direction convention", (
       );
     }
   });
-
-  // DELETED with the shape it pinned: "flips only the row that owns the chevron,
-  // never its subtree" hand-built an expanded top-level container holding a
-  // COLLAPSED one, and `tree.ts` cannot produce that any more — only a top-level
-  // container folds, so a nested row has no chevron in layout and no
-  // `aria-expanded` to bleed from. The child combinators it defended are still in
-  // `31-exec-view.css` and still correct; there is simply nothing left that a
-  // descendant selector could visibly repaint.
 });
 
 describe("a row inside the group box is a band, not a pill", () => {
-  // Reported: a row on the group box's dark fill took a ROUNDED hover and
-  // selection fill while sitting mid-list. A row spans the box's whole inner width
-  // (`.ev-kids` adds no inline padding), so the corners belong to the box and a
-  // radius on the row reads as a floating pill rather than a band in a list.
+  // A row spans the box's inner width, so the box owns the corners; a rounded row mid-list reads as floating.
   it("squares the header and every row inside the box, and leaves the box its corners", () => {
     const box = evRow({ depth: 0, kids: true, expanded: true });
     box.classList.add("ev-group");
-    // A direct child of a box indents by ZERO (`tree.ts` writes `--ev-depth` 0 for
-    // depth 0 AND depth 1), which is what this harness's `depth` models.
+    // `tree.ts` writes `--ev-depth` 0 for depth 0 and 1.
     const child = evRow({ depth: 0, kids: false });
     box.querySelector<HTMLElement>(":scope > .ev-kids")!.appendChild(child);
     mount(evTree(box));
@@ -215,18 +174,14 @@ describe("a row inside the group box is a band, not a pill", () => {
   });
 
   it("leaves an UN-BOXED top-level row its own radius", () => {
-    // The other direction, and the reason the fix is scoped to the box: outside one,
-    // each row is its own box in a gapped column, so rounding it is correct.
+    // Outside a box each row is its own box, so rounding it is correct.
     const row = evRow({ depth: 0, kids: false });
     mount(evTree(row));
     const main = row.querySelector<HTMLElement>(".ev-row-main")!;
     expect(Number.parseFloat(css(main, "border-top-left-radius"))).toBeGreaterThan(0);
   });
 
-  // Reported: the box's dark fill continued past the last selectable row. It was
-  // `padding-block-end: var(--sp-1)` on `.ev-kids` — 4px measured — which reads as a
-  // list that carries on after its last item. Flush is also what gives that row its
-  // rounded bottom corners, since the box clips them.
+  // Flush: bottom padding on `.ev-kids` read as a list continuing past its last item.
   it("runs the last row to the box's inner bottom edge, and clips its corners there", () => {
     const box = evRow({ depth: 0, kids: true, expanded: true });
     box.classList.add("ev-group");
@@ -244,18 +199,12 @@ describe("a row inside the group box is a band, not a pill", () => {
       box.getBoundingClientRect().bottom - Number.parseFloat(css(box, "border-bottom-width"));
     expect(last.getBoundingClientRect().bottom).toBeCloseTo(innerBottom, 1);
 
-    // The corner is the BOX's, taken through the clip rather than restated on the
-    // row (a child flush inside a clipping parent takes no radius), the only shape
-    // that works at any nesting depth, since the visually-last row can be the last
-    // descendant of a nested container.
+    // The corner is the box's, through its clip (the flush-inside-a-clipping-parent exemption), which works at any depth.
     expect(css(box, "overflow")).toBe("hidden");
     expect(Number.parseFloat(css(box, "border-bottom-left-radius"))).toBeGreaterThan(0);
   });
 
-  // Reported as a "1 line black gap between steps". `.ev-kids` carried
-  // `gap: 0.0625rem`; a row paints nothing at rest, so that gap showed the BOX's own
-  // fill — the darkest rung — which is invisible until a row takes the hover wash or
-  // the selected fill and then reads as a line cut across the list.
+  // A gap between rows shows the box's fill, visible once a row takes a fill.
   it("runs adjacent rows flush, so no fill shows between them", () => {
     const box = evRow({ depth: 0, kids: true, expanded: true });
     box.classList.add("ev-group");
@@ -264,7 +213,6 @@ describe("a row inside the group box is a band, not a pill", () => {
     for (const child of children) {
       kids.appendChild(child);
     }
-    // The state the gap was visible in: one row carrying a fill of its own.
     children[0]!.classList.add("ev-selected");
     mount(evTree(box));
 
@@ -292,8 +240,7 @@ describe("the run's task instructions read as a card", () => {
   }
 
   it("takes the same fill, radius and padding as the timeline card", () => {
-    // Read off `.ev-tl` rather than hardcoded, so the claim is that the two are
-    // the SAME card and not that either is a given colour.
+    // Read off `.ev-tl`: the claim is that they are the same card.
     const tl = document.createElement("div");
     tl.className = "ev-tl";
     const reference = mount(tl);
@@ -311,19 +258,14 @@ describe("the run's task instructions read as a card", () => {
   });
 
   it("disappears entirely when hidden, rather than becoming an empty card", () => {
-    // There is no author `[hidden]` rule in this tree, so the UA sheet's
-    // `[hidden] { display: none }` LOSES the specificity tie to the bare class
-    // and a hidden `.ev-inputs` computed `display: grid` at 17px tall.
+    // No author `[hidden]` rule here, so the UA's `[hidden]` loses to the bare class.
     const box = mount(inputs(true));
     expect(css(box, "display")).toBe("none");
     expect(box.getBoundingClientRect().height).toBe(0);
   });
 });
 
-// The page has TWO clamps — the header's instructions and a result box's report —
-// and one opener skin between them. `run-page-layout.test.ts` asserts the shared
-// selector list, which is what makes a fork unrepresentable; this is the other
-// direction, that what the reader sees is in fact one control twice.
+// Two clamps, one opener skin; `run-page-layout.test.ts` pins the shared selector, this pins what it paints.
 describe("both clamp openers wear one skin", () => {
   it("resolves to the same ink, size and underline", () => {
     const row = document.createElement("div");
@@ -338,8 +280,7 @@ describe("both clamp openers wear one skin", () => {
     row.append(instructions, report);
     mount(row);
 
-    // The premise: the skin really is in force, rather than both reading as the UA
-    // button default — a bare `<button>` is not underlined and is not this ink.
+    // Premise: the skin is in force, not the UA button default.
     expect(css(instructions, "text-decoration-line")).toBe("underline");
     expect(css(instructions, "background-color")).toBe("rgba(0, 0, 0, 0)");
 
@@ -358,7 +299,6 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
     const row = document.createElement("div");
     row.className = "run-step";
     row.dataset["status"] = "completed";
-    // An ANCHOR, as the builder makes it: the row is a door into `/run/{id}`.
     const head = document.createElement("a");
     head.className = "run-step-head";
     head.href = "/run/wf_1";
@@ -374,21 +314,17 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
   }
 
   it("keeps a navigator row's own ink rather than taking the reset's link ink", () => {
-    // The reset layer carries `a { color: var(--c-link) }`, and this app spends link
-    // ink on TEXT controls; a row is a navigator, like `.tab` and `.ev-row-main`. So
-    // the row has to opt out, or every step in the card reads as a hyperlink.
+    // The reset layer inks every `a` as a link, and a row is a navigator, so it opts out.
     const card = mount(step("captured"));
     const head = card.querySelector<HTMLElement>(".run-step-head")!;
     expect(css(head, "text-decoration-line")).toBe("none");
 
-    // The oracle is the LIVE token, not a literal: `--c-link` is theme-split, and a
-    // hard-coded swatch would pass on one theme and lie on the other.
+    // The live token, not a literal: `--c-link` is theme-split.
     const probe = document.createElement("a");
     probe.href = "/run/wf_1";
     probe.textContent = "link";
     card.appendChild(probe);
     expect(css(head, "color")).not.toBe(css(probe, "color"));
-    // …and it is the inherited ink, which is what `color: inherit` means.
     expect(css(head, "color")).toBe(css(card, "color"));
   });
 
@@ -400,16 +336,13 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
   it("moves the trailing space to a margin, outside the clip region", () => {
     const card = mount(step(overflowing));
     const cap = card.querySelector<HTMLElement>(".run-step-capture")!;
-    // `overflow: hidden` clips at the PADDING box, so bottom padding on a
-    // `-webkit-line-clamp` box reveals the clipped line inside that band.
+    // `overflow: hidden` clips at the padding box, so bottom padding reveals the clipped line.
     expect(css(cap, "padding-bottom")).toBe("0px");
     expect(Number.parseFloat(css(cap, "margin-bottom"))).toBeGreaterThan(0);
-    // The clamp itself is untouched.
     expect(css(cap, "-webkit-line-clamp")).toBe("2");
     expect(css(cap, "overflow-y")).toBe("hidden");
   });
 
-  /** Every line box the capture's text produced, clipped ones included. */
   function lineRects(cap: HTMLElement): DOMRect[] {
     const range = document.createRange();
     range.selectNodeContents(cap);
@@ -419,19 +352,10 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
   it("paints no partial line under the ellipsis", () => {
     const card = mount(step(overflowing));
     const cap = card.querySelector<HTMLElement>(".run-step-capture")!;
-    // The clip edge IS the element's own bottom, because `overflow: hidden`
-    // clips at the padding box.
-    //
-    // "No line below the edge" is the WRONG claim, and asserting it fails on the
-    // fix: `getClientRects()` reports every line the text produced, and leaving
-    // lines below the edge is the clamp's whole job. The defect is a line that
-    // STRADDLES the edge — part painted, part cut. With block-end padding the
-    // third line began 8px above the edge and 7px of it rendered, directly under
-    // the ellipsis; with the padding at 0 that line begins exactly ON the edge,
-    // so none of it paints.
+    // The clip edge is the element's bottom. Lines below it are the clamp's job; none may straddle it.
     const clip = cap.getBoundingClientRect().bottom;
     const rects = lineRects(cap);
-    // The text really does overflow, or this asserts nothing.
+    // The text really overflows, or this asserts nothing.
     expect(rects.length).toBeGreaterThan(2);
     const straddling = rects
       .filter((r) => r.top < clip - 0.5 && r.bottom > clip + 0.5)
@@ -440,20 +364,12 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
   });
 
   it("keeps the visible gap the padding used to give it", () => {
-    // The fix must not tighten the row, and the plan's claim is that the visible
-    // gap is IDENTICAL either way — not that it is any particular number. So the
-    // oracle is a second card carrying the pre-fix declaration inline, rather
-    // than arithmetic over the box model, which would only restate it.
-    // `.run-step` is `overflow: hidden`, so it establishes a BFC and the margin
-    // cannot collapse out of the row.
+    // The visible gap must be identical either way; the oracle is a second card carrying the naive declaration inline.
     const visibleGap = (card: HTMLElement): number => {
       const row = card.querySelector<HTMLElement>(".run-step")!;
       const cap = card.querySelector<HTMLElement>(".run-step-capture")!;
       const clip = cap.getBoundingClientRect().bottom;
-      // A line box is not one rect: `white-space: pre-wrap` plus
-      // `overflow-wrap: anywhere` splits a line into a rect per text fragment
-      // (measured: 4 rects for the 2 visible lines), so take the lowest visible
-      // EDGE rather than counting rects.
+      // `pre-wrap` + `overflow-wrap: anywhere` splits a line into fragment rects, so take the lowest visible edge.
       const shown = lineRects(cap)
         .map((r) => r.bottom)
         .filter((b) => b <= clip + 0.5);
@@ -471,21 +387,10 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
   });
 });
 
-// The run page's collapsed report is the app's ONLY clamp over a markdown bubble's
-// block children, and that is what makes it the only one a fixed cap cannot serve:
-// each child carries its own line metric AND its own margins, so `N × lh` lands on
-// a line boundary for a single-block report and mid-glyph for every structured one.
-// Reported as the last visible row being sliced through the middle of its letters.
-//
-// THE ASSERTION IS THAT NO LINE BOX STRADDLES THE CLIP EDGE, deliberately not that
-// the box's height is an integer multiple of its line-height: the latter is FALSE of
-// correct output here, since one report renders 13, 16 and 17px ink boxes plus 8px
-// inter-block margins, so a test asserting it would be red on a working fix.
-// Straddling is what the defect violates and what the fix guarantees.
+// The run page's report is the only clamp over markdown block children, each with its own line metric and margins,
+// so no fixed cap lands on a line boundary.
 describe("the run page's collapsed report ends on a whole line", () => {
-  /** `exec-view/page.ts` `resultItem`'s box: the key row, then a body holding the
-   *  clamped text and its opener as SIBLINGS (a clamped box is `overflow: hidden`, so
-   *  a button inside it is clipped away exactly when it becomes needed). */
+  /** The opener is a sibling of the clamped text: inside the `overflow: hidden` box it would be clipped. */
   function resultBox(...blocks: HTMLElement[]): {
     text: HTMLElement;
     more: HTMLButtonElement;
@@ -519,8 +424,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     rBody.appendChild(item);
     results.appendChild(rBody);
     mount(results);
-    // AFTER mounting: a detached element measures 0 on both sides, so `attachClamp`
-    // would answer with its character guess and snap nothing.
+    // After mounting: detached, `attachClamp` falls back to its character guess.
     const handle = attachClamp(text, more, { lines: 12, fallbackChars: 900, snapToLine: true });
     return { text, more, handle };
   }
@@ -552,10 +456,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     return ul;
   }
 
-  /** A 16x16 opaque PNG, so an `<img>` has a real box with no network fetch. It is a
-   *  VALID one, which is load-bearing: the probe that found the over-trim first used a
-   *  malformed PNG that Chromium and WebKit decoded anyway while Firefox refused it,
-   *  so the image shape silently measured 0px tall and read as a no-op. */
+  /** A valid PNG: Firefox refused the malformed one Chromium and WebKit decoded. */
   const PNG16 =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGNwaDhAEmIY1TCqYfhqAACldYAQpGTU2QAAAABJRU5ErkJggg==";
 
@@ -564,14 +465,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     readonly bottom: number;
   }
 
-  /** Every LINE BAND the box renders, clipped ones included: rects merged by
-   *  overlapping vertical extent, so one line split across several rects (an inline
-   *  element, a wrapped fragment) counts once.
-   *
-   *  A single `Range` over the box cannot answer this — with block-level children
-   *  `selectNodeContents(box).getClientRects()` returns the ONE bounding rect where
-   *  this walk returns twenty, which is why the run-step case above may use one and
-   *  this one may not. */
+  /** Every line band, rects merged by vertical overlap; a single `Range` returns a bounding box. */
   function textBands(box: HTMLElement): Band[] {
     const bands: Band[] = [];
     const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
@@ -596,8 +490,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     return bands;
   }
 
-  /** `overflow: hidden` clips at the padding box, and `.ev-r-text` declares neither
-   *  padding nor border, so the element's own bottom IS the clip edge. */
+  /** `.ev-r-text` has no padding or border, so its bottom is the clip edge. */
   function clipEdge(text: HTMLElement): number {
     const styles = getComputedStyle(text);
     expect(styles.paddingBottom, "the clip-edge arithmetic assumes no padding").toBe("0px");
@@ -612,8 +505,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   }
 
   const shapes: readonly [string, () => HTMLElement[]][] = [
-    // Both reproduce in all three engines against a fixed cap; a fence and a list are
-    // the ordinary structured report rather than a contrived one.
+    // Both reproduce in all three engines with a fixed cap.
     [
       "three paragraphs then a fenced block",
       () => [para(28, "alpha"), para(26, "beta"), para(30, "gamma"), fence(6)],
@@ -627,8 +519,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   for (const [what, blocks] of shapes) {
     it(`cuts no line box through its glyphs: ${what}`, () => {
       const { text, more } = resultBox(...blocks());
-      // The premise: a report that fits its cap has nothing to clip, so without this
-      // the case asserts nothing.
+      // Premise: a report that fits has nothing to clip.
       expect(
         text.scrollHeight - text.clientHeight,
         "the report overflows the clamp",
@@ -638,10 +529,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     });
 
     it(`keeps every whole line the cap showed: ${what}`, () => {
-      // The other direction, and what stops the snap degenerating into "show less":
-      // the measured clip may only discard the PARTIAL line, so the count of fully
-      // visible lines is the same as under the stylesheet's own cap. Measured by
-      // withdrawing the snap and re-taking it through the handle.
+      // The snap may discard only the partial line: fully visible lines match the stylesheet's own cap.
       const { text, handle } = resultBox(...blocks());
       const snapped = textBands(text).filter((b) => b.bottom <= clipEdge(text) + 0.5).length;
 
@@ -654,10 +542,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     });
   }
 
-  /** The clip edge the STYLESHEET's own cap gives, measured with the snap withdrawn
-   *  and then restored through the handle, so the box is left as production leaves it.
-   *  Content positions are unaffected by the cap — the box CLIPS, it does not reflow —
-   *  so every other rect in a case may be read in either state. */
+  /** The stylesheet's clip, measured with the snap withdrawn and restored through the handle. */
   function nominalClip(text: HTMLElement, handle: ReturnType<typeof attachClamp>): number {
     text.style.removeProperty("--clamp-h");
     const at = text.getBoundingClientRect().bottom;
@@ -665,24 +550,9 @@ describe("the run page's collapsed report ends on a whole line", () => {
     return at;
   }
 
-  // A BOX THAT RENDERS NO TEXT registers no rect in the band walk, so a snap over text
-  // alone trims back to the last band ABOVE it and hides content that FITTED. That is
-  // the OVER-trim direction, which is why the straddle assertion above cannot see it:
-  // measured before the fix at 700px in three engines, a rule cost 16.4/14.7/15.7px, a
-  // 16px image 27.4/25.7/26.7px and an empty fence 35.4/33.7/34.7px (Chromium/Firefox/
-  // WebKit) — over a line of report each. It matters because the clamped content is a
-  // markdown bubble, and a step report genuinely carries rules, images and fences.
-  //
-  // Two shapes the same sweep found do NOT over-trim and are deliberately absent: an
-  // empty paragraph renders 0px tall in all three engines, so it can never be the last
-  // VISIBLE box, and a table row spanning two lines is covered by its own cells' text
-  // bands.
+  // A box that renders no text registers no rect, so a text-only snap over-trims content that fitted.
   const atomic: readonly [string, number, () => HTMLElement | Promise<HTMLElement>][] = [
-    // The filler word count puts the box just under the cap with the trailing
-    // paragraph past it, which is the only arrangement where the box can be the last
-    // one that FITS. Each was measured at this host's 480px with ±3 words of slack,
-    // and the premise assertions below fail loudly rather than passing vacuously if a
-    // type-scale change moves the window.
+    // Word counts that leave the box just under the cap with the trailing paragraph past it.
     ["a horizontal rule", 77, () => document.createElement("hr")],
     [
       "an image",
@@ -691,11 +561,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
         const img = document.createElement("img");
         img.src = PNG16;
         img.alt = "";
-        // A data-URI image still decodes ASYNCHRONOUSLY, so the decode has to land
-        // BEFORE the clamp is attached: a snap taken while the image is still 0px tall
-        // correctly awards it nothing, and the case would then measure the decode race
-        // rather than the walk. That race is real in production too and is recorded as
-        // a residual — see the report.
+        // A data-URI image decodes asynchronously, so decode before attaching or this measures the race.
         await img.decode();
         return img;
       },
@@ -715,9 +581,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     it(`clips on the last box that FITS even when it carries no text: ${what}`, async () => {
       const box = await build();
       box.dataset["atomicTarget"] = "1";
-      // A TRAILING paragraph is required rather than decoration: the box has to be the
-      // last thing that fits WHILE the report still overflows, and with the box last
-      // those two are mutually exclusive.
+      // A trailing paragraph keeps the report overflowing while the box is the last thing that fits.
       const { text, more, handle } = resultBox(para(fillerWords, "alpha"), box, para(60, "omega"));
 
       expect(
@@ -748,23 +612,13 @@ describe("the run page's collapsed report ends on a whole line", () => {
         text.getBoundingClientRect().bottom - boxBottom,
         `so the clip lands on ${what}'s own bottom edge rather than the band above it`,
       ).toBeCloseTo(0, 1);
-      // The other direction, so a fix for the over-trim cannot buy it with a mid-line
-      // cut.
+      // A fix for over-trim must not cut mid-line.
       expect(straddling(text)).toEqual([]);
     });
   }
 
   it("does not move the clip onto a box that renders NOTHING", () => {
-    // The third direction, and the one that makes the walk's zero-height test a live
-    // guard rather than a formality. An empty paragraph renders 0px tall, so it can never
-    // be the last VISIBLE box and cannot over-trim — which is why the table above records
-    // it as not reproducing — but it still has a POSITION, and a position between the last
-    // painted line and the cap is one an unguarded walk awards: the clip then lands in the
-    // margin gap below the last line, showing a strip of blank space where the snap's
-    // whole job is to end on the last whole line. Measured with the guard removed, over
-    // the same sweep at 700px: the clip moves down 11.4px in Chromium, 9.7 in Firefox and
-    // 10.7 in WebKit, on 20 of 44 samples in each — and NO band straddles, so the straddle
-    // oracle is silent about it in both directions.
+    // An empty paragraph is 0px tall and must not be awarded a clip position in a margin gap.
     const empty = document.createElement("p");
     const { text, more, handle } = resultBox(para(76, "alpha"), empty, para(60, "omega"));
 
@@ -799,37 +653,16 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("refuses an atomic box that rides the line the cap cuts, rather than clipping inside it", async () => {
-    // THE OTHER DIRECTION OF THE ATOMIC WALK, and the one every case above structurally
-    // cannot reach: each target in that table is a direct child of the bubble, so it
-    // forms its own anonymous line box and can never SHARE one with text. An INLINE
-    // replaced box does share one — `.message.assistant`'s `& img` rule declares no
-    // `display`, so an `![](…)` inside a paragraph is inline — and under
-    // `vertical-align: baseline` its own bottom is the line's BASELINE, which sits above
-    // the text band's bottom by the font's descent. So a box whose own bottom fits under
-    // the cap can ride a line that does NOT, and awarding it writes the clip inside that
-    // line: everything above the baseline painted, the descenders cut. Measured against a
-    // build that awards at the pop, over a sub-line sweep at 700px: 0.788 of a line
-    // painted in Chromium and WebKit and 0.758 in Firefox, on 8 / 10 / 8 samples each.
+    // An inline replaced box shares a line box with text, which the direct-child cases cannot reach.
     const img = document.createElement("img");
     img.src = PNG16;
     img.alt = "";
-    // Awaited for the reason the standalone-image case above states: an undecoded image
-    // is 0px tall, and the case would then measure the decode race rather than the walk.
     await img.decode();
     const line = document.createElement("p");
     line.append(document.createTextNode("lead "), img, document.createTextNode(" trail"));
-    // The bait window is the font's DESCENT inside a 22.4px line — 4px at this host's
-    // type scale — and a filler word count moves the target by a WHOLE line, so no count
-    // lands in it. The negative margin slides the line into the window; it is the only
-    // arranged number here, and the premises below fail loudly rather than vacuously if a
-    // type-scale change moves it.
+    // The bait window is the font's descent; the negative margin slides the line into it.
     line.style.marginBlockStart = "-3.6px";
-    // The TAIL is a rule rather than a paragraph, and that is the second half of the
-    // shape rather than decoration: with text below the clip the walk breaks on it and
-    // the cut band is closed on the way out, so the band's verdict happens to be in hand
-    // early. With no text below the clip the cut band is judged only by the walk's LAST
-    // close, which is what makes deferring the candidates to after it load-bearing — and
-    // a report ending on an image paragraph followed by a rule is an ordinary shape.
+    // A rule as the tail, so the walk does not close the cut band early on text below the clip.
     const { text, more, handle } = resultBox(para(74, "alpha"), line, document.createElement("hr"));
 
     expect(text.scrollHeight - text.clientHeight, "the report overflows the clamp").toBeGreaterThan(
@@ -873,35 +706,19 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("keeps clipping rather than opening fully when no height could be positive", () => {
-    // A clip height at or below zero is invalid at computed-value time, so
-    // `max-block-size: var(--clamp-h, 12lh)` falls back to its initial `none` and the
-    // collapsed box renders the WHOLE report — the outcome `31-exec-view.css`'s own
-    // comment cites against `-webkit-line-clamp`. Failing open is the right DIRECTION
-    // for this surface, so the guard raises nothing; it just makes that state
-    // unreachable.
-    //
-    // The shape is SYNTHETIC and says so: the written height works out to the last
-    // fitting band's bottom RELATIVE TO THE BOX'S OWN TOP, so reaching a non-positive
-    // one needs a fitting band at or above that top, which no markdown report produces.
-    // A negative top margin puts one there and a large one on the next block pushes
-    // every other band below the clip, so that band is the only candidate.
+    // A non-positive clip height falls back to `none` and shows the whole report.
     const high = para(3, "high");
     high.style.marginTop = "-400px";
     const low = para(40, "low");
     low.style.marginTop = "700px";
     const { text, handle } = resultBox(high, low);
-    // AND the box has to sit far enough down the page that the band above it is still at
-    // a POSITIVE viewport y — otherwise the earlier `fits <= 0` guard answers first and
-    // this case measures that one instead. Bait the unguarded code would really take.
+    // Far enough down that the band above is at positive y, or `fits <= 0` answers first.
     text.closest<HTMLElement>(".ev-results")?.style.setProperty("margin-block-start", "600px");
     handle.sync();
 
     const boxTop = text.getBoundingClientRect().top;
     const bandBottom = high.getBoundingClientRect().bottom;
-    // The overflow premise is read with the snap WITHDRAWN, so it states a fact about
-    // the REPORT rather than about the snap's own output: a snap that opened the box
-    // fully would make its own premise false, and the case would then fail on this line
-    // instead of on the assertion that names the cause.
+    // The overflow premise is read with the snap withdrawn, so it describes the report.
     text.style.removeProperty("--clamp-h");
     const overflow = text.scrollHeight - text.clientHeight;
     handle.sync();
@@ -925,11 +742,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("has the production results clamp opting IN to the line snap", () => {
-    // Every other case in this describe constructs its own clamp, so deleting
-    // `snapToLine` from `RESULT_CLAMP` restores the mid-glyph clip with this whole file
-    // green — measured. A SOURCE assertion because the opt-in is an authored literal,
-    // and importing the builder drags `chat.ts` and the run store in behind it for a
-    // fact they do not decide.
+    // Source assertion: deleting `snapToLine` from `RESULT_CLAMP` leaves every constructed-clamp case green.
     const decl = /const RESULT_CLAMP\s*=\s*\{([^}]*)\}/.exec(execPageSrc);
     expect(decl?.[1], "exec-view/page.ts declares RESULT_CLAMP").toBeDefined();
     expect(
@@ -939,11 +752,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     ).toMatch(/\bsnapToLine\s*:\s*true\b/);
   });
 
-  /** A markdown table's row, the shape that had NO case in this file and so went unseen
-   *  through three passes: SHORT header labels, one long body cell that wraps to two lines,
-   *  one short body cell centred in the row, and one cell holding the 16x16 PNG. Short
-   *  headers are what stop auto table layout squeezing the other columns to one character.
-   *  Built with `createElement` + `textContent` like every other fixture here. */
+  /** A markdown table row: short headers, a wrapped cell and a centred one, and an image cell. */
   async function tableRow(): Promise<HTMLElement> {
     const table = document.createElement("table");
     const thead = document.createElement("thead");
@@ -967,8 +776,6 @@ describe("the run page's collapsed report ends on a whole line", () => {
     const img = document.createElement("img");
     img.src = PNG16;
     img.alt = "";
-    // Awaited for the reason the atomic cases above state: an undecoded image is 0px
-    // tall, and the case would measure the decode race rather than the model.
     await img.decode();
     shot.appendChild(img);
     row.append(wide, short, shot);
@@ -977,9 +784,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     return table;
   }
 
-  /** Every rendered text rect in the box, UNMERGED. The three helpers below walk every text
-   *  node unbounded and un-pruned, so they are the model's SPECIFICATION rather than a copy
-   *  of its implementation — which is what lets them contradict it when it is wrong. */
+  /** Unmerged and unpruned: the specification the model is checked against. */
   function allRects(box: HTMLElement): DOMRect[] {
     const out: DOMRect[] = [];
     const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
@@ -1010,10 +815,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     return allRects(text).some((r) => r.top < y - 0.5 && r.bottom > y + 0.5);
   }
 
-  /** Does this element render a TEXT RECT anywhere beneath it? The MODEL's own atom
-   *  predicate, so the over-trim oracle's candidate set is the model's: an element whose
-   *  only text is an NBSP has a real line box and is text-bearing, where a non-blank-TEXT
-   *  predicate would call it an atom and hand the oracle a candidate the model refuses. */
+  /** The model's own atom predicate: an NBSP-only element has a real line box. */
   function rendersText(el: Element): boolean {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
@@ -1038,11 +840,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     readonly wrote: boolean;
   }
 
-  /** A SWEEP rather than one arranged offset, at this host's own width: a handful of filler
-   *  word counts crossed with POSITIVE gaps, which can only ever widen the space above the
-   *  row, so every straddle it finds is reachable by a report nobody arranged. Each sample
-   *  releases its clamp BEFORE the next mount, because `releaseClampsIn` can only reach an
-   *  element still inside `host` and `mount` replaces the tree. */
+  /** A sweep of filler counts and positive gaps, so every straddle found is reachable. */
   async function sweepRow(
     trailing: () => HTMLElement[],
     each: (s: RowSample) => void,
@@ -1078,13 +876,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   }
 
   it("cuts no line box through its glyphs: a table row whose cells share a line", async () => {
-    // THE REGRESSION CASE FOR THIS DEFECT. A table row is the one ordinary markdown shape
-    // where two cells' rects OVERLAP vertically — a cell wrapping to two lines beside a
-    // single-line cell the UA centres in the row — so the rect list in document order is
-    // NOT sorted by `top`, which is exactly the assumption the single-pass band machine
-    // made. Measured on the shipped build over a 3,384-sample sweep at 700px: 67 / 66 / 66
-    // samples clipped up to 9.91 / 10.00 / 10.00px into a 16px line box, 83-95% of that
-    // line's ink lost, in Chromium / Firefox / WebKit.
+    // A table row's cell rects overlap vertically, so document order is not sorted by position.
     let overlapping = 0;
     let unsorted = 0;
     let insideRow = 0;
@@ -1123,9 +915,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
         if (cuts.length > 0) {
           worst.push(`filler ${String(s.words)} gap ${String(s.gap)}px: ${cuts.join(", ")}`);
         }
-        // The BAND oracle is asserted too and is the cheap gross check; it is a SUPERSET of
-        // the rect one and, being computed from the model that was replaced, is a
-        // DIAGNOSTIC — where the two ever disagree the rect reading rules.
+        // The band oracle is a superset and diagnostic; where they disagree the rect reading rules.
         expect(straddling(s.text)).toEqual([]);
       },
     );
@@ -1147,13 +937,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("clips no higher than the last position no rendered rect straddles", async () => {
-    // The OVER-TRIM direction, one-directional on purpose: the clip is never ABOVE the
-    // straddle-free ideal. Equality is FALSE of correct output on the refusal arm, where
-    // the stylesheet's own cap stands up to `SNAP_EPSILON` below the ideal, so an equality
-    // assertion here would be red on a working fix. The candidate set is the model's own —
-    // rect bottoms AND the bottoms of elements that render no text — because an oracle
-    // built on a wider atom predicate hands it a candidate the model refuses and the
-    // one-directional assertion then fails on correct output.
+    // One-directional: the clip is never above the straddle-free ideal (equality fails on the refusal arm).
     await sweepRow(
       () => [para(40, "omega")],
       (s) => {
@@ -1177,11 +961,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("reads the cells that come after a rect below the clip", async () => {
-    // THE BOUND's own case, and nothing else in this file pins it. The walk stops a child
-    // list at the first element whose box starts below the deepest ink read so far, so a
-    // long tail after the row is what makes it fire at all — and the cell that refuses the
-    // cutting clip is the row's LAST, so a bound that stopped one element early would
-    // reproduce the defect with every other case here still green.
+    // The walk's stop bound: a long tail after the row is what makes it fire.
     await sweepRow(
       () => Array.from({ length: 60 }, (_, i) => para(12, `tail${String(i)}`)),
       (s) => {
@@ -1195,11 +975,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
   });
 
   it("leaves a report that fits unclipped, with no opener", () => {
-    // A report shorter than the cap has nothing to clip, so the snap must not run at
-    // all: the written property is what this owns, because an always-snap whose value
-    // is the content's own last line makes `scrollHeight > clientHeight` true by a
-    // fraction and offers a Show more over nothing to reveal. Red-checked by dropping
-    // the overflow conjunct, which writes a height here and fails on that assertion.
+    // A report under the cap must not snap: a written height would offer Show more over nothing.
     const { text, more } = resultBox(para(6, "short"));
     expect(text.scrollHeight - text.clientHeight, "the report fits").toBeLessThanOrEqual(1);
     expect(more.hidden, "so no opener is offered").toBe(true);

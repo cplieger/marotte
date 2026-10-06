@@ -1,8 +1,5 @@
 package marotte
 
-// ACP JSON-RPC wire types: request/response/notification envelopes for
-// communication with kiro-cli over the ACP protocol.
-
 import (
 	"encoding/json"
 	"errors"
@@ -45,24 +42,10 @@ type Notification struct {
 
 // RPCError is a JSON-RPC 2.0 error object.
 type RPCError struct {
-	// Data is the optional member JSON-RPC allows for implementation-defined
-	// detail, and on KAS it is where most errors actually SAY something.
-	//
-	// Counted over every engine-emitted frame in the wire logs: 127 `-32603`
-	// errors set Message to the literal "Internal error" and put the real text
-	// in Data — either `{"details": "…"}` or a Zod issue array — while the 6
-	// `-32602` errors put it in Message and carry no Data at all.
-	//
-	// The 4 `-32000` errors are NOT in that second group, and the earlier claim
-	// that they carry no Data was wrong: -32000 is KAS's own application code
-	// and it does attach Data (the throttle case is the one marotte reads, in
-	// command/prompt.go's promptFailureReason). Treat -32000 as "check both".
-	// So the two fields are not redundant and neither is primary: dropping Data
-	// (which this struct did) loses the cause of every internal error, and
-	// dropping Message would lose every parameter-validation message.
-	//
-	// Kept as raw JSON because the two shapes have nothing in common;
-	// workflow.Details is the one place that unwraps both.
+	// Data (below) is where most KAS errors actually say something: a `-32603` puts the real text
+	// in Data (`{"details": …}` or a Zod issue array) with Message "Internal error", a `-32602`
+	// puts it in Message, and `-32000` uses both. Raw JSON because the shapes share nothing;
+	// workflow.Details unwraps both.
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
 	Code    int             `json:"code"`
@@ -113,61 +96,22 @@ type RPCErrorOut struct {
 // path for callers that need errors.Is classification.
 var ErrNotIdle = errors.New("session not idle")
 
-// ErrBridgeExited is the sentinel a Call returns (wrapped in a TransportError)
-// when the ACP subprocess died with the request still pending. Exported for the
-// same reason as ErrNotIdle: a caller has to be able to tell this apart from a
-// transient write failure without substring matching, because the two want
-// OPPOSITE actions. A write that failed once may succeed on a retry; a dead
-// bridge cannot, because the readLoop has closed its done channel permanently,
-// so every retry fails instantly and the only thing the attempts buy is dead
-// wall-clock time before the same error surfaces.
+// ErrBridgeExited is the sentinel a Call returns (wrapped in a TransportError) when the ACP
+// subprocess died with the request pending. Distinct from a transient write failure because the two
+// want opposite actions: a dead bridge's readLoop has closed for good, so a retry only burns time.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
-// ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable
-// TransportError) when a single stdout frame exceeded the bridge's size cap and
-// was dropped. It is deliberately distinct from ErrBridgeExited: the process and
-// the ACP session are both still alive, so the chat stays promptable and a
-// caller must not tear anything down on this.
-//
-// The wording is the USER-FACING one. A dropped frame's bytes are gone, so the
-// bridge cannot say whether it was a notification or the response to a pending
-// request, and it therefore fails every pending request rather than risk leaving
-// one waiting forever (Bridge.Call has no client-side deadline by design). This
-// string is what the prompt path's failure banner shows, via
-// promptFailureReason, which is the whole reason the loss is not silent.
-//
-// Not retryable: the same prompt would very likely produce the same oversize
-// tool result, so two retries buy a re-run of an expensive turn and the same
-// failure. A user who wants it again presses Send.
+// ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when
+// one stdout frame exceeded the bridge's cap and was dropped. The process and session live, so
+// nothing is torn down. Every pending request fails, since the dropped frame cannot be attributed;
+// the text is user-facing. Not retryable: the same turn would likely overflow again.
 var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
 
-// ErrBridgeNotStarted is the sentinel every write on a bridge returns when the
-// subprocess is not there to write to: Start has not run yet, or it ran and
-// failed. Exported for the same reason as its siblings — a caller must be able
-// to tell it from a bridge that exited mid-request without substring matching.
-//
-// It exists because the alternative was a PANIC. The stdin handle is an
-// interface field assigned by Start, so writing before that assignment called a
-// method on a nil interface, which webhttp.Recoverer turned into a 500 with no
-// body and no attributable log line. Both halves reach a real caller: the bridge
-// record is registered BEFORE Start so concurrent opens coalesce, so any command
-// resolving a bridge by chat id can hold one mid-spawn (a mode or effort click
-// during a cold spawn, which unpacks a ~240 MB runtime); and a failed Start rolls
-// the record out of the map AFTER releasing the starting state, so a holder that
-// raced the removal keeps a bridge that will never have a handle.
-//
-// The write path cannot tell those two apart — it sees an absent handle either
-// way — so it does not try. It reports the absence and lets the CALLER's retry
-// policy decide, which is why Call wraps it retryable like any other write
-// failure: a retry after the spawn finishes succeeds, and a retry against a
-// failed Start costs the same dead wall-clock time ErrBridgeExited's own doc
-// names, with the same error surfacing at the end of it.
+// ErrBridgeNotStarted is the sentinel every write on a bridge returns when there is no subprocess
+// to write to: Start has not run, or it failed. A bridge is registered before Start so opens
+// coalesce, so a command can hold one mid-spawn. Call wraps it retryable, letting the caller's
+// policy decide.
 var ErrBridgeNotStarted = errors.New("ACP bridge has not started")
-
-// There is no marotte.ErrChatNotFound sentinel. It existed for errors.Is
-// classification against a store TRANSITION, and PromoteRewind was the only
-// transition that returned it. (command.ErrChatNotFound is a different, live
-// value: the 404 response body, not a sentinel to match on.)
 
 // TransportError wraps bridge-level transport failures (pipe closed,
 // write timeout, process exited) with explicit retryability semantics.

@@ -1,16 +1,8 @@
 package agent
 
-// The rewritten order is ONE function's answer, and this is what says so.
-//
-// Under R2 a turn's ordinal is reused after a rewind (the surviving high-water plus
-// one), so two turns in one log can carry the same n and the log's order is FIRST
-// APPEARANCE — nothing sorts it. EntryLog.Rewrite is what lays that order down on
-// disk, and SwapMerged is the one function that decides it. A second production
-// caller would be a second decider: a writer laying down an order MergeEntries never
-// produced, against a revert gate the swap already read and it did not.
-//
-// A census rather than a comment, because the property is an ABSENCE — the next
-// caller is the one nobody wrote yet, so no list can see it coming.
+// SwapMerged is the one production caller of EntryLog.Rewrite: a second would lay down an order
+// MergeEntries never produced, past a revert gate it never read. A census, because the next
+// caller is one nobody has written yet.
 
 import (
 	"fmt"
@@ -23,8 +15,7 @@ import (
 	"testing"
 )
 
-// Directories with no Go the walk needs, or none at all: the bundled front end, its
-// dependency tree, the vitest cache, and the fixtures a test reads as data.
+// Directories the walk skips: the bundled front end, its dependencies, the vitest cache and test fixtures.
 var callerSkipDirs = map[string]bool{
 	".git":         true,
 	".vitest":      true,
@@ -34,9 +25,7 @@ var callerSkipDirs = map[string]bool{
 	"testdata":     true,
 }
 
-// A walk that stops finding files must fail rather than report a clean census. 406
-// non-test files measured; the floor is low enough that a package moving costs
-// nothing and high enough that a walker rooted at the wrong directory is caught.
+// A walk that stops finding files must fail. 406 measured; the floor catches a wrongly rooted walker.
 const callerFileFloor = 300
 
 // rewriteSite is one production call of a method named Rewrite.

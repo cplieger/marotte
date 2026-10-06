@@ -36,19 +36,10 @@ var scanSkipDirs = map[string]bool{
 // stopped looking rather than found nothing.
 const productionFileFloor = 100
 
-// TestNoProductionSiteDiscardsMutateError is the migration guard for
-// ErrTombstoned. Adding a sentinel does not change Mutate's signature, so no
-// caller is FORCED to look at it: every `if err != nil` site starts propagating
-// the refusal correctly, while a `_ = store.Mutate(...)` keeps the old reading
-// and still compiles. The compiler cannot close that hole without a second
-// return value at every call site, so this test closes it instead — it fails
-// the moment a production file drops the error, which is the moment the
-// sentinel becomes ignorable again.
-//
-// internal/testsupport is exempt on purpose: chatstore_contract.go is a test
-// suite that happens not to be named _test.go (it is exported so several
-// packages can run it against their own store), and its assertions are the
-// reason it discards.
+// TestNoProductionSiteDiscardsMutateError guards ErrTombstoned: a `_ = store.Mutate(...)` still
+// compiles and silently drops the refusal, which the compiler cannot catch without a second return
+// value. internal/testsupport is exempt: chatstore_contract.go is an exported test suite whose
+// assertions discard on purpose.
 func TestNoProductionSiteDiscardsMutateError(t *testing.T) {
 	root := repoRoot(t)
 	exempt := filepath.Join(root, "internal", "testsupport")

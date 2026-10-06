@@ -1,15 +1,5 @@
-// Picking a mode with NO active chat, which is the one call site in this module
-// that depends on a chat existing.
-//
-// `selectMode` used to read `createSession(); getActive();` — correct only while
-// the chat id was minted in this tab's memory. The id is the server's now, so the
-// read has to happen in the create's continuation. The failure mode a bare `void`
-// produces is silent: `set_mode` would be addressed to whatever chat was active
-// before, or dropped entirely on a first-ever visit, and the pill would still flip
-// because the action's own optimistic update does not consult the server.
-//
-// Driven through the real click path (expand the pill, click an option) rather than
-// by exporting `selectMode`, so the test exercises the wiring a user reaches.
+// Picking a mode with NO active chat, which is the one call site in this module that depends on a
+// chat existing.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { setModeDispatch, createSessionMock, getActiveMock } = vi.hoisted(() => ({
@@ -24,19 +14,14 @@ vi.mock("./api-client.js", () => ({ apiGet: vi.fn(async () => ({ items: [] })) }
 vi.mock("./store.js", () => ({
   getActive: getActiveMock,
   activeSession: { value: undefined },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds: another module in the graph imports these names.
   get: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
   apiGetTyped: vi.fn(),
 }));
-// The expandable pill is @cplieger/ui-primitives machinery; what this file needs is
-// the list rendered, which is what onExpand does.
+// The expandable pill is @cplieger/ui-primitives machinery; what this file needs is the list
+// rendered, which is what onExpand does.
 vi.mock("./pill-expand.js", () => ({
   makeExpandable: (_pill: HTMLElement, _list: HTMLElement, opts: { onExpand: () => void }) => {
     expandList = opts.onExpand;
@@ -106,10 +91,8 @@ describe("picking a mode with no active chat", () => {
     expect(arg.chatID).toBe("c-created");
   });
 
-  // The silent failure a bare `void` plus a synchronous read would produce, made
-  // observable: another chat becomes active while the create is in flight. A
-  // `getActive()` read after the detached call would send the pick THERE; the
-  // continuation sends it to the chat that was asked for.
+  // The silent failure a bare `void` plus a synchronous read would produce, made observable:
+  // another chat becomes active while the create is in flight.
   it("addresses the created chat even when another becomes active meanwhile", async () => {
     let resolveCreate: (id: string) => void = () => undefined;
     createSessionMock.mockReturnValue(

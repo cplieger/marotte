@@ -40,13 +40,9 @@ func statusLabel(c byte) string {
 	return "Unknown"
 }
 
-// appendStatusEntries appends the gitFile rows for one porcelain XY status pair + path. A
-// path that is BOTH staged (X) and changed in the worktree (Y) yields two rows, one per
-// side, so a caller counting CHANGED FILES must count distinct paths rather than entries.
-//
-// orig is the rename/copy origin path, empty for every other entry, and it rides only the
-// row whose status letter is the R or C: the other side of a partially-staged rename is an
-// ordinary edit to the file at its new path.
+// appendStatusEntries appends the gitFile rows for one porcelain XY pair and path. A path both
+// staged and changed yields two rows, one per side, so counting changed FILES means counting
+// distinct paths. orig is the rename/copy origin, empty otherwise.
 func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFile {
 	f := gitFile{Path: path}
 	switch {

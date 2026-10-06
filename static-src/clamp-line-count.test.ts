@@ -1,18 +1,5 @@
-// ---------------------------------------------------------------------------
-// A clamp's line count is ONE fact written in TWO languages.
-//
-// Every show-more in this app is two numbers: the count a TypeScript constant
-// hands `attachClamp`, which measures the pre-layout character fallback against
-// it, and the count the stylesheet declares, which does the actual clipping.
-// Until this file the only thing linking them was a comment, so moving one side
-// alone was silent — a stylesheet clamping tighter than the constant claims
-// withdraws the opener from text that is genuinely clipped, and one clamping
-// looser leaves an opener over nothing to reveal.
-//
-// A SOURCE test rather than a rendered one, because both counts are authored
-// literals: `getComputedStyle` on a clamped element reports a resolved pixel
-// height, which cannot answer whether the two authored counts agree.
-// ---------------------------------------------------------------------------
+// A clamp's line count is one fact in two languages: the TS constant `attachClamp` falls back against, and the CSS clip.
+// Moving one side alone withdraws the opener from clipped text or leaves one over nothing. Source test: both are literals.
 
 import { describe, it, expect } from "vitest";
 
@@ -21,20 +8,16 @@ import execPageSrc from "./exec-view/page.ts?raw";
 import steerNoteSrc from "./fundamentals/steer-note.ts?raw";
 import dockAskSrc from "./dock-ask.ts?raw";
 
-/** Every shipped stylesheet, for the exhaustiveness sweep. `css-rules.ts` exports
- *  no sheet map, so the sweep needs its own eager glob — the pattern
- *  `spin-period.test.ts` uses for the same reason. */
+/** `css-rules.ts` exports no sheet map, so the sweep globs its own. */
 const sheets = import.meta.glob<string>("./css/*.css", {
   query: "?raw",
   import: "default",
   eager: true,
 });
 
-/** A top-level clamp rule, by the attribute `attachClamp` toggles. */
 const CLAMPED_RULE = /^(\.[a-z-]+\[data-clamped\])\s*\{/gm;
 
 interface ClampPair {
-  /** The surface a reader sees, so a failure names the thing rather than the file. */
   readonly what: string;
   readonly tsFile: string;
   readonly tsSrc: string;
@@ -43,20 +26,8 @@ interface ClampPair {
   readonly selector: string;
 }
 
-// No per-pair PROPERTY name: the CSS reader is mechanism-agnostic, mirroring
-// `attachClamp` itself, which decides by measurement and never reads the
-// declaration.
-//
-// TWO CSS-ONLY CLAMPS ARE DELIBERATELY ABSENT, and neither can be expressed
-// here: the turn header's request (`.turn[data-folded] .turn-req-text`,
-// 29-turns.css), which is fold-conditional, and the dock's steer row
-// (`.steer-text`, 26-dock.css), which has no opener. Both carry their count in
-// the stylesheet alone, so there is no constant to pair them against and no
-// `[data-clamped]` rule for the sweep below to find — the contract this file
-// states cannot express a one-language clamp, and widening `ClampPair` to make
-// one representable would give the sweep a row it can never check. Each count is
-// asserted where it can be, against real layout: the header's in
-// `disclosure-row-css.test.ts`, the dock row's in `pending-steers.test.ts`.
+// Two CSS-only clamps are deliberately absent (no TS constant, no `[data-clamped]` rule): `.turn-req-text` and
+// `.steer-text`. Their counts are asserted against layout in `disclosure-row-css.test.ts` and `pending-steers.test.ts`.
 const PAIRS: readonly ClampPair[] = [
   {
     what: "the run page's instructions",
@@ -83,10 +54,7 @@ const PAIRS: readonly ClampPair[] = [
     selector: ".steer-note-text[data-clamped]",
   },
   {
-    // ONE row for BOTH dock ask cards — the agent's own question and a parked
-    // workflow step's. They were two rows against two constants and two rules
-    // until `dock-ask.ts` made them one primitive; a second row here would be a
-    // second name for one fact, which is what this file exists to prevent.
+    // One row for both dock ask cards: `dock-ask.ts` owns one constant for them.
     what: "a dock ask card's question",
     tsFile: "dock-ask.ts",
     tsSrc: dockAskSrc,
@@ -100,17 +68,10 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
 }
 
-/** The line count a clamp constant declares. Two shapes in the tree — an options
- *  object (`{ lines: 3, fallbackChars: 220 }`) and a bare count
- *  (`const CLAMP_LINES = 4`) — so both are matched here rather than in the table.
- *
- *  Comments are stripped first because two of these docs quote their own number in
- *  prose ("Twelve lines because…", "Four rather than the turn header's three"). */
+/** Matches both constant shapes (options object, bare count); comments are stripped because some docs quote the number. */
 function tsClampLines(pair: ClampPair): number {
   const code = stripComments(pair.tsSrc);
-  // `\s+CLAMP` cannot match inside `RESULT_CLAMP` (the preceding character is a
-  // word character, so there is no whitespace to consume), which is what keeps the
-  // two exec-view constants apart.
+  // `\s+CLAMP` cannot match inside `RESULT_CLAMP`, which keeps the two exec-view constants apart.
   const re = new RegExp(
     String.raw`\bconst\s+${pair.constant}\s*=\s*(?:\{[^{}]*?\blines\s*:\s*(\d+)|(\d+)\s*;)`,
   );
@@ -119,18 +80,10 @@ function tsClampLines(pair: ClampPair): number {
   return Number.parseInt(m?.[1] ?? m?.[2] ?? "", 10);
 }
 
-/** Every line count a clamp rule declares, whatever spelling it uses. Three in the
- *  tree: `-webkit-line-clamp`, its standard twin `line-clamp`, and `max-block-size`
- *  in `lh` (the results clamp, which cannot use line-clamp because a markdown
- *  bubble's children are block-level). All of them are returned, so a rule
- *  declaring the pair has both checked and cannot half-move.
- *
- *  The `max-block-size` matcher reads the count from ANYWHERE in the declaration's
- *  value rather than anchoring on the colon, because the results clamp spells its
- *  cap as the FALLBACK of a `var()` — `clamp-text.ts` writes a measured height into
- *  `--clamp-h` and the authored count is what it snaps down from. The count is still
- *  authored in CSS and still checked against the constant, so the two-language
- *  contract this file states is unchanged. */
+/**
+ * Every count a clamp rule declares in any spelling (`-webkit-line-clamp`, `line-clamp`, `max-block-size` in `lh`), so a
+ * rule cannot half-move. The `max-block-size` count is read anywhere in the value: it is a `var(--clamp-h, …)` fallback.
+ */
 function cssClampCounts(pair: ClampPair): { prop: string; lines: number }[] {
   const body = ruleBody(loadCSS(pair.sheet), pair.selector).replace(/\/\*[\s\S]*?\*\//g, " ");
   return [
@@ -161,8 +114,7 @@ describe("a clamp's line count is one fact in two languages", () => {
     });
   }
 
-  // The premise, or the comparison above can pass on two absences: `toBe` reads
-  // NaN as equal to NaN, so a regex that stopped matching would agree with itself.
+  // Premise: `toBe` reads NaN as equal to NaN, so a regex that stopped matching would agree with itself.
   it("reads a real count from both sides of every pair", () => {
     for (const pair of PAIRS) {
       const tsLines = tsClampLines(pair);
@@ -179,8 +131,7 @@ describe("a clamp's line count is one fact in two languages", () => {
     }
   });
 
-  // What makes the table above collectively exhaustive: a clamp site added with
-  // no row fails here instead of shipping unpinned.
+  // Exhaustiveness: a clamp rule with no row fails here.
   it("covers every clamp rule in the shipped stylesheets", () => {
     const declared = new Set<string>();
     for (const css of Object.values(sheets)) {

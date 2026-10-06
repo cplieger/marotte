@@ -2,30 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TABS, TAB_LABELS } from "./settings-tabs.js";
 import type * as ModSettingsTabs from "./settings-tabs.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
-// swapViews spy: runs its callback synchronously (so the panel swap still
-// happens) while recording every invocation. One invocation == one swap.
+// swapViews spy: runs its callback synchronously (so the panel swap still happens) while recording
+// every invocation. One invocation == one swap.
 const { swapViewsSpy, route } = vi.hoisted(() => ({
   swapViewsSpy: vi.fn((fn: () => HTMLElement | null) => {
     fn();
   }),
-  /** What the strip says is on screen. The subscriber's second gate reads it, and this
-   *  suite runs the REAL tabs.ts otherwise — where no row exists, so it would answer
-   *  `null` and refuse every load. */
+  /** What the strip says is on screen. The subscriber's second gate reads it, and this suite
+   *  runs the REAL tabs.ts otherwise — where no row exists, so it would answer `null` and refuse
+   *  every load. */
   route: { current: { kind: "settings" } as { readonly kind: string } | null },
 }));
 
@@ -37,10 +25,9 @@ vi.mock("./tabs.js", async () => ({
   getActiveTabRoute: () => route.current,
 }));
 
-// Mock ./dom.js so `$` resolves against the test-built DOM. The registry
-// resolves the tab bar / select lazily from the live DOM, mirroring the real
-// lazy getters in dom.ts so initSettingsTabs() works against whatever was
-// built in beforeEach.
+// Mock ./dom.js so `$` resolves against the test-built DOM. The registry resolves the tab bar /
+// select lazily from the live DOM, mirroring the real lazy getters in dom.ts so initSettingsTabs()
+// works against whatever was built in beforeEach.
 vi.mock("./dom.js", () => {
   const idFor: Record<string, string> = {
     settingsTabBar: "settings-tab-bar",
@@ -87,8 +74,6 @@ describe("settings-tabs TAB_LABELS coverage", () => {
     { tab: "tools", label: "Tools" },
     { tab: "permissions", label: "Permissions" },
     { tab: "instructions", label: "Custom instructions" },
-    // "git" removed: the Git & forges settings tab was retired (it had no
-    // panel or pill in the DOM; /settings/git canonicalizes to General).
   ] as const)("$tab → $label", ({ tab, label }) => {
     expect(TAB_LABELS[tab]).toBe(label);
   });
@@ -99,8 +84,8 @@ describe("settings-tabs TAB_LABELS coverage", () => {
 });
 
 describe("settings-tabs forceSettingsTab dedup", () => {
-  // Build the panel layout contract initSettingsTabs() expects: a tab bar with
-  // one button per tab, one panel per tab, and a page title.
+  // Build the panel layout contract initSettingsTabs() expects: a tab bar with one button per tab,
+  // one panel per tab, and a page title.
   function buildSettingsDom(): void {
     document.body.replaceChildren();
     const bar = document.createElement("div");
@@ -119,8 +104,6 @@ describe("settings-tabs forceSettingsTab dedup", () => {
   }
 
   beforeEach(() => {
-    // Fresh module per test → activeTab defaults to "general" and exactly one
-    // onTabChange subscriber exists (one initSettingsTabs() per test).
     route.current = { kind: "settings" };
     vi.resetModules();
     bootSeq++;
@@ -151,17 +134,14 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     const general = vi.fn();
     const tools = vi.fn();
 
-    // initUI runs at BOOT, with Settings not on screen. The immediate subscribe
-    // fire paints the default panel — a DOM sync, not an activation — and firing a
-    // loader there is what put General's three `kiro-cli settings` SPAWNS on the
-    // boot path, concurrent with the boot's own reads.
+    // initUI runs at BOOT, with Settings not on screen.
     initSettingsTabs({ general, tools });
     expect(general).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
 
-    // A sub-tab SWITCH is a subject change, so it refetches every time. The sequence
-    // has to ALTERNATE: `activeTab` is deduped, so two consecutive writes of one value
-    // notify once and would make a repeated switch look like a latch.
+    // A sub-tab SWITCH is a subject change, so it refetches every time. The sequence has to
+    // ALTERNATE: `activeTab` is deduped, so two consecutive writes of one value notify once and
+    // would make a repeated switch look like a latch.
     forceSettingsTab("tools");
     expect(tools).toHaveBeenCalledTimes(1);
     forceSettingsTab("general");
@@ -178,9 +158,9 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     initSettingsTabs({ tools });
     route.current = { kind: "chat" };
 
-    // `applyRoute`'s settings case is `forceSettingsTab(route.tab)` then `openTab`, so
-    // without this term the router's own order loads the panel twice — and for General
-    // that loader is a server-side `kiro-cli settings` spawn.
+    // `applyRoute`'s settings case is `forceSettingsTab(route.tab)` then `openTab`, so without this
+    // term the router's own order loads the panel twice — and for General that loader is a
+    // server-side `kiro-cli settings` spawn.
     forceSettingsTab("tools");
 
     expect(tools).not.toHaveBeenCalled();
@@ -209,8 +189,8 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     const general = vi.fn();
     initSettingsTabs({ general });
 
-    // What a materialized settings tab's `onShow` calls: the gear, a path link and
-    // a restored tab all arrive here, with the panel actually shown.
+    // What a materialized settings tab's `onShow` calls: the gear, a path link and a restored tab
+    // all arrive here, with the panel actually shown.
     loadSettingsTabData("general");
     expect(general).toHaveBeenCalledTimes(1);
   });

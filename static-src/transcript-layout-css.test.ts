@@ -1,19 +1,8 @@
-// The transcript's LAYOUT declarations: what is contained, what is not part of
-// the transcript's layout at all, and what the live-edge marker costs.
-//
-// The containment cases are source facts about the shipped stylesheets, so they
-// are read out of the CSS rather than off a computed style — `content-visibility`
-// and `contain` resolve to themselves whether or not the property does anything
-// observable in one page. The marker's cost is the opposite kind of claim, so it
-// is measured against real layout.
-//
-// The regression each one guards is a measured one. `.msg-row` (13-messages.css)
-// has carried this pair for a long time while the four cards below — one open
-// turn measured 353 tool cards — carried none, so the containment was declared on
-// one row per prose bubble and inert for everything that costs anything. And the
-// composer is a flex sibling of the transcript's scroller with
-// `field-sizing: content` on its textarea, so without `contain: layout` a
-// keystroke shares a layout pass with whatever the transcript is doing.
+// The transcript's LAYOUT declarations: what is contained, what is outside its layout, and what the
+// live-edge marker costs. Containment is a source fact, read from the CSS (`contain` computes to
+// itself whether or not it does anything); the marker's cost is measured. One open turn measured
+// 353 tool cards, and the composer's `field-sizing: content` textarea shares a layout pass with the
+// transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
 
@@ -33,11 +22,8 @@ describe("transcript containment", () => {
       expect(body, `${selector} declares content-visibility: auto`).toMatch(
         /content-visibility:\s*auto\s*;/u,
       );
-      // `auto` as the first value is what makes the fallback a pre-first-render
-      // estimate rather than a permanent lie about the card's height. The size
-      // may be a token: a card whose collapsed height IS a control height reads
-      // `var(--btn-h)` so it stays right on a coarse pointer, which a literal
-      // cannot, and `tool-box-height.test.ts` is what checks the resolved value.
+      // `auto` first makes the fallback a pre-render estimate. A token size (`var(--btn-h)`) stays right
+      // on coarse; `tool-box-height.test.ts` checks the resolved value.
       expect(body, `${selector} declares contain-intrinsic-size: auto <size>`).toMatch(
         /contain-intrinsic-size:\s*auto\s+(?:[\d.]+rem|var\(--[\w-]+\))\s*;/u,
       );
@@ -45,10 +31,8 @@ describe("transcript containment", () => {
   }
 
   it("leaves the collapsed subagent body on `hidden`, keyed on its own state", () => {
-    // The block's `auto` is keyed on viewport relevancy; the BODY's is keyed on
-    // the disclosure, and only `hidden` applies in one state. Two elements, two
-    // keyings — a sweep that "aligned" them would resurrect the case
-    // 14-tools.css documents at length.
+    // The block's `auto` keys on viewport relevancy, the BODY's on the disclosure; 14-tools.css says why
+    // they must not be "aligned".
     const body = ruleBody(loadCSS("14-tools.css"), ".subagent-block.collapsed > .subagent-body");
     expect(body).toMatch(/content-visibility:\s*hidden\s*;/u);
   });
@@ -58,31 +42,16 @@ describe("composer layout independence", () => {
   const form = (): string => ruleBody(loadCSS("15-input.css"), '[id="prompt-form"]');
 
   it("declares LAYOUT containment, and only that", () => {
-    // Not `paint`, `content` or `strict`: the pill cards open UPWARD out of this
-    // bar (`bottom: 100%` against their slot, up to `min(26rem, 55dvh)` tall), and
-    // paint containment clips a subtree at the padding box — every one of them
-    // would lose its top. Not `size` either: the bar's height IS its content's.
+    // Not `paint`/`content`/`strict`: pill cards open UPWARD out of this bar and paint containment
+    // would clip their tops. Not `size`: the bar's height IS its content's.
     expect(form()).toMatch(/contain:\s*layout\s*;/u);
     expect(form()).not.toMatch(/contain:[^;]*\b(?:paint|content|strict|size)\b/u);
   });
 
   it("carries the z-index its own stacking context makes necessary", () => {
-    // Layout containment makes the bar a stacking context, and a NON-POSITIONED
-    // stacking context paints with the in-flow content — so the pill cards that
-    // open upward out of this box (`bottom: 100%`, up to `min(26rem, 55dvh)`)
-    // would paint under `.chat-toolbar`, which is opaque and spans the same
-    // column. `position: relative` plus a positive z-index puts the whole bar in
-    // the positioned layer instead, above the content layer the toolbar paints in.
-    //
-    // THE TOOLBAR IS THE OTHER HALF OF THAT ORDER, AND THE CHECK IS NEGATIVE NOW.
-    // It used to be a floating `position: absolute` pill at z-index 10, so this
-    // rule's 10 existed to MATCH it and leave the two to a DOM-order tie. It is a
-    // full-width in-flow bar since the title-bar rewrite (12-chat.css): static,
-    // with no stacking level of its own, so it paints in the content layer and any
-    // positioned z-index above 0 clears it. What must not come back silently is a
-    // toolbar that COMPETES — re-floating it puts an opaque bar back over the
-    // cards, and the pairing has to be re-derived rather than inherited from a
-    // number that happened to match.
+    // Layout containment makes the bar a stacking context, so `position: relative` plus a positive
+    // z-index lifts it (and its upward pill cards) above the content layer. The toolbar is static,
+    // in-flow and unstacked, so any positive z-index clears it; a re-floated toolbar must fail here.
     const body = form();
     expect(body).toMatch(/position:\s*relative\s*;/u);
     expect(body).toMatch(/z-index:\s*10\s*;/u);
@@ -121,10 +90,8 @@ describe("against real layout", () => {
     stage.remove();
   });
 
-  /** A transcript view holding `n` 100px turns, optionally with the live-edge
-   *  marker scroll.ts appends — placed FIRST, which is where reconcile leaves
-   *  unkeyed furniture, so the flex order is what has to put it last. Parented by
-   *  the caller. */
+  /** A transcript view of `n` 100px turns, optionally with scroll.ts's live-edge marker placed FIRST
+   *  (where reconcile leaves unkeyed furniture), so flex order must put it last. */
   function view(withEdge: boolean, n = 2): HTMLElement {
     const v = document.createElement("div");
     v.className = "transcript-view is-active";
@@ -142,12 +109,9 @@ describe("against real layout", () => {
     return v;
   }
 
-  /** The multiplexer inside the REAL ancestor chain index.html declares, sized so
-   *  the transcript overflows: `#messages-wrap` is the element scroll.ts scrolls,
-   *  measures and roots the observer on, so every box between it and the marker is
-   *  part of the geometry. `parked` adds the second view a chat switch leaves
-   *  behind. `#messages-wrap-outer` takes an explicit height because production
-   *  gets its own from `flex: 1` in the chat view. */
+  /** The multiplexer inside index.html's REAL ancestor chain, overflowing: `#messages-wrap` is what
+   *  scroll.ts scrolls and observes. `parked` adds a switched-away view. The outer wrap gets an
+   *  explicit height in place of production's `flex: 1`. */
   function scroller(n: number, parked = 0): { scrollEl: HTMLElement; edge: HTMLElement } {
     const outer = document.createElement("div");
     outer.id = "messages-wrap-outer";
@@ -185,40 +149,23 @@ describe("against real layout", () => {
   }
 
   it("the live-edge marker sits ON the SCROLLER's content bottom", () => {
-    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN, against the box that decides it:
-    // scroll.ts roots the observer on `#messages-wrap` with a `rootMargin` of
-    // BOTTOM_TOLERANCE_PX and `isAtBottom` reads that element's `scrollHeight`, so
-    // the two agree only at zero offset from ITS content bottom. What reopens the
-    // 16px is `.transcript-view`'s own `padding-block-end` and, measured one ancestor
-    // at a time in this Chromium, nothing else: padding on `#messages`, on the
-    // scroller or on `#messages-wrap-outer` each moves the marker and the content
-    // bottom together. The scroller-relative form earns its place on the case below.
+    // The marker's top margin: scroll.ts's observer (rooted on `#messages-wrap`, BOTTOM_TOLERANCE_PX)
+    // and `isAtBottom` agree only at zero offset from its content bottom. Measured, only
+    // `.transcript-view`'s `padding-block-end` reopens the 16px; ancestors move both together.
     const { scrollEl, edge } = scroller(3);
     expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
   });
 
   it("a parked view adds nothing below the marker", () => {
-    // The other half of the same geometry, and it is only visible from the
-    // scroller: the views share one scroll box, so a parked one contributing
-    // height stacks it UNDER the active view's marker. `content-visibility: hidden`
-    // skips only the contents, so the zeroed `min-height` and `padding-block` are
-    // what keep the marker on the content bottom — without them the observer
-    // answers about a position the reader can never reach.
+    // A parked view sharing the scroll box stacks height under the active marker; `content-visibility:
+    // hidden` skips only contents, so zeroed `min-height` and `padding-block` keep the marker honest.
     const { scrollEl, edge } = scroller(3, 1);
     expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
   });
 
   it("the marker's margin carries the block-end air and adds nothing of its own", () => {
-    // A zero-height flex item still earns the column's `gap`, so the margin is
-    // `--sp-4 - --sp-3` — enough to draw the air the view's `padding-block-end` used
-    // to, and no more. Get it wrong in either direction and the transcript MOVES:
-    // with `justify-content: flex-end`, extra height lifts the whole column.
-    //
-    // Absolute numbers rather than a comparison against a marker-less view, which
-    // measures nothing production has (scroll.ts appends the marker to every view it
-    // attaches): 244 = two 100px turns, two 12px gaps, 4px of margin, 16px of air
-    // above the first turn. That total is what it was while the view carried
-    // symmetric padding and the margin was negative.
+    // A zero-height flex item still earns the `gap`, so the margin is `--sp-4 - --sp-3`; any other value
+    // lifts the `flex-end` column. 244 = two 100px turns, two 12px gaps, 4px margin, 16px of air.
     const v = view(true);
     stage.appendChild(v);
     const edge = v.querySelector<HTMLElement>(".transcript-edge");
@@ -233,11 +180,8 @@ describe("against real layout", () => {
     );
   });
 
-  // There is no rect-based case for the composer's containment CLIPPING a pill
-  // card, and the absence is deliberate: paint containment clips what is PAINTED
-  // and leaves every geometry read unchanged, so such a case passes identically
-  // under `contain: paint` (measured). The choice is pinned as a declaration
-  // above, where it is falsifiable.
+  // No rect case for containment CLIPPING a pill card: paint containment leaves geometry reads
+  // unchanged, so it would pass under `contain: paint` too (measured). Pinned as a declaration above.
 
   /** A turn body holding the entries `build` returns, inside the card that owns the
    *  gap. Real layout, because the question is what the ENTRIES measure apart. */
@@ -270,13 +214,8 @@ describe("against real layout", () => {
   }
 
   it("spaces two entries by the turn body's own gap and nothing else", () => {
-    // The container that spaces a turn's blocks is `.turn-body` (29-turns.css) and
-    // there is no level between it and an entry: the per-message wrap and the
-    // boxless block region are deleted (`git show HEAD:static-src/css/13-messages.css`
-    // `.msg-wrap`, `git show HEAD:static-src/css/14-tools.css` `.assistant-blocks`).
-    // MEASURED rather than read off `row-gap`, because a margin on either entry
-    // stacks on the gap and a declaration cannot see that — which is the defect the
-    // 0.0px boundaries were the other half of.
+    // `.turn-body` (29-turns.css) spaces a turn's blocks, with no level between it and an entry.
+    // MEASURED rather than read off `row-gap`: an entry margin stacks on the gap.
     const a = entry("msg-row");
     const b = entry("msg-row");
     const host = body(a, b);
@@ -286,10 +225,7 @@ describe("against real layout", () => {
   });
 
   it("adds no margin of its own on a reasoning trace or a code-references row", () => {
-    // Both carry `margin: 0` for exactly this reason (13-messages.css), and both
-    // comments cited the retired wrap until the wrap went, so the claim is worth
-    // pinning where it is falsifiable: a margin here reads as a 20px boundary
-    // beside a 12px one.
+    // Both carry `margin: 0` (13-messages.css); a margin here reads as a 20px boundary beside 12px.
     const row = entry("msg-row");
     const reasoning = entry("reasoning-block");
     const refs = entry("code-refs");

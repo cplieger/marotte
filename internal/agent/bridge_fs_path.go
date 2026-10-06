@@ -1,5 +1,3 @@
-// File-system path resolution and error helpers for kiro-cli ACP bridges.
-
 package agent
 
 import (
@@ -16,51 +14,32 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// fsReadCap caps text reads at 8 MiB. kiro-cli's scratch reads are tiny
-// (a README, a steering file); anything bigger is either a mistake or a
-// binary file that shouldn't go through readTextFile.
+// fsReadCap caps text reads at 8 MiB: every KAS read_file and str_replace pre-read.
 const fsReadCap = 8 << 20
 
-// fsWriteCap is the per-write byte cap (4 MiB). It used to be an alias of
-// pending.Cap so the staging path and the plain fs handler shared one constant;
-// there is only one write path now, so the number lives here.
+// fsWriteCap caps one write at 4 MiB; KAS composes every structured edit into a whole-file
+// fs/write_text_file here.
 const fsWriteCap = 4 << 20
 
-// Sentinel errors for routine fs handler rejections. These are expected
-// outcomes (not bugs) and are logged at Debug rather than Warn.
+// Routine fs rejections, logged at Debug.
 var (
 	errCapExceeded    = errors.New("file exceeds byte cap")
 	errRejectedByUser = errors.New("change rejected by user")
 )
 
-// errNoWorkRoot is the refusal when the workspace could not be opened as a
-// confined root. Not routine: an operator has to fix it.
+// errNoWorkRoot means the workspace could not be opened as a confined root. Not routine.
 var errNoWorkRoot = errors.New("workspace is not open for confined access")
 
-// resolveInsideWorkDir confines p to the workspace. On the type that holds
-// workDir, so a collaborator needing it does not need a *Runtime.
-//
-// Answers a LEXICAL question — "does this name lie inside the workspace" —
-// which is not the same as performing the operation inside the workspace.
-// Every handler that touches the filesystem uses confineInWorkDir instead,
-// which pairs the answer with the handle that makes it enforceable. This entry
-// point survives for callers that need only the verdict and the absolute path.
+// resolveInsideWorkDir confines p to the workspace LEXICALLY and returns the absolute path.
+// Filesystem operations use confineInWorkDir, which pairs the verdict with a handle.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
 
-// confineInWorkDir resolves p inside the workspace and returns the workspace
-// root together with the root-relative name that addresses p through it.
-//
-// This closes the check-then-act window a lexical-only resolve leaves open:
-// the agent has write access to the workspace and can swap an intermediate
-// directory for a symlink between the verdict and the operation, so naming
-// the operation through lt.workRoot is what re-resolves every path component
-// on each op. Residual: a symlink that stays INSIDE the workspace is still
-// followed, so a lost race can land on a different in-workspace file — the
-// delete path descends component by component instead
-// (atomicfile.OpenParentInRoot), because that is the one place the race is
-// unrecoverable.
+// confineInWorkDir returns the workspace root and p's root-relative name, so every component
+// is re-resolved per operation: an agent can swap an ancestor for a symlink between
+// verdict and operation. A symlink staying inside the workspace is still followed; delete
+// descends with atomicfile.OpenParentInRoot instead.
 func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 	if lt.workRoot == nil {
 		return nil, "", errNoWorkRoot
@@ -76,11 +55,8 @@ func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 	return lt.workRoot, rel, nil
 }
 
-// respondFSError writes a JSON-RPC error response for an fs request and
-// logs the failure. The log level is classified by error type so routine
-// rejections (cap-exceeded) stay at Debug and don't trip operator alert
-// dashboards that key off Warn+. Real OS / parse failures remain at Warn
-// for triage.
+// respondFSError answers an fs request with a JSON-RPC error and logs it: routine
+// rejections at Debug, real failures at Warn.
 func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, err error) {
 	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
@@ -91,8 +67,7 @@ func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, ms
 	in.respondBridge(ctx, chatID, msg, nil, err)
 }
 
-// fsErrorIsRoutine reports whether err is an expected policy denial or
-// input validation failure rather than an actionable OS / parse error.
+// fsErrorIsRoutine reports whether err is an expected policy denial or validation failure.
 func fsErrorIsRoutine(err error) bool {
 	if err == nil {
 		return false
@@ -101,9 +76,7 @@ func fsErrorIsRoutine(err error) bool {
 		errors.Is(err, errRejectedByUser)
 }
 
-// respondBridge routes a response back to the bridge that issued the
-// request. msg.ID is required; if the bridge is gone, we drop silently
-// (the agent's Call will time out on its side).
+// respondBridge sends a response to the bridge that issued the request; a gone bridge drops it silently.
 func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, result any, err error) {
 	if msg.ID == nil {
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
@@ -118,8 +91,6 @@ func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, msg
 		slog.Error("fs response write failed", "chat_id", chatID, "method", msg.Method, "error", wErr)
 	}
 }
-
-// --- ACP request/response helpers (consolidated from bridge_respond.go) ---
 
 func parseRequest(msg *marotte.RPCResponse, v any) error {
 	if msg.Params == nil {

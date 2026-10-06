@@ -2,11 +2,8 @@ package agent
 
 import "net/http"
 
-// runRoutes is the HTTP surface over the run lifecycle: the /api/runs and
-// /api/recipes endpoints plus the schedule CRUD. An adapter holding its subject
-// and the hub epoch the live-runs envelope stamps, because the dependency runs
-// one way — every handler parses a request, calls one domain method and writes
-// a response.
+// runRoutes is the HTTP adapter over the run lifecycle: /api/runs, /api/recipes and schedule CRUD, holding
+// its subject and the hub epoch for the live-runs envelope.
 type runRoutes struct {
 	runs  *Runs
 	epoch func() string
@@ -17,12 +14,9 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
 	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
-	// The exact form is registered beside the subtree because ServeMux otherwise
-	// answers it with a 307 to the trailing-slash form, the one redirect class
-	// internal/server's canonicalAPIPath cannot see. Both land on one handler.
+	// The exact form beside the subtree, or ServeMux 307s it to the slash form, which canonicalAPIPath cannot see.
 	mux.HandleFunc("GET /api/runs/{id}/steps", rr.handleStepTranscript)
-	// Trailing wildcard: a node path contains "/", and percent-encoding it is
-	// refused by canonicalAPIPath, which compares the DECODED path.
+	// A trailing wildcard: node paths contain "/", and canonicalAPIPath refuses an encoded one.
 	mux.HandleFunc("GET /api/runs/{id}/steps/{path...}", rr.handleStepTranscript)
 	mux.HandleFunc("GET /api/runs/{id}/turns/{turn}", rr.handleTurnRange)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
@@ -32,6 +26,8 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/retry", rr.handleRetry)
 	mux.HandleFunc("DELETE /api/runs/{id}", rr.handleDelete)
 	mux.HandleFunc("POST /api/runs/{id}/step", rr.handleStepStatus)
+	mux.HandleFunc("POST /api/runs/{id}/extend", rr.handleExtend)
+	mux.HandleFunc("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
 	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
 	rr.registerSchedule(mux)

@@ -1,30 +1,8 @@
-// The exec view's tree pane: the execution's structure, as a structure.
-//
-// A delegated execution nests (a loop body, a parallel's branches, a watch
-// inside a sequence); flattening to leaves loses that a step ran twice or that
-// three ran at once.
-//
-// A container is a ROW, not an indent: its own kind glyph, rolled-up state, and
-// the one fact that explains it (a repeat's bound, a parallel's join policy, a
-// watch's condition), from `nodePlan`.
-//
-// HIERARCHY IS A BOX, not an indent. A top-level container gets `.ev-group` — a
-// bordered box whose own row is its filled header — and its direct children sit
-// inside it unindented, because the box already says they are its. Only a
-// sub-sub-item (depth >= 2) indents, and it takes the `↳` glyph as well.
-//
-// SELECTION, not disclosure: unfolding a step in place pushes every later row
-// down, moving what a live-run reader is watching. A STEP never collapses —
-// `paint` hides a childless row's chevron, which is what keeps it
-// non-collapsible.
-//
-// ONE FOLD PER BOX. Only a TOP-LEVEL container discloses; a container nested
-// inside a box always shows its children. Two folds over one tree meant the box's
-// chevron did not answer "show me what is in here" — opening it revealed rows that
-// were themselves still shut — and the inner fold hid the loop passes a reader
-// opens the box to read. `collapsible` is `depth === 0` and `applyCollapse` is the
-// one writer that honours it, so a nested container carries no chevron and no
-// `aria-expanded` rather than a control that does nothing.
+// The exec view's tree pane: the execution's structure (a loop ran twice, three ran at once).
+// A container is a ROW with its kind glyph, rolled-up state and one `nodePlan` fact. Hierarchy is
+// a BOX: a top-level container is a bordered `.ev-group`; only depth >= 2 indents (with `↳`).
+// SELECTION, not disclosure, so live rows never move; a step never collapses. ONE FOLD PER BOX:
+// only a top-level container discloses, and `applyCollapse` is the one writer that honours it.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -110,10 +88,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     // an element carrying `role="treeitem"` plus a click handler is axe's
     // `nested-interactive`, and `aria-hidden` does not clear it.
     const chevron = el("span", { className: "ev-twist", "aria-hidden": "true" }, chevronEl());
-    // The sub-sub-item marker: the tab strip's own nesting glyph in the tab strip's
-    // own carrier shape. `aria-hidden` because the row's `aria-label` already states
-    // the structure, and NOT a `.tab-icon`-style affordance — a row's position is
-    // its parent's.
+    // The tab strip's nesting glyph in its carrier shape; `aria-hidden` since the row's `aria-label`
+    // states the structure.
     const nest = el(
       "span",
       { className: "ev-nest", "aria-hidden": "true" },
@@ -176,10 +152,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     return row;
   }
 
-  /** The one writer of a row's fold state, in all three channels. It reads
-   *  `collapsible` rather than trusting `collapsed`, so a nested container is held
-   *  open and carries no `aria-expanded` — announcing a disclosure state for a row
-   *  with no disclosure is the defect the hidden chevron would otherwise leave. */
+  /** The one writer of a row's fold state, in all three channels. Reads `collapsible`, so a nested
+   *  container is held open and carries no `aria-expanded`. */
   function applyCollapse(row: Row): void {
     const collapsed = row.collapsible && row.collapsed;
     row.root.classList.toggle("ev-collapsed", collapsed);

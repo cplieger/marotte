@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// twoRoots builds the shape ResolveInsideAnyAbs exists for: a workspace and a
-// SIBLING uploads directory, each holding one real file, plus a third directory
-// neither root contains. Both are symlink-resolved for canonTmp's reason.
+// twoRoots builds a workspace and a SIBLING uploads directory, each with one real file,
+// plus a directory neither root contains. Symlink-resolved for canonTmp's reason.
 func twoRoots(t *testing.T) (work, uploads, outside string) {
 	t.Helper()
 	work = canonTmp(t)
@@ -23,76 +22,69 @@ func twoRoots(t *testing.T) (work, uploads, outside string) {
 	return work, uploads, outside
 }
 
-// The two roots are tried in order and either one resolves an ABSOLUTE path,
-// which is the whole point: an uploaded file's path names a directory beside the
-// workspace, and a single-root confinement refuses half the attachments a
-// composer produces.
-func TestResolveInsideAnyAbs_absolutePathResolvesInEitherRoot(t *testing.T) {
+// Either root resolves an ABSOLUTE path: an uploaded file lives beside the workspace.
+func TestConfineAnyAbs_absolutePathResolvesInEitherRoot(t *testing.T) {
 	work, uploads, outside := twoRoots(t)
 	roots := []string{work, uploads}
 
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name     string
+		in       string
+		wantRoot string
+		wantRel  string
 	}{
-		{"in the workspace", filepath.Join(work, "f.txt"), filepath.Join(work, "f.txt")},
-		{"in the uploads dir", filepath.Join(uploads, "f.txt"), filepath.Join(uploads, "f.txt")},
+		{"in the workspace", filepath.Join(work, "f.txt"), work, "f.txt"},
+		{"in the uploads dir", filepath.Join(uploads, "f.txt"), uploads, "f.txt"},
+		{"the workspace itself", work, work, "."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveInsideAnyAbs(roots, tc.in)
+			root, rel, err := ConfineAnyAbs(roots, tc.in)
 			if err != nil {
-				t.Fatalf("ResolveInsideAnyAbs(roots, %q) err = %v, want nil", tc.in, err)
+				t.Fatalf("ConfineAnyAbs(roots, %q) err = %v, want nil", tc.in, err)
 			}
-			if got != tc.want {
-				t.Errorf("ResolveInsideAnyAbs(roots, %q) = %q, want %q", tc.in, got, tc.want)
+			if root != tc.wantRoot || rel != tc.wantRel {
+				t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q), want (%q, %q)", tc.in, root, rel, tc.wantRoot, tc.wantRel)
 			}
 		})
 	}
 
-	// A path in NEITHER root is refused, and the message names the workspace —
-	// roots[0]'s error is the one returned, so a reader is not told about a
-	// directory they did not name.
+	// A path in NEITHER root is refused with roots[0]'s error, naming the workspace.
 	stray := filepath.Join(outside, "f.txt")
-	_, err := ResolveInsideAnyAbs(roots, stray)
+	_, _, err := ConfineAnyAbs(roots, stray)
 	if err == nil {
-		t.Fatalf("ResolveInsideAnyAbs(roots, %q) err = nil, want an error", stray)
+		t.Fatalf("ConfineAnyAbs(roots, %q) err = nil, want an error", stray)
 	}
 	if !strings.Contains(err.Error(), "workspace") {
 		t.Errorf("error = %q, want it to name the workspace", err)
 	}
 }
 
-// A RELATIVE path resolves against roots[0] ONLY. With two roots a relative path
-// would otherwise name two different files, so keeping it single-valued preserves
-// ResolveInsideAbs's behaviour exactly.
-func TestResolveInsideAnyAbs_relativePathTakesTheFirstRootOnly(t *testing.T) {
+// A RELATIVE path resolves against roots[0] ONLY, so it names a single file.
+func TestConfineAnyAbs_relativePathTakesTheFirstRootOnly(t *testing.T) {
 	work, uploads, _ := twoRoots(t)
 
-	got, err := ResolveInsideAnyAbs([]string{work, uploads}, "f.txt")
+	root, rel, err := ConfineAnyAbs([]string{work, uploads}, "f.txt")
 	if err != nil {
-		t.Fatalf("ResolveInsideAnyAbs(roots, %q) err = %v, want nil", "f.txt", err)
+		t.Fatalf("ConfineAnyAbs(roots, %q) err = %v, want nil", "f.txt", err)
 	}
-	if want := filepath.Join(work, "f.txt"); got != want {
-		t.Errorf("ResolveInsideAnyAbs(roots, %q) = %q, want the workspace's copy %q", "f.txt", got, want)
+	if root != work || rel != "f.txt" {
+		t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q), want the workspace's copy (%q, %q)", "f.txt", root, rel, work, "f.txt")
 	}
 
-	// Swapping the order swaps the answer, which is what proves the resolution
-	// is positional rather than a search over both.
-	got, err = ResolveInsideAnyAbs([]string{uploads, work}, "f.txt")
+	// Swapping the order swaps the answer: resolution is positional.
+	root, _, err = ConfineAnyAbs([]string{uploads, work}, "f.txt")
 	if err != nil {
-		t.Fatalf("ResolveInsideAnyAbs(swapped, %q) err = %v, want nil", "f.txt", err)
+		t.Fatalf("ConfineAnyAbs(swapped, %q) err = %v, want nil", "f.txt", err)
 	}
-	if want := filepath.Join(uploads, "f.txt"); got != want {
-		t.Errorf("ResolveInsideAnyAbs(swapped, %q) = %q, want %q", "f.txt", got, want)
+	if root != uploads {
+		t.Errorf("ConfineAnyAbs(swapped, %q) root = %q, want %q", "f.txt", root, uploads)
 	}
 }
 
-// A ".." escape is refused from EITHER root, and a symlink leaving one is refused
-// too — the second root widens which directories may be named, never the
-// confinement each one applies.
-func TestResolveInsideAnyAbs_refusesEscapes(t *testing.T) {
+// A ".." escape or a leaving symlink is refused from EITHER root: a second root widens
+// which directories may be named, never the confinement.
+func TestConfineAnyAbs_refusesEscapes(t *testing.T) {
 	work, uploads, outside := twoRoots(t)
 	roots := []string{work, uploads}
 
@@ -111,41 +103,38 @@ func TestResolveInsideAnyAbs_refusesEscapes(t *testing.T) {
 		{"dot-dot out of the uploads dir", filepath.Join(uploads, "..", "elsewhere")},
 		{"symlink out of the uploads dir", filepath.Join(uploads, "out", "f.txt")},
 		{"symlink out of the workspace", filepath.Join(work, "out", "f.txt")},
+		{"relative symlink out of the workspace", filepath.Join("out", "f.txt")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, err := ResolveInsideAnyAbs(roots, tc.in); err == nil {
-				t.Errorf("ResolveInsideAnyAbs(roots, %q) = (%q, nil), want an error", tc.in, got)
+			if root, rel, err := ConfineAnyAbs(roots, tc.in); err == nil {
+				t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q, nil), want an error", tc.in, root, rel)
 			}
 		})
 	}
 }
 
-// An empty second root is legal and INERT, so a caller with no upload surface may
-// pass "" rather than branching: pathinside.Root("") contains no path, so it can
-// only ever fail to match.
-func TestResolveInsideAnyAbs_emptySecondRootIsInert(t *testing.T) {
+// An empty second root is legal and INERT: pathinside.Root("") contains no path.
+func TestConfineAnyAbs_emptySecondRootIsInert(t *testing.T) {
 	work, _, outside := twoRoots(t)
 	roots := []string{work, ""}
 
 	inside := filepath.Join(work, "f.txt")
-	if got, err := ResolveInsideAnyAbs(roots, inside); err != nil || got != inside {
-		t.Errorf("ResolveInsideAnyAbs(roots, %q) = (%q, %v), want (%q, nil)", inside, got, err, inside)
+	if root, rel, err := ConfineAnyAbs(roots, inside); err != nil || root != work || rel != "f.txt" {
+		t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q, %v), want (%q, %q, nil)", inside, root, rel, err, work, "f.txt")
 	}
 	stray := filepath.Join(outside, "f.txt")
-	if got, err := ResolveInsideAnyAbs(roots, stray); err == nil {
-		t.Errorf("ResolveInsideAnyAbs(roots, %q) = (%q, nil), want an error", stray, got)
+	if root, rel, err := ConfineAnyAbs(roots, stray); err == nil {
+		t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q, nil), want an error", stray, root, rel)
 	}
 }
 
-// The two degenerate inputs: an empty path is refused like ResolveInsideAbs's,
-// and NO roots is refused rather than silently confining to nothing in
-// particular.
-func TestResolveInsideAnyAbs_refusesDegenerateInputs(t *testing.T) {
+// An empty path is refused, and NO roots is refused rather than confining to nothing.
+func TestConfineAnyAbs_refusesDegenerateInputs(t *testing.T) {
 	work := canonTmp(t)
-	if got, err := ResolveInsideAnyAbs([]string{work}, ""); err == nil {
-		t.Errorf("ResolveInsideAnyAbs(roots, %q) = (%q, nil), want an error", "", got)
+	if root, rel, err := ConfineAnyAbs([]string{work}, ""); err == nil {
+		t.Errorf("ConfineAnyAbs(roots, %q) = (%q, %q, nil), want an error", "", root, rel)
 	}
-	if got, err := ResolveInsideAnyAbs(nil, "f.txt"); err == nil {
-		t.Errorf("ResolveInsideAnyAbs(nil, %q) = (%q, nil), want an error", "f.txt", got)
+	if root, rel, err := ConfineAnyAbs(nil, "f.txt"); err == nil {
+		t.Errorf("ConfineAnyAbs(nil, %q) = (%q, %q, nil), want an error", "f.txt", root, rel)
 	}
 }

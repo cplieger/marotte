@@ -1,14 +1,5 @@
 package specapproval
 
-// The approval record: what it stores, what it refuses to store, what it drops
-// from a file it did not write, and how Stale is derived.
-//
-// The properties worth pinning are the ones whose failure is SILENT. A merge that
-// replaces instead of merging loses an approval and reports success. A sanitize
-// that keeps a malformed entry puts a badge on screen against a hash nothing can
-// compare. A Derive that omits a phase whose document is gone reports the spec as
-// never reviewed. None of those surfaces as an error anywhere.
-
 import (
 	"encoding/json"
 	"errors"
@@ -23,9 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hashA and hashB are two distinct sha256-shaped digests. Written out rather than
-// hashed from bytes: nothing here reads a document, so a real digest would only
-// hide which value the assertion is about.
+// hashA and hashB are two distinct sha256-shaped digests, written out so the assertion's
+// value is visible.
 var (
 	hashA = strings.Repeat("a", 64)
 	hashB = strings.Repeat("b", 64)
@@ -33,9 +23,7 @@ var (
 
 const specDir = ".kiro/specs/demo"
 
-// newStoreIn opens a store in a fresh directory and fails the test on the
-// diagnostic error, so a case that is not ABOUT a load failure cannot pass while
-// silently starting empty.
+// newStoreIn opens a store in a fresh directory and fails on the diagnostic error.
 func newStoreIn(t *testing.T, dir string) *Store {
 	t.Helper()
 	s, err := NewStore(dir)
@@ -54,9 +42,7 @@ func writeDoc(t *testing.T, dir, body string) {
 	}
 }
 
-// A record has to survive the process that wrote it, and the file it lands in is
-// the sixth 0600 file in the config dir — the mode is the whole protection for a
-// document naming workspace paths, so it is asserted rather than assumed.
+// TestApprove_IsReadBackByTheNextStoreFromA0600File pins durability and the 0600 mode.
 func TestApprove_IsReadBackByTheNextStoreFromA0600File(t *testing.T) {
 	dir := t.TempDir()
 	s := newStoreIn(t, dir)
@@ -86,10 +72,7 @@ func TestApprove_IsReadBackByTheNextStoreFromA0600File(t *testing.T) {
 	}
 }
 
-// THE MERGE IS WHY Approve EXISTS rather than a Set taking the whole map: a
-// second phase written into the record must not drop the first. A replace-instead
-// of-merge reports success and loses an approval, which is the failure this store
-// exists to prevent.
+// TestApprove_MergesASecondPhaseRatherThanReplacingTheRecord pins the merge.
 func TestApprove_MergesASecondPhaseRatherThanReplacingTheRecord(t *testing.T) {
 	dir := t.TempDir()
 	s := newStoreIn(t, dir)
@@ -128,9 +111,7 @@ func TestApprove_ReApprovingAPhaseRecordsTheNewVersion(t *testing.T) {
 	}
 }
 
-// The store validates exactly what it STORES, and a refusal must apply NOTHING —
-// a record half-written against a value the load path would then drop is worse
-// than the refusal, because it reports success.
+// TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing pins that a refusal applies nothing.
 func TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing(t *testing.T) {
 	cases := map[string]struct {
 		dir, phase, hash, user string
@@ -165,9 +146,8 @@ func TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing(t *testing.T) {
 	}
 }
 
-// MaxSpecs is the outer wall against a hostile or broken writer, and it bounds
-// NEW specs only: a phase of a spec already in the record can never be refused by
-// it, or a full record would freeze the specs it does hold.
+// TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne pins that MaxSpecs bounds NEW
+// specs only.
 func TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne(t *testing.T) {
 	dir := t.TempDir()
 	full := make(map[string]map[string]record, MaxSpecs)
@@ -192,10 +172,8 @@ func TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne(t *testing.T) {
 	}
 }
 
-// A document this store cannot read is warn-and-start-empty, not a boot failure
-// (invariant 6): an approval is re-creatable by approving again, so refusing to
-// start would leave no way in to repair the record. The error is DIAGNOSTIC, so
-// it must be returned rather than swallowed, and the store must still work.
+// TestNewStore_WarnsAndStartsEmptyOnADocumentItCannotRead pins warn-and-start-empty
+// (invariant 6) with the error still returned.
 func TestNewStore_WarnsAndStartsEmptyOnADocumentItCannotRead(t *testing.T) {
 	cases := map[string]string{
 		"not json":         "{{{",
@@ -241,9 +219,8 @@ func TestNewStore_RefusesADocumentOverTheDecodeBound(t *testing.T) {
 	}
 }
 
-// THE MODE VERDICT LEADS, and this is the case that says so: a symlink planted at
-// the name must be refused rather than having its target parsed as the record.
-// filemode.EnforceFile opens O_NOFOLLOW, so the refusal is the kernel's.
+// TestNewStore_RefusesASymlinkAtTheNameRatherThanParsingItsTarget pins that the mode verdict
+// leads.
 func TestNewStore_RefusesASymlinkAtTheNameRatherThanParsingItsTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "elsewhere.json")
@@ -270,10 +247,7 @@ func TestNewStore_RefusesASymlinkAtTheNameRatherThanParsingItsTarget(t *testing.
 	}
 }
 
-// sanitize drops each entry this store could not have written INDIVIDUALLY, so
-// the failure mode is one missing badge rather than a record that will not load.
-// Every dropped shape here would otherwise put a badge on screen against a value
-// nothing can compare.
+// TestNewStore_DropsAnEntryThisStoreCouldNotHaveWritten pins per-entry sanitize.
 func TestNewStore_DropsAnEntryThisStoreCouldNotHaveWritten(t *testing.T) {
 	dir := t.TempDir()
 	long := strings.Repeat("d", MaxDirBytes+1)
@@ -302,10 +276,7 @@ func TestNewStore_DropsAnEntryThisStoreCouldNotHaveWritten(t *testing.T) {
 	}
 }
 
-// Stale is DERIVED per read, never stored, and the two shapes that must both read
-// stale are a document that moved and a document that is gone. Omitting the gone
-// one would report the spec as never reviewed, which is the opposite of what the
-// record says.
+// TestDerive_MarksAMovedOrMissingDocumentStale pins both stale shapes.
 func TestDerive_MarksAMovedOrMissingDocumentStale(t *testing.T) {
 	approved := map[string]marotte.SpecApproval{
 		"requirements": {Hash: hashA},
@@ -334,10 +305,8 @@ func TestDerive_MarksAMovedOrMissingDocumentStale(t *testing.T) {
 	}
 }
 
-// Two documents can share a role — requirements.md and bugfix.md both map to
-// requirements — and the FIRST in display order is the one the client's phase
-// segment shows, so it is the one the reader approved and the one Stale compares
-// against. Reading the last would report a fresh approval as stale.
+// TestDerive_ComparesTheFirstDocumentInDisplayOrderForASharedRole pins the first document as
+// the comparand.
 func TestDerive_ComparesTheFirstDocumentInDisplayOrderForASharedRole(t *testing.T) {
 	got := Derive(
 		map[string]marotte.SpecApproval{"requirements": {Hash: hashA}},
@@ -365,10 +334,7 @@ func TestForAndDerive_AnswerNothingForASpecNobodyApproved(t *testing.T) {
 	}
 }
 
-// Phases is DERIVED from the role vocabulary rather than listed twice, so a role
-// added to marotte.SpecDocRole cannot be silently unapprovable. What this pins is
-// the membership either way: every phase in the set is approvable, and the
-// residual bucket is not.
+// TestPhases_AreTheApprovableRolesAndNotTheResidualBucket pins the derived membership.
 func TestPhases_AreTheApprovableRolesAndNotTheResidualBucket(t *testing.T) {
 	for _, phase := range Phases() {
 		if !ValidPhase(string(phase)) {
@@ -383,11 +349,8 @@ func TestPhases_AreTheApprovableRolesAndNotTheResidualBucket(t *testing.T) {
 	}
 }
 
-// A CONCURRENT approval of a different phase must not lose the other, which is
-// the property the merge-inside-the-write-lock exists for: a snapshot taken
-// outside it lets two writers clone the same record and the later persist wins.
-// Probabilistic, so it is deliberately generous — four phases' worth of writers
-// across a real fsync, over four fresh stores.
+// TestApprove_ConcurrentApprovalsOfDifferentPhasesAllSurvive pins the merge under concurrency
+// (probabilistic, so generous).
 func TestApprove_ConcurrentApprovalsOfDifferentPhasesAllSurvive(t *testing.T) {
 	for round := range 4 {
 		dir := t.TempDir()

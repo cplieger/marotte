@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -16,66 +17,77 @@ import (
 // and why that key was refused is the same answer either way.
 var errStoredNull = errors.New("settings: stored value is null")
 
-// DefaultKnowledgeEnabled is the knowledge switch's default, TRUE, and it is a
-// constant so the two readers that need it cannot disagree: the effective view
-// below and internal/agent's knowledgeEnabled, which resolves the same absence
-// for the session door. It defaults on because the index, its REST surface and
-// its UI all predate the switch, so reading an absent key as the zero value takes
-// the knowledge tool away from every existing install.
+// DefaultKnowledgeEnabled is TRUE, shared with internal/agent's knowledgeEnabled: the
+// knowledge tool predates the switch, so absent must not read as off.
 const DefaultKnowledgeEnabled = true
 
-// DefaultNotifyPRStatus is OFF while its two siblings are ON: a pull request's CI
-// verdict is already on the forge and in the PR list, where the other two kinds
-// report work this server did while nobody was looking.
+// DefaultContentCollectionEnabled is the content-collection switch's default: off,
+// so nothing is offered for service improvement until the user opts in.
+const DefaultContentCollectionEnabled = false
+
+// DefaultGuardPayloadLinks is TRUE because the guard closes the one channel that
+// moves workspace data off the box on a single click with no ask; off is a choice
+// the user makes, never the reading of an absent key.
+const DefaultGuardPayloadLinks = true
+
+// DefaultAutoCompactPct is the point at which marotte adds nothing to KAS's own 80/95, which
+// is why an invalid stored value reads as it.
+const (
+	DefaultAutoCompactionEnabled = true
+	DefaultAutoCompactPct        = 80
+)
+
+// ValidAutoCompactPct reports whether pct is a value the slider can produce:
+// 50..90 in steps of 5.
+func ValidAutoCompactPct(pct int) bool {
+	return pct >= 50 && pct <= 90 && pct%5 == 0
+}
+
+// DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
+// forge, where the other two report unobserved work.
 const (
 	DefaultNotifyAgentFinished = true
 	DefaultNotifyPRStatus      = false
 	DefaultNotifyRunOutcome    = true
 )
 
-// EffectiveDefaults is the value in force for every client-rendered preference
-// when config.json says nothing about it.
-//
-// This is the ONE statement of those values, and it answers a narrower question
-// than the per-consumer defaults in internal/agent and internal/composition: this
-// is "the document is silent, what is true", uniform per key, while a consumer
-// answers "I could not read the document at all, what do I do", which differs
-// per consumer. internal/composition's chatRetention is the case that proves they
-// must not be merged — it uses FieldStrict, so an UNREADABLE file yields 0 (purge
-// nothing this pass) where an ABSENT key yields DefaultChatRetentionDays.
+// EffectiveDefaults is the ONE statement of every client-rendered preference's value when
+// config.json is SILENT. It is not a consumer's answer for an UNREADABLE file, which differs
+// per consumer (composition's chatRetention purges nothing then), so the two must not merge.
 func EffectiveDefaults() marotte.EffectiveSettings {
 	return marotte.EffectiveSettings{
-		AgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
-		ChatRetentionDays: DefaultChatRetentionDays,
-		KnowledgeEnabled:  DefaultKnowledgeEnabled,
-		// The seed map's zero value is the one that must not be sent: a nil map
-		// marshals as null, and no field here is optional, so "no model has a
-		// remembered level yet" is the empty object.
+		AgentIgnoreFiles:      DefaultAgentIgnoreFiles(),
+		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
+		AutoCompactPct:        DefaultAutoCompactPct,
+		ChatRetentionDays:     DefaultChatRetentionDays,
+		GuardPayloadLinks:     DefaultGuardPayloadLinks,
+		KnowledgeEnabled:      DefaultKnowledgeEnabled,
+		ContentCollection:     DefaultContentCollectionEnabled,
+		MemoryMode:            DefaultMemoryMode,
+		// The agent-capability defaults are kiro-cli's own; "" on the two
+		// follow-kiro choices sends nothing, so kiro-cli's experiment decides.
+		SpecPlanning:              DefaultSpecPlanning,
+		SpecPlanningAskFirst:      DefaultSpecPlanningAskFirst,
+		InlineAgents:              DefaultInlineAgents,
+		SteeringReminders:         DefaultSteeringReminders,
+		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		WorkValidation:            DefaultWorkValidation,
+		CloudFormationSafetyCheck: DefaultCloudFormationSafety,
+		OutputStyle:               DefaultOutputStyle,
+		TerminalCommandTimeoutMs:  DefaultTerminalCommandTimeoutMs,
+		// An empty object, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
-		// The three per-kind push switches take their polarity from the Default*
-		// constants above, which are NOT uniform, while the master switch below
-		// defaults OFF. No polarity here is safe for a client to guess.
+		// The per-kind push defaults are not uniform; no polarity is safe for a client to guess.
 		NotifyAgentFinished: DefaultNotifyAgentFinished,
 		NotifyPRStatus:      DefaultNotifyPRStatus,
 		NotifyRunOutcome:    DefaultNotifyRunOutcome,
-		// Everything else is its zero value, and each one is the right answer rather
-		// than an omission: no theme or browser path chosen, no remembered model,
-		// push off until asked for, tool search off to match kiro-cli, memory off by
-		// standing veto, supervised and scheduled-auto-approve off (the latter
-		// fail-closed by decision), and info-level logs.
+		// Everything else is its zero value deliberately (scheduled auto-approve fail-closed).
 	}
 }
 
-// RetentionEnabled reports whether chat retention keeps a closed chat's record.
-// It is the CLOSE path's read of chat_retention_days, and it FAILS TOWARD
-// KEEPING: an unreadable config.json answers ON (delete nothing), an absent key
-// or file takes DefaultChatRetentionDays (ON), days == 0 answers OFF (ephemeral),
-// and any other value — -1 = forever included — answers ON.
-//
-// Must never share a reader with the retention PURGE
-// (internal/composition.chatRetention): the 0-sentinel's safe direction INVERTS
-// between the two — for the purge, 0 means "purge nothing", so unreadable maps
-// to 0; for close, 0 means "delete now", so unreadable must map to ON.
+// RetentionEnabled reports whether chat retention keeps a closed chat's record. It FAILS
+// TOWARD KEEPING: unreadable answers ON, absent takes the default, only 0 answers OFF. It must
+// never share a reader with the purge, whose 0-sentinel's safe direction is the inverse.
 func RetentionEnabled(ctx context.Context, configDir string) bool {
 	days, ok, err := FieldStrict[int](ctx, configDir, KeyChatRetentionDays)
 	if err != nil {
@@ -89,14 +101,9 @@ func RetentionEnabled(ctx context.Context, configDir string) bool {
 	return days != 0
 }
 
-// EffectiveFrom resolves the stored document into the view the client reads:
-// EffectiveDefaults with every stored value that FITS ITS FIELD overlaid, and
-// the keys whose stored value did not fit returned so the caller can say so.
-//
-// Value validity is deliberately NOT checked, only type validity: `theme:
-// "purple"` is a well-typed string and passes, and the client's asThemeChoice
-// rejects it. The wire owns the type, the reader with the vocabulary owns the
-// value. A nil or empty stored map yields the defaults unchanged.
+// EffectiveFrom resolves the stored document into the client's view: EffectiveDefaults with
+// every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit. Value
+// validity is the client's (theme "purple" passes). A nil or empty map yields the defaults.
 func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.EffectiveSettings, rejected []string) {
 	out := EffectiveDefaults()
 	for key, set := range effectiveSetters(&out) {
@@ -111,35 +118,34 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.Effecti
 	return out, rejected
 }
 
-// effectiveKeys is every config.json key the effective view can carry.
-//
-// Exists for two mechanical properties: each key is in KnownKeys, so a response
-// round-tripped as a PATCH raises no unknown-key warning; and each FIELD of
-// marotte.EffectiveSettings has one, so adding a field without a setter fails
-// rather than silently becoming unsettable.
+// effectiveKeys is every config.json key the effective view can carry (checked against
+// KnownKeys and against the struct's fields).
 func effectiveKeys() []string {
 	var out marotte.EffectiveSettings
 	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
 }
 
-// effectiveSetters maps each key to the one decode-and-assign for its field.
-//
-// Each setter decodes into a scratch value and assigns only on success, so a value
-// that does not fit leaves the destination untouched and there is nothing to undo.
-// Built per call over the caller's own struct rather than declared once, because
-// each closure has to bind that struct's field address.
+// effectiveSetters maps each key to the one decode-and-assign for its field, bound to the
+// caller's struct.
 func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMessage) error {
 	return map[string]func(json.RawMessage) error{
-		KeyAgentIgnoreFiles:     func(r json.RawMessage) error { return decodeInto(&out.AgentIgnoreFiles, r) },
-		KeyChatRetentionDays:    func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
-		KeyTheme:                func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
-		KeyFBPath:               func(r json.RawMessage) error { return decodeInto(&out.FBPath, r) },
-		KeyLastModel:            func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
-		KeyLastEffortByModel:    func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
-		KeyLastMergeMethod:      func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
-		KeyKnowledgeEnabled:     func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
+		KeyAgentIgnoreFiles:      func(r json.RawMessage) error { return decodeInto(&out.AgentIgnoreFiles, r) },
+		KeyAutoCompactionEnabled: func(r json.RawMessage) error { return decodeInto(&out.AutoCompactionEnabled, r) },
+		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
+		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
+		KeyTheme:                 func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
+		KeyFBPath:                func(r json.RawMessage) error { return decodeInto(&out.FBPath, r) },
+		KeyLastModel:             func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
+		KeyLastEffortByModel:     func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
+		KeyLastMergeMethod:       func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
+		KeyKnowledgeEnabled:      func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
+		KeyContentCollectionEnabled: func(r json.RawMessage) error {
+			return decodeInto(&out.ContentCollection, r)
+		},
+		KeyGuardPayloadLinks:    func(r json.RawMessage) error { return decodeInto(&out.GuardPayloadLinks, r) },
 		KeyToolSearchEnabled:    func(r json.RawMessage) error { return decodeInto(&out.ToolSearchEnabled, r) },
-		KeyMemoryEnabled:        func(r json.RawMessage) error { return decodeInto(&out.MemoryEnabled, r) },
+		KeyMemoryMode:           func(r json.RawMessage) error { return decodeMemoryMode(&out.MemoryMode, r) },
+		KeyMCPWaitForReady:      func(r json.RawMessage) error { return decodeInto(&out.MCPWaitForReady, r) },
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },
 		KeyNotifyAgentFinished:  func(r json.RawMessage) error { return decodeInto(&out.NotifyAgentFinished, r) },
 		KeyNotifyPRStatus:       func(r json.RawMessage) error { return decodeInto(&out.NotifyPRStatus, r) },
@@ -147,16 +153,46 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeySupervisedDefault:    func(r json.RawMessage) error { return decodeInto(&out.SupervisedDefault, r) },
 		KeyScheduledAutoApprove: func(r json.RawMessage) error { return decodeInto(&out.ScheduledAutoApprove, r) },
 		KeyDebugLogs:            func(r json.RawMessage) error { return decodeInto(&out.DebugLogs, r) },
+		KeySpecPlanning: func(r json.RawMessage) error {
+			return decodeChecked(&out.SpecPlanning, r, KeySpecPlanning, ValidSpecPlanning)
+		},
+		KeySpecPlanningAskFirst: func(r json.RawMessage) error { return decodeInto(&out.SpecPlanningAskFirst, r) },
+		KeyInlineAgents:         func(r json.RawMessage) error { return decodeInto(&out.InlineAgents, r) },
+		KeySteeringReminders:    func(r json.RawMessage) error { return decodeInto(&out.SteeringReminders, r) },
+		KeyWorkflowsEnabled:     func(r json.RawMessage) error { return decodeInto(&out.WorkflowsEnabled, r) },
+		KeyWorkValidation: func(r json.RawMessage) error {
+			return decodeChecked(&out.WorkValidation, r, KeyWorkValidation, ValidFeatureChoice)
+		},
+		KeyCloudFormationSafety: func(r json.RawMessage) error {
+			return decodeChecked(&out.CloudFormationSafetyCheck, r, KeyCloudFormationSafety, ValidFeatureChoice)
+		},
+		KeyOutputStyle: func(r json.RawMessage) error {
+			return decodeChecked(&out.OutputStyle, r, KeyOutputStyle, ValidOutputStyle)
+		},
+		KeyTerminalCommandTimeoutMs: func(r json.RawMessage) error {
+			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
+		},
 	}
 }
 
-// decodeInto decodes raw into a scratch T and assigns it only on success, so a
-// caller's field keeps whatever it already held when the value does not fit.
-//
-// A stored JSON null is refused rather than accepted: encoding/json treats null
-// as a no-op for most targets, so decoding it would silently assign the
-// scratch's zero value — which for chat_retention_days is 0, "delete chats on
-// close". Refusing means the default stands and the key is reported.
+// decodeAutoCompactPct is decodeInto plus the value check the effective view
+// otherwise leaves to the client: a well-typed pct the slider cannot produce
+// keeps the default, because the agent's policy reads the same value.
+func decodeAutoCompactPct(dst *int, raw json.RawMessage) error {
+	var pct int
+	if err := decodeInto(&pct, raw); err != nil {
+		return err
+	}
+	if !ValidAutoCompactPct(pct) {
+		return fmt.Errorf("settings: %s %d is not 50..90 in steps of 5", KeyAutoCompactPct, pct)
+	}
+	*dst = pct
+	return nil
+}
+
+// decodeInto decodes raw into a scratch T and assigns it only on success. A stored JSON null
+// is refused: encoding/json treats it as a no-op for most targets, which would assign the
+// scratch's zero (0 retention days, "delete on close").
 func decodeInto[T any](dst *T, raw json.RawMessage) error {
 	if string(raw) == "null" {
 		return errStoredNull

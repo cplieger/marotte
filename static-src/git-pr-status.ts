@@ -1,11 +1,4 @@
-// ---------------------------------------------------------------------------
-// Pure read-outs for a PR row: the CI check chip, the merge verdict, the
-// merge queue, and which per-forge controls a row may offer.
-//
-// DOM-free on purpose. The row renderer in git-prs-tab.ts turns these
-// descriptors into elements; keeping the prose and the rules here is what
-// makes every branch testable without a document.
-// ---------------------------------------------------------------------------
+// DOM-free on purpose: git-prs-tab.ts renders these descriptors, so every rule is testable without a document.
 
 import type { ForgeKind } from "./forge-types.js";
 import type { GitPR } from "./git-types.js";
@@ -27,9 +20,10 @@ function fillReason(pr: GitPR, field: string): string | undefined {
 const NOT_READ = "This forge's list does not carry checks. They are read while this list is shown.";
 const UNREAD = "the last read of this pull request failed. The next cycle reads it again.";
 
-/** Describe the CI chip for a PR, or null when the forge has no verdict to give.
- *  A verdict the family's list does not carry gets a chip saying it was not
- *  read, so a row with failing CI cannot read as a quiet one. */
+/**
+ * Describe the CI chip for a PR, or null when the forge has no verdict. A verdict the list does not carry gets a
+ * "not read" chip, so failing CI cannot read as a quiet row.
+ */
 export function checkChip(pr: GitPR): CheckChip | null {
   const total = pr.action.checks_total;
   const failing = pr.action.checks_failing;
@@ -104,12 +98,10 @@ export interface MergeVerdict {
   reason: string;
 }
 
-/** The row's merge verdict. Every refusal names its cause.
- *
- *  Only `none` is ready on its own. A cause this build does not know is still a
- *  cause, reported with the server's own word, so it cannot read as mergeable.
- *  Every family refuses a merge with no head pin, so a row without `head_sha`
- *  cannot merge whatever the forge says about it. */
+/**
+ * The row's merge verdict; every refusal names its cause. Only `none` is ready on its own: an unknown cause reports
+ * the server's word, and a row without `head_sha` cannot merge.
+ */
 export function mergeVerdict(pr: GitPR): MergeVerdict {
   const cause = pr.action.merge_blocked;
   switch (cause) {
@@ -145,11 +137,10 @@ function blocked(reason: string): MergeVerdict {
   return { state: "blocked", reason };
 }
 
-/** The verdict for a row whose forge names no block cause. The Gitea family
- *  never names one and GitLab does not while it is still computing the merge
- *  status, so the draft flag and the `mergeable` verdict decide: reading
- *  `unknown` alone as blocked would disable Merge on every Gitea and Codeberg
- *  row. */
+/**
+ * The Gitea family never names a cause and GitLab does not while computing, so the draft flag and `mergeable`
+ * decide: `unknown` alone as blocked would disable Merge on every Gitea and Codeberg row.
+ */
 function unnamedCauseVerdict(pr: GitPR): MergeVerdict {
   if (pr.draft === true) {
     return blocked(DRAFT_REASON);
@@ -198,9 +189,7 @@ function headVerdict(pr: GitPR): MergeVerdict {
   }
 }
 
-/** Render a server-produced word for a reader: one line, bounded. A future
- *  value could be long or carry newlines, so it is normalised here rather than
- *  trusted for its provenance. */
+/** One bounded line: a future server value could be long or carry newlines. */
 function oneLine(word: string): string {
   const MAX = 40;
   const line = word.replace(/\s+/g, " ").trim();
@@ -238,14 +227,11 @@ const QUEUE_WORDS: ReadonlyMap<string, string> = new Map([
  *  or why not. */
 export type RerunControl = { offer: false } | { offer: true; reason: string };
 
-/** The Re-run control of a failing row, from its connection's `rerun_checks`
- *  capability (undefined: not answered yet; null: the read failed) and the
- *  reason a coded refusal left on its repository.
- *
- *  GitHub decides a re-run per repository, so no connection read can answer and
- *  its control stays enabled until a refusal says otherwise. Every other family
- *  refuses a re-run its capability does not read `yes`, so an unknown there is
- *  disabled with the evidence. */
+/**
+ * The Re-run control of a failing row, from the connection's `rerun_checks` capability (undefined: not answered;
+ * null: the read failed) and any coded refusal on its repository. GitHub decides per repository, so its control stays
+ * enabled until a refusal; elsewhere anything but `yes` is disabled with the evidence.
+ */
 export function rerunControl(
   kind: ForgeKind,
   cap: Affordance | null | undefined,
@@ -312,13 +298,11 @@ export function movedRepository(err: { readonly code?: string; readonly cause?: 
   return { moved: true, to: { repo_id: id, display_path: path } };
 }
 
-/** Whether a row should offer to arm the forge's auto-merge: the checks
- *  are not settled yet, nothing else blocks the merge, the forge is not
- *  already holding it, and the row has a head pin. "Nothing else blocks
- *  it" gates both arms: a bare pending verdict says nothing about a draft,
- *  a conflict or a policy block, which the forge would not honour when the
- *  check went green. An unnamed cause with a `yes` verdict on a non-draft
- *  row counts as nothing blocking, as it does for mergeVerdict. */
+/**
+ * Whether a row should offer to arm auto-merge: checks unsettled, nothing else blocking, the forge not already holding
+ * it, and a head pin. A bare pending verdict says nothing about a draft, conflict or policy block, which the forge
+ * would not honour. An unnamed cause with a `yes` verdict on a non-draft row counts as nothing blocking.
+ */
 export function canArmAutoMerge(pr: GitPR): boolean {
   if (pr.action.auto_merge_armed === "yes" || pr.state !== "open" || !hasHead(pr)) {
     return false;

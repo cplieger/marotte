@@ -1,7 +1,5 @@
 package agent
 
-// Unit tests for hook_status.go: the cachedBoolField staleness check.
-
 import (
 	"os"
 	"path/filepath"
@@ -11,9 +9,7 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// A cached value whose stored size differs from the on-disk size is a
-// cache MISS even when the mtime matches: get() must re-read the fresh
-// value rather than return the stale cached one.
+// A size mismatch is a miss even when the mtime matches.
 func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cli.json")
@@ -26,10 +22,7 @@ func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	}
 
 	c := newCachedBoolField(path, "k", false)
-	// Prime the cache to claim value=true with a matching identity but a
-	// DIFFERENT size, isolating the size term in the cache-hit check. The size
-	// term is what catches an in-place rewrite that changes the length inside one
-	// clock tick, which the mtime and os.SameFile legs both call unchanged.
+	// A matching identity with a different size isolates the size term, which catches a same-tick in-place rewrite.
 	c.value = true
 	c.id = atomicfile.Identify(info)
 	c.size = info.Size() + 1
@@ -39,11 +32,8 @@ func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	}
 }
 
-// TestHookStatusCache_EqualLengthRenamePublishInvalidates is the os.SameFile
-// leg's own case: kiro-cli publishes cli.json by rename (a new inode per write,
-// measured against the 2.19.0 binary), so a second generation of equal length
-// landing on the same coarse-clock mtime differs only by inode. The (mtime, size)
-// pair called that unchanged and served the previous answer indefinitely.
+// TestHookStatusCache_EqualLengthRenamePublishInvalidates pins the os.SameFile leg: kiro-cli
+// publishes cli.json by rename (2.19.0), so an equal-length generation on the same mtime differs only by inode.
 func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -78,8 +68,7 @@ func TestHookStatusCache_EqualLengthRenamePublishInvalidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat v2: %v", err)
 	}
-	// Guards against a vacuous pass: an in-place write or a moved mtime would be
-	// caught by the size and mtime legs too.
+	// Guards against a vacuous pass.
 	if os.SameFile(info1, info2) {
 		t.Fatalf("setup: the second publish reused the inode; this case needs a rename publish")
 	}

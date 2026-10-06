@@ -26,13 +26,12 @@ import (
 
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	t.Helper()
-	dir = t.TempDir() // e.g. /tmp/TestXxx123 — the handler's single granted mount
+	dir = t.TempDir()
 	var err error
 	h, err = New(Sensitive{}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// prefix is the request path relative to /
 	prefix = strings.TrimPrefix(dir, "/")
 	return h, dir, prefix
 }
@@ -121,8 +120,6 @@ func multipartUpload(t *testing.T, targetDir string, files map[string][]byte) *h
 	return req
 }
 
-// --- resolvePath tests ---
-
 func TestResolvePath_OutsideRoots(t *testing.T) {
 	h, _, _ := testDir(t)
 	for _, dir := range []string{"etc/passwd", "proc/1/status", "var/log/syslog", "workspace2/x"} {
@@ -139,8 +136,6 @@ func TestResolvePath_Allowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// myrepo doesn't exist so EvalSymlinks returns ENOENT on the
-	// leaf; we fall through to the lexical form.
 	if want := dir + "/myrepo/file.go"; got.abs != want {
 		t.Errorf("got %q, want %q", got.abs, want)
 	}
@@ -174,7 +169,7 @@ func TestResolvePath_Normalisation(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	tests := []struct {
 		in   string
-		want string // relative to the mount dir
+		want string
 	}{
 		{prefix + "/myrepo", "/myrepo"},
 		{prefix + "//myrepo", "/myrepo"},
@@ -196,7 +191,7 @@ func TestResolvePath_Normalisation(t *testing.T) {
 	}
 }
 
-// S1 regression: a symlink planted inside a granted mount must not
+// A symlink planted inside a granted mount must not
 // grant access to an out-of-mount target.
 func TestResolvePath_SymlinkOutOfMountRejected(t *testing.T) {
 	h, dir, prefix := testDir(t)
@@ -206,20 +201,15 @@ func TestResolvePath_SymlinkOutOfMountRejected(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	// Lexical form is <mount>/evil-link which passes the mount match.
-	// EvalSymlinks resolves to /etc, which is outside every grant.
 	_, err := h.resolvePath(prefix + "/evil-link")
 	if err == nil {
 		t.Errorf("resolvePath via symlink to /etc returned nil error; expected rejection")
 	}
 }
 
-// S1 regression: reading through a symlink that points at a sensitive
-// path is blocked by the symlink-aware resolver. We can't create
-// /config/push-subs.json in a test, so we inject a sensitive entry
-// targeting an actual file inside the temp dir and symlink another
-// name onto it. EvalSymlinks must resolve the link to the real
-// sensitive path and the enforceAccess re-check must 403.
+// TestReadFile_SymlinkToSensitive_Blocked: a read through a symlink to a sensitive path is blocked
+// by the symlink-aware resolver; the sensitive target is injected, since a test cannot create the
+// real one.
 func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
@@ -232,9 +222,6 @@ func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	// Register the real target as sensitive — the lexical form of
-	// "peek" itself is not in the list, so without EvalSymlinks the
-	// read would succeed.
 	h.sensitive = h.sensitive.with(sensitivePath{Path: secret, IsDir: false})
 
 	rec := getReq(t, h, "/api/file?path="+prefix+"/peek")
@@ -243,7 +230,7 @@ func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
 	}
 }
 
-// S1 regression: writing through a symlink whose parent escapes the
+// Writing through a symlink whose parent escapes the
 // workspace is refused at resolve time (not absorbed by O_NOFOLLOW on
 // the wrong side of the check).
 func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
@@ -261,32 +248,23 @@ func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
 	}
 }
 
-// --- Sensitive.Blocks tests (direct coverage) ---
-
 func TestSensitive_Blocks(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
 		want bool
 	}{
-		// kiro-cli state lives inside HOME (KIRO_HOME=$HOME/.kiro); the
-		// whole /config/home/ tree is blocked.
 		{"home_env_md", "/config/home/.kiro/steering/environment.md", true},
 		{"home_agents", "/config/home/.kiro/agents/foo.json", true},
 		{"home_ssh_key", "/config/home/.ssh/id_ed25519", true},
-		// Legacy pre-relocation KIRO_HOME tree: blocked wholesale.
 		{"legacy_env_md", "/config/kiro/steering/environment.md", true},
 		{"legacy_agents", "/config/kiro/agents/foo.json", true},
 		{"legacy_any_file", "/config/kiro/steering/other.md", true},
 		{"unrelated_file", "/workspace/repo/main.go", false},
 		{"chats_dir_deep", "/config/chats/deep/nested.json", true},
 		{"exact_push_subs", "/config/push-subs.json", true},
-		// Settings -> Tools' Advanced-configuration links open these two in the
-		// editor, so an entry added here for either one leaves both links
-		// opening a tab that 403s, with nothing else in the suite red. Absence
-		// from the deny list is HALF of what makes those doors work; the other
-		// half is /config being a granted browse root, pinned in
-		// internal/composition, which this package cannot see.
+		// Settings → Tools links open these two in the editor, so a deny entry for either makes
+		// both links 403.
 		{"tools_manifest_not_denied", "/config/tools.json", false},
 		{"app_settings_not_denied", "/config/config.json", false},
 	}
@@ -306,20 +284,14 @@ func TestIsProtectedDir(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Protected: dir itself listed (or ancestor of listed dir).
 		{"/config/chats", true},
-		{"/config/home/.kiro/agents", true}, // inside the blocked HOME tree
-		{"/config/kiro/steering", true},     // inside the blocked legacy tree
-		{"/config/kiro", true},              // the legacy tree itself
-		{"/config/home", true},              // the HOME tree itself
-		{"/config", true},                   // encloses push-subs.json
-		// Not protected: leaves and unrelated paths.
+		{"/config/home/.kiro/agents", true},
+		{"/config/kiro/steering", true},
+		{"/config/kiro", true},
+		{"/config/home", true},
+		{"/config", true},
 		{"/workspace", false},
 		{"/workspace/repo", false},
-		// Note: a path below a sensitive dir prefix still matches
-		// because callers already ran it through Sensitive.Blocks (which
-		// would also block it). protectedDir is the defense for
-		// the CONTAINER case, not a substitute for Blocks.
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
@@ -329,8 +301,6 @@ func TestIsProtectedDir(t *testing.T) {
 		})
 	}
 }
-
-// --- looksBinary boundaries ---
 
 func TestLooksBinary_Boundaries(t *testing.T) {
 	tests := []struct {
@@ -353,8 +323,6 @@ func TestLooksBinary_Boundaries(t *testing.T) {
 		})
 	}
 }
-
-// --- File read/write tests ---
 
 func TestReadWriteFile(t *testing.T) {
 	h, dir, prefix := testDir(t)
@@ -440,7 +408,7 @@ func TestReadFile_TooLarge(t *testing.T) {
 	}
 }
 
-// Q5 regression: writing onto a directory returns a clean 400, not a
+// Writing onto a directory returns a clean 400, not a
 // generic 500 leaking the raw EISDIR path.
 func TestWriteFile_TargetIsDirectory(t *testing.T) {
 	h, dir, prefix := testDir(t)
@@ -451,7 +419,6 @@ func TestWriteFile_TargetIsDirectory(t *testing.T) {
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	// Body should be the generic sentinel, not the OS error text.
 	if strings.Contains(rec.Body.String(), "is a directory") == false {
 		t.Errorf("body = %s, want \"path is a directory\"", rec.Body.String())
 	}
@@ -477,14 +444,12 @@ func TestFile_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// --- Directory listing tests ---
-
 // The root listing is synthetic: exactly the granted mounts, sorted by
 // name, never writable. Nothing else on the host filesystem leaks in.
 func TestListFiles_Root_ListsMounts(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	h, err := New(Sensitive{}, dirB, dirA) // deliberately unsorted
+	h, err := New(Sensitive{}, dirB, dirA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,8 +546,6 @@ func TestListFiles_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// --- Action tests ---
-
 func TestAction_Mkdir(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	rec := postReq(t, h, "/api/files/action", `{"action":"mkdir","path":"`+prefix+`/newdir"}`)
@@ -620,13 +583,9 @@ func TestAction_Delete(t *testing.T) {
 	}
 }
 
-// swappedAncestor stages the race a pinned parent exists for: a path whose
-// directory component was a real, empty directory when the policy check resolved
-// it, and is a symlink to a sensitive tree by the time the operation runs.
-//
-// The loc is built before the swap, which is what makes the window deterministic.
-// It returns the request-path form of the named entry, the on-disk path of the
-// file that must survive, and the loc the action is called with.
+// swappedAncestor stages the race a pinned parent exists for: a directory component that was real
+// and empty when the policy resolved it is swapped for a symlink to a sensitive directory before
+// the operation.
 func swappedAncestor(t *testing.T, h *Handler, dir string) (victim string, l loc) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, "store"), 0o755); err != nil {
@@ -639,8 +598,6 @@ func swappedAncestor(t *testing.T, h *Handler, dir string) (victim string, l loc
 	if err := os.Mkdir(filepath.Join(dir, "x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The named entry does not exist inside the real x, so anything the operation
-	// touches is a file it was never pointed at.
 	l = locAt(h, filepath.Join(dir, "x", "keep.txt"))
 	if err := os.Remove(filepath.Join(dir, "x")); err != nil {
 		t.Fatal(err)
@@ -651,13 +608,8 @@ func swappedAncestor(t *testing.T, h *Handler, dir string) (victim string, l loc
 	return victim, l
 }
 
-// TestActionDelete_RefusesASwappedAncestor: the sensitive-path check is
-// exact-prefix over the resolved path, so /config/x/chats matches no sensitive
-// prefix and passes — and with x swapped for an in-mount symlink, the mount's
-// os.Root would FOLLOW it (a root confines but does not pin) and the unlink would
-// land on the protected tree through a check that said the path was not
-// protected. Naming only the final element through a pinned parent is what closes
-// it.
+// TestActionDelete_RefusesASwappedAncestor: the sensitive check is exact-prefix over the resolved
+// path, so only the pinned parent stops a delete through a swapped ancestor.
 func TestActionDelete_RefusesASwappedAncestor(t *testing.T) {
 	h, dir, _ := testDir(t)
 	victim, l := swappedAncestor(t, h, dir)
@@ -671,12 +623,8 @@ func TestActionDelete_RefusesASwappedAncestor(t *testing.T) {
 	}
 }
 
-// S3 regression: shallow-path guard.
-// TestAction_SecurityRejections consolidates all action-rejection tests
-// that verify 403 responses for sensitive/protected/blacklisted paths.
-// Each sub-test injects a sensitive prefix (when needed), creates any
-// required filesystem state, POSTs an action, asserts 403, and verifies
-// the filesystem was not mutated.
+// TestAction_SecurityRejections collects every action rejection that must answer 403 for a
+// sensitive, protected or out-of-grant path.
 func TestAction_SecurityRejections(t *testing.T) {
 	type secCase struct {
 		checkSourceExists  string
@@ -700,7 +648,7 @@ func TestAction_SecurityRejections(t *testing.T) {
 			action:          "mkdir",
 			useTempDir:      true,
 			pathSuffix:      "chats",
-			sensitivePrefix: "chats/", // directory prefix
+			sensitivePrefix: "chats/",
 			checkDestAbsent: "chats",
 		},
 		{
@@ -708,7 +656,7 @@ func TestAction_SecurityRejections(t *testing.T) {
 			action:          "touch",
 			useTempDir:      true,
 			pathSuffix:      "chats",
-			sensitivePrefix: "chats/", // directory prefix
+			sensitivePrefix: "chats/",
 			checkDestAbsent: "chats",
 		},
 		{
@@ -716,32 +664,26 @@ func TestAction_SecurityRejections(t *testing.T) {
 			action:          "touch",
 			useTempDir:      true,
 			pathSuffix:      "secret.json",
-			sensitivePrefix: "secret.json", // exact file
+			sensitivePrefix: "secret.json",
 			checkDestAbsent: "secret.json",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Every case runs against a temp-dir mount; useTempDir=false
-			// cases simply target paths outside it (absolute suffixes).
 			h, dir, prefix := testDir(t)
 
-			// Inject sensitive prefix if specified.
 			if tc.sensitivePrefix != "" && tc.useTempDir {
 				var entry string
 				isDir := strings.HasSuffix(tc.sensitivePrefix, "/")
 				if isDir {
-					// directory prefix — filepath.Join strips trailing slash
 					entry = filepath.Join("/", prefix, tc.sensitivePrefix) + "/"
 				} else {
-					// exact file
 					entry = filepath.Join("/", prefix, tc.sensitivePrefix)
 				}
 				h.sensitive = h.sensitive.with(sensitivePath{Path: entry, IsDir: isDir})
 			}
 
-			// Create setup file/dir.
 			if tc.setupFile != "" {
 				if err := os.WriteFile(filepath.Join(dir, tc.setupFile), []byte("payload"), 0o644); err != nil {
 					t.Fatal(err)
@@ -753,7 +695,6 @@ func TestAction_SecurityRejections(t *testing.T) {
 				}
 			}
 
-			// Build JSON body.
 			var reqPath string
 			if tc.useTempDir {
 				reqPath = prefix + "/" + tc.pathSuffix
@@ -777,28 +718,24 @@ func TestAction_SecurityRejections(t *testing.T) {
 				t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 			}
 
-			// Optional body content assertion.
 			if tc.wantBodyContains != "" {
 				if !strings.Contains(rec.Body.String(), tc.wantBodyContains) {
 					t.Errorf("body = %s, want substring %q", rec.Body.String(), tc.wantBodyContains)
 				}
 			}
 
-			// Verify source still exists.
 			if tc.checkSourceExists != "" {
 				if _, err := os.Stat(filepath.Join(dir, tc.checkSourceExists)); err != nil {
 					t.Errorf("source %q removed despite rejection: %v", tc.checkSourceExists, err)
 				}
 			}
 
-			// Verify destination does not exist.
 			if tc.checkDestAbsent != "" {
 				if _, err := os.Stat(filepath.Join(dir, tc.checkDestAbsent)); err == nil {
 					t.Errorf("destination %q created despite rejection", tc.checkDestAbsent)
 				}
 			}
 
-			// Verify no temp orphans.
 			if tc.checkNoTempOrphans {
 				entries, err := os.ReadDir(dir)
 				if err != nil {
@@ -897,8 +834,6 @@ func stubAvailableBytes(t *testing.T, avail int64, err error) {
 	availableBytes = func(string) (int64, error) { return avail, err }
 }
 
-// --- handleDownload tests ---
-
 func TestHandleDownload_File(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "doc.txt"), []byte("hello"), 0o644); err != nil {
@@ -939,23 +874,14 @@ func condGet(t *testing.T, h *Handler, path, etag, lastMod string) *httptest.Res
 	return rec
 }
 
-// TestHandleDownload_ETagSurvivesASameSecondRewrite pins the strong validator.
-//
-// Last-Modified is an HTTP-date truncated to one second, so with it as the only
-// validator a rewrite inside one second of the client's last Last-Modified
-// answers 304 and the browser serves the previous bytes. The agent's screenshot
-// loop is that consumer: a re-shot frame keeps its filename and therefore its
-// URL, so nothing busts the cache. Both revalidations here carry both headers,
-// which is what a browser sends, and the SIZE is held constant so the assertion
-// rests on the mtime-nanoseconds leg rather than passing for a second reason.
+// TestHandleDownload_ETagSurvivesASameSecondRewrite pins the strong validator: with Last-Modified
+// alone a rewrite inside one second answers 304 with stale bytes.
 func TestHandleDownload_ETagSurvivesASameSecondRewrite(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	path := filepath.Join(dir, "shot.png")
 	if err := os.WriteFile(path, []byte("frame-one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Both mtimes are pinned into ONE wall-clock second so the test does not
-	// depend on how coarse the host's inode clock happens to be.
 	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	if err := os.Chtimes(path, base, base.Add(time.Millisecond)); err != nil {
 		t.Fatal(err)
@@ -978,7 +904,6 @@ func TestHandleDownload_ETagSurvivesASameSecondRewrite(t *testing.T) {
 		t.Fatalf("ETag = %q, want a quoted strong validator (an unquoted one ServeContent never matches)", etag)
 	}
 
-	// The validator must still validate, or the fix would be "always 200".
 	if rec := condGet(t, h, url, etag, lastMod); rec.Code != http.StatusNotModified {
 		t.Errorf("unchanged file: status = %d, want 304", rec.Code)
 	}
@@ -1001,23 +926,8 @@ func TestHandleDownload_ETagSurvivesASameSecondRewrite(t *testing.T) {
 	}
 }
 
-// TestHandleDownload_SVGIsAttachment pins the one download header that is a
-// SECURITY control rather than a convenience.
-//
-// mime.TypeByExtension(".svg") is "image/svg+xml", and an SVG document rendered
-// at a same-origin URL executes its own script with this origin's privileges —
-// which would mean access to marotte's cookies and its whole same-origin API
-// surface. Every `<img src=…>` pointed at this route is safe on its own (an SVG
-// referenced AS AN IMAGE may not fetch, script, or reach the embedding document),
-// but the file browser also renders a real anchor to this URL, and CSP does not
-// close the gap: `frame-src` falls back to `default-src 'self'`, which PERMITS a
-// same-origin frame.
-//
-// `Content-Disposition: attachment` is the whole control. It was untested, and a
-// plausible future change — "serve images inline so the viewer can use them" —
-// would have silently turned the existing download anchor into stored XSS. The
-// `<img>` path needs no `inline` to work, which is exactly why relaxing this
-// would buy nothing.
+// TestHandleDownload_SVGIsAttachment pins the one download header that is a SECURITY control: an
+// SVG served inline runs script as a document.
 func TestHandleDownload_SVGIsAttachment(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	const svg = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
@@ -1028,7 +938,6 @@ func TestHandleDownload_SVGIsAttachment(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	// The type is script-capable, which is precisely why the disposition matters.
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
 		t.Errorf("Content-Type = %q, want image/svg+xml*", ct)
 	}
@@ -1039,8 +948,6 @@ func TestHandleDownload_SVGIsAttachment(t *testing.T) {
 	if strings.Contains(cd, "inline") {
 		t.Errorf("Content-Disposition = %q, must never be inline for image/svg+xml", cd)
 	}
-	// The bytes are served verbatim; nothing sanitizes them, and nothing should —
-	// inertness comes from HOW the response is consumed, not from rewriting it.
 	if got := rec.Body.String(); got != svg {
 		t.Errorf("body = %q, want the file verbatim", got)
 	}
@@ -1068,9 +975,9 @@ func TestHandleDownload_UnknownExtension(t *testing.T) {
 func TestHandleDownload_ErrorPaths(t *testing.T) {
 	type dlCase struct {
 		name       string
-		path       string // query param value (empty = omit param)
-		setupDir   string // create this subdir in temp dir before request
-		method     string // HTTP method; defaults to GET
+		path       string
+		setupDir   string
+		method     string
 		wantStatus int
 	}
 
@@ -1079,7 +986,7 @@ func TestHandleDownload_ErrorPaths(t *testing.T) {
 	cases := []dlCase{
 		{
 			name:       "missing_path_param",
-			path:       "", // no ?path= at all
+			path:       "",
 			wantStatus: 400,
 		},
 		{
@@ -1137,8 +1044,6 @@ func TestHandleDownload_ErrorPaths(t *testing.T) {
 	}
 }
 
-// --- handleUpload tests ---
-
 func TestHandleUpload_SingleFile(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
@@ -1167,7 +1072,7 @@ func TestHandleUpload_SingleFile(t *testing.T) {
 	}
 }
 
-// Ops F1 regression: partial writes never surface under the user's
+// Partial writes never surface under the user's
 // filename. The temp-rename pattern leaves `.upload-*` siblings on
 // error, never a truncated file at the expected path.
 func TestHandleUpload_NoPartialFileOnSuccess(t *testing.T) {
@@ -1182,7 +1087,6 @@ func TestHandleUpload_NoPartialFileOnSuccess(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// No leftover .upload-* sibling on the happy path.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1220,8 +1124,6 @@ func TestHandleUpload_StripsPathPrefixInFilename(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	// Filename with embedded directory component must land as
-	// filepath.Base; no escape out of the target dir.
 	req := multipartUpload(t, prefix,
 		map[string][]byte{"subdir/hidden.txt": []byte("naughty")})
 	rec := httptest.NewRecorder()
@@ -1237,7 +1139,7 @@ func TestHandleUpload_StripsPathPrefixInFilename(t *testing.T) {
 	}
 }
 
-// Q4 regression: invalid filenames surface as 400 with a descriptive
+// Invalid filenames surface as 400 with a descriptive
 // error instead of silently succeeding with a subset `uploaded` array.
 func TestHandleUpload_DotDotFilenameReturns400(t *testing.T) {
 	h, _, prefix := testDir(t)
@@ -1285,12 +1187,8 @@ func TestHandleUpload_OutsideRootsDir(t *testing.T) {
 	}
 }
 
-// S5 regression: upload must refuse a dir= that names a protected
-// directory (or a container of one). Without protectedDir on the
-// resolved target, dir=/config/chats would silently land arbitrary
-// files inside the chat store. Simulated via injected sensitive
-// prefix pointing inside the temp dir so we don't need a real
-// /config mount.
+// TestHandleUpload_RefusesProtectedDir: a dir= naming a protected directory, or a container of one,
+// is refused.
 func TestHandleUpload_RefusesProtectedDir(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
@@ -1314,22 +1212,13 @@ func TestHandleUpload_RefusesProtectedDir(t *testing.T) {
 	}
 }
 
-// S5 regression: upload into a non-sensitive parent must refuse per-
-// file overwrites of sensitive exact-match entries. When the parent
-// also encloses a sensitive file, the directory gate trips first
-// (upload target is a container of a sensitive file); when the
-// parent is non-enclosing but the filename happens to match a
-// sensitive entry elsewhere, the per-file gate trips with
-// "invalid filename". Either 403 or 400 is acceptable — the critical
-// invariant is that the sensitive file is never materialised.
+// TestHandleUpload_RefusesSensitiveFilename: an upload into an ordinary parent must not overwrite a
+// sensitive exact-match file.
 func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	// Register a specific file as sensitive while leaving the parent
-	// dir writable — mirrors /config/push-subs.json where /config is
-	// a mount point but push-subs.json is protected.
 	secret := filepath.Join(dir, "keys.json")
 	h.sensitive = h.sensitive.with(sensitivePath{Path: secret, IsDir: false})
 
@@ -1345,16 +1234,8 @@ func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 	}
 }
 
-// A symlink planted between resolvePath's EvalSymlinks and the write must not
-// materialise its target.
-//
-// The premise this test used to carry was wrong: it credited
-// syscall.O_NOFOLLOW on the old root.OpenFile, and that flag never did anything
-// here (see TestWriteFile_RelativeSymlinkCannotClobberVictim for the
-// measurement). What blocked THIS case was os.Root's own rule that a symlink
-// must not be absolute, and the target here is absolute. The write now refuses
-// a non-regular target outright, so the answer is a 400 naming it; the
-// post-condition is unchanged and is what matters.
+// TestWriteFile_DanglingSymlinkToSensitive_Blocked: a symlink planted between resolvePath and the
+// write must not materialise its target.
 func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
@@ -1376,20 +1257,8 @@ func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 	}
 }
 
-// The case the deleted syscall.O_NOFOLLOW claimed to cover and did not: a
-// RELATIVE symlink swapped in AFTER resolvePath accepted a regular file.
-//
-// A symlink that already exists is not the exposure — resolvePath EvalSymlinks
-// the leaf, so it names the target and Sensitive.Blocks judges the target. The
-// exposure is the race, so the race is what this stages: resolve, swap, write.
-//
-// Measured on go1.27.0: os.Root.OpenFile ORs O_NOFOLLOW in itself and then
-// re-resolves the link on the resulting ELOOP, so a caller-supplied O_NOFOLLOW
-// is ignored and the open lands on the target. The red check performs the exact
-// deleted open and shows the victim clobbered; the handler then refuses. An
-// ABSOLUTE-target link is a different case that os.Root refuses on its own
-// (symlinks must not be absolute), which is why the sibling test above passed
-// for a reason unrelated to the flag.
+// TestWriteFile_RelativeSymlinkSwappedAfterResolve: a RELATIVE symlink swapped in after resolvePath
+// accepted a regular file must not be written through.
 func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 	h, dir, _ := testDir(t)
 
@@ -1402,7 +1271,6 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 		t.Fatalf("seed decoy: %v", err)
 	}
 
-	// The resolve the handler performs, on the regular file.
 	l, err := h.resolvePath(strings.TrimPrefix(decoy, "/"))
 	if err != nil {
 		t.Fatalf("resolvePath(%q) = %v, want nil", decoy, err)
@@ -1418,7 +1286,6 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 		}
 	}
 
-	// Red check: the deleted open writes through the link.
 	swap()
 	f, err := l.m.root.OpenFile(l.rel(),
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
@@ -1437,7 +1304,6 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 		t.Fatalf("victim after the ambient write = %q, want %q", got, "CLOBBERED")
 	}
 
-	// Reset and run the handler's own write against the same stale loc.
 	if err := os.WriteFile(victim, []byte("KEEP"), 0o600); err != nil {
 		t.Fatalf("restore victim: %v", err)
 	}
@@ -1479,16 +1345,13 @@ func TestHandleUpload_InvalidMultipart(t *testing.T) {
 	}
 }
 
-// Ops F5 regression: oversize upload returns 413, not a generic 400.
+// An oversize upload returns 413, not a generic 400.
 func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 	h, _, prefix := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	// The body is STREAMED rather than built: materializing maxUploadSize bytes
-	// made this test the whole package's memory peak, and it grew with every
-	// raise of the cap. MaxBytesReader counts bytes off the wire, so it trips
-	// mid-body whatever produced the framing.
+	// Streamed rather than built, so the test is not the package's memory peak.
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pr.Close() })
 	mw := multipart.NewWriter(pw)
@@ -1502,8 +1365,6 @@ func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 			_ = pw.CloseWithError(err)
 			return
 		}
-		// The copy fails as soon as MaxBytesReader refuses the body. That is
-		// this goroutine's expected end, not a fixture failure.
 		if _, err := io.CopyN(part, filler{}, maxUploadSize+1024); err != nil {
 			_ = pw.CloseWithError(err)
 			return
@@ -1532,13 +1393,8 @@ func (filler) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Q1 (S1 deeper): a symlinked ancestor + two-or-more nonexistent
-// trailing components must not bypass the allow-list. The earlier S1
-// tests only pinned the single-missing-leaf case where
-// EvalSymlinks(parent) resolves the symlink itself. With two missing
-// components (evil/newdir/sub where newdir doesn't exist in /etc),
-// EvalSymlinks(parent)=EvalSymlinks(.../evil/newdir) returns ENOENT
-// internally — only the ancestor walk surfaces the symlink crossing.
+// TestResolvePath_SymlinkAncestorWithDeepMissingLeaf: a symlinked ancestor over two or more missing
+// components must not bypass the allow-list.
 func TestResolvePath_SymlinkAncestorWithDeepMissingLeaf_Rejected(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
@@ -1547,22 +1403,15 @@ func TestResolvePath_SymlinkAncestorWithDeepMissingLeaf_Rejected(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	// `newdir/sub` do not exist either in the temp dir or in /etc.
-	// Pre-fix: resolveRealPath returned the lexical form, which stays
-	// inside the granted mount, and the request passed. Post-fix: the
-	// ancestor walk resolves `evil` to `/etc`, recomposes
-	// `/etc/newdir/sub`, and enforce rejects it as outside every mount.
 	_, err := h.resolvePath(prefix + "/evil/newdir/sub")
 	if err == nil {
 		t.Errorf("resolvePath through symlinked ancestor + deep missing leaf returned nil error; expected rejection")
 	}
 }
 
-// Q1 cross-handler regression: actionMkdir must not create
-// directories under a symlinked ancestor's blacklisted target.
-// Using a hermetic temp dir registered as sensitive (proxy for /etc
-// which we don't want to actually write into during tests) means the
-// test is side-effect-free even if the guard ever regresses.
+// actionMkdir must not create directories under a symlinked ancestor's
+// blacklisted target. A temp dir registered as sensitive stands in for /etc,
+// so the test writes nothing real even if the guard fails.
 func TestAction_Mkdir_ThroughSymlinkedAncestor_Rejected(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
@@ -1583,11 +1432,8 @@ func TestAction_Mkdir_ThroughSymlinkedAncestor_Rejected(t *testing.T) {
 	}
 }
 
-// --- ctxReader tests (direct unit coverage of the cancellation guard) ---
-//
-// The cancellation branch is only exercised indirectly by writeUploads,
-// where a successful upload masks a regression of the `ctx.Err()` guard.
-// A mutation that removes the guard must be caught here.
+// Direct ctxReader coverage: writeUploads exercises the cancellation branch only indirectly, where
+// a successful upload masks a regression.
 
 // errReader always returns its configured error on Read.
 type errReader struct{ err error }
@@ -1660,21 +1506,14 @@ func TestCtxReader_Read(t *testing.T) {
 	}
 }
 
-// --- actionRename destination resolvePath coverage ---
-//
-// Pins that rename's destination runs through resolvePath (blacklist
-// + real-path) instead of only the lexical sensitive/protected checks,
-// so renaming a file into a name that matches a sensitive PREFIX
-// directory (e.g. `chats`) on cold boot cannot slip past the per-call
-// guards. This keeps rename's destination checks the same as copy's.
+// TestAction_Rename_DestRunsResolvePath pins that rename's destination runs through resolvePath,
+// not only the lexical checks.
 func TestAction_Rename_DestRunsResolvePath(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "old.txt"),
 		[]byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Name `chats` would, after Join, resolve to <prefix>/chats which
-	// is a protected directory per the injected deny-list entry.
 	h.sensitive = h.sensitive.with(sensitivePath{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true})
 
 	rec := postReq(t, h, "/api/files/action",
@@ -1693,7 +1532,6 @@ func TestAction_Rename_DestRunsResolvePath(t *testing.T) {
 func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	h, dir, _ := testDir(t)
 
-	// Build a multipart body with 3 files.
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
@@ -1709,7 +1547,6 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Parse the multipart form to get FileHeaders.
 	reader := multipart.NewReader(&buf, w.Boundary())
 	form, err := reader.ReadForm(1 << 20)
 	if err != nil {
@@ -1722,7 +1559,6 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 		t.Fatalf("expected 3 file headers, got %d", len(files))
 	}
 
-	// Cancel the context before calling writeUploads.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -1733,8 +1569,6 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	if !errors.Is(wErr, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", wErr)
 	}
-	// No files should have been written because the context was
-	// already cancelled at the top of the first iteration.
 	if len(uploaded) != 0 {
 		t.Errorf("expected 0 uploaded files, got %d", len(uploaded))
 	}
@@ -1744,10 +1578,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	}
 }
 
-// --- BenchmarkResolvePath (hot path called on every HTTP request) ---
-
 func BenchmarkResolvePath(b *testing.B) {
-	// Create a temp dir with a nested structure for the deep-path case.
 	dir := b.TempDir()
 	prefix := strings.TrimPrefix(dir, "/")
 	h, err := New(Sensitive{}, dir)
@@ -1755,13 +1586,11 @@ func BenchmarkResolvePath(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	// Create a nested directory for the deep path case.
 	deep := filepath.Join(dir, "a", "b", "c", "d")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		b.Fatal(err)
 	}
 
-	// Create a symlink for the symlink case.
 	linkTarget := filepath.Join(dir, "a", "b")
 	link := filepath.Join(dir, "linked")
 	if err := os.Symlink(linkTarget, link); err != nil {
@@ -1788,12 +1617,7 @@ func BenchmarkResolvePath(b *testing.B) {
 	}
 }
 
-// --- Fuzz target for resolvePath (security-critical path resolution) ---
-
 func FuzzResolvePath(f *testing.F) {
-	// Two mounts: a real temp dir (filesystem-backed resolution) and a
-	// policy-level "/config" mount so the sensitive-prefix seeds
-	// exercise the sensitive layer rather than dying at mount match.
 	dir := f.TempDir()
 	backing, err := os.OpenRoot(f.TempDir())
 	if err != nil {
@@ -1806,7 +1630,6 @@ func FuzzResolvePath(f *testing.F) {
 	h.mounts = append(h.mounts, mount{root: backing, dir: "/config", name: "config"})
 	prefix := strings.TrimPrefix(dir, "/")
 
-	// Seed corpus: known attack shapes and edge cases.
 	seeds := []string{
 		prefix + "/myrepo/file.go",
 		"../../../etc/passwd",
@@ -1834,13 +1657,9 @@ func FuzzResolvePath(f *testing.F) {
 	f.Fuzz(func(t *testing.T, input string) {
 		result, err := h.resolvePath(input)
 		if err != nil {
-			// Rejected path — that's fine, security working as intended.
 			return
 		}
 
-		// Assertion 1: no panic (implicit — reaching here means no panic).
-
-		// Assertion 2: the result is always an absolute clean path.
 		if !filepath.IsAbs(result.abs) {
 			t.Errorf("resolvePath(%q) = %q is not absolute", input, result.abs)
 		}
@@ -1848,8 +1667,6 @@ func FuzzResolvePath(f *testing.F) {
 			t.Errorf("resolvePath(%q) = %q is not clean (Clean = %q)", input, result.abs, cleaned)
 		}
 
-		// Assertion 3 (allow-list invariant): the result lies inside a
-		// granted mount, and the returned mount is that owner.
 		owner := h.mountFor(result.abs)
 		if owner == nil {
 			t.Errorf("resolvePath(%q) = %q is outside every granted mount", input, result.abs)
@@ -1857,17 +1674,13 @@ func FuzzResolvePath(f *testing.F) {
 			t.Errorf("resolvePath(%q) returned mount %q, want owner %q", input, result.m.dir, owner.dir)
 		}
 
-		// Assertion 4: the result is never a sensitive path.
 		if (Sensitive{}).Blocks(result.abs) {
 			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result.abs)
 		}
 	})
 }
 
-// --- FuzzSensitiveBlocks (security-critical sensitive-path predicate) ---
-
 func FuzzSensitiveBlocks(f *testing.F) {
-	// Seed corpus: known sensitive paths, near-misses, and adversarial shapes.
 	seeds := []string{
 		"/config/home/.kiro/steering/marotte.md",
 		"/config/home/.kiro/steering/environment.md",
@@ -1898,8 +1711,6 @@ func FuzzSensitiveBlocks(f *testing.F) {
 	f.Fuzz(func(t *testing.T, input string) {
 		result := (Sensitive{}).Blocks(input)
 
-		// Assertion 1: if Blocks returns true, the input must match
-		// at least one deny-list entry (directory prefix or exact file).
 		if result {
 			matched := false
 			for _, sp := range (Sensitive{}).entries() {
@@ -1918,7 +1729,6 @@ func FuzzSensitiveBlocks(f *testing.F) {
 			}
 		}
 
-		// Assertion 2: if no deny-list entry matches, result must be false.
 		if !result {
 			for _, sp := range (Sensitive{}).entries() {
 				if sp.IsDir {
@@ -1930,17 +1740,8 @@ func FuzzSensitiveBlocks(f *testing.F) {
 				}
 			}
 		}
-
-		// Assertion 3: no panic (implicit — reaching here means no panic).
 	})
 }
-
-// --- Boundary and error-propagation tests -----------------------------
-//
-// These pin observable outcomes at size boundaries (mkdir/touch/delete
-// depth guards, the readFile size cap) and on error
-// paths (action functions must propagate the raw OS error, never
-// swallow it or return errHandled).
 
 // discardStatusRecorder captures the HTTP status code without buffering
 // the response body, so the large-file download tests never allocate the
@@ -1974,7 +1775,7 @@ func (s *discardStatusRecorder) Write(p []byte) (int, error) {
 }
 
 // actionMkdir creates any path inside a mount; only the mount point
-// itself is refused (the mount boundary replaced the old depth guard).
+// itself is refused.
 func TestAction_Mkdir_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "a", "b"))
@@ -1994,7 +1795,7 @@ func TestAction_Mkdir_PropagatesError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	l := locAt(h, filepath.Join(dir, "afile", "sub")) // "afile" is a file -> MkdirAll ENOTDIR
+	l := locAt(h, filepath.Join(dir, "afile", "sub"))
 	err := actionMkdir(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", l.abs)
@@ -2028,7 +1829,7 @@ func TestAction_Touch_PropagatesOpenError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "pfile"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	l := locAt(h, filepath.Join(dir, "pfile", "child")) // parent is a file -> OpenFile ENOTDIR
+	l := locAt(h, filepath.Join(dir, "pfile", "child"))
 	err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", l.abs)
@@ -2062,7 +1863,7 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 	if err := os.Symlink("/etc", filepath.Join(dir, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	l := locAt(h, filepath.Join(dir, "escape", "leaf")) // traverses an escaping symlink
+	l := locAt(h, filepath.Join(dir, "escape", "leaf"))
 	err := actionDelete(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", l.abs)
@@ -2076,7 +1877,7 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 // past every guard rather than returning errHandled.
 func TestAction_Rename_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
-	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
+	l := locAt(h, filepath.Join(dir, "ghost.txt"))
 	err := actionRename(t.Context(), httptest.NewRecorder(),
 		fileAction{Name: "renamed.txt"}, l, h)
 	if err == nil {
@@ -2120,7 +1921,7 @@ func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 // both strictly-greater-than, and the LimitReader reads MaxFileSize+1.
 func TestReadFile_AtExactMaxSize(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	content := bytes.Repeat([]byte("a"), MaxFileSize) // exactly the cap; not binary
+	content := bytes.Repeat([]byte("a"), MaxFileSize)
 	if err := os.WriteFile(filepath.Join(dir, "big.txt"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2141,8 +1942,8 @@ func TestReadFile_AtExactMaxSize(t *testing.T) {
 	}
 }
 
-// hugeDownloadSize is ten times the 100 MB guard handleDownload used to carry,
-// so a file of this size is unambiguously past the deleted boundary.
+// hugeDownloadSize (1 GiB) is far past any plausible size cap, so serving it
+// proves handleDownload has none.
 const hugeDownloadSize = 1 << 30
 
 // writeSparseFile creates a file of the requested size without allocating it,
@@ -2257,14 +2058,12 @@ func TestWriteOneUpload_PropagatesError(t *testing.T) {
 		t.Fatal("no multipart file parsed")
 	}
 	h, dir, _ := testDir(t)
-	dest := locAt(h, filepath.Join(dir, "missing-dir", "x.txt")) // parent does not exist
+	dest := locAt(h, filepath.Join(dir, "missing-dir", "x.txt"))
 	n, err := writeOneUpload(t.Context(), dest, fhs[0])
 	if err == nil {
 		t.Fatalf("writeOneUpload(dest with missing parent) = (n=%d, nil), want non-nil error", n)
 	}
 }
-
-// --- /api/files/download (POST zip stream) ---------------------------
 
 // handleDownloadZip streams a workspace dir/file selection as a zip:
 // top-level entries are named by their base, and a selected directory
@@ -2279,8 +2078,6 @@ func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Two files in the subdirectory, not one: a directory walk that enumerated
-	// only its first child would archive b.txt and silently drop c.txt.
 	if err := os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("bravo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2317,8 +2114,6 @@ func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
 	if want := filepath.Join("sub", "b.txt"); got[want] != "bravo" {
 		t.Errorf("zip entry %q = %q, want %q (directory must recurse)", want, got[want], "bravo")
 	}
-	// The second child: a walk that enumerated the directory one entry at a
-	// time would archive only the first and drop this one.
 	if want := filepath.Join("sub", "c.txt"); got[want] != "charlie" {
 		t.Errorf("zip entry %q = %q, want %q (every child of a directory must be archived)",
 			want, got[want], "charlie")
@@ -2334,7 +2129,6 @@ func TestHandleDownloadZip_Rejects(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want 405", rec.Code)
 	}
-	// RFC 9110 §15.5.6: a 405 must name the resource's permitted methods.
 	if got := rec.Header().Get("Allow"); got != "POST" {
 		t.Errorf("Allow = %q, want %q", got, "POST")
 	}
@@ -2365,46 +2159,32 @@ func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
 	}
 }
 
-// Security regression: the container's HOME tree (/config/home/) holds the
-// real credential stores — the AWS SSO token + OAuth client secret
-// (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
-// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json plus
-// /config/mcp-secrets.json hold MCP env/header/oauth secrets and the OAuth
-// refresh tokens and PKCE verifiers in cleartext. A prior audit found these
-// browsable/readable/downloadable because the deny list omitted them.
-// Pins that every access path (Sensitive.Blocks, resolvePath, HTTP
-// read, HTTP download) now refuses them. The handler mounts "/config"
-// at the POLICY level (temp-dir backed), so the rejection exercises
-// the sensitive layer — not the mount match — and fires on the lexical
-// enforce pass; no such file needs to exist on the test host.
+// TestSensitivePaths_CredentialStoresRefused: the container HOME under /config/home holds the real
+// credential stores, which must all be refused.
 func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 	credPaths := []string{
-		"config/home/.aws/sso/cache/kiro-auth-token.json",    // live SSO bearer + refresh token
-		"config/home/.aws/sso/cache/botocore-client-id.json", // OAuth client id + secret
-		"config/home/.ssh/id_ed25519",                        // git SSH private key
-		"config/home/.config/gh/hosts.yml",                   // forge PAT / OAuth token
-		"config/home/.gitconfig",                             // git identity / credential config
-		"config/mcp.json",                                    // MCP secrets, cleartext
-		"config/mcp-secrets.json",                            // MCP OAuth refresh tokens + PKCE verifiers
+		"config/home/.aws/sso/cache/kiro-auth-token.json",
+		"config/home/.aws/sso/cache/botocore-client-id.json",
+		"config/home/.ssh/id_ed25519",
+		"config/home/.config/gh/hosts.yml",
+		"config/home/.gitconfig",
+		"config/mcp.json",
+		"config/mcp-secrets.json",
 	}
 	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {
 		t.Run(p, func(t *testing.T) {
 			abs := filepath.Clean("/" + p)
-			// Blocks is the predicate enforce relies on.
 			if !(Sensitive{}).Blocks(abs) {
 				t.Errorf("Blocks(%q) = false, want true (credential store must be protected)", abs)
 			}
-			// resolvePath gates every read/write/download/action.
 			if _, err := h.resolvePath(p); err == nil {
 				t.Errorf("resolvePath(%q) = nil error, want rejection", p)
 			}
-			// GET read must 403.
 			if rec := getReq(t, h, "/api/file?path="+p); rec.Code != http.StatusForbidden {
 				t.Errorf("GET /api/file?path=%s: status = %d, want 403; body=%s",
 					p, rec.Code, rec.Body.String())
 			}
-			// GET download must 403 (this is the escaped-confinement path).
 			if rec := getReq(t, h, "/api/file/download?path="+p); rec.Code != http.StatusForbidden {
 				t.Errorf("GET /api/file/download?path=%s: status = %d, want 403; body=%s",
 					p, rec.Code, rec.Body.String())
@@ -2413,19 +2193,8 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 	}
 }
 
-// TestWriteFile_StaleWriteGuard pins the guard that stops the editor silently
-// discarding an agent's work.
-//
-// The scenario is routine rather than exotic in this app: the file a user has
-// open in the editor is in the same tree the agent writes to, so "changed since
-// you loaded it" happens whenever the agent touches that file mid-edit. Before
-// this, the PUT overwrote unconditionally and the agent's version was gone with
-// no trace.
-//
-// A DIGEST rather than an mtime, because this repo measured that Linux stamps
-// inode timestamps from a coarse clock: two writes inside one tick are
-// byte-identical in mtime, which is exactly the rapid agent write the guard
-// exists to catch.
+// TestWriteFile_StaleWriteGuard pins the guard that stops the editor silently discarding an agent's
+// write to the file it has open.
 func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	dir := t.TempDir()
 	h, err := New(Sensitive{}, dir)
@@ -2437,7 +2206,6 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Read it the way the editor does, to learn the hash.
 	rec := getReq(t, h, "/api/file?path="+target)
 	var read struct {
 		Content     string `json:"content"`
@@ -2463,8 +2231,6 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	})
 
 	t.Run("stale hash is refused and returns the current content", func(t *testing.T) {
-		// The file now says "mine\n"; save against the ORIGINAL hash, as an editor
-		// that loaded before the change would.
 		body := `{"content":"clobber\n","expected_hash":"` + read.ContentHash + `"}`
 		rec := putReq(t, h, "/api/file?path="+target, body)
 		if rec.Code != http.StatusConflict {
@@ -2478,8 +2244,6 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode conflict: %v", err)
 		}
-		// The current content rides the refusal so the client can show what
-		// changed instead of asking the user to reload and compare by eye.
 		if out.Content != "mine\n" {
 			t.Errorf("conflict content = %q, want the on-disk bytes", out.Content)
 		}
@@ -2492,8 +2256,6 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	})
 
 	t.Run("omitted hash still writes", func(t *testing.T) {
-		// Optional by design: every non-editor writer and any older client keeps
-		// working rather than being blocked by a guard it does not know about.
 		rec := putReq(t, h, "/api/file?path="+target, `{"content":"unguarded\n"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -2558,14 +2320,8 @@ func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 	}
 }
 
-// captureFilebrowseLogs redirects the slog default into a buffer for the
-// duration of one test. The default logger is process-global, so a test using
-// this must not run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureFilebrowseLogs redirects the slog default into a buffer for one test; tests using it must
+// not run in parallel.
 func captureFilebrowseLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -2710,17 +2466,7 @@ func TestHandleDownloadZip_WriterWithoutFlushSupport(t *testing.T) {
 	}
 }
 
-// --- 507 mapping ------------------------------------------------------
-//
-// A full volume is the one write failure this surface can name a remedy for, so
-// it answers 507 rather than a generic 500. ENOSPC cannot be induced without
-// mounting a filesystem, which this container cannot do, so the mapping is
-// tested at its decision point: the errno has to be reachable through the exact
-// wrapping the production write paths hand it.
-
 func TestIsOutOfSpace_MatchesThroughAtomicfileWrapping(t *testing.T) {
-	// The shape atomicfile actually produces: a *WriteError over the
-	// *os.PathError os.File.Write returns, whose Err is the raw errno.
 	wrapped := func(errno syscall.Errno) error {
 		return &atomicfile.WriteError{
 			Phase: atomicfile.PhaseTempWrite,

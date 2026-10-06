@@ -13,7 +13,6 @@ export default [
     ignores: [
       // Dependencies (any depth — marotte's web/static-src/node_modules nests deep)
       "**/node_modules/**",
-      // Build output / generated bundles (TS->JS, CSS bundles, etc.)
       "**/static/**",
       "**/static-src/dist/**",
       "**/dist/**",
@@ -21,12 +20,10 @@ export default [
       "**/.next/**",
       "**/.cache/**",
       "**/coverage/**",
-      // Minified / generated source
       "**/*.min.*",
       "**/*.gen.ts",
       "**/*.gen.js",
       "**/wire/*.gen.ts",
-      // Test fixtures that aren't real code
       "**/__mocks__/**",
       "**/__test-helpers__/**",
     ],
@@ -46,7 +43,6 @@ export default [
         tsconfigRootDir: import.meta.dirname,
       },
       globals: {
-        // Browser
         window: "readonly",
         document: "readonly",
         navigator: "readonly",
@@ -82,11 +78,9 @@ export default [
         crypto: "readonly",
         btoa: "readonly",
         atob: "readonly",
-        // Service Worker
         self: "readonly",
         ServiceWorkerGlobalScope: "readonly",
         clients: "readonly",
-        // Test runner globals (vitest auto-injected)
         describe: "readonly",
         it: "readonly",
         test: "readonly",
@@ -99,7 +93,6 @@ export default [
       },
     },
     rules: {
-      // Allow `_`-prefixed unused names.
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
@@ -110,26 +103,20 @@ export default [
           ignoreRestSiblings: true,
         },
       ],
-      // Enforce `import type {...}` for types.
       "@typescript-eslint/consistent-type-imports": [
         "error",
         { prefer: "type-imports", fixStyle: "inline-type-imports" },
       ],
-      // Discourage `any`, prefer `unknown`.
       "@typescript-eslint/no-explicit-any": "error",
-      // Avoid silent fall-through bugs in async event handlers.
       "@typescript-eslint/no-misused-promises": [
         "error",
         { checksVoidReturn: { attributes: false } },
       ],
-      // Prefer literal numeric/string template parts (catches accidental coercion).
       "@typescript-eslint/restrict-template-expressions": [
         "error",
         { allowNumber: true, allowBoolean: true, allowNullish: false },
       ],
-      // Console policy.
       "no-console": ["warn", { allow: ["warn", "error", "debug"] }],
-      // Equality: enforce strict ===.
       eqeqeq: ["error", "always", { null: "ignore" }],
       curly: ["error", "all"],
       "no-var": "error",

@@ -1,7 +1,5 @@
-// The disclosure half of the MCP setup path: what a publisher declared about an
-// env var or header has to reach the form row and the registry result, because
-// dropping it is what let a server install cleanly and then fail with nothing on
-// screen saying it wanted a token.
+// What a publisher declared about an env var or header must reach the form row and the registry result, or a server
+// installs and fails with nothing saying it wanted a token.
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("./icons.js", () => ({ ICON_CLOSE: "<svg></svg>" }));
@@ -37,7 +35,7 @@ describe("appendKeyPair declared-field disclosure", () => {
     const value = h.querySelector<HTMLInputElement>(".mcp-pair-value");
     expect(meta!.querySelector(".mcp-pair-mark-required")).not.toBeNull();
     expect(value!.getAttribute("aria-required")).toBe("true");
-    // The marker is only useful to a screen reader if the input points at it.
+    // The marker helps a screen reader only if the input points at it.
     expect(value!.getAttribute("aria-describedby")).toBe(meta!.id);
     expect(meta!.id).not.toBe("");
   });
@@ -49,8 +47,7 @@ describe("appendKeyPair declared-field disclosure", () => {
     const value = h.querySelector<HTMLInputElement>(".mcp-pair-value");
     expect(meta!.textContent).toContain("Secret");
     expect(value!.placeholder).toContain("masked");
-    // Not a password input: the value is empty and the user needs to be able to
-    // verify what they paste. The mask round-trip is what earns type=password.
+    // Not a password input: the value is empty and the user must verify what they paste.
     expect(value!.type).toBe("text");
   });
 

@@ -10,11 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
-// Doc is one classified per-repo steering markdown file. The
-// `Filename` is the basename (e.g. "notes.md"); the `Inclusion`
-// + `FileMatch` + `Description` are parsed from YAML frontmatter (or
-// defaulted when absent). Used by writeWorkspace to render the per-repo
-// steering inventory in environment.md grouped by trigger type.
+// Doc is one classified per-repo steering markdown file: basename plus front-matter fields.
 type Doc struct {
 	Filename    string // basename, e.g. "notes.md"
 	Inclusion   string // "always" | "fileMatch" | "manual" | "auto"; defaults to "always"
@@ -22,9 +18,8 @@ type Doc struct {
 	Description string // human-readable description from the description field
 }
 
-// writeRepoSteering renders the per-repo steering inventory grouped
-// by inclusion trigger ("always", "fileMatch", "manual"/"auto"). Indented one
-// level under the repo bullet so the relationship is visually clear.
+// writeRepoSteering renders the per-repo steering inventory grouped by inclusion trigger,
+// indented under the repo bullet.
 func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
 	always := make([]Doc, 0, len(docs))
 	matched := make([]Doc, 0, len(docs))
@@ -34,9 +29,7 @@ func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
 		case inclusionFileMatch:
 			matched = append(matched, d)
 		case inclusionManual, inclusionAuto:
-			// "auto" is on-demand like "manual" — KAS offers both as slash
-			// commands and excludes both from its always-loaded set — so the
-			// header below ("read on demand") already describes it.
+			// "auto" is on demand like "manual": KAS offers both as slash commands.
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -74,14 +67,10 @@ func writeSteeringEntry(b *strings.Builder, repo string, d Doc) {
 	b.WriteString("\n")
 }
 
-// writeRepoSteeringInstructions adds an explicit directive to the main
-// agent about how to consume per-repo steering. Marotte's main agent
-// boots at /workspace, so kiro-cli's auto-include logic only loads
-// steering at that level — the per-repo .kiro/steering/ dirs require
-// an explicit nudge.
+// writeRepoSteeringInstructions tells the agent to read per-repo steering: the agent boots
+// at /workspace, so kiro-cli auto-loads steering only at that level.
 func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir string) {
-	// Only emit this section when at least one repo actually carries
-	// .kiro/ content — otherwise it's noise.
+	// Only when some repo carries .kiro/ content.
 	hasAny := false
 	for _, r := range repos {
 		rd := filepath.Join(workDir, r)
@@ -131,9 +120,7 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []Doc) {
 		case inclusionFileMatch:
 			matched = append(matched, d)
 		case inclusionManual, inclusionAuto:
-			// "auto" is on-demand like "manual" — KAS offers both as slash
-			// commands and excludes both from its always-loaded set — so the
-			// header below ("read on demand") already describes it.
+			// "auto" is on demand like "manual": KAS offers both as slash commands.
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -170,32 +157,15 @@ func writeSkillEntry(b *strings.Builder, repo string, d Doc) {
 	b.WriteString("\n")
 }
 
-// findRepoDocs scans a repo's `.kiro/steering/` directory and returns
-// the markdown files classified by their YAML frontmatter inclusion
-// mode. Files without frontmatter default to "always". Delegates to
-// findMdDocsInDir, which caps each file read at 64 KiB (only the
-// frontmatter head is needed) and the result at 20 entries — a
-// reasonable environment.md budget; a repo with more steering than that
-// is pathological and the agent gets a representative sample either way.
+// findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion
+// mode (default "always"), via findMdDocsInDir's caps.
 func findRepoDocs(repoDir string) []Doc {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
-// parseSteeringFrontmatter adapts the shared front-matter parser (Parse, in
-// frontmatter.go) onto the Doc shape this file's environment.md writers use.
-//
-// It used to BE the parser, line-oriented, and it returned the literal ">" as
-// the description of every document using a block scalar — which was all 47
-// agents and 14 of 28 skills in this repo, rendered into the agent-facing
-// environment.md as "— >". Do not reintroduce a local parse here; one parser
-// serves this generator and the REST scanners both.
-//
-// The two free-text fields are defused HERE rather than in Parse, because this
-// is the adapter for the one consumer that writes them into agent-authoritative
-// markdown. Parse's other consumer is internal/server, which renders them as
-// JSON for a browser that escapes its own output, so defusing there would edit
-// values for a caller that does not need it. A workspace repo's `.kiro` docs are
-// workspace content like any other.
+// parseSteeringFrontmatter adapts the shared front-matter parser (Parse) onto Doc; do not
+// reintroduce a local parse here. The free-text fields are defused HERE, in the one consumer
+// that writes them into agent-authoritative markdown (internal/server's JSON needs no defuse).
 func parseSteeringFrontmatter(data []byte) Doc {
 	fm := Parse(data)
 	return Doc{
@@ -205,12 +175,8 @@ func parseSteeringFrontmatter(data []byte) Doc {
 	}
 }
 
-// frontmatterBody returns the YAML front-matter block of a steering
-// markdown file — the text between the opening and closing `---` fences —
-// and whether a well-formed block was present. It strips a leading UTF-8
-// BOM and normalizes CRLF to LF first, so fence detection is BOM- and
-// line-ending-agnostic (a CRLF- or BOM-authored doc must not fall
-// through the exact `---\n` prefix check and lose its front-matter).
+// frontmatterBody returns the YAML front-matter between the `---` fences and whether one was
+// present, after stripping a UTF-8 BOM and normalizing CRLF.
 func frontmatterBody(data []byte) (string, bool) {
 	content := normalizeText(data)
 	if !strings.HasPrefix(content, "---\n") {
@@ -223,16 +189,9 @@ func frontmatterBody(data []byte) (string, bool) {
 	return content[4 : 4+end], true
 }
 
-// normalizeInclusion validates a steering front-matter inclusion value,
-// folding any unrecognized value (typo, empty) to the default "always".
-//
-// FOUR values, not three. KAS's SteeringContextFrontMatterSchema declares
-// `inclusion: enum(["always","fileMatch","manual","auto"])`, and "auto" is an
-// ON-DEMAND mode: `emitDocumentsChanged` filters `inclusion !== "auto"` out of
-// its notification, and `createSteeringCommandSource` collects `manual` and
-// `auto` together as slash-command entries. Folding it to "always" therefore
-// claimed the exact opposite of the truth about the one thing the inclusion
-// badge exists to answer — whether a doc costs tokens on every session.
+// normalizeInclusion validates an inclusion value, folding unknown or empty to "always". FOUR
+// values: KAS's schema declares "auto" too, an ON-DEMAND mode; folding it to "always" would
+// claim the opposite about token cost.
 func normalizeInclusion(v string) string {
 	switch v {
 	case inclusionFileMatch:
@@ -246,23 +205,14 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// ParseInclusion returns the validated inclusion mode ("always",
-// "fileMatch", "manual" or "auto") from a steering markdown file's YAML
-// front-matter, folding unknown or absent values to "always". It
-// tolerates a leading UTF-8 BOM and CRLF line endings. Exported so the
-// REST kiro-config scanner (internal/server) classifies steering docs
-// through this single parser rather than a divergent copy.
+// ParseInclusion returns the validated inclusion mode from a steering file's front-matter
+// ("always" when absent or unknown), BOM- and CRLF-tolerant. Exported for internal/server.
 func ParseInclusion(data []byte) string {
 	return parseSteeringFrontmatter(data).Inclusion
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill directories. A skill is
-// a DIRECTORY containing SKILL.md (mirrors the authoritative REST scan
-// in internal/server/kiro_config.go's scanSkills) — NOT a flat `.md`
-// file. Each SKILL.md's frontmatter classifies the skill by inclusion
-// mode; a subdirectory without a SKILL.md still counts as a skill
-// (default "always"), matching the REST scan. Reads are capped at 64 KiB
-// (only the frontmatter head is needed) and the result at 20 entries.
+// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md, as
+// internal/server's scanSkills does), classified by SKILL.md's inclusion mode. Capped.
 func findRepoSkills(repoDir string) []Doc {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
@@ -274,8 +224,7 @@ func findRepoSkills(repoDir string) []Doc {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		// The skill's classification lives in its SKILL.md frontmatter;
-		// a missing SKILL.md yields empty data -> default "always".
+		// A missing SKILL.md yields empty data, so the default "always".
 		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
@@ -351,11 +300,8 @@ func findRepoHooks(repoDir string) []HookEntry {
 	return out
 }
 
-// ParseHooks parses a v1 hook document into its entries, with every field
-// sanitized. Exported so the REST docs scanner reuses this parser rather than
-// re-deriving one: hook files are workspace content, and defuse is what keeps a
-// raw newline or backtick from breaking out of the code span these values are
-// rendered into.
+// ParseHooks parses a v1 hook document into its entries, every field defused. Exported for
+// the REST docs scanner.
 func ParseHooks(data []byte) []HookEntry {
 	return parseHookDoc(data)
 }
@@ -365,12 +311,8 @@ func ParseHooks(data []byte) []HookEntry {
 //	{"version":"v1","hooks":[{name, trigger, matcher?,
 //	  action:{type:"command"|"agent", command|prompt}, timeout?}]}
 //
-// This is the on-disk format Kiro's createHook tool and marotte's own
-// create_hook command write (internal/command/hooks.go buildHookDoc);
-// triggers are PascalCase (SessionStart, PreToolUse, PostFileSave, …).
-// One file may carry multiple hooks; each becomes its own entry. The
-// action preview prefers command hooks' command and falls back to agent
-// hooks' prompt. Malformed JSON or an empty hooks array yields nil.
+// the format Kiro's createHook tool and internal/command/hooks.go write. Malformed JSON or
+// an empty hooks array yields nil.
 func parseHookDoc(data []byte) []HookEntry {
 	var doc struct {
 		Hooks []struct {
@@ -405,17 +347,9 @@ func parseHookDoc(data []byte) []HookEntry {
 	return out
 }
 
-// defuse flattens control characters, strips hidden Unicode, and swaps
-// backticks for quotes — the one pass every workspace-derived string this
-// generator writes must go through before landing in environment.md, which
-// kiro-cli treats as authoritative agent context.
-//
-// A raw newline can end the line a value was quoted on and start a line the
-// reader attributes to marotte; a backtick can close the code span the value
-// sits inside. Measured end to end: a crafted `.git/HEAD` with an embedded
-// newline once rendered a fake steering section under a real heading, before
-// this was applied everywhere rather than only to hook fields and a README's
-// first line.
+// defuse flattens control characters, strips hidden Unicode and swaps backticks for quotes:
+// every workspace-derived string must pass it before landing in environment.md, which
+// kiro-cli treats as authoritative. A raw newline could forge a line; a backtick close a span.
 func defuse(s string) string {
 	s = strings.Map(func(r rune) rune {
 		switch r {
@@ -429,12 +363,8 @@ func defuse(s string) string {
 	return sanitize.Unicode(s)
 }
 
-// findMdDocsInDir scans a flat directory of `.md` files, classifying
-// each by its YAML frontmatter (inclusion / fileMatchPattern /
-// description) and defaulting to "always" when absent. Reads are capped
-// at 64 KiB (frontmatter is at the head) and the result at 20 entries.
-// Backs findRepoDocs (per-repo steering); skills use findRepoSkills,
-// which scans subdirectories for SKILL.md instead.
+// findMdDocsInDir classifies each `.md` in a flat directory by its front-matter. Reads are
+// capped at 64 KiB and the result at 20 entries.
 func findMdDocsInDir(dir string) []Doc {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -1,8 +1,5 @@
 package agent
 
-// Tests for schedule_http.go: whether the schedule surface exists at all, which
-// depends on a dependency the rest of the run surface does not need.
-
 import (
 	"net/http"
 	"net/http/httptest"
@@ -11,14 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt pins the guard that
-// decides whether these three routes exist.
-//
-// Every schedule handler reads the store directly, so registering them without one
-// does not degrade — it panics inside an HTTP handler on the first request, which
-// takes down the connection and logs a stack trace where a 404 belongs. Skipping
-// the registration when a store IS present is the same bug reflected: the schedule
-// UI gets a 404 for a feature that is configured and working.
+// TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt pins that without a store the handlers would panic;
+// with one, skipping them would 404 a working feature.
 func TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
 	t.Run("a configured store gets the routes", func(t *testing.T) {
 		st, err := schedule.NewStore(t.TempDir())

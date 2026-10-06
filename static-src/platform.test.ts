@@ -1,12 +1,5 @@
-// Tests for platform.ts guardDuplicateActivation: the duplicate-pointer-dispatch
-// guard in front of activation handlers.
-//
-// Events are real PointerEvent / MouseEvent objects carrying the pointerType and
-// detail the browser stamps on each activation shape (a pointer click has
-// detail > 0 and a concrete pointerType; a keyboard activation has detail 0 and
-// an empty pointerType). The guard's clock is its injectable `now` parameter, so
-// arrival times are hand-cranked numbers rather than races against real time —
-// an event's own timeStamp is read-only and cannot be aimed.
+// Tests for platform.ts guardDuplicateActivation: the duplicate-pointer-dispatch guard in front of
+// activation handlers.
 import { describe, expect, it, vi } from "vitest";
 import { guardDuplicateActivation } from "./platform.js";
 
@@ -15,8 +8,8 @@ function pointerClick(pointerType: "mouse" | "touch" | "pen"): PointerEvent {
   return new PointerEvent("click", { pointerType, detail: 1 });
 }
 
-/** A keyboard activation: Enter/Space on a button synthesizes a click with
- *  detail 0 and no pointerType. */
+/** A keyboard activation: Enter/Space on a button synthesizes a click with detail 0 and no
+ *  pointerType. */
 function keyboardClick(): PointerEvent {
   return new PointerEvent("click", { pointerType: "", detail: 0 });
 }
@@ -78,8 +71,8 @@ describe("guardDuplicateActivation", () => {
   });
 
   it("does not treat a different pointer type as a duplicate", () => {
-    // A ghost dispatch replays ONE physical gesture, so it arrives with the
-    // same pointerType; mouse-then-touch is two inputs, not a duplicate.
+    // A ghost dispatch replays ONE physical gesture, so it arrives with the same pointerType;
+    // mouse-then-touch is two inputs, not a duplicate.
     const { fn, at } = harness();
     at(0, pointerClick("mouse"));
     at(40, pointerClick("touch"));

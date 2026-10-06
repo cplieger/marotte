@@ -46,7 +46,7 @@ import {
   transcriptViewFor,
   disposeChatView,
 } from "./messages.js";
-import { addAttachment } from "./attachments.js";
+import { addAttachment, unownedAttachmentPaths } from "./attachments.js";
 import {
   saveComposerState,
   restoreComposerState,
@@ -60,6 +60,7 @@ import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { info } from "./toast.js";
+import { named, noticeSubject } from "./notice-subject.js";
 import { createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
 import { newOpID } from "./transport.js";
 
@@ -75,12 +76,11 @@ onBus(BUS_ACTIVATE_CHAT, (p) => {
 
 // --- Chat tab registration ---
 
-/** Open (or activate) a chat tab. Pass `{ activate: false }` for a bulk open:
- *  activation runs activateChatView (messages fetch + conflicts prefetch), so
- *  bulk-opening N chats active would fan out 2N requests.
- *
- *  A ROUND TRIP, resolving once the tab is in the projection: the tab set is
- *  server-owned, so `open_tab` creates it and `tabs_changed` paints it. */
+/**
+ * Open (or activate) a chat tab; `{ activate: false }` for a bulk open, since activation
+ * fetches messages and conflicts per chat. A ROUND TRIP: `open_tab` creates the
+ * server-owned tab and `tabs_changed` paints it.
+ */
 export async function openChatTab(
   id: string,
   name: string,
@@ -90,36 +90,33 @@ export async function openChatTab(
     kind: "chat",
     ref: id,
     name,
-    // `parentTabID`, not a chat id: `TabSubject.Parent` names an open TAB, and an
-    // unresolvable parent silently promotes the tangent to top level. `owns` stays at
-    // its default — a side chat owns its own bridge.
+    // `parentTabID`, not a chat id: an unresolvable parent silently promotes the tangent to top
+    // level. A side chat owns its own bridge.
     ...(opts?.parentTabID === undefined ? {} : { parent: opts.parentTabID }),
     ...(opts?.activate === undefined ? {} : { activate: opts.activate }),
   });
 }
 
-/** A chat tab's dot state right now: the chat's live state, with a pending ask
- *  outranking it. Named because two producers need the same answer — this module's
- *  opener and tab-materialize.ts, which cannot read the decision dock itself. */
+/**
+ * A chat tab's dot state right now, a pending ask outranking the live state; shared with
+ * tab-materialize.ts, which cannot read the dock.
+ */
 export function chatTabDot(id: string): TabDotStatus | "" {
   return tabStatusFor(get(id), hasPendingDecision(id));
 }
 
-/** Everything closing a chat TAB does on this device — client-local cleanup only,
- *  identical whoever closed the tab. Run DEFERRED for a close this device dispatched
- *  (exactly once per closed tab) and immediately for a remote close's applied
- *  removal. Nothing here dispatches: process teardown and the retention-off record
- *  delete are both the server's `close_tab`. */
+/**
+ * Everything closing a chat TAB does on this device, client-local only: deferred for this
+ * device's own close (once per tab), immediate for a remote close. Teardown and the record
+ * delete are the server's `close_tab`.
+ */
 export function closeChatTab(id: string): void {
   // The draft belongs to the CHAT, not the tab, so a pending save goes out before the
   // row drops.
   flushComposerDraft();
-  // The dock queue is keyed by chat id, so a queue left behind was resurrected by
-  // reopening the SAME id — a dot claiming a decision that no longer existed.
+  // The dock queue is keyed by chat id, so a leftover queue resurrects on reopening the id.
   dropDecisions(id);
-  // Same shape one surface over: a withheld agent-finished cue is keyed by chat id and
-  // would be released, for a conversation that is no longer on screen, by whatever
-  // ended the run it was waiting on.
+  // A withheld agent-finished cue is keyed by chat id too.
   forgetDeferredCue(id);
   // Before removeChat: the store reassigning the active chat repaints synchronously,
   // and a dead view still in the registry would be parked by that paint.
@@ -129,35 +126,33 @@ export function closeChatTab(id: string): void {
   removeChat(id);
   // Local only: reopening the chat seeds the text back from the server.
   dropComposerState(id);
-  // `removeChat` reassigns the store's active chat with no activation behind it, so
-  // without this retarget the next keystroke lands in no chat at all. Harmless when
-  // the strip activates a neighbour straight after — a retarget is idempotent.
+  // `removeChat` reassigns the active chat with no activation, so retarget the composer;
+  // idempotent.
   retargetComposer(getActiveId());
 }
 
 // --- Activation generation ---
 
-/** Bumped by every activateChatView call.
- *
- *  Two activations for one chat are ordinary, and store-load aborts the older fetch —
- *  without this guard the superseded activation paints its retry box over a transcript
- *  that just loaded fine. It completes the `getActiveId() !== id` check beside it,
- *  which only catches a newer activation of a DIFFERENT chat. */
+/**
+ * Bumped by every activateChatView call, so a superseded activation of the SAME chat cannot
+ * paint its retry box over a loaded transcript (`getActiveId() !== id` catches other chats).
+ */
 let activationGen = 0;
 
-/** Remove a previous activation's failure box from the chat's transcript view. Every
- *  activation clears it rather than each success path remembering to: it is appended
- *  furniture the transcript repaint does not own. */
+/**
+ * Remove a previous activation's failure box; every activation clears it, since the
+ * transcript repaint does not own it.
+ */
 function clearChatLoadError(): void {
   for (const box of (activeTranscriptView() ?? $.messages).querySelectorAll(".load-error")) {
     box.remove();
   }
 }
 
-/** The transcript's failure affordance: what went wrong, and one button that tries
- *  again. Shared by the two ways a chat can fail to open — its messages did not load,
- *  or its record is not in this device's store at all — because the reader's move is
- *  the same either way. Retry re-activates AND refetches. */
+/**
+ * The transcript's failure affordance, one Retry button for both failures (messages did not
+ * load, or the record is not in the store). Retry re-activates and refetches.
+ */
 function paintChatLoadError(message: string, id: string): void {
   const box = el("div", { className: "load-error" }, el("span", {}, message));
   const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
@@ -169,9 +164,10 @@ function paintChatLoadError(message: string, id: string): void {
   (activeTranscriptView() ?? $.messages).appendChild(box);
 }
 
-/** Re-read the chat list for a tab whose chat this device's store does not hold, and
- *  activate it again if the read produces it. One attempt per activation, and it cannot
- *  loop. The generation check is what makes it safe to fire and forget. */
+/**
+ * Re-read the chat list for a tab whose chat the store lacks and re-activate if it appears.
+ * One attempt per activation; the generation check makes fire-and-forget safe.
+ */
 async function healMissingChat(id: string, gen: number): Promise<void> {
   if (!(await loadList())) {
     return;
@@ -183,19 +179,17 @@ async function healMissingChat(id: string, gen: number): Promise<void> {
   refreshChatView(id);
 }
 
-/** Point every per-chat view at `id`. A chat tab's `onShow`, exported so the tab
- *  factory can name it. It fetches NOTHING: `tabs.ts` `refreshRow` calls
- *  `refreshChatView` immediately after this returns. */
+/**
+ * Point every per-chat view at `id` (a chat tab's `onShow`). Fetches NOTHING: `refreshRow`
+ * calls `refreshChatView` right after.
+ */
 export function activateChatView(id: string): void {
   // The save MUST precede setActive: it reads the outgoing chat's id, which nothing
   // can recover afterwards.
   saveComposerState();
   const gen = ++activationGen;
-  // Re-keyed on the switch itself, before the repaint below and before any branch or
-  // early return can skip it: as a side effect of a successful message load, every
-  // path that never reaches that callback inherited the previous chat's markers.
-  // Pointing the rail is the whole update here — the rail spans the SESSION, and the
-  // refresh fetches for itself.
+  // Re-keyed before any branch can skip it, so no path inherits the previous chat's markers;
+  // the refresh fetches the session-wide rail itself.
   pointTurnRail(id);
   setActive(id);
   restoreComposerState(id);
@@ -203,9 +197,8 @@ export function activateChatView(id: string): void {
   clearChatLoadError();
   const session = get(id);
   if (session === undefined) {
-    // A tab naming a chat this device's store does not hold: the store is provably
-    // stale against a set the server minted, so the answer is one re-read. The
-    // affordance is painted FIRST, so a re-read that fails leaves something to act on.
+    // A tab naming a chat the store lacks means the store is stale: one re-read. The affordance
+    // paints FIRST so a failed re-read leaves something to act on.
     paintChatLoadError("This conversation is not loaded yet.", id);
     void healMissingChat(id, gen);
     return;
@@ -217,19 +210,18 @@ export function activateChatView(id: string): void {
     setModel(id, session.model);
   }
 
-  // The view furniture, under the same condition it has always sat under. It stays
-  // ABOVE the arms rather than being hoisted: hoisting adds a second, uncoalesced
-  // `/api/chats/{id}/turns` to every stale activation, since the forced rail below
-  // belongs to the refresh.
+  // The view furniture stays ABOVE the arms: hoisting would add an uncoalesced
+  // `/api/chats/{id}/turns` to every stale activation.
   if (!isEmptyChat(session) && !transcriptStale(session)) {
     setupLoadMore(id);
     void loadTurnRail(id); // UNFORCED; refreshChatView owns the forced one
   }
 }
 
-/** Bring the chat's DATA up to date. `tabs.ts` `refreshRow` calls this immediately
- *  after `activateChatView`, and the four direct callers of that hook call it
- *  themselves — `refreshRow` supplies the fetch on every other path. */
+/**
+ * Bring the chat's DATA up to date: `refreshRow` calls this after `activateChatView`, and
+ * that hook's four direct callers call it themselves.
+ */
 export function refreshChatView(id: string): void {
   const session = get(id);
   if (session === undefined) {
@@ -251,16 +243,11 @@ export function refreshChatView(id: string): void {
     // switching back costs ZERO fetches.
     return;
   }
-  // A previous load's failure box is NOT content, so the placeholder below would mount
-  // UNDER it and render both at once. Idempotent, so activation clearing it too costs
-  // nothing.
+  // The failure box is not content, so it would sit over the placeholder; idempotent.
   clearChatLoadError();
-  // `getActiveId() !== id` is what makes the subagent delegation safe: `showSubagent`
-  // does not `setActive`, so a delegated refresh would otherwise arm a shimmer into a
-  // different chat's view.
-  //
-  // On a cold transcript the paint is deferred by 150ms, so a cached open never
-  // flashes it. min-visible stays 0 — the skeleton shares the messages container.
+  // `showSubagent` does not `setActive`, so `getActiveId() !== id` keeps a delegated refresh's
+  // shimmer out of another chat. Deferred 150ms on a cold transcript so a cached open never
+  // flashes.
   const skeleton =
     session.turn_order.length > 0 || getActiveId() !== id
       ? null
@@ -291,19 +278,15 @@ export function refreshChatView(id: string): void {
     if (fresh !== undefined) {
       setupLoadMore(id);
     }
-    // The rail's index is session-wide and independent of the message window, so it
-    // is its own fetch. FORCED: the load that just landed re-stamped the session
-    // fresh, so the rail's gate can no longer see this refresh's stale verdict.
+    // The session-wide rail is its own fetch, FORCED: the load just re-stamped the session fresh.
     void loadTurnRail(id, { force: true });
   });
 }
 
-/** Fetch a message-less chat's record so its stored draft can be adopted.
- *
- *  The draft rides the single-chat GET, and the branch above skips that GET for a chat
- *  with no messages — which is exactly the chat that can still hold one. The re-check
- *  after the await stays: the user can switch chats while it is in flight, and the
- *  seed writes into the shared composer. */
+/**
+ * Fetch a message-less chat's record to adopt its stored draft (the branch above skips that
+ * GET). Re-checked after the await: the seed writes the shared composer.
+ */
 function seedEmptyChatDraft(id: string): void {
   void loadMessages(id).then((ok) => {
     if (ok && getActiveId() === id) {
@@ -350,9 +333,10 @@ function setupLoadMore(chatID: string): void {
 
 // --- Sending prompts ---
 
-/** Send from the composer. Nothing here touches the model picker: `submitPrompt` sets
- *  `thinking` synchronously and the picker's own effect keys on it, so the overlay
- *  closes for every sender. */
+/**
+ * Send from the composer. `submitPrompt` sets `thinking`, which closes the picker's overlay
+ * for every sender.
+ */
 export function sendPrompt(text: string): void {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -361,14 +345,12 @@ export function sendPrompt(text: string): void {
   void submitPrompt(chatID, text);
 }
 
-// --- Session lifecycle ---
-
 const NEW_CHAT_NAME = "New conversation";
 
-/** Seed the store row for a chat the SERVER has just created. The id, name and model
- *  all come off the header the create command returned, so the row is a projection of
- *  what the server persisted rather than a guess. `usage.context_size` is the one
- *  derived field: the client owns the model catalog, so the header cannot carry it. */
+/**
+ * Seed the store row for a chat the SERVER just created, from the returned header.
+ * `usage.context_size` is derived: the client owns the model catalog.
+ */
 function seedChat(header: ChatHeader): void {
   upsertHeader(header);
   const model = header.model ?? "";
@@ -377,11 +359,11 @@ function seedChat(header: ChatHeader): void {
   }
 }
 
-/** Adopt the tab a creating command opened server-side: paint it from the response,
- *  hand the pending-op machine what it committed, and activate it. `create_chat` and
- *  `fork_chat` write the record and open the tab under one coordinator lock, so the
- *  reply already carries the committed subject. A reply with no subject has nothing to
- *  adopt, so the pending op is retired. */
+/**
+ * Adopt the tab a creating command opened server-side: paint it, hand the pending-op
+ * machine what committed, activate. The reply carries the committed subject; with none,
+ * the op is retired.
+ */
 function adoptCreatedTab(opID: string, created: CreatedChat): void {
   const subject = created.subject;
   if (subject === undefined) {
@@ -393,19 +375,20 @@ function adoptCreatedTab(opID: string, created: CreatedChat): void {
   activateTab(subject.id);
 }
 
-/** Create a new chat and open its tab. Resolves to the new chat's id, or "" when the
- *  server refused. If initialPrompt is non-empty, send it immediately.
- *
- *  ASYNC because the id is the SERVER's. Every caller must await or explicitly detach
- *  — `no-floating-promises` names the sites, but a bare `void` at one that reads
- *  `getActiveId()` on the next line would silently read the PREVIOUS chat. */
+/**
+ * Create a new chat and open its tab, resolving to the id or "" when refused. Files staged
+ * with no chat move to it; a non-empty initialPrompt or files send at once. Every caller
+ * awaits or detaches explicitly: a bare `void` then `getActiveId()` reads the PREVIOUS chat.
+ */
 export async function createSession(initialPrompt?: string): Promise<string> {
   const model = getLastModel();
-  // Minted HERE and passed as an argument, never inside the action's run(): the
-  // framework re-runs run() per retry attempt, so the server would mint a second chat
-  // for one gesture. Registered BEFORE the dispatch so the tabs frame correlates.
+  // Minted here, never inside run(), which retries would re-run (a second chat per gesture).
+  // Registered BEFORE the dispatch so the tabs frame correlates.
   const opID = newOpID();
   beginAdopt(opID);
+  // Read before the await: files staged with no chat open belong to no chat, so the
+  // retarget below would discard them instead of handing them to the chat it makes.
+  const carried = unownedAttachmentPaths();
   const created = await createChat.dispatch({ opID, model });
   if (created === null) {
     // The action framework has already raised its toast; there is no chat.
@@ -415,27 +398,28 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   seedChat(created.chat);
   const id = created.chat.id;
   setActive(id);
-  // The composer belongs to THIS chat from here, not from the activation below —
-  // otherwise anything typed in the round-trip window is filed under the chat the user
-  // just left and flushed to the server as its draft.
+  // The composer is THIS chat's from here, so text typed during the round trip is not filed
+  // under the chat just left.
   retargetComposer(id);
+  for (const path of carried) {
+    addAttachment(path);
+  }
   // The reply carries the tab the create opened server-side, so the row is painted and
   // ACTIVATED from the response, with no second round trip.
   adoptCreatedTab(opID, created);
 
-  if (initialPrompt !== undefined && initialPrompt !== "") {
+  if (initialPrompt !== undefined && (initialPrompt !== "" || carried.length > 0)) {
     setCurrentModel(model);
     sendPrompt(initialPrompt);
   }
   return id;
 }
 
-/** Open a TANGENT off `parentChatID`: a real chat starting with the parent's whole
- *  conversation behind it, opened as a SUB-TAB under the one it came from.
- *
- *  `chat.fork` calls KAS's `session/fork` and binds the new chat to the session it
- *  returns, so no context is copied and nothing syncs the two. `TabSubject.Parent` is
- *  set at open and never reassigned, making a parent cycle unrepresentable. */
+/**
+ * Open a TANGENT off `parentChatID` as a SUB-TAB: `chat.fork` binds it to KAS's
+ * `session/fork`, so nothing is copied or synced. `TabSubject.Parent` is set once, making a
+ * cycle unrepresentable.
+ */
 export async function openTangentChat(parentChatID: string): Promise<void> {
   if (parentChatID === "" || get(parentChatID) === undefined) {
     return;
@@ -461,13 +445,11 @@ export async function openTangentChat(parentChatID: string): Promise<void> {
   setCurrentModel(model);
 }
 
-/** Put the reader on this chat, OPENING its tab when it has none.
- *
- *  The open lives here rather than inlined in the router: this function is "put the
- *  reader on this chat" and has exactly one caller, and `chat.test.ts` can drive it.
- *  Rewriting a URL that names no record stays the router's. A REFUSAL IS NOT REPORTED
- *  HERE — `openTabCommand` declares its own error message, so the framework has
- *  already toasted; the outcome is returned so the caller can canonicalize the URL. */
+/**
+ * Put the reader on this chat, OPENING its tab when it has none. A refusal is not reported
+ * here: `openTabCommand` already toasted, and the outcome lets the caller canonicalize the
+ * URL.
+ */
 export async function switchSession(id: string): Promise<OpenTabOutcome | "activated"> {
   // A chat id and its TAB id are different values — the tab's is opaque and
   // server-minted — so reaching a chat's tab goes through the lookup.
@@ -484,14 +466,11 @@ export async function switchSession(id: string): Promise<OpenTabOutcome | "activ
   return openChatTab(id, get(id)?.name ?? "Chat");
 }
 
-/** Settle a deep-linked chat id the store holds NO row for, by ASKING the server.
- *
- *  The store's silence is not evidence: `loadList` makes it authoritative at the
- *  instant it lands and stale from then on, so a chat created on another device while
- *  this client's SSE lags is missing from it. Three answers — `opened` (the header is
- *  adopted, `switchSession` opens the tab), `gone` (the server says no such chat),
- *  `unresolved` (nobody answered; the caller says nothing terminal). The store is
- *  RE-READ after the await, so a row that appeared meanwhile outranks the verdict. */
+/**
+ * Settle a deep-linked chat id the store has NO row for by ASKING the server (the store goes
+ * stale after `loadList`): `opened`, `gone`, or `unresolved` (say nothing terminal). The
+ * store is re-read after the await.
+ */
 export async function resolveUnknownChat(id: string): Promise<"opened" | "gone" | "unresolved"> {
   const verdict = await confirmChatExists(id);
   if (verdict === "exists" || get(id) !== undefined) {
@@ -501,12 +480,10 @@ export async function resolveUnknownChat(id: string): Promise<"opened" | "gone" 
   return verdict;
 }
 
-/** Attach workspace files to the active chat's next prompt, each as a removable pill
- *  below the textarea. Switches to the chat tab if needed.
- *
- *  PLURAL, and not a convenience: with the chat id coming from the server, N singular
- *  calls would each find no active chat and each ask for one, so a three-file drop
- *  onto an empty workspace would create three chats with one file each. */
+/**
+ * Attach workspace files to the active chat's next prompt as pills, switching to the chat
+ * tab if needed. PLURAL: per-file calls would each create a chat on an empty workspace.
+ */
 export async function attachPathsToActiveChat(paths: readonly string[]): Promise<void> {
   if (paths.length === 0) {
     return;
@@ -528,10 +505,10 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
   $.promptInput.focus();
 }
 
-/** Open a session the previous-session picker listed.
- *
- *  Every row the picker offers is a TAB CONVERSATION — the server lists a session only
- *  when a marotte chat claims it (`toResumable`) — so `chat_id` is always present. */
+/**
+ * Open a session the previous-session picker listed; every listed row is claimed by a
+ * marotte chat (`toResumable`), so `chat_id` is always present.
+ */
 export async function openPreviousSession(
   row: ResumableSession,
 ): Promise<"opened" | "gone" | "failed"> {
@@ -541,19 +518,21 @@ export async function openPreviousSession(
   }
   const existing = get(chatID);
   if (existing === undefined) {
-    // Required, not defensive: closing a tab calls removeChat, so a chat closed in
-    // this browser session is gone from the store while its file survives. Activating
-    // first renders an empty chat view and stops.
+    // Required: a chat closed in this page is gone from the store while its file survives.
     await loadList();
   }
   // AWAITED: opening the tab is a round trip. `openChatTab` already activates, so the
   // explicit call below is the belt for a tab already open and active, where it refetches.
   const outcome = await openChatTab(chatID, get(chatID)?.name ?? row.title);
   if (outcome === "not-found") {
-    // Retention is off and a close DELETED this conversation. Said with the activation
-    // SKIPPED, or the reader lands on an empty transcript over a dead active pointer.
-    // Distinct from a network failure by openTab's outcome.
-    info("That conversation is gone. It was ephemeral because retention is off.");
+    // Retention is off and a close DELETED this conversation: said with activation skipped,
+    // and no Open offered, since it would 404.
+    info(
+      named(
+        noticeSubject(chatID, row.title),
+        "That conversation is gone. It was ephemeral because retention is off.",
+      ),
+    );
     return "gone";
   }
   if (outcome !== "opened") {
@@ -565,10 +544,10 @@ export async function openPreviousSession(
   return "opened";
 }
 
-/** Create a new chat pre-set to the "plan" workflow mode — the share-target
- *  `?agent=planner` shortcut. On KAS "planner" is the bundled Plan mode, not a v2
- *  agent: the mode is persisted on the empty chat and applied at session/new
- *  (StartOpts.Mode). AWAITS the create — `set_mode` addresses the chat it returned. */
+/**
+ * Create a chat pre-set to the "plan" mode (`?agent=planner`), persisted on the empty chat
+ * and applied at session/new. AWAITS the create: `set_mode` addresses its chat.
+ */
 export async function createPlannerSession(): Promise<void> {
   const id = await createSession();
   if (id === "") {
@@ -577,10 +556,10 @@ export async function createPlannerSession(): Promise<void> {
   void setMode.dispatch({ chatID: id, modeID: "plan" });
 }
 
-/** One open chat tab's row effect. Tracks THIS chat's per-entity signal (plus the
- *  session set's structure, so a row landing after its tab still paints) and the
- *  decision dock, and writes only its own row. The dock read doubles as the
- *  subscription, which is the case the dot's "input" state exists for. */
+/**
+ * One open chat tab's row effect: tracks this chat's signal (and the set's structure, so a
+ * late row still paints) plus the dock, and writes only its own row.
+ */
 function chatRowEffect(chatID: string): () => void {
   return effect(() => {
     const s = watchSession(chatID);
@@ -595,9 +574,8 @@ function chatRowEffect(chatID: string): () => void {
     }
     // Reconcile tab name with server auto-rename / agent focus title.
     renameTab(tabID, s.name);
-    // tabStatusFor owns the precedence; the pending-ask half comes from the dock.
-    // `updated_at` is LAST ACTIVITY rather than "finished at", which is what the dot's
-    // outcome phrase renders an age from. The only caller that supplies one.
+    // `updated_at` is LAST ACTIVITY, which the outcome phrase's age renders; the only caller
+    // supplying one.
     setTabStatus(tabID, tabStatusFor(s, pendingAsk), s.updated_at);
   });
 }

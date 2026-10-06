@@ -32,6 +32,9 @@ var (
 	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
 	// that is gone — the delete-ordering gate's refusal.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
+	// errRunPurging is the 409 for an open_tab naming a run the retention purge is
+	// deleting, and for a create that would bind the session that run belongs to.
+	errRunPurging = errors.New("that workflow run is being deleted")
 	// errTabUnknown is the 404 for a pin or a reparent naming an id the set does
 	// not hold.
 	errTabUnknown = errors.New("that tab is not open")
@@ -116,6 +119,14 @@ type Membership struct {
 	// its first attempt made. Here rather than in the handlers because resolving
 	// an op and reserving a tab slot must happen in the same critical section.
 	ops *createLedger
+	// sessions is the fresh session-chain read AdmitRunPurge decides on. Nil spares
+	// every run that names a parent session.
+	sessions SessionClaims
+	// purgingRuns holds the runs AdmitRunPurge admitted and whose delete has not
+	// returned; OpenTab refuses them. purgingSessions counts those runs' parent
+	// sessions; CreateChatAndOpen refuses to bind one. Both guarded by mu.
+	purgingRuns     map[string]struct{}
+	purgingSessions map[string]int
 	// mu is THE operation lock, held across the reservation, the mint, both
 	// durable writes and the event. Order: mu -> chat record lock -> tabs writeMu.
 	mu sync.Mutex
@@ -132,14 +143,14 @@ type MembershipDeps struct {
 	CloseChat  chatCloser
 	DeleteChat chatDeleter
 	Retention  retentionRead
-	// SupervisedDefault answers the workspace-wide Supervised default that a
-	// newly minted record is seeded from. A FUNCTION rather than a config-dir
-	// path, mirroring retentionWake: the settings read stays out of the
-	// coordinator, so the coordinator keeps no filesystem knowledge and its
-	// callers cannot disagree with the prompt path's own reader. Nil is false
-	// (fail closed), never a panic.
+	// SupervisedDefault answers the workspace-wide Supervised default a new record is seeded from.
+	// A function so the coordinator keeps no filesystem knowledge and cannot disagree with the
+	// prompt path's reader; nil is false.
 	SupervisedDefault func(context.Context) bool
 	Runs              RunOwner
+	// Sessions answers the run purge's claim check. Nil spares every run with a
+	// parent session (the fail-toward-keeping direction).
+	Sessions SessionClaims
 }
 
 // NewMembership builds the coordinator.
@@ -153,15 +164,16 @@ func NewMembership(deps *MembershipDeps) *Membership {
 		deleteChat:        deps.DeleteChat,
 		retention:         deps.Retention,
 		runs:              deps.Runs,
+		sessions:          deps.Sessions,
 		supervisedDefault: deps.SupervisedDefault,
 		ops:               newCreateLedger(),
+		purgingRuns:       map[string]struct{}{},
+		purgingSessions:   map[string]int{},
 	}
 }
 
-// supervisedDefaultValue answers the Supervised default for a fresh record.
-// An unwired reader is FALSE rather than a panic: a build with no settings
-// reader mints unsupervised chats, which is what every chat did before the
-// default reached this path at all.
+// supervisedDefaultValue answers the Supervised default for a fresh record; an unwired reader is
+// false rather than a panic.
 func (m *Membership) supervisedDefaultValue(ctx context.Context) bool {
 	if m.supervisedDefault == nil {
 		return false
@@ -212,23 +224,14 @@ type TabOpened struct {
 	Created bool
 }
 
-// CreateChatAndOpen writes a chat record and opens its tab as one operation, so the
-// final slot cannot be consumed between minting and opening and no delete lands between
-// the two writes. Returns errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409)
-// when the record is absent after a Mutate that reported no error (a tombstoned id).
-//
-// Returns errOpenChatUnknown (404) when a required chat is absent, errTabsFull (409)
-// at MaxOpenTabs, and errChatNotCreated (409) when the record is absent after a Mutate
-// that reported no error.
-//
-// A failed tab write leaves the chat created and returns the error; a retry carrying the
-// same op_id finishes it.
+// CreateChatAndOpen writes a chat record and opens its tab as one operation, so the final slot
+// cannot be consumed between mint and open and no delete lands between the two writes. Returns
+// errOpenChatUnknown (404) when a required chat is absent, errTabsFull (409) at MaxOpenTabs, and
+// errChatNotCreated (409) when the record is absent after a Mutate that reported no error. A failed
+// tab write leaves the chat created; a retry with the same op_id finishes it.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (ChatOpened, error) {
-	// Hoisted above every lock: the read is file I/O, and both the operation
-	// lock and the chat record lock m.chats.Mutate takes are held below here.
-	// Resolved unconditionally, replay included — the read is cached, so the
-	// cost is a stat, and a conditional resolve would have to run inside the
-	// lock this hoist exists to stay out of.
+	// Hoisted above every lock because the read is file I/O; resolved unconditionally (it is
+	// cached) so no conditional resolve has to run inside the lock.
 	supervisedDefault := m.supervisedDefaultValue(ctx)
 
 	m.mu.Lock()
@@ -253,6 +256,7 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 	}
 
 	// The record leads.
+	purging := false
 	_, err := m.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if exists {
 			return false
@@ -261,10 +265,16 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 		// inherits its parent's posture on top of this.
 		c.SupervisedMode = supervisedDefault
 		req.Init(c)
-		return true
+		// After Init, whatever it bound: a chat claiming a session whose run the
+		// purge is deleting would claim a run that is about to be gone.
+		purging = slices.ContainsFunc(c.SessionChain(), m.sessionPurging)
+		return !purging
 	})
 	if err != nil {
 		return ChatOpened{}, StatusError(http.StatusInternalServerError, err)
+	}
+	if purging {
+		return ChatOpened{}, StatusError(http.StatusConflict, errRunPurging)
 	}
 	c, ok := m.chats.Get(ctx, chatID)
 	if !ok {
@@ -311,6 +321,9 @@ func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID str
 		if _, ok := m.chats.Get(ctx, marotte.ChatID(spec.Ref)); !ok {
 			return TabOpened{}, StatusError(http.StatusNotFound, errOpenChatUnknown)
 		}
+	}
+	if _, purging := m.purgingRuns[spec.Ref]; purging && spec.Kind == marotte.TabKindRun {
+		return TabOpened{}, StatusError(http.StatusConflict, errRunPurging)
 	}
 	spec.Parent = m.fillRunParent(spec)
 	return m.openTab(ctx, spec, opID)
@@ -372,38 +385,45 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []ma
 	deleted := m.deleteDoomedRecords(rollCtx, doomed)
 	m.mu.Unlock()
 
-	// After the lock: the teardown issues a session/cancel over the bridge with no
-	// client-side timeout, so holding the lock across it would let one wedged process
-	// block every other tab mutation. Exactly one grade per chat — delete grade for a
-	// record that went with this close (driven from the captured chain), close grade for
-	// every other chat tab, including a doomed chat whose delete failed.
+	// After the lock: the teardown's session/cancel has no client-side timeout, so one wedged
+	// process would block every tab mutation. One grade per chat: delete grade for a record this
+	// close took (from the captured chain), close grade for every other chat tab, including a
+	// doomed chat whose delete failed.
+	if m.tearDownClosed(rollCtx, closed, deleted) {
+		// The closed tab may have been what held an expired chat or finished run outside the age
+		// test, so wake the purge now rather than after an idle back-off of up to an hour. After
+		// the lock, because the wake reads a field it guards.
+		m.wakeRetention()
+	}
+	return closed, version, nil
+}
+
+// tearDownClosed runs one teardown grade per chat the close took and reports whether
+// a chat or run tab went, which is what owes retention a wake. Called after mu is
+// released.
+func (m *Membership) tearDownClosed(ctx context.Context, closed []marotte.TabSubject, deleted map[marotte.ChatID][]string) (retentionTabClosed bool) {
 	dispatched := make(map[marotte.ChatID]bool, len(deleted))
-	chatTabClosed := false
 	for _, t := range closed {
+		if t.Kind == marotte.TabKindRun {
+			retentionTabClosed = true
+		}
 		if t.Kind != marotte.TabKindChat {
 			continue
 		}
-		chatTabClosed = true
+		retentionTabClosed = true
 		chatID := marotte.ChatID(t.Ref)
 		if chain, isDoomed := deleted[chatID]; isDoomed {
 			if !dispatched[chatID] {
 				dispatched[chatID] = true
-				m.deleteChat(rollCtx, chatID, chain)
+				m.deleteChat(ctx, chatID, chain)
 			}
 			continue
 		}
 		if m.closeChat != nil {
-			m.closeChat(rollCtx, chatID)
+			m.closeChat(ctx, chatID)
 		}
 	}
-	if chatTabClosed {
-		// The tab that just closed may have been the last thing holding an expired chat
-		// outside retention's age test, so ask the purge to reconsider now instead of at
-		// the end of an idle back-off that doubles to an hour (SetRetentionWake carries
-		// the measurement). After the lock, because the wake reads a field it guards.
-		m.wakeRetention()
-	}
-	return closed, version, nil
+	return retentionTabClosed
 }
 
 // doomedChats decides what a retention-off close of id will delete: every chat whose
@@ -593,33 +613,30 @@ func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID marotte.
 	return nil
 }
 
-// RetentionClose tears down the work of a chat the retention purge has already removed and
-// then closes its tabs. The BY-CHAIN grade, because the record is already gone and a
-// record-reading teardown would silently no-op. The teardown runs BEFORE the operation lock,
-// where DeleteChatAndCloseTabs runs its own and for the same reason: the run cancel must
-// precede the bridge going down and it reaches the bridge. Closing tabs is normally a no-op
-// — HasOpenTab already skips a chat with an open tab, so reaching it with tabs to close
-// means one was opened between the predicate and the remove.
+// RetentionClose tears down the work of a chat the retention purge already removed, then closes its
+// tabs. By-chain grade, because a record-reading teardown would no-op. The teardown runs before the
+// operation lock, as in DeleteChatAndCloseTabs: the run cancel must precede the bridge going down.
+// Tabs to close here mean one was opened between HasOpenTab and the remove.
 func (m *Membership) RetentionClose(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
-	m.teardown.DeleteChatStateByChain(ctx, chatID, sessionChain)
+	m.teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopRetention)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closeTabsFor(ctx, chatID, "")
 }
 
-// SetRetentionWake registers the callback that asks the retention purge to run a
-// pass now. A SETTER rather than a constructor field because the coordinator is
-// built during Runtime construction and the purge scheduler after it.
-//
-// CLOSING A TAB IS THE EVENT THAT OWES THIS: HasOpenTab pins an expired chat
-// outside the age test while its tab is open, and an exempt chat contributes no
-// wake-up deadline, so a pass that saw only exempt chats backs off to a one-hour
-// ceiling and the chat could outlive its window by that much.
+// SetRetentionWake registers the callback that asks the retention purge for a pass now; a setter
+// because the purge scheduler is built after the coordinator. Closing a tab owes it: an exempt chat
+// contributes no deadline, so without a wake an all-exempt pass backs off to the one-hour ceiling.
 func (m *Membership) SetRetentionWake(wake func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.retentionWake = wake
 }
+
+// WakeRetention asks the purge to reconsider, if a scheduler is wired. A run that
+// just finished owes it as much as a closed tab: with retention off, a finished run
+// no tab shows is purgeable from that moment.
+func (m *Membership) WakeRetention() { m.wakeRetention() }
 
 // wakeRetention asks the purge to reconsider, if a scheduler is wired.
 func (m *Membership) wakeRetention() {
@@ -631,9 +648,7 @@ func (m *Membership) wakeRetention() {
 	}
 }
 
-// HasOpenTab reports whether any tab shows this chat — retention's second
-// predicate. This makes retention opt-out for a chat left open forever, which is
-// accepted: closing a tab under someone to satisfy a timer is worse. Takes no
+// HasOpenTab reports whether any tab shows this chat, retention's second predicate. Takes no
 // operation lock: it is a read, and the lock orders writes against their events.
 func (m *Membership) HasOpenTab(chatID marotte.ChatID) bool {
 	if m.tabs == nil {
@@ -641,6 +656,65 @@ func (m *Membership) HasOpenTab(chatID marotte.ChatID) bool {
 	}
 	open, _ := m.tabs.List()
 	return len(tabsForChat(open, chatID)) > 0
+}
+
+// AdmitRunPurge answers whether the run purge may delete workflowID, launched from parentSessionID:
+// false while a tab shows the run, while any chat's chain holds that session, or when the chats
+// cannot all be read. On true both are marked purging until the caller runs done, so OpenTab and
+// CreateChatAndOpen refuse them. Checks and marks share mu, so nothing commits between the decision
+// and the delete.
+func (m *Membership) AdmitRunPurge(ctx context.Context, workflowID, parentSessionID string) (done func(), ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runTabOpen(workflowID) || !m.sessionUnclaimed(ctx, parentSessionID) {
+		return nil, false
+	}
+	m.purgingRuns[workflowID] = struct{}{}
+	if parentSessionID != "" {
+		m.purgingSessions[parentSessionID]++
+	}
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.purgingRuns, workflowID)
+		if parentSessionID == "" {
+			return
+		}
+		m.purgingSessions[parentSessionID]--
+		if m.purgingSessions[parentSessionID] <= 0 {
+			delete(m.purgingSessions, parentSessionID)
+		}
+	}, true
+}
+
+// runTabOpen reports whether a tab shows workflowID. Caller holds mu.
+func (m *Membership) runTabOpen(workflowID string) bool {
+	if m.tabs == nil {
+		return false
+	}
+	open, _ := m.tabs.List()
+	return slices.ContainsFunc(open, func(t marotte.TabSubject) bool {
+		return t.Kind == marotte.TabKindRun && t.Ref == workflowID
+	})
+}
+
+// sessionUnclaimed reports whether no chat's session chain holds sessionID, true
+// only when every chat was read. An empty id names no session. Caller holds mu.
+func (m *Membership) sessionUnclaimed(ctx context.Context, sessionID string) bool {
+	if sessionID == "" {
+		return true
+	}
+	if m.sessions == nil {
+		return false
+	}
+	claimed, complete := m.sessions.SessionClaimed(ctx, sessionID)
+	return !claimed && complete
+}
+
+// sessionPurging reports whether a run the purge is deleting was launched from
+// sessionID. Caller holds mu.
+func (m *Membership) sessionPurging(sessionID string) bool {
+	return m.purgingSessions[sessionID] > 0
 }
 
 // openTab opens and, when something was committed, emits. Caller holds mu.

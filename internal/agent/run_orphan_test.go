@@ -1,7 +1,6 @@
 package agent
 
-// Tests for the restart-orphan clearing. The unacceptable failure is cancelling a
-// LIVE run, so most of these assert a refusal and name the population it protects.
+// The unacceptable failure is cancelling a live run, so most cases assert a refusal.
 
 import (
 	"encoding/json"
@@ -16,10 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// kasRuns builds a workflow/list reply, DEFAULTING `workflowName` to the row's `name`.
-// The real wire always carries both (`{name: runLabel ?? workflowName, workflowName}`), so
-// omitting it would encode a shape the backend never sends. A row setting `workflowName`
-// itself is the labelled case and is left alone.
+// kasRuns builds a workflow/list reply, defaulting `workflowName` to `name` as the wire always carries both.
 func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 	t.Helper()
 	for _, row := range rows {
@@ -34,11 +30,7 @@ func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 	return raw
 }
 
-// inspectReply builds a workflow/inspect reply in KAS's own shape, with the run status
-// and the pause reason on `state`. It takes the WORKFLOW ID because the predicate
-// refuses a reply that does not echo the run it asked about: a fixture omitting the id
-// lets every positive case pass against the exact unsafe shape that check rejects — an
-// orphan's pause state while naming some other, live run.
+// inspectReply builds a KAS inspect reply. It takes the workflow id: the predicate refuses a reply naming another run.
 func inspectReply(t *testing.T, workflowID string, status marotte.RunStatus, reason string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -57,11 +49,8 @@ func inspectPaused(t *testing.T, workflowID, reason string) json.RawMessage {
 	return inspectReply(t, workflowID, marotte.RunStatusPaused, reason)
 }
 
-// inspectPausedWithDetail is the shape a pause KAS CLASSIFIED comes back as: the same
-// reply plus `state.pauseDetail`. Reason and detail are passed separately because they
-// can DISAGREE about how resumable a pause looks, which is what lets a test drive the
-// wrapper sentence past the reason arm. `occurredAt` is written even though
-// `pauseDetail` no longer declares it: the fixture describes the WIRE, and KAS sends it.
+// inspectPausedWithDetail adds `state.pauseDetail`; reason and detail are separate since they can disagree.
+// `occurredAt` is written because KAS sends it.
 func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDetail) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -81,16 +70,12 @@ func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDet
 	return raw
 }
 
-// The pause a step inside a PARALLEL BRANCH produces, both halves, verbatim from a run on
-// the stock KAS 2.21.0 bundle. The sentence matches NONE of the reason arms and the detail
-// is byte-identical to a plain step's, because `executeParallel` composes the sentence
-// FROM the branch's detail.
+// A parallel branch's pause, verbatim from a real run (KAS 2.21.0): the sentence matches no reason arm and
+// the detail equals a plain step's.
 const branchWrapperReason = "Parallel 'phase1' is waiting on branch 'live-verify' " +
 	"(branch paused on transient error EAI_AGAIN)."
 
-// branchWaitReason is the SAME wrapper with no cause in it. An interruption, a permanent
-// failure and a need-input park all reach the run as exactly this sentence, so it names
-// NONE of them — which is what makes it prove the detail arm rather than the reason arm.
+// branchWaitReason is the same wrapper with no cause, which interruptions, failures and need-input parks all produce.
 const branchWaitReason = "Parallel 'phase1' is waiting on branch 'live-verify'."
 
 func transientDetail() pauseDetail {
@@ -100,11 +85,8 @@ func transientDetail() pauseDetail {
 	}
 }
 
-// TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral: at least five KAS sites set a
-// pause reason and only ONE means the owning process died. A deliberate pause, a policy
-// stop, a step waiting for input and a torn plan all report the same `paused` status,
-// and cancelling any of them destroys work somebody is coming back to. So the comparison
-// is against the literal, and anything else leaves the run alone.
+// TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral pins that many KAS sites set a pause reason and only one means
+// the owner died; cancelling any other `paused` run destroys work.
 func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 	for name, tc := range map[string]struct {
 		reason string
@@ -150,9 +132,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 		}
 	})
 
-	// The reply must be ABOUT the run asked about and must still say paused: the caller
-	// cancels the workflow id from the LEASE, so either half missing would authorise
-	// cancelling a live run on somebody else's — or an expired — pause state.
+	// The reply must name this run and still say paused, or a lease's id could be cancelled on another run's state.
 	t.Run("the reply must be about this run and still say paused", func(t *testing.T) {
 		for name, reply := range map[string]json.RawMessage{
 			"a reply naming a DIFFERENT run": inspectPaused(t, "wf_other", stalePauseReason),
@@ -176,8 +156,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 		}
 	})
 
-	// The request side of the same identity check: an empty id would match a reply that
-	// carries no workflowId, the one shape that decodes to an empty string.
+	// An empty id would match a reply with no workflowId.
 	t.Run("an empty workflow id is never asked about", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -194,12 +173,8 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 	})
 }
 
-// TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn is the UNACCEPTABLE-FAILURE test,
-// and why the predicate is a conjunction of two narrow conditions: each case is a run
-// that is genuinely LIVE or genuinely somebody else's, and each would be cancelled by a
-// predicate widened in one plausible direction — the KAS list alone, dropping the origin
-// exclusion, `status == paused`, or the lease condition alone. Bridge presence is
-// deliberately unused: after a restart NO run has one, so it would cancel all four.
+// TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn pins that each case is live or not marotte's, and each would be
+// cancelled by one plausible widening. Bridge presence is unused: after a restart no run has one.
 func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
@@ -240,8 +215,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 					t.Fatalf("Put: %v", err)
 				}
 			}
-			// A live bridge is deliberately absent for every case: a restart leaves
-			// none, so supplying one would let a bridge-presence predicate pass.
+			// No live bridge in any case, as after a restart.
 			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
@@ -266,10 +240,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned is the positive case. Without it
-// the schedule wedged permanently: KAS reports the run `paused`, the resume sweep only
-// reaches runs inside a chat's session chain, and `paused` is not terminal, so the
-// single-run rule refused every later slot forever.
+// TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned pins that otherwise the `paused` orphan blocks every later slot.
 func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -297,8 +268,8 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	if !cancelled {
 		t.Errorf("no cancel went out for the orphan: %v", br.callLog())
 	}
-	// Its own reason, not `cancelled`: a user cancel, a blown deadline, a step-cap
-	// trip and a restart orphan are four different facts and the row names which.
+	wantStopParams(t, "sweep cancel", br.paramsFor(methodKiroWorkflowCancel), false, "")
+	// Its own reason: the row names which of four stops it was.
 	if got := h.runs.endReason("wf_1"); got != runEndOrphaned {
 		t.Errorf("the orphan recorded %q, want %q", got, runEndOrphaned)
 	}
@@ -307,11 +278,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow pins the half the run's own
-// row cannot carry: a schedule whose run was swept must stop reading "started". Without
-// it the recipe reads as busy, every later slot is refused as an overlap, and the log
-// line is the only trace — which is invisible from the Workflows tab, where a wedge and
-// a long run look identical.
+// TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow pins that the schedule must stop reading "started".
 func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -352,11 +319,8 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately is bookkeeping rather than the
-// orphan path: a terminal status in the list is evidence enough, so nothing is cancelled
-// and nothing is recorded. BOTH origins, because the agent exclusion guards the CANCEL
-// only — an agent-origin lease outliving its run holds its launching chat exempt from
-// client eviction until the next boot.
+// TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately pins that bookkeeping for both origins; an agent lease
+// outliving its run keeps its chat exempt from eviction.
 func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 	for name, origin := range map[string]runlease.Origin{
 		"manual": runlease.OriginManual,
@@ -390,8 +354,7 @@ func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing pins the first miss: a run
-// absent from an otherwise successful list keeps its lease.
+// TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing pins the first miss.
 func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
@@ -443,8 +406,7 @@ func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome pins
-// the six-hour bookkeeping backstop. No cancel is ever sent on absence.
+// TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome pins the six-hour backstop; absence never cancels.
 func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
@@ -536,8 +498,7 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing pins the original
-// failure at its widest: one short successful reply must not drop every lease.
+// TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing pins that one short reply must not drop every lease.
 func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
@@ -557,8 +518,7 @@ func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails: at boot the likeliest
-// cause is kiro-cli still installing, and the admission backstop is the second chance.
+// TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails pins that at boot kiro-cli may still be installing.
 func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
@@ -580,12 +540,8 @@ func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails: freeing the lease would leave
-// the KAS row paused with nothing left to explain it, so admission would refuse forever,
-// where keeping it means the next launch retries the clear. It also pins what the ROW
-// says — recording the reason before the cancel and never taking it back made History
-// render the run as ended (a recognised end reason outranks live status in history.ts)
-// for a run still paused in KAS. An ending that did not happen must not be announced.
+// TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails pins that the kept lease lets the next launch retry, and the
+// row must not announce an ending that did not happen.
 func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -612,18 +568,14 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 			"in KAS and the next admission attempt retries the clear, so History must not "+
 			"already say it was stopped", got)
 	}
-	// And the claim is back, or the retry this lease was kept for cannot happen.
+	// The claim is back for that retry.
 	if !h.runs.claimTermination("wf_1") {
 		t.Error("the failed cancel kept the termination claim, so nothing can clear the orphan")
 	}
 }
 
-// TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan is the check-to-cancel
-// window, narrowed. Both callers establish "orphan" from an earlier read and then cancel;
-// re-asking immediately before the cancel shrinks the gap to one RPC round trip, which is
-// as far as it goes — KAS exposes no compare-and-cancel and no state token `cancel` will
-// honour. What makes the remainder safe is that nothing marotte owns can resume a run this
-// function reaches: Resume needs the run's own `run:<id>` bridge, which a restart destroys.
+// TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan pins that re-asking just before the cancel narrows
+// the window to one round trip (KAS has no compare-and-cancel); nothing marotte owns can resume such a run.
 func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T) {
 	for name, reply := range map[string]json.RawMessage{
 		"it is executing again":       inspectReply(t, "wf_1", "running", stalePauseReason),
@@ -653,7 +605,7 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 			if _, held := h.runs.lease("wf_1"); !held {
 				t.Error("the lease of a run that was left alone was released")
 			}
-			// The claim goes back, or the run can never be ended by anything again.
+			// The claim goes back.
 			if !h.runs.claimTermination("wf_1") {
 				t.Error("the refusal kept the termination claim, so no bound and no Cancel " +
 					"button can ever act on this run")
@@ -662,8 +614,7 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 	}
 }
 
-// TestRecipeIdle_ClearsABlockingOrphanAndProceeds is the admission backstop, which exists
-// because a run can be orphaned without a restart: its own bridge can die mid-session.
+// TestRecipeIdle_ClearsABlockingOrphanAndProceeds pins that a run can be orphaned without a restart.
 func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -691,17 +642,13 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	}
 }
 
-// TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe pins the single-run rule against a run
-// wearing a LABEL, the shape that made the guard fail OPEN. A row's `name` is
-// `runLabel ?? workflowName`, so a labelled run files itself under a string no recipe
-// lookup matches and a second live run was admitted.
+// TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe pins that `name` is `runLabel ?? workflowName`, so matching on it failed open.
 func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_live", "status": "running",
-			// The divergence: KAS's watch stamp made the display name
-			// `<recipe>-<targetId>` while the recipe stayed `publish`.
+			// KAS's watch stamp made the name `<recipe>-<targetId>`.
 			"name": "publish-pr-4127", "workflowName": "publish",
 		}),
 	}
@@ -711,10 +658,7 @@ func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
 	}
 }
 
-// TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain is why admission keeps
-// reading KAS's list rather than the leases: that list is the only thing that sees the two
-// populations marotte does not launch, so a lease-only admission would make an
-// agent-launched and a TUI-launched run invisible to the single-run rule.
+// TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain pins that only KAS's list sees agent and TUI runs.
 func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
@@ -764,9 +708,7 @@ func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 	}
 }
 
-// TestOrphanSweepBudget_ExceedsThePerCallTimeout: the sweep issues one inspect per
-// candidate lease sequentially, so a budget below the per-call timeout would cancel the
-// first call rather than bounding the sweep.
+// TestOrphanSweepBudget_ExceedsThePerCallTimeout pins that the sequential inspects need a budget above one call.
 func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 	t.Parallel()
 	if orphanSweepBudget <= sessionListTimeout {
@@ -779,12 +721,8 @@ func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 	}
 }
 
-// TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse pins the boundary the
-// resume sweep may act on. KAS records a pause for about thirteen causes in three groups —
-// involuntary, waiting on a human, stopped by policy — and only the first may be resumed
-// without asking, so a reason drifting into the wrong group either strands a run forever
-// or restarts one somebody parked on purpose. The network reason is matched by PREFIX, so
-// the negative cases include the shapes a loose prefix would swallow.
+// TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse pins that of KAS's pause causes (involuntary, waiting
+// on a human, policy) only the first may resume unasked; the negatives include what a loose prefix swallows.
 func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) {
 	transient := transientDetail()
 
@@ -793,27 +731,25 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 		reason string
 		want   bool
 	}{
-		// --- The REASON arm, every case with NO detail ---
-		// Involuntary: nobody chose this, and KAS's own text says so.
+		// The reason arm, no detail. Involuntary.
 		"the reconcile's restart literal": {nil, stalePauseReason, true},
 		"an interrupted step":             {nil, interruptedPauseReason, true},
 		"a transient model 5xx":           {nil, modelServicePauseReason, true},
 		"a transient network code":        {nil, "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.", true},
 		"a different network code":        {nil, "Transient connection error (ECONNRESET); the run is paused and can be resumed.", true},
 
-		// Waiting on a human. Resuming these would answer a question nobody asked.
+		// Waiting on a human.
 		"a step that asked for input":   {nil, "Step requested user input via send_message.", false},
 		"a step awaiting the next turn": {nil, "Step 'review' is waiting for the next user message.", false},
 		"a step awaiting user input":    {nil, "Step 'design' is waiting for user input.", false},
 
-		// Stopped by policy or already over. Resuming these overrides a decision.
+		// Policy or over.
 		"a repeat at maxIterations":   {nil, "Repeat 'implement' reached maxIterations.", false},
 		"a repeat aborted at the cap": {nil, "Repeat 'implement' aborted at maxIterations.", false},
 		"a recorded failure":          {nil, "Run failed: the reviewer never approved", false},
 		"a deliberate pause":          {nil, "Paused by user request", false},
 
-		// The shapes a careless prefix match would swallow. They carry no detail so the
-		// second arm cannot answer for them and the prefix stays tested.
+		// Shapes a careless prefix would swallow, detail-less so the prefix stays tested.
 		"no reason at all":                           {nil, "", false},
 		"the network phrase mid-sentence":            {nil, "Step failed: Transient connection error (EAI_AGAIN)", false},
 		"the network phrase without its parenthesis": {nil, "Transient connection error EAI_AGAIN", false},
@@ -821,19 +757,14 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 		"the interruption literal truncated":         {nil, "Step interrupted (agent shutdown or connection reset)", false},
 		"the restart literal in different case":      {nil, "interrupted by agent restart; the previously running step was paused for resume.", false},
 
-		// --- The DETAIL arm, every case with a reason NO arm accepts ---
-		// KAS's executeParallel composes the sentence from the branch's own detail, so
-		// it matches nothing above and the detail is a plain step's byte for byte.
+		// The detail arm, with no accepted reason: executeParallel's wrapper matches nothing.
 		"a transient fault inside a parallel branch": {&transient, branchWrapperReason, true},
-		// The same detail under a sentence nobody has seen: a third KAS code path may
-		// word it a third way and the class still decides.
+		// Unseen prose: the class still decides.
 		"a classified fault under prose no arm knows": {&transient, "Something upstream re-worded this.", true},
-		// A classified fault with NO prose at all. The frame carries the class, so
-		// the absence of a sentence is not the absence of a verdict.
+		// No prose at all: the class is still a verdict.
 		"a classified fault with no reason at all": {&transient, "", true},
 
-		// The detail arm is a CLASS match, not a presence check: a pause KAS classified
-		// as anything else is somebody's decision.
+		// A class match, not presence.
 		"a permanent fault carrying a detail": {
 			&pauseDetail{Class: "permanent", Code: "ENOTFOUND"},
 			branchWaitReason, false,
@@ -846,9 +777,7 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 			&pauseDetail{Class: "transient", Code: "EAI_AGAIN"},
 			branchWaitReason, false,
 		},
-		// The needInput-inside-a-parallel-branch shape: the wrapper sentence with NO
-		// detail. It must stay false, and it proves the detail arm did not widen the
-		// predicate to the wrapper SENTENCE. See run_ask.go for the signal that closes it.
+		// A parallel need-input park: the wrapper without detail stays false (run_ask.go's signal handles it).
 		"a need-input park inside a parallel branch": {nil, branchWaitReason, false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -860,14 +789,10 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 	}
 }
 
-// TestResumablePause_IsStrictlyWiderThanTheCancelPredicate is the asymmetry, and the whole
-// reason these are two functions. The orphan sweep CANCELS on its predicate so it may only
-// fire when the owning process died; the resume sweep RESUMES so it may fire for any
-// involuntary stop. Widening the cancel side destroys work; narrowing the resume side
-// stranded six live runs.
+// TestResumablePause_IsStrictlyWiderThanTheCancelPredicate pins that the cancel predicate fires only for a dead owner,
+// the resume one for any involuntary stop. Widening cancel destroys work; narrowing resume stranded runs.
 func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
-	// Both predicates are driven over the SAME inspect fixture, so this asserts the
-	// relationship between the two rules rather than restating either.
+	// Both predicates over the same fixture.
 	both := func(t *testing.T, reply json.RawMessage) (cancel, resume bool) {
 		t.Helper()
 		h, _, br := newTestHub()
@@ -876,8 +801,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 	}
 
 	t.Run("everything the cancel side accepts, the resume side accepts too", func(t *testing.T) {
-		// Otherwise a restart-paused run would be cancellable by the orphan sweep and
-		// never resumable by its own chat, which is the worst of both rules.
+		// Otherwise a restart-paused run would be cancellable but never resumable.
 		cancel, resume := both(t, inspectPaused(t, "wf_1", stalePauseReason))
 		if !cancel || !resume {
 			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for KAS's restart literal; want both true",
@@ -903,9 +827,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 		})
 	}
 
-	// The DETAIL half of the asymmetry: the detail arm licenses a RESUME and must never
-	// license a CANCEL. `restartPaused` takes no detail at all, so this is by
-	// construction — and the way it would be lost is threading the detail in for symmetry.
+	// The detail licenses a resume, never a cancel; restartPaused takes no detail by construction.
 	t.Run("a classified transient fault is resumable and never cancellable", func(t *testing.T) {
 		cancel, resume := both(t, inspectPausedWithDetail(t, "wf_1", branchWrapperReason, transientDetail()))
 		if cancel {
@@ -919,9 +841,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 		}
 	})
 
-	// The same fixture with the detail REMOVED, the wrapper a need-input park (and an
-	// interruption, and a permanent failure) produces. Neither predicate may touch it: it
-	// is not the restart literal, and the sentence carries no verdict at all.
+	// The detail-less wrapper: neither predicate may touch it.
 	t.Run("the branch wrapper with no detail is neither resumable nor cancellable", func(t *testing.T) {
 		cancel, resume := both(t, inspectPaused(t, "wf_1", branchWaitReason))
 		if cancel || resume {
@@ -932,10 +852,8 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 	})
 }
 
-// TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions: the reason predicate is wider
-// than restartPaused's and nothing else about the check is. The status is re-read off THIS
-// reply because a pause reason outlives its pause, so acting on the reason alone would
-// resume a run already executing; the identity check and the failed-RPC refusal stand.
+// TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
+// re-read since a reason outlives its pause.
 func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	transient := "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
@@ -980,11 +898,8 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 	})
 }
 
-// TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame: a lease is released on
-// the live path by exactly one event, a terminal `run_complete` on a bridge this process
-// still reads, and a cancel is a node-boundary verb — so a run with no in-flight node has
-// no boundary to reach and no such frame follows. Without the release such a run stays on
-// /api/runs/live indefinitely, holding its chat exempt from the client's eviction sweep.
+// TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame pins that a cancel of a run with no in-flight node
+// sends no `run_complete`; a real run stayed on /api/runs/live 27 hours after reaching `aborted`.
 func TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -1000,11 +915,8 @@ func TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame(t *testing
 	}
 }
 
-// TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver: each case is a lease that
-// must survive. The caller asks about the workflow id from the LEASE, so a reply naming a
-// different run must not decide this one's fate; the rest are runs that have not finished,
-// and releasing one unbounds it (the deadline lives on the lease), silences the unattended
-// permission floor, and strands a blocking row clearBlockingOrphan can no longer explain.
+// TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver pins that releasing a live run's lease unbounds it,
+// silences the unattended floor and strands its blocking row.
 func TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver(t *testing.T) {
 	for name, reply := range map[string]json.RawMessage{
 		"a reply naming a DIFFERENT run": inspectReply(t, "wf_other", "aborted", ""),
@@ -1026,12 +938,8 @@ func TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver(t *testing.T)
 	}
 }
 
-// TestReleaseIfOver_LeavesARunItCouldNotReadAlone is the recorded LIMIT, and the one case
-// SweepOrphaned's first branch covers that this does not: that branch reads the run LIST,
-// where an absent id positively states KAS has no such run, while `inspect` reports the
-// same condition as an ERROR indistinguishable in KIND from a bridge that did not answer.
-// So it takes the conservative direction — a lease left behind costs memory and one chat's
-// eviction exemption, a lease released under a live run unbounds it.
+// TestReleaseIfOver_LeavesARunItCouldNotReadAlone pins that inspect reports an unknown run as an error like a dead
+// bridge's, so it keeps the lease, the cheaper mistake.
 func TestReleaseIfOver_LeavesARunItCouldNotReadAlone(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
@@ -1045,9 +953,7 @@ func TestReleaseIfOver_LeavesARunItCouldNotReadAlone(t *testing.T) {
 	}
 }
 
-// TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease: the early return is what makes
-// the reconcile a NO-OP for a run whose terminal frame won the race, and why the check sits
-// before the RPC rather than inside the release.
+// TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease pins that the early return before the RPC.
 func TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease(t *testing.T) {
 	for name, id := range map[string]string{
 		"a run whose lease is already gone": "wf_1",
@@ -1069,11 +975,8 @@ func TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease(t *testing.T) {
 	}
 }
 
-// TestSweepOrphaned_ReportsWhetherItReachedKAS: the verdict exists so the composition root
-// can retry the ONE failure a caller can act on. Before it travelled, `run list
-// unavailable` was terminal for the process — seven boots in ten days met a kiro-cli still
-// installing and kept every stale lease for the whole process life. An empty lease store
-// reports REACHED deliberately: a retry would find the same emptiness.
+// TestSweepOrphaned_ReportsWhetherItReachedKAS so the composition root can retry when kiro-cli was still
+// installing. An empty store reports reached: a retry finds the same.
 func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
 	t.Run("a run list that answered", func(t *testing.T) {
 		h, _, br := newTestHub()

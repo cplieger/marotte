@@ -8,8 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// stampedAt sets every entry's ts to ms, the appender's own field the export reads
-// for the turn heading's timestamp.
+// stampedAt sets every entry's ts to ms, which the export reads for the heading timestamp.
 func stampedAt(entries []marotte.Entry, ms int64) []marotte.Entry {
 	for i := range entries {
 		entries[i].Ts = ms
@@ -99,8 +98,7 @@ func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 	}
 }
 
-// A hidden bidi-control codepoint in a tool result's output is scrubbed by the
-// sanitize.Output pass the renderer applies.
+// A hidden bidi codepoint in tool output is scrubbed by sanitize.Output.
 func TestRenderChatMarkdown_SanitisesToolOutput(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		tool(marotte.EntryToolCall{ID: "tc1", Title: "run"},
@@ -114,8 +112,7 @@ func TestRenderChatMarkdown_SanitisesToolOutput(t *testing.T) {
 	}
 }
 
-// Content containing a triple-backtick run is wrapped in a longer fence so it
-// cannot close the block early.
+// A triple-backtick run gets a longer fence.
 func TestFencedCode_ExpandsFenceForEmbeddedBackticks(t *testing.T) {
 	out := fencedCode("before ``` after", "")
 	if !strings.HasPrefix(out, "````\n") {
@@ -142,9 +139,7 @@ func TestMdTimestamp_ZeroIsEmpty(t *testing.T) {
 	}
 }
 
-// The export omits what a turn does not carry. Rendering an absent plan, a zero
-// duration or a line-less location produces sections and coordinates that were
-// never in the transcript, which is worse than saying nothing.
+// An absent plan, zero duration or line-less location renders nothing rather than invented sections.
 func TestRenderChatMarkdown_OmitsWhatTheTurnDoesNotCarry(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "done").
@@ -168,10 +163,7 @@ func TestRenderChatMarkdown_OmitsWhatTheTurnDoesNotCarry(t *testing.T) {
 	}
 }
 
-// A steer is words arriving mid-turn, and whether the agent read them is the fact
-// the reader most wants back: a read user steer, a dropped one and an agent-origin
-// note each get their own heading, and every steer's text survives whatever its
-// heading says, because losing a word is worse than an ambiguous label.
+// A read user steer, a dropped one and an agent note each get their own heading, and every steer's text survives.
 func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
 		add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}).
@@ -192,10 +184,7 @@ func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T)
 	}
 }
 
-// An ack with no words of its own adds nothing: the steer's own heading already says
-// whether the agent read it, so the ack must not say "read" a second time. The
-// assertion is equality against the same turn WITHOUT the ack, which fails the moment
-// anything renders a wordless one.
+// A wordless ack adds nothing; asserted as equality with the same turn without it.
 func TestRenderChatMarkdown_AWordlessSteerAckAddsNothing(t *testing.T) {
 	steer := marotte.EntrySteer{Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}
 
@@ -218,9 +207,7 @@ func TestRenderChatMarkdown_AWordlessSteerAckAddsNothing(t *testing.T) {
 	}
 }
 
-// An ack's words are the AGENT's, lifted out of the reply they rode on; the client
-// draws them as prose at the ack's own position, so an export dropping them would
-// lose part of what the agent said.
+// An ack's words are the agent's, rendered as prose at the ack's position.
 func TestRenderChatMarkdown_RendersASteerAcksWordsAsAgentProse(t *testing.T) {
 	steer := marotte.EntrySteer{Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}
 	ack := marotte.EntrySteerAck{SteerID: "steer-1", Text: "switching to tabs now"}
@@ -236,10 +223,7 @@ func TestRenderChatMarkdown_RendersASteerAcksWordsAsAgentProse(t *testing.T) {
 	}
 }
 
-// A revert is a RECORD, so the export states the cut the transcript states: the rule
-// and the words, at the record's own position inside its carrier. The entry's presence
-// is the whole fact, which is why the assertion is on the rendered boundary rather than
-// on any field of the payload.
+// A revert's rule and words render at the record's position in its carrier; asserted on the boundary, not the payload.
 func TestRenderChatMarkdown_StatesTheCutARevertRecorded(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
 		text("say-1", "done").
@@ -258,10 +242,8 @@ func TestRenderChatMarkdown_StatesTheCutARevertRecorded(t *testing.T) {
 	}
 }
 
-// ONE entry kind carries TWO triggers, so the export says which one happened: a
-// model move, an effort-only change, or the context reset an empty target means.
-// The detail must mirror the transcript row's arms or the same entry reads as two
-// different events depending on where it is read.
+// One kind, two triggers: a model move, an effort-only change, or the context reset an empty target means, mirroring
+// the transcript row.
 func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -281,12 +263,16 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 			unwanted: []string{"→"},
 		},
 		{
-			// `effort` is optional on the wire, so a chat file written before it
-			// existed renders the line it always rendered.
+			// `effort` is optional on the wire, so an older chat file renders as before.
 			name:     "no_tier",
 			payload:  marotte.EntryModelSwitched{From: "sonnet-5", To: "opus-5"},
 			want:     "**Event: model_switched** sonnet-5 → opus-5",
-			unwanted: []string{"("},
+			unwanted: []string{"(", "switched by KAS"},
+		},
+		{
+			name:    "repinned_by_kas",
+			payload: marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5", Reason: marotte.ModelSwitchReasonUnavailable},
+			want:    "**Event: model_switched** opus-5 → sonnet-5, switched by KAS: unavailable",
 		},
 		{
 			name:     "context_reset",
@@ -315,9 +301,7 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	}
 }
 
-// A tool_result is folded into its call's block, so one call is one block whose
-// status and output are the SETTLED ones; a result whose call a rewind cut away
-// renders on its own rather than vanishing.
+// A tool_result folds into its call's block with the settled status and output; an orphaned result renders alone.
 func TestRenderChatMarkdown_FoldsAResultIntoItsCallAndRendersAnOrphanAlone(t *testing.T) {
 	tf := openTurn("t-1", 1, nil).
 		tool(marotte.EntryToolCall{ID: "tc1", Title: "build", Status: marotte.ToolPending},
@@ -345,8 +329,7 @@ func TestRenderChatMarkdown_FoldsAResultIntoItsCallAndRendersAnOrphanAlone(t *te
 	}
 }
 
-// A plan is rendered ONCE, at the first plan entry's position, in its NEWEST state:
-// a later plan entry updates the checklist rather than adding a second one.
+// A plan renders once, at the first plan's position, in its newest state.
 func TestRenderChatMarkdown_RendersThePlanOnceInItsNewestState(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		add("", "plan-1", marotte.EntryKindPlan, marotte.EntryPlan{Entries: []marotte.PlanEntry{{Content: "step one", Status: marotte.PlanPending}}}).
@@ -367,7 +350,7 @@ func TestRenderChatMarkdown_RendersThePlanOnceInItsNewestState(t *testing.T) {
 	}
 }
 
-// A delegate's entries say whose words they are; the chat's own agent gets no note.
+// A delegate's entries say whose words they are; lane "" gets no note.
 func TestRenderChatMarkdown_MarksADelegatesLane(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "parent prose").

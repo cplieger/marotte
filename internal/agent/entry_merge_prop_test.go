@@ -11,44 +11,29 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Property 3 of the design's test strategy: the merge is idempotent and
-// order-preserving. Property 7's pure half rides along, because the two state the same
-// invariant from either end — every id present before a rewrite is present after, in the
-// same relative order within its turn, with the turns contiguous in n order.
+// The merge is idempotent and order-preserving: every id survives, in relative order within its turn, turns contiguous by n.
 
-// turnPlan is one turn of a generated transcript: which side holds it, how the two sides
-// disagree about it, and how the record split its first say. One plan builds BOTH sides,
-// so a paired turn cannot accidentally be generated unpairable.
+// turnPlan is one turn of a generated transcript; one plan builds both sides, so a paired turn is never generated unpairable.
 type turnPlan struct {
-	// InRecord and InProjected decide the three populations the merge has rules for: a
-	// paired turn, a record turn no replay covers, and a replayed turn the record lost.
+	// InRecord and InProjected pick one of the three populations: paired, record-only, replay-only.
 	InRecord    bool
 	InProjected bool
-	// Bound gives the record turn a turn_bind, rule one's only key. OutOfScope mints it
-	// in another session, which is the scope that keeps the empty-turn retry straight,
-	// and gives the projected side its own say ids so rule two cannot pair the two
-	// either: the arm is a stale stamp meeting a turn it never named.
+	// Bound gives the record turn a turn_bind (rule one). OutOfScope mints it in another session
+	// and gives the projection its own say ids, so neither rule pairs them.
 	Bound      bool
 	OutOfScope bool
-	// Says is how many content entries the turn holds, at least one so a projected turn
-	// always carries rule two's key. Segments is how many pieces the record split the
-	// first say into, which is the boundary set the union may never merge.
+	// Says is the content entry count (at least one, for rule two's key); Segments is how many
+	// pieces the record split the first say into.
 	Says     int
 	Segments int
-	// SteerLost is a steer the replay holds and the record does not, the crash case rule
-	// 3 stamps.
+	// SteerLost is a steer only the replay holds, the crash case rule 3 stamps.
 	SteerLost bool
-	// Placeholder decides whether the record's closer is one a process wrote or the
-	// store's synthesized placeholder, the one arm KAS's own account may replace. A
-	// record turn is ALWAYS closed, because the store's own open closer closes every
-	// turn it finds open before it serves or appends anything, so an open record turn
-	// cannot reach a merge.
+	// Placeholder picks a process-written closer or the store's placeholder. A record turn is
+	// always closed: the store's open closer closes every open turn first.
 	Placeholder bool
-	// ProjClosed decides whether the replay saw a turn_end at all, which is rule 4's own
-	// arm: an inserted turn with none gets the synthesized closer.
+	// ProjClosed decides whether the replay saw a turn_end (rule 4).
 	ProjClosed bool
-	// TailBytes is how much longer the replay's first say is than the record's segments
-	// concatenated, which is where a crash loses deltas.
+	// TailBytes is how much longer the replay's first say is than the record's segments.
 	TailBytes int
 }
 
@@ -58,7 +43,7 @@ func genTurnPlans() *rapid.Generator[[]turnPlan] {
 			Says:     rapid.IntRange(1, 3).Draw(t, "says"),
 			Segments: rapid.IntRange(1, 3).Draw(t, "segments"),
 		}
-		// One of the three populations, so every generated turn is in at least one side.
+		// Every generated turn is in at least one side.
 		switch rapid.IntRange(0, 2).Draw(t, "population") {
 		case 0:
 			p.InRecord, p.InProjected = true, true
@@ -78,10 +63,8 @@ func genTurnPlans() *rapid.Generator[[]turnPlan] {
 	return rapid.SliceOfN(plan, 1, 4)
 }
 
-// buildSides turns a plan into the two accounts of one transcript. `stamp` is how a
-// generated entry gets its Ts, so the same plan can be built with timestamps and without
-// them: the merge reads none, and the only honest way to say so in Go is to show the
-// output is identical either way.
+// buildSides turns a plan into both accounts; stamp sets each entry's Ts, so the same plan
+// builds with and without timestamps.
 func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []RecordTurn, projected []translate.ProjectedTurn) {
 	for i, p := range plans {
 		recTurnID := fmt.Sprintf("T%d", i)
@@ -103,8 +86,7 @@ func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []R
 		}
 		projPrompt := prompt
 		if p.Bound {
-			// The replay carries KAS's own record id in the prompt, which is what rule one
-			// compares against the record's bind.
+			// The replay carries KAS's record id in the prompt, rule one's comparison.
 			projPrompt = &marotte.EntryPrompt{ID: kasID, Text: "go"}
 		}
 		projRows = append(projRows, openRow(projTurnID, 0, projPrompt))
@@ -117,7 +99,7 @@ func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []R
 			}
 			whole := strings.Repeat("x", 4*(s+1))
 			if s == 0 {
-				// The record's own segment boundaries, which the union may never merge.
+				// The record's own segment boundaries.
 				per := len(whole) / p.Segments
 				for k := range p.Segments {
 					id := say
@@ -190,8 +172,7 @@ func stampTurn(turn RecordTurn, stamp func(int) int64) RecordTurn {
 	return turn
 }
 
-// TestMergeEntries_IsIdempotentAndOrderPreserving is property 3, plus property 7's pure
-// half.
+// TestMergeEntries_IsIdempotentAndOrderPreserving pins idempotence and order preservation.
 func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
@@ -201,8 +182,7 @@ func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 		assertMergeShape(rt, record, merged)
 		assertArms(rt, plans, record, merged)
 
-		// Idempotence: the second merge of the same replay must change nothing, which is
-		// what makes a resumed chat stop rewriting its own log on every load.
+		// Idempotence: a second merge of the same replay changes nothing.
 		again, changed := MergeEntries(mergedAsRecord(merged), projected, "sid-1")
 		if changed {
 			rt.Fatalf("second merge reported a change:\nfirst:\n%s\nsecond:\n%s",
@@ -214,14 +194,11 @@ func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 	})
 }
 
-// TestMergeEntries_ReadsNoTimestamp is the design's "no ts read" clause, stated the one
-// way Go allows: the merge's output must be identical whether every timestamp is
-// meaningful or every timestamp is zero. A merge that sorted by Ts, or fell back to it
-// for a position, would answer differently.
+// TestMergeEntries_ReadsNoTimestamp pins that output is identical whether timestamps are meaningful or zero.
 func TestMergeEntries_ReadsNoTimestamp(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
-		// Descending stamps, so anything ordering by Ts would REVERSE what the spine says.
+		// Descending stamps, so ordering by Ts would reverse the spine.
 		withTs, projWithTs := buildSides(rt, plans, func(i int) int64 { return int64(9000 - i*7) })
 		zeroed, projZeroed := buildSides(rt, plans, func(int) int64 { return 0 })
 
@@ -233,8 +210,7 @@ func TestMergeEntries_ReadsNoTimestamp(t *testing.T) {
 	})
 }
 
-// shapeOf is a merged log's turn and entry ids in order, with the payloads and
-// timestamps dropped, which is exactly the part a ts read could move.
+// shapeOf is a merged log's turn and entry ids in order, payloads and timestamps dropped.
 func shapeOf(turns []MergedTurn) string {
 	var b strings.Builder
 	for i := range turns {
@@ -248,7 +224,7 @@ func shapeOf(turns []MergedTurn) string {
 
 // assertMergeShape holds the invariants both properties share.
 func assertMergeShape(rt *rapid.T, record []RecordTurn, merged []MergedTurn) {
-	// Every record entry is present after, in the same relative order WITHIN its turn.
+	// Every record entry survives, in relative order within its turn.
 	byTurn := make(map[string][]string, len(merged))
 	for i := range merged {
 		for _, e := range merged[i].Entries {
@@ -295,10 +271,7 @@ func assertMergeShape(rt *rapid.T, record []RecordTurn, merged []MergedTurn) {
 	}
 }
 
-// assertArms checks each generated arm's own outcome, turn by turn: which turns paired
-// and which were inserted, whose closer survived, where a lost steer landed and what it
-// says, and that a longer replayed say extended the record's LAST segment and nothing
-// else. The record is the oracle for the segments, so nothing here re-derives the merge.
+// assertArms checks each generated arm's outcome per turn, with the record as the segment oracle.
 func assertArms(rt *rapid.T, plans []turnPlan, record []RecordTurn, merged []MergedTurn) {
 	at := make(map[string]int, len(merged))
 	for i := range merged {
@@ -322,7 +295,7 @@ func assertArms(rt *rapid.T, plans []turnPlan, record []RecordTurn, merged []Mer
 		_, hasProj := at[projID]
 		switch {
 		case pairs:
-			// Rule one when bound, rule two otherwise: ONE turn, the record's id.
+			// Rule one when bound, rule two otherwise: one turn, the record's id.
 			if !hasRec || hasProj {
 				rt.Fatalf("plan %d should pair into %s alone, merged holds T=%v P=%v:\n%s",
 					i, recID, hasRec, hasProj, dumpMerged(merged))
@@ -330,7 +303,7 @@ func assertArms(rt *rapid.T, plans []turnPlan, record []RecordTurn, merged []Mer
 			assertPairedTurn(rt, i, p, recordAt[recID], merged[at[recID]])
 			pairedSeen = true
 		case p.InRecord && p.InProjected:
-			// A stale stamp and a turn it never named: both survive, neither touched.
+			// A stale stamp and a turn it never named: both survive untouched.
 			if !hasRec || !hasProj {
 				rt.Fatalf("plan %d is out of scope and should stay unpaired, merged holds T=%v P=%v:\n%s",
 					i, hasRec, hasProj, dumpMerged(merged))
@@ -356,18 +329,17 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got Merged
 	_, closer := closerOf(rt, got)
 	switch {
 	case !p.Placeholder:
-		// A closer a process wrote is the live observation and stands, whatever the
-		// replay's own turn_end said.
+		// A process-written closer stands, whatever the replay's turn_end said.
 		if closer.Outcome != marotte.TurnOutcomeCompleted || closer.StopReasonRaw != "end_turn" {
 			rt.Fatalf("plan %d: live closer replaced by %+v", i, closer)
 		}
 	case p.ProjClosed:
-		// The placeholder yields to KAS's own account of the crashed turn.
+		// The placeholder yields to KAS's account.
 		if closer.Outcome != marotte.TurnOutcomeCancelled || closer.StopReasonRaw != "cancelled" {
 			rt.Fatalf("plan %d: placeholder closer did not take KAS's account, got %+v", i, closer)
 		}
 	default:
-		// KAS had no account either, so the placeholder is the truth and stays.
+		// KAS had no account either, so the placeholder stays.
 		if closer.StopReasonRaw != string(marotte.StopReasonUnterminated) {
 			rt.Fatalf("plan %d: placeholder closer replaced by %+v with no turn_end on the replay", i, closer)
 		}
@@ -377,8 +349,7 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got Merged
 	}
 	assertLostSteer(rt, i, p, got)
 
-	// The record's segments of the first say, in order, are the oracle: every segment
-	// but the last is byte-identical, and the last carries exactly the replayed tail.
+	// Every segment but the last is byte-identical; the last carries exactly the replayed tail.
 	say := fmt.Sprintf("S%d-0", i)
 	want := sayTexts(rt, rec.Entries, say)
 	have := sayTexts(rt, got.Entries, say)
@@ -394,8 +365,7 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got Merged
 	}
 }
 
-// assertKeptTurn is rule 2 at turn granularity: an unpaired record turn is emitted at its
-// record position with nothing inserted and nothing rewritten but seq and n.
+// assertKeptTurn is rule 2: an unpaired record turn stays put, only seq and n rewritten.
 func assertKeptTurn(rt *rapid.T, i int, rec RecordTurn, got MergedTurn) {
 	if len(got.Entries) != len(rec.Entries) {
 		rt.Fatalf("plan %d: unpaired record turn gained entries, %d -> %d:\n%s",
@@ -411,11 +381,8 @@ func assertKeptTurn(rt *rapid.T, i int, rec RecordTurn, got MergedTurn) {
 	}
 }
 
-// assertInsertedTurn is rule 3 at turn granularity plus rule 4: a replayed turn the
-// record lacks is inserted whole, its steers stamped dropped/restart, its closer KAS's
-// own when the replay had one and the synthesized placeholder otherwise. The caller
-// reports headMissed when the turn had no paired predecessor and still landed at or
-// past a record turn — the head rule the resumed session's first merge rests on.
+// assertInsertedTurn is rules 3 and 4: an inserted turn is whole, steers dropped/restart,
+// closer KAS's or the placeholder. headMissed reports a predecessor-less turn not at the head.
 func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got MergedTurn, headMissed bool) {
 	closerID, closer := closerOf(rt, got)
 	if p.ProjClosed {
@@ -434,8 +401,7 @@ func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got MergedTurn, headMiss
 	}
 }
 
-// assertLostSteer is rule 3's stamp: a steer the record never held is inserted as
-// dropped/restart, never as read and never as not-known.
+// assertLostSteer is rule 3's stamp: dropped/restart, never read or not-known.
 func assertLostSteer(rt *rapid.T, i int, p turnPlan, got MergedTurn) {
 	id := fmt.Sprintf("steer-lost-%d", i)
 	found := false
@@ -499,8 +465,7 @@ func entryOpenPayload(turn MergedTurn) []byte {
 	return nil
 }
 
-// isSubsequence reports whether want appears inside got in order, which is what "the
-// same relative order within its turn" means when entries may be inserted between.
+// isSubsequence reports whether want appears in got in order, with insertions allowed.
 func isSubsequence(want, got []string) bool {
 	i := 0
 	for _, g := range got {

@@ -1,26 +1,7 @@
-// ---------------------------------------------------------------------------
-// EVERY TEXT CONTROL SITS ON THE TYPE SCALE, and none of them outsizes the body
-// rung.
-//
-// This replaced a 16px FLOOR over `:is(input, textarea, select)` in two tier arms
-// (`text-field-floor-css.test.ts`, deleted with the rule). The floor existed
-// because iOS Safari zooms the page when a control under 16px takes focus — but
-// `static/index.html` ships `maximum-scale=1.0`, which is what suppresses that
-// auto-zoom, so it defended against behaviour the document cannot exhibit while
-// making every field in the app 16px on a finger against 11-14px everywhere
-// around it. 61-mcp-tools.css carries the full record.
-//
-// Two contracts, and the first is the one the removal made visible. The reset's
-// zero-specificity size is what keeps a control nothing else has sized OFF the UA
-// default: Chromium gives every form control Arial at 13.3333px, and 18 of the 50
-// controls the shipped page renders had no size from any component class. The
-// floor was hiding that on the coarse tier by rewriting all of them. Second, no
-// control computes ABOVE the body rung, which is the reported defect stated as a
-// guard.
-//
-// The sizes are read off `:root` rather than listed, so a retune of a token moves
-// the assertion with it and only a size that is on NO rung fails.
-// ---------------------------------------------------------------------------
+// Every text control sits on the type scale. The reset's zero-specificity size keeps a control no
+// class sized OFF the UA default (Chromium: Arial 13.3333px). On the fine tier no control outsizes
+// the body rung; coarse pointers get the 16px text-entry floor (61-mcp-tools.css). Sizes are read
+// off `:root`, so a token retune moves the assertions with it.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // The viewport control. `vitest/browser` is the Vitest 5 spelling;
@@ -47,10 +28,8 @@ const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".rule-fo
 
 describe("the declarations, read from source", () => {
   it("declares the 16px text-entry floor, in both tier arms", () => {
-    // The floor is PRESENT: `static/index.html` ships no `maximum-scale`, which the
-    // viewport meta drops for WCAG 1.4.4 (02-reset.css allows `pinch-zoom` to match),
-    // so iOS's focus auto-zoom is live for any focused control under 16px, and
-    // `#prompt-input` carries `autofocus`, so the app would load already zoomed.
+    // The floor is PRESENT: the viewport meta has no `maximum-scale` (WCAG 1.4.4), so iOS zooms any
+    // focused control under 16px, and `#prompt-input` has `autofocus`.
     const floors = allRules(loadCSS("61-mcp-tools.css")).filter(
       (r) => /:is\(input, textarea, select\)/.test(r.selector) && /font-size:/.test(r.body),
     );
@@ -86,10 +65,7 @@ describe("the declarations, read from source", () => {
   });
 
   it("leaves no hardcoded 16px on a text control", () => {
-    // The three find inputs (24-find.css, 20-editor.css) and the settings number
-    // input (18-pages.css) each carried a literal `16px` or `1rem` at a mobile
-    // breakpoint, with a comment naming the iOS zoom. Swept as a population,
-    // because the next one would be written the same way.
+    // Literal mobile-breakpoint `16px`/`1rem` sizes, swept as a population so the next one fails too.
     const offenders: string[] = [];
     for (const name of ["24-find.css", "20-editor.css", "18-pages.css"]) {
       for (const rule of allRules(loadCSS(name))) {
@@ -129,13 +105,8 @@ describe("the controls, measured over the shipped markup", () => {
     }
   });
 
-  /** The app's own page at one viewport size under one pointer tier.
-   *
-   *  The whole body, with every `hidden` container revealed and every dialog
-   *  shown: most of these controls live behind a modal or a settings panel, so a
-   *  fixture holding one field would measure a page this app does not render. The
-   *  resize is asserted, or a `page.viewport` that stopped moving the frame would
-   *  leave every case reporting about the project's own size. */
+  /** The app's own page at one viewport size and pointer tier: the whole body with hidden containers
+   *  revealed and dialogs shown, since most controls live behind one. The resize is asserted. */
   async function mountPage(
     width: number,
     height: number,
@@ -160,15 +131,9 @@ describe("the controls, measured over the shipped markup", () => {
     for (const dlg of document.querySelectorAll("dialog")) {
       dlg.show();
     }
-    // THE SEND BUTTON'S GLYPH, because `static/index.html` ships it empty and
-    // `prompt-input.ts` injects it at boot (`sendBtn.replaceChildren(iconEl(…))`).
-    // Without it this fixture renders a 26px-wide button the app never shows, and its
-    // hit-target expander — absolutely positioned, sized off `--hit-floor`, so it
-    // reaches further the narrower the box — then protrudes 10px past the row's own
-    // 4px padding and the tight-row case below reports `.prompt-pills` overflowing by
-    // 5px. Measured both ways at the same width: 5px empty, 0px with the glyph. The
-    // production glyph rather than a hand-written one, so an upstream path change
-    // moves this with it.
+    // The send button's glyph, which `prompt-input.ts` injects at boot: without it the button is 26px
+    // wide and its `--hit-floor` expander overflows `.prompt-pills` by 5px. The production glyph, so
+    // an upstream path change follows.
     const send = document.getElementById("send-btn");
     if (send !== null) {
       send.replaceChildren(iconEl(ICON_SEND));
@@ -205,7 +170,7 @@ describe("the controls, measured over the shipped markup", () => {
     return out;
   }
 
-  /** Every control that computes above the body rung — the reported defect. */
+  /** Every control that computes above the body rung. */
   function aboveBody(): string[] {
     const root = getComputedStyle(document.documentElement);
     const bodyPx =
@@ -240,13 +205,9 @@ describe("the controls, measured over the shipped markup", () => {
     expect(offScale()).toEqual([]);
   });
 
-  // The coarse arms are not in this case: their 16px floor sits ABOVE the body rung
-  // (16 against `--fs-md`'s 14) because 16 is iOS's auto-zoom threshold rather than a
-  // rung of this app's scale. What the case pins is the tier where no floor applies:
-  // nothing there may outsize the transcript, the defect the type scale answers.
-  // THE POINTER decides the floor, never the width — so a WIDE coarse viewport (an
-  // iPad in landscape) is a floored arm, and an unresolved tier is floored only
-  // below the 48rem no-JS fallback.
+  // The coarse floor is deliberately ABOVE the body rung (iOS's threshold, not a rung), so this pins
+  // the fine tiers: nothing may outsize the transcript. The POINTER decides the floor, never the
+  // width; an unresolved tier is floored only below the 48rem no-JS fallback.
   const FINE_TIERS = TIERS.filter(
     ([, w, , pointer]) => pointer === "fine" || (pointer === null && w > 768),
   );
@@ -262,10 +223,8 @@ describe("the controls, measured over the shipped markup", () => {
     ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
     ["a phone with no pointer tier resolved yet", 390, 844, null],
   ])("floors every text control at 16px on %s", async (_l, w, h, pointer) => {
-    // The coarse floor asserted as a POPULATION: every text-entry control on the shipped
-    // page, so a field added later joins the case without an edit here. The box
-    // controls are excluded — a checkbox paints at its own `rem` size and the floor
-    // reaches its label, not its box (the last case in this file measures that).
+    // Every text-entry control on the shipped page, as a population; box controls are excluded (the
+    // floor reaches a checkbox's label, not its box; the last case measures that).
     await mountPage(w, h, pointer);
     const under: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(CONTROLS)) {
@@ -291,16 +250,8 @@ describe("the controls, measured over the shipped markup", () => {
     }
   });
 
-  // THE OTHER HALF OF THE FLOOR: what the type AROUND a floored field does. The
-  // floor is above the body rung on purpose (the case above), so on a coarse
-  // pointer a field is 16px whatever its own class says — and a label left at
-  // `--fs-xs` then sat 5px under it. Measured across the shipped page before
-  // 01-tokens.css "The FORM type scale": 28 controls read larger than the nearest
-  // string beside them, 17 of them by 5px.
-  //
-  // The consumers are READ off the manifest rather than listed, so a site that
-  // starts reading a rung joins these cases with no edit here, and a site that
-  // stops reading one fails the source case rather than drifting silently.
+  // What the type AROUND a floored field does: a label left at `--fs-xs` sat 5px under a 16px field.
+  // Consumers are READ off the manifest, so a new reader joins and a dropped one fails the source case.
   const formTierSelectors = (token: "--fs-form-label" | "--fs-form-peer"): string[] => {
     const out: string[] = [];
     for (const { name, css } of manifestSheets()) {
@@ -331,11 +282,8 @@ describe("the controls, measured over the shipped markup", () => {
       expect(formTierSelectors(token).length, `${token} has consumers`).toBeGreaterThan(0);
     }
 
-    // The PEER consumers are asserted as a closed set, unlike the label ones. Two
-    // of the three rows are built by JS (`knowledge.ts`, `permissions-ui.ts`), so
-    // the shipped page renders no element for them and the measured case below
-    // cannot reach them — a source-side contract is the only guard available, and
-    // without it dropping one of these reads is invisible in both halves.
+    // The PEER consumers are a closed set: two of the three rows are built by JS, so the measured case
+    // cannot reach them and this source contract is the only guard.
     expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
       ".filepicker-footer .btn-save",
       ".knowledge-add-form .btn-small",
@@ -344,15 +292,9 @@ describe("the controls, measured over the shipped markup", () => {
     ]);
   });
 
-  /** Every rendered text-entry control that outsizes the largest string beside it
-   *  by more than one rung, named with the string it beat.
-   *
-   *  THE POPULATION IS DERIVED FROM THE PAGE, never from the list of selectors that
-   *  read the rungs, and that is the whole difference between a guard and a
-   *  tautology: a consumer that STOPS reading a rung drops out of a selector sweep
-   *  and takes its own coverage with it, so the sweep goes green for the one edit it
-   *  exists to catch. Red-checked both ways — pointing `.rf-label` back at
-   *  `--fs-xs` leaves a selector sweep green and fails this. */
+  /** Every rendered text-entry control that outsizes the largest string beside it by more than one
+   *  rung. Derived from the PAGE, never from the selectors that read the rungs: a consumer that stops
+   *  reading a rung would drop out of a selector sweep and take its coverage with it. */
   function overNeighbours(gap: number): string[] {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(CONTROLS)) {
@@ -412,10 +354,7 @@ describe("the controls, measured over the shipped markup", () => {
     const rem = Number.parseFloat(root.fontSize);
     const rung = (name: string): number => Number.parseFloat(root.getPropertyValue(name)) * rem;
 
-    // The gap is the RELATION rather than a literal 2, so a retune of the scale
-    // moves the assertion with it: a label is metadata and stays one rung under
-    // the field it names, a control sharing the field's row is equal rank and
-    // matches the floor.
+    // The gap is the RELATION, not a literal: a label stays one rung under its field, a peer matches it.
     expect(rung("--fs-form-peer"), "the peer rung is the iOS floor").toBe(16);
     expect(rung("--fs-form-label")).toBe(rung("--fs-md"));
     const oneRung = rung("--fs-form-peer") - rung("--fs-form-label");
@@ -431,17 +370,8 @@ describe("the controls, measured over the shipped markup", () => {
     ["a phone with a coarse pointer", 390, 844, "coarse" as const],
     ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
   ])("matches a row-sharing button to the field it sits beside, on %s", async (_l, w, h, p) => {
-    // The PEER half, which the one-rung sweep above deliberately cannot see: a
-    // button one rung under its field is inside that tolerance and is still the
-    // reported defect one rung smaller, so equality is asserted directly. The
-    // containers are NAMED because the peer population is small and closed — a row
-    // holding both a field and a button — and naming them is what makes this
-    // survive a site dropping its token read, which is the mutant that made the
-    // selector sweep hollow.
-    //
-    // Only the containers the SHIPPED markup renders are listed: `.knowledge-add-form`
-    // is built by `knowledge.ts` at runtime, so the measured half cannot reach it and
-    // the source-side closed set above is what guards its token read.
+    // The PEER half, which the one-rung tolerance cannot see, asserted as equality on NAMED containers.
+    // Only those the shipped markup renders; `.knowledge-add-form` is guarded by the closed set above.
     await mountPage(w, h, p);
     const mismatched: string[] = [];
     for (const sel of [".filepicker-footer", ".rule-form"]) {
@@ -474,10 +404,7 @@ describe("the controls, measured over the shipped markup", () => {
   });
 
   it("overflows none of the tight rows at 390px coarse", async () => {
-    // The gate any change to the type scale of every field has to clear: it is only
-    // safe if no row a field sits in starts clipping. Measured as
-    // content-wider-than-box per row, which is what a reader sees as a cut label or
-    // a control pushed off the edge.
+    // The gate for any type-scale change: no row a field sits in may clip.
     await mountPage(390, 844, "coarse");
     const overflowing: string[] = [];
     for (const sel of TIGHT_ROWS) {
@@ -494,13 +421,9 @@ describe("the controls, measured over the shipped markup", () => {
   });
 
   it("moves no box control, because the box controls carry a rem size of their own", async () => {
-    // The premise for a reset selector that excludes no input type: a native checkbox
-    // and radio paint at a font-relative size, but both carry an explicit `rem` box
-    // (02-reset.css and 61-mcp-tools.css). Pushing the RUNG to 3rem is deliberately
-    // absurd — a box that tracked the font would triple — and the rung rather than the
-    // root, because a `rem` box is root-relative. ON THE FINE TIER, because the coarse
-    // 16px floor pins a control's font-size outright, so the rung override would reach
-    // nothing and the case would pass for a reason that says nothing about the box.
+    // The reset excludes no input type because checkbox and radio carry an explicit `rem` box: pushing
+    // the RUNG (not the root, which moves `rem` boxes) to 3rem moves neither. On the FINE tier, because
+    // the coarse floor pins the font-size outright and the override would reach nothing.
     await mountPage(1280, 800, "fine");
     const boxes = [...document.querySelectorAll<HTMLElement>('[type="checkbox"], [type="radio"]')];
     expect(boxes.length).toBeGreaterThan(10);

@@ -67,14 +67,12 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	// Seed a user file so the fallback has something to read.
 	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Erroring provider → fallback to file read.
 	s := &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, workDir: work}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -96,7 +94,7 @@ func TestPolicyRuleAddDefaultsToAsk(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	s := &Server{workDir: work}
-	// No effect provided → must default to ask (conservative), never allow.
+	// No effect → defaults to ask, never allow.
 	rec := postRules(t, s, policyRuleBody{Op: "add", Scope: "workspace", Capability: "fs_write", Match: []string{"src/**"}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -135,13 +133,9 @@ func TestPolicyRuleInvalidScopeRejected(t *testing.T) {
 	}
 }
 
-// TestPolicyRuleUnrecognisedCapabilityRoundTrips is the T67 inversion at the
-// HTTP edge: this used to be a 400. The rule is written verbatim and KAS's loader
-// is the authority — it validates on load and SKIPS an unrecognised rule as
-// non-fatal, reporting it on _kiro/policy/changed's errors array (translated to
-// the permissions_changed SSE and rendered from payload.errors), NOT on
-// _kiro/policy/error, which KAS emits only for fatal errors. The 400 meant
-// marotte refused to write the rule a newly-added capability exists for.
+// TestPolicyRuleUnrecognisedCapabilityRoundTrips pins that an unrecognised capability is
+// written verbatim: KAS's loader is the authority and skips it non-fatally, reporting it on
+// _kiro/policy/changed's errors array.
 func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -165,10 +159,8 @@ func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	}
 }
 
-// TestPolicyRuleMalformedCapabilityRejected: dropping the vocabulary check did
-// not drop the shape check. An empty or control-character capability is not
-// something KAS could reject usefully — it is a malformed request, and writing it
-// leaves a rule the user has to hand-edit out of a security policy file.
+// TestPolicyRuleMalformedCapabilityRejected pins that an empty or control-character
+// capability is still a 400.
 func TestPolicyRuleMalformedCapabilityRejected(t *testing.T) {
 	for name, capability := range map[string]string{
 		"empty":             "",
@@ -189,11 +181,8 @@ func TestPolicyRuleMalformedCapabilityRejected(t *testing.T) {
 	}
 }
 
-// TestPickerCapabilities_UnionsInWhatTheRulesUse: the suggested set is a
-// hand-copied snapshot of a list KAS does not expose, so the rules KAS reports
-// are the only channel through which the picker can learn a new capability. A
-// capability in use anywhere — including the read-only kiro/administration/agent
-// baselines — becomes selectable with no marotte release.
+// TestPickerCapabilities_UnionsInWhatTheRulesUse pins that a capability any rule uses
+// becomes selectable.
 func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 	base := policyfile.Capabilities()
 	if slices.Contains(base, "hooks") {
@@ -226,16 +215,8 @@ func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 	}
 }
 
-// TestPickerCapabilities_NoRulesIsTheSuggestedSet: a fresh install with no rules
-// must still populate the dropdown.
-//
-// The non-EMPTY leg is the wire assertion, and slices.Equal cannot make it:
-// slices.Equal(nil, []string{}) is true, so comparing against the suggested set
-// would pass if both were empty, and an empty picker marshals `"capabilities":
-// null` rather than `[]` (the field carries no omitzero/omitempty). Since
-// pickerCapabilities now returns slices.Sorted(maps.Keys(…)), whose answer for an
-// empty set IS nil, the invariant "the snapshot always seeds it" is what keeps
-// the wire shape stable — so it is asserted here rather than assumed.
+// TestPickerCapabilities_NoRulesIsTheSuggestedSet pins a non-EMPTY result for no rules:
+// slices.Equal(nil, []string{}) is true, and an empty set would marshal as null.
 func TestPickerCapabilities_NoRulesIsTheSuggestedSet(t *testing.T) {
 	got := pickerCapabilities(nil)
 	if len(got) == 0 {
@@ -253,7 +234,6 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	t.Setenv("HOME", home)
-	// Seed a deny rule.
 	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
@@ -323,8 +303,6 @@ func TestPolicyExplainRequiresTarget(t *testing.T) {
 		t.Errorf("status = %d, want 400 (no capability/tool_id)", rec.Code)
 	}
 }
-
-// --- op=update: in-place effect editing ---
 
 func TestPolicyRuleUpdate(t *testing.T) {
 	seed := func(t *testing.T) (s *Server, wp string) {
@@ -427,10 +405,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 }
 
 func TestPolicyExplainShellRequiresResource(t *testing.T) {
-	// KAS has no command-independent shell decision; the handler refuses
-	// the simulation up front with a clear reason instead of forwarding a
-	// request that can only fail (and used to surface as a misleading
-	// "unavailable" error).
+	// KAS has no command-independent shell decision, so the handler refuses up front.
 	f := &fakePolicy{explain: &marotte.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
 	s := &Server{policy: f}
 	b, _ := json.Marshal(marotte.PolicyExplainRequest{Capability: "shell", Resource: "   "})
@@ -445,10 +420,8 @@ func TestPolicyExplainShellRequiresResource(t *testing.T) {
 	}
 }
 
-// An update that leaves the effect where it is widens nothing, so it costs no
-// confirmation. The gate exists for a change that grants the agent more than it
-// had; demanding a confirm for a no-op would train the user to send one every
-// time, which is how the gate stops meaning anything.
+// TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm pins that a no-op update needs no
+// confirm, or the gate would stop meaning anything.
 func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -471,10 +444,8 @@ func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
 	}
 }
 
-// The shadowing guard belongs to ALLOW rules and to no other kind. An allow that
-// an explicit ask already covers is silently inert once written, so it is refused
-// instead — and the deny and ask rules that cannot be shadowed that way must not
-// be sent through the same round trip to KAS.
+// TestPolicyRuleAdd_GuardChecksAllowRulesOnly pins that only ALLOW rules take the shadowing
+// round trip.
 func TestPolicyRuleAdd_GuardChecksAllowRulesOnly(t *testing.T) {
 	seed := func(t *testing.T) (*Server, *fakePolicy, string) {
 		t.Helper()
@@ -525,9 +496,7 @@ func TestPolicyRuleAdd_GuardChecksAllowRulesOnly(t *testing.T) {
 	})
 }
 
-// The scope filter keeps a scoped read to its own file. Inverting it would serve
-// the workspace's rules under the user scope and the other way round, which the
-// panel shows as provenance the user then edits the wrong file from.
+// TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile pins that a scoped read stays in its file.
 func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -570,14 +539,8 @@ func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 	}
 }
 
-// KAS reports one rule several times, and the panel rendered every copy.
-//
-// Measured live on kiro-cli 2.19.0 against a workspace permissions.yaml holding
-// exactly ONE rule: `_kiro/permissions/list` answered with 25 rules of which TEN
-// were byte-identical copies of that one, same scope and same source path, while
-// every other rule in the reply appeared once. The fixture below is that reply's
-// shape. The user saw their single "allow all *" rule ten times over, each row
-// carrying its own remove button.
+// TestPolicyView_DropsIdenticalDuplicatesFromKAS pins the dedupe against the measured reply
+// shape (kiro-cli 2.19.0: one rule reported ten times).
 func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 	// The rule as it actually arrived, ten times.
 	dup := marotte.PolicyRule{
@@ -609,8 +572,7 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 	if len(got.Rules) != 3 {
 		t.Fatalf("Rules length = %d, want 3 (one per distinct rule); got %+v", len(got.Rules), got.Rules)
 	}
-	// Order is the order the first copy arrived in, so the reader's rows do not
-	// reshuffle between two reads of an unchanged policy.
+	// First-arrival order, so rows do not reshuffle between reads.
 	wantCaps := []string{"fs_write", "all", "fs_read"}
 	for i, want := range wantCaps {
 		if got.Rules[i].Capability != want {
@@ -619,10 +581,8 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 	}
 }
 
-// The same rule in the user file AND the workspace file is TWO rules: a reader
-// needs both rows to know which file to edit, and removing one must not remove
-// the other. This is why the key spans scope and source rather than being a
-// signature over capability + effect + globs.
+// TestDedupePolicyRules_KeepsTheSameRuleInTwoScopes pins that one rule in two files stays
+// two rows.
 func TestDedupePolicyRules_KeepsTheSameRuleInTwoScopes(t *testing.T) {
 	rules := []marotte.PolicyRule{
 		{Capability: "shell", Effect: "ask", Scope: policyfile.ScopeUser, Source: "/home/u/.kiro/settings/permissions.yaml", Match: []string{"rm *"}},
@@ -643,9 +603,7 @@ func TestDedupePolicyRules_EmptyStaysNonNil(t *testing.T) {
 	}
 }
 
-// The key is length-prefixed per element so no glob content can forge a
-// collision. Two rules differing only in where a separator falls inside their
-// globs must stay two rules, because a glob is arbitrary user text.
+// TestPolicyRuleKey_GlobContentCannotForgeACollision pins the length-prefixed key.
 func TestPolicyRuleKey_GlobContentCannotForgeACollision(t *testing.T) {
 	cases := map[string][2]marotte.PolicyRule{
 		"split differs": {

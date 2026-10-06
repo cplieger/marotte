@@ -19,38 +19,12 @@ var acpMethodRe = regexp.MustCompile(
 	`"(_?kiro/[a-zA-Z/_]+|_?session/[a-zA-Z/_]+|fs/[a-zA-Z/_]+|terminal/[a-zA-Z/_]+|initialize)"`,
 )
 
-// acpMethodFloor is the count below which the derivation below is presumed
-// broken rather than the surface presumed shrunk.
-//
-// Measured at 82 on 2026-08-27. A test that derives its own subject can fail
-// open — a refactor that builds method names by concatenation, or moves them
-// into a generated file this walk skips, would leave the sweep with nothing to
-// check and every assertion vacuously true. The floor is the guard against
-// that, set well under the real count so a legitimate removal does not trip it.
+// acpMethodFloor is the count below which the derivation is presumed broken rather than the surface
+// shrunk (82 when set).
 const acpMethodFloor = 60
 
-// TestACPMethodsPresent is the upgrade gate that answers the question a
-// kiro-cli bump actually raises: does the agent server still speak every verb
-// marotte depends on?
-//
-// It exists because the capability census could not answer it. That census
-// introspects the bundle's IDENTIFIERS, so kiro-cli 2.20.0 broke it by shipping
-// a mangled build — 23.3 MB to 11.3 MB, every local and module-level function
-// renamed — and the resulting red gate said nothing whatsoever about whether the
-// upgrade was safe. Measured across that same bump: all 82 methods below are
-// present in both bundles, unchanged, while eight of the census's nine
-// extractors had to be re-anchored.
-//
-// A method name is a WIRE STRING. A minifier may not touch it, because both
-// ends compare it byte for byte, which is exactly the property that makes it a
-// durable anchor where an identifier is not. So this test should keep working
-// across upstream builds that reshape the census, and when it DOES fail it
-// names a verb marotte calls into the void.
-//
-// Scope, stated because it bounds what a pass means: presence of the name, not
-// agreement about its params, its result shape or its semantics. Those are the
-// goldens' and the census's job. A vanished method is the failure mode this
-// catches, and it is the one that takes a feature out silently.
+// TestACPMethodsPresent is the kiro-cli upgrade gate: does the pinned agent server still handle
+// every ACP method marotte's sources name.
 func TestACPMethodsPresent(t *testing.T) {
 	active := activeKASVersion(t)
 	src, path := bundleSource(t, active)
@@ -82,15 +56,8 @@ Bundle: %s`, active, len(absent), strings.Join(absent, "\n  "), path)
 	t.Logf("kiro-cli %s carries all %d ACP method names marotte uses", active, len(methods))
 }
 
-// marotteACPMethods returns every ACP method name marotte's production sources
-// name, sorted and deduplicated.
-//
-// Derived rather than listed, so a method added to marotte is covered without
-// anyone remembering to extend a fixture — the failure mode a hand-kept list
-// has is silently omitting the one verb that later breaks. Test files are
-// excluded because they deliberately name verbs that do NOT exist, to exercise
-// the unknown-method paths (`session/somethingNew`, `terminal/not_a_verb`), and
-// those would read as upstream removals here.
+// marotteACPMethods returns every ACP method name marotte's production sources name, sorted and
+// deduplicated, derived so a new method is covered automatically.
 func marotteACPMethods(t *testing.T) []string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
@@ -117,8 +84,6 @@ func marotteACPMethods(t *testing.T) []string {
 			return err
 		}
 		for _, m := range acpMethodRe.FindAllStringSubmatch(string(raw), -1) {
-			// A trailing slash is a dispatch PREFIX (`_kiro/workflow/`), not a
-			// method, so no bundle carries it as a literal.
 			if strings.HasSuffix(m[1], "/") {
 				continue
 			}

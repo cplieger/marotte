@@ -76,8 +76,8 @@ func SeverityOf(o TurnOutcome) TurnSeverity {
 	return TurnSeverityStopped
 }
 
-// DefaultFailureReason is what a turn says when nothing upstream said anything: no
-// stopDetails on the wire, or a record predating TurnFailureReason. One sentence
+// DefaultFailureReason is what a turn says when no closer supplied a reason, or for a
+// record predating TurnFailureReason. One sentence
 // per OUTCOME rather than per severity, because a refusal and a network
 // interruption are both broken and want different words; empty where no account is
 // needed. Pinned BYTE-IDENTICAL against the fixture the client reads too.
@@ -112,6 +112,9 @@ type TurnConclusion struct {
 	// RawStop is the stop reason exactly as the wire sent it, kept whatever the
 	// outcome, so an unmeasured value is recoverable rather than flattened away.
 	RawStop StopReason
+	// FailureKind is the classified failure a prompt-failure closer names, persisted
+	// as turn_close.failure_kind.
+	FailureKind FailureKind
 	// Truncated is a turn the model stopped short of finishing. Stored though
 	// derivable from RawStop, so two projections do not re-implement the mapping.
 	Truncated bool

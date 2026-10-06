@@ -21,15 +21,8 @@ import (
 	"github.com/cplieger/marotte/internal/procgroup"
 )
 
-// bareTerminals builds the registry with NO collaborators, for the tests that
-// exercise its bookkeeping only: turn scoping, kill, retired output. A test that
-// reaches a collaborator through this fixture nil-panics, and that is the right
-// failure — it says the test left the half this fixture serves and wants the
-// wired one from newTestHub.
-// bareTerminals is a registry with no collaborators: no bridges, no lifetime, no
-// broadcast, and no turn-epoch reader. An absent reader attributes every terminal
-// to epoch zero, which the eviction rule collects at the next close whichever
-// turn that is — so a test that cares about attribution wires the reader.
+// bareTerminals is a registry with no collaborators, for bookkeeping-only tests; reaching
+// a collaborator nil-panics. Without a turn reader every terminal is collected at the next close.
 func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil, nil) }
 
 func TestRingBuffer(t *testing.T) {
@@ -39,22 +32,18 @@ func TestRingBuffer(t *testing.T) {
 		t.Errorf("got %q, want %q", r.String(), "hello")
 	}
 	r.Write([]byte(" world!"))
-	// "hello world!" is 12 bytes, limit is 10, so first 2+ bytes trimmed.
 	got := r.String()
 	if len(got) > 10 {
 		t.Errorf("buffer exceeded limit: len=%d", len(got))
 	}
-	// Should contain the tail of the input.
 	if got != "lo world!" && got != "o world!" && got != " world!" {
 		// The exact trim depends on UTF-8 boundary advancement.
-		// Just verify it's within limit and contains the tail.
 		t.Logf("ring buffer output: %q (len=%d)", got, len(got))
 	}
 }
 
 func TestRingBufferUTF8(t *testing.T) {
 	r := newByteRing(8)
-	// Write a multi-byte UTF-8 character (3 bytes for é = 0xC3 0xA9)
 	r.Write([]byte("aaaaaé"))
 	got := r.String()
 	if len(got) > 8 {
@@ -167,8 +156,7 @@ func FuzzByteRing_WriteRead(f *testing.F) {
 	})
 }
 
-// drainAll clears the terminal maps even when a registered terminal has
-// already exited (its done channel is closed).
+// drainAll clears the maps even when a terminal already exited.
 func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 	at := bareTerminals()
 	done := make(chan struct{})
@@ -188,8 +176,7 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 	}
 }
 
-// release removes only the named terminal from both maps (dropping just
-// its id from the chat's slice) and reports (nil,false) for an unknown id.
+// release removes only the named terminal and reports (nil, false) for an unknown id.
 func TestAgentTerminals_Release(t *testing.T) {
 	at := bareTerminals()
 	at.terms["t1"] = newAgentTerminal(nil, "c1", 64)
@@ -207,7 +194,6 @@ func TestAgentTerminals_Release(t *testing.T) {
 		t.Errorf("byChatID[c1] = %v, want [t2] (only t1 should be dropped)", got)
 	}
 
-	// Unknown id: no removal, returns (nil, false).
 	if gotTerm, gotOK := at.release("nope"); gotOK || gotTerm != nil {
 		t.Errorf("release(unknown) = %v, %v; want nil, false", gotTerm, gotOK)
 	}
@@ -216,9 +202,7 @@ func TestAgentTerminals_Release(t *testing.T) {
 	}
 }
 
-// --- agent-terminal server-side regression tests (ordering + UTF-8 boundary) ---
-
-// ringEvent is a decoded terminal_* SSE event captured from the replay ring.
+// ringEvent is a decoded terminal_* SSE event from the replay ring.
 type ringEvent struct {
 	typ     string
 	termID  string
@@ -226,10 +210,8 @@ type ringEvent struct {
 	eventID uint64
 }
 
-// captureTerminalEvents reads the runtime's replay ring and returns every
-// terminal_created/terminal_output/terminal_exited event, sorted by the
-// monotonic SSE event id (ring insertion order can differ from event-id
-// order because seq.Add runs before the fan-out lock).
+// captureTerminalEvents returns every terminal_* event in the replay ring, sorted by event
+// id: insertion order can differ because seq.Add runs before the fan-out lock.
 func captureTerminalEvents(t *testing.T, h *Runtime) []ringEvent {
 	t.Helper()
 	var out []ringEvent
@@ -277,28 +259,20 @@ func firstEventID(evs []ringEvent, typ marotte.EventType) (uint64, bool) {
 	return 0, false
 }
 
-// terminal_created must be broadcast (and so receive a lower monotonic event
-// id) before any terminal_output / terminal_exited event. emit() assigns ids
-// in call order and the pump/exit goroutines are started only after the
-// terminal_created broadcast, so created always sorts first. If it didn't, a
-// fast write-and-exit command's output/exited events would reach the client
-// before the tab exists and get dropped (unknown terminal id) — wedging the
-// tab in "running".
+// TestTerminalCreated_BroadcastBeforeOutputAndExited pins terminal_created ahead of any
+// output or exit; otherwise the client drops them and the tab stays "running".
 func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
-	// printf writes to stdout (pump → terminal_output); the brief sleep keeps
-	// the process alive so the pump reads that output well before cmd.Wait
-	// closes the pipe, then the process exits (exit goroutine → terminal_exited).
+	// The brief sleep lets the pump read the output before cmd.Wait closes the pipe.
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "printf hello; sleep 0.3"}, nil)
 
 	h.translateACPEvent("c1", msg)
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 
-	// The terminal_exited broadcast happens just after term.done closes, so
-	// poll until both output and exited have landed in the ring.
+	// terminal_exited lands just after term.done closes, so poll for both.
 	var evs []ringEvent
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -336,8 +310,7 @@ func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
 	}
 }
 
-// chunkReader hands out its byte chunks one Read at a time, letting a test
-// place a read boundary exactly inside a multi-byte UTF-8 rune.
+// chunkReader hands out one chunk per Read, placing a read boundary inside a rune.
 type chunkReader struct {
 	chunks [][]byte
 	i      int
@@ -352,15 +325,11 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// A multi-byte rune split across the 4 KB read boundary must not be corrupted
-// in the live SSE broadcast: pumpOutput carries the incomplete tail to
-// the next chunk so every terminal_output chunk is valid UTF-8, while the ring
-// still receives every raw byte.
+// A rune split across the 4 KB read boundary must arrive intact in the live broadcast while the ring keeps every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 	term := newAgentTerminal(nil, "c1", 1024)
-	// "aé€😀" with reads that split every multi-byte rune internally:
-	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
+	// Reads split every multi-byte rune: é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
 	r := &chunkReader{chunks: [][]byte{
 		{0x61},             // "a" (complete ASCII)
 		{0xC3},             // é byte 1/2  → incomplete, held
@@ -374,9 +343,7 @@ func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T
 
 	h.agentTerms.pumpOutput(term, "t1", "c1", r)
 
-	// Reassemble the broadcast chunks. A split rune would have its halves
-	// coerced to U+FFFD by the SSE JSON marshal, so the reassembly would not
-	// equal the original text — the equality check is what proves the fix.
+	// A split rune would marshal as U+FFFD, so equality proves the carry.
 	var got bytes.Buffer
 	for _, e := range captureTerminalEvents(t, h) {
 		if e.typ == string(marotte.EventTerminalOutput) {
@@ -386,7 +353,6 @@ func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T
 	if got.String() != want {
 		t.Errorf("broadcast reassembly = %q, want %q (a rune was split across the read boundary)", got.String(), want)
 	}
-	// The ring buffer must still hold every raw byte.
 	if ring := term.output.String(); ring != want {
 		t.Errorf("ring content = %q, want %q", ring, want)
 	}
@@ -422,8 +388,7 @@ func TestIncompleteTailLen(t *testing.T) {
 	}
 }
 
-// sizeChunkReader hands out fixed-size slices of data, one per Read, so a fuzz
-// target can place read boundaries at every offset.
+// sizeChunkReader hands out fixed-size slices, one per Read.
 type sizeChunkReader struct {
 	data []byte
 	size int
@@ -440,9 +405,8 @@ func (r *sizeChunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// pumpBroadcast runs the output pump over data on a fresh terminal, handing the
-// reader out in size-byte slices, and returns the ring's raw content plus the
-// concatenation of every terminal_output payload the pump broadcast.
+// pumpBroadcast runs the pump over data in size-byte reads and returns the ring plus the
+// concatenated broadcast payloads.
 func pumpBroadcast(t *testing.T, h *Runtime, data []byte, size int) (ring, broadcast []byte) {
 	t.Helper()
 	preSeq := h.bus.fanout.Position().Head
@@ -465,24 +429,10 @@ func pumpBroadcast(t *testing.T, h *Runtime, data []byte, size int) (ring, broad
 	return term.output.Bytes(), broadcast
 }
 
-// FuzzPumpTerminalOutput_UTF8Broadcast asserts two invariants over arbitrary
-// bytes split at arbitrary read boundaries: (1) the ring holds the raw input
-// exactly, no byte dropped or duplicated, and (2) where the read boundaries
-// fall does not change what the transcript receives — the chunked broadcast
-// reassembles to the same text as a single-read broadcast of the same input.
-//
-// (2) is the pending-tail carry's whole job, stated as an oracle rather than as
-// byte-equality with the input, because the emitter is not a passthrough: it
-// deletes hidden Unicode and parses escape sequences off into style spans, so a
-// broadcast is expected to differ from the raw bytes. What it may NOT do is
-// differ by chunk size — a rune split across a read boundary turns into two
-// U+FFFD on one side of that comparison and one character on the other.
-//
-// Bounded to 512 bytes, which is also inside ansitext's maxPendingBytes, the one
-// input class where its streaming parse cannot agree with a one-shot parse.
-//
-// One agent is reused across iterations (fuzz iterations run sequentially per
-// process) to avoid leaking the per-Runtime background goroutines.
+// FuzzPumpTerminalOutput_UTF8Broadcast asserts that the ring holds the input exactly and
+// that read boundaries do not change the broadcast (chunked equals single-read; the
+// emitter is not a passthrough). Bounded to 512 bytes, inside ansitext's maxPendingBytes.
+// One runtime is reused to avoid leaking per-Runtime goroutines.
 func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte("hello"), uint8(1))
 	f.Add([]byte("aé€😀z"), uint8(1))
@@ -491,12 +441,8 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte{0xFF, 0x80, 0xE2}, uint8(1)) // invalid + incomplete tail
 	f.Add([]byte("a\u202cb"), uint8(1))       // hidden Unicode the emitter deletes
 	f.Add([]byte("a\x1b[31mred"), uint8(1))   // an escape the parser lifts into a span
-	// A two-byte escape (ESC + a final byte, no CSI) split across the read
-	// boundary: this exercises the PARSER's cross-chunk escape state rather than
-	// the UTF-8 carry, so it is a different mechanism from the seeds above. The
-	// weekly fuzz reached this input class with a chunk size larger than the
-	// input, where chunked and whole are the same single read and the oracle is
-	// vacuous; chunkSize 1 is what makes the boundary real.
+	// A two-byte escape split across the boundary exercises the parser's cross-chunk state;
+	// chunkSize 1 makes the boundary real.
 	f.Add([]byte("\x1b0"), uint8(1))
 	f.Add([]byte("a\x1b0b"), uint8(1))
 	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
@@ -507,11 +453,10 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		chunkSize := int(chunkRaw)%8 + 1
 
 		ring, chunked := pumpBroadcast(t, h, data, chunkSize)
-		// The ring receives every raw byte exactly once, for any input.
 		if !bytes.Equal(ring, data) {
 			t.Fatalf("ring content = %x, want raw input %x (chunkSize=%d)", ring, data, chunkSize)
 		}
-		// size is clamped to 1 so an empty input still terminates the reader.
+		// Clamped to 1 so an empty input still terminates the reader.
 		_, whole := pumpBroadcast(t, h, data, max(len(data), 1))
 		if !bytes.Equal(chunked, whole) {
 			t.Fatalf("input %x broadcast as %q at chunkSize=%d but as %q in one read — a rune was split across the read boundary",
@@ -520,21 +465,12 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	})
 }
 
-// --- R2: process-group teardown for agent terminals ---
-
-// TestKillGroup_ReapsTheWholeTree is the R2 regression: a head-only kill strands
-// an agent terminal's children.
-//
-// Agent terminals are the agent's own commands, so they are routinely trees, and
-// unlike the bridge there is no stdin-EOF channel to reclaim them. The bait is
-// the shape any build tool produces — a shell with children that outlive it —
-// and the assertion is on the GRANDCHILD, because that is what survived the
-// measured head-only kill (2 spawned, 2 survived).
+// TestKillGroup_ReapsTheWholeTree pins a group kill: agent commands are trees with no stdin-EOF
+// reclaim, and the assertion is on the grandchild a head-only kill stranded.
 func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
-	// The shell writes its child's pid, then blocks. Killing the group must take
-	// the child too; killing the head alone leaves it running.
+	// Killing the group must take the child; killing the head alone leaves it running.
 	script := "sleep 300 & echo $! > " + pidFile + "; wait"
 	cmd := exec.Command("sh", "-c", script) // #nosec G204 -- fixed test script
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -565,6 +501,92 @@ func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
 	}
 }
 
+// Once the head is reaped its pid may lead a stranger's group; the fixture stands one in with a Setpgid sleep.
+func TestKillTerminalGroup_AfterReapSignalsNothing(t *testing.T) {
+	stranger := exec.Command("sleep", "30") // #nosec G204 -- fixed test command
+	stranger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := stranger.Start(); err != nil {
+		t.Fatalf("Setup: start stranger: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-stranger.Process.Pid, syscall.SIGKILL)
+		_, _ = stranger.Process.Wait()
+	})
+
+	term := newAgentTerminal(stranger, "c1", 64)
+	term.pgid = stranger.Process.Pid
+	term.reaped = true
+	// done stays open: the reaped flag, not done, is the gate.
+
+	err := killTerminalGroup(term, "t-reaped")
+	if !procgroup.AlreadyGone(err) {
+		t.Errorf("killTerminalGroup(reaped terminal) = %v, want an already-gone error", err)
+	}
+	if !processAlive(stranger.Process.Pid) {
+		t.Error("killTerminalGroup on a reaped terminal killed the process now holding its pid")
+	}
+}
+
+// startBaitTerminal drives `script` through terminal/create and returns the runtime, terminal id and the pid written to pidFile.
+func startBaitTerminal(t *testing.T, script, pidFile string) (h *Runtime, termID string, childPID int) {
+	t.Helper()
+	h = hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	h.translateACPEvent("c1", termCreateMsg(t, 1, "sh", []string{"-c", script}, nil))
+	h.agentTerms.mu.Lock()
+	for id := range h.agentTerms.terms {
+		termID = id
+	}
+	h.agentTerms.mu.Unlock()
+	if termID == "" {
+		t.Fatal("Setup: no agent terminal registered")
+	}
+	return h, termID, waitForPIDFile(t, pidFile)
+}
+
+func termIDMsg(t *testing.T, id int64, method, termID string) *marotte.RPCResponse {
+	t.Helper()
+	return &marotte.RPCResponse{ID: &id, Method: method, Params: mustJSON(t, map[string]string{"terminalId": termID})}
+}
+
+// A running command's whole tree goes with terminal/kill, via the group captured at spawn.
+func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	h, termID, childPID := startBaitTerminal(t, "sleep 300 & echo $! > "+pidFile+"; wait", pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
+	if !processAlive(childPID) {
+		t.Fatalf("Setup: grandchild %d not alive before the kill; the test proves nothing", childPID)
+	}
+
+	h.translateACPEvent("c1", termIDMsg(t, 2, methodTermKill, termID))
+
+	deadline := time.Now().Add(3 * time.Second)
+	for processAlive(childPID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("grandchild %d survived terminal/kill; the group captured at spawn was not signalled", childPID)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A finished command's backgrounded child is left running, as KAS's own terminal does (characterization pin).
+func TestTerminalRelease_LeavesAFinishedCommandsBackgroundedChild(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	h, termID, childPID := startBaitTerminal(t,
+		"sleep 30 >/dev/null 2>&1 </dev/null & echo $! > "+pidFile, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
+
+	h.agentTerms.mu.Lock()
+	term := h.agentTerms.terms[termID]
+	h.agentTerms.mu.Unlock()
+	waitClosed(t, term.done, "terminal")
+
+	h.translateACPEvent("c1", termIDMsg(t, 2, methodTermRelease, termID))
+
+	if !processAlive(childPID) {
+		t.Errorf("terminal/release killed %d, the backgrounded child of a command that had already finished", childPID)
+	}
+}
+
 // waitForPIDFile polls for the bait script's pid file and returns the pid.
 func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
@@ -583,22 +605,9 @@ func waitForPIDFile(t *testing.T, path string) int {
 	}
 }
 
-// processAlive reports whether pid is a live (non-zombie) process, read from
-// /proc/<pid>/stat.
-//
-// The null signal is NOT usable here. `kill(pid, 0)` answers "alive" for a
-// zombie, and the process this test polls is the bait shell's child: killGroup
-// takes the shell too, so the child is orphaned and reparented to PID 1 the
-// moment it dies, and it stays a zombie until whatever init the test happens to
-// run under collects it. Reaping the HEAD does not help — the head is the
-// child's parent, not the child's reaper. So a null-signal poll measures the
-// ambient reaper's latency rather than killGroup's reach: it needs an init that
-// reaps (it flakes on a loaded runner and fails outright in a container whose
-// PID 1 never reaps), and a zombie already proves the signal landed.
-//
-// The state field follows the last ')' — comm is parenthesized and may itself
-// contain spaces or parens, so the whole prefix has to be skipped from the
-// right rather than split on whitespace.
+// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat.
+// Not kill(pid, 0): that answers alive for a zombie, so it would measure the ambient
+// reaper rather than killGroup. The state follows the last ')' because comm may hold parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {
@@ -612,16 +621,11 @@ func processAlive(pid int) bool {
 	return s[i+2] != 'Z'
 }
 
-// A stream that ends in the middle of an escape sequence must still deliver the
-// bytes it held. The parser buffers an incomplete sequence waiting for its final
-// byte, and at EOF no final byte is coming — so without the release the tail
-// disappears from the transcript instead of showing as the truncated sequence it
-// is, and a command killed mid-write silently loses its last characters.
+// A stream ending mid-escape must still deliver the held bytes, or a command killed mid-write loses its tail.
 func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) {
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 
-	// "hi" parses out as text; "\x1b[3" is a CSI sequence with no final byte, so
-	// the parser holds it and neutralizes the ESC on release.
+	// "\x1b[3" has no final byte, so the parser holds it and neutralizes the ESC on release.
 	_, broadcast := pumpBroadcast(t, h, []byte("hi\x1b[3"), 8)
 
 	const want = "hi\uFFFD[3"
@@ -630,11 +634,7 @@ func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) 
 	}
 }
 
-// exitStatusFromState must report a clean exit as a code with no signal. Its
-// signal branch exists because ProcessState.ExitCode() is -1 on signal death,
-// and exit code 0 is the value that sits closest to that boundary: reading it as
-// "not a real exit code" would report every successful command as a signal
-// death, which the client paints as a failure.
+// A clean exit is a code with no signal: exit 0 must not read as a signal death.
 func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
 	t.Parallel()
 
@@ -657,16 +657,11 @@ func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
 	}
 }
 
-// Bytes held back as an incomplete rune must still reach the transcript when the
-// stream ends. The pump carries a truncated multi-byte rune forward so no chunk
-// is invalid UTF-8, and at EOF the carry has nowhere left to go — dropping it
-// would silently lose the last characters of any command killed mid-write, while
-// the ring kept them, so the two views of the same output would disagree.
+// An incomplete rune held at EOF must still reach the transcript, matching the ring.
 func TestPumpTerminalOutput_DeliversTheHeldRuneTailAtEOF(t *testing.T) {
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 
-	// "hi" then the first two bytes of "€": complete text, then a rune whose
-	// third byte never arrives.
+	// "hi" then the first two bytes of "€".
 	data := []byte{'h', 'i', 0xE2, 0x82}
 	ring, broadcast := pumpBroadcast(t, h, data, 8)
 

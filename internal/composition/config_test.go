@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +10,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -48,7 +51,6 @@ func TestConfigFromEnv_Overrides(t *testing.T) {
 	t.Setenv("KIRO_CLI_VERSION", "9.9.9")
 	t.Setenv("KIRO_CLI_SHA256", "abc")
 	t.Setenv("KIRO_CLI_SHA256_ARM64", "def")
-	t.Setenv("MAROTTE_AUTH_LOGIN_URL_TIMEOUT", "10s")
 
 	cfg := ConfigFromEnv()
 
@@ -62,8 +64,26 @@ func TestConfigFromEnv_Overrides(t *testing.T) {
 		t.Errorf("pins = %q/%q/%q, want the three exported literals verbatim",
 			cfg.KiroCLIVersion, cfg.KiroCLISHA256, cfg.KiroCLISHA256ARM64)
 	}
-	if cfg.AuthConfig.LoginURLTimeout != 10*time.Second {
-		t.Errorf("LoginURLTimeout = %v, want 10s", cfg.AuthConfig.LoginURLTimeout)
+}
+
+// TestConfigFromEnv_RemovedOverridesAreIgnored pins that the catalog refresh and
+// sign-in timeout variables are inert: set, they change nothing.
+func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {
+	t.Setenv("MAROTTE_TOOL_CATALOG_REFRESH", "off")
+	for _, name := range []string{
+		"MAROTTE_AUTH_LOGIN_URL_TIMEOUT", "MAROTTE_AUTH_LOGIN_TIMEOUT",
+		"MAROTTE_AUTH_LOGOUT_TIMEOUT", "MAROTTE_AUTH_WHOAMI_TIMEOUT",
+	} {
+		t.Setenv(name, "1s")
+	}
+
+	cfg := ConfigFromEnv()
+
+	if cfg.ToolCatalogRefresh != toolbelt.DefaultCatalogRefresh {
+		t.Errorf("ToolCatalogRefresh = %v, want toolbelt's default %v", cfg.ToolCatalogRefresh, toolbelt.DefaultCatalogRefresh)
+	}
+	if cfg.AuthConfig != auth.DefaultConfig {
+		t.Errorf("AuthConfig = %+v, want auth.DefaultConfig %+v", cfg.AuthConfig, auth.DefaultConfig)
 	}
 }
 
@@ -78,13 +98,8 @@ func containsIP(nets []*net.IPNet, ipStr string) bool {
 	return false
 }
 
-// TestParseAllowedHosts pins the ALLOWED_HOSTS parser (the config-layer
-// wrapper over webhttp.ParseHostList): unset/blank yields an INACTIVE policy
-// (any Host accepted, the backward-compatible default), a valid list becomes
-// an active canonicalized exact-match gate with the loopback carve-out, a
-// malformed entry is dropped (drop-and-report) while the valid subset is
-// kept, and an all-invalid list yields an ACTIVE EMPTY policy — deny-all,
-// fail closed, never silently unprotected.
+// TestParseAllowedHosts pins the ALLOWED_HOSTS parser: unset or blank is an INACTIVE policy, valid
+// entries engage the gate.
 func TestParseAllowedHosts(t *testing.T) {
 	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
@@ -114,10 +129,10 @@ func TestParseAllowedHosts(t *testing.T) {
 			host, peer string
 			want       bool
 		}{
-			{"MAROTTE.example.com:8080", "192.168.1.50:44444", true}, // case + port canonicalize
+			{"MAROTTE.example.com:8080", "192.168.1.50:44444", true},
 			{"attacker.evil:8080", "192.168.1.50:44444", false},
-			{"127.0.0.1:8080", "127.0.0.1:54321", true},     // healthcheck shape rides the carve-out
-			{"127.0.0.1:8080", "192.168.1.50:44444", false}, // forged loopback Host from remote peer
+			{"127.0.0.1:8080", "127.0.0.1:54321", true},
+			{"127.0.0.1:8080", "192.168.1.50:44444", false},
 		} {
 			if got := allows(t, policy, c.host, c.peer); got != c.want {
 				t.Errorf("Allows(Host %q, peer %s) = %v, want %v", c.host, c.peer, got, c.want)
@@ -265,16 +280,12 @@ func TestConfigFromEnv_TrustedProxies(t *testing.T) {
 	})
 }
 
-// TestTrustedProxies_ClientIPResolution is the end-to-end contract: the
-// parsed set, fed to webhttp.ClientIP exactly as server.go and the auth
-// audit logs do, must resolve the real client only from a trusted
-// proxy's X-Forwarded-For and otherwise fall back to the unspoofable
-// socket peer. (webhttp.ClientIP exists in the pinned v1.1.1, so this
-// test does not depend on the unreleased WithClientIP.)
+// TestTrustedProxies_ClientIPResolution asserts that the parsed set, fed to webhttp.ClientIP as server.go does,
+// resolves the real client only from a trusted peer.
 func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 	const (
-		peer      = "198.51.100.4" // the socket peer (TCP RemoteAddr host)
-		xffClient = "203.0.113.9"  // pretend-real client carried in XFF
+		peer      = "198.51.100.4"
+		xffClient = "203.0.113.9"
 	)
 	newReq := func() *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
@@ -303,29 +314,8 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 	})
 }
 
-// TestOverlayFiles pins the asymmetry between the two ways a catalog-overlay
-// path can fail to resolve.
-//
-// The default is the image's own path, absent whenever marotte runs outside the
-// container, so warning about it would put a line in every `go run` and teach a
-// reader that this warning means nothing. An EXPLICIT path that does not resolve
-// is the opposite: nobody typed it by accident, so running overlay-less without
-// saying so leaves the operator looking at an unpatched tool catalog with nothing
-// TestBundledToolsFiles pins the resolution of marotte's bundled-tools file,
-// and the ONE property here that changed on purpose is that a missing default
-// now warns.
-//
-// While that file held display copy, a missing default was dropped silently:
-// the path only exists inside the image, so a bare `go run` would have warned
-// every time about something no operator configured. Now the file is the only
-// place gopls, typescript, typescript-language-server and pyright exist — the
-// published catalog is a general reference and carries none of them, while
-// DefaultSeed names all four — so its absence makes every seeded template fail
-// at enable time. Staying silent about that means the operator debugs "my
-// language servers will not install" with nothing in the log pointing at a
-// file. The `explicit` attribute is what still separates an operator's typo
-// from the ordinary out-of-container case, so the distinction survives without
-// the silence.
+// TestBundledToolsFiles pins how a catalog-overlay path that fails to resolve is reported, default
+// and explicit alike.
 func TestBundledToolsFiles(t *testing.T) {
 	t.Run("a resolvable explicit path is used", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "bundled-tools.json")
@@ -360,8 +350,6 @@ func TestBundledToolsFiles(t *testing.T) {
 	})
 
 	t.Run("a missing default warns too, marked not explicit", func(t *testing.T) {
-		// Staged, not read off the ambient path: inside the image the real file
-		// exists, so an ambient read passes on CI and fails in the container.
 		absent := filepath.Join(t.TempDir(), "bundled-tools.json")
 		restore := defaultBundledTools
 		defaultBundledTools = absent
@@ -383,18 +371,8 @@ func TestBundledToolsFiles(t *testing.T) {
 	})
 }
 
-// TestBrowseRoots pins the lenient parser's two halves: the standard mounts
-// always survive, and only a real malformed entry is reported.
-//
-// The extras are what an operator adds, so the list has to hold more than a
-// couple of them; and the warning is the only trace a grant was dropped, so it
-// must fire when one was and stay quiet when none was — a warning on a clean
-// list is how an operator ends up hunting for a typo they did not make.
-//
-// The uploads directory is one of the standard mounts, and the assertion is
-// positional on purpose: an upload with no "dir" resolves against the granted set
-// and is REFUSED outright when that mount is missing, so dropping it here is a
-// composer that answers 403 for the container's life.
+// TestBrowseRoots pins the lenient parser: the standard mounts always survive, and only a real
+// malformed entry is reported.
 func TestBrowseRoots(t *testing.T) {
 	t.Run("several valid extras all survive alongside the standard mounts", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
@@ -423,13 +401,7 @@ func TestBrowseRoots(t *testing.T) {
 	})
 }
 
-// TestParseTrustedProxies_ReportsOnlyRealRejections pins the report half of the
-// lenient parser the value tests above cover.
-//
-// This list decides whether a forwarded header is believed over the socket peer,
-// so a dropped entry silently downgrades a proxy to untrusted and every request
-// through it gets logged with the proxy's own address. The warning is the only
-// place that shows up, and a warning on a clean list would bury it.
+// TestParseTrustedProxies_ReportsOnlyRealRejections pins the report half of the lenient parser.
 func TestParseTrustedProxies_ReportsOnlyRealRejections(t *testing.T) {
 	t.Run("a well-formed list is parsed silently", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
@@ -452,14 +424,8 @@ func TestParseTrustedProxies_ReportsOnlyRealRejections(t *testing.T) {
 	})
 }
 
-// TestParseTrustedInstallUIDs pins the one report marotte emits about a list
-// whose entries are assertions of privilege.
-//
-// Each uid claims an identity is already as privileged as this process, so an
-// entry silently dropped means custody stays enforced against an account the
-// operator meant to exempt — and an entry silently KEPT that they mistyped would
-// exempt one they did not. The count is reported and the values are not, because
-// a mis-wired compose can put a secret on any key.
+// TestParseTrustedInstallUIDs pins the one report marotte emits about a list whose entries assert
+// privilege.
 func TestParseTrustedInstallUIDs(t *testing.T) {
 	t.Run("a well-formed list is parsed silently", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
@@ -486,16 +452,8 @@ func TestParseTrustedInstallUIDs(t *testing.T) {
 	})
 }
 
-// TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk pins both warnings
-// this parser owns, and their silence.
-//
-// The gate is the only thing that breaks the DNS-rebinding chain in front of an
-// otherwise unauthenticated HTTP surface with a PTY on it, and both of its
-// failure shapes are silent on the wire: a dropped entry just never matches, and
-// an active-but-empty policy 403s every browser request with the loopback
-// healthcheck still green. So each has a warning, and neither may fire for a list
-// that works — one spurious "rejecting every non-loopback request" is enough for
-// an operator to widen the allowlist to fix a problem they do not have.
+// TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk pins both warnings this parser owns, and
+// their silence.
 func TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk(t *testing.T) {
 	const failClosed = "rejecting every non-loopback request"
 
@@ -535,4 +493,55 @@ func TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk(t *testing.T) {
 			t.Errorf("logs = %q, want the fail-closed warning: every browser request now 403s", out)
 		}
 	})
+}
+
+// The key's presence is the only fact the boot report needs, so the value never
+// enters Config: a Config is logged, diffed and handed around freely.
+func TestConfigFromEnv_RecordsKiroAPIKeyPresenceNotValue(t *testing.T) {
+	const secret = "kiro-api-key-test-value"
+	t.Setenv("KIRO_API_KEY", secret)
+	cfg := ConfigFromEnv()
+	if !cfg.KiroAPIKeySet {
+		t.Error("KiroAPIKeySet = false with KIRO_API_KEY set, want true")
+	}
+	if dump := fmt.Sprintf("%+v", cfg); strings.Contains(dump, secret) {
+		t.Errorf("Config carries the API key value: %s", dump)
+	}
+
+	t.Setenv("KIRO_API_KEY", "")
+	if ConfigFromEnv().KiroAPIKeySet {
+		t.Error("KiroAPIKeySet = true with KIRO_API_KEY empty, want false")
+	}
+}
+
+// An allowlisted API key replaces the kiro-cli login as the agent's identity with
+// nothing on screen saying so, which is the one case that earns a boot line. Not
+// allowlisted is already named by the per-spawn drop warning, so it stays silent.
+//
+// Not parallel: it swaps the slog default.
+func TestLogBridgeEnvPosture(t *testing.T) {
+	const identityMsg = "KIRO_API_KEY reaches kiro-cli"
+	cases := []struct {
+		name     string
+		keySet   bool
+		allow    string
+		wantWarn bool
+	}{
+		{name: "key unset", allow: "KIRO_API_KEY"},
+		{name: "key set, not allowlisted", keySet: true, allow: "GH_TOKEN"},
+		{name: "key set and allowlisted", keySet: true, allow: "GH_TOKEN,KIRO_API_KEY", wantWarn: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureDefaultLogger(t)
+			logBridgeEnvPosture(&Config{
+				KiroAPIKeySet:  tc.keySet,
+				BridgeEnvAllow: bridge.ParseEnvAllowlist(tc.allow),
+			})
+			if got := strings.Contains(logs.String(), identityMsg); got != tc.wantWarn {
+				t.Errorf("logBridgeEnvPosture(keySet=%t, allow=%q) warned = %t, want %t; logs:\n%s",
+					tc.keySet, tc.allow, got, tc.wantWarn, logs.String())
+			}
+		})
+	}
 }

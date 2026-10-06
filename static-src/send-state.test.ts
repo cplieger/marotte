@@ -1,12 +1,6 @@
-// Unit tests for send-state.ts — verifies the SendState computed derives the
-// send-button state reactively from the SSE-status / agent-down signals plus
-// the reactive store (activeSession), pushing to prompt-input via a single
-// effect with NO manual recompute call.
-//
-// The vocabulary here is narrow on purpose: `agentDown` means there is nothing to
-// send to, and an ordinary failed attempt never reaches it (failure-notice.ts owns
-// that). A test that writes a throttle message into this signal is asserting the
-// wrong thing about the button.
+// Unit tests for send-state.ts — verifies the SendState computed derives the send-button state
+// reactively from the SSE-status / agent-down signals plus the reactive store (activeSession),
+// pushing to prompt-input via a single effect with NO manual recompute call.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
@@ -71,29 +65,21 @@ describe("send-state precedence", () => {
     });
 
     // Drop disconnected via "connecting" (not "connected", which would clear
-    // agentDown) → agentDown now wins.
     setSSEStatus("connecting");
     expect(lastPushed()).toEqual({
       kind: "error",
       reason: "The agent could not be started for this chat.",
     });
 
-    // Clear it → STREAMING wins. Cancelling the turn is what the one control has
-    // to guarantee, so nothing below it may take the button.
     clearAgentDown();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    // Turn ends → idle. There is no state between the two: a message typed
-    // mid-turn was steered into that turn, so nothing is pending client-side to
-    // report.
     setThinking(id, false);
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
-  // Both reachability rungs report `error`, and neither locks the composer: the
-  // next Send respawns the bridge, and a dropped SSE stream says nothing about the
-  // command POST. They used to push `blocked`, which disabled the textarea and
-  // turned one throttled turn into a dead thread.
+  // Both reachability rungs report `error`, and neither locks the composer: the next Send respawns
+  // the bridge, and a dropped SSE stream says nothing about the command POST.
   it("reports both unreachable states as the advisory error state", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
@@ -108,11 +94,8 @@ describe("send-state precedence", () => {
     expect(lastPushed()?.kind).toBe("error");
   });
 
-  // The regression this file exists to catch after 2026-08: a failed ATTEMPT must
-  // leave the button alone. Nothing on the prompt-failure path calls setAgentDown,
-  // so a throttled turn on a connected client settles back to idle and the send
-  // icon stays a send icon. If a future change routes prompt_failed here again,
-  // this is what fails.
+  // A failed ATTEMPT must leave the button alone. Nothing on the prompt-failure path calls setAgentDown, so a throttled turn on a
+  // connected client settles back to idle and the send icon stays a send icon.
   it("leaves the button idle when a turn fails on a reachable agent", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
@@ -121,15 +104,15 @@ describe("send-state precedence", () => {
     setThinking(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    // What handlers/turn.ts does for a `prompt_failed` frame, in full: clear
-    // thinking, and report the prose somewhere that is not this module.
+    // What handlers/turn.ts does for a `prompt_failed` frame, in full: clear thinking, and report
+    // the prose somewhere that is not this module.
     setThinking(id, false);
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
-  // Outstanding steers must NOT reach the button. They are server state about
-  // what the agent has read, shown on the chip row; putting them here would give
-  // the one control two jobs, and during a turn it would stop offering Cancel.
+  // Outstanding steers must NOT reach the button. They are server state about what the agent has
+  // read, shown on the chip row; putting them here would give the one control two jobs, and during
+  // a turn it would stop offering Cancel.
   it("ignores pending steers entirely", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
@@ -160,11 +143,10 @@ describe("send-state auto-tracking", () => {
   });
 });
 
-// The third face state: a refused send (409 reason:"starting"). submit.ts owns
-// the copy; this module only renders it, on the same rung and with the same
-// lifecycle as the unreachable-agent state — the next attempt clears it via
-// clearAgentDown, and a chat switch drops it because the refusal was one
-// chat's.
+// The third face state: a refused send (409 reason:"starting"). submit.ts owns the copy; this
+// module only renders it, on the same rung and with the same lifecycle as the unreachable-agent
+// state — the next attempt clears it via clearAgentDown, and a chat switch drops it because the
+// refusal was one chat's.
 describe("send-state refused-send face", () => {
   it("renders the caller's copy through the error surface", () => {
     const id = "c1";
@@ -180,9 +162,8 @@ describe("send-state refused-send face", () => {
   });
 
   it("outranks streaming, exactly like the agent-down rung", () => {
-    // The store may read busy for the holder's own turn (the connect's `busy_chats`);
-    // the refusal face must still win, or the reader never learns their send was
-    // refused.
+    // The store may read busy for the holder's own turn (the connect's `busy_chats`); the refusal
+    // face must still win, or the reader never learns their send was refused.
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);

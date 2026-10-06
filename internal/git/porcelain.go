@@ -1,8 +1,6 @@
-// ONE `git status` invocation per repository, plus its parser. Porcelain v2
-// carries the branch, ahead/behind and stash counts as header records beside the
-// file list; the panel still spawns `remote get-url origin` separately, because v2
-// reports the upstream REF and not the URL. Format reference: gitstatus(1)
-// "Porcelain Format Version 2".
+// ONE `git status` (porcelain v2) per repository, plus its parser: branch, ahead/behind and stash
+// counts ride as header records. `remote get-url origin` stays separate because v2 reports the
+// upstream ref, not the URL. Format: gitstatus(1) "Porcelain Format Version 2".
 
 package git
 
@@ -38,13 +36,9 @@ type porcelainStatus struct {
 	Conflicted bool
 }
 
-// readStatus runs the status invocation in dir and parses it.
-//
-// The error survives because the callers want different things from a failure: the
-// dashboard degrades to empty counts, a discard refuses to act on a status it does
-// not have, and pull-all must treat an unreadable tree as unsafe rather than clean.
-// A FAILED read still answers the branch, read off .git/HEAD, so a wedged
-// repository's row keeps its one piece of orientation.
+// readStatus runs the status invocation in dir and parses it. The error survives because callers
+// differ: the dashboard degrades to empty counts, a discard refuses, pull-all treats an unreadable
+// tree as unsafe. A failed read still answers the branch, read off .git/HEAD.
 func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 	raw, err := gitExec(ctx, dir, statusArgs...).CombinedOutput()
 	if err != nil {
@@ -93,18 +87,21 @@ func headBranch(dir string) string {
 // resolving a relative pointer against the file's own directory (git's rule).
 // Empty when the file is not a gitdir pointer.
 func resolveGitDirFile(dir, gitFile string) string {
-	target, ok := strings.CutPrefix(strings.TrimSpace(readSmallFile(gitFile)), "gitdir:")
+	target, ok := parseGitFile(readSmallFile(gitFile))
 	if !ok {
-		return ""
-	}
-	target = strings.TrimSpace(target)
-	if target == "" {
 		return ""
 	}
 	if filepath.IsAbs(target) {
 		return target
 	}
 	return filepath.Join(dir, target)
+}
+
+// parseGitFile returns the path a gitfile's `gitdir:` line names.
+func parseGitFile(raw string) (string, bool) {
+	target, ok := strings.CutPrefix(strings.TrimSpace(raw), "gitdir:")
+	target = strings.TrimSpace(target)
+	return target, ok && target != ""
 }
 
 // readSmallFile reads at most headDocMaxBytes of path, answering "" for anything it
@@ -147,11 +144,9 @@ const (
 	unmergedFields = 11
 )
 
-// parsePorcelainV2 parses the status output; pure, so the grammar is testable
-// without git. Records are NUL-separated, headers included: git never quotes a path
-// in the -z form, where the newline form C-quotes non-ASCII (café.txt →
-// "caf\303\251.txt") and those strings match nothing when fed back to git.
-// Malformed records are skipped, which also makes CombinedOutput's stderr harmless.
+// parsePorcelainV2 parses the status output; pure, so the grammar is testable without git.
+// NUL-separated records: the -z form never quotes a path, where the newline form C-quotes non-ASCII
+// into strings git cannot match. Malformed records are skipped.
 func parsePorcelainV2(raw []byte) porcelainStatus {
 	var st porcelainStatus
 	records := strings.Split(string(raw), "\x00")

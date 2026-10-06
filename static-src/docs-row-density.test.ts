@@ -1,21 +1,12 @@
-// A DOCS ROW IS ONE HEIGHT WHATEVER IT CARRIES.
-//
-// The rows are on the shared `.entry` builder under `.docs-panel`, which sets the
-// three-line tier ONCE for all six tabs. So a spec with nothing under its title,
-// a steering doc with two badges and a clamped description, and a hook with two
-// mono fact lines all measure the same, and their titles sit at one offset — the
-// column a reader scans. This used to key padding on block count, which is what
-// made the page measure 36px to 124px across its tabs.
-//
-// Real layout, because the claim is geometric.
+// A docs row is one height whatever it carries: `.docs-panel` sets the three-line tier once on the shared `.entry`
+// builder, so titles sit at one offset. Real layout, since the claim is geometric.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { entryList, entryRow } from "./entry-row.js";
 import type { EntryRowSpec } from "./entry-row.js";
 
-/** The three-line tier's px, hardcoded rather than read back: the design's own
- *  numbers, so a retune has to move this table deliberately. */
+/** Hardcoded: a retune has to move this table deliberately. */
 const FINE_3 = 72;
 const COARSE_3 = 76;
 
@@ -31,9 +22,7 @@ const badge = (text: string): HTMLElement => {
 
 const noop = (): void => undefined;
 
-/** The shapes the six tabs produce, as docs.ts builds them: a spec's path and
- *  group, two badges over a clamped description, two mono fact lines, and a
- *  document with NO description (an empty clamp). */
+/** The shapes docs.ts builds, including a document with no description. */
 const SPECS: readonly EntryRowSpec[] = [
   {
     key: "spec",
@@ -90,7 +79,6 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** A Docs panel holding one section, exactly as docs.ts builds it. */
 function mountPanel(pointer: "fine" | "coarse"): HTMLElement {
   document.documentElement.setAttribute("data-pointer", pointer);
   const panel = document.createElement("div");
@@ -111,7 +99,6 @@ function mountPanel(pointer: "fine" | "coarse"): HTMLElement {
 const heights = (panel: HTMLElement): number[] =>
   [...panel.querySelectorAll<HTMLElement>(".entry")].map((r) => r.getBoundingClientRect().height);
 
-/** The title's offset from its row's top, the number a reader's eye scans down. */
 function titleTops(panel: HTMLElement): number[] {
   return [...panel.querySelectorAll<HTMLElement>(".entry")].map((row) => {
     const title = row.querySelector<HTMLElement>(".entry-title") as HTMLElement;
@@ -136,8 +123,7 @@ describe("a docs row", () => {
   });
 
   it("takes the tier from the panel, not from the row", () => {
-    // The control for "set once on the list": the same row outside the panel is
-    // on the default two-line rung.
+    // Control: the same row outside the panel is on the default two-line rung.
     document.documentElement.setAttribute("data-pointer", "fine");
     const list = entryList();
     list.append(entryRow(SPECS[0] as EntryRowSpec));

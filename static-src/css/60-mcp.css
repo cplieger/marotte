@@ -569,6 +569,33 @@
   font-size: var(--fs-sm);
 }
 
+/* The organization's MCP catalog while MCP is restricted to its registry. */
+.mcp-registry-panel {
+  margin-block-end: var(--sp-3);
+}
+
+.mcp-registry-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-registry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.mcp-registry-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .mcp-row {
   /* Row height comes from the TIER, not from the font. Without it this row
      resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
@@ -638,8 +665,8 @@
   flex-shrink: 0;
 }
 
-/* A row with no configuration behind it: no toggle and no action buttons, so it
-   is tinted back to read as informational rather than actionable. Mixed toward
+/* A row with no configuration behind it: no toggle, no edit and no remove, so it
+   is tinted back to read as informational rather than editable. Mixed toward
    the page background rather than to transparent — the list's own background is
    the 1px row separator colour, which a translucent row would show through. */
 .mcp-row-readonly {
@@ -661,6 +688,13 @@
   align-items: center;
   gap: 0.125rem;
   flex-shrink: 0;
+}
+
+/* REQUIRED: `.icon-btn` declares `display: flex`, which beats the UA sheet's
+   `[hidden] { display: none }` on specificity, so without this a row's hidden
+   Reconnect still renders. Reconnect is hidden on a row with no live report. */
+.mcp-row-actions > .icon-btn[hidden] {
+  display: none;
 }
 
 .mcp-toggle {
@@ -916,40 +950,6 @@
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
   font-weight: var(--fw-medium);
-}
-
-/* The tool list is recorded but NOT IN FORCE, because the security profile in
-   force does not honour it. A hue wash of its state over the section rather than
-   a rung, with the notice's own words as the non-colour channel (WCAG 1.4.1) —
-   the same declaration `.tool-denial` uses in 14-tools.css, which is this app's
-   shipped amber-notice shape, so the two read alike.
-
-   Amber and not red because nothing broke: the grant did not take effect, which
-   is the register a stopped tool row takes. */
-.mcp-list-suspended {
-  padding: var(--sp-2);
-  border-radius: var(--r);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  line-height: 1.5;
-}
-
-/* The names stay VISIBLE and read as not-in-force — struck through in tertiary
-   ink, which is this app's own "this is undone" treatment (the deselected
-   turn-approval row). Never hidden: the whole defect being fixed is a grant
-   nobody could see, and hiding the list to say it is suspended would reproduce
-   it one state over.
-
-   Scoped to the LABEL so the remove control keeps its own ink and its strike
-   does not read as a disabled button — the list is still editable, and it
-   applies again on a profile that honours it.
-
-   Keyed on the attribute rather than an id: the treatment is "a suspended MCP
-   form section", and only the section that HAS a posture ever carries it. */
-.mcp-form-section[data-suspended] .chip-label {
-  text-decoration: line-through;
-  color: var(--c-text-tertiary);
 }
 
 /* Clickable known-tool suggestions under the disabled-tools chip editor. */

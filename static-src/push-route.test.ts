@@ -1,15 +1,4 @@
-// ---------------------------------------------------------------------------
-// REQUIRED TEST 1: the worker's destination and the page's opener resolve to the
-// SAME route.
-//
-// Each row asserts three things, and (3) against (1) is the killing property: it
-// fails if either half stops going through `pushTargetRoute`, which is the only
-// thing keeping the two agreeing. A row asserting only `buildPath` would pass while
-// the page diverged, and that is precisely the state this change removes.
-//
-// The route literals and URLs are HARDCODED, so the table is a spec rather than a
-// restatement of the functions it drives.
-// ---------------------------------------------------------------------------
+// REQUIRED TEST 1: the worker's destination and the page's opener resolve to the SAME route.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { buildPath, type Route } from "./route-path.js";
@@ -19,7 +8,7 @@ import {
   _resetNotificationOpenerForTest,
 } from "./notification-open.js";
 
-vi.mock("./toast.js", () => ({ info: vi.fn() }));
+vi.mock("./toast.js", async () => (await import("./__test-helpers__/toast-mock.js")).toastMock());
 
 const { routePushMessage } = await import("./handlers/push-message.js");
 
@@ -44,9 +33,9 @@ const rows: readonly Row[] = [
     chatId: "",
     subject: "pr:github:github.com:cplieger/marotte#42",
     route: { kind: "git", tab: "prs", pr: "github:github.com:cplieger/marotte#42" },
-    // The identity rides as a `#pr=` fragment, so a cold click from the tray carries
-    // the pull request into `openWindow` rather than only the tab. The `#` inside it
-    // percent-encodes to `%23`, which is why the fragment is one encoded value.
+    // The identity rides as a `#pr=` fragment, so a cold click from the tray carries the pull
+    // request into `openWindow` rather than only the tab. The `#` inside it percent-encodes to
+    // `%23`, which is why the fragment is one encoded value.
     url: "/git/prs#pr=github%3Agithub.com%3Acplieger%2Fmarotte%2342",
   },
   {
@@ -99,9 +88,9 @@ describe("one subject, one destination", () => {
 });
 
 describe("an unregistered opener", () => {
-  // Its own describe with the reset, because the opener is ONE module-level slot and
-  // Vitest links a module once per file: the table above has already registered a spy,
-  // so without this the unregistered state is unreachable.
+  // Its own describe with the reset, because the opener is ONE module-level slot and Vitest links a
+  // module once per file: the table above has already registered a spy, so without this the
+  // unregistered state is unreachable.
   beforeEach(() => {
     _resetNotificationOpenerForTest();
   });

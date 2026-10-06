@@ -1,28 +1,18 @@
-// The agent-terminal → tool-card seam: what happens to live chunks that arrive
-// before a card has claimed their terminal id.
-//
-// Two defects live here and both are ORDERING defects, so they are only
-// reachable through the real mount path — the hold, the card build and the flush
-// have to run in the order the reconciler runs them.
+// Live terminal chunks that arrive before a card claims their terminal id. Both defects are ordering defects, so
+// only the real mount path (hold, build, flush in reconciler order) reaches them.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderOutput } from "./output-render.js";
 import type { TextSpan, ToolCall } from "./types.js";
+import type * as ToolSchema from "./tool-schema.js";
 
-// The signal layer hands back the same snapshot it was given, so mount's effect
-// sees `next === lastApplied` and does not re-enter applyToolCallUpdate. The real
-// store-signals module would drag the whole chat store in.
+// The signal layer hands back the snapshot it was given, so mount's effect does not re-enter the update path.
 vi.mock("./store-signals.js", () => ({
-  // The map itself needs its `clear`: the module under test drops a card's signal
-  // by key when the card is released and when every effect is disposed, so an
-  // `undefined` here throws out of the teardown every case runs.
+  // The module drops a card's signal by key on release and dispose, so an `undefined` `clear` throws in teardown.
   toolCallSigs: { clear: vi.fn() },
-  // Real key composition: the module under test keys its card registry on the
-  // composite, and a key of `undefined` would collapse every entry onto one.
+  // Real key composition: an `undefined` key would collapse every registry entry onto one.
   toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
   ensureToolCallSig: vi.fn((_chat: string, _id: string, tc: unknown) => ({ value: tc })),
-  // Present-but-undefined: Browser Mode links for real rather than reading
-  // properties off a namespace object, so a factory that omits a name some module
-  // in this graph imports fails collection, and no path under test calls these.
+  // Present-but-undefined so real-ESM linking succeeds; no path under test calls these.
   peekToolCallSig: undefined,
   entryTextSigs: undefined,
   laneSigs: undefined,
@@ -40,20 +30,14 @@ vi.mock("./store-signals.js", () => ({
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
 }));
-vi.mock("./tool-schema.js", () => ({
+// Spread from the original: the module is pure and the title path reads its real functions.
+vi.mock("./tool-schema.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ToolSchema>()),
   isToolDone: vi.fn(() => false),
-  // Present-but-undefined, same reason as the mocks above: another module in
-  // this graph imports the name and no path under test calls it.
-  isToolActive: undefined,
-  isSubagentInvocation: undefined,
 }));
 
-// A card double that does the ONE thing these tests depend on the real builder
-// doing: render `opts.output` into the output region at BUILD time, through the
-// same painter (`renderOutput`) tool-card.ts uses. That is what makes a
-// subsequent flush a duplicate rather than a first paint. The real module is not
-// imported because it reaches scroll.ts's self-initialising singleton and the
-// editor openers, none of which this seam touches.
+// A card double that renders `opts.output` at build time through `renderOutput`, which makes a later flush a
+// duplicate rather than a first paint.
 vi.mock("./tool-card.js", () => ({
   buildToolCard: vi.fn((opts: { output?: string; outputSpans?: TextSpan[] }) => {
     const card = document.createElement("div");
@@ -73,9 +57,10 @@ vi.mock("./tool-card.js", () => ({
   expandToolDetails: vi.fn(),
   applyOutcome: vi.fn(),
   refreshToolDisclosure: vi.fn(),
-  // Inert, as above: the mount effect calls it per pass and its own behaviour is
-  // pinned in `tool-card-silence.test.ts`.
+  // Inert: the mount effect calls it per pass.
   syncSilenceMarker: vi.fn(),
+  syncOffloadLink: vi.fn(),
+  syncInteractionFact: vi.fn(),
 }));
 
 import {
@@ -84,15 +69,17 @@ import {
   appendTerminalChunk,
   forgetTerminal,
   disposeAllToolEffects,
+  drainParkedTerminals,
+  initToolViewCallbacks,
 } from "./messages-tools.js";
 
-/** The mount every card in this file goes through. The chat id is part of the
- *  per-tool signal key, so a mount and its writer have to name the same one. */
+const parkedCards = new Set<HTMLElement>();
+initToolViewCallbacks({ isCardParked: (card) => parkedCards.has(card) });
+
+/** The mount every card here uses; the chat id is part of the per-tool signal key. */
 const mount = (tc: ToolCall): HTMLDivElement => mountToolCallCard("c-terminal", tc);
 
-/** A minimal ToolCall. Cast at the boundary: the wire type carries a dozen
- *  fields this seam never reads, and spelling them out would obscure the two
- *  that matter (`terminal_id` and `output`). */
+/** A minimal ToolCall, cast at the boundary: only `terminal_id` and `output` matter here. */
 function toolCall(over: Record<string, unknown>): ToolCall {
   return {
     id: "tc-1",
@@ -110,14 +97,14 @@ function pre(card: Element): string {
 
 beforeEach(() => {
   disposeAllToolEffects();
+  parkedCards.clear();
   document.body.replaceChildren();
 });
 
 describe("a completion snapshot supersedes the hold", () => {
   it("does not print the opening output twice when the first frame already carries it", () => {
-    // The reachable sequence: a fast command's chunks land before any card owns
-    // the terminal, then its FIRST tool_call frame arrives already completed with
-    // the server's whole-stream output on it.
+    // A fast command's chunks land before any card owns the terminal, then its first frame arrives completed with
+    // the whole output.
     appendTerminalChunk("term-1", "hello\n", [], 0);
     appendTerminalChunk("term-1", "world\n", [], 6);
 
@@ -125,14 +112,12 @@ describe("a completion snapshot supersedes the hold", () => {
       toolCall({ terminal_id: "term-1", status: "completed", output: "hello\nworld\n" }),
     );
 
-    // Flushing the hold on top of the snapshot yields "hello\nworld\nhello\nworld\n".
+    // Flushing the hold on top of the snapshot would duplicate the output.
     expect(pre(card)).toBe("hello\nworld\n");
   });
 
   it("still flushes the hold when the tool call carries no output of its own", () => {
-    // The other half, and the reason the hold exists at all: without it the
-    // opening lines of every command are missing from the live view until
-    // completion replaces the whole thing.
+    // Without the hold, a command's opening lines are missing from the live view until completion.
     appendTerminalChunk("term-2", "starting\n", [], 0);
     const card = mount(toolCall({ id: "tc-2", terminal_id: "term-2" }));
     expect(pre(card)).toBe("starting\n");
@@ -150,37 +135,135 @@ describe("a completion snapshot supersedes the hold", () => {
     const tc = toolCall({ id: "tc-4", terminal_id: "term-4" });
     const card = mount(tc);
     expect(pre(card)).toBe("a\n");
-    // The same link arrives on every later update; the discard must be permanent
-    // in both directions, so neither a re-link nor a snapshot re-flushes.
+    // The link arrives on every later update, so the discard must be permanent.
     updateToolCall(card, tc, "c-terminal");
     expect(pre(card)).toBe("a\n");
   });
 
-  it("keeps live chunks flowing after the link, snapshot or not", () => {
+  it("keeps live chunks flowing to an in-flight card after the link", () => {
+    const card = mount(toolCall({ id: "tc-5", terminal_id: "term-5" }));
+    appendTerminalChunk("term-5", "after\n", [], 0);
+    expect(pre(card)).toBe("after\n");
+  });
+
+  it("gives a settled card no live chunks: its snapshot is its record", () => {
     const card = mount(
-      toolCall({ id: "tc-5", terminal_id: "term-5", status: "completed", output: "snap\n" }),
+      toolCall({ id: "tc-5s", terminal_id: "term-5s", status: "completed", output: "snap\n" }),
     );
-    appendTerminalChunk("term-5", "after\n", [], 5);
-    expect(pre(card)).toBe("snap\nafter\n");
+    appendTerminalChunk("term-5s", "after\n", [], 5);
+    expect(pre(card)).toBe("snap\n");
+  });
+
+  it("still gives a settled card with no snapshot the opening lines it was held", () => {
+    appendTerminalChunk("term-5h", "opening\n", [], 0);
+    const card = mount(toolCall({ id: "tc-5h", terminal_id: "term-5h", status: "completed" }));
+    expect(pre(card)).toBe("opening\n");
+  });
+});
+
+describe("a settled call's opening lines reach a card that was parked", () => {
+  function twoSurfaces(): {
+    view: HTMLElement;
+    parkedCard: HTMLDivElement;
+    liveCard: HTMLDivElement;
+  } {
+    const view = document.createElement("div");
+    const page = document.createElement("div");
+    document.body.append(view, page);
+    const tc = toolCall({ id: "tc-p", status: "in_progress" });
+    const parkedCard = mount(tc);
+    const liveCard = mount(tc);
+    view.appendChild(parkedCard);
+    page.appendChild(liveCard);
+    parkedCards.add(parkedCard);
+    appendTerminalChunk("term-p", "opening\n", [], 0);
+    return { view, parkedCard, liveCard };
+  }
+
+  it("writes the prefix into the parked card at unpark, and the live card once", () => {
+    const { view, parkedCard, liveCard } = twoSurfaces();
+    updateToolCall(
+      liveCard,
+      toolCall({ id: "tc-p", terminal_id: "term-p", status: "completed" }),
+      "c-terminal",
+    );
+    expect(pre(liveCard)).toBe("opening\n");
+    expect(pre(parkedCard)).toBe("");
+
+    parkedCards.delete(parkedCard);
+    drainParkedTerminals("c-terminal", view);
+    expect(pre(parkedCard)).toBe("opening\n");
+    expect(pre(liveCard)).toBe("opening\n");
+
+    drainParkedTerminals("c-terminal", view);
+    expect(pre(parkedCard)).toBe("opening\n");
+  });
+
+  it("leaves a parked card alone when a snapshot reached it meanwhile", () => {
+    const { view, parkedCard, liveCard } = twoSurfaces();
+    updateToolCall(
+      liveCard,
+      toolCall({ id: "tc-p", terminal_id: "term-p", status: "completed" }),
+      "c-terminal",
+    );
+    parkedCards.delete(parkedCard);
+    updateToolCall(
+      parkedCard,
+      toolCall({
+        id: "tc-p",
+        terminal_id: "term-p",
+        status: "completed",
+        output: "opening\nall\n",
+      }),
+      "c-terminal",
+    );
+    drainParkedTerminals("c-terminal", view);
+    expect(pre(parkedCard)).toBe("opening\nall\n");
+  });
+});
+
+describe("only an in-flight card is a terminal's live sink", () => {
+  it("a completed read card does not steal the stream from an in-flight owner", () => {
+    const live = mount(toolCall({ id: "tc-a", terminal_id: "term-x" }));
+    const done = mount(
+      toolCall({ id: "tc-b", terminal_id: "term-x", status: "completed", output: "snap\n" }),
+    );
+    appendTerminalChunk("term-x", "more\n", [], 0);
+    expect(pre(live)).toBe("more\n");
+    expect(pre(done)).toBe("snap\n");
+  });
+
+  it("a second in-flight card does not displace the first owner", () => {
+    const first = mount(toolCall({ id: "tc-c", terminal_id: "term-y" }));
+    const second = mount(toolCall({ id: "tc-d", terminal_id: "term-y" }));
+    appendTerminalChunk("term-y", "x\n", [], 0);
+    expect(pre(first)).toBe("x\n");
+    expect(pre(second)).toBe("");
+  });
+
+  it("settling the owner through an update releases the stream", () => {
+    const tc = toolCall({ id: "tc-e", terminal_id: "term-z" });
+    const card = mount(tc);
+    appendTerminalChunk("term-z", "one\n", [], 0);
+    updateToolCall(card, { ...tc, status: "completed" }, "c-terminal");
+    appendTerminalChunk("term-z", "two\n", [], 4);
+    expect(pre(card)).toBe("one\n");
   });
 });
 
 describe("the hold is a contiguous prefix", () => {
-  // 64 KB, PENDING_CHARS_CAP. Not exported: the cap is an internal budget, and a
-  // test that reads it would pass whatever it was set to.
+  // PENDING_CHARS_CAP, deliberately not exported: a test reading it would pass whatever it was set to.
   const CAP = 64 * 1024;
 
   it("stops accepting after the first chunk that does not fit, leaving no hole", () => {
-    // Accepting a later SMALLER chunk after dropping an oversized one produces a
-    // silent gap: every chunk is rebased by its own `base`, so the two sides of
-    // the hole render as though they were adjacent and nothing marks the missing
-    // middle.
+    // Every chunk is rebased by its own `base`, so accepting a smaller chunk after a dropped one would render the two
+    // sides of the hole as adjacent.
     appendTerminalChunk("term-6", "head\n", [], 0);
     appendTerminalChunk("term-6", "M".repeat(CAP), [], 5);
     appendTerminalChunk("term-6", "tail\n", [], 5 + CAP);
 
     const card = mount(toolCall({ id: "tc-6", terminal_id: "term-6" }));
-    // "head\ntail\n" is the gap: two non-adjacent slices printed as neighbours.
+    // "head\ntail\n" would be the gap.
     expect(pre(card)).toBe("head\n");
   });
 
@@ -200,8 +283,7 @@ describe("the hold is a contiguous prefix", () => {
   });
 
   it("evicts the oldest hold once too many terminals are unclaimed", () => {
-    // PENDING_TERMINALS_CAP is 16. The 17th terminal to be held evicts the first,
-    // because the newest is the one most likely still to find its card.
+    // PENDING_TERMINALS_CAP is 16; the 17th evicts the first, since the newest most likely still finds its card.
     for (let i = 0; i < 17; i++) {
       appendTerminalChunk(`bulk-${String(i)}`, `t${String(i)}\n`, [], 0);
     }
@@ -214,8 +296,7 @@ describe("the hold is a contiguous prefix", () => {
 
 describe("a flushed chunk keeps its styling", () => {
   it("rebases held spans by each chunk's own base", () => {
-    // The hold stores `base` per chunk precisely so a flush is not one big
-    // concatenation: the second chunk's spans address the accumulated stream.
+    // `base` is stored per chunk so the second chunk's spans address the accumulated stream.
     appendTerminalChunk("term-9", "ok\n", [{ start: 0, end: 2, fg: 2, bg: -1, attrs: 0 }], 0);
     appendTerminalChunk("term-9", "bad\n", [{ start: 3, end: 6, fg: 1, bg: -1, attrs: 0 }], 3);
     const card = mount(toolCall({ id: "tc-9", terminal_id: "term-9" }));

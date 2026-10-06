@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// The personal access token forms: one per forge kind, and one for a server
-// whose kind the detect route names before the same token connect.
-// ---------------------------------------------------------------------------
-
 import type { ForgeKind } from "./wire/types.gen.js";
 import { connectPAT, detectForge, type ConnectionOptions } from "./actions/forge.js";
 import { withAsyncFeedback } from "./async-button.js";
@@ -180,8 +175,7 @@ async function connectAs(
   args: Parameters<typeof connectPAT.dispatch>[0],
   status: HTMLElement,
 ): Promise<boolean> {
-  // Typed outcome: the framework's error toast is suppressed (error: false),
-  // so this status line is the only failure surface.
+  // The framework's error toast is suppressed (error: false), so this status line is the only failure surface.
   const o = await connectPAT.dispatch(args).outcome;
   if (o.status === "cancelled") {
     setLine(status, "");

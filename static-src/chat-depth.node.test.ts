@@ -1,9 +1,7 @@
-// The transcript's depth ladder and its one hover recipe, in BOTH themes: the two
-// themes run one ladder in opposite directions. Shells out to
-// `scripts/css-contrast.py` rather than reimplementing the colour maths (a second
-// implementation is a second thing to be wrong). The hover POPULATION is DERIVED
-// from the stylesheets, because a hand-kept list passes forever once somebody adds
-// a box header. Node environment: this runs a process.
+// The transcript's depth ladder and its one hover recipe in BOTH themes: one ladder run in
+// opposite directions. The maths is shelled out to `scripts/css-contrast.py`. The hover
+// POPULATION is derived from the stylesheets, so a new box header joins it by existing.
+// Node env: this runs a process.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -14,9 +12,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
 
-/** Read with `node:fs`, not a `?raw` glob: in vitest's NODE project a `*.css?raw`
- *  import resolves to the EMPTY STRING, which would make every sweep below pass
- *  over nothing. Same reason the two sibling contrast tests read their own. */
+/** Read with `node:fs`: in vitest's node project a `*.css?raw` import resolves to "". */
 /** The transcript's stylesheets plus the run page's, which follows the same recipe. */
 const SHEETS = [
   "12-chat.css",
@@ -86,9 +82,7 @@ describe("the transcript's depth ladder is the same ladder in both themes", () =
   });
 
   it("places the card rung BETWEEN the page and the box, in both themes", () => {
-    // Contrast ratios are exactly multiplicative along a monotonic luminance
-    // chain, so composition IS the betweenness test and needs no luminance
-    // implementation: a rung outside the interval exceeds the direct ratio.
+    // Ratios multiply along a monotonic luminance chain, so composition IS the betweenness test.
     const cardVsPage = pair(CARD, PAGE);
     const boxVsCard = pair(BOX, CARD);
     const boxVsPage = pair(BOX, PAGE);
@@ -134,9 +128,10 @@ describe("the transcript's depth ladder is the same ladder in both themes", () =
   });
 });
 
-/** Every `:hover` rule in a transcript stylesheet that names a box-header class
- *  AND writes a background. Derived, so a seventh header joins the population by
- *  existing rather than by being added here. */
+/**
+ * Every `:hover` rule in a transcript stylesheet naming a box-header class and writing a
+ * background, derived.
+ */
 interface HoverRule {
   file: string;
   line: number;
@@ -213,16 +208,13 @@ describe("one hover recipe for every box header in a transcript", () => {
   const population = boxHeaderHovers();
 
   it("finds the headers it is meant to be guarding", () => {
-    // A sweep that matches nothing passes every assertion below it. Ten box and
-    // row surfaces write a hover background today, across the transcript and the
-    // run page; the floor is what catches a regex that stopped matching.
+    // A floor, so a regex that stopped matching cannot pass every assertion below.
     expect(population.length, JSON.stringify(population, null, 1)).toBeGreaterThanOrEqual(10);
   });
 
   it("writes the interaction wash and never a ramp rung or a hue", () => {
-    // `--c-hover` for a header with no fill of its own, `--layer-hover` for one
-    // with a fill to preserve. Anything else is a second recipe: an accent or
-    // status mix makes hover carry identity, which the border and glyph already do.
+    // `--c-hover` without a fill of its own, `--layer-hover` with one; an accent mix would make
+    // hover carry identity.
     const allowed = new Set(["var(--c-hover)", "var(--layer-hover)"]);
     for (const r of population) {
       expect(allowed.has(r.value), `${r.file}:${r.line} ${r.selector} hovers with ${r.value}`).toBe(
@@ -232,9 +224,8 @@ describe("one hover recipe for every box header in a transcript", () => {
   });
 
   it("gates each of them on any-hover so a tap cannot latch the wash on", () => {
-    // Each of these is a disclosure trigger or a link, so the finger is still on
-    // it when the gesture ends and `:hover` sticks. `any-hover` rather than
-    // `hover`: `hover` reports the primary input only.
+    // Disclosure triggers and links keep the finger on them, so `:hover` sticks; `any-hover`,
+    // since `hover` reports the primary input only.
     for (const r of population) {
       expect(
         r.gated,
@@ -246,12 +237,8 @@ describe("one hover recipe for every box header in a transcript", () => {
 
 describe("hint ink stays off the HOVERED band, on every surface that has one", () => {
   it("measures why: the hovered band is a two-level surface and the band at rest is not", () => {
-    // Since the ink ramp was authored against the hovered box (01-tokens.css "SEEDS:
-    // ink"), the hint ink clears the band AT REST — which is what lets the turn info
-    // panel keep its hint-ink labels. It does not clear the band under the hover wash,
-    // and the two band regions that hover (the chat's `.turn-head-row`, the run
-    // page's group head) are exactly where the step-ups to secondary live. Both
-    // halves are asserted so the step-ups cannot be justified by a stale premise.
+    // The hint ink clears the band AT REST but not under the hover wash, which is where the
+    // step-ups to secondary live. Both halves are asserted.
     const hintRest = pair("var(--c-text-tertiary)", "var(--c-bg-tertiary)");
     const hint = pair("var(--c-text-tertiary)", "over(var(--c-hover), var(--c-bg-tertiary))");
     const secondary = pair("var(--c-text-secondary)", "over(var(--c-hover), var(--c-bg-tertiary))");
@@ -273,10 +260,8 @@ describe("hint ink stays off the HOVERED band, on every surface that has one", (
     const rule = /\.ev-group > \.ev-row-main :where\(\.ev-dur\)\s*\{([^{}]*)\}/.exec(css);
     expect(rule, "the group head's duration steps up").not.toBeNull();
     expect(/color:\s*var\(--c-text-secondary\);/.test(rule?.[1] ?? "")).toBe(true);
-    // `:where()` keeps it under 70-selection.css's (0,3,0) muted-ink rule, so a
-    // SELECTED head still reads `--c-selected-muted-fg`. Written as a class count
-    // rather than a computed specificity: three classes here would tie and win on
-    // MANIFEST order, which is the failure this guards.
+    // `:where()` keeps it under 70-selection.css's (0,3,0) muted-ink rule; three classes here
+    // would tie and win on MANIFEST order.
     const selector = ".ev-group > .ev-row-main :where(.ev-dur)";
     const scoring = selector.replace(/:where\([^)]*\)/g, "").match(/\./g) ?? [];
     expect(scoring.length, "scores below the selected rule's three classes").toBeLessThan(3);

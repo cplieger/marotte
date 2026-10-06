@@ -1,18 +1,12 @@
-// ---------------------------------------------------------------------------
-// Tests for handlers/push-message.ts's own job: turning a posted MESSAGE into a
-// push target, including the `subject ?? ""` the wire type leaves optional.
-//
-// The destination itself is push-route.test.ts's subject — that file asserts the
-// worker's URL and this opener resolve to ONE route — so what is pinned here is the
-// mapping from the message's two fields onto the target, through the real seam with
-// a spy opener rather than a mock of it.
-// ---------------------------------------------------------------------------
+// Turning a posted MESSAGE into a push target, `subject ?? ""` included, through the real seam
+// with a spy opener; the destination is push-route.test.ts's.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type { Route } from "../route-path.js";
 import { registerNotificationOpener } from "../notification-open.js";
+import { defaultUsage, setSessions } from "../store.js";
 
-vi.mock("../toast.js", () => ({ info: vi.fn() }));
+vi.mock("../toast.js", async () => (await import("../__test-helpers__/toast-mock.js")).toastMock());
 
 const toast = await import("../toast.js");
 const { initPushMessages, routePushMessage } = await import("./push-message.js");
@@ -45,7 +39,7 @@ describe("initPushMessages", () => {
     });
     expect(onSubscriptionChanged).toHaveBeenCalledTimes(1);
     expect(opened).not.toHaveBeenCalled();
-    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.notice).not.toHaveBeenCalled();
   });
 
   it("toasts an arrived chat push and leaves the presence tag alone", () => {
@@ -57,9 +51,58 @@ describe("initPushMessages", () => {
       title: "Marotte",
       body: "Agent finished",
     });
-    expect(toast.info).toHaveBeenCalledWith("Agent finished");
+    expect(toast.notice).toHaveBeenCalledWith("Agent finished", "info", undefined);
     expect(onSubscriptionChanged).not.toHaveBeenCalled();
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("names the chat the push is about", () => {
+    setSessions([
+      {
+        id: "c1",
+        name: "Fix the parser",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        supervised_mode: false,
+        usage: defaultUsage(),
+        turns: new Map(),
+        turn_order: [],
+        turn_count: 0,
+        has_more: false,
+        thinking: false,
+        working_label: "Thinking",
+      },
+    ]);
+    postFromWorker({
+      type: "push",
+      reason: "arrived",
+      chatId: "c1",
+      subject: "",
+      title: "Marotte",
+      body: "Agent finished",
+    });
+    // The chat is retained and has no tab, so the notice offers Open onto it.
+    expect(toast.notice).toHaveBeenCalledWith(
+      "Fix the parser: Agent finished",
+      "info",
+      expect.objectContaining({ label: "Open" }),
+    );
+    setSessions([]);
+  });
+
+  it("names a chat the page no longer holds by the name the push carried", () => {
+    setSessions([]);
+    postFromWorker({
+      type: "push",
+      reason: "arrived",
+      chatId: "c9",
+      subject: "",
+      chatName: "Fix the parser",
+      title: "Marotte",
+      body: "Agent finished",
+    });
+    expect(toast.notice).toHaveBeenCalledWith("Fix the parser: Agent finished", "info", undefined);
   });
 });
 

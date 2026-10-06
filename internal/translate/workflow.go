@@ -1,9 +1,7 @@
 package translate
 
-// v3 (KAS) workflow-run lifecycle handlers. KAS's nine notifications become three SSE
-// events: seven are pure invalidations sharing one handler, and the two ends of the run
-// mean something other than "refetch" to a client. They arrive on the LAUNCHING CHAT's
-// bridge, because KAS parents a run on the calling chat's session.
+// v3 workflow-run lifecycle handlers: KAS's nine notifications become three SSE events
+// (seven invalidations share one handler). They arrive on the LAUNCHING CHAT's bridge.
 
 import (
 	"cmp"
@@ -19,10 +17,9 @@ import (
 // supervisor in this tier — see logAgentRun.
 const runOriginAgent = "agent"
 
-// kasRunStart mirrors _kiro/workflow/run_start. `nodeTree` and `inputs` are not decoded: the
-// client refetches `inspect`, whose `state.root` carries the same tree with execution facts,
-// so the launch-time copy would only ever be staler. `parentSessionId` is NOT decoded — see
-// logAgentRun for what replaced it as the origin signal.
+// kasRunStart mirrors _kiro/workflow/run_start. `nodeTree` and `inputs` are not decoded:
+// the client refetches `inspect`, whose tree is fresher. `parentSessionId` is not decoded
+// either (see logAgentRun).
 type kasRunStart struct {
 	WorkflowID   string `json:"workflowId"`
 	WorkflowName string `json:"workflowName"`
@@ -41,39 +38,22 @@ type kasRunNode struct {
 	NodePath   []string `json:"nodePath"`
 }
 
-// kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is not adopted as client
-// state — the client refetches rather than rendering a snapshot from an event — but
-// `workflowName` is read out of it for the log line, because this is the one lifecycle
-// notification with no top-level name. Neither copy of `parentSessionId` is decoded; see
-// logAgentRun.
+// kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is read only for
+// `workflowName`, the one lifecycle frame with no top-level name; the client refetches.
 type kasRunComplete struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
 	FinalState struct {
 		WorkflowName string `json:"workflowName"`
+		RunLabel     string `json:"runLabel"`
 	} `json:"finalState"`
 }
 
-// logAgentRun writes the one durable trace an agent-launched run gets in this tier: two
-// append-only lines correlated by workflow_id, because such a run has no record, no supervisor
-// and no host-lost detection, so otherwise the only evidence it existed is a chat transcript
-// somebody has to open. It holds no state, so it cannot see a run whose host died between the
-// two lines. Silent for a run MAROTTE launched, which a person or a schedule already holds a
-// run id and a lease for, so logging it would dilute the class this line exists to make
-// greppable.
-//
-// The discriminator is the frame's DELIVERY ADDRESS, not `parentSessionId`. It used to be that
-// payload field, on the premise that marotte's own launch path sent none — a premise
-// `_kiro/workflow/new` retired in 0.63.3 by REQUIRING one, so every manual and scheduled run
-// would now log as origin=agent and the class would be worthless. The address is a fact
-// marotte owns rather than one upstream owns: (*Runtime).dispatch hands a run-bridge lifecycle
-// frame an EMPTY chat id, while a chat bridge's Forward stamps that chat's real id. So a
-// non-empty chat id IS "launched from inside a chat session", and HandleRunStart already rests
-// on the same property one line below for the Scheduled flag.
-//
-// Not the lease, and the ordering is why: observeComplete calls forgetBounds — which releases
-// the lease — BEFORE HandleRunComplete, so a lease-existence predicate reads false for every
-// terminal run marotte launched, mis-classifying exactly the frame it has to get right.
+// logAgentRun writes the one durable trace an agent-launched run gets: two lines correlated
+// by workflow_id, since such a run has no record or supervisor. Silent for a run marotte
+// launched. The discriminator is the DELIVERY ADDRESS, not `parentSessionId` (which
+// _kiro/workflow/new requires): (*Runtime).dispatch hands a run-bridge frame an EMPTY chat
+// id. Not the lease: observeComplete releases it BEFORE HandleRunComplete.
 func logAgentRun(msg string, chatID marotte.ChatID, workflowID, recipe string, extra ...any) {
 	if chatID == "" {
 		return
@@ -86,9 +66,8 @@ func logAgentRun(msg string, chatID marotte.ChatID, workflowID, recipe string, e
 		}, extra...)...)
 }
 
-// HandleRunStart translates _kiro/workflow/run_start → the run_started SSE. It fires again on
-// every resume, which is why the client treats it as "this run exists and something changed"
-// rather than as a create; an insert keyed on workflow id is idempotent.
+// HandleRunStart translates _kiro/workflow/run_start into the run_started SSE. It fires
+// again on every resume, so the client treats it as "exists and changed", not a create.
 func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasRunStart](msg, "workflow/run_start")
 	if !ok || p.WorkflowID == "" {
@@ -97,20 +76,15 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, 
 	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStarted, chatID, marotte.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
-		Name:       p.WorkflowName,
-		// Keyed on the workflow id, not chatID: this frame's chat id is empty for exactly
-		// the runs the flag is about.
+		Name:       cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), p.WorkflowName),
+		// Keyed on the workflow id: this frame's chat id is empty for exactly these runs.
 		Scheduled: t.runOrigin.IsScheduled(p.WorkflowID),
 	}))
 }
 
-// HandleRunComplete translates _kiro/workflow/run_complete → the run_finished SSE. Terminal
-// covers more than success — a cancel, a failure and an `onMaxIterations: "pause"` policy stop
-// all arrive here — which is why the status travels rather than being inferred from the event.
-//
-// It does NOT forget the run's step sessions: `paused` reaches this frame on a run that is
-// still going, so the bound has to test the status, and the caller already does for the run's
-// own bounds. The hook is agent.observeComplete's terminal branch, through ForgetRunSteps.
+// HandleRunComplete translates _kiro/workflow/run_complete into the run_finished SSE.
+// Terminal covers cancel, failure and a pause policy stop, so the status travels. It does
+// NOT forget step sessions (`paused` arrives on a live run); agent.observeComplete does.
 func (t *Translator) HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasRunComplete](msg, "workflow/run_complete")
 	if !ok || p.WorkflowID == "" {
@@ -121,15 +95,12 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID marotte.ChatI
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunFinished, chatID, marotte.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
-		// This frame's one name for the run, inside the state rather than at the top level
-		// as on run_start.
-		Name: p.FinalState.WorkflowName,
+		Name:       cmp.Or(p.FinalState.RunLabel, p.FinalState.WorkflowName),
 	}))
 }
 
-// RunProgressHandler returns the handler for one of the seven progress kinds. One function
-// rather than seven: they share a payload shape, and the kind stamped on the event tells the
-// client how eagerly to refetch, never how to reconstruct state.
+// RunProgressHandler returns the handler for one of the seven progress kinds; the kind on
+// the event tells the client how eagerly to refetch, never how to rebuild state.
 func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		p, ok := unmarshalParams[kasRunNode](msg, "workflow/"+string(kind))
@@ -140,8 +111,8 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 		switch kind {
 		case marotte.RunProgressNodeStart:
 			path := runNodePathOf(&p, node)
-			// The ONE frame that announces a step's session id. Recorded before the
-			// broadcast so a permission ask racing the event still classifies.
+			// The ONE frame announcing a step's session id; recorded before the broadcast so a racing
+			// permission ask still classifies.
 			if p.SessionID != "" {
 				t.steps.record(p.SessionID, p.WorkflowID, node, path)
 			}
@@ -155,10 +126,8 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 	}
 }
 
-// runProgress builds the frame for one progress kind: the node's state where the
-// kind describes a node, an empty node path where it does not. The empty path is
-// the signal, not a gap — a client applies a named node and refetches otherwise,
-// which is the contract the three tree-shape kinds keep.
+// runProgress builds the frame for one progress kind. An empty node path is the signal:
+// a client applies a named node and refetches otherwise.
 func runProgress(
 	kind marotte.RunProgressKind, node string, p *kasRunNode, at time.Time,
 ) marotte.RunProgressPayload {
@@ -171,8 +140,7 @@ func runProgress(
 		out.StartedAt = stamp
 	case marotte.RunProgressNodeComplete:
 		out.NodePath = runNodePathOf(p, node)
-		// KAS's own word, forwarded: it is already the client tree's NodeState
-		// vocabulary, so mapping it here would be a second enumeration.
+		// KAS's word is already the client tree's NodeState vocabulary.
 		out.Status = p.Status
 		out.EndedAt = stamp
 		out.FailureReason = p.Reason
@@ -180,8 +148,7 @@ func runProgress(
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusPaused
 	case marotte.RunProgressWatchPoll:
-		// A poll only says it looked, so it re-states `running`: a frame stating
-		// nothing is a frame the client cannot apply.
+		// A poll re-states `running`: a frame stating nothing cannot be applied.
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusRunning
 	case marotte.RunProgressLoopIteration, marotte.RunProgressPaused, marotte.RunProgressStepsQueued:

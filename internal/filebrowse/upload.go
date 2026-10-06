@@ -29,8 +29,6 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// gosec:G120 is a false positive: r.Body is capped by MaxBytesReader
 	// above, so ParseMultipartForm can't cause memory exhaustion here.
 	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { //nolint:gosec // G120: size bounded by nginx proxy
-		// Split the error classes so clients can distinguish "too big,
-		// retry smaller" (413) from "invalid multipart" (400).
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
@@ -49,21 +47,15 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Upload-target-directory gate: without this, an agent-triggered
-	// upload with dir=/config would silently land files inside the
-	// sensitive container. Sensitive.Blocks on the final per-file path (in
-	// writeUploads) is the second layer.
+	// Without this gate an upload with dir=/config would land inside the sensitive container;
+	// writeUploads checks each final path too.
 	if h.sensitive.protectedDir(dirLoc.abs) {
 		slog.Warn("filebrowse: upload blocked on protected dir", "dir", dirLoc.abs)
 		httpreply.Forbidden(w, "upload target is protected")
 		return
 	}
-	// Create a nested target on demand, inside the mount's own os.Root. This is
-	// a no-op for the DEFAULT target now that the uploads directory IS a mount:
-	// dirLoc.rel() is "." there, and os.Root.MkdirAll(".") returns nil. Creating
-	// the uploads directory therefore moved to boot (composition's
-	// ensureUploadDir), because a mount that cannot be opened is skipped and no
-	// upload would reach this line to create it.
+	// A nested target is created inside the mount's os.Root; the default target is the uploads
+	// mount itself (rel "."), created at boot by ensureUploadDir.
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
 		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
@@ -75,11 +67,8 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "no files")
 		return
 	}
-	// Refuse the WHOLE batch before writing any of it: the batch is not atomic,
-	// so a full volume otherwise leaves the earlier files on disk and answers
-	// "3 of 5 uploaded". The transfer is already spent here, so this buys a
-	// clean refusal, not a saved upload. Not checked against os.TempDir() where
-	// the spill lands: that is the container overlay, not the quota'd volume.
+	// Refuse the WHOLE batch before writing any of it: the batch is not atomic. Not checked against
+	// os.TempDir(), the overlay, where the spill lands.
 	var batchBytes int64
 	for _, fh := range formFiles {
 		batchBytes += fh.Size
@@ -101,18 +90,9 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
 
-// respondUploadError maps a writeUploads failure to its HTTP response: an
-// invalid filename is the client's fault (400); a single file crossing the
-// per-file cap is rejected loudly with a 413, never silently truncated; a full
-// volume is a 507 naming the space rather than a generic failure; anything else
-// is a 500.
-//
-// Every body carries the names that DID land, because a partially-failed
-// batch is not rolled back: each file is whole or absent, but the batch is
-// not atomic (an upload may overwrite, so undoing one needs a backup of
-// every destination, and the rollback can itself fail halfway). The 400
-// branch goes through WriteJSONStatus rather than httpreply.BadRequest
-// because that helper cannot carry the uploaded-files key.
+// respondUploadError maps a writeUploads failure: invalid filename 400, an over-cap file 413 (never
+// truncated), a full volume 507, else 500. Every body names the files that DID land, because a
+// batch is not rolled back (each file is whole or absent).
 func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, err error) {
 	if errors.Is(err, errInvalidFilename) {
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
@@ -154,12 +134,9 @@ func uploadErrorJSON(msg string, uploaded []string) map[string]any {
 // produce a confusing `uploaded: []` subset response.
 var errInvalidFilename = errors.New("invalid filename")
 
-// writeUploads copies each multipart file into the target directory
-// atomically via write-temp-then-rename, returning the list of filenames
-// written plus total bytes. On error, the partial temp file is removed;
-// files written earlier in the batch remain on disk, and their names ride
-// the error response. The context lets a client disconnect abort the
-// remaining files in a batch upload.
+// writeUploads writes each multipart file atomically into the target directory and returns the
+// names written and total bytes. A failed file leaves no temp; earlier files stay and are named in
+// the error response. ctx aborts the rest of the batch.
 func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader, sensitive Sensitive) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
@@ -173,10 +150,8 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
 		dest := filepath.Join(dirLoc.abs, name)
-		// Per-file sensitive-path gate: protectedDir on the target
-		// directory catches container-level drops, this blocks file-level
-		// overwrites of sensitive exact-match entries when the target
-		// directory itself is not sensitive.
+		// Per-file gate: protectedDir caught a sensitive target directory; this blocks overwriting
+		// a sensitive file in an ordinary one.
 		if sensitive.Blocks(dest) {
 			slog.Warn("filebrowse: upload rejected: sensitive dest",
 				"raw_name", logsafe.Field(fh.Filename), "dest", logsafe.Field(dest))
@@ -192,11 +167,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 	return uploaded, total, nil
 }
 
-// writeOneUpload streams fh into a temp file inside the handler's *os.Root,
-// fsyncs it, then renames it over dest — kernel-confined to the root. On any
-// error the temp is removed so a partial write never surfaces under the
-// user's expected filename. ctx lets a client disconnect abort the copy
-// mid-stream.
+// countingReader counts the bytes read through it.
 type countingReader struct {
 	r io.Reader
 	n int64
@@ -215,14 +186,8 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 	}
 	defer func() { _ = src.Close() }()
 
-	// Abort at the next chunk boundary on context cancel. The per-file cap
-	// is enforced by WithMaxBytes below, which REJECTS an over-cap file
-	// rather than silently truncating it.
+	// The per-file cap is WithMaxBytes's below, which rejects rather than truncates.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: src}}
-	// WriteReaderInRoot stages a temp inside the mount's root, fsyncs it,
-	// renames over the root-relative dest, then fsyncs the parent dir,
-	// staying kernel-confined to the mount. It refuses a symlink dest and
-	// removes the temp on any error.
 	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
 		atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
 		return cr.n, werr

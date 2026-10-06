@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock persist.js so we observe patchSettings calls without touching the
-// network. Mirrors persist.test.ts's pattern.
+// Mock persist.js so we observe patchSettings calls without touching the network. Mirrors
+// persist.test.ts's pattern.
 vi.mock("./persist.js", () => ({
   patchSettings: vi.fn(),
 }));
@@ -30,11 +30,7 @@ describe("setLastModel — redundant-write guard", () => {
   });
 
   it("does NOT patch when called again with the cached value", () => {
-    // Regression: the SSE settings_updated handler used to push the
-    // server-confirmed value back through setLastModel, which called
-    // patchSettings, which triggered another settings_updated, which
-    // looped at debounce speed forever. The guard below makes any
-    // setLastModel call with the already-cached value a no-op.
+    // The guard below makes any setLastModel call with the already-cached value a no-op.
     setLastModel("claude-opus-4.6");
     vi.clearAllMocks();
 
@@ -68,10 +64,9 @@ describe("setLastModel — redundant-write guard", () => {
 });
 
 describe("the effort seed — the level a new chat opens on, per model", () => {
-  // The seed is WRITTEN by the server, inside the set_effort command that
-  // justifies it, so this module only ever adopts and reads it. There is no
-  // setter to test: a level the session refused must not be remembered, and only
-  // the command knows whether it took.
+  // The seed is WRITTEN by the server, inside the set_effort command that justifies it, so this
+  // module only ever adopts and reads it. There is no setter to test: a level the session refused
+  // must not be remembered, and only the command knows whether it took.
   beforeEach(() => {
     vi.clearAllMocks();
     restoreLastEffort({});
@@ -83,9 +78,9 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("keeps one level per model, so a pick on one retracts none of the others", () => {
-    // The whole reason the seed is a map: one level for the app meant the only
-    // level remembered anywhere was the one chosen most recently, so every other
-    // model silently reopened on its own default tier.
+    // The whole reason the seed is a map: one level for the app meant the only level remembered
+    // anywhere was the one chosen most recently, so every other model silently reopened on its own
+    // default tier.
     restoreLastEffort({ m1: "max", m2: "low" });
 
     expect(getLastEffortFor("m1")).toBe("max");
@@ -93,23 +88,21 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("answers only for a model that has an entry", () => {
-    // A tier is a judgement about one model; carried onto another it would override
-    // that model's own default.
     restoreLastEffort({ "claude-opus-5": "max" });
     expect(getLastEffortFor("gpt-luna")).toBe("");
     expect(getLastEffortFor("")).toBe("");
   });
 
   it("an inherited member answers like a model with no entry", () => {
-    // A model id is arbitrary text, and a bare record read hands back Object's
-    // own member for `constructor` — which would reach the picker as a level.
+    // A model id is arbitrary text, and a bare record read hands back Object's own member for
+    // `constructor` — which would reach the picker as a level.
     expect(getLastEffortFor("constructor")).toBe("");
     expect(getLastEffortFor("toString")).toBe("");
   });
 
   it("adopting a payload patches nothing", () => {
-    // The write side is the server's. A patch from here would push a
-    // server-confirmed value straight back and loop at debounce speed.
+    // The write side is the server's. A patch from here would push a server-confirmed value
+    // straight back and loop at debounce speed.
     restoreLastEffort({ m1: "xhigh" });
 
     expect(patchSettings).not.toHaveBeenCalled();
@@ -117,8 +110,8 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("an absent payload leaves the cache alone", () => {
-    // A settings document that says nothing about the seed is not a document
-    // saying nobody has picked: nothing is remembered, so nothing is retracted.
+    // A settings document that says nothing about the seed is not a document saying nobody has
+    // picked: nothing is remembered, so nothing is retracted.
     restoreLastEffort({ m1: "high" });
     restoreLastEffort(undefined);
     expect(getLastEffortFor("m1")).toBe("high");

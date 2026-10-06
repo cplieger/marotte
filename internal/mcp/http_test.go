@@ -171,7 +171,7 @@ func TestHandleCollection_POST_wrongContentType_is400(t *testing.T) {
 	}
 }
 
-// 413-on-oversize (Q8): feed MaxJSONBody+1 bytes; decoder returns
+// 413-on-oversize: feed MaxJSONBody+1 bytes; decoder returns
 // *http.MaxBytesError which the helper must detect and turn into 413.
 func TestHandleCollection_POST_oversize_is413(t *testing.T) {
 	_, mux := newRoutedStore(t)
@@ -510,8 +510,6 @@ func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
 	}
 }
 
-// --- D80: the 400 carries a per-field breakdown ---
-
 // decodeValidation400 reads the validation envelope off a 400 recorder.
 func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationErrorBody {
 	t.Helper()
@@ -525,8 +523,8 @@ func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validatio
 	return got
 }
 
-// TestPost_ValidationErrorNamesEveryBadField is the wire half of D80: one
-// response, three fields, so the form can mark three inputs.
+// TestPost_ValidationErrorNamesEveryBadField — one 400 response names all three
+// bad fields, so the form can mark three inputs.
 func TestPost_ValidationErrorNamesEveryBadField(t *testing.T) {
 	_, mux := newRoutedStore(t)
 	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", map[string]any{

@@ -1,18 +1,5 @@
-// ---------------------------------------------------------------------------
-// device-view.ts owns the localStorage fields that are not the workspace's: the
-// active tab, the two shell fields, the sidebar width, the theme's pre-paint cache, and the three
-// pointer fields (the detected tier, the user's stated choice, and the sticky
-// has-been-touched flag).
-//
-// The property worth pinning hardest is the ONE-OWNER rule, and it is here
-// because its violation already shipped once. All four live in a single JSON blob
-// under one key, so every write is a read-modify-write — and the module this
-// replaced had TWO of them, a `writeLocal` for the device fields beside a
-// `cacheTheme` for the theme. That only worked because `writeLocal` remembered to
-// re-read the theme and re-attach it by hand; forget that line and choosing a
-// theme, then resizing the shell, silently clears the theme prepaint.js is about
-// to read.
-// ---------------------------------------------------------------------------
+// device-view.ts owns the device fields of one localStorage JSON blob; the one-owner rule matters most, since two
+// read-modify-write writers on one key drop each other's fields.
 
 import { describe, it, expect, beforeEach } from "vitest";
 
@@ -69,10 +56,7 @@ describe("the four fields this screen keeps to itself", () => {
   });
 
   it("keeps a valid field when a sibling is the wrong type", () => {
-    // A hand-edited blob, or one written by an older build. `shell_h` feeds the
-    // panel's sizing arithmetic directly, so a string there is not a cosmetic
-    // problem — and dropping the whole record over one bad field would reset the
-    // two that are fine.
+    // `shell_h` feeds sizing arithmetic; one bad field must not reset the good ones.
     localStorage.setItem(
       LS_UI_STATE_KEY,
       JSON.stringify({ active_view: "chat-y", shell_open: "yes", shell_h: "tall" }),
@@ -94,9 +78,7 @@ describe("the four fields this screen keeps to itself", () => {
   });
 
   it("refuses a negative, non-finite or non-number width and keeps its siblings", () => {
-    // JSON cannot carry NaN or Infinity (both serialise to null), so those two are
-    // what a blob written by a broken build reads back as; the raw literals are
-    // planted too, through a hand-written blob string.
+    // JSON turns NaN and Infinity into null; the raw literals are planted via a hand-written blob.
     for (const raw of [
       '{"sidebar_w":-5,"shell_h":300}',
       '{"sidebar_w":"400","shell_h":300}',
@@ -122,9 +104,7 @@ describe("the four fields this screen keeps to itself", () => {
 
 describe("the theme's pre-paint cache", () => {
   it("round-trips the three choices, and 'system' is one of them", () => {
-    // "system" is a real stored CHOICE — the user asked to follow the OS — not the
-    // absence of one. Coercing it away is what once made Auto unreachable after a
-    // single toggle click.
+    // "system" is a real choice; coercing it away made Auto unreachable.
     for (const choice of ["dark", "light", "system"] as const) {
       cacheTheme(choice);
       expect(cachedTheme()).toBe(choice);
@@ -164,8 +144,7 @@ describe("the pointer fields", () => {
     markCoarseSeen();
     expect(coarseEverSeen()).toBe(true);
 
-    // The flag reveals a control, so a hand-edited blob must not turn it on with
-    // a truthy value of the wrong type.
+    // The flag reveals a control, so a wrong-typed truthy value must not turn it on.
     for (const bad of ["true", 1, {}]) {
       localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ pointer_coarse_seen: bad }));
       expect(coarseEverSeen()).toBe(false);
@@ -173,9 +152,7 @@ describe("the pointer fields", () => {
   });
 
   it("keeps the choice and the observation apart", () => {
-    // The whole reason they are two fields: the detector writes `pointer` on every
-    // tier change it sees, and a choice sharing that field would be erased by the
-    // session's first mouse move.
+    // Two fields because the detector writes `pointer` on every tier change and would erase a shared choice.
     setPointerModeChoice("coarse");
     cachePointerTier("fine");
 
@@ -184,7 +161,6 @@ describe("the pointer fields", () => {
   });
 });
 
-// The rule, from both sides. This is the module's reason to exist.
 describe("one owner of the key", () => {
   it("a device-field write preserves the theme cache", () => {
     cacheTheme("light");
@@ -267,9 +243,7 @@ describe("one owner of the key", () => {
   });
 
   it("leaves a field it does not own alone", () => {
-    // Nothing else writes this key today, and the read-modify-write is what makes
-    // that safe to stay true: a future field added by another module is preserved
-    // rather than dropped on the next shell drag.
+    // A field added by another module must survive the next write.
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ someone_elses: "value" }));
     setShellHeight(200);
     cacheTheme("dark");

@@ -1,12 +1,6 @@
-// The depth ladder as RENDERED, over markup the production builders produced.
-// `chat-depth.node.test.ts` reads the declarations; this reads what the browser
-// paints, which is the half that catches a later stylesheet repainting a box onto
-// the card's rung.
-//
-// The measurement goes through a canvas because Chromium resolves a var-driven
-// `oklch()` to the authored `oklch(...)` form in `getComputedStyle`, so the string
-// cannot be compared numerically, while `fillStyle` parses it and `getImageData`
-// hands back the sRGB bytes it really painted.
+// The depth ladder as RENDERED over production markup (`chat-depth.node.test.ts` reads the
+// declarations). Through a canvas: `getComputedStyle` reports var-driven `oklch()` as
+// authored, while `getImageData` returns the painted sRGB bytes.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
@@ -159,9 +153,7 @@ describe("the rendered transcript ladder", () => {
   }
 
   it("gives the two box headers in a group ONE hover fill to land on", () => {
-    // One recipe resolves to one colour only if both headers sit on the same
-    // parent fill. Their `:hover` values are `chat-depth.node.test.ts`'s; this
-    // pins the surface underneath them.
+    // One recipe is one colour only on the same parent fill; this pins that surface.
     setTheme("dark");
     const shell = group();
     const header = shell.querySelector(".tool-group-header");

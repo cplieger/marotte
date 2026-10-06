@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// Service worker for Web Push notifications, PWA installability, and the shell
-// precache. Handles push events, notification clicks, subscription recovery, and
-// a fetch handler that serves the build's content-hashed chunks cache-first (see
-// "The shell precache" below).
-// Compiled to static/sw.js by tsconfig.sw.json.
-// ---------------------------------------------------------------------------
+// Service worker: Web Push, PWA installability, and the shell precache (content-hashed chunks served
+// cache-first). Compiled to static/sw.js by tsconfig.sw.json.
 
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="sw-env.d.ts" />
@@ -16,32 +11,18 @@ import { parsePushTarget, pushTargetRoute, pushTargetTag } from "./push-subject.
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-// ---------------------------------------------------------------------------
-// The shell precache: the content-hashed chunks, never a stable name and never the
-// HTML (precache.ts's `isShellPath` owns that rule and the reason). Most of the set
-// is on the FIRST-PAINT path rather than lazy — app.js statically imports 45 of the
-// 63 and dynamically imports 5 — which is why the rule is about the NAME. A resume
-// used to spend ~50 revalidation round trips before first paint, every one a 304:
-// the bytes were already local and the app waited for the network to say so.
-// ---------------------------------------------------------------------------
+// The shell precache: content-hashed chunks only, never a stable name or the HTML (precache.ts
+// `isShellPath` owns the rule). Most are on the first-paint path, so a resume skips ~50 304s.
 
-/** Cache holding the precached chunks. One name, and the manifest is stored INSIDE
- *  it under its own path, so the stamp travels with the assets it describes.
- *
- *  A DEPLOY IS NEVER MASKED: index.html stays `no-store`, so every load fetches
- *  the current HTML, therefore the current app.js and style.css (both left to the
- *  network), therefore the current chunk names. `syncPrecache` runs off every
- *  navigation rather than off `install`, because a deploy that leaves sw.js
- *  byte-identical fires no `install` at all. */
+/** Cache holding the precached chunks, with the manifest stored INSIDE it so the stamp travels
+ *  with its assets. A deploy is never masked: index.html is `no-store`. `syncPrecache` runs off
+ *  every navigation, since a byte-identical sw.js fires no `install`. */
 const SHELL_CACHE = "marotte-shell";
 
 /** Where the build's asset list lives (cmd/bundle writes it). */
 const PRECACHE_URL = "/precache.json";
 
-/** Read the manifest a document just served, or null when it is unusable.
- *
- *  `no-store` so this one request is never the thing serving a stale answer;
- *  `parseManifest` owns what counts as usable. */
+/** The manifest a document just served, or null when unusable (`parseManifest`); `no-store`. */
 async function fetchManifest(): Promise<PrecacheManifest | null> {
   try {
     const r = await fetch(PRECACHE_URL, { cache: "no-store" });
@@ -59,14 +40,9 @@ async function fetchManifest(): Promise<PrecacheManifest | null> {
 /** The sync in flight, if any. */
 let syncing: Promise<boolean> | null = null;
 
-/** Bring the cache in line with the current build, and report whether it moved.
- *
- *  ONE SYNC AT A TIME, because two straddling a deploy corrupt each other: A reads
- *  manifest X, B fills and stamps Y, then A's prune — its `wanted` built from X —
- *  deletes Y's content-hashed chunks. The cache then holds stamp Y with Y's assets
- *  missing, and `fillPrecache`'s stamp-equality early return blocks the repair
- *  until the next deploy moves the stamp again. A second caller joins the first
- *  and takes its answer, which is the answer for the manifest state it arrived in. */
+/** Bring the cache in line with the current build; reports whether it moved. ONE SYNC AT A TIME:
+ *  two straddling a deploy let one's prune delete the other's chunks under the new stamp, which
+ *  `fillPrecache`'s stamp check then never repairs. A second caller joins the first. */
 function syncPrecache(): Promise<boolean> {
   if (syncing !== null) {
     return syncing;
@@ -78,12 +54,8 @@ function syncPrecache(): Promise<boolean> {
   return syncing;
 }
 
-/** One sync pass. Call `syncPrecache`, never this.
- *
- *  ORDER IS LOAD-BEARING: fill first, then record the stamp, then prune. A stamp
- *  written before its assets are in would make a crashed sync look complete
- *  forever, and pruning before the fill would blank the cache for a document
- *  loading right now. */
+/** One sync pass; call `syncPrecache`. ORDER IS LOAD-BEARING: fill, record the stamp, then prune
+ *  (an early stamp makes a crashed sync look complete; an early prune blanks a loading document). */
 async function fillPrecache(): Promise<boolean> {
   const next = await fetchManifest();
   if (next === null) {
@@ -130,23 +102,16 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
           await caches.delete(name);
         }
       }
-      // No skipWaiting anywhere, so this only runs once the previous worker's
-      // clients are gone — claiming here therefore cannot hand a document a
-      // graph its HTML did not ask for. What it does buy is the FIRST install:
-      // the page that registered the worker becomes controlled without a reload,
-      // and it loaded the very deployment this cache was built from.
+      // No skipWaiting, so claiming cannot hand a document a graph its HTML did not ask for; it makes the
+      // first registering page controlled without a reload.
       await sw.clients.claim();
     })(),
   );
 }) as EventListener);
 
-// Three arms, and the handler's mere presence is also what satisfies the PWA install
-// criterion. A NAVIGATION goes to the network — the shell must stay fresh — and
-// doubles as the deploy check. A CONTENT-HASHED CHUNK is answered from the cache.
-// Everything else, `/api/*` reads and the `/api/events` stream included, is never
-// handed to `respondWith` at all: `isShellPath` is a synchronous gate for exactly
-// that reason, because a handler that asks the cache first has already taken the
-// request over.
+// Three arms (the handler's presence also satisfies PWA installability): NAVIGATION to the network
+// (and the deploy check), a CONTENT-HASHED CHUNK from cache, everything else never `respondWith`'d;
+// `isShellPath` is synchronous for that reason.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
   const url = new URL(event.request.url);
   if (url.origin === location.origin && isPreviewPath(url.pathname)) {
@@ -177,30 +142,25 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
   );
 }) as EventListener);
 
-/** The push payload marotte's server sends (internal/push/send.go pushPayload,
- *  whose subject fields come from marotte.PushSubject).
- *
- *  EXACTLY ONE of the two subject fields is set, and both may be absent for a
- *  workspace-global notification. `chat_id` names the chat a notification belongs
- *  to; `subject` names one that has no chat behind it — a pull request, whose CI
- *  flip happens with nothing open — and carries a kind prefix rather than a URL,
- *  because the page owns the route vocabulary. */
+/** The server's push payload (internal/push/send.go pushPayload; marotte.PushSubject). At most ONE
+ *  subject field: `chat_id`, or `subject` (a kind-prefixed non-chat target); the page owns routes. */
 interface PushData {
   title?: string;
   body?: string;
   chat_id?: string;
   subject?: string;
+  chat_name?: string;
 }
 
-/** Message this worker posts to an open page. The page owns the route
- *  vocabulary, so we hand over the SUBJECT and let it navigate;
- *  `reason` says whether the user asked to go there, is merely being told, or has
- *  to re-derive its presence tag because the browser rotated the subscription. */
+/** Message to an open page: the SUBJECT (the page owns routes) and whether the user asked to go
+ *  there, is being told, or must re-derive its presence tag. */
 interface PushPageMessage {
   type: "push";
   reason: "clicked" | "arrived" | "subscription_changed";
   chatId: string;
   subject: string;
+  /** The chat's name when the push was sent, for a page that has dropped its row. */
+  chatName?: string;
   title: string;
   body: string;
 }
@@ -216,11 +176,8 @@ function readStringField(raw: unknown, field: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Is this client already on the route's pathname? Both sides go through the URL
- *  parser, so neither percent-encoding nor the fragment can make two spellings of one
- *  location disagree. A client's url is absolute per spec, so the throw is unreachable
- *  in practice and is swallowed rather than defended: a client we cannot parse is a
- *  client we do not prefer, never a click that fails. */
+/** Whether this client is on the route's pathname, both through the URL parser. An unparseable
+ *  client is simply not preferred. */
 function samePath(clientURL: string, route: Route): boolean {
   try {
     const here = new URL(clientURL);
@@ -253,11 +210,8 @@ sw.addEventListener("push", ((event: PushEvent) => {
 
   event.waitUntil(
     (async () => {
-      // A focused page gets a message instead of a tray banner. This is the
-      // one sanctioned exception to "every push must show a notification"
-      // (Chrome enforces userVisibleOnly and will otherwise substitute its own
-      // generic "site updated in background" notice), and it is what makes an
-      // in-app toast the right surface when the user is already looking.
+      // A focused page gets a message instead of a tray banner: the one sanctioned exception to
+      // userVisibleOnly (Chrome would substitute a generic notice).
       const clients = await windowClients();
       if (clients.some((c) => c.focused)) {
         for (const c of clients) {
@@ -266,6 +220,7 @@ sw.addEventListener("push", ((event: PushEvent) => {
             reason: "arrived",
             chatId: chatID,
             subject,
+            chatName: data.chat_name ?? "",
             title,
             body,
           } satisfies PushPageMessage);
@@ -304,13 +259,8 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
 
   event.waitUntil(
     (async () => {
-      // Focus an existing page and hand it the target, rather than matching on
-      // exact URL equality. marotte is a single page with a router, so a client
-      // sitting on /settings does not equal /chat/<id> and the documented
-      // exact-match pattern would open a SECOND window of the same app. Posting
-      // the id also beats WindowClient.navigate(), which is only legal for
-      // clients this worker controls — precisely the ones includeUncontrolled
-      // was set to include.
+      // Focus an existing page and post it the target: a single-page app's URLs never match exactly, and
+      // WindowClient.navigate() is illegal for the uncontrolled clients included here.
       const clients = await windowClients();
       if (clients.length > 0) {
         const onTarget = clients.filter((c) => samePath(c.url, route));
@@ -350,10 +300,8 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
           body: JSON.stringify(newSub.toJSON()),
         }),
       )
-      // The presence tag is derived from the endpoint, so a rotated subscription is
-      // a new tag: every open page re-derives, persists and reconnects. Until it does
-      // the profile is counted under the old tag and a push to the new endpoint is
-      // sent rather than suppressed, which is the fail-open direction.
+      // A rotated subscription is a new presence tag; until pages re-derive, a push to the new endpoint
+      // is sent rather than suppressed (fail-open).
       .then(async () => {
         for (const c of await windowClients()) {
           c.postMessage({
@@ -372,13 +320,8 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
   );
 }) as EventListener);
 
-/** Subscription options for a pushsubscriptionchange recovery. When the
- *  browser supplies the old subscription, reuse its options verbatim.
- *  When it does NOT (the exact case this event exists for — an expired
- *  subscription can arrive with oldSubscription === null), a bare
- *  `{userVisibleOnly:true}` subscribe fails on VAPID-enforcing push
- *  services, so recovery previously broke precisely when it was needed:
- *  fetch the server's VAPID public key and subscribe with it. */
+/** pushsubscriptionchange options: the old subscription's when supplied; otherwise (it can be
+ *  null) a bare `{userVisibleOnly:true}` fails on VAPID-enforcing services, so fetch the VAPID key. */
 async function resolveSubscribeOptions(
   old: PushSubscription | null,
 ): Promise<PushSubscriptionOptionsInit> {
@@ -396,10 +339,8 @@ async function resolveSubscribeOptions(
   return { userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(d.publicKey) };
 }
 
-/** Base64url → Uint8Array for the VAPID applicationServerKey. Near-copy of
- *  push-util.ts's helper, and the difference is the reason it is one: that
- *  version's return type leaves the buffer backing implicit, which
- *  `applicationServerKey` rejects (see below). */
+/** Base64url → Uint8Array for applicationServerKey. Not push-util.ts's helper: its implicit buffer
+ *  backing is rejected by `applicationServerKey`. */
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");

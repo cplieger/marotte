@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The status vocabulary's contract. This module is the app's ONE status
-// vocabulary — the run card, the exec tree and (through icons.ts) a tool card
-// all read it — so the properties pinned here are the ones that keep three
-// surfaces from spelling one state three ways.
-//
-// The central one is that each state carries EXACTLY ONE mark. A character map
-// beside an icon map could both answer for one state, which is how a row ends up
-// painting a glyph AND a character; the tagged record makes that unrepresentable
-// and these cases are what say it stayed that way.
-// ---------------------------------------------------------------------------
+// The app's ONE status vocabulary (run card, exec tree, tool card through icons.ts). Each state
+// carries EXACTLY ONE mark, so no row can paint a glyph AND a character.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -78,12 +69,8 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
   });
 });
 
-// THE VOCABULARY SPLITS THREE WAYS, and reading it as two is what put a past-tense
-// sentence on a step that never ran: the complement of `inFlight` is not "ran", it is
-// "ran or never will". A consumer branching on one predicate has to have an arm for
-// the third bucket, so these pin that the buckets are disjoint and that between them
-// they name every state — a ninth state added to `ALL` above then has to be
-// classified here rather than falling into whichever arm happens to be last.
+// Three buckets, not two: the complement of `inFlight` is "ran or never will". Disjoint and
+// covering, so a new state in `ALL` must be classified here.
 describe("inFlight, neverRan and settled partition the vocabulary", () => {
   it("agrees on no state, pairwise", () => {
     expect(ALL.filter((s) => inFlight(s) && neverRan(s))).toEqual([]);
@@ -99,11 +86,8 @@ describe("inFlight, neverRan and settled partition the vocabulary", () => {
     expect(ALL.filter(neverRan)).toEqual(["pending", "skipped"]);
   });
 
-  // Hardcoded rather than derived from the other two, or this case would restate
-  // their definitions instead of pinning this one: `settled` is what the results
-  // region's done-gate reads, and `fail`/`warn` being IN is the decision it carries
-  // (such a step can hold a capture worth reading) while `skipped` being OUT is the
-  // other half (terminal, but it never ran).
+  // Hardcoded, not derived: `fail`/`warn` IN (a capture worth reading) and `skipped` OUT are the
+  // decisions the results region's done-gate carries.
   it("names exactly the three states that ran and stopped", () => {
     expect(ALL.filter(settled)).toEqual(["ok", "fail", "warn"]);
   });

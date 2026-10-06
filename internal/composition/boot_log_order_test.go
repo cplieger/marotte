@@ -1,12 +1,7 @@
 package composition
 
-// Install calls slogx.Setup, whose documented precondition is that it precede any slog
-// call that matters: a line logged above it goes out through the stdlib default handler,
-// so it is neither logfmt nor level-controlled and cannot answer the `| logfmt` query it
-// exists to serve.
-//
-// SCOPE: Build's OWN statements plus the callees registered in syncLoggingCallees. An
-// unregistered one is invisible, so this is not a claim that nothing logs pre-Install.
+// slogx.Setup must precede any slog call that matters, or the line goes out through the stdlib
+// handler; this pins that Build logs nothing before logctl.Install.
 
 import (
 	"errors"
@@ -23,18 +18,13 @@ import (
 // MANUAL allowlist, not transitive analysis: the walk follows no call graph, so a helper
 // that logs and is registered nowhere here stays invisible and its ordering unpinned.
 var syncLoggingCallees = map[string]struct{}{
-	// Register only a callee whose position above Install is not FORCED. validateConfig
-	// logs synchronously too, but Install reads <configDir>/config.json, so registering it
-	// would redden this gate forever with no correct fix.
+	// Only callees whose position above Install is not forced: validateConfig logs too, but Install
+	// reads config.json, so it must run first.
 	"startKiroCLI": {},
 }
 
-// slogCallsBeforeInstall reports every logging call in Build's OWN statements — a direct
-// slog call or a syncLoggingCallees member — positioned before logctl.Install. FuncLit
-// bodies are SKIPPED: a closure declared above Install runs whenever its owner invokes it,
-// so a lexical verdict on one would be wrong. It takes SOURCE rather than a path so the red
-// check is a fixture. A missing Install is an ERROR, not zero violations, or renaming it
-// would make this pass vacuously.
+// slogCallsBeforeInstall reports every logging call in Build's own statements (direct slog or a
+// syncLoggingCallees member) positioned before logctl.Install. FuncLit bodies are skipped.
 func slogCallsBeforeInstall(src string) (before []string, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "composition.go", src, 0)
@@ -51,8 +41,6 @@ func slogCallsBeforeInstall(src string) (before []string, err error) {
 		return nil, errNoBuild
 	}
 
-	// Collect positions first, so the comparison is over the whole body rather than over
-	// the statements ahead of a running cursor.
 	installPos := token.NoPos
 	var logAt []token.Pos
 	var logName []string
@@ -110,7 +98,6 @@ func TestBuild_LogsOnlyAfterTheHandlerIsInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read composition.go: %v", err)
 	}
-	// Without this the claim is vacuous: an empty Build body satisfies the ordering.
 	if !strings.Contains(string(raw), `slog.Info("boot paths resolved"`) {
 		t.Fatal(`composition.go carries no slog.Info("boot paths resolved") call; ` +
 			"the boot-path diagnostic is what this ordering exists to protect")
@@ -153,16 +140,12 @@ func TestSlogCallsBeforeInstall_ReadsTheOrdering(t *testing.T) {
 			wantCount: 1,
 		},
 		{
-			// The real body's pre-Install statements include if blocks, which a walk over
-			// top-level statements alone would miss.
 			name: "a nested call before Install is caught too",
 			src: "package composition\n\nfunc Build() {\n\tif true {\n" +
 				"\t\tslog.Warn(\"x\")\n\t}\n\tlogctl.Install(nil, \"\")\n}\n",
 			wantCount: 1,
 		},
 		{
-			// A closure's declaration position says nothing about when it logs, and
-			// "move the call below Install" is no remedy for one.
 			name: "a slog call inside a pre-Install closure is not reported",
 			src: "package composition\n\nfunc Build() {\n" +
 				"\tstore.SetOnChange(func() {\n\t\tslog.Warn(\"x\")\n\t})\n" +
@@ -170,8 +153,6 @@ func TestSlogCallsBeforeInstall_ReadsTheOrdering(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			// A registered callee logs on Build's own goroutine, so its position is
-			// judged like a direct slog call.
 			name: "a registered callee before Install is caught",
 			src: "package composition\n\nfunc Build() {\n" +
 				"\tkiro := startKiroCLI(nil, nil)\n\tlogctl.Install(nil, \"\")\n}\n",
@@ -184,8 +165,6 @@ func TestSlogCallsBeforeInstall_ReadsTheOrdering(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			// The limitation, pinned rather than left implied: no call graph is
-			// followed, so a helper that logs and is not registered is invisible.
 			name: "an unregistered callee before Install is not reported",
 			src: "package composition\n\nfunc Build() {\n" +
 				"\tvalidateConfig(nil, nil)\n\tlogctl.Install(nil, \"\")\n}\n",

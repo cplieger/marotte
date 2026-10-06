@@ -59,8 +59,6 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 	if len(commandDischarges) != len(names) {
 		t.Errorf("the table has %d rows for %d commands", len(commandDischarges), len(names))
 	}
-	// Names, because the table is keyed by VALUE and a value cannot say which constant
-	// it came from.
 	byValue := map[marotte.CommandType]string{
 		marotte.CmdCreateChat:          "CmdCreateChat",
 		marotte.CmdResumeSession:       "CmdResumeSession",
@@ -75,6 +73,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdRewindChat:          "CmdRewindChat",
 		marotte.CmdCompact:             "CmdCompact",
 		marotte.CmdSetEffort:           "CmdSetEffort",
+		marotte.CmdSetThinking:         "CmdSetThinking",
 		marotte.CmdSetDraft:            "CmdSetDraft",
 		marotte.CmdSetAttachments:      "CmdSetAttachments",
 		marotte.CmdSetMode:             "CmdSetMode",
@@ -82,6 +81,10 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
 		marotte.CmdSteer:               "CmdSteer",
 		marotte.CmdSteerClear:          "CmdSteerClear",
+		marotte.CmdQueuePrompt:         "CmdQueuePrompt",
+		marotte.CmdUnqueuePrompt:       "CmdUnqueuePrompt",
+		marotte.CmdSetInterruptMode:    "CmdSetInterruptMode",
+		marotte.CmdRenameChat:          "CmdRenameChat",
 		marotte.CmdSteerRemove:         "CmdSteerRemove",
 		marotte.CmdOpenTab:             "CmdOpenTab",
 		marotte.CmdCloseTab:            "CmdCloseTab",
@@ -113,14 +116,9 @@ func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID marotte.Chat
 	f.discharged = append(f.discharged, chatID)
 }
 
-// TestDispatch_DischargesOnlyAnAnswer drives the dispatcher per command type, because
-// the hook is the dispatcher's and no handler was edited: a rule applied once at
-// dispatch cannot be pinned by testing a handler.
-//
-// The three structured channels are dischargeByAnswer, so each needs BOTH halves here:
-// the affirmative payload clears the claim (that is the defect being fixed — an agent
-// that asked through a card and got an answer used to keep the amber dot for the life of
-// the chat), and the walk-away, the unknown action and the absent payload all keep it.
+// TestDispatch_DischargesOnlyAnAnswer drives the dispatcher per command type, because the hook is
+// the dispatcher's. Each structured channel needs both halves: the affirmative payload clears the
+// claim, and the walk-away, unknown action and absent payload keep it.
 func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -135,8 +133,8 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			want:    true,
 		},
 		{
-			// The prompt path discharges at StartTurn, where the turn's SOURCE tells a
-			// prompt from a `!cmd`; a second discharge here would fire for both.
+			// The prompt path discharges at StartTurn, where the turn's source tells a prompt from
+			// a `!cmd`; a second discharge here would fire for both.
 			name:    "a prompt does not, because its turn source decides",
 			cmdType: marotte.CmdPrompt,
 		},
@@ -147,8 +145,6 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			want:    true,
 		},
 		{
-			// Dismissing advances the agent without the user answering, so whether they
-			// still owe one is the ambiguity that keeps the claim.
 			name:    "a dismissed question does not",
 			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"dismissed"}`,
@@ -165,8 +161,6 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			want:    true,
 		},
 		{
-			// The kind is on the REQUEST, so a reject is indistinguishable here — and it
-			// is the user deciding too, which is what ends the wait.
 			name:    "a permission reject clears it as well, because deciding is answering",
 			cmdType: marotte.CmdPermissionResponse,
 			payload: `{"request_id":7,"option_id":"reject_once"}`,
@@ -184,7 +178,6 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			want:    true,
 		},
 		{
-			// decline and cancel resolve the request having answered nothing it asked.
 			name:    "a declined elicitation does not",
 			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"decline"}`,
@@ -195,8 +188,6 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			payload: `{"request_id":7,"action":"cancel"}`,
 		},
 		{
-			// An action outside the channel's vocabulary is an unknown signal, and an
-			// unknown signal keeps the claim rather than guessing at it.
 			name:    "an elicitation action nobody declared does not",
 			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"maybe"}`,
@@ -218,8 +209,6 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			},
 		},
 		{
-			// Same rule on the widened channels: the discharge sits after the handler,
-			// so an answer the handler refused reaches no claim.
 			name:    "an answer whose handler failed does not",
 			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"answered","answer":"blue"}`,

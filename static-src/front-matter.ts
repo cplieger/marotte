@@ -1,41 +1,10 @@
-// ---------------------------------------------------------------------------
-// YAML front-matter split for the editor's rendered-markdown read mode.
-//
-// Pure and DOM-free. Mirrors the VALUE syntax of internal/steering/frontmatter.go
-// for the subset `.kiro` documents actually use — flat scalars, block scalars
-// (`>` / `|` with chomping and indent indicators), quoted strings, and flow
-// (`[a, b]`) or block (`- a`) sequences — and nothing else.
-//
-// It is stricter than the Go parser in exactly one place, on purpose: the closing
-// fence must be a line that is exactly `---` (see findCloseFence). The stakes
-// differ. A Go misread degrades to empty FIELDS and the row still renders; a
-// misread here removes text from the BODY, which is the document itself.
-//
-// # Why the editor parses instead of asking the server
-//
-// The values are already parsed per row by GET /api/workspace/kiro-docs, but
-// the editor cannot reach them: docs.ts keeps its rows in a module-local array
-// and opens a document with `openFile(path)`, which carries a path and nothing
-// else. Three of the editor's four entry points never touch docs.ts at all — a
-// `/file/{path}` deep link, the boot restore from the server's tab set, and a
-// file-browser click — so threading metadata through one of them would leave the
-// other three showing a document with no header. Parsing the text the editor has
-// already loaded covers every entry point, and covers a `.md` file OUTSIDE
-// `.kiro` that happens to carry front-matter.
-//
-// # Deliberately schema-free
-//
-// The Go parser resolves seven named keys and defaults `inclusion` to "always"
-// because a steering document that declares nothing IS always-loaded. That
-// default is a STEERING fact: forwarding it to a skill once badged every skill
-// in the docs browser as always-loaded, which was a false claim about token
-// cost. The editor is showing one file's own header, so it reports the keys that
-// file DECLARED, in the order it declared them, and invents no default. That is
-// both simpler than a schema and the only version that cannot lie.
-// ---------------------------------------------------------------------------
+// YAML front-matter split for the editor's read mode. Pure and DOM-free. Mirrors the value syntax of
+// internal/steering/frontmatter.go for the subset `.kiro` documents use (flat and block scalars, quoted strings,
+// flow and block sequences). Stricter in one place: the closing fence must be exactly `---`, since a misread here
+// removes body text. Parsed client-side because three of the editor's four entry points carry only a path.
+// Schema-free: it reports the keys the file declared, in order, and invents no default.
 
-/** One declared front-matter key. A scalar carries `value`; a sequence carries
- *  `items`. A key declared with nothing after it carries neither. */
+/** One declared front-matter key: a scalar carries `value`, a sequence `items`; an empty key carries neither. */
 export interface FrontMatterField {
   key: string;
   value: string;
@@ -53,17 +22,16 @@ export interface FrontMatterSplit {
 
 const OPEN_FENCE = "---\n";
 
-/** Split a document into its declared front-matter fields and its markdown body.
- *
- *  A malformed header is never an error: the block is left as body text, which
- *  renders as ordinary markdown rather than vanishing. */
+/**
+ * Split a document into its declared front-matter fields and its markdown body. A malformed header is never an
+ * error: it stays as body text.
+ */
 export function splitFrontMatter(text: string): FrontMatterSplit {
   const content = normalizeText(text);
   if (!content.startsWith(OPEN_FENCE)) {
     return { present: false, fields: [], body: content };
   }
-  // The closing fence must be at least one line below the opening one, so an
-  // index equal to the opening fence's length means an empty block.
+  // The closing fence must sit at least one line below the opening one, so this index means an empty block.
   const close = findCloseFence(content);
   if (close <= OPEN_FENCE.length) {
     return { present: false, fields: [], body: content };
@@ -74,17 +42,12 @@ export function splitFrontMatter(text: string): FrontMatterSplit {
   return { present: true, fields: parseFields(block), body };
 }
 
-/** Index of the newline that begins the closing fence LINE, or -1 when the
- *  document has none.
- *
- *  The line has to be exactly `---`. A prefix search accepted `----` and
- *  `---draft` as a close, which contradicts the rule above: an unterminated
- *  header followed by a horizontal rule further down had everything between them
- *  silently promoted to metadata and removed from the rendered body. Trailing
- *  whitespace is tolerated because an editor leaves it behind invisibly. */
+/**
+ * Index of the newline that begins the closing fence line, or -1. The line must be exactly `---` (trailing
+ * whitespace tolerated): a prefix match let an unterminated header absorb text up to a later horizontal rule.
+ */
 function findCloseFence(content: string): number {
-  // Start at the newline that ends the opening fence: a fence needs its own line,
-  // so the search is over line starts from there on.
+  // A fence needs its own line, so the search is over line starts from here on.
   let from = OPEN_FENCE.length - 1;
   for (;;) {
     const at = content.indexOf("\n---", from);
@@ -100,27 +63,20 @@ function findCloseFence(content: string): number {
   }
 }
 
-/** Strip a leading UTF-8 BOM and fold every line-ending convention to "\n".
- *  A LONE "\r" is folded too: without it a Mac-classic document's whole header
- *  is one line, so the fence check fails and the header renders as body text. */
+/** Strip a leading BOM and fold every line ending to "\n", a lone "\r" included, or a Mac-classic header is one line. */
 function normalizeText(text: string): string {
   const s = text.startsWith("\ufeff") ? text.slice(1) : text;
   return s.replace(/\r\n?/g, "\n");
 }
 
-/** Walk the front-matter body and return its top-level fields.
- *
- *  The reason this is not a per-line `split(":")`: a key whose value is a block
- *  scalar or a block sequence owns every more-indented line that follows it, and
- *  those lines carry no colon of their own. */
+/** Not a per-line `split(":")`: a block scalar or sequence owns every more-indented line after its key. */
 function parseFields(block: string): FrontMatterField[] {
   const lines = block.split("\n");
   const out: FrontMatterField[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (isSkippable(line) || leadingSpaces(line) > 0) {
-      // An indented line at top level is a continuation the block readers below
-      // already consumed, or it is malformed. Either way it is not a key.
+      // An indented line at top level was already consumed by a block reader, or is malformed. Either way not a key.
       continue;
     }
     const colon = line.indexOf(":");
@@ -150,17 +106,13 @@ function parseFields(block: string): FrontMatterField[] {
   return out;
 }
 
-/** Whether a front-matter line carries no data: blank, or a full-line comment. */
 function isSkippable(line: string): boolean {
   const t = line.trim();
   return t === "" || t.startsWith("#");
 }
 
-/** Whether a value is a YAML block-scalar header: `>` or `|`, optionally with a
- *  chomping (`-`/`+`) or explicit-indent digit. The value itself lives on the
- *  following indented lines, so `>foo` is not one. */
+/** Whether a value is a block-scalar header: `>` or `|`, optionally with a chomping or indent indicator. `>foo` is not. */
 function isBlockScalarIndicator(val: string): boolean {
-  // An empty value starts with neither, so the empty case falls out of these two.
   if (!val.startsWith(">") && !val.startsWith("|")) {
     return false;
   }
@@ -172,13 +124,10 @@ function isBlockScalarIndicator(val: string): boolean {
   return true;
 }
 
-/** Fold the indented lines starting at `from` into one string, returning it and
- *  the index of the LAST line consumed.
- *
- *  Folding is `>`-style for both indicators — newlines become spaces. A `|`
- *  block preserves them strictly, but this value renders into one metadata row,
- *  and a literal newline there would break the row rather than honour the
- *  author's intent. */
+/**
+ * Fold the indented lines from `from` into one string; returns it and the last line consumed. Both indicators fold
+ * `>`-style: the value renders into one metadata row, which a literal newline would break.
+ */
 function readBlockScalar(lines: string[], from: number): { value: string; lastIdx: number } {
   const parts: string[] = [];
   let i = from;
@@ -188,16 +137,14 @@ function readBlockScalar(lines: string[], from: number): { value: string; lastId
       continue;
     }
     if (leadingSpaces(line) === 0) {
-      break; // a new top-level key
+      break;
     }
     parts.push(line.trim());
   }
   return { value: parts.join(" "), lastIdx: i - 1 };
 }
 
-/** Read `- item` lines starting at `from`. Returns `lastIdx = from - 1` when the
- *  next content line is not a sequence entry, leaving the caller's cursor where
- *  it was. */
+/** Returns `lastIdx = from - 1` when the next content line is not an entry, leaving the caller's cursor in place. */
 function readBlockSequence(lines: string[], from: number): { items: string[]; lastIdx: number } {
   const items: string[] = [];
   let i = from;
@@ -218,9 +165,7 @@ function readBlockSequence(lines: string[], from: number): { items: string[]; la
   return { items, lastIdx: i - 1 };
 }
 
-/** Parse a single-line `[a, b, c]` sequence. A value containing a comma inside
- *  quotes is not supported: no `.kiro` document uses one, and guessing would be
- *  worse than the simple split. */
+/** Commas inside quotes are not supported: no `.kiro` document uses one. */
 function parseFlowSequence(val: string): string[] {
   let inner = val.startsWith("[") ? val.slice(1) : val;
   inner = inner.endsWith("]") ? inner.slice(0, -1) : inner;
@@ -249,9 +194,7 @@ function leadingSpaces(line: string): number {
   return n;
 }
 
-/** Strip one matching pair of surrounding quotes. Deliberately not an escape
- *  decoder: `.kiro` front-matter quotes to protect a leading `*` or a colon,
- *  never to encode one. */
+/** Not an escape decoder: `.kiro` front-matter quotes to protect a leading `*` or a colon, never to encode one. */
 function unquote(s: string): string {
   if (s.length >= 2) {
     const first = s[0];

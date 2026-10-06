@@ -1,23 +1,12 @@
-// Tests for actions/editor.ts: saveFile, fetchAgentLines, suggestResolution.
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
 );
 
-// Every name in `api-client.ts`, because Browser Mode links ESM for real: a name
-// any module in this graph imports has to exist on the mock even when nothing
-// here calls it. Four names sufficed until the tab projection widened the graph
-// and `apiGetTyped` started being reached, and the symptom was not a missing
-// export. The `transport.js` mock below calls `importOriginal()`, which threw on
-// the broken link and killed the browser page, so the run reported a closed
-// connection rather than naming what it could not find. That is worth knowing
-// before debugging the next one.
-//
-// Listed rather than spread from `vi.importActual`: the real module's own graph
-// reaches `transport.js`, which this file also mocks, so importing it for real
-// inside a factory is circular and dies the same opaque way.
+// Every `api-client.ts` name: Browser Mode links ESM for real, and a broken link surfaces as a
+// closed browser connection, not a missing export. Listed rather than `vi.importActual`, whose
+// graph reaches the also-mocked `transport.js` and dies the same opaque way.
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
@@ -29,14 +18,8 @@ vi.mock("../api-client.js", () => ({
   apiPutOrError: vi.fn(),
   apiGetOrError: vi.fn(),
 }));
-// Every name in `transport.ts`, listed rather than spread from `importOriginal`.
-// This mock used to call it, and that is what turned a broken ESM link elsewhere
-// in the graph into an opaque "browser connection was closed": the factory threw
-// while resolving the real module, which kills the page instead of naming the
-// export it could not find. Listing is duller and it fails legibly.
-//
-// Only `send` needs to be inert; the three id minters are real because a test that
-// asserts on a request wants a real id in it.
+// Every `transport.ts` name, listed: an `importOriginal()` that throws on a broken link kills the
+// page rather than naming the export. The id minters are real so requests carry real ids.
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
   newMessageID: () => "m-test",
@@ -84,9 +67,8 @@ describe("editor.save_file", () => {
   });
 });
 
-// The inverse IS the done-when for N4: per-hunk resolution is gone because
-// KAS decides per ACTION (a multi-file rename shares one toolCallId), so a
-// merged-text reply had no addressable target.
+// KAS decides per ACTION (a multi-file rename shares one toolCallId), so per-hunk resolution has
+// no addressable target.
 describe("editor.resolve_partial", () => {
   it("no longer exists", async () => {
     const mod = await import("./editor.js");
@@ -123,31 +105,17 @@ describe("editor.suggest_resolution", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// load_diff: the two sides speak different path languages, and conflating them
-// broke every git diff in the editor, in BOTH directions.
-//
-//   /api/file      container-ABSOLUTE, resolved against the granted-roots
-//                  allow-list; a relative path is denied 403.
-//   /api/git/show  workspace-relative (or repo-relative with an explicit repo);
-//                  validateFilePath refuses a leading "/", so an absolute path
-//                  is a 400.
-//
-// One spelling sent to both meant whichever endpoint disagreed returned null and
-// the whole diff failed with a message naming neither side.
-//
-// The two sides also go through DIFFERENT client helpers, which is why they are
-// mocked separately below: the working copy needs `apiGetOrError` because two of
-// its failure statuses are answers about a changed file (404 deleted, 415 binary)
-// rather than failures to read one.
-// ---------------------------------------------------------------------------
+// load_diff: the two sides speak different path languages.
+//   /api/file      container-ABSOLUTE (granted-roots allow-list); relative is a 403.
+//   /api/git/show  workspace- or repo-relative; a leading "/" is a 400.
+// They use different helpers: the working copy needs `apiGetOrError` because 404 (deleted) and
+// 415 (binary) are answers about a changed file.
 describe("editor.load_diff", () => {
   const SHOW = "/api/git/show";
   const FILE = "/api/file?";
 
-  /** Stage both sides. `show` is git's answer body (or null for unreachable);
-   *  `file` is the working copy's HTTP status plus its body, because the status
-   *  is what the action branches on. */
+  /** Stage both sides: git's answer body (null = unreachable), and the working copy's status and
+   *  body, since the status is what the action branches on. */
   function answer(show: unknown, file: { status: number; data?: unknown }): void {
     vi.mocked(api.apiGet).mockImplementation((url: string) => {
       if (!url.startsWith(SHOW)) {
@@ -217,9 +185,7 @@ describe("editor.load_diff", () => {
   });
 
   it("captions a file outside every repo 'not in git' rather than HEAD", async () => {
-    // An empty pane captioned HEAD claims HEAD holds the file and holds it
-    // empty. This pairs with internal/git's KindNotInRepo, which exists so a
-    // real git failure cannot render as "this file is brand new".
+    // An empty pane captioned HEAD would claim HEAD holds the file empty (internal/git KindNotInRepo).
     expect.assertions(3);
     setWorkspaceRoot("/workspace");
     answer({ error: "not_in_repo" }, ok("work"));
@@ -234,11 +200,8 @@ describe("editor.load_diff", () => {
   });
 
   it("captions an untracked file 'not in HEAD' rather than HEAD", async () => {
-    // git owns the file's directory but this ref holds no revision of it — an
-    // untracked or staged-new file. `handleShow` answers empty content, which
-    // renders as a correct all-add diff, and the pane captioned with the ref
-    // would claim the ref holds the file and holds it empty. Distinct from
-    // 'not in git' above, which means no repository owns the path at all.
+    // A repo owns the directory but the ref holds no revision (untracked or staged-new): the pane
+    // must not claim the ref holds the file empty. Distinct from 'not in git' above.
     expect.assertions(4);
     setWorkspaceRoot("/workspace");
     answer({ content: "", absent: true }, ok("brand new\n"));
@@ -269,10 +232,7 @@ describe("editor.load_diff", () => {
   });
 
   it("renders a deleted file as an all-deletions diff captioned 'deleted'", async () => {
-    // A 404 from the file route is the CHANGE, not a failure to read it: the
-    // working copy is gone, so the diff is every line of the base removed. The
-    // git panel's changed-file list is full of these, and collapsing the status
-    // to null failed the whole diff for one.
+    // A 404 from the file route is the CHANGE (working copy gone): every base line removed.
     expect.assertions(4);
     setWorkspaceRoot("/workspace");
     answer({ content: "gone\n" }, { status: 404 });

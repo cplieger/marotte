@@ -9,8 +9,7 @@ import (
 )
 
 func TestHookIDRoundTrip(t *testing.T) {
-	// KAS ids are absolute paths with a "#hook-N" suffix — the base64url
-	// handle must survive the '/' and '#' that break a URL path segment.
+	// The base64url handle must survive the '/' and '#' of a KAS id.
 	cases := []string{
 		"/workspace/.kiro/hooks/greet.json#hook-0",
 		"/a b/c.json#hook-12",
@@ -77,12 +76,9 @@ func TestHookScopeAndPath(t *testing.T) {
 	}{
 		{"under workdir", filepath.Join(work, ".kiro", "hooks", "g.json"), hookScopeWorkspace, ".kiro/hooks/g.json"},
 		{"empty", "", hookScopeWorkspace, ""},
-		// A workspace directory whose name merely BEGINS with two dots is a
-		// name, not a traversal (pathinside.RelEscapes is separator-precise),
-		// so its hooks stay workspace-scoped with a relative editor target.
+		// A directory name beginning with two dots is not a traversal.
 		{"dotdot-prefixed dir under workdir", filepath.Join(work, "..drafts", "g.kiro.hook"), hookScopeWorkspace, "..drafts/g.kiro.hook"},
-		// kiro-cli 2.13 global hooks: $HOME/.kiro/hooks → global scope with a
-		// ~-display path (no editor link; the HOME tree is editor-blocked).
+		// kiro-cli 2.13 global hooks: global scope with a ~-display path.
 		{"global under home", filepath.Join(home, ".kiro", "hooks", "g.json"), hookScopeGlobal, "~/.kiro/hooks/g.json"},
 		{"outside both", "/etc/passwd", hookScopeGlobal, "/etc/passwd"},
 	}
@@ -108,8 +104,7 @@ func TestToHookInfo(t *testing.T) {
 	h := &Settings{lifecycle: &lifetime{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "greet.json")
 
-	// No timeout in the fixture: KAS's list projection emits {type, command}
-	// only, so a case feeding one asserted a wire shape that cannot arrive.
+	// No timeout: KAS's list projection emits {type, command} only.
 	cmd := h.toHookInfo(&kasHook{
 		ID:     fp + "#hook-0",
 		Name:   "greet",
@@ -125,10 +120,7 @@ func TestToHookInfo(t *testing.T) {
 	if cmd.Trigger != "Manual" || cmd.Matcher != ".*" || !cmd.Enabled {
 		t.Errorf("meta flatten wrong: %+v", cmd)
 	}
-	// A Manual hook carrying a matcher IS the ineffective pairing, and the read
-	// surface DOES report it even though create_hook refuses that shape: a hook
-	// file can be hand-written or copied in from outside marotte, and this row is
-	// the only place such a mistake becomes visible.
+	// A Manual hook with a matcher is ineffective; hand-written files make the read surface report it.
 	if cmd.MatcherWarning != "ineffective" {
 		t.Errorf("a Manual hook with a matcher should be badged ineffective; got %q", cmd.MatcherWarning)
 	}
@@ -142,7 +134,7 @@ func TestToHookInfo(t *testing.T) {
 		t.Errorf("id not the encoded KAS id: decoded %q", decoded)
 	}
 
-	// kiro-cli 2.13 global hook (~/.kiro/hooks): global scope + ~-display path.
+	// A kiro-cli 2.13 global hook: global scope plus ~-display path.
 	if home, err := os.UserHomeDir(); err == nil {
 		gfp := filepath.Join(home, ".kiro", "hooks", "global.json")
 		global := h.toHookInfo(&kasHook{
@@ -173,13 +165,8 @@ func TestToHookInfo(t *testing.T) {
 	}
 }
 
-// TestToHookInfo_MatcherWarning pins the one diagnostic this surface computes: a
-// tool-name trigger with no matcher runs on EVERY tool call, which upstream warns
-// about in its own log and never tells a client.
-//
-// It is a badge rather than a refusal because the state is legitimate, and it is
-// computed here rather than in TypeScript because the trigger-to-subject table
-// would then exist twice and could disagree about a subject.
+// TestToHookInfo_MatcherWarning pins the badge: a tool trigger without matcher runs on every tool
+// call, which upstream only logs. Computed server-side so the table exists once.
 func TestToHookInfo_MatcherWarning(t *testing.T) {
 	work := t.TempDir()
 	h := &Settings{lifecycle: &lifetime{workDir: work}}
@@ -203,20 +190,14 @@ func TestToHookInfo_MatcherWarning(t *testing.T) {
 		{"pre tool use with no matcher is badged", "PreToolUse", "", "missing_tool_matcher"},
 		{"post tool use with no matcher is badged", "PostToolUse", "", "missing_tool_matcher"},
 		{"a tool matcher clears it", "PreToolUse", "fsWrite", ""},
-		// The ineffective pairing reaches this surface too, even though create_hook
-		// refuses it: a hook file can be hand-written or copied in, and this row is
-		// then the only place the mistake is visible.
+		// Reported even though create_hook refuses it: files can be hand-written.
 		{"a matcher on a none-subject trigger is badged", "SessionStart", `\.go$`, "ineffective"},
 		{"an alias spelling is badged too", "userTriggered", "x", "ineffective"},
-		// The two subjects that never badge, in the direction each could be wrong:
-		// a path matcher is effective, and a path trigger without one means every
-		// file rather than a mistake.
+		// A path matcher is effective, and a path trigger without one means every file.
 		{"file save with a matcher is silent", "PostFileSave", `\.go$`, ""},
 		{"file save with no matcher is silent", "PostFileSave", "", ""},
 		{"session start with no matcher is silent", "SessionStart", "", ""},
-		// A trigger KAS reports that this table does not know must not produce a
-		// diagnostic about its matcher: the real defect is the trigger, and naming
-		// the matcher would send the reader to the wrong field.
+		// An unknown trigger produces no matcher diagnostic.
 		{"an unknown trigger is silent", "SomeFutureTrigger", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

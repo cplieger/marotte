@@ -1,23 +1,4 @@
-// The keyboard shortcut reference sheet: its content, and the binding that opens
-// it.
-//
-// The content half exists because the sheet is GENERATED from keys.ts's registry.
-// A transcribed list would drift, so the tests assert the generated rows are
-// exactly the registry (nothing missing, nothing invented) and separately pin the
-// seven chords the app ships — so a new binding forces a look at this file rather
-// than appearing silently.
-//
-// The binding half covers the two mechanical traps a bare `?` walks into:
-// keys.ts returns early on any unmodified key, so the sheet cannot be a
-// register() row; and app.ts's focusComposerOnTyping redirects any bare printable
-// key into the composer, which would type the `?` there while the sheet opened.
-//
-// keys.ts registers its document listener ONCE per module instance (the
-// `initialized` guard), so this file initialises it once with one recording stub
-// set and clears the counts per test. Re-importing it with vi.resetModules would
-// leave the earlier instance's listener attached to the shared document, and that
-// listener's stopImmediatePropagation would swallow the event before the new one
-// saw it.
+// The keyboard shortcut reference sheet: its content, and the binding that opens it.
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 
@@ -46,9 +27,8 @@ function press(key: string, target?: HTMLElement, extra: KeyboardEventInit = {})
   return e;
 }
 
-/** The (chord, description) pair per registered binding, as the sheet must
- *  render it. Derived from the registry so the comparison is a coverage check
- *  rather than a second transcription. */
+/** The (chord, description) pair per registered binding, as the sheet must render it. Derived
+ *  from the registry so the comparison is a coverage check rather than a second transcription. */
 function registryPairs(): string[] {
   return registeredShortcuts().map((b) => {
     const keys = ["Ctrl"];
@@ -81,18 +61,18 @@ afterEach(() => {
 
 describe("the sheet's content", () => {
   it("covers every chord keys.ts registers, and invents none", () => {
-    // "Elsewhere" is the authored group for bindings no register() call owns.
+    // "Elsewhere" is the authored group for bindings no register() call owns. The Composer group
+    // also carries prompt-input.ts's authored Shift+Enter row.
     const generated = sheetGroups()
       .filter((g) => g.name !== "Elsewhere")
-      .flatMap((g) =>
-        g.rows.flatMap((r) => r.chords.map((c) => `${c.join("+")}=${r.description}`)),
-      );
+      .flatMap((g) => g.rows.flatMap((r) => r.chords.map((c) => `${c.join("+")}=${r.description}`)))
+      .filter((pair) => pair !== "Shift+Enter=New line, continuing a list item");
     expect(generated.slice().sort()).toEqual(registryPairs().slice().sort());
   });
 
   it("ships exactly the chords the app registers today", () => {
-    // Deliberately exhaustive: a binding added to keys.ts fails here until it is
-    // acknowledged, which is the moment to check it reads correctly on the sheet.
+    // Deliberately exhaustive: a binding added to keys.ts fails here until it is acknowledged,
+    // which is the moment to check it reads correctly on the sheet.
     expect(registeredShortcuts().map((b) => `${b.shift ? "Shift+" : ""}${b.key}`)).toEqual([
       "k",
       "n",
@@ -119,13 +99,19 @@ describe("the sheet's content", () => {
     expect(sheetGroups().map((g) => g.name)).toEqual(["Chats", "Panels", "Composer", "Elsewhere"]);
   });
 
+  it("lists Shift+Enter beside the composer's registered chord", () => {
+    const composer = sheetGroups().find((g) => g.name === "Composer");
+    expect(composer?.rows.map((r) => [r.description, r.chords])).toEqual([
+      ["Send message", [["Ctrl", "Enter"]]],
+      ["New line, continuing a list item", [["Shift", "Enter"]]],
+    ]);
+  });
+
   it("lists the bindings that live outside the registry", () => {
     const other = sheetGroups().find((g) => g.name === "Elsewhere");
-    // Escape and `?` (keys.ts, above the modifier gate), Ctrl+F TWICE (app.ts's
-    // capture-phase listener routes it by the active tab's kind, so the chord
-    // has two meanings and the sheet says both) and F2 (files.ts). A sheet
-    // missing these is wrong for the reader even though no register() call owns
-    // them.
+    // Escape and `?` (keys.ts, above the modifier gate), Ctrl+F TWICE (app.ts's capture-phase
+    // listener routes it by the active tab's kind, so the chord has two meanings and the sheet says
+    // both) and F2 (files.ts).
     expect(other?.rows.map((r) => r.chords[0]?.join("+"))).toEqual([
       "Esc",
       "Ctrl+F",
@@ -171,9 +157,9 @@ describe("the ? binding", () => {
   });
 
   it("stops the composer-focus handler from typing the ? as well", () => {
-    // app.ts registers focusComposerOnTyping on document AFTER keys.ts, in the
-    // same phase: it fires for any bare printable key and would focus the
-    // composer and let the same keystroke land in it.
+    // app.ts registers focusComposerOnTyping on document AFTER keys.ts, in the same phase: it fires
+    // for any bare printable key and would focus the composer and let the same keystroke land in
+    // it.
     const sibling = vi.fn();
     document.addEventListener("keydown", sibling);
     try {
@@ -212,8 +198,8 @@ describe("the ? binding", () => {
   });
 
   it("is not reachable as a modifier chord", () => {
-    // `?` is Shift+/ already. Ctrl+? and Alt+? are different chords and belong to
-    // the browser, not to this sheet.
+    // `?` is Shift+/ already. Ctrl+? and Alt+? are different chords and belong to the browser, not
+    // to this sheet.
     press("?", undefined, { ctrlKey: true });
     press("?", undefined, { metaKey: true });
     press("?", undefined, { altKey: true });

@@ -1,18 +1,8 @@
-// ---------------------------------------------------------------------------
 // The route VOCABULARY: parseRoute, buildPath, and the round trip between them.
-//
-// MOVED here from router.test.ts when the vocabulary moved out of router.ts. That
-// file keeps the DOM-bound half; these cases drive two pure functions and need no
-// history, no location and no tab store.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
 import { parseRoute, buildPath, type Route, type SettingsTab, type DocsTab } from "./route-path";
-
-// ---------------------------------------------------------------------------
-// Proposal tarch-b14-p2: Table-driven test for parseRoute
-// ---------------------------------------------------------------------------
 
 describe("parseRoute (table-driven)", () => {
   const cases: { name: string; pathname: string; hash: string; expected: Route }[] = [
@@ -44,9 +34,8 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "git", tab: "prs" },
     },
     {
-      // The identity contains `#`, which is why it rides as ONE percent-encoded
-      // fragment value rather than three fields — and why it cannot be a path
-      // segment. `%23` is that `#`.
+      // The identity contains `#`, which is why it rides as ONE percent-encoded fragment value
+      // rather than three fields — and why it cannot be a path segment. `%23` is that `#`.
       name: "/git/prs#pr=<encoded identity>",
       pathname: "/git/prs",
       hash: "#pr=github%3Agithub.com%3Acplieger%2Fmarotte%2342",
@@ -59,8 +48,8 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "git", tab: "prs" },
     },
     {
-      // Read ONLY on the tab that holds pull requests, so the round trip stays an
-      // identity for the two that do not.
+      // Read ONLY on the tab that holds pull requests, so the round trip stays an identity for the
+      // two that do not.
       name: "/git#pr=x (the fragment on another tab) → no pr",
       pathname: "/git",
       hash: "#pr=github:x#1",
@@ -105,8 +94,8 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "history", tab: "runs" },
     },
     {
-      // The canonical pane omits its segment, so the explicit spelling folds to the
-      // same object the bare path parses to.
+      // The canonical pane omits its segment, so the explicit spelling folds to the same object the
+      // bare path parses to.
       name: "/history/chats (explicit) → chats",
       pathname: "/history/chats",
       hash: "",
@@ -119,8 +108,8 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "history" },
     },
     {
-      // The spec board is deleted outright — no shim, no redirect. A saved
-      // /specs bookmark is just an unknown path now.
+      // The spec board is deleted outright — no shim, no redirect. A saved /specs bookmark is just
+      // an unknown path now.
       name: "/specs (retired route) → default chat",
       pathname: "/specs",
       hash: "",
@@ -139,9 +128,9 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "files", path: "/" },
     },
     {
-      // A rootless `/files/<segs>` is the ABSOLUTE path `/<segs>`: the file surface has
-      // ONE container-absolute path space, and `normalizeDirPath` (files-shared.ts) is
-      // its only door. There is no workspace-relative reading and no reachability probe.
+      // A rootless `/files/<segs>` is the ABSOLUTE path `/<segs>`: the file surface has ONE
+      // container-absolute path space, and `normalizeDirPath` (files-shared.ts) is its only door.
+      // There is no workspace-relative reading and no reachability probe.
       name: "/files/src/main.go (a rootless link resolves as the ABSOLUTE path)",
       pathname: "/files/src/main.go",
       hash: "",
@@ -208,16 +197,35 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "chat", id: "" },
     },
     {
-      // The baseline: a run URL with no fragment carries no node, which is what
-      // every caller that means "the run" produces.
+      // A turn permalink: the fragment names the session-absolute ordinal.
+      name: "/chat/c1#turn-7",
+      pathname: "/chat/c1",
+      hash: "#turn-7",
+      expected: { kind: "chat", id: "c1", turn: 7 },
+    },
+    {
+      name: "/chat/c1#turn-0 (no turn 0) → no turn",
+      pathname: "/chat/c1",
+      hash: "#turn-0",
+      expected: { kind: "chat", id: "c1" },
+    },
+    {
+      name: "/chat/c1#turn-7x (trailing junk) → no turn",
+      pathname: "/chat/c1",
+      hash: "#turn-7x",
+      expected: { kind: "chat", id: "c1" },
+    },
+    {
+      // The baseline: a run URL with no fragment carries no node, which is what every caller that
+      // means "the run" produces.
       name: "/run/wf_1 (no hash)",
       pathname: "/run/wf_1",
       hash: "",
       expected: { kind: "run", id: "wf_1" },
     },
     {
-      // A node path contains `/`, which is why it is a fragment rather than a
-      // path segment — the tab's identity stays `(run, workflowId)`.
+      // A node path contains `/`, which is why it is a fragment rather than a path segment — the
+      // tab's identity stays `(run, workflowId)`.
       name: "/run/wf_1#node=wf_1%2Fiter-0%2Fwork",
       pathname: "/run/wf_1",
       hash: "#node=wf_1%2Fiter-0%2Fwork",
@@ -236,8 +244,8 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "run", id: "wf_1" },
     },
     {
-      // safeDecode is the decoder, so a bare `%` survives as itself instead of
-      // throwing — a hash arrives straight off location and off popstate.
+      // safeDecode is the decoder, so a bare `%` survives as itself instead of throwing — a hash
+      // arrives straight off location and off popstate.
       name: "/run/wf_1#node=%zz (malformed percent) → raw value",
       pathname: "/run/wf_1",
       hash: "#node=%zz",
@@ -274,9 +282,6 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "settings", tab: "instructions" },
     },
     {
-      // The "git" settings tab was retired (no panel/pill existed in the
-      // DOM — deep-linking it landed on a blank Settings body); the segment
-      // now canonicalizes to General like any unknown tab.
       name: "/settings/git (retired tab) → general",
       pathname: "/settings/git",
       hash: "",
@@ -318,38 +323,29 @@ describe("parseRoute (table-driven)", () => {
     expect(parseRoute(pathname, hash)).toEqual(expected);
   });
 });
-// ---------------------------------------------------------------------------
-// Proposal tarch-b14-p1: Property-based round-trip test (parseRoute ∘ buildPath)
-// ---------------------------------------------------------------------------
 
 describe("parseRoute/buildPath round-trip (property-based)", () => {
-  // "git" removed: the retired Git & forges settings tab no longer exists.
+  // No "git": forge accounts live on the git view's Sources tab.
   const settingsTabs: SettingsTab[] = ["general", "tools", "permissions", "instructions"];
 
-  // Exhaustive BY CONSTRUCTION: `satisfies Record<DocsTab, true>` makes a
-  // missing tab a compile error, so a seventh sub-tab cannot be added to the
-  // type without appearing here — and once it is here, the round-trip below
-  // fails until parseDocsTab learns it.
-  //
-  // That chain is not hypothetical. `workflows` was added to DocsTab and to
-  // buildPath but not to parseDocsTab, so the app wrote /docs/workflows and read
-  // it straight back as /docs: a reload, a back button or a shared link landed
-  // on Steering, and nothing failed because this family was absent from the
-  // arbitrary below.
+  // Exhaustive BY CONSTRUCTION: `satisfies Record<DocsTab, true>` makes a missing tab a compile
+  // error, so a seventh sub-tab cannot be added to the type without appearing here — and once it is
+  // here, the round-trip below fails until parseDocsTab learns it.
   const DOCS_TABS = {
     steering: true,
     skills: true,
+    prompts: true,
     agents: true,
     specs: true,
     hooks: true,
     workflows: true,
+    memories: true,
+    powers: true,
   } satisfies Record<DocsTab, true>;
   const docsTabs = Object.keys(DOCS_TABS) as DocsTab[];
 
-  // Container-absolute paths, which is the only space a files route has. The URL
-  // drops the leading slash (`/files/a/b`), so no generated route serialises with an
-  // empty segment. `/file/{path}` deliberately does NOT share that: its serializer
-  // is untouched here, so the two routes differ on purpose and must not be aligned.
+  // Container-absolute paths, which is the only space a files route has. The URL drops the leading
+  // slash (`/files/a/b`), so no generated route serialises with an empty segment.
   const arbFilesRoute: fc.Arbitrary<Route> = fc.oneof(
     fc.constant<Route>({ kind: "files", path: "/" }),
     fc
@@ -369,15 +365,23 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       .string({ minLength: 1, maxLength: 30 })
       .filter((s) => !s.includes("/") && !s.includes("#"))
       .map((id): Route => ({ kind: "chat", id })),
-    // git (all three sub-tabs round-trip: changes→/git, prs→/git/prs, …)
+    // chat WITH a turn permalink
+    fc
+      .tuple(
+        fc
+          .string({ minLength: 1, maxLength: 30 })
+          .filter((s) => !s.includes("/") && !s.includes("#")),
+        fc.integer({ min: 1, max: 100000 }),
+      )
+      .map(([id, turn]): Route => ({ kind: "chat", id, turn })),
     fc.constantFrom<Route>(
       { kind: "git", tab: "changes" },
       { kind: "git", tab: "prs" },
       { kind: "git", tab: "sources" },
     ),
-    // git WITH a pr: the identity is OPAQUE, so it is generated with the two
-    // characters that made it a fragment in the first place — `/` and `#` — rather
-    // than filtered to a shape a path segment could have carried.
+    // git WITH a pr: the identity is OPAQUE, so it is generated with the two characters that made
+    // it a fragment in the first place — `/` and `#` — rather than filtered to a shape a path
+    // segment could have carried.
     fc
       .tuple(
         fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim() !== ""),
@@ -389,8 +393,8 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
         tab: "prs",
         pr: `${forge}:${repo}#${String(n)}`,
       })),
-    // history: the bare spelling, and both panes stated. "chats" omits the
-    // segment (/history) and folds back to the bare object; "runs" carries it.
+    // history: the bare spelling, and both panes stated. "chats" omits the segment (/history) and
+    // folds back to the bare object; "runs" carries it.
     fc.constantFrom<Route>(
       { kind: "history" },
       { kind: "history", tab: "chats" },
@@ -427,14 +431,12 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
         fc.integer({ min: 1, max: 10000 }),
       )
       .map(([segs, line]): Route => ({ kind: "file", path: segs.join("/"), line })),
-    // run without a node — the "the run" spelling, byte-identical to what it
-    // has always been
+    // run without a node — the "the run" spelling, byte-identical to what it has always been
     fc
       .string({ minLength: 1, maxLength: 30 })
       .filter((s) => !s.includes("/") && !s.includes("#"))
       .map((id): Route => ({ kind: "run", id })),
-    // run WITH a node: a multi-segment path, which is the case a path segment
-    // could not carry
+    // run WITH a node: a multi-segment path, which is the case a path segment could not carry
     fc
       .tuple(
         fc
@@ -450,19 +452,11 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       .map(([id, segs]): Route => ({ kind: "run", id, node: segs.join("/") })),
     // settings
     fc.constantFrom(...settingsTabs).map((tab): Route => ({ kind: "settings", tab })),
-    // docs — every sub-tab. "steering" omits the segment (/docs), the rest
-    // carry it, and all six must survive the trip.
+    // docs — every sub-tab. "steering" omits the segment (/docs), the rest carry it, and all six
+    // must survive the trip.
     fc.constantFrom(...docsTabs).map((tab): Route => ({ kind: "docs", tab })),
   );
 
-  // route → URL → route is TOTAL, which is what this property asserts. The reverse
-  // is not an identity: `buildPath(parseRoute(u)) === u` holds for /files,
-  // /files/workspace/_ui-qa and /files/dir%20name/f.ts and for NO other row above.
-  // The other five canonicalise in three classes — the four root spellings collapse
-  // to /files (/files/, /files//, /files/.), the legacy /files//<abs> collapses its
-  // double slash, and /files/%zz re-encodes its raw % (safeDecode returns the raw
-  // input on a malformed sequence, so the route is /%zz and encodeURIComponent gives
-  // "%25zz"; a second pass converges).
   it("buildPath(route) round-trips through parseRoute to the canonical form", () => {
     fc.assert(
       fc.property(arbRoute, (route) => {
@@ -506,39 +500,34 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
 function canonicalize(route: Route): Route {
   switch (route.kind) {
     case "settings":
-      // /settings/general → tab "general" (already canonical)
       return route;
     case "file":
-      // line <= 0 or undefined → no line property in parsed output
       if (route.line === undefined || route.line <= 0) {
         return { kind: "file", path: route.path };
       }
       return route;
     case "run":
-      // An empty node is dropped on both sides: buildPath omits the fragment
-      // and parseRoute reads `#node=` as no node. Mirrors the file/line case.
+      // An empty node is dropped on both sides: buildPath omits the fragment and parseRoute reads
+      // `#node=` as no node. Mirrors the file/line case.
       if (route.node === undefined || route.node === "") {
         return { kind: "run", id: route.id };
       }
       return route;
     case "git":
-      // Same shape one route over: an empty pr, or a pr on a tab that holds no
-      // pull requests, is dropped by buildPath and never produced by parseRoute.
+      // Same shape one route over: an empty pr, or a pr on a tab that holds no pull requests, is
+      // dropped by buildPath and never produced by parseRoute.
       if (route.pr === undefined || route.pr === "" || route.tab !== "prs") {
         return { kind: "git", tab: route.tab };
       }
       return route;
     case "history":
-      // The canonical pane is the ABSENT field: buildPath omits its segment and
-      // parseRoute never produces `tab: "chats"`.
+      // The canonical pane is the ABSENT field: buildPath omits its segment and parseRoute never
+      // produces `tab: "chats"`.
       return route.tab === "runs" ? route : { kind: "history" };
     default:
       return route;
   }
 }
-// ---------------------------------------------------------------------------
-// Adversarial percent-encoding property test (tarch-b15-c7-p5)
-// ---------------------------------------------------------------------------
 describe("parseRoute adversarial inputs (no-throw)", () => {
   it("never throws on arbitrary pathname strings", () => {
     expect.assertions(1);
@@ -577,12 +566,7 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The spec route: one encoded segment holding a whole directory.
-//
-// `parseRoute` splits on `/` BEFORE it decodes, so the directory's own slashes have
-// to arrive encoded, and an unencoded spelling is not a spec route at all.
-// ---------------------------------------------------------------------------
 
 describe("the spec route", () => {
   it.each([".kiro/specs/x", "repo/.kiro/specs/feature-x"])("round-trips %s", (dir) => {
@@ -599,12 +583,7 @@ describe("the spec route", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The git `#pr=` fragment, stated rather than sampled.
-//
-// The property above covers the round trip over generated identities; these three
-// are the rules a reader should be able to check by eye.
-// ---------------------------------------------------------------------------
 
 describe("the git #pr= fragment", () => {
   const identity = "github:github.com:cplieger/marotte#42";

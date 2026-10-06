@@ -13,8 +13,10 @@ vi.mock("./actions/chat.js", () => ({
 }));
 
 const toasts: string[] = [];
-vi.mock("./toast.js", () => ({
-  showToast: (msg: string) => {
+const toastChats: string[] = [];
+vi.mock("./notice-subject.js", () => ({
+  chatNotice: (chatID: string, msg: string) => {
+    toastChats.push(chatID);
     toasts.push(msg);
     return () => undefined;
   },
@@ -26,6 +28,7 @@ const store = await import("./store.js");
 beforeEach(() => {
   dispatch.mockReset();
   toasts.length = 0;
+  toastChats.length = 0;
 });
 
 describe("handleTypedCommand", () => {
@@ -62,6 +65,17 @@ describe("handleTypedCommand", () => {
   it("leaves other slash commands to KAS", () => {
     expect(handleTypedCommand("c1", "/goal")).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not claim a name the table only inherits", () => {
+    expect(handleTypedCommand("c1", "/constructor")).toBe(false);
+    expect(handleTypedCommand("c1", "/toString")).toBe(false);
+  });
+
+  it("refuses /tangent on a chat with no conversation", () => {
+    expect(handleTypedCommand("c-none", "/tangent")).toBe(true);
+    expect(toasts).toEqual(["Send a message first, then start a tangent from it."]);
+    expect(toastChats).toEqual(["c-none"]);
   });
 
   it("refuses without a chat", () => {
@@ -102,6 +116,13 @@ describe("handleTypedCommand /drop", () => {
       store.setThinking(id, true);
     }
   }
+
+  it("refuses /rewind mid-turn", () => {
+    seedThinking("c1");
+    expect(handleTypedCommand("c1", "/rewind")).toBe(true);
+    expect(toasts).toEqual(["Rewind is unavailable while the agent is working."]);
+    expect(toastChats).toEqual(["c1"]);
+  });
 
   it("returns the composer to prompt mode by clearing thinking", () => {
     seedThinking("c1");

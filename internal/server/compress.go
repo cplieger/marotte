@@ -17,29 +17,21 @@ import (
 // the framing and CPU cost outweigh the saving.
 const compressMinBytes = 1024
 
-// compressSkipPaths are answered without wrapping at all, decided BEFORE the handler
-// runs: a response whose contract is that each write reaches the client immediately
-// cannot be buffered to measure it. compressWriter degrades on Flush and Hijack as a
-// backstop, but a stream that never reaches the wrapper cannot be broken by a later
-// change to that backstop.
+// compressSkipPaths are answered without wrapping at all: a response whose contract is that
+// each write reaches the client immediately cannot be buffered to measure it.
 var compressSkipPaths = []string{"/api/events", "/api/shell/ws"}
 
-// compressJSON negotiates Content-Encoding: gzip for JSON response bodies over
-// compressMinBytes. Three conditions, all required: the request offers gzip, the
-// Content-Type is JSON, and the body reaches the threshold. The Content-Type gate is
-// also what keeps precompressed static assets out — they carry their own
-// Content-Encoding, which gzipCandidate refuses.
+// compressJSON negotiates Content-Encoding: gzip for JSON bodies over compressMinBytes when
+// the request offers gzip. The Content-Type gate also keeps precompressed static assets out.
 func compressJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isCompressSkipped(r.URL.Path) {
-			// Not negotiated at all, so its representation does not vary and it
-			// gets no Vary either.
+			// Not negotiated, so no Vary either.
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Announced before the outcome is known: a below-threshold body and a
-		// `gzip;q=0` refusal were selected on Accept-Encoding just as much as a
-		// compressed one, and a shared cache cannot see that from the body.
+		// Announced before the outcome: a small body or a `gzip;q=0` refusal was also selected on
+		// Accept-Encoding, which a shared cache cannot see from the body.
 		w.Header().Add("Vary", "Accept-Encoding")
 		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)
@@ -107,11 +99,8 @@ func qZero(params string) bool {
 	return false
 }
 
-// isJSONMediaType reports whether a Content-Type names JSON: exactly
-// application/json, or a structured `+json` suffix (RFC 6839). Deliberately NOT a
-// substring test — application/x-ndjson contains "json" and is a STREAM whose flush
-// is its liveness signal, so a substring match would buffer the one JSON-shaped
-// response that must not be buffered.
+// isJSONMediaType reports whether a Content-Type names JSON: exactly application/json or a
+// `+json` suffix (RFC 6839). Not a substring test: application/x-ndjson is a STREAM.
 func isJSONMediaType(ct string) bool {
 	mt, _, err := mime.ParseMediaType(ct)
 	if err != nil {
@@ -137,11 +126,9 @@ const (
 	modeGzip
 )
 
-// compressWriter decides per response whether to gzip it. The decision needs the
-// Content-Type, known at WriteHeader, AND the body size, known only as the body
-// arrives, so the status line is held back until the threshold is crossed or the
-// handler returns. Everything the handler can do in between resolves to a plain
-// pass-through.
+// compressWriter decides per response whether to gzip it. That needs the Content-Type (at
+// WriteHeader) and the body size (as it arrives), so the status line is held back until the
+// threshold is crossed or the handler returns.
 type compressWriter struct {
 	http.ResponseWriter
 	gz     *gzip.Writer
@@ -229,14 +216,12 @@ func (cw *compressWriter) Write(p []byte) (int, error) {
 }
 
 // startGzip switches a buffering response over to gzip, replaying what is buffered.
-// Content-Length is dropped rather than recomputed: the handler's value describes the
-// identity representation, and the encoded length is unknown until the body ends.
+// Content-Length is dropped: the handler's value describes the identity representation.
 func (cw *compressWriter) startGzip() {
 	h := cw.Header()
 	gz, err := gzip.NewWriterLevel(cw.ResponseWriter, gzip.DefaultCompression)
 	if err != nil {
-		// Only an invalid level reaches this and the level is a constant, so it
-		// is unreachable — answer plainly rather than losing the body.
+		// Unreachable (the level is a constant); answer plainly rather than lose the body.
 		cw.passThrough()
 		return
 	}
@@ -251,9 +236,8 @@ func (cw *compressWriter) startGzip() {
 	}
 }
 
-// Flush resolves a still-undecided response as plain first: a handler that flushes is
-// telling the client to expect these bytes now, which is the one claim buffering
-// cannot honour. compressSkipPaths covers the known streams; this catches a new one.
+// Flush resolves an undecided response as plain first: a flushing handler wants these bytes
+// sent now, which buffering cannot honour.
 func (cw *compressWriter) Flush() {
 	if cw.mode == modeBuffering {
 		cw.passThrough()

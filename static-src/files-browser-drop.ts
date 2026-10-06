@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// File browser: drag-drop upload into the browser view (current dir or
-// hovered folder). Uses the shared drop-zone helper for the boilerplate.
-// ---------------------------------------------------------------------------
-
 import { $ } from "./dom.js";
 import { type FileEntry, joinPath } from "./files-shared.js";
 import { attachPathsToActiveChat } from "./chat.js";
@@ -59,9 +54,7 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const targetDir =
         dropTargetFolder !== "" ? joinPath(currentPath, dropTargetFolder) : currentPath;
       dropTargetFolder = "";
-      // Screened for the same reason the composer's drop is: a drop is not a
-      // considered choice of file, so an over-cap one arrived here as a full
-      // transfer ending in a bare 413 that named nothing.
+      // Screened like the composer's drop: an over-cap file would otherwise end in a bare 413 naming nothing.
       const screened = screenUploads(files);
       if (screened.skipped !== "") {
         toast.error(screened.skipped);
@@ -74,9 +67,7 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
         {
           onSuccess: (paths) => {
             ctx.reload();
-            // DETACHED: an upload callback, with nothing after it that reads the
-            // chat. One call for the batch, not one per path — see
-            // attachPathsToActiveChat.
+            // Detached, one call for the batch (see attachPathsToActiveChat).
             void attachPathsToActiveChat(paths);
           },
         },

@@ -11,15 +11,9 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// newWithin runs New on its own goroutine and fails if it has not returned
-// inside budget.
-//
-// A deadline rather than a plain call, because the defect this pins does not
-// fail — it HANGS. This runs on the BOOT path, so reverting the OpenRegular
-// adoption in load() makes the container never finish starting rather than
-// report an error, and reverting it here makes this test run to the go-test
-// timeout. The parked goroutine is abandoned deliberately: it is blocked in
-// open(2) and nothing in userspace can reclaim it.
+// newWithin runs New on its own goroutine and fails if it has not returned inside budget:
+// the defect this pins HANGS rather than fails. A parked goroutine is abandoned (blocked
+// in open(2)).
 func newWithin(t *testing.T, budget time.Duration, configDir string) (*Store, error) {
 	t.Helper()
 	type res struct {
@@ -40,10 +34,7 @@ func newWithin(t *testing.T, budget time.Duration, configDir string) (*Store, er
 	}
 }
 
-// TestNew_RefusesAFifoInsteadOfBlockingTheBoot pins the ordering fix. load()
-// used to os.ReadFile the path and only then ask filemode.EnforceFile whether
-// the mode could be verified, so the O_NONBLOCK that EnforceFile's own doc calls
-// load-bearing was defeated by the line above it.
+// TestNew_RefusesAFifoInsteadOfBlockingTheBoot pins that the mode verdict precedes any read.
 func TestNew_RefusesAFifoInsteadOfBlockingTheBoot(t *testing.T) {
 	dir := t.TempDir()
 	if err := syscall.Mkfifo(filepath.Join(dir, fileName), fileMode); err != nil {
@@ -55,9 +46,7 @@ func TestNew_RefusesAFifoInsteadOfBlockingTheBoot(t *testing.T) {
 	}
 }
 
-// TestNew_RefusesASymlinkBeforeReadingItsTarget is the other half of the same
-// ordering fix: the target's bytes used to be read and parsed as the credential
-// store, and only then refused.
+// TestNew_RefusesASymlinkBeforeReadingItsTarget pins that a symlink's target is never parsed.
 func TestNew_RefusesASymlinkBeforeReadingItsTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "elsewhere.json")
@@ -68,19 +57,13 @@ func TestNew_RefusesASymlinkBeforeReadingItsTarget(t *testing.T) {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
 	s, err := New(dir)
-	// Fatal, not Errorf: New returns a nil Store alongside a non-nil error, so
-	// there is nothing left to assert on once this holds and a sibling read would
-	// dereference nil.
+	// Fatal: New returns a nil Store with the error.
 	if err == nil {
 		t.Fatalf("New followed a symlink at %s and loaded %d entries", fileName, len(s.secrets))
 	}
 }
 
-// TestNew_BoundsTheFileBeforeAllocating pins the second defect at the same site:
-// os.ReadFile sized its buffer from the file and read all of it, and the
-// maxFileBytes check then ran on the RESULT — so the bound was enforced after an
-// arbitrarily large file had already been pulled into memory, on the boot path,
-// over a file the agent's own shell can grow. ReadBoundedFile stats first.
+// TestNew_BoundsTheFileBeforeAllocating pins that the size bound is checked before reading.
 func TestNew_BoundsTheFileBeforeAllocating(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, fileName)
@@ -88,8 +71,7 @@ func TestNew_BoundsTheFileBeforeAllocating(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A sparse file one byte over the bound: no disk is consumed, but a
-	// read-then-check would still allocate every byte of it.
+	// A sparse file one byte over the bound: no disk, but a read-then-check would allocate it.
 	if err := f.Truncate(maxFileBytes + 1); err != nil {
 		_ = f.Close()
 		t.Skipf("truncate unsupported here: %v", err)

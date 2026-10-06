@@ -20,13 +20,8 @@ import (
 	"github.com/cplieger/sse/ssetest"
 )
 
-// The SSE transport (fan-out, replay ring, the hello, Last-Event-ID resume,
-// slow-client eviction, keepalives) is github.com/cplieger/sse and is
-// tested there. These tests pin marotte's layer: emit marshaling + chat topics,
-// the frame-cap substitute, the connected handshake, the initial-state hook, and
-// the draining gate.
-
-// --- emit / replay buffer ---
+// The transport is github.com/cplieger/sse's and tested there; these pin marotte's layer: emit and chat
+// topics, the frame-cap substitute, the handshake, the initial-state hook, the draining gate.
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
@@ -60,9 +55,7 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 }
 
 func TestEmit_TopicCarriesChatID(t *testing.T) {
-	// marotte's contract is that emit maps ChatID onto the event topic (empty
-	// ChatID = global broadcast); nothing subscribes with a topic since the
-	// stream is unfiltered, so the topic is diagnostic.
+	// emit maps ChatID onto the topic (empty is global); the stream is unfiltered, so the topic is diagnostic.
 	h, _, _ := newTestHub()
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
@@ -80,11 +73,8 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 	}
 }
 
-// TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged pins the frame-cap
-// substitute: an entry_appended whose text runs past sse.MaxFrameBytes is
-// refused by the hub, and what enters the ring instead is one subject_changed
-// carrying the refused frame's stamp, with a Warn naming the type and the size. A
-// frame the cap admits publishes intact.
+// TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged pins that an entry_appended past sse.MaxFrameBytes becomes one
+// subject_changed carrying its stamp, with a Warn; a frame under the cap publishes intact.
 func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -125,8 +115,7 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	}
 }
 
-// textEntry is a sealed text entry of the given size in turn t1, the shape of the
-// one frame whose payload can outgrow the ring's cap.
+// textEntry is a sealed text entry of the given size in turn t1, the one frame able to outgrow the cap.
 func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry {
 	t.Helper()
 	payload, err := json.Marshal(marotte.EntryText{Text: text})
@@ -136,9 +125,7 @@ func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry
 	return marotte.Entry{ID: fmt.Sprintf("%s-%d", turn, seq), Turn: turn, Kind: marotte.EntryKindText, Payload: payload, Seq: seq}
 }
 
-// TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError: with no subject there is
-// no fetch instruction to substitute, so the frame is dropped and the log is the
-// only signal.
+// TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError pins that no subject, no fetch to substitute.
 func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -162,17 +149,12 @@ func reencodeBytes(data []byte, into any) error {
 	return reencode(rawJSON(data), into)
 }
 
-// rawJSON lets reencode carry already-encoded bytes without a second marshal of a
-// decoded map.
+// rawJSON lets reencode carry encoded bytes without re-marshalling.
 type rawJSON []byte
 
 func (r rawJSON) MarshalJSON() ([]byte, error) { return []byte(r), nil }
 
-// --- HandleSSE (integration-ish, direct call) ---
-
-// TestHandleSSE_AdvertisesReconnectDelay pins that the hub is CONSTRUCTED with
-// the reconnect hint. Nothing else in the suite would notice its absence: the
-// field is not a frame, so it carries no type and no id to assert on.
+// TestHandleSSE_AdvertisesReconnectDelay pins the hub's reconnect hint, which carries no type or id to assert otherwise.
 func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
@@ -182,18 +164,14 @@ func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
 	if n := strings.Count(body, "retry: "); n != 1 {
 		t.Fatalf("body carries %d retry: lines, want exactly 1 (a property of the connection, not of a frame): %q", n, body)
 	}
-	// Ahead of the replay and the handshake, so the delay is in effect before
-	// the connection can first drop.
+	// Ahead of the replay and handshake, so it applies before the first drop.
 	if !strings.HasPrefix(body, want) {
 		t.Errorf("body does not open with %q: %q", want, body)
 	}
 }
 
-// TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing pins that the hub is
-// CONSTRUCTED with the named keepalive: the frame carries the name the client
-// listens for, no id: (so Last-Event-ID stays on the last real event), and it
-// never enters the replay ring. Serial: it writes the package var the hub reads
-// at construction.
+// TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing pins the named keepalive: the client's name, no id:
+// (Last-Event-ID stays put), never in the ring. Serial: it writes a package var read at construction.
 func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	prev := keepaliveInterval
 	keepaliveInterval = 10 * time.Millisecond
@@ -271,8 +249,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	}
 }
 
-// A resume past the reply cap is a gap the digest reconciles rather than a
-// kilo-frame replay: the hello says so and no ring frame is replayed.
+// A resume past the reply cap is a gap: the hello says so and nothing is replayed.
 func TestHandleSSE_AResumePastTheReplyCapIsAGap(t *testing.T) {
 	h, _, _ := newTestHub()
 	for i := 1; i <= replyMaxEvents+50; i++ {
@@ -315,10 +292,8 @@ func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	}
 }
 
-// Asserted through the MUX because the gate is a route wrapper applied at
-// registration: a test calling handleSSE directly would bypass it and pass whether or
-// not it is wired. An ungated route is checked too, because the gate must NOT become
-// global — a health probe during wind-down is what reports the wind-down.
+// Through the mux: the gate is a registration-time wrapper. An ungated route is checked too: a health probe
+// must report the wind-down.
 func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -339,10 +314,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 			if tc.body != "" {
 				body = strings.NewReader(tc.body)
 			}
-			// A bounded context so a REGRESSION fails fast instead of hanging:
-			// without the gate the event stream opens and blocks forever, which
-			// would turn this test into a 10-minute timeout rather than a failure
-			// naming the status it got.
+			// Bounded, so a regression fails fast instead of blocking on an open stream.
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
 			req := httptest.NewRequest(tc.method, tc.path, body).WithContext(ctx)
@@ -374,8 +346,6 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	})
 }
 
-// --- Helper: a ResponseWriter with no Flusher ---
-
 type nonFlusherWriter struct {
 	hdr    http.Header
 	body   strings.Builder
@@ -391,8 +361,7 @@ func (w *nonFlusherWriter) Header() http.Header {
 func (w *nonFlusherWriter) Write(p []byte) (int, error) { return w.body.Write(p) }
 func (w *nonFlusherWriter) WriteHeader(code int)        { w.status = code }
 
-// BenchmarkEmit measures the marshal+publish hot path (ring append; fan-out
-// scaling is benchmarked in the sse library).
+// BenchmarkEmit measures marshal and publish (fan-out is benchmarked in the sse library).
 func BenchmarkEmit(b *testing.B) {
 	h, _, _ := newTestHub()
 	evt := marotte.ServerEvent{Type: "chat_updated", ChatID: "bench"}
@@ -403,12 +372,8 @@ func BenchmarkEmit(b *testing.B) {
 	}
 }
 
-// The state the hook writes AFTER the handshake, so also the fact that the
-// handshake's write does not end the hook. The event log alone is not enough: a
-// permission dialog that aged out of the ring leaves the agent blocked on an answer
-// nothing renders. On a v3 connect it rides the aggregate; on a legacy connect its
-// own frame. Neither shape synthesizes a turn_state: a chat mid-turn is named in
-// busy_chats and its content comes from GET /api/chats/{id}.
+// The hook's post-handshake state: a permission dialog aged out of the ring would block the agent unseen. v3
+// rides the aggregate, legacy its own frame; neither synthesizes a turn_state.
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
 	h, _, br := newTestHub()
 
@@ -448,9 +413,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	}
 }
 
-// The run-ask half, whose reason is stronger than the permission's: a parked run has
-// no deadline of its own and the event does not re-fire, so a reload with no replay
-// leaves the run parked with nothing on screen to answer it.
+// A parked run has no deadline and its event does not re-fire, so a reload with no replay leaves nothing to answer.
 func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.asks.Add(&runAsk{
@@ -473,8 +436,7 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 		t.Errorf("the v3 pending_snapshot does not carry the question: %q", v3)
 	}
 
-	// After the answer there is nothing to replay: the claim deleted the entry, so
-	// a second connection must not re-offer a card whose request is settled.
+	// The claim deleted the entry, so a second connection must not re-offer it.
 	if _, ok := h.runs.asks.TakeIfPresent("wf_1", "a1"); !ok {
 		t.Fatal("Setup: the ask could not be claimed")
 	}
@@ -486,10 +448,7 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	}
 }
 
-// A reconnect re-reads the notification toggles because the config may have been
-// edited while SSE was down. A FRESH connection does not — the process just read them
-// — and re-reading on every one costs a disk read plus a singleflight round per page
-// load.
+// A reconnect re-reads notification toggles (edited while SSE was down); a fresh connection does not.
 func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -506,7 +465,6 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 			h := New(context.Background(), t.TempDir(),
 				func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 			cs.wire(h)
-			h.mcpRegistry.SignalReady()
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 

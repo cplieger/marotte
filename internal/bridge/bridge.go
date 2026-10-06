@@ -20,32 +20,26 @@ import (
 	"github.com/cplieger/marotte/internal/version"
 )
 
-// scannerLineCap is the per-frame content cap for the bridge's stdout: a full
-// fsWriteCap (4 MiB) payload plus worst-case JSON escaping and envelope slack.
-// Exceeding it is survivable — the frame is drained and dropped (bridge_frame.go).
+// scannerLineCap is the per-frame cap on the bridge's stdout: a full fsWriteCap (4 MiB) payload plus worst-case
+// escaping. A larger frame is drained and dropped (bridge_frame.go).
 const scannerLineCap = 16 << 20
 
-// stdoutBufSize is the ReadSlice window for the stdout frame reader, NOT the frame
-// cap: a larger frame is assembled across several ErrBufferFull reads.
+// stdoutBufSize is the ReadSlice window, not the frame cap: a larger frame is assembled across ErrBufferFull reads.
 const stdoutBufSize = 64 * 1024
 
-// stderrLineCap bounds one forwarded kiro-cli stderr line. Longer lines are
-// marked as truncated and drained through their newline so later diagnostics
-// continue to reach the log.
+// stderrLineCap bounds one forwarded kiro-cli stderr line; a longer one is marked truncated and drained through its
+// newline so later diagnostics still reach the log.
 const stderrLineCap = 64 * 1024
 
-// errBridgeExited aliases the exported sentinel Call returns when a waiter is
-// unblocked by readLoop's post-exit drain. It must stay an ALIAS: two distinct values
-// with the same text would make errors.Is fail and the retry loop spin on a corpse.
+// errBridgeExited aliases the exported sentinel Call returns when readLoop's post-exit drain unblocks a waiter. An
+// alias, so errors.Is holds and the retry loop does not spin on a dead bridge.
 var errBridgeExited = marotte.ErrBridgeExited
 
-// errBridgeNotStarted aliases the exported sentinel every write returns when the
-// bridge has no stdin handle. An ALIAS for errBridgeExited's reason: two values
-// with one text defeat errors.Is at the call sites that classify them.
+// errBridgeNotStarted aliases the exported sentinel a write returns with no stdin handle; an alias so errors.Is
+// holds at the call sites.
 var errBridgeNotStarted = marotte.ErrBridgeNotStarted
 
-// ACP RPC method names, re-exported for package-local use. The canonical definitions
-// live in marotte/methods.go so the protocol vocabulary is discoverable in one place.
+// ACP RPC method names, re-exported for package-local use; marotte/methods.go is canonical.
 const (
 	methodInitialize  = marotte.MethodInitialize
 	methodSessionNew  = marotte.MethodSessionNew
@@ -53,151 +47,143 @@ const (
 	methodSetMode     = marotte.MethodSetMode
 )
 
-// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every extension
-// key on this wire hangs off it, on three different requests, and a block written one
-// level up or down is IGNORED rather than rejected.
+// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. KAS ignores, rather than rejects, a block one
+// level off.
 const metaKeyKiro = "kiro"
 
-// The two per-session composer choices marotte sends inside _meta.kiro on session/new.
-// KAS reads them as `kiroMeta.modelId` and `kiroMeta.effortLevel`.
+// The per-session keys marotte adds inside _meta.kiro beside kascap's: the composer choices on session/new
+// (`modelId`, `effortLevel`, `modeId`) and the chat's client steering on both verbs.
 const (
 	metaKeyModelID     = "modelId"
 	metaKeyEffortLevel = "effortLevel"
+	metaKeyModeID      = "modeId"
+	metaKeySteering    = "steering"
 )
 
-// session/set_config_option param keys, named because three call sites spell them.
+// session/set_config_option param keys, shared by three call sites.
 const (
 	keyConfigID    = "configId"
 	keyConfigValue = "value"
 )
 
-// AgentKiroCapabilities is the backend capability advertisement retained from
-// the initialize result. Raw preserves keys this client does not model yet.
+// AgentKiroCapabilities is the backend capability advertisement from initialize. Raw keeps keys not modelled yet.
 type AgentKiroCapabilities struct {
 	Raw              map[string]json.RawMessage
+	Logging          KASLogging
 	ExtensionMethods []string
 	ReplayMarking    bool
 }
 
-// stdinPipe wraps the subprocess's write end so Bridge.stdin can be one
-// atomically-published word. See that field for why publication is atomic.
+// KASLogging is initialize's logging block. Only the log directory is read; Raw keeps the rest.
+type KASLogging struct {
+	LogDir string `json:"logDir"`
+}
+
+// stdinPipe wraps the subprocess's write end so Bridge.stdin is one atomically published word.
 type stdinPipe struct{ w io.WriteCloser }
 
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
-	// lifecycleCtx bounds the subprocess: the receiving half of StartOpts.Lifetime,
-	// assigned by Start, which refuses a nil one. A lifetime HANDLE rather than a
-	// stashed caller context — never a request or turn context.
+	// lifecycleCtx bounds the subprocess: StartOpts.Lifetime's receiving half, set by Start, which refuses nil. Never a
+	// request or turn context.
 	lifecycleCtx context.Context
-	// stdin is the subprocess's write end, published ATOMICALLY because its one
-	// writer and its three readers are on different goroutines: startProcess
-	// assigns it, writeFrame writes through it, Stop closes it, and cmd.Cancel
-	// closes it from os/exec's own goroutine.
-	//
-	// Atomic rather than a mutex, and the reason is a NUMBER: the only lock in
-	// reach is writeMu, and writeFrame holds it for up to writeDeadline (30 s),
-	// so making Stop take it would block a shutdown path — which stops every
-	// bridge BEFORE inflight.Wait() — for half a minute per wedged bridge. A
-	// dedicated second mutex would buy the same publication for an extra lock
-	// order to keep acyclic against writeMu.
-	//
-	// The wrapper type is what makes the load a single word: atomic.Pointer over
-	// the interface directly would give a *io.WriteCloser nobody reading the call
-	// site could love.
+	// stdin is the subprocess's write end, published atomically: startProcess assigns it, writeFrame writes, Stop and
+	// cmd.Cancel close it, on different goroutines. Not writeMu: writeFrame holds that up to writeDeadline (30 s), and
+	// shutdown stops every bridge before inflight.Wait(). The wrapper keeps the load to a single word.
 	stdin   atomic.Pointer[stdinPipe]
 	modes   atomic.Pointer[[]marotte.SessionMode]
 	stdout  *frameReader
 	pending map[int64]chan pendingReply
 	notifCh chan marotte.Notification
 	done    chan struct{}
-	// catalog is the UNFILTERED advertised set. Models derives the picker's list
-	// from it and ApplyServedModels derives the entitlement ids, so a deprecated
-	// model the account still holds cannot be filtered out of the check.
+	// catalog is the unfiltered advertised set: Models and ApplyServedModels derive from it, so a deprecated model the
+	// account holds still counts for entitlement.
 	catalog   atomic.Pointer[[]marotte.SessionModel]
 	agentKiro atomic.Pointer[AgentKiroCapabilities]
 	cmd       *exec.Cmd
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
-	envAllow     map[string]struct{}
-	cliPath      string
-	modelID      marotte.ModelID
-	workDir      string
-	sessionID    marotte.SessionID
-	currentMode  string
-	sessionTitle string
-	// effortLevel is the tier the session last REPORTED, off the `effortLevel` option's
-	// currentValue — observed rather than requested, which makes applyInitialEffort a
-	// repair. Empty means unknown and must assert. ObserveEffort feeds the other channel.
+	envAllow map[string]struct{}
+	// contentCollection is StartOpts.ContentCollection, immutable after Start. contentCollectionMu spans a resolve and
+	// its send, so KAS always ends on the newest resolution.
+	contentCollection func(context.Context) bool
+	cliPath           string
+	modelID           marotte.ModelID
+	workDir           string
+	sessionID         marotte.SessionID
+	currentMode       string
+	sessionTitle      string
+	// effortLevel is the tier the session last reported (the `effortLevel` option's currentValue), not the requested
+	// one, so applyInitialEffort repairs. Empty means unknown and must assert. ObserveEffort feeds it too.
 	effortLevel string
-	// extraArgs are the filtered operator launch flags for this spawn
-	// (StartOpts.ExtraArgs). Immutable after Start.
+	// thinking is the session's last reported thinking value ("on", "off", or "" when untoggleable or unreported);
+	// SetModel clears it.
+	thinking string
+	// extraArgs are this spawn's filtered operator launch flags (StartOpts.ExtraArgs). Immutable after Start.
 	extraArgs []string
-	// extraEnv is appended to the inherited environment of the kiro-cli process, so the
-	// install manager's active version directory leads PATH and `kiro-cli` resolves a
-	// sibling out of the same verified install. Empty leaves the screened inherited env.
+	// extraEnv is appended to the kiro-cli process's environment so the active install directory leads PATH and
+	// `kiro-cli` resolves within the same verified install. Empty leaves the screened inherited env.
 	extraEnv []string
-	// presets are the KAS policy-preset ids this session opens with. Immutable after
-	// Start for a stronger reason than symmetry: KAS does not persist the ids, so both
-	// session doors must send the SAME set or a resumed chat changes posture silently.
+	// presets are the KAS policy-preset ids this session opens with, immutable after Start. KAS does not persist them,
+	// so both session doors must send the same set or a resumed chat silently changes posture.
 	presets []string
-	// deliveredSeq counts the notifications readLoop has pushed onto notifCh and is the
-	// sequence stamped on each. Touched only by readLoop's goroutine — published on the
-	// frame and on the reply to a pending request, never read across the boundary.
+	// memory is the session-door memory preference; its reflection half is re-asserted after session/load. Immutable
+	// after Start.
+	memory marotte.MemoryPreference
+	// features are the Agent-capabilities settings this spawn sends; immutable after Start.
+	features marotte.AgentFeatures
+	// deliveredSeq counts notifications readLoop pushed onto notifCh and stamps each. readLoop's goroutine only.
 	deliveredSeq uint64
-	// loadSeq is the read-loop position the `session/load` response arrived at, published
-	// by SessionLoadSeq. Guarded by b.mu, unlike deliveredSeq: written on the goroutine
-	// that issued the load, read wherever a decision is ordered against the replay.
+	// loadSeq is the read-loop position the session/load response arrived at (SessionLoadSeq). Guarded by b.mu: written
+	// by the loading goroutine, read wherever a decision is ordered against the replay.
 	loadSeq uint64
-	// summarizationPct and truncationPct are the compaction thresholds the SESSION
-	// reported. 0 means no session/load result has carried one, which is the normal
-	// state of a chat that has never resumed.
+	// summarizationPct is the summarization threshold the session reported; 0 until a session/load result carries one.
 	summarizationPct float64
-	truncationPct    float64
 	nextID           atomic.Int64
 	stopOnce         sync.Once
 	mu               sync.Mutex
 	writeMu          sync.Mutex
 	pendingMu        sync.Mutex
 	// readMu decides whether a read loop or Stop closes notifCh (claimNotifClose).
-	readMu       sync.Mutex
-	notifClaimed bool
-	enableHooks  bool
+	readMu              sync.Mutex
+	contentCollectionMu sync.Mutex
+	notifClaimed        bool
+	enableHooks         bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
 	secretStorage bool
-	// toolSearch and knowledge gate the `settings.toolSearch` row and the two
-	// `knowledge` rows. Immutable after Start, like presets: KAS resolves both at
-	// session creation and freezes them, so both doors must describe one spawn.
+	// toolSearch is "Load MCP tools on demand", driving kascap's KIRO_FEATURE_TOOL_LOAD_ENABLED row. knowledge gates the
+	// two knowledge rows. Both immutable after Start: KAS freezes them at session creation.
 	toolSearch bool
 	knowledge  bool
-	// supervised records that this session ACCEPTED `autopilot: off`, never that the
-	// chat asked for it — the request lives on the chat record, and conflating the two
-	// is what let a refused assert read as satisfied. False therefore covers both "the
-	// assert was refused" and "nobody asked", which is why the coordinator only reads it
-	// alongside the chat's own request.
+	// supervised records that the session accepted `autopilot: off`, not that the chat asked; the request lives on the
+	// chat record. False covers refused and unasked, so the coordinator reads it with the chat's request.
 	supervised bool
-	// memory gates the `userMemoryOptIn` row's VALUE (never its presence) and contributes
-	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED to the child environment. Immutable after
-	// Start, and the environment is fixed when the subprocess starts anyway.
-	memory bool
+	// disableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true (run bridges).
+	disableSessionTitles bool
+	// disableAutoCompaction is the value this bridge sent on the session door, immutable after Start. KAS froze it, so
+	// it, not the current setting, says whether KAS still compacts this chat.
+	disableAutoCompaction bool
+	// sessionTitleSetByUser is the session result's titleSetByUser latch.
+	sessionTitleSetByUser bool
 }
+
+// AutoCompactionDisabled reports whether this bridge's session opened with KAS compaction off.
+func (b *Bridge) AutoCompactionDisabled() bool { return b.disableAutoCompaction }
 
 // Option configures a Bridge at construction time.
 type Option func(*Bridge)
 
-// WithEnv appends extra environment variables to the kiro-cli process this bridge
-// starts. Used to put the install manager's active version directory first on PATH.
+// WithEnv appends environment variables to the kiro-cli process, to put the active install directory first on PATH.
 func WithEnv(env []string) Option {
 	return func(b *Bridge) { b.extraEnv = env }
 }
 
-// WithEnvAllow re-permits credential-shaped names the inherit screen would drop.
-// Built by ParseEnvAllowlist from EnvAllowVar; see bridge_env.go.
+// WithEnvAllow re-permits credential-shaped names the inherit screen would drop (ParseEnvAllowlist, EnvAllowVar).
 func WithEnvAllow(allowed map[string]struct{}) Option {
 	return func(b *Bridge) { b.envAllow = allowed }
 }
 
-// New returns a fresh bridge that runs the kiro-cli binary at cliPath. Call Start
-// before any other method. cliPath is resolved by the CALLER, once per bridge, which
-// is what makes a version switch reach the next chat.
+// New returns a bridge that runs the kiro-cli binary at cliPath; call Start first. The caller resolves cliPath per
+// bridge, so a version switch reaches the next chat.
 func New(cliPath, workDir string, opts ...Option) *Bridge {
 	b := &Bridge{
 		cliPath: cliPath,
@@ -219,10 +205,9 @@ func (b *Bridge) SessionID() marotte.SessionID {
 	return b.sessionID
 }
 
-// SessionLoadSeq returns the read-loop position the `session/load` response arrived at,
-// which a consumer must have folded up to before treating that replay as complete.
-// Set by `session/load` ONLY, so session/new and a failed load answer 0 — and 0 is
-// also a legal position, so pair this with the fact that the load returned.
+// SessionLoadSeq returns the read-loop position of the session/load response, which a consumer must have folded to
+// before treating the replay as complete. Only session/load sets it; 0 is also a legal position, so pair it with
+// the load having returned.
 func (b *Bridge) SessionLoadSeq() uint64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -243,35 +228,36 @@ func (b *Bridge) CurrentMode() string {
 	return b.currentMode
 }
 
-// SupervisedApplied reports whether this bridge's session ACCEPTED `autopilot: off`.
-//
-// It says nothing about whether the chat ASKED for supervised mode: that request lives
-// on the chat record, and a caller must read both, or "false" cannot be told apart from
-// "nobody wanted it". The pair is what makes a refused assert reportable rather than
-// silent — see BridgeCoordinator.reportSupervisedNotApplied.
+// SupervisedApplied reports whether this bridge's session accepted `autopilot: off`. Whether the chat asked lives on
+// the chat record, and a caller must read both to report a refused assert
+// (BridgeCoordinator.reportSupervisedNotApplied).
 func (b *Bridge) SupervisedApplied() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.supervised
 }
 
-// SessionTitle returns KAS's own title for the live session, from the session result's
-// flat `_meta.title` — always the "New Session" placeholder on creation, the real
-// stored title on load. NOT the authoritative chat name: the caller adopts it only
-// while the chat is default-named, and a focus_update title outranks it.
+// SessionTitle returns KAS's title for the live session (flat `_meta.title`): "New Session" on creation, the stored
+// title on load. Not authoritative: the caller adopts it only for a default-named chat, and focus_update outranks it.
 func (b *Bridge) SessionTitle() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionTitle
 }
 
-// ContextThresholds returns the percentages at which the session summarizes and
-// truncates its own context, from the session/load result's flat `_meta.contextUsage`.
-// Either is 0 when no result has carried it; the caller supplies the fallback.
-func (b *Bridge) ContextThresholds() (summarization, truncation float64) {
+// SessionTitleSetByUser reports whether KAS holds the title as the user's (flat `_meta.titleSetByUser`).
+func (b *Bridge) SessionTitleSetByUser() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.summarizationPct, b.truncationPct
+	return b.sessionTitleSetByUser
+}
+
+// SummarizationThreshold returns the percentage at which the session summarizes its context, from session/load's
+// flat `_meta.contextUsage`; 0 when none carried it.
+func (b *Bridge) SummarizationThreshold() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.summarizationPct
 }
 
 // AgentKiroCapabilities returns the backend's initialize advertisement.
@@ -286,13 +272,21 @@ func (b *Bridge) AgentKiroCapabilities() AgentKiroCapabilities {
 	}
 	return AgentKiroCapabilities{
 		Raw:              raw,
+		Logging:          p.Logging,
 		ExtensionMethods: slices.Clone(p.ExtensionMethods),
 		ReplayMarking:    p.ReplayMarking,
 	}
 }
 
-// Modes returns the available session modes as declared on session/new or
-// session/load. The returned slice is frozen; callers MUST NOT mutate it.
+// KASLogDir returns the log directory the backend advertised at initialize, or "".
+func (b *Bridge) KASLogDir() string {
+	if p := b.agentKiro.Load(); p != nil {
+		return p.Logging.LogDir
+	}
+	return ""
+}
+
+// Modes returns the session modes from session/new or session/load. Frozen; callers must not mutate it.
 func (b *Bridge) Modes() []marotte.SessionMode {
 	if p := b.modes.Load(); p != nil {
 		return *p
@@ -300,8 +294,7 @@ func (b *Bridge) Modes() []marotte.SessionMode {
 	return nil
 }
 
-// Catalog returns the unfiltered catalog reported by the session result.
-// Frozen; callers MUST NOT mutate it.
+// Catalog returns the session result's unfiltered catalog. Frozen; callers must not mutate it.
 func (b *Bridge) Catalog() []marotte.SessionModel {
 	if p := b.catalog.Load(); p != nil {
 		return *p
@@ -309,8 +302,7 @@ func (b *Bridge) Catalog() []marotte.SessionModel {
 	return nil
 }
 
-// Models returns the catalog with [Deprecated] / [Legacy] entries filtered out
-// (modeltext.Hidden), derived from Catalog so the two cannot disagree.
+// Models returns Catalog without [Deprecated] / [Legacy] entries (modeltext.Hidden).
 func (b *Bridge) Models() []marotte.SessionModel {
 	catalog := b.Catalog()
 	if catalog == nil {
@@ -328,9 +320,8 @@ func (b *Bridge) Models() []marotte.SessionModel {
 // NotifCh returns incoming ACP notifications, each carrying the read loop's sequence.
 func (b *Bridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
 
-// SetModel performs an in-session model swap via session/set_config_option (configId
-// "model") — the v3 replacement for the removed session/set_model. On failure the
-// bridge's model id is left unchanged.
+// SetModel swaps the model in-session via session/set_config_option (configId "model"), v3's replacement for
+// session/set_model. On failure the model id is unchanged.
 func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Lock()
 	sessionID := b.sessionID
@@ -345,19 +336,17 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	}
 	b.mu.Lock()
 	b.modelID = marotte.ModelID(modelID)
-	// A swap can reset the session's effort level and the bridge cannot see that it did:
-	// KAS reconciles against the NEW model's tier list (measured on 2.19.1 — a swap to
-	// `auto`, which offers none, destroys it). Clearing makes the next call assert.
+	// A swap can reset effort invisibly: KAS reconciles against the new model's tiers (2.19.1: a swap to `auto` drops
+	// it). Clearing makes the next call assert.
 	b.effortLevel = ""
+	b.thinking = ""
 	b.mu.Unlock()
 	return nil
 }
 
-// EnsureEffort makes the live session run at `level` via session/set_config_option
-// (configId "effortLevel"). The ONE spelling of that call. Differs-only against what
-// the session last REPORTED, which is safe rather than optimistic because SetModel
-// CLEARS the cache. An invalid level is dropped rather than sent, and the cache is
-// written from the REPLY: KAS silently ignores a level the current model lacks.
+// EnsureEffort makes the live session run at level via session/set_config_option (configId "effortLevel"), the one
+// spelling of that call. It sends only when the reported level differs (SetModel clears the cache), drops an invalid
+// level, and caches the reply: KAS silently ignores a level the model lacks.
 func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	if level == "" || !marotte.EffortLevel(level).Valid() {
 		return nil
@@ -377,9 +366,7 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	if err != nil {
 		return err
 	}
-	// Record what the session now REPORTS, never what was asked for. Probed on 2.19.1:
-	// setting a level on a session at the `auto` model returns ok with no effortLevel
-	// option at all, so storing the request would leave the bridge believing a tier.
+	// Cache what the session reports: on 2.19.1 a level set on `auto` returns ok with no effortLevel option.
 	var out struct {
 		ConfigOptions []sessionConfigOption `json:"configOptions"`
 	}
@@ -391,11 +378,55 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	return nil
 }
 
-// ObserveEffort records a level the SESSION reported on the one channel this bridge
-// does not read: the `config_option_update` notification it forwards unread. Without
-// it the cache goes stale-OPTIMISTIC where it matters — KAS moves the level on its own
-// (first-prompt model pin, a swap from the IDE or TUI) and a bridge still believing its
-// own request compares equal and skips the repair. An empty level is ignored.
+// EnsureThinking makes the session's thinking match choice ("on" or "off") via set_config_option (configId
+// "thinking"). A string: KAS ignores a boolean. Sent only when the session reported a different value; unreported
+// means untoggleable or unknown. The reply refreshes thinking and effort, since thinking off caps a high tier.
+func (b *Bridge) EnsureThinking(ctx context.Context, choice string) error {
+	if choice != marotte.ThinkingOn && choice != marotte.ThinkingOff {
+		return nil
+	}
+	b.mu.Lock()
+	sessionID := b.sessionID
+	current := b.thinking
+	b.mu.Unlock()
+	if current == "" || current == choice {
+		return nil
+	}
+	resp, err := b.Call(ctx, marotte.MethodSetConfigOption, map[string]any{
+		marotte.KeySessionID: sessionID,
+		keyConfigID:          marotte.ConfigOptionThinking,
+		keyConfigValue:       choice,
+	})
+	if err != nil {
+		return err
+	}
+	var out struct {
+		ConfigOptions []sessionConfigOption `json:"configOptions"`
+	}
+	b.mu.Lock()
+	b.thinking = choice
+	if resp != nil && len(resp.Result) > 0 && json.Unmarshal(resp.Result, &out) == nil {
+		b.applyThinkingConfigOptionLocked(out.ConfigOptions)
+		b.applyEffortConfigOptionLocked(out.ConfigOptions)
+	}
+	b.mu.Unlock()
+	return nil
+}
+
+// ObserveThinking records a thinking value from the config_option_update channel this bridge forwards unread.
+// Empty is ignored.
+func (b *Bridge) ObserveThinking(value string) {
+	if value != marotte.ThinkingOn && value != marotte.ThinkingOff {
+		return
+	}
+	b.mu.Lock()
+	b.thinking = value
+	b.mu.Unlock()
+}
+
+// ObserveEffort records a level the session reported on config_option_update, which this bridge forwards unread.
+// KAS moves the level itself (first-prompt pin, an IDE or TUI swap), and a stale cache would skip the repair. Empty
+// is ignored.
 func (b *Bridge) ObserveEffort(level string) {
 	if level == "" {
 		return
@@ -405,18 +436,27 @@ func (b *Bridge) ObserveEffort(level string) {
 	b.mu.Unlock()
 }
 
-// spawn packages this bridge's per-spawn facts for the kascap table's gated rows,
-// which gate several different ways — presence, value, presence-from-emptiness — so one
-// boolean would not do. All are immutable after Start, so this reads them without the
-// mutex, and it is one method because both doors must describe the SAME spawn.
-func (b *Bridge) spawn() kascap.Spawn {
-	return kascap.Spawn{
-		SecretStorage: b.secretStorage,
-		Hooks:         b.enableHooks,
-		Presets:       b.presets,
-		ToolSearch:    b.toolSearch,
-		Knowledge:     b.knowledge,
-		Memory:        b.memory,
+// spawn packages this spawn's facts for kascap's gated rows, which gate by presence, value and emptiness. Immutable
+// after Start, so read without the mutex; one method because both doors must describe the same spawn.
+func (b *Bridge) spawn() *kascap.Spawn {
+	return &kascap.Spawn{
+		SecretStorage:            b.secretStorage,
+		Hooks:                    b.enableHooks,
+		Presets:                  b.presets,
+		Knowledge:                b.knowledge,
+		MemoryMode:               b.memory.Mode,
+		MemoryReflection:         b.memory.Reflection,
+		ToolLoad:                 b.toolSearch,
+		DisableSessionTitles:     b.disableSessionTitles,
+		DisableAutoCompaction:    b.disableAutoCompaction,
+		SpecPlan:                 b.features.SpecPlan,
+		SpecAskClarification:     b.features.SpecAskClarification,
+		WorkValidation:           b.features.WorkValidation,
+		InfraSafetyMonitor:       b.features.InfraSafetyMonitor,
+		TerminalCommandTimeoutMs: b.features.TerminalCommandTimeoutMs,
+		InlineAgents:             b.features.InlineAgents,
+		SteeringReminders:        b.features.SteeringReminders,
+		Workflows:                b.features.Workflows,
 	}
 }
 
@@ -446,8 +486,14 @@ func decodeAgentKiroCapabilities(result json.RawMessage) (AgentKiroCapabilities,
 	if err := json.Unmarshal(kiro, &typed); err != nil {
 		return AgentKiroCapabilities{}, err
 	}
+	// Diagnostic only: a malformed block must not fail the handshake.
+	var logging KASLogging
+	if block, ok := raw["logging"]; ok && json.Unmarshal(block, &logging) != nil {
+		logging = KASLogging{}
+	}
 	return AgentKiroCapabilities{
 		Raw:              raw,
+		Logging:          logging,
 		ExtensionMethods: typed.ExtensionMethods,
 		ReplayMarking:    typed.ReplayMarking,
 	}, nil
@@ -455,34 +501,29 @@ func decodeAgentKiroCapabilities(result json.RawMessage) (AgentKiroCapabilities,
 
 func (b *Bridge) initialize(ctx context.Context) error {
 	initStart := time.Now()
-	// The _meta.kiro block is DECLARED in internal/kascap rather than built here. This
-	// is the CONNECTION door; the session door is built from the same table by
-	// withSessionMeta, and a key belongs to whichever one KAS reads it from.
+	// Declared in internal/kascap. This is the connection door; withSessionMeta builds the session door from the same
+	// table, and each key goes where KAS reads it.
 	kiroMeta := kascap.Capabilities(b.spawn())
 
-	// Advertise fs read/write and terminal: kiro-cli routes file access and command
-	// execution through us when these are true. elicitation is what makes kiro-cli
-	// forward an MCP server's elicitation/create; without it the tool call stalls.
+	// fs and terminal route file access and command execution through marotte. elicitation makes kiro-cli forward an
+	// MCP server's elicitation/create; without it the tool call stalls.
 	resp, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs": map[string]any{
 				"readTextFile":  true,
 				"writeTextFile": true,
-				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs verbs, and
-				// declaring them CONFINES rather than grants: the else-branch is KAS's own
-				// NodeFileSystem with no marotte path check. readFile / writeFile are
-				// deliberately ABSENT — claiming them moves writes off the guarded rung.
+				// Claiming KAS's stat, readDirectory and delete confines rather than grants: otherwise KAS uses its own filesystem
+				// with no marotte path check. readFile/writeFile stay absent: claiming writeFile brings range edits in UTF-16 offsets
+				// marotte would have to splice.
 				"_meta": map[string]any{metaKeyKiro: map[string]any{
 					"stat":          true,
 					"readDirectory": true,
 					"delete":        true,
 				}},
 			},
-			// terminal:true routes every agent shell command through marotte's own
-			// terminal/* handlers, so marotte owns the pid, argv and output ring. THE
-			// TRAP: registering any client tool whose id is in KAS's CORE_IO_TOOL_IDS
-			// flips `hasClientIOTools` and silently unbounds the agent's ExecuteBash.
+			// terminal routes agent shell commands through marotte's terminal/* handlers, which own the pid, argv and output.
+			// Registering a client tool in KAS's CORE_IO_TOOL_IDS flips hasClientIOTools and silently unbounds ExecuteBash.
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
@@ -499,8 +540,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize result: %w", err)
 	}
 	b.agentKiro.Store(&caps)
-	// Developer-oriented; Start()'s "bridge started" is the authoritative line.
-	// elapsed_ms isolates the initialize round trip so a change to it is attributable.
+	// Start()'s "bridge started" is the authoritative line; elapsed_ms isolates the initialize round trip.
 	slog.Debug("ACP initialize RPC completed",
 		"version", version.Build,
 		"elapsed_ms", time.Since(initStart).Milliseconds(),

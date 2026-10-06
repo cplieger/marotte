@@ -1,15 +1,6 @@
-// shell-viewport — publishes `--shell-shortfall`, the distance the visual viewport
-// extends below the layout viewport, so the shell's bottom-anchored boxes reach the
-// screen edge while iOS hands a standalone app a transiently short containing block
-// on a cold launch. Standalone only: a Safari tab's visual viewport outgrows its
-// layout viewport whenever the chrome retracts, and extending into that band is the
-// dvh-flicker class. A NEGATIVE shortfall (the keyboard, or iPadOS's phantom
-// keyboard-sized shrink) is ignored; the keyboard is fixIOSViewport's.
-//
-// The premise, that `visualViewport.height` is correct while the ICB is short, is
-// unverified on any device. With both numbers equally short the shortfall is 0 and
-// the property is absent, so the app is exactly its anchored self.
-// `?vpdebug=1` (or `#vpdebug`) mounts a readout of every input.
+// shell-viewport — publishes `--shell-shortfall`, the distance the visual viewport extends below
+// the layout viewport, so the shell's bottom-anchored boxes reach the screen edge while iOS hands a
+// standalone app a transiently short containing block on a cold launch.
 
 import { isStandalone } from "./platform.js";
 

@@ -13,9 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// openTestTurn records a prompt turn on reg's lifecycle for chatID, at the registry
-// alone: no store append, because these tests are about the registry's own state
-// machine. The id is minted per call so two opens on one chat never collide.
+// openTestTurn records a prompt turn on reg's lifecycle at the registry alone, with a fresh id per call.
 func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *Turn {
 	t.Helper()
 	id := "t-" + strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -28,11 +26,8 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *Turn 
 	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil))
 }
 
-// TestTurnRegistry_InterruptIsFirstWinsPerTurn pins both guards on the cause a turn
-// ends with. FIRST-WINS because two writers reach one turn — a user pressing Cancel
-// and kiro-cli's tool-use filter — and neither may relabel the other. ID-SCOPED
-// because a cause offered for a finished turn must land nowhere; while it lived on
-// the bridge, turn A's cause survived into turn B.
+// TestTurnRegistry_InterruptIsFirstWinsPerTurn pins that first-wins because Cancel and kiro-cli's tool-use filter both write
+// the cause; id-scoped because on the bridge turn A's cause once survived into turn B.
 func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 	reg := newTurnRegistry()
 	turn := openTestTurn(t, reg, "c1")
@@ -47,8 +42,7 @@ func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 		t.Errorf("cause = %q, want the FIRST one to win", got)
 	}
 
-	// The turn ends and another opens. The old id names a turn that is over, so a
-	// cause armed for it must not reach the new one.
+	// The old id names a finished turn; its cause must not reach the new one.
 	reg.finish(turn, marotte.TurnResult{})
 	next := openTestTurn(t, reg, "c1")
 	if reg.interrupt("c1", turn.ID, "stale cause") {
@@ -59,10 +53,8 @@ func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_ClaimIsFirstWins pins the exclusion the finalizer rests on: two
-// closers reaching one turn persist and announce it once. The loser WAITS rather than
-// being refused — the winner's persistence and broadcast run with no lock held, so the
-// loser observes the result of that work rather than a half-finalized turn.
+// TestTurnRegistry_ClaimIsFirstWins pins that two closers persist and announce one turn once. The loser waits, observing the
+// winner's unlocked persistence and broadcast rather than a half-finalized turn.
 func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
@@ -94,10 +86,8 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_FinalizeWakesAParkedOpen is the normal-path deadlock guard, and the
-// reason the waitable is a channel closed on EVERY state change: armed only where a
-// frame folds, a finalize woke nobody and the user's next prompt parked in its open
-// forever. withLifecycle is the one door an open goes through.
+// TestTurnRegistry_FinalizeWakesAParkedOpen pins that the waitable closes on every state change; armed only on folds, a
+// finalize woke nobody and the next prompt parked forever.
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
@@ -118,9 +108,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 		opened <- next
 	}()
 
-	// The parked open must not proceed while the chat is finalizing: that is what
-	// keeps the next turn unobservable until the previous one's persistence and
-	// broadcast have completed.
+	// The next turn stays unobservable until the previous one's persistence and broadcast complete.
 	select {
 	case <-opened:
 		t.Fatal("an open proceeded while the chat was finalizing")
@@ -141,9 +129,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_OpenIsCancellable pins the other half of choosing a channel over a
-// sync.Cond: a waiter can be given up on. Cond.Wait composes with no cancellation at
-// all, so a chat wedged in finalizing held its caller for good.
+// TestTurnRegistry_OpenIsCancellable pins that a channel, unlike sync.Cond, lets a waiter give up on a wedged chat.
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
@@ -166,8 +152,7 @@ func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_ForgetDropsTheChat: the registry must not outlive the chats it
-// describes, or a deleted chat's lifecycle is retained for the process's life.
+// TestTurnRegistry_ForgetDropsTheChat pins that a deleted chat's lifecycle must not be retained for the process's life.
 func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
@@ -185,9 +170,7 @@ func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
 	}
 }
 
-// failingUsageStore answers every Mutate with one chosen error and is asked nothing
-// else, which is what lets the embedded interface stay nil: a real persist failure has
-// no store-side seam, so the metering write's error handling is driven from here.
+// failingUsageStore answers every Mutate with one chosen error; a real persist failure has no store-side seam.
 type failingUsageStore struct {
 	bridgeChatRecords
 	err error
@@ -197,11 +180,8 @@ func (s failingUsageStore) Mutate(context.Context, marotte.ChatID, func(*marotte
 	return "", s.err
 }
 
-// TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was
-// designed for. ErrTombstoned means the write was DECLINED for a chat id deleted inside
-// the window, so nothing reached disk — and a metering frame lands once per turn on
-// every chat, so surfacing it would put an ERROR line in the log for the mechanism
-// working as intended. Driven through the REAL store's tombstone, not a stub's error.
+// TestMutateUsage_TombstonedRefusalIsNotAnError pins that ErrTombstoned means the write was declined for a deleted chat, and
+// metering lands once per turn, so logging it as an error would fire on the mechanism working.
 func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", nil)
@@ -221,9 +201,7 @@ func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestMutateUsage_OtherErrorsStillLog is the other half, and it is what keeps the drop
-// narrow: matching the sentinel must not swallow a real persist failure — a full disk,
-// a permission fault, a corrupt chat file.
+// TestMutateUsage_OtherErrorsStillLog pins that matching the sentinel must not swallow a real persist failure.
 func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 	bc := &BridgeCoordinator{chatStore: failingUsageStore{err: errors.New("disk full")}, turns: newTurnRegistry()}
 	logs := captureLogs(t)
@@ -235,12 +213,8 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 	}
 }
 
-// A chat forgotten mid-finalize still has its turn published on the lifecycle its
-// waiters are parked on. Re-resolving from the chat id creates a FRESH lifecycle on a
-// miss, so a finish in flight after a forget set that one idle and left the old one in
-// turnFinalizing forever — parking Forward's own goroutine there for the life of the
-// process, with no seal, no replay-projection settle and no exit tail. The turn carries
-// its lifecycle now.
+// A finish after forget once re-resolved a fresh lifecycle and left the old one in turnFinalizing, parking Forward
+// forever; the turn now carries its lifecycle.
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
@@ -253,10 +227,8 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 		t.Fatal("claimOwn lost the claim on a freshly opened turn")
 	}
 
-	// The chat goes away while its turn is finalizing.
 	r.forget(chatID)
 
-	// A fold arriving on Forward parks on the lifecycle it already resolved.
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	woken := make(chan bool, 1)
@@ -283,10 +255,8 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 	}
 }
 
-// busyChatIDs is live's population — an own turn, a pending turn owed its bracket, or a
-// held admission slot — because it is the only set a client's stale-`thinking`
-// retraction may be withheld from, and the handshake and the transcript GET must not
-// disagree about it.
+// busyChatIDs covers an own turn, a pending turn owed its bracket and a held admission slot: the set a stale
+// thinking retraction is withheld from, shared by the handshake and the transcript GET.
 func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	busySet := func(t *testing.T, r *turnRegistry) map[marotte.ChatID]bool {
 		t.Helper()
@@ -319,9 +289,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 		}
 	})
 
-	// A SETTLED chat is the whole point of the negative statement: it is what the client
-	// retracts against. ReleaseTurn drops the completion handle and leaves the turn open,
-	// so the turn has to be finalized for the chat to be idle.
+	// ReleaseTurn leaves the turn open, so it must be finalized for the chat to be idle.
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.stagePromptTurn(t, "c1")
@@ -336,7 +304,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	})
 }
 
-// A shell reservation reaches this door too, from the one predicate both doors read.
+// A shell reservation reaches this set through the same predicate.
 func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
 	h, _, _ := newTestHub()
 	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
@@ -346,5 +314,31 @@ func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
 
 	if !slices.Contains(h.coord.turns.busyChatIDs(), "c1") {
 		t.Error("a chat holding a shell reservation is absent from busy_chats")
+	}
+}
+
+// TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence pins that a stop belongs to every turn open when it arrived, and it
+// outlives the finalize while a handle is held.
+func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
+	h, _, _ := newTestHub()
+	a, _ := h.stagePromptTurn(t, "c1")
+
+	h.coord.RequestStop("c1")
+	endTurn(t, h, "c1", a)
+
+	if !h.coord.StopRequestedAfter("c1", a) {
+		t.Error("StopRequestedAfter(a) = false after a stop and a finalize with its handle held, want true")
+	}
+	b, _ := h.stagePromptTurn(t, "c1")
+	if h.coord.StopRequestedAfter("c1", b) {
+		t.Error("StopRequestedAfter(b) = true for a turn opened after the stop, want false")
+	}
+	if !h.coord.StopRequestedAfter("c1", a) {
+		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
+	}
+
+	h.coord.RequestStop("c-never-opened")
+	if _, ok := h.coord.turns.lookup("c-never-opened"); ok {
+		t.Error("a stop on a chat with no turns minted a lifecycle for it")
 	}
 }

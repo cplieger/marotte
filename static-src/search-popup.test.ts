@@ -1,13 +1,5 @@
-// The page search popup, which is what History, the configuration browser and
-// the git view's two panels all are now.
-//
-// Four boxes had four answers to one question before this: two permanent in-flow
-// fields built through the shared shell, and two hand-authored `<input
-// type="search">` elements with their own magnifier — so the toolbar's magnifier
-// meant a floating box on a chat, a full-width field on /history, and nothing at
-// all on the git view. What this file pins is the part that could not be shared
-// until they agreed on placement: the reveal, and the ONE rule a hidden filter
-// needs that a permanent one did not.
+// The page search popup, which is what History, the configuration browser and the git view's two
+// panels all are now.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSearchPopup } from "./search-popup.js";
 import type { FindKind } from "./find-registry.js";
@@ -62,8 +54,8 @@ describe("building", () => {
   });
 
   it("DECLINES when its host is not there, so the chord reaches native find", () => {
-    // Every page here is lazily loaded, so the host arrives with the page. A
-    // decline is the honest answer, not an exception.
+    // Every page here is lazily loaded, so the host arrives with the page. A decline is the honest
+    // answer, not an exception.
     document.body.innerHTML = `<button type="button" id="find-btn"></button>`;
     const { popup } = build();
     expect(popup.open()).toBe(false);
@@ -71,9 +63,8 @@ describe("building", () => {
   });
 
   it("is hidden before its first open, so it takes no clicks it was never given", () => {
-    // The primitive writes `[hidden]` only at the END of a leave, so a freshly
-    // built panel is visible to the layout — and this one is a fixed-position box
-    // at opacity 0 over the page.
+    // The primitive writes `[hidden]` only at the END of a leave, so a freshly built panel is
+    // visible to the layout — and this one is a fixed-position box at opacity 0 over the page.
     const { popup } = build();
     popup.close();
     expect(popup.isOpen()).toBe(false);
@@ -91,16 +82,15 @@ describe("building", () => {
 });
 
 describe("closing clears", () => {
-  // The rule a hidden box needs and a permanent one did not. A popup that closed
-  // holding `redis` would leave the page showing three of forty rows with nothing
-  // on screen saying why, and the only way back would be reopening a box the
-  // reader has no reason to think is still armed.
+  // The rule a hidden box needs and a permanent one did not. A popup that closed holding `redis`
+  // would leave the page showing three of forty rows with nothing on screen saying why, and the
+  // only way back would be reopening a box the reader has no reason to think is still armed.
   it("empties the field and re-runs, so the page repaints unfiltered", () => {
     const { popup, seen } = build();
     popup.open();
-    // Opening runs nothing: the close below is what clears, so a freshly opened
-    // box is always empty and a run would be a repaint of the list already on
-    // screen — which on History is a refetch of every session.
+    // Opening runs nothing: the close below is what clears, so a freshly opened box is always empty
+    // and a run would be a repaint of the list already on screen — which on History is a refetch of
+    // every session.
     expect(seen).toEqual([]);
     typeInto("redis");
     expect(seen).toEqual(["redis"]);
@@ -110,8 +100,7 @@ describe("closing clears", () => {
   });
 
   it("does not re-run when there was nothing typed", () => {
-    // Closing an untouched box must not be a refetch of the list already on
-    // screen.
+    // Closing an untouched box must not be a refetch of the list already on screen.
     const { popup, seen } = build();
     popup.open();
     const before = seen.length;
@@ -154,9 +143,8 @@ describe("closing clears", () => {
 
 describe("the toolbar magnifier", () => {
   it("takes aria-pressed on open and gives it back on close", () => {
-    // aria-pressed, not aria-expanded: find is a TOGGLE, and 70-selection.css
-    // already styles `.icon-btn[aria-pressed="true"]` as the app's one selected
-    // treatment.
+    // aria-pressed, not aria-expanded: find is a TOGGLE, and 70-selection.css already styles
+    // `.icon-btn[aria-pressed="true"]` as the app's one selected treatment.
     const { popup } = build();
     popup.open();
     expect(document.getElementById("find-btn")?.getAttribute("aria-pressed")).toBe("true");
@@ -183,8 +171,8 @@ describe("the toolbar magnifier", () => {
   });
 
   it("re-opening an already-open box lands the caret in it", () => {
-    // show() on an open popup is a no-op reveal, so both doors — the button and
-    // the chord — have to focus explicitly.
+    // show() on an open popup is a no-op reveal, so both doors — the button and the chord — have to
+    // focus explicitly.
     const { popup } = build();
     popup.open();
     (document.getElementById("find-btn") as HTMLButtonElement).focus();
@@ -195,9 +183,8 @@ describe("the toolbar magnifier", () => {
 });
 
 describe("search versus filter", () => {
-  // ONE component, two readings. The kind decides the glyph and the wording and
-  // nothing structural, so a reader learns one control and is told which of the
-  // two things this page has.
+  // ONE component, two readings. The kind decides the glyph and the wording and nothing structural,
+  // so a reader learns one control and is told which of the two things this page has.
   it("draws a funnel for a filter and a magnifier for a search", () => {
     const filter = build({ kind: "filter" });
     filter.popup.open();
@@ -239,9 +226,9 @@ describe("search versus filter", () => {
 
 describe("what it does NOT offer", () => {
   it("has no match-case toggle on either kind, for two reasons that agree", () => {
-    // A filter folds the query AND the row it matches it against, so there is
-    // nothing a toggle could change; the one page search is case-insensitive at
-    // its endpoint by decision. The surfaces that DO offer it have a cursor.
+    // A filter folds the query AND the row it matches it against, so there is nothing a toggle
+    // could change; the one page search is case-insensitive at its endpoint by decision. The
+    // surfaces that DO offer it have a cursor.
     const { popup } = build();
     popup.open();
     expect(document.querySelector('#probe [aria-label="Match case"]')).toBeNull();
@@ -255,8 +242,7 @@ describe("what it does NOT offer", () => {
   });
 
   it("is not type=search, because it carries its own ×", () => {
-    // Two clear controls a thumb-width apart, doing different things, is worse
-    // than one.
+    // Two clear controls a thumb-width apart, doing different things, is worse than one.
     const { popup } = build();
     popup.open();
     expect((document.getElementById("probe-input") as HTMLInputElement).type).toBe("text");
@@ -275,10 +261,10 @@ describe("what it does NOT offer", () => {
 });
 
 describe("the trim rule lives here, once", () => {
-  // The shell's own contract is that its value is "trimmed of nothing", so the
-  // popup owns the one trim rule, per kind: a filter folds against rows already on
-  // screen, where a stray space matches nothing a reader meant; a search hands the
-  // text to a server whose parser splits on whitespace anyway.
+  // The shell's own contract is that its value is "trimmed of nothing", so the popup owns the one
+  // trim rule, per kind: a filter folds against rows already on screen, where a stray space matches
+  // nothing a reader meant; a search hands the text to a server whose parser splits on whitespace
+  // anyway.
   it("hands a filter the trimmed query", () => {
     const { popup, seen } = build({ kind: "filter" });
     popup.open();
@@ -307,8 +293,8 @@ describe("the trim rule lives here, once", () => {
   });
 
   it("paints for the same string it queried", () => {
-    // `render` receives the query too; a page filtering on one string and
-    // painting for another is the drift this rule exists to remove.
+    // `render` receives the query too; a page filtering on one string and painting for another is
+    // the drift this rule exists to remove.
     const painted: string[] = [];
     createSearchPopup<string>({
       id: "probe",
@@ -326,8 +312,8 @@ describe("the trim rule lives here, once", () => {
   });
 
   it("closes a whitespace-only box without a repaint", () => {
-    // The page already saw "" for it, so the close has nothing to undo — and on
-    // History a repaint is a refetch of every session.
+    // The page already saw "" for it, so the close has nothing to undo — and on History a repaint
+    // is a refetch of every session.
     const { popup, seen } = build({ kind: "search" });
     popup.open();
     typeInto("   ");

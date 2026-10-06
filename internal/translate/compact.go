@@ -1,7 +1,5 @@
 package translate
 
-// Compaction domain helpers, called from v3_updates.go's handleV3Summarization.
-
 import (
 	"cmp"
 	"context"
@@ -25,8 +23,7 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 	if summaryPtr != nil {
 		summary = *summaryPtr
 	}
-	// A watermark naming an entry the same shutdown refused would be worse than
-	// neither, so every effect below rides one detached context.
+	// One detached context: a watermark naming an entry the shutdown refused would be worse.
 	ctx = durable.Context(ctx)
 	empties, err := t.chats.EmptyCompactions(ctx, chatID)
 	if errors.Is(err, chat.ErrTombstoned) || errors.Is(err, chat.ErrChatNotFound) {
@@ -78,7 +75,6 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
-	// A compaction failure does not prove the turn ended, so the host is told rather
-	// than the turn being closed here: it bounds the silence before it interrupts.
+	// A compaction failure does not prove the turn ended: the host bounds the silence, then interrupts.
 	t.turnInterrupt.CompactionFailed(chatID, detail)
 }

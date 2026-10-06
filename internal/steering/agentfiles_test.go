@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// fakeDirEntry is a directory listing entry the test controls completely,
-// including names no filesystem would accept. The rule reads only Name and
-// IsDir, so Type and Info are the minimum that satisfies the interface.
+// fakeDirEntry is a listing entry the test fully controls, including names no filesystem
+// would accept.
 type fakeDirEntry struct {
 	name  string
 	isDir bool
@@ -42,13 +41,8 @@ func entries(names ...string) []fs.DirEntry {
 	return out
 }
 
-// agentDoorFixture is the listing every door test uses. Its twin lives in
-// internal/server/kiro_agent_doors_test.go, which asserts the two REST scans
-// resolve it the way DedupeAgentFiles does; TestFindRepoAgents_AgreesWithTheRule
-// below does the same for the generator's door.
-//
-// Sorted, because both production readers (fs.ReadDir and os.ReadDir) sort by
-// name, so this is the order the doors actually see.
+// agentDoorFixture is the listing every door test uses (its twin is in
+// internal/server/kiro_agent_doors_test.go). Sorted, as fs.ReadDir and os.ReadDir sort.
 var agentDoorFixture = []string{
 	".hidden.md",
 	".md",
@@ -60,8 +54,6 @@ var agentDoorFixture = []string{
 }
 
 // TestDedupeAgentFiles is the ONE statement of what an agents/ listing means.
-// Every door reads it through this function, so these expectations are the whole
-// contract and no door restates them.
 func TestDedupeAgentFiles(t *testing.T) {
 	tests := map[string]struct {
 		in   []fs.DirEntry
@@ -155,17 +147,13 @@ func TestDedupeAgentFiles(t *testing.T) {
 	}
 }
 
-// TestFindRepoAgents_AgreesWithTheRule is the generator's door. It asserts
-// agreement with DedupeAgentFiles rather than restating the expectations, so the
-// rule's table above stays the only place they live — which is the whole point of
-// there being one rule.
+// TestFindRepoAgents_AgreesWithTheRule asserts the generator's door against DedupeAgentFiles.
 func TestFindRepoAgents_AgreesWithTheRule(t *testing.T) {
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".kiro", "agents")
 	for _, name := range agentDoorFixture {
 		if name == ".md" {
-			// A file literally named ".md" is legal on disk and the rule refuses it;
-			// written here so the door sees the same listing as its twins.
+			// A file named ".md" is legal on disk and the rule refuses it.
 			mustWriteFile(t, filepath.Join(dir, name), "")
 			continue
 		}

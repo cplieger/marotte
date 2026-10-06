@@ -1,8 +1,3 @@
-// Actions for chat lifecycle: delete, list previous sessions, resume a
-// previous session, cancel, switch model, set mode, compact, send prompt,
-// permission response, elicitation response, user-input response, and the
-// supervised (autopilot) toggle.
-
 import {
   apiAction,
   defineAction,
@@ -12,11 +7,17 @@ import {
   transportAction,
   IDEMPOTENCY_COMMAND_FIELD,
   API_TIMEOUT_MS,
+  classifyFetchError,
+  withTimeout,
 } from "./index.js";
+import { exportFilename } from "../export-filename.js";
 import { join as joinKey } from "@cplieger/keyenc";
+import { errorAbout, successAbout } from "./subject.js";
 
+import type { AttachedFile } from "../attachments.js";
 import type {
   ChatHeader,
+  InterruptMode,
   PendingSteer,
   Session,
   SessionListResponse,
@@ -31,6 +32,7 @@ import {
   get,
   setThinking,
   setSupervisedMode,
+  setChatInterruptMode,
   removeChat,
   reinsertSession,
   indexOfSession,
@@ -46,11 +48,12 @@ import {
 } from "../store.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 
-// --- chat.create ---
-// Server mints the chat id and returns it. `opID` is a dispatch argument
-// (never minted inside `run()`) so a retry past the Idempotency-Key TTL
-// resolves via the server's op_id ledger (command/create_ledger.go) instead
-// of minting a second chat. No `dedupe`: two clicks on New chat are two chats.
+/** The chat an action's arguments address, for its notification's subject. */
+const onChat = ({ chatID }: { readonly chatID: string }): string => chatID;
+
+// `opID` is a dispatch argument (never minted in `run()`) so a retry past the Idempotency-Key TTL
+// resolves via the server's op_id ledger (command/create_ledger.go). No `dedupe`: two clicks are
+// two chats.
 
 export const createChat = defineAction<
   { opID: string; name?: string; model?: string },
@@ -81,20 +84,15 @@ export const createChat = defineAction<
   error: "Could not create a chat",
 });
 
-/** What a creating command committed: the chat, and the tab the coordinator
- *  opened for it in the same operation. The caller adopts `subject` to paint
- *  and activate the tab with no second `open_tab` round trip. `subject` is
- *  absent when no tab store is wired; `version` is the collection version
- *  the open committed. */
+/** What a creating command committed: the chat and the tab opened for it in the same operation,
+ *  adopted with no second `open_tab` round trip. `subject` is absent when no tab store is wired. */
 export interface CreatedChat {
   chat: ChatHeader;
   subject?: TabSubject;
   version: number;
 }
 
-/** Reads the chat a creating command returned, or throws — a reply with no
- *  chat is a failure even at HTTP 200, shared across all three creating
- *  actions. */
+/** The chat a creating command returned; a reply with no chat throws even at HTTP 200. */
 function chatFromReply(r: SendResult, signal: AbortSignal, what: string): CreatedChat {
   if (!r.ok) {
     if (signal.aborted || r.code === "cancelled") {
@@ -126,15 +124,10 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): Create
   };
 }
 
-// There is no `chat.close` action: `close_tab` is the one gesture, and it runs
-// the same teardown server-side through the membership coordinator
-// (`closeChatTeardown`).
+// No `chat.close` action: `close_tab` runs the same teardown server-side (`closeChatTeardown`).
 
-// --- chat.delete ---
-// With retention off, closing a non-empty chat's tab deletes it permanently.
-// With retention on, a close just drops the tab (removeChat) and the server
-// keeps the chat until the purge window expires. This is the app's ONLY chat
-// delete path.
+// The app's ONLY chat delete path. With retention off a close deletes a non-empty chat; with it
+// on the server keeps the chat until the purge window expires.
 
 export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
   name: "chat.delete",
@@ -160,10 +153,8 @@ export const deleteChat = transportAction<string, { session: Session; atIndex: n
       reinsertSession(op.session, op.atIndex);
     }
   },
-  error: "Could not delete chat",
+  error: errorAbout((id: string) => id, "Could not delete chat"),
 });
-
-// --- chat.set_supervised ---
 
 export const setSupervised = transportAction<
   { chatID: string; enabled: boolean },
@@ -193,25 +184,108 @@ export const setSupervised = transportAction<
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Could not update supervised mode",
+  error: errorAbout(onChat, "Could not update supervised mode"),
 });
 
-// --- chat.set_draft ---
+/** What Send means while a turn runs on this chat. It touches no turn: a switch
+ *  mid-turn leaves sent steers and queued rows where they are. */
+export const setInterruptMode = transportAction<
+  { chatID: string; mode: InterruptMode },
+  { prev: InterruptMode }
+>({
+  name: "chat.set_interrupt_mode",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, mode }) => ({
+    type: "set_interrupt_mode",
+    chat_id: chatID,
+    payload: { mode },
+  }),
+  optimistic: ({ chatID, mode }) => {
+    const session = get(chatID);
+    if (session === undefined) {
+      return undefined;
+    }
+    const prev: InterruptMode = session.interrupt_mode ?? "steer";
+    setChatInterruptMode(chatID, mode);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined) {
+      setChatInterruptMode(chatID, op.prev);
+    }
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: errorAbout(onChat, "Could not change what Send does mid-turn"),
+});
 
-/** Persists the composer text typed and not sent, server-side so a draft
- *  follows the user across devices. Debounced 600ms, flushed on blur, chat
- *  switch, and unload.
- *
- *  - `success: false` / `error: false`: draft saving is user-transparent —
- *    the live textarea still holds the text and the next keystroke retries.
- *  - `scope` is per COMPOSER, not per chat: it serializes draft writes
- *    against each other, never against `chat.send_prompt`'s `chat:<id>`
- *    scope (held for the whole turn) — sharing it would queue the send's
- *    own draft-clear behind the turn it just started. Attachments share
- *    this scope too, since `draft_changed` carries both fields in one frame.
- *  - No optimism: the composer IS the view of this value.
- *
- *  Not retryable: a retry would re-send text the next debounce supersedes. */
+/** The longest name the server accepts, in UTF-16 units (`marotte.MaxUserChatNameUnits`). */
+export const MAX_CHAT_NAME_UNITS = 128;
+
+/** A user's own chat name. No optimism: the tab label repaints from the
+ *  server's `chat_updated`, and a refused name leaves the old one standing. */
+export const renameChat = transportAction<{ chatID: string; name: string }>({
+  name: "chat.rename",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat-name:${chatID}`,
+  dedupe: ({ chatID, name }) => joinKey("chat.rename", chatID, name),
+  command: ({ chatID, name }) => ({
+    type: "rename_chat",
+    chat_id: chatID,
+    payload: { name },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: errorAbout(onChat, "Couldn't rename the chat"),
+});
+
+/** The Kiro session zip can take KAS a while to assemble across a long chain. */
+const SESSION_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** Download every Kiro session in the chat's chain as one zip
+ *  (`GET /api/chats/{id}/kiro-session`). A fetch and a blob rather than an
+ *  anchor, so a failure reaches the reader as a toast instead of a broken file. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+export const downloadKiroSession = defineAction<{ chatID: string; name: string }, void>({
+  name: "chat.download_kiro_session",
+  dedupe: ({ chatID }) => chatID,
+  run: async ({ chatID, name }, signal) => {
+    let r: Response;
+    try {
+      r = await fetch(`/api/chats/${encodeURIComponent(chatID)}/kiro-session`, {
+        signal: withTimeout(signal, SESSION_DOWNLOAD_TIMEOUT_MS),
+      });
+    } catch (e) {
+      throw classifyFetchError(e, signal);
+    }
+    if (!r.ok) {
+      throw new ActionError("Download failed", { status: r.status });
+    }
+    const blob = await r.blob();
+    if (signal.aborted) {
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = exportFilename(name, chatID, "kiro-session");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+  error: errorAbout(onChat, "Couldn't download the Kiro session"),
+});
+
+/** Persists the unsent composer text server-side, so it follows the user across devices.
+ *  Debounced 600ms, flushed on blur, chat switch and unload; silent and not retryable (the next
+ *  keystroke supersedes it). `scope` is per COMPOSER: sharing `chat.send_prompt`'s `chat:<id>`
+ *  scope would queue the send's own draft-clear behind the turn it started. Attachments share it,
+ *  since `draft_changed` carries both fields. */
 export const setDraft = transportAction<{ chatID: string; text: string }>({
   name: "chat.set_draft",
   networkMode: "always",
@@ -225,13 +299,8 @@ export const setDraft = transportAction<{ chatID: string; text: string }>({
   error: false,
 });
 
-// --- chat.set_attachments ---
-
-/** Persists the workspace paths staged beside a chat's draft, the draft's
- *  twin: same 600ms cadence, same `composer:<id>` scope (keeps the two
- *  halves of one `draft_changed` frame from interleaving), same silence, no
- *  retry. Paths, never contents — the server reads each file at send time.
- *  Sends the WHOLE list, since the row on screen is the authoritative copy. */
+/** Persists the paths staged beside a draft, with `setDraft`'s cadence, scope, silence and no
+ *  retry. Paths only (the server reads each file at send time); sends the WHOLE list. */
 export const setAttachments = transportAction<{ chatID: string; paths: string[] }>({
   name: "chat.set_attachments",
   networkMode: "always",
@@ -245,13 +314,9 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
   error: false,
 });
 
-// --- chat.compact ---
-
-/** Summarizes the conversation through KAS's native `compact` verb (typed `/compact`
- *  reaches the model as prose, not this — see typed-commands.ts). `idempotencyKey`
- *  because a retry that compacts twice summarizes a summary; success claims ACCEPTANCE
- *  rather than completion (`internal/command/compact.go` records why); and `error` is
- *  unset so the default carries the server's own refusal prose. */
+/** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose).
+ *  `idempotencyKey`: a double compact summarizes a summary. Success claims ACCEPTANCE, not
+ *  completion (`internal/command/compact.go`). */
 export const compactChat = transportAction<{ chatID: string }>({
   name: "chat.compact",
   networkMode: "always",
@@ -261,23 +326,15 @@ export const compactChat = transportAction<{ chatID: string }>({
     type: "compact",
     chat_id: chatID,
   }),
-  success: "Compacting the conversation…",
+  success: successAbout(onChat, "Compacting the conversation…"),
+  error: errorAbout(onChat, "Compact failed"),
 });
 
-// --- chat.steer ---
-
-/** Delivers a message into the running turn (`_session/steer`). Optimistic:
- *  the row is drawn on submit since the composer clears its text then, and a
- *  refusal (409 turn-ended-mid-flight or idle, 400 on a `[notification/...]`
- *  prefix) un-draws it and restores the composer text.
- *
- *  Custom runner rather than `transportAction`: the 200 carries the
- *  authoritative `steer_id`, adopted here to confirm the chip within the
- *  POST's own round trip rather than waiting on `steer_queued`. It also
- *  lifts the envelope's `reason` into the ActionError's code, letting
- *  submit.ts convert a `no_turn` refusal back into a prompt.
- *
- *  `error: false`: submit.ts owns the failure surface. */
+/** Delivers a message into the running turn (`_session/steer`). Optimistic; a refusal un-draws
+ *  the row and restores the composer text. A custom runner: it adopts the 200's authoritative
+ *  `steer_id` so the chip confirms without `steer_queued`, and lifts `reason` into the
+ *  ActionError code so submit.ts can turn `no_turn` into a prompt. `error: false`: submit.ts
+ *  owns the failure surface. */
 export const steerChat = defineAction<
   { chatID: string; text: string; messageID: string },
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
@@ -309,9 +366,7 @@ export const steerChat = defineAction<
     }
     const steerID = steerIDOf(r.body);
     if (steerID !== "") {
-      // `user` is a fact on this path, not a guess: this is the reply to THIS
-      // device's own POST, and the server has just recorded the same id in the
-      // ledger its own `steer_queued` frame will be stamped from.
+      // A fact here, not a guess: this is the reply to THIS device's own POST.
       recordSteerQueued(chatID, { id: steerID, text, origin: "user", state: "queued" });
     }
   },
@@ -336,11 +391,66 @@ function steerIDOf(body: unknown): string {
   return typeof id === "string" ? id : "";
 }
 
-/** Drops every steer KAS is still holding for this chat
- *  (`_session/steer/clear`). Does not cancel the turn. Optimistic, so an
- *  explicit discard never leaves a "not delivered" mark. Only CONFIRMED
- *  entries go — a `pending` one has no server-side id yet, so the clear
- *  cannot address it. */
+/** Holds a message for the end of the running turn (Queue mode). Not optimistic: the row comes
+ *  from the server's header broadcast, so every device shows one list. Lifts `reason` like
+ *  `steerChat`; `error: false`. */
+export const queuePrompt = defineAction<
+  { chatID: string; text: string; messageID: string; attachments?: readonly AttachedFile[] },
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
+  void
+>({
+  name: "chat.queue_prompt",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: (args) => joinKey("chat.queue_prompt", args.chatID, args.messageID),
+  idempotencyKey: true,
+  error: false,
+  run: async ({ chatID, text, messageID, attachments }, signal, ctx) => {
+    const cmd: Parameters<typeof transportSend>[0] = {
+      type: "queue_prompt",
+      chat_id: chatID,
+      payload: {
+        text,
+        message_id: messageID,
+        ...(attachments !== undefined && attachments.length > 0
+          ? { attachments: attachments.map((a) => ({ path: a.path, name: a.name })) }
+          : {}),
+      },
+    };
+    if (ctx?.idempotencyKey !== undefined) {
+      (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD] = ctx.idempotencyKey;
+    }
+    const r: SendResult = await transportSend(cmd, { signal, reportSendState: false });
+    if (!r.ok) {
+      const opts: { status: number; code?: string } = { status: r.status };
+      const code = r.reason ?? r.code;
+      if (code !== undefined) {
+        opts.code = code;
+      }
+      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, opts);
+    }
+  },
+});
+
+/** Removes one queued follow-up. An id no row carries is success on the server,
+ *  because two devices can discard the same row. */
+export const unqueuePrompt = transportAction<{ chatID: string; messageID: string }>({
+  name: "chat.unqueue_prompt",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: (args) => joinKey("chat.unqueue_prompt", args.chatID, args.messageID),
+  command: ({ chatID, messageID }) => ({
+    type: "unqueue_prompt",
+    chat_id: chatID,
+    payload: { message_id: messageID },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: errorAbout(onChat, "Could not remove the follow-up"),
+});
+
+/** Drops every steer KAS still holds (`_session/steer/clear`) without cancelling the turn.
+ *  Optimistic. Only CONFIRMED entries go: a `pending` one has no server id to address. */
 export const clearSteers = transportAction<
   { chatID: string },
   { chatID: string; removed: readonly PendingSteer[] }
@@ -350,24 +460,19 @@ export const clearSteers = transportAction<
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID }) => ({ type: "steer_clear", chat_id: chatID }),
   optimistic: ({ chatID }) => ({ chatID, removed: dropConfirmedSteers(chatID) }),
-  // The removed entries exist only on the optimistic result, so this rollback
-  // reads the second parameter. `undefined` means `optimistic` never ran, so
-  // nothing was taken out and there is nothing to put back.
+  // The removed entries exist only on the optimistic result; `undefined` means none were taken.
   rollback: (_args, op) => {
     if (op !== undefined) {
       restoreSteers(op.chatID, op.removed);
     }
   },
-  error: "Could not discard",
+  error: errorAbout(onChat, "Could not discard"),
 });
 
-/** Delete ONE dock row. The wire has no per-steer removal, so the SERVER clears KAS's
- *  buffer and resends the kept rows as one combined steer; the deleted row leaves on its
- *  own frame or entry, and the kept rows keep their elements, so nothing is drawn or
- *  undrawn here. A refusal is an `ActionError` carrying the server's sentence, its status
- *  and its `reason`, which is what lets Edit tell a definite refusal from a lost reply.
- *
- *  Deduped per row: two clicks on one × are one delete. */
+/** Delete ONE dock row. The wire has no per-steer removal, so the server clears KAS's buffer and
+ *  resends the kept rows as one steer; nothing is drawn here. A refusal is an `ActionError` with
+ *  the server's sentence, status and `reason`, so Edit can tell a refusal from a lost reply.
+ *  Deduped per row. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
 export const removeSteer = defineAction<{ chatID: string; steerID: string }, void>({
   name: "chat.remove_steer",
@@ -391,10 +496,7 @@ export const removeSteer = defineAction<{ chatID: string; steerID: string }, voi
   },
 });
 
-// --- chat.set_mode ---
-// Switches the chat's session mode (v3). On a live bridge, switches in
-// place via session/set_mode; on an empty chat, persists and applies at the
-// first prompt. Optimistic so the pill flips instantly.
+// A live bridge switches in place (session/set_mode); an empty chat applies it at the first prompt.
 
 export const setMode = transportAction<{ chatID: string; modeID: string }, { prev: string }>({
   name: "chat.set_mode",
@@ -420,15 +522,11 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Could not switch mode",
+  error: errorAbout(onChat, "Could not switch mode"),
 });
 
-// --- chat.restore ---
-
-/** The History picker's inventory. Read through the GENERATED decoder, because
- *  the reply's two per-list verdicts are what the picker branches on to say
- *  whether there is nothing to resume or the read failed — a claim with no
- *  decoder behind it would let an absent verdict read as success. */
+/** The History picker's inventory, through the GENERATED decoder so an absent per-list verdict
+ *  cannot read as success. */
 export const loadSessions = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
@@ -443,12 +541,8 @@ export const loadSessions = apiAction<
   error: "Could not load previous sessions",
 });
 
-// --- chat.resume_session ---
-// Adopts a KAS session the picker listed as a NEW chat, bound to the session
-// id; the transcript arrives from the session/load replay. Returns the
-// header (server-minted id) so the caller can open it. `opID` matters more
-// here than for a bare create: minting per attempt would leave two chats
-// bound to one KAS session.
+// Adopts a listed KAS session as a NEW chat; the transcript arrives from session/load replay.
+// `opID` matters more than for a create: minting per attempt binds two chats to one session.
 
 export const resumeSession = defineAction<
   { opID: string; sessionID: string; name: string },
@@ -475,12 +569,8 @@ export const resumeSession = defineAction<
   error: "Could not resume that session",
 });
 
-// --- chat.fork ---
-// Opens a tangent: a new chat starting with the parent's conversation, then
-// diverging. The server resumes the parent's bridge on demand, calls
-// `session/fork` on it and binds the returned id, so nothing is copied
-// client-side. Reply's `outcome` (`forked` or `fresh`) is informational; the
-// tangent opens either way. `opID` stops a retry forking twice.
+// The server resumes the parent's bridge and calls `session/fork`; nothing is copied client-side.
+// `outcome` is informational; `opID` stops a retry forking twice.
 
 export const forkChat = defineAction<
   { opID: string; parentChatID: string; title?: string },
@@ -511,12 +601,8 @@ export const forkChat = defineAction<
   error: "Could not start a tangent",
 });
 
-// --- chat.cancel_turn ---
-// No scope: cancel must fire immediately, not queue behind an in-flight
-// sendPrompt in the same chat. Idempotent server-side.
-// Named "cancel_turn" rather than "cancel" to avoid confusion with the
-// Action.cancel() method. `lead` is the send-now arrow's row: the turn-end resend
-// orders it first.
+// No scope: cancel must not queue behind an in-flight sendPrompt. `lead` is the send-now arrow's
+// row, which the turn-end resend orders first.
 
 export const cancelTurn = transportAction<
   { chatID: string; lead?: string },
@@ -541,14 +627,11 @@ export const cancelTurn = transportAction<
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Could not cancel turn",
+  error: errorAbout(onChat, "Could not cancel turn"),
 });
 
-// --- chat.switch_model ---
-// defineAction because the caller needs a boolean return, and setThinking is
-// a loading indicator here rather than an optimistic mutation that
-// transportAction's rollback pattern fits. Rollback restores the previous
-// model via setModel().
+// defineAction: the caller needs a boolean, and setThinking is a loading indicator here rather
+// than an optimistic mutation. Rollback restores the previous model.
 
 export const switchModel = defineAction<
   { chatID: string; model: string },
@@ -577,8 +660,7 @@ export const switchModel = defineAction<
     }
   },
   run: async ({ chatID, model }, signal) => {
-    // Don't touch thinking state — it's owned by sendPrompt and
-    // bindLoadingState on the model switcher button handles the UI indicator.
+    // sendPrompt owns thinking; the switcher button's bindLoadingState shows progress.
     const r = await transportSend(
       { type: "switch_model", chat_id: chatID, payload: { model } },
       { signal, reportSendState: false },
@@ -595,21 +677,12 @@ export const switchModel = defineAction<
     }
     return true;
   },
-  error: "Could not switch model",
+  error: errorAbout(onChat, "Could not switch model"),
 });
 
-// --- chat.send_prompt ---
-//
-// Posts a prompt to a chat with the shared thinking + 409 lifecycle. The
-// server acks at admission ({accepted, message_id}), so dispatch runs at the
-// standard API timeout; turn completion is SSE-anchored. Returns "sent" on
-// ack, "queued" on plain 409 (steerable turn in flight), "starting" on 409
-// reason:"starting" (admission holder is a spawn, a shell command or a workflow
-// step, none of which can receive a steer), "gone" on 409 reason:"chat_not_found"
-// (a tombstoned chat), or null on any other error.
-//
-// `error: false`: failure-notice.ts already raises the toast via
-// transport.send's reportSendState.
+// The server acks at admission, so dispatch runs at the standard timeout; completion is SSE's.
+// Returns "sent", "queued" (plain 409), "starting" (409: the admission holder cannot take a
+// steer), "gone" (409 chat_not_found) or null. `error: false`: transport.send already toasts.
 
 interface SendPromptArgs {
   chatID: string;
@@ -662,11 +735,8 @@ export const sendPrompt = defineAction<
     }
     if (r.status === 409) {
       if (r.reason === "starting") {
-        // The admission holder is a cold spawn, a shell command or a workflow step — none of
-        // which can receive a steer. Returned as a VALUE so the caller can branch on it, which
-        // means the framework's rollback never runs and the optimistic write is undone here:
-        // `thinking` left true would turn the user's retry into a steer. The dot then reads
-        // whatever the log says, which for the previous turn is its own `turn_close`.
+        // Returned as a VALUE, so the framework's rollback never runs: undo here, or the user's retry
+        // becomes a steer.
         setThinking(chatID, false);
         return "starting";
       }
@@ -687,26 +757,18 @@ export const sendPrompt = defineAction<
   error: false, // send-state.ts is the surface
 });
 
-// --- the three interactive asks ---
-// Scope is per-request, not per-chat: two pending requests in the same chat
-// are independent and should fire in parallel.
+// Scope is per request: two pending asks in one chat are independent.
 
 /** The Go sentinel `errAlreadyAnswered` (internal/command/validate.go), served
  *  as 409 `{"error":"already_answered"}`. Matched by value; no generated
  *  constant exists for a command error body. */
 const ALREADY_ANSWERED = "already_answered";
 
-/** Answering an ask has three outcomes: answered, already settled by another
- *  surface (`superseded`), or failed. `superseded` is not an error — the
- *  server accepts exactly one answer per request id, so the reader's intent
- *  was still met. It is silent here; decision-dock.ts already announces the
- *  superseded card with attribution.
- *
- *  These carry a custom runner rather than `transportAction` because that
- *  framework's `run()` throws on every `!ok` and has no third outcome. */
+/** Answered, `superseded` (another surface answered first; the server takes one answer per id,
+ *  so intent was met; silent, as decision-dock.ts announces it), or failed. A custom runner,
+ *  because `transportAction`'s `run()` throws on every `!ok`. */
 type DecisionAnswer = "answered" | "superseded";
 
-/** Sends one answer and classifies the outcome. */
 async function answerDecision(
   cmd: { type: string; chat_id: string; payload: Record<string, unknown> },
   signal: AbortSignal,
@@ -739,6 +801,8 @@ export const respondPermission = defineAction<
      *  on an ordinary tool permission. Every offered action must appear —
      *  an omitted id is a silent rollback, not "no opinion". */
     fileDecisions?: Record<string, boolean>;
+    /** The deny note, on a reject_once answer only. */
+    rejectionReason?: string;
   },
   DecisionAnswer
 >({
@@ -747,21 +811,23 @@ export const respondPermission = defineAction<
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  run: ({ chatID, requestID, optionID, fileDecisions }, signal, ctx) =>
+  run: ({ chatID, requestID, optionID, fileDecisions, rejectionReason }, signal, ctx) =>
     answerDecision(
       {
         type: "permission_response",
         chat_id: chatID,
-        payload:
-          fileDecisions !== undefined
-            ? { request_id: requestID, option_id: optionID, file_decisions: fileDecisions }
-            : { request_id: requestID, option_id: optionID },
+        payload: {
+          request_id: requestID,
+          option_id: optionID,
+          ...(fileDecisions !== undefined ? { file_decisions: fileDecisions } : {}),
+          ...(rejectionReason !== undefined ? { rejection_reason: rejectionReason } : {}),
+        },
       },
       signal,
       ctx?.idempotencyKey,
     ),
   // Reached only by a real failure: a superseded answer returns normally.
-  error: "Could not send permission response",
+  error: errorAbout(onChat, "Could not send permission response"),
 });
 
 export const respondElicitation = defineAction<
@@ -791,7 +857,7 @@ export const respondElicitation = defineAction<
       signal,
       ctx?.idempotencyKey,
     ),
-  error: "Could not send elicitation response",
+  error: errorAbout(onChat, "Could not send elicitation response"),
 });
 
 export const respondUserInput = defineAction<
@@ -821,5 +887,5 @@ export const respondUserInput = defineAction<
       signal,
       ctx?.idempotencyKey,
     ),
-  error: "Could not send your answer",
+  error: errorAbout(onChat, "Could not send your answer"),
 });

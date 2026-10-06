@@ -1,6 +1,5 @@
-// Every control on the Changes tab that starts a request is busy at once, stays
-// busy through a repaint while it runs, and shows its outcome in place. Only
-// the network is held.
+// A control that starts a request is busy at once, stays busy through a repaint while it runs, and shows its
+// outcome in place. Only the network is held.
 
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 
@@ -27,8 +26,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm: H.confirm,
 }));
-// The forge list is the shared store's, which reads it through an action; routed
-// through the mocked client so each describe answers it with the rest.
+// The forge store reads the list through an action; routed through the mocked client so each describe answers it.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -49,8 +47,7 @@ vi.mock("./git-scroll.js", async (importOriginal) => ({
     fn();
   },
 }));
-// Spread: the originals spread above import this module's other exports (the real
-// confirm's `ask` imports `openDialog` and `closeDialog`).
+// The real confirm's `ask` imports `openDialog` and `closeDialog`, so the originals stay.
 vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createDialog: () => ({ open: H.dialogOpen, close: H.dialogClose }),
@@ -78,9 +75,8 @@ describe("the Changes tab", () => {
   let repos: GitRepoStatus[] = [];
   let seq = 0;
 
-  // One reset for the whole describe: the toolbar's loading binding is made once,
-  // at init, and a reset after it would leave that binding reading a registry the
-  // actions no longer write.
+  // One reset for the describe: the toolbar's loading binding is made once at init, and a later reset would leave it
+  // reading a registry the actions do not write.
   beforeAll(() => {
     resetActionFramework();
     host = document.createElement("div");
@@ -104,8 +100,7 @@ describe("the Changes tab", () => {
     );
   });
 
-  /** A repository behind, ahead, stashed and with one change on each side of the
-   *  index, so every one of its controls renders; each case names its own. */
+  /** Behind, ahead, stashed and one change each side of the index, so every control renders. */
   function repoStatus(): GitRepoStatus {
     seq += 1;
     return {
@@ -133,7 +128,6 @@ describe("the Changes tab", () => {
     return document.querySelector<HTMLElement>(`#git-changes-mount section[data-repo="${name}"]`)!;
   }
 
-  /** The section's controls that start a request. */
   function controls(name: string): HTMLButtonElement[] {
     return [
       ...section(name).querySelectorAll<HTMLButtonElement>(
@@ -146,7 +140,6 @@ describe("the Changes tab", () => {
     return controls(name).find((b) => b.textContent.trim() === label);
   }
 
-  /** The file row's own control. */
   function rowControl(name: string, path: string, label: string): HTMLButtonElement | undefined {
     const li = [...section(name).querySelectorAll<HTMLElement>(".git-file-row")].find(
       (r) => r.querySelector(".git-file-path")?.textContent === path,
@@ -156,7 +149,6 @@ describe("the Changes tab", () => {
     );
   }
 
-  /** What the section says about its last press. */
   function note(name: string): string {
     return section(name).querySelector(".git-repo-note")?.textContent ?? "";
   }
@@ -305,8 +297,7 @@ describe("the Changes tab", () => {
     const mine = repoStatus();
     await show(mine);
     const calls = heldFetch();
-    // By its tooltip rather than its label: the outcome glyph stands in for the
-    // label while it shows, so a label lookup misses a Pull that is still there.
+    // By tooltip: the outcome glyph stands in for the label while it shows.
     const pullControl = (): Element | null =>
       section(mine.repo).querySelector('[data-tooltip="git pull --ff-only"]');
     expect(pullControl()).not.toBeNull();
@@ -320,8 +311,7 @@ describe("the Changes tab", () => {
     expectIdle(byLabel(mine.repo, "Push"));
   });
 
-  // A read naming repositories is one the server answers after rescanning them; an
-  // unnamed one answers from its last scan, which predates the press.
+  // A read naming repositories is answered after a rescan; an unnamed one from the last scan, which predates the press.
   it("a landed press reads its own repository again", async () => {
     const mine = repoStatus();
     await show(mine, repoStatus());

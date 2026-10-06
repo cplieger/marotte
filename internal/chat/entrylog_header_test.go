@@ -12,16 +12,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The header policy is total, so the log holds no nil check over the collaborator
-// that carries it. The census is a source read rather than a
-// behavioural arm because the property is an ABSENCE: the guard that comes back is
-// the one nobody has written yet, and a run root supplied noHeader behaves
-// identically whether the call site is guarded or not.
+// The header policy is total, so the log holds no nil check over it. A source census, because the property is an
+// absence: a run root behaves the same whether a call site is guarded or not.
 
-// headerCollaboratorFields are the EntryLog fields that reach a root's header: the
-// LogHeader collaborator, and the six hook fields R2 and R3 deleted. The retired
-// spellings are named too, because restoring one is how the optional-hook policy
-// returns.
+// headerCollaboratorFields are the EntryLog fields that reach a root's header: the LogHeader collaborator plus the
+// deleted hook fields, named so restoring one fails.
 var headerCollaboratorFields = []string{
 	"header",
 	"model",
@@ -32,9 +27,8 @@ var headerCollaboratorFields = []string{
 	"revise",
 }
 
-// entrylogSourceFloor is the line count below which the read is measuring something
-// other than the log: a census over the wrong file reports a clean sweep, which is
-// the one answer it must never give.
+// entrylogSourceFloor is the line count below which the census is reading the wrong file, which would report a clean
+// sweep.
 const entrylogSourceFloor = 800
 
 func TestEntryLog_HoldsNoNilGuardOverItsHeader(t *testing.T) {
@@ -88,7 +82,7 @@ func TestEntryLog_HoldsNoNilGuardOverItsHeader(t *testing.T) {
 	}
 }
 
-// itoa keeps the census free of a fmt import for one number.
+// itoa keeps the census free of fmt for one number.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -103,10 +97,8 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// TestNeedsReconcile_TheRunRootIsNotReconcilable is item (d)'s last arm: the run root
-// answers the reconcile predicate false through its header POLICY, not through a nil
-// hook. The twin is what makes the arm non-vacuous — the same crash signal on a chat
-// root answers true, so the run root's false is the policy and not the fixture.
+// TestNeedsReconcile_TheRunRootIsNotReconcilable pins that the run root answers false through its header policy. The same
+// crash signal on a chat root answers true, so the false is the policy, not the fixture.
 func TestNeedsReconcile_TheRunRootIsNotReconcilable(t *testing.T) {
 	t.Run("a run root is not reconcilable", func(t *testing.T) {
 		ctx := t.Context()
@@ -131,9 +123,7 @@ func TestNeedsReconcile_TheRunRootIsNotReconcilable(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = reopened.Close() })
 
-		// The fixture's honesty guard, on the NEIGHBOURING fact: the store-open closer
-		// left this turn the crash signal condition (ii) reads. Without it the
-		// predicate is false for every root and the arm below measures nothing.
+		// Guard: the store-open closer left this turn condition (ii)'s signal, or the arm below measures nothing.
 		wantUnterminated(t, reopened, step.Turn)
 
 		if reopened.NeedsReconcile() {
@@ -160,8 +150,7 @@ func TestNeedsReconcile_TheRunRootIsNotReconcilable(t *testing.T) {
 	})
 }
 
-// wantUnterminated fails unless turn's newest entry is the store-open closer's own
-// turn_close, which is the signal the reconcile predicate's condition (ii) reads.
+// wantUnterminated fails unless turn's newest entry is the store-open closer's turn_close, condition (ii)'s signal.
 func wantUnterminated(t *testing.T, lg *EntryLog, turn string) {
 	t.Helper()
 	entries, err := lg.TurnRange(turn, 0)

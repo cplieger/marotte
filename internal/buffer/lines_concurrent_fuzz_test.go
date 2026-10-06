@@ -8,11 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// FuzzLineTrackerConcurrentRecordGet exercises the LineTracker's RWMutex
-// and heap invariants under concurrent Record, Get, and Clear operations.
-// The invariant: no panic, files-per-chat never exceeds maxFilesPerChat,
-// ranges-per-file never exceeds maxLineRangesPerFile, and Get never
-// returns data for a cleared chat.
+// FuzzLineTrackerConcurrentRecordGet runs concurrent Record, Get and Clear: no panic, files per chat and ranges per
+// file stay capped, and a cleared chat returns nothing.
 func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 0, 0, 1, 2, 3, 1})
 	f.Add([]byte{3, 3, 3, 3, 0, 0, 0, 0})
@@ -60,7 +57,6 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 		}
 		wg.Wait()
 
-		// Post-condition: invariants hold.
 		lt.mu.RLock()
 		defer lt.mu.RUnlock()
 		for _, state := range lt.data {
@@ -72,7 +68,7 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 					t.Fatalf("ranges per file %d > %d", len(ranges), maxLineRangesPerFile)
 				}
 			}
-			// Heap size must equal ranges map size.
+			// The heap and the map have the same size.
 			if state.h.Len() != len(state.entries) {
 				t.Fatalf("heap len %d != entries len %d", state.h.Len(), len(state.entries))
 			}

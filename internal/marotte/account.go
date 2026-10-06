@@ -1,15 +1,8 @@
 package marotte
 
-// Account/subscription-level usage, distinct from a chat's per-session
-// context ring (which reads the v3 usage_update notification). This is
-// the ACCOUNT quota/credits surface returned by the KAS
-// _kiro/account/getUsage request (GetUsageLimits under the hood), served
-// to the client at GET /api/account/usage and rendered only in the
-// sidebar status footer.
-//
-// Fields mirror the KAS getUsage `data` object (snake_cased for the
-// client). Parsing lives in agent/account_usage.go; the raw KAS shape is
-// not exposed to clients.
+// Account-level usage (quota and credits) from KAS's _kiro/account/getUsage, served at GET
+// /api/account/usage for the sidebar footer; distinct from a chat's context ring. Fields mirror
+// getUsage's `data`, snake_cased; parsing is agent/account_usage.go's.
 
 // AccountUsage is the account/subscription usage snapshot for the
 // signed-in identity.
@@ -29,13 +22,9 @@ type AccountUsage struct {
 	Breakdowns []AccountUsageBreakdown `json:"breakdowns"`
 	// IsEnterprise reports whether the plan is an enterprise/managed plan.
 	IsEnterprise bool `json:"is_enterprise,omitempty"`
-	// OveragesEnabled reports whether overage billing is enabled.
-	//
-	// NEVER `omitempty`: the client DISPLAYS this state, and `omitempty` omits a
-	// false bool, so an absent field would be indistinguishable from "overages
-	// are off" — a reader cannot supply a fallback for a fact it is meant to
-	// report. Without the tag wiregen emits a REQUIRED TypeScript field, so the
-	// render branch is total. Same contract as EffectiveSettings' fields.
+	// OveragesEnabled reports whether overage billing is enabled. NEVER `omitempty`: the client
+	// displays it, and an omitted false is indistinguishable from absent; without the tag wiregen
+	// emits a required field.
 	OveragesEnabled bool `json:"overages_enabled"`
 	// Stale is true when this snapshot was served from the last-known
 	// cache because a fresh fetch failed (no live bridge, rate limit).

@@ -1,9 +1,7 @@
 package command
 
-// Staged attachments: the files parked beside one chat's draft and not yet
-// sent. Mirrors draft.go: no bridge call, a write that does not move the
-// retention clock (ChatStore.SetAttachments), a no-op on a chat that is not
-// a server record yet, and one draft_changed broadcast when something landed.
+// Staged attachments mirror draft.go: no bridge call, no move of the retention clock, a no-op on a
+// chat that is not a server record yet.
 
 import (
 	"context"

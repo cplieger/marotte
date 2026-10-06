@@ -1,10 +1,7 @@
 package translate
 
-// The runtime wire census.
-//
-// Serial, never parallel: these tests swap slog's process-global default and
-// reset the package-global ledger. That is the same constraint captureSlog
-// already carries, stated again because the ledger adds a second reason.
+// Serial, never parallel: these tests swap slog's process-global default and reset the
+// package-global ledger.
 
 import (
 	"bytes"
@@ -16,10 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// resetCensus empties the ledger and un-latches it for one test, restoring
-// nothing afterwards — a fresh map per test is the isolation, and a leftover
-// ledger from an earlier test is exactly what would make one of these pass
-// vacuously.
+// resetCensus empties and un-latches the ledger for one test; a leftover ledger would let
+// a test pass vacuously.
 func resetCensus(t *testing.T) {
 	t.Helper()
 	census.mu.Lock()
@@ -34,9 +29,8 @@ func resetCensus(t *testing.T) {
 	})
 }
 
-// TestCensusMeta_ReportsAnUnknownFieldOnce is the mechanism: a member KAS sends
-// that the struct does not read reaches the log, by name and JSON type, exactly
-// once however many frames carry it.
+// TestCensusMeta_ReportsAnUnknownFieldOnce pins that an unread member reaches the log, by
+// name and JSON type, once however many frames carry it.
 func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -62,9 +56,7 @@ func TestCensusMeta_ReportsAnUnknownFieldOnce(t *testing.T) {
 	}
 }
 
-// TestCensusMeta_NeverLogsAValue is the safety property, and the reason the probe
-// reads one byte of each value rather than decoding it. A field's contents cannot
-// leak from code that never materializes them.
+// TestCensusMeta_NeverLogsAValue pins the safety property: no field's contents reach the log.
 func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -86,13 +78,8 @@ func TestCensusMeta_NeverLogsAValue(t *testing.T) {
 	}
 }
 
-// TestCensusMeta_FoldsCase is the subtle one, and it is why knownKeysOf
-// lowercases.
-//
-// encoding/json matches object members case-insensitively, so a frame sending
-// `MessageId` IS consumed by the `messageId` field. Comparing case-sensitively
-// would report a field that was read — a false finding, which is worse than none
-// because it teaches the reader to ignore the probe.
+// TestCensusMeta_FoldsCase pins the case fold: encoding/json consumes `MessageId` with the
+// `messageId` field, so a case-sensitive compare reports a false finding.
 func TestCensusMeta_FoldsCase(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -106,10 +93,8 @@ func TestCensusMeta_FoldsCase(t *testing.T) {
 	}
 }
 
-// TestCensusMeta_DeclinedFieldsAreQuiet: `preview` is skipped on purpose, so
-// reporting it would fire on the first frame of every file write and get the
-// probe muted before it could say anything real. The declined list is not
-// optional decoration.
+// TestCensusMeta_DeclinedFieldsAreQuiet pins that `preview` is not reported, or the probe
+// fires on every file write and mutes itself.
 func TestCensusMeta_DeclinedFieldsAreQuiet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -123,10 +108,7 @@ func TestCensusMeta_DeclinedFieldsAreQuiet(t *testing.T) {
 	}
 }
 
-// TestCensusMeta_IsBounded covers both bounds. The per-frame one stops a hostile
-// block from turning one frame into a hundred thousand map inserts; the
-// per-process one latches the probe off rather than growing an unbounded map
-// keyed on backend-controlled text.
+// TestCensusMeta_IsBounded covers the per-frame bound and the per-process latch.
 func TestCensusMeta_IsBounded(t *testing.T) {
 	t.Run("an oversized object is skipped", func(t *testing.T) {
 		resetCensus(t)
@@ -166,15 +148,9 @@ func TestCensusMeta_IsBounded(t *testing.T) {
 	})
 }
 
-// TestCensusMeta_SanitizesTheFieldName: a field name is backend-controlled text
-// on a logfmt line, so a raw newline in it forges a log record and an ANSI
-// sequence repaints the terminal of whoever tails it.
-//
-// The BOUND is what this asserts on, plus the absence of an escaped newline.
-// Asserting only "no raw newline in the output" would be vacuous: slog's
-// TextHandler quotes and escapes a value containing one, so that assertion passes
-// with the sanitizer removed — measured, not assumed. The length cap is entirely
-// this package's, so it distinguishes.
+// TestCensusMeta_SanitizesTheFieldName pins the bound and the absence of an escaped
+// newline: slog's TextHandler escapes a raw newline itself, so asserting only its absence
+// passes with the sanitizer removed.
 func TestCensusMeta_SanitizesTheFieldName(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -193,23 +169,19 @@ func TestCensusMeta_SanitizesTheFieldName(t *testing.T) {
 	if !strings.Contains(out, "UNKNOWN") {
 		t.Fatalf("the field was not reported at all: %s", out)
 	}
-	// The escaped form slog would render an unsanitized newline as. runesafe
-	// replaces the newline with a space, so neither spelling should survive.
+	// The escaped form slog renders an unsanitized newline as; runesafe makes it a space.
 	if strings.Contains(out, `\n`) {
 		t.Errorf("an unsanitized newline reached the log line: %q", out)
 	}
-	// The cap is this package's own, so it is the assertion that fails when the
-	// sanitize-and-bound call is removed.
+	// The cap is this package's own, so this fails when the sanitize call is removed.
 	if len(out) > len(name) {
 		t.Errorf("the log line is %d bytes for a %d-byte name; the field name was not bounded",
 			len(out), maxCensusNameBytes)
 	}
 }
 
-// TestCensusMeta_NeverBreaksADecode is the hard rule for a diagnostic, asserted
-// through the real decode path rather than on the helper: every call site drops
-// the frame when its decode errors, so a probe able to contribute an error would
-// stop tool cards from rendering.
+// TestCensusMeta_NeverBreaksADecode pins, through the real decode, that the probe never
+// contributes an error: every call site drops the frame on one.
 func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 	resetCensus(t)
 	for name, frame := range map[string]string{
@@ -223,9 +195,7 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var chunk ACPChunkWire
 			err := json.Unmarshal([]byte(frame), &chunk)
-			// A wrongly-typed kiro block is the caller's decode error to report,
-			// not the census's to invent — what matters is that the probe never
-			// ADDS one, which the unknown-field and empty rows pin.
+			// A wrongly-typed block is the caller's decode error; the probe must never ADD one.
 			if err != nil && !strings.Contains(name, "string") && !strings.Contains(name, "array") {
 				t.Fatalf("decode failed: %v", err)
 			}
@@ -236,10 +206,8 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 	}
 }
 
-// TestCensusMeteringUnit_ReportsAnUnsummedUnit is the one place a VALUE is
-// reported, because there the label IS the discovery: `unit` is a field marotte
-// reads, so no field-name probe can see that KAS started billing in a new
-// dimension. An unrecognised unit is silently dropped from the spend total today.
+// TestCensusMeteringUnit_ReportsAnUnsummedUnit pins the one VALUE report: an unrecognised
+// unit is otherwise silently dropped from the spend total.
 func TestCensusMeteringUnit_ReportsAnUnsummedUnit(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -262,13 +230,8 @@ func TestCensusMeteringUnit_ReportsAnUnsummedUnit(t *testing.T) {
 	}
 }
 
-// TestKnownKeysOf_CoversTheWholeWireBlock pins the derived set against the two
-// carriers it describes.
-//
-// Derived from the struct tags rather than hand-listed, so the set cannot drift
-// from the parser — a hand-written list goes stale silently, and in the direction
-// that produces a false report. These assertions exist to catch the two ways the
-// walk itself can be wrong: missing a field, and failing to lowercase.
+// TestKnownKeysOf_CoversTheWholeWireBlock pins the derived set against its two carriers,
+// catching a missed field or a failed lowercase in the walk.
 func TestKnownKeysOf_CoversTheWholeWireBlock(t *testing.T) {
 	cases := map[string]struct {
 		typ  reflect.Type
@@ -319,8 +282,7 @@ func sortedKeys(m map[string]struct{}) []string {
 	return out
 }
 
-// TestJSONKindOf names every shape a member can take, because the type is the
-// entire payload of a report.
+// TestJSONKindOf names every shape a member can take: the type is a report's whole payload.
 func TestJSONKindOf(t *testing.T) {
 	cases := map[string]string{
 		`{"a":1}`:  "object",
@@ -341,9 +303,8 @@ func TestJSONKindOf(t *testing.T) {
 	}
 }
 
-// TestSessionInfoUpdate_CensusRunsOnTheRealFrame closes the loop: the probe has to
-// fire through the ordinary handler, not only when called directly. A census wired
-// into a type nothing decodes reports nothing forever.
+// TestSessionInfoUpdate_CensusRunsOnTheRealFrame pins that the probe fires through the
+// ordinary handler, not only when called directly.
 func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -366,27 +327,22 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	}
 }
 
-// TestKnownKeys_IsCachedPerType: censusMeta runs on every frame, and
-// agent_message_chunk arrives per token, so a reflection walk plus a map
-// allocation per frame is the one way this diagnostic could reach a profile.
-// Asserted by identity — the cache must return the SAME map, not an equal one.
+// TestKnownKeys_IsCachedPerType pins by identity that the cache returns the SAME map:
+// agent_message_chunk arrives per token.
 func TestKnownKeys_IsCachedPerType(t *testing.T) {
 	first := knownKeys(reflect.TypeFor[acpKiroBlockShadow]())
 	second := knownKeys(reflect.TypeFor[acpKiroBlockShadow]())
 	if len(first) == 0 {
 		t.Fatal("derived no keys at all")
 	}
-	// Two calls must not produce two maps. Compared with reflect.ValueOf pointers
-	// because Go forbids comparing maps directly.
+	// Go forbids comparing maps, so compare reflect.ValueOf pointers.
 	if reflect.ValueOf(first).Pointer() != reflect.ValueOf(second).Pointer() {
 		t.Error("knownKeys rebuilt the set; the walk and its allocation run per frame")
 	}
 }
 
-// TestCensusMeta_DoesNotMutateTheCachedSet is the hazard the caching introduces
-// and the reason declined names are scanned rather than merged: the cached map is
-// shared by every caller, so folding one caller's declined list into it would
-// silence that name for all of them.
+// TestCensusMeta_DoesNotMutateTheCachedSet pins that one caller's declined list does not
+// leak into the shared cached set.
 func TestCensusMeta_DoesNotMutateTheCachedSet(t *testing.T) {
 	resetCensus(t)
 	var logbuf bytes.Buffer
@@ -401,16 +357,13 @@ func TestCensusMeta_DoesNotMutateTheCachedSet(t *testing.T) {
 		t.Errorf("the shared key set grew from %d to %d; a declined name leaked into it",
 			before, after)
 	}
-	// And the decline still has to work, or the test above passes for the wrong
-	// reason.
+	// The decline still has to work, or the test above passes for the wrong reason.
 	if strings.Contains(logbuf.String(), "UNKNOWN") {
 		t.Errorf("the declined name was reported: %s", logbuf.String())
 	}
 }
 
-// BenchmarkCensusMeta prices the probe on the streaming hot path. Run with
-// -benchmem; the interesting number is allocations per frame, which the key-set
-// cache is what keeps down.
+// BenchmarkCensusMeta prices the probe on the streaming hot path; run with -benchmem.
 func BenchmarkCensusMeta(b *testing.B) {
 	raw := json.RawMessage(`{"kind":"agent-subtask","agentSubtaskId":"s-1",` +
 		`"messageId":"m-1-say","timestamp":"2026-08-21T10:00:00.000Z"}`)

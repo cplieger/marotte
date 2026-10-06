@@ -1675,6 +1675,53 @@
   align-items: stretch;
 }
 
+/* The top strip: four equal tracks of square, captioned buttons. Each is at
+ * least the hit floor tall, and its radius is the card's derived rung, so the
+ * corners nearest the card's own share its centre. */
+.chat-opt-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-1);
+}
+
+.chat-opt-strip-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-block-size: max(var(--hit-floor), 3.5rem);
+  aspect-ratio: 1;
+  padding: var(--sp-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+  color: inherit;
+  background: var(--c-bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--card-radius);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+
+  &:active {
+    background: var(--c-press);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+@media (any-hover: hover) {
+  .chat-opt-strip-btn:not(:disabled):hover {
+    background: var(--c-hover);
+  }
+}
+
+.chat-opt-strip-caption {
+  white-space: nowrap;
+}
+
 /* An ACTION row wraps its button so the goal row's inline form can be a sibling
  * of that button rather than a child of it — the same reason the expand card is
  * the pill's sibling: a form holding an input and a submit button inside a
@@ -1764,8 +1811,15 @@
    row's TOP edge — so an expander centred on it overhangs upward, measured 4px
    into the row above on a coarse pointer, which is that row's whole bottom
    chrome. */
-.chat-opt-row > input[type="checkbox"]::after {
+.chat-opt-row > input[type="checkbox"]::after,
+.chat-opt-row > input[type="radio"]::after {
   content: none;
+}
+
+/* A radio group's caption, inset by the rows' own padding plus their 1px border so
+   it starts on the rows' label x. */
+.chat-opt-group-label {
+  padding-inline: calc(var(--sp-1) + 1px);
 }
 
 /* Declared here because the universal floor cannot reach a <label>: it matches the
@@ -2200,4 +2254,78 @@
     #000 calc(100% - var(--vk-ring-band))
   );
   animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+/* The `/` and `#` menu: in flow above .prompt-box on .steer-stack's measure, so the bar
+   grows upward to show it and nothing is covered. */
+.slash-menu {
+  display: flex;
+  flex-direction: column;
+  max-width: var(--content-max-w);
+  max-height: min(18rem, 40dvh);
+  width: 100%;
+  margin: 0 auto var(--sp-2);
+  padding: var(--sp-1);
+  overflow-y: auto;
+  list-style: none;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.slash-opt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-height: var(--ctl-h-dense);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: calc(var(--r-lg) - 1px - var(--sp-1));
+  cursor: pointer;
+
+  &[aria-selected="true"] {
+    background: var(--c-hover);
+  }
+
+  &[aria-disabled="true"] {
+    cursor: default;
+
+    & .slash-opt-name {
+      color: var(--c-text-tertiary);
+    }
+  }
+}
+
+.slash-opt-name {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  color: var(--c-text-primary);
+}
+
+/* A `#` item names a path or URI, so it yields width instead of overflowing. */
+.slash-opt-ref {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-opt-hint {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.slash-opt-desc {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

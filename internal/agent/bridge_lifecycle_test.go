@@ -7,9 +7,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Tests for bridge_lifecycle.go: spawn, lookup, reuse, and teardown of
-// per-chat ACP bridges. Shared fixtures live in shared_test.go.
-
 func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 	h, _, _ := newTestHub()
 	if sb := h.coord.Bridge("no-such-chat"); sb != nil {

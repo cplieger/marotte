@@ -13,9 +13,7 @@ import (
 	"testing"
 )
 
-// realKey is a key in the exact shape KAS derives, so the tests exercise the
-// same lengths and characters the wire carries. The hash is the probe-confirmed
-// sha256("http://127.0.0.1:46877/mcp" + "|").
+// realKey has the exact shape KAS derives (sha256("http://127.0.0.1:46877/mcp" + "|")).
 const realKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773dd72a3ddf3a.client"
 
 func newStore(t *testing.T) *Store {
@@ -27,9 +25,8 @@ func newStore(t *testing.T) *Store {
 	return s
 }
 
-// TestRoundTripAcrossProcesses is the task's own done-when clause: a credential
-// stored by one process must be readable by the next one. This is the property
-// that takes MCP OAuth from one DCR per bridge spawn to zero.
+// TestRoundTripAcrossProcesses pins that a credential stored by one process is readable by
+// the next.
 func TestRoundTripAcrossProcesses(t *testing.T) {
 	dir := t.TempDir()
 	ctx := t.Context()
@@ -58,7 +55,7 @@ func TestRoundTripAcrossProcesses(t *testing.T) {
 }
 
 // TestFileIs0600 pins the permission. These are OAuth client secrets and
-// refresh tokens; a group- or world-readable file is the finding.
+// refresh tokens, so a group- or world-readable file is a leak.
 func TestFileIs0600(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
@@ -130,8 +127,6 @@ func TestDelete(t *testing.T) {
 }
 
 // TestDeleteAbsentDoesNotWrite pins that a no-op delete leaves the file alone.
-// A store that rewrote on every miss would turn KAS's speculative deletes into
-// disk churn.
 func TestDeleteAbsentDoesNotWrite(t *testing.T) {
 	s := newStore(t)
 	if err := s.Delete(t.Context(), "never-stored"); err != nil {
@@ -163,11 +158,7 @@ func TestBounds(t *testing.T) {
 		}
 	})
 
-	// The limits are inclusive: a blob measuring exactly the cap is a blob KAS
-	// is allowed to hand over, and refusing it would surface as an MCP connect
-	// failure the operator cannot act on (the value is opaque and its size is
-	// KAS's choice). The over-limit cases above only pin the far side of the
-	// edge, so both sides are stated.
+	// The limits are inclusive: a blob exactly at the cap is stored.
 	t.Run("value exactly at the limit is stored", func(t *testing.T) {
 		s := newStore(t)
 		value := strings.Repeat("x", MaxValueBytes)
@@ -214,9 +205,7 @@ func TestBounds(t *testing.T) {
 		if err := s.Set(ctx, "one-too-many", "v"); !errors.Is(err, ErrTooLarge) {
 			t.Errorf("Set() past the entry cap error = %v, want ErrTooLarge", err)
 		}
-		// An OVERWRITE of an existing key must still be allowed at the cap:
-		// KAS refreshes a token set in place, and refusing that would strand
-		// a full store on stale credentials forever.
+		// An OVERWRITE at the cap is still allowed: KAS refreshes a token set in place.
 		existing, _ := firstKey(s)
 		if err := s.Set(ctx, existing, "refreshed"); err != nil {
 			t.Errorf("Set(existing key) at the cap error = %v, want nil", err)
@@ -224,9 +213,7 @@ func TestBounds(t *testing.T) {
 	})
 }
 
-// count reports how many keys the store holds. A test helper rather than an
-// exported method: production never asks, and an exported accessor with only
-// test callers is dead weight punused correctly flags.
+// count reports how many keys the store holds (test-only).
 func (s *Store) count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -264,23 +251,13 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 	if got := corruptSiblings(t, dir); len(got) != 1 {
 		t.Errorf("quarantine siblings = %v, want exactly one %s.corrupt.<ts>.<pid>", got, fileName)
 	}
-	// The store is usable afterwards.
 	if err := s.Set(t.Context(), realKey, "v"); err != nil {
 		t.Errorf("Set() after corrupt recovery error = %v, want nil", err)
 	}
 }
 
-// TestCorruptStoreReportsTheQuarantineNotAFailure pins what the operator reads
-// when a quarantine SUCCEEDS.
-//
-// The rename is the only forensic copy of a file holding OAuth client secrets,
-// refresh tokens and PKCE verifiers, so the two log lines are the whole record
-// of whether that copy exists: one says where the evidence went, the other says
-// it was lost. A quarantine that worked and reported a preservation failure
-// would send whoever is reading the logs looking for a file that is sitting
-// right there, and the filesystem end-state is identical either way — the
-// rename has already happened by the time either line is chosen — so nothing
-// but the log can tell them apart.
+// TestCorruptStoreReportsTheQuarantineNotAFailure pins the log line of a SUCCESSFUL
+// quarantine: the log is the only record of whether the forensic copy exists.
 func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("{not json"), 0o600); err != nil {
@@ -299,14 +276,9 @@ func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
 	}
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the
-// duration of the test and restores it on cleanup. The handler is global, so
-// this package's tests never run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
+// along with the log package's writer and flags, which slog.SetDefault also redirects.
+// The handler is global, so this package's tests never run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -320,9 +292,8 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return buf
 }
 
-// corruptSiblings returns the quarantine files in dir. The scan is by PREFIX
-// because the name carries a timestamp and a PID; an exact-name Stat would pin
-// the fixed name that TestCorruptStoreKeepsTheFirstForensicCopy forbids.
+// corruptSiblings returns the quarantine files in dir, by PREFIX (the name carries a
+// timestamp and PID).
 func corruptSiblings(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -338,16 +309,9 @@ func corruptSiblings(t *testing.T, dir string) []string {
 	return found
 }
 
-// TestCorruptStoreKeepsTheFirstForensicCopy pins the property a fixed
-// quarantine name cannot have: the FIRST corrupt store survives a later one.
-// These bytes are OAuth client secrets, refresh tokens and PKCE verifiers, and
-// the first corruption is the evidence worth keeping — a second one arriving
-// later is the ordinary aftermath, not the incident.
-//
-// The already-quarantined copy is staged directly rather than driven by a
-// second real corruption: the name's timestamp has one-second resolution and
-// its PID is this process's, so two corruptions inside one test would race for
-// the same name for reasons that have nothing to do with the defect.
+// TestCorruptStoreKeepsTheFirstForensicCopy pins that the first corrupt store survives a
+// later one. The earlier copy is staged directly: two real corruptions in one second and
+// one PID would race for the same name.
 func TestCorruptStoreKeepsTheFirstForensicCopy(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, fileName)
@@ -391,21 +355,9 @@ func TestCorruptStoreKeepsTheFirstForensicCopy(t *testing.T) {
 	}
 }
 
-// TestPersistFailureRollsBack pins that the in-memory map never claims a
-// durability the disk does not have. KAS rethrows a store failure, so a Set
-// that reports success while the write failed would present as a credential
-// that silently reads back empty on the next spawn.
-//
-// The persist is broken by putting a DIRECTORY at the store's own path, not by
-// chmod'ing the parent unwritable. An unwritable directory is a DAC check, and
-// uid 0 bypasses DAC — so under root (which is how this suite runs in the
-// container) the write SUCCEEDED and the test failed on its own assertion,
-// pinning nothing. rename(2) is the mechanism that cannot be bypassed: it
-// refuses to replace an existing directory with a non-directory (EISDIR) for
-// root and non-root alike, and atomicfile commits every write with a rename, so
-// persistLocked fails at its rename phase for everyone. Gating the old shape on
-// os.Geteuid() would have skipped the rollback logic in the one environment the
-// suite usually runs in, which is close to not testing it at all.
+// TestPersistFailureRollsBack pins that the in-memory map never claims a durability the disk
+// lacks. The persist is broken with a DIRECTORY at the store path: rename(2) refuses it
+// even for root, where an unwritable parent would not (uid 0 bypasses DAC).
 func TestPersistFailureRollsBack(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
@@ -431,7 +383,6 @@ func TestPersistFailureRollsBack(t *testing.T) {
 		t.Errorf("Get() = %q after a failed Set, want %q (the failed write must roll back)", v, "original")
 	}
 
-	// Same for a failed delete.
 	if err := s.Delete(ctx, realKey); err == nil {
 		t.Fatal("Delete() error = nil with a directory at the store path, want an error")
 	}
@@ -440,11 +391,7 @@ func TestPersistFailureRollsBack(t *testing.T) {
 	}
 }
 
-// TestOnDiskShape pins the file format: a flat map of PLAINTEXT key →
-// base64 value. Both halves are deliberate. The plaintext key is what an
-// operator greps to answer "is this credential cached?", and a keyed map (rather
-// than a file per key) is what keeps an attacker-adjacent key out of a path. The
-// base64 value is what makes the round-trip byte-exact — see FuzzKeysAndValues.
+// TestOnDiskShape pins the file format: a flat map of PLAINTEXT key → base64 value.
 func TestOnDiskShape(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
@@ -471,8 +418,7 @@ func TestOnDiskShape(t *testing.T) {
 	if f.Secrets[realKey] != want {
 		t.Errorf("secrets[%q] = %q, want %q (base64 of the value)", realKey, f.Secrets[realKey], want)
 	}
-	// The value must NOT appear verbatim: that is the tell that the encoding
-	// is actually applied rather than merely asserted above.
+	// The value must NOT appear verbatim, or the encoding is not applied.
 	if strings.Contains(string(data), `"blob"`) {
 		t.Error("the raw value appears in the file; values must be base64-encoded")
 	}
@@ -499,10 +445,8 @@ func TestUndecodableEntryDropped(t *testing.T) {
 	}
 }
 
-// FuzzKeysAndValues checks the store against arbitrary keys and values: KAS
-// derives the key from an MCP server URL the user supplies, so the key is
-// untrusted input. Invariants: an accepted pair round-trips byte-for-byte, a
-// rejected one leaves no trace, and no input escapes the store's own directory.
+// FuzzKeysAndValues checks arbitrary (untrusted) keys and values: an accepted pair
+// round-trips byte-for-byte, a rejected one leaves no trace, nothing escapes the directory.
 func FuzzKeysAndValues(f *testing.F) {
 	f.Add(realKey, `{"client_id":"x"}`)
 	f.Add("", "")
@@ -512,10 +456,7 @@ func FuzzKeysAndValues(f *testing.F) {
 	f.Add("k\x00v", "nul")
 	f.Add("ключ", "юникод")
 	f.Add(strings.Repeat("k", MaxKeyBytes), "at the key limit")
-	// Both halves of the round-trip bug this target found: a non-UTF-8 VALUE
-	// (silently became U+FFFD before values were base64-encoded) and a
-	// non-UTF-8 KEY (JSON object keys are sanitized the same way, so the entry
-	// was written under a name it could never be found under; now rejected).
+	// Seeds for the two round-trip bugs found: a non-UTF-8 value and a non-UTF-8 key.
 	f.Add(realKey, "\x9c")
 	f.Add("\xfe", "0")
 
@@ -549,9 +490,7 @@ func FuzzKeysAndValues(f *testing.F) {
 			}
 		}
 
-		// Whatever the key contained, the ONLY file the store may create is
-		// its own. A key is never a path component; this is what a
-		// file-per-key layout could not guarantee.
+		// The ONLY file the store may create is its own: a key is never a path component.
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("readdir: %v", err)

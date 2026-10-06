@@ -157,6 +157,43 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	})
 }
 
+// TestHandleSessionInfoUpdate_HookCardSourcePath pins the hook file a Hook fired card
+// opens: the workspace-relative file KAS's hook id names, and "" whenever the id names
+// no file inside the workspace.
+func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {
+	cases := map[string]struct {
+		workDir, hookID, want string
+	}{
+		"workspace_file":    {"/workspace", "/workspace/.kiro/hooks/lint.kiro.hook#hook-0", ".kiro/hooks/lint.kiro.hook"},
+		"second_hook":       {"/workspace", "/workspace/.kiro/hooks/a.json#hook-12", ".kiro/hooks/a.json"},
+		"global_file":       {"/workspace", "/config/home/.kiro/hooks/a.json#hook-0", ""},
+		"agent_profile":     {"/workspace", "kiro_default#hook-1", ""},
+		"index_not_numeric": {"/workspace", "/workspace/.kiro/hooks/a.json#hook-x", ""},
+		"no_index":          {"/workspace", "/workspace/.kiro/hooks/a.json#hook-", ""},
+		"workspace_root":    {"/workspace", "/workspace#hook-0", ""},
+		"parent_escape":     {"/workspace", "/workspace/../etc/passwd#hook-0", ""},
+		"no_work_dir":       {"", "/workspace/.kiro/hooks/a.json#hook-0", ""},
+		"bare_id":           {"/workspace", "h1", ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			frame := hookUpdateFrame(t, "probe", hookStatusCompleted)
+			frame["_meta"].(map[string]any)["kiro"].(map[string]any)["hook"].(map[string]any)["hookId"] = tc.hookID
+			base, _ := newEventCaptureDeps()
+			roles := rolesOf(&hookStatusDeps{baseDeps: base, enabled: true})
+			roles.WorkDir = tc.workDir
+			New(roles).HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, frame), FrameAttribution{})
+			calls := toolCallsOf(t, base.chatEntries("c1"))
+			if len(calls) != 1 {
+				t.Fatalf("buffered tool calls = %d, want 1", len(calls))
+			}
+			if got := calls[0].SourcePath; got != tc.want {
+				t.Errorf("hookId %q in %q: SourcePath = %q, want %q", tc.hookID, tc.workDir, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestKnownSessionInfoKinds_HookUpdateIsConsumed pins hook_update out of the
 // deliberately-ignored table: a consumed kind listed there would log a decode miss as a
 // known drop.

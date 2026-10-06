@@ -23,10 +23,8 @@ import (
 // DefaultTitle is the notification title used for all Web Push messages.
 const DefaultTitle = "Marotte"
 
-// pushDebounce is the per-subject quiet window; pushResponseCap bounds
-// body drain for keep-alive-friendly reads; pushBodyCap caps the
-// combined title+body payload so an accidental megabyte send doesn't
-// get silently rejected by the push vendor.
+// pushDebounce is the per-subject quiet window; pushBodyCap caps title+body so an
+// oversize send is not silently rejected by the vendor.
 const (
 	pushDebounce    = 5 * time.Second
 	pushResponseCap = 64 << 10 // 64 KiB — vendors return tiny bodies
@@ -35,34 +33,18 @@ const (
 
 	pushMaxAttempts = 3 // total tries for a retryable delivery failure
 
-	// debounceHighWater is when preflightSend prunes expired debounce entries.
-	//
-	// Keying the window by subject makes the map's size a function of how many
-	// distinct things have been notified about rather than of how many kinds
-	// exist, so a process running for weeks would otherwise hold one slot per
-	// chat and pull request it ever sent about. An entry older than the window
-	// can no longer suppress anything, so dropping it is free; the high-water
-	// mark just keeps the sweep off the common path.
+	// debounceHighWater is when preflightSend prunes expired debounce entries: per-subject
+	// keys would otherwise grow one slot per chat and PR ever notified about.
 	debounceHighWater = 64
 )
 
-// pushSubjectGlobal is the debounce subject for a notification with nothing single
-// behind it (an empty marotte.PushSubject — see its doc comment).
-//
-// Named rather than left as the empty string so the workspace-global window is a
-// stated member of the key space instead of an accident of a zero value. It is
-// deliberately not a legal subject spelling: a chat id cannot contain a space and a
-// PR key is prefixed `pr:`, so nothing real can land in this slot.
+// pushSubjectGlobal is the debounce subject for a notification with nothing single behind
+// it. Not a legal subject spelling (chat ids have no space, PR keys start `pr:`).
 const pushSubjectGlobal = "<workspace global>"
 
-// pushDebounceKey is what a quiet window belongs to: one KIND about one SUBJECT.
-//
-// Kind alone was wrong and silently lossy. The poller gives each pull request its
-// own subject so two PRs settling together occupy their own tray slots, but a
-// kind-only window dropped the second send inside five seconds — and the poller had
-// already advanced its `seen` state for that PR, so the notification was never
-// retried. Coalescing repeats of ONE subject is the behaviour worth having;
-// coalescing two different subjects is data loss.
+// pushDebounceKey is what a quiet window belongs to: one KIND about one SUBJECT. A
+// kind-only window drops a second subject's send (the poller has already advanced its
+// `seen` state), so coalescing two subjects is data loss.
 type pushDebounceKey struct {
 	kind    marotte.PushKind
 	subject string
@@ -80,12 +62,8 @@ func debounceKey(kind marotte.PushKind, subject marotte.PushSubject) pushDebounc
 	}
 }
 
-// Retry timing for a retryable delivery failure (429 or 5xx). Vars, not
-// consts, so a test can collapse the ladder instead of sleeping through it.
-//
-// The budget is the notification's USEFULNESS window, not a generous transport
-// allowance: a permission ask is moot once answered and "agent finished" is
-// moot an hour later, so a delivery landing after this is worse than none.
+// Retry timing for a 429/5xx. Vars so a test can collapse the ladder. The budget is the
+// notification's USEFULNESS window: a delivery landing later is worse than none.
 var (
 	pushRetryBudget = 60 * time.Second
 	pushRetryBase   = 1 * time.Second
@@ -98,11 +76,8 @@ type vapidKeys struct {
 
 // Service manages push subscriptions and sends notifications.
 type Service struct {
-	// lifetime is the service's OWN cancellable child of the context New
-	// requires; it is the writeLoop-liveness signal, distinct from any
-	// caller's ctx. Merging the two would reopen a shutdown hang: saveSubs and
-	// flushSaves wait on `done` closing, which never happens if Close() raced
-	// the send after writeLoop already exited. See persist.go's guarded waits.
+	// lifetime is the service's OWN child of New's ctx: the writeLoop-liveness signal.
+	// Merging it with a caller's ctx reopens a shutdown hang (see persist.go's guarded waits).
 	lifetime      context.Context
 	prefsFlight   singleflight.Group
 	saveCh        chan saveRequest
@@ -118,9 +93,8 @@ type Service struct {
 	// present is receiving the event on its stream and is not pushed. nil sends
 	// to every subscription, which is the fail-open direction.
 	presence *Presence
-	// suppressed counts the subscriptions the filter skipped, per kind, for the
-	// test-only probe: a count that stays at zero while presence shows attended
-	// profiles means the tags are not matching.
+	// suppressed counts filter skips per kind for the test-only probe; zero while presence
+	// shows attended profiles means the tags are not matching.
 	suppressed map[marotte.PushKind]*atomic.Uint64
 	subject    string
 	dir        string
@@ -129,11 +103,8 @@ type Service struct {
 	deferred deferred
 	mu       sync.Mutex
 	healthy  bool
-	// keysGenerated records that loadKeys minted a replacement keypair, which is
-	// what makes every stored subscription undeliverable. loadSubs reads it to
-	// report that cost off the read it already performs. Unguarded on purpose: New
-	// runs loadKeys then loadSubs on the constructing goroutine, before the write
-	// loop starts and before any caller holds the service.
+	// keysGenerated records that loadKeys minted a new keypair (every stored subscription is
+	// now undeliverable). Unguarded: New sets and reads it before the write loop starts.
 	keysGenerated bool
 }
 
@@ -153,12 +124,8 @@ func WithPresence(p *Presence) Option {
 	return func(s *Service) { s.presence = p }
 }
 
-// New creates a Service, loads persisted subscriptions and preferences, and starts the write loop.
-// subject is the VAPID subject (mailto: or https: URI identifying the sender).
-//
-// ctx is the service's lifetime and is required — it is passed straight to
-// context.WithCancel, so a nil one is refused there, at the single construction
-// site, rather than defaulted into a service nothing can stop.
+// New creates a Service, loads persisted subscriptions and preferences, and starts the
+// write loop. subject is the VAPID subject. ctx is the service's lifetime and is required.
 func New(ctx context.Context, configDir, subject string, opts ...Option) *Service {
 	ctx, cancel := context.WithCancel(ctx)
 	prefs := make(map[marotte.PushKind]bool, len(kindRegistry))
@@ -183,11 +150,8 @@ func New(ctx context.Context, configDir, subject string, opts ...Option) *Servic
 	for _, o := range opts {
 		o(s)
 	}
-	// isAllowedPushEndpoint is the primary gate (name-based vendor allowlist,
-	// https-only, no explicit ports); ssrf.SafeTransport is the IP-layer
-	// backstop, re-validating the resolved/connected IP to close DNS-rebinding
-	// vectors a name-based check alone leaves open. CheckRedirect re-checks
-	// the allowlist on every hop.
+	// isAllowedPushEndpoint is the name-based gate; ssrf.SafeTransport re-validates the
+	// connected IP (DNS rebinding), and CheckRedirect re-checks the allowlist on every hop.
 	pushTransport := ssrf.SafeTransport(
 		ssrf.WithAllowedPorts(443),
 	)
@@ -217,13 +181,7 @@ func New(ctx context.Context, configDir, subject string, opts ...Option) *Servic
 	return s
 }
 
-// Close cancels any in-flight pushes and waits for the write loop to
-// drain pending saves. Call from the runtime's shutdown path so pending
-// sends don't hold the shutdown up to 10s each.
-//
-// It SIGNALS and WAITS, which is the half of the rule the lifetime field serves:
-// cancelling s.lifetime is the signal, and <-s.writeLoopDone is the proof the
-// loop went quiet.
+// Close cancels in-flight pushes and waits for the write loop to drain pending saves.
 func (s *Service) Close() {
 	s.cancel()
 	s.deferred.stop()
@@ -246,9 +204,7 @@ func (s *Service) Subscribe(sub marotte.PushSubscription) {
 	s.subs[sub.Endpoint] = sub
 	s.mu.Unlock()
 	s.saveSubsAsync(s.lifetime)
-	// Log only the host so the per-subscriber token in the URL
-	// path doesn't leak into Loki. Host alone is enough to
-	// distinguish Chrome/Firefox/Safari subscribers for debugging.
+	// Log only the host: the URL path carries the per-subscriber token.
 	host := "unknown"
 	if u, err := url.Parse(sub.Endpoint); err == nil && u.Host != "" {
 		host = u.Host
@@ -281,15 +237,9 @@ func (s *Service) Wants(kind marotte.PushKind) bool {
 	return s.healthy && kind.Valid() && s.prefs[kind] && len(s.subs) > 0
 }
 
-// kindRegistry is the single source of truth for push notification kinds.
-// init() below validates every entry against marotte.PushKind.Valid() so the
-// two cannot drift.
-//
-// An EMPTY SettingsKey means the kind has no writable preference: it is a
-// floor, always DefaultOn. PushKindPermission is the one such kind — see the
-// "no notify_permission key" note in internal/settings/defaults.go. Every KEYED
-// entry takes its default from settings.Default*, so this table is a registry
-// rather than a second declaration of those values.
+// kindRegistry is the single source of truth for push kinds (validated against
+// marotte.PushKind.Valid at init). An empty SettingsKey is an unsilenceable floor
+// (PushKindPermission only); keyed entries take their defaults from settings.Default*.
 var kindRegistry = []KindPref{
 	{marotte.PushKindAgentFinished, settings.KeyNotifyAgentFinished, settings.DefaultNotifyAgentFinished},
 	{marotte.PushKindPRStatus, settings.KeyNotifyPRStatus, settings.DefaultNotifyPRStatus},
@@ -342,14 +292,8 @@ func validateKindRegistry(entries []KindPref) error {
 	return nil
 }
 
-// ReloadPreferences deduplicates concurrent preference reloads via
-// singleflight so N simultaneous SSE reconnects produce only one
-// disk read.
+// ReloadPreferences coalesces concurrent reloads via singleflight into one disk read.
 func (s *Service) ReloadPreferences(ctx context.Context) {
-	// loadPreferences handles its own errors internally (logs and
-	// swallows), so the closure returns (nil, nil) unconditionally.
-	// We still surface any unexpected singleflight error at Debug so
-	// future closure changes that add a real error path aren't lost.
 	if _, err, _ := s.prefsFlight.Do("prefs", func() (any, error) {
 		s.loadPreferences(ctx)
 		return nil, nil
@@ -358,9 +302,7 @@ func (s *Service) ReloadPreferences(ctx context.Context) {
 	}
 }
 
-// writeLoop drains saveCh and writes the latest snapshot to disk.
-// Serialises all disk writes through a single goroutine, eliminating
-// the need for writeMu.
+// writeLoop drains saveCh and writes the latest snapshot; the single writer goroutine.
 func (s *Service) writeLoop() {
 	defer close(s.writeLoopDone)
 	for {
@@ -372,7 +314,6 @@ func (s *Service) writeLoop() {
 			s.writeSubsSnapshot(req.subs)
 			close(req.done)
 		case <-s.lifetime.Done():
-			// Drain remaining on shutdown.
 			for {
 				select {
 				case req := <-s.saveCh:
@@ -386,15 +327,12 @@ func (s *Service) writeLoop() {
 	}
 }
 
-// loadPreferences reads the notification toggles from <configDir>/config.json —
-// the per-kind ones, then the master — and applies them. Missing file, missing
-// keys, or parse failures fall through to the default state set in New via
-// kindRegistry.
+// loadPreferences reads the per-kind toggles, then the master, from config.json; missing
+// or unparseable values keep the kindRegistry defaults set in New.
 func (s *Service) loadPreferences(ctx context.Context) {
-	// Build local prefs map without holding mu — settings.Field does disk I/O.
+	// Build the map without holding mu: settings.Field does disk I/O.
 	local := make(map[marotte.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
-		// A keyless kind is a floor: no disk read can turn it off.
 		if kr.SettingsKey == "" {
 			local[kr.Kind] = kr.DefaultOn
 			continue
@@ -405,20 +343,13 @@ func (s *Service) loadPreferences(ctx context.Context) {
 			local[kr.Kind] = kr.DefaultOn
 		}
 	}
-	// The MASTER switch, applied LAST so nothing above can re-widen it, and read here
-	// so the disk agrees with the settings write path's own arm: turning it off
-	// PATCHes only this key, so the per-kind keys keep their (usually absent,
-	// therefore ON) values and the assignment below would re-arm them.
-	//
-	// ONLY AN EXPLICIT FALSE ZEROES: this key's default is OFF ("the reader has not
-	// opted in") while each kind carries its own, so an absent master read as a
-	// decision would silence every workspace that has never opened Settings.
+	// The master switch is applied LAST so nothing re-widens it. Only an explicit false
+	// zeroes: its default is off while each kind has its own, so absent is not a decision.
 	if enabled, ok := settings.Field[bool](ctx, s.dir, settings.KeyNotificationsEnabled); ok && !enabled {
 		for kind := range local {
 			local[kind] = false
 		}
 	}
-	// Single swap under mu — narrows critical section to one map assignment.
 	s.mu.Lock()
 	s.prefs = local
 	s.mu.Unlock()

@@ -2,14 +2,9 @@ import { describe, it, expect } from "vitest";
 
 import { relativeTime, absoluteTime } from "./relative-time.js";
 
-// ---------------------------------------------------------------------------
-// The one vocabulary, rung by rung, plus the two boundaries a formatter gets
-// wrong: the day boundary (a date, not a count, from 24 hours on) and the year
-// boundary (the year appears exactly when it differs from now's).
-//
-// Every timestamp is built in LOCAL time (`new Date(y, m, d, …)`), because the
-// date rung is spelled by `toLocaleDateString`.
-// ---------------------------------------------------------------------------
+// The one vocabulary, rung by rung, plus the two boundaries a formatter gets wrong: the day
+// boundary (a date, not a count, from 24 hours on) and the year boundary (the year appears exactly
+// when it differs from now's).
 
 const at = (y: number, m: number, d: number, h = 0, min = 0, s = 0): number =>
   new Date(y, m - 1, d, h, min, s, 0).getTime();

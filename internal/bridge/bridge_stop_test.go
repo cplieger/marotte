@@ -7,8 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A Start that fails before any process exists leaves no read loop to close NotifCh,
-// so Stop closes it: a forward loop ranging over the stream must still end.
+// A Start that fails before any process leaves no read loop, so Stop closes NotifCh and a forward loop still ends.
 func TestStop_ClosesTheStreamOfABridgeThatNeverStarted(t *testing.T) {
 	for name, opts := range map[string]*marotte.StartOpts{
 		"no kiro-cli installed":     {Lifetime: t.Context()},

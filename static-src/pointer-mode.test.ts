@@ -1,17 +1,8 @@
-// ---------------------------------------------------------------------------
-// The touch/mouse toggle: its three visibility conditions, the click, and the
-// a11y triple.
-//
-// The button is mounted from `static/index.html` rather than a copy of its markup,
-// because the authored glyph classes and the initial `.hidden` ARE the contract
-// this module reads — a hand-written fixture would keep passing after the page
-// stopped agreeing with it.
-// ---------------------------------------------------------------------------
+// The touch/mouse toggle: its three visibility conditions, the click, and the a11y triple.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
-// The viewport control, for the one gate that can only be measured by resizing.
-// `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub
-// that throws.
+// The viewport control, for the one gate that can only be measured by resizing. `vitest/browser` is
+// the Vitest 5 spelling; `@vitest/browser/context` is a stub that throws.
 import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 
@@ -43,10 +34,10 @@ function mountButton(): HTMLButtonElement {
   return btn as HTMLButtonElement;
 }
 
-/** The whole `<div …>…</div>` opening with `openTag`, matched by counting nested
- *  div tags. Nothing formats `static/index.html` — prettier runs from
- *  `static-src/` and the page is its sibling — so its whitespace is not a
- *  contract and a blank-line delimiter would break on a reindent. */
+/** The whole `<div …>…</div>` opening with `openTag`, matched by counting nested div tags.
+ *  Nothing formats `static/index.html` — prettier runs from `static-src/` and the page is its
+ *  sibling — so its whitespace is not a contract and a blank-line delimiter would break on a
+ *  reindent. */
 function divAt(openTag: string): string {
   const start = indexHtml.indexOf(openTag);
   expect(start, `static/index.html has no ${openTag}`).toBeGreaterThan(-1);
@@ -134,26 +125,22 @@ describe("the toggle's click", () => {
     const btn = mountButton();
     initPointerTier();
     initPointerModeToggle();
-    // The FIRST paint has nothing on screen to slide out, so it settles
-    // synchronously — which is also what puts the right glyph up on a cold load.
+    // The FIRST paint has nothing on screen to slide out, so it settles synchronously — which is
+    // also what puts the right glyph up on a cold load.
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
 
     btn.click();
-    // The swap waits for the outgoing glyph's slide, so it is the one part of the
-    // click that is not synchronous. No stylesheet is mounted here, so nothing
-    // transitions and the settle arrives on the module's own safety timeout —
-    // which is the same path reduced motion takes in production.
+    // The swap waits for the outgoing glyph's slide, so it is the one part of the click that is not
+    // synchronous. No stylesheet is mounted here, so nothing transitions and the settle arrives on
+    // the module's own safety timeout — which is the same path reduced motion takes in production.
     await vi.waitFor(() => {
       expect(hiddenGlyphs(btn)).toEqual(["fine"]);
     });
   });
 
   it("converges on the second click when two land inside one slide", async () => {
-    // The first click's settle is deferred behind the outgoing glyph's slide, so it
-    // is still pending when the second click paints. Two things have to hold: the
-    // superseded settle must change nothing when it finally arrives, and the glyph
-    // it left parked below its resting position must be put back — the settle
-    // clears `.icon-setting` on the glyph it HIDES, never on the one it reveals.
+    // The first click's settle is deferred behind the outgoing glyph's slide, so it is still
+    // pending when the second click paints.
     markCoarseSeen();
     const btn = mountButton();
     initPointerTier();
@@ -172,17 +159,8 @@ describe("the toggle's click", () => {
   });
 
   it("rides `transform`, leaving the `translate` property to icon-crisp", () => {
-    // THE DEFECT, and it is a cross-module one no rendering test would name: this slide
-    // and `icon-crisp.ts` were both writing the `translate` property on the same
-    // element. The crisp pass writes an inline sub-pixel offset onto every `.ic-*`
-    // glyph, so declaring a `transition` for `translate` here animated each of those
-    // writes over 0.35s — and that pass re-measures 250ms after a write that MOVED
-    // something, so it read the interpolated box mid-flight, computed a different offset
-    // from it, wrote again, and re-armed itself. A self-sustaining oscillation with no
-    // gesture behind it, reported as these two buttons wiggling (left-right in mouse
-    // mode, up in touch mode — whichever axis the snap was correcting). The two
-    // properties compose additively, so the slide takes `transform` and `translate`
-    // stays the snap's alone.
+    // A cross-module coupling no rendering test would name: this slide and `icon-crisp.ts` must
+    // not both write the `translate` property on the same element.
     const sheet = loadCSS("10-shell-app.css");
     const SLIDE = ':is([id="theme-btn"], [id="pointer-mode-btn"]) svg';
     const base = ruleBody(sheet, SLIDE);
@@ -214,8 +192,8 @@ describe("the toggle's click", () => {
   });
 
   it("reports the tier a stored choice put the document in", () => {
-    // The button paints from what is IN FORCE, not from a default: a device that
-    // chose the enlarged tier must not come back offering to enlarge it again.
+    // The button paints from what is IN FORCE, not from a default: a device that chose the enlarged
+    // tier must not come back offering to enlarge it again.
     setPointerModeChoice("coarse");
     markCoarseSeen();
     const btn = mountButton();
@@ -228,12 +206,9 @@ describe("the toggle's click", () => {
   });
 
   it("keeps one accessible name in both states while the tooltip carries the state", () => {
-    // `aria-pressed` is the state channel, so the name may not also change with the
-    // state: announced, a flipping action name reads as "Switch to mouse mode,
-    // pressed", attaching a state to a phrase about the next press. The tooltip has
-    // no such channel beside it, so it says both. Deliberately literal-free — the
-    // case above pins the exact copy, and this one has to survive a wording change
-    // or the rule stops being guarded the moment somebody rewrites the strings.
+    // `aria-pressed` is the state channel, so the name may not also change with the state:
+    // announced, a flipping action name reads as "Switch to mouse mode, pressed", attaching a state
+    // to a phrase about the next press. The tooltip has no such channel beside it, so it says both.
     markCoarseSeen();
     const btn = mountButton();
     initPointerTier();
@@ -261,19 +236,15 @@ describe("the toggle's click", () => {
   });
 });
 
-/** The one rule in the mobile stylesheet that hides the toggle. Spelled in full
- *  because `ruleContaining` keys on an exact selector-list MEMBER, and stating it
- *  here is what lets the scope checks ("inside the query that names each arm,
- *  exactly once") do their work. */
+/** The one rule in the mobile stylesheet that hides the toggle. Spelled in full because
+ *  `ruleContaining` keys on an exact selector-list MEMBER, and stating it here is what lets the
+ *  scope checks ("inside the query that names each arm, exactly once") do their work. */
 const MOBILE_HIDE = '[id="pointer-mode-btn"]';
 
 describe("the phone-shaped arm of the visibility rule", () => {
   it("is display:none inside ONE query naming both the narrow and the short arm", () => {
-    // The viewport condition is CSS's, in the one file that owns the definition of
-    // mobile — so it tracks a rotation and a window resize for free and cannot
-    // disagree with `.mobile-only`. `ruleContaining` demands exactly one match per
-    // scope, so asking it under each arm and then comparing the two bodies is what
-    // says the arms sit in one prelude rather than in two rules that can drift.
+    // The viewport condition is CSS's, in the one file that owns the definition of mobile — so it
+    // tracks a rotation and a window resize for free and cannot disagree with `.mobile-only`.
     const narrow = ruleContaining(loadCSS("50-mobile.css"), MOBILE_HIDE, "48rem");
     const short = ruleContaining(loadCSS("50-mobile.css"), MOBILE_HIDE, "30rem");
     expect(narrow.body).toMatch(/display:\s*none/);
@@ -281,11 +252,8 @@ describe("the phone-shaped arm of the visibility rule", () => {
   });
 
   it("hides the toggle on a phone-shaped viewport whatever the tier is", () => {
-    // The phone layout is touch-only in either orientation, so a control that
-    // revokes the enlarged tier has nothing to offer there. Asserted over EVERY
-    // rule that reaches the id rather than over this one, so a rule that gates the
-    // hide on the tier again fails here instead of quietly reintroducing the
-    // width-gated escape hatch a `fine` pin used to survive on.
+    // The phone layout is touch-only in either orientation, so a control that revokes the enlarged
+    // tier has nothing to offer there.
     const reaching = allRules(loadCSS("50-mobile.css")).filter((r) =>
       r.selector.includes('[id="pointer-mode-btn"]'),
     );
@@ -297,8 +265,8 @@ describe("the phone-shaped arm of the visibility rule", () => {
 });
 
 describe("the toolbar row at phone width", () => {
-  // Nullable and cleaned up conditionally, so a failure BEFORE the fixture is
-  // built reports itself rather than being replaced by a hook error on undefined.
+  // Nullable and cleaned up conditionally, so a failure BEFORE the fixture is built reports itself
+  // rather than being replaced by a hook error on undefined.
   let styleEl: HTMLStyleElement | null = null;
   let app: HTMLElement | null = null;
 
@@ -307,11 +275,10 @@ describe("the toolbar row at phone width", () => {
     app?.remove();
   });
 
-  /** The bar at a stated chat-area width, with the coarse tier in force. Returns
-   *  the visible action buttons; the viewport here is the browser project's 1280px,
-   *  so `width <= 48rem` does not apply and `#menu-toggle` keeps its `display: none`
-   *  — a real phone shows the hamburger too, and that is the one button these cases
-   *  cannot account for. */
+  /** The bar at a stated chat-area width, with the coarse tier in force. Returns the visible
+   *  action buttons; the viewport here is the browser project's 1280px, so `width <= 48rem` does
+   *  not apply and `#menu-toggle` keeps its `display: none` — a real phone shows the hamburger
+   *  too, and that is the one button these cases cannot account for. */
   function mountBarAt(width: string): HTMLElement[] {
     styleEl ??= mountAppCSS();
     app?.remove();
@@ -329,14 +296,9 @@ describe("the toolbar row at phone width", () => {
   }
 
   it("keeps every toolbar button on one row at 390px with coarse controls", () => {
-    // Settings moved into this bar, so the row carries one more 44px touch target
-    // than it did, and `.chat-toolbar` wraps rather than overflowing — this is the
-    // measurement that says whether it has to.
-    //
-    // MEASURED: these 7 render 44px each, so 7x44 + 6x2 + 24 of padding is 344 and
-    // the row still holds at 360px. Adding the hamburger makes it 8x44 + 7x2 + 24 =
-    // 390, which fits a 390px phone EXACTLY and wraps below it. That is a cost to
-    // report, not one to fix by shrinking a touch target.
+    // Settings moved into this bar, so the row carries one more 44px touch target than it did, and
+    // `.chat-toolbar` wraps rather than overflowing — this is the measurement that says whether it
+    // has to.
     const buttons = mountBarAt("390px");
     expect(buttons.length, "the persistent toolbar buttons").toBe(7);
     const tops = [...new Set(buttons.map((b) => b.offsetTop))];
@@ -345,14 +307,7 @@ describe("the toolbar row at phone width", () => {
   });
 
   it("ends the actions on the bar's own gutter, with the heading on their row", () => {
-    // The two halves of what the heading's own row cost, in one case because they
-    // are one layout. The actions were left-aligned on their line (measured at
-    // 430px: last button right edge 378 against a content edge of 418) and the
-    // heading sat under them, which is what made the bar 70px instead of 52.
-    //
-    // 520px rather than a phone width so the title is WIDE enough to fit and the
-    // heading is genuinely in flow: at 390px page-title.ts clips it, and a case
-    // measuring the clipped state would pass with `flex: 1 1 0` reverted.
+    // The two halves of what the heading's own row cost, in one case because they are one layout.
     const buttons = mountBarAt("520px");
     const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
     const heading = app?.querySelector<HTMLElement>(".titlebar-heading");
@@ -364,9 +319,9 @@ describe("the toolbar row at phone width", () => {
     const last = buttons[buttons.length - 1]!.getBoundingClientRect();
     expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
 
-    // Same row as the actions, and to their left. CENTRES rather than top edges:
-    // the bar is `align-items: center` over a 19px heading and 44px buttons, so
-    // equal tops would be the wrong assertion and fail on a correct layout.
+    // Same row as the actions, and to their left. CENTRES rather than top edges: the bar is
+    // `align-items: center` over a 19px heading and 44px buttons, so equal tops would be the wrong
+    // assertion and fail on a correct layout.
     const headBox = heading!.getBoundingClientRect();
     const mid = (r: DOMRect) => r.top + r.height / 2;
     expect(mid(headBox), "the heading shares the actions' row").toBeCloseTo(mid(last), 0);
@@ -375,10 +330,8 @@ describe("the toolbar row at phone width", () => {
 
   it("keeps the actions on the gutter once page-title.ts clips the heading", () => {
     // The state a phone actually renders, and the only one that pins the bar's own
-    // `justify-content: flex-end`: `.sr-only` is `position: absolute`, so a clipped
-    // heading leaves the flex line and takes its growth with it. With the heading in
-    // flow the growth alone puts the actions right, so the in-flow case above stays
-    // green with `flex-end` deleted — this is the case that does not.
+    // `justify-content: flex-end`: `.sr-only` is `position: absolute`, so a clipped heading leaves
+    // the flex line and takes its growth with it.
     const buttons = mountBarAt("390px");
     const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
     app?.querySelector<HTMLElement>(".titlebar-heading")?.classList.add("sr-only");
@@ -390,11 +343,10 @@ describe("the toolbar row at phone width", () => {
   });
 
   it("wraps rather than pushing an action off the start edge at 320px", () => {
-    // What the bar's `flex-wrap: wrap` is for, and the reason right-alignment cannot
-    // be the whole rule: the actions need 326px of a 320px phone (7x44 + 6x2 + 24 of
-    // padding here, 8 buttons on a real one), they cannot shrink into it because
-    // `min-width: var(--btn-h)` is the touch floor, and overflow past `flex-end`
-    // leaves a control left of the bar with no scroll to reach it.
+    // What the bar's `flex-wrap: wrap` is for, and the reason right-alignment cannot be the whole
+    // rule: the actions need 326px of a 320px phone (7x44 + 6x2 + 24 of padding here, 8 buttons on
+    // a real one), they cannot shrink into it because `min-width: var(--btn-h)` is the touch floor,
+    // and overflow past `flex-end` leaves a control left of the bar with no scroll to reach it.
     const buttons = mountBarAt("320px");
     const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
     const startEdge =
@@ -408,13 +360,9 @@ describe("the toolbar row at phone width", () => {
 });
 
 describe("the phone-shaped gate, measured at real viewport sizes", () => {
-  // A media query answers about the VIEWPORT, so the only honest test of this gate
-  // resizes one — no amount of DOM setup can stand in for it. The block sits LAST
-  // in the file and restores the size in `afterAll`, because the toolbar case above
-  // reads the browser project's own width. `page.viewport` has no getter, so the
-  // size is READ off the frame on entry rather than copied from `vitest.config.ts`:
-  // a hand-copied pair would silently leave every later file measuring at the old
-  // size if that config moved.
+  // A media query answers about the VIEWPORT, so the only honest test of this gate resizes one — no
+  // amount of DOM setup can stand in for it. The block sits LAST in the file and restores the size
+  // in `afterAll`, because the toolbar case above reads the browser project's own width.
   let entry: { readonly width: number; readonly height: number } | null = null;
   let styleEl: HTMLStyleElement | null = null;
 
@@ -430,12 +378,10 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
     }
   });
 
-  /** The button's computed `display` at one viewport size. `.hidden` is cleared
-   *  first: it is the JS gate's channel and carries `display: none !important`, so
-   *  leaving the authored class on would answer "none" for every case and the CSS
-   *  gate — the subject here — would go unmeasured. The resize is asserted, or a
-   *  `page.viewport` that stopped moving the frame would make every case below
-   *  report about the project's own size while still naming a phone. */
+  /** The button's computed `display` at one viewport size. `.hidden` is cleared first: it is the
+   *  JS gate's channel and carries `display: none !important`, so leaving the authored class on
+   *  would answer "none" for every case and the CSS gate — the subject here — would go
+   *  unmeasured. */
   async function displayAt(width: number, height: number): Promise<string> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
@@ -452,28 +398,22 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
   });
 
   it("hides the toggle on a wide, SHORT viewport — the same phone rotated", async () => {
-    // The shape that used to slip the gate: past 48rem wide, so the narrow arm
-    // stops matching, on a device where every hit target should stay at 44px. One
-    // tap here pinned `fine`, and portrait then had no control to undo it with.
+    // One tap here pinned `fine`, and portrait then had no control to undo it with.
     expect(await displayAt(900, 400)).toBe("none");
   });
 
   it("offers the toggle on a viewport that is neither narrow nor short", async () => {
-    // A tablet in landscape clears both arms, which is what measuring the SHORT
-    // edge buys over measuring the width: 1024x768 is wide and tall, 900x400 is
-    // wide and short, and only the first is a device with a pointer to choose.
+    // A tablet in landscape clears both arms, which is what measuring the SHORT edge buys over
+    // measuring the width: 1024x768 is wide and tall, 900x400 is wide and short, and only the first
+    // is a device with a pointer to choose.
     expect(await displayAt(1024, 768)).not.toBe("none");
   });
 });
 
 describe("the phone-shaped gate, measured at real viewport sizes", () => {
-  // A media query answers about the VIEWPORT, so the only honest test of this gate
-  // resizes one — no amount of DOM setup can stand in for it. The block sits LAST
-  // in the file and restores the size in `afterAll`, because the toolbar case above
-  // reads the browser project's own width. `page.viewport` has no getter, so the
-  // size is READ off the frame on entry rather than copied from `vitest.config.ts`:
-  // a hand-copied pair would silently leave every later file measuring at the old
-  // size if that config moved.
+  // A media query answers about the VIEWPORT, so the only honest test of this gate resizes one — no
+  // amount of DOM setup can stand in for it. The block sits LAST in the file and restores the size
+  // in `afterAll`, because the toolbar case above reads the browser project's own width.
   let entry: { readonly width: number; readonly height: number } | null = null;
   let styleEl: HTMLStyleElement | null = null;
 
@@ -489,12 +429,10 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
     }
   });
 
-  /** The button's computed `display` at one viewport size. `.hidden` is cleared
-   *  first: it is the JS gate's channel and carries `display: none !important`, so
-   *  leaving the authored class on would answer "none" for every case and the CSS
-   *  gate — the subject here — would go unmeasured. The resize is asserted, or a
-   *  `page.viewport` that stopped moving the frame would make every case below
-   *  report about the project's own size while still naming a phone. */
+  /** The button's computed `display` at one viewport size. `.hidden` is cleared first: it is the
+   *  JS gate's channel and carries `display: none !important`, so leaving the authored class on
+   *  would answer "none" for every case and the CSS gate — the subject here — would go
+   *  unmeasured. */
   async function displayAt(width: number, height: number): Promise<string> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
@@ -511,33 +449,23 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
   });
 
   it("hides the toggle on a wide, SHORT viewport — the same phone rotated", async () => {
-    // The shape that used to slip the gate: past 48rem wide, so the narrow arm
-    // stops matching, on a device where every hit target should stay at 44px. One
-    // tap here pinned `fine`, and portrait then had no control to undo it with.
+    // One tap here pinned `fine`, and portrait then had no control to undo it with.
     expect(await displayAt(900, 400)).toBe("none");
   });
 
   it("offers the toggle on a viewport that is neither narrow nor short", async () => {
-    // A tablet in landscape clears both arms, which is what measuring the SHORT
-    // edge buys over measuring the width: 1024x768 is wide and tall, 900x400 is
-    // wide and short, and only the first is a device with a pointer to choose.
+    // A tablet in landscape clears both arms, which is what measuring the SHORT edge buys over
+    // measuring the width: 1024x768 is wide and tall, 900x400 is wide and short, and only the first
+    // is a device with a pointer to choose.
     expect(await displayAt(1024, 768)).not.toBe("none");
   });
 });
 
 describe("the coarse glyph", () => {
   it("keeps folded fingers beside the extended one", () => {
-    // The defect this pins was USER-REPORTED, and no other gate can see it:
-    // prettier never formats `static/index.html`, html-validate does not read path
-    // data, and `menu-icons.test.ts` only asks whether the six header glyphs differ
-    // from each other. The glyph shipped as a two-path reduction of Lucide
-    // `pointer` — one long finger centred between a single knuckle and a thumb —
-    // which reads as an obscene gesture, and the three folded fingers are what make
-    // the same drawing read as a hand pointing.
-    //
-    // A count rather than the exact path data: pinning the bytes would fail a
-    // legitimate redraw as loudly as a regression, and what has to survive is the
-    // property, not this particular hand.
+    // No other gate can see this: prettier never formats
+    // `static/index.html`, html-validate does not read path data, and `menu-icons.test.ts` only
+    // asks whether the six header glyphs differ from each other.
     const glyph = markupFor('id="pointer-mode-btn"').match(
       /<svg class="pointer-icon-coarse[\s\S]*?<\/svg>/,
     )?.[0];
@@ -558,9 +486,9 @@ describe("the ON state's paint", () => {
   });
 
   /** The button's background in both `aria-pressed` states. `.icon-btn` transitions
-   *  `background`, so a read taken straight after the flip returns an interpolated
-   *  value — finishing the transitions is what makes the second reading the settled
-   *  one rather than a sample of the ramp. */
+   *  `background`, so a read taken straight after the flip returns an interpolated value —
+   *  finishing the transitions is what makes the second reading the settled one rather than a
+   *  sample of the ramp. */
   function fills(btn: HTMLElement): { off: string; on: string } {
     btn.setAttribute("aria-pressed", "false");
     btn.getAnimations().forEach((a) => a.finish());
@@ -571,16 +499,7 @@ describe("the ON state's paint", () => {
   }
 
   it("does not take the selected fill, while a sibling icon-btn still does", () => {
-    // Reported as "it keeps an active background when it should not". The glyph IS
-    // this toggle's state channel — `paint()` slides the mouse out and the hand in
-    // — so the shared selected fill (70-selection.css) rendered one fact twice and
-    // left a header button looking permanently selected for as long as touch mode
-    // was on.
-    //
-    // The find button is the NEGATIVE CONTROL and is not optional: without it this
-    // case passes just as well when the selected rule stops working for every
-    // control in the app, which is the failure a one-element assertion cannot tell
-    // from the fix.
+    // Reported as "it keeps an active background when it should not".
     styleEl ??= mountAppCSS();
     document.body.innerHTML = `${markupFor('id="pointer-mode-btn"')}${markupFor('id="find-btn"')}`;
     const pointer = document.getElementById("pointer-mode-btn");

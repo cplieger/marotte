@@ -62,8 +62,6 @@ func TestRepoDir(t *testing.T) {
 }
 
 func TestRepoDir_NeverEscapesWorkDir(t *testing.T) {
-	// Fuzzy invariant: for any input the parser accepts as a subdir, the
-	// resolved path must be lexically rooted at workDir.
 	workDir := filepath.FromSlash("/home/user/work")
 	h := &Handler{workDir: workDir}
 	inputs := []string{
@@ -73,7 +71,6 @@ func TestRepoDir_NeverEscapesWorkDir(t *testing.T) {
 	}
 	for _, in := range inputs {
 		got := h.repoDir(in)
-		// Must either equal workDir or have workDir as a lexical prefix.
 		if got != workDir {
 			rel, err := filepath.Rel(workDir, got)
 			if err != nil {
@@ -145,26 +142,22 @@ func TestHandleShow_Rejections(t *testing.T) {
 		name    string
 		path    string
 		ref     string
-		rawPath bool // if true, set path via RawQuery to bypass net/url escaping
-		rawRef  bool // if true, set ref via RawQuery to bypass net/url escaping
+		rawPath bool
+		rawRef  bool
 	}
 	cases := []testCase{
-		// Missing/invalid path
 		{name: "missing_path", path: "", ref: ""},
-		// Invalid refs
 		{name: "ref_with_space", path: "foo", ref: "bad ref"},
 		{name: "ref_starting_with_dash", path: "foo", ref: "-exec"},
 		{name: "ref_carriage_return", path: "foo", ref: "HEAD\rmalicious", rawRef: true},
 		{name: "ref_null_byte", path: "foo", ref: "HEAD\x00abc", rawRef: true},
 		{name: "ref_colon_metachar", path: "foo", ref: "HEAD:inject", rawRef: true},
 		{name: "ref_asterisk_metachar", path: "foo", ref: "HEAD*", rawRef: true},
-		// Path traversal
 		{name: "path_traversal_parent", path: "../../etc/passwd"},
 		{name: "path_traversal_dotdot", path: ".."},
 		{name: "path_traversal_nested", path: "a/../../x"},
 		{name: "path_absolute", path: "/etc/passwd"},
 		{name: "path_leading_dash", path: "-evil"},
-		// Path control bytes
 		{name: "path_null_byte", path: "has\x00null", rawPath: true},
 		{name: "path_newline", path: "has\nnewline", rawPath: true},
 		{name: "path_cr", path: "has\rcr", rawPath: true},
@@ -199,7 +192,7 @@ func TestHandleShow_Rejections(t *testing.T) {
 // what keeps a real failure legible: folded together, a broken object database renders
 // as "this file is brand new" and silently claims every line was added.
 func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
-	h := NewHandler(t.TempDir()) // no .git anywhere
+	h := NewHandler(t.TempDir())
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -222,8 +215,6 @@ func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 // card's filename — because translate.relPath knows nothing about repos.
 func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	work := t.TempDir()
-	// The workspace root is a repo too, so this cannot pass by accident: the
-	// old default WOULD find a repository here, just not the right one.
 	initFixtureRepo(t, work)
 	sub := filepath.Join(work, "sub")
 	if err := os.Mkdir(sub, 0o750); err != nil {
@@ -249,8 +240,6 @@ func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("error = %q, want the subrepo resolved", got.Error)
 	}
-	// gitCmd trims the trailing newline off every git invocation's output; that
-	// is pre-existing and shared with the repo-named path.
 	if got.Content != "from the subrepo" {
 		t.Errorf("content = %q, want the committed base from the owning repo."+
 			" Empty means the base was read from the workspace root, so the diff"+
@@ -276,12 +265,8 @@ func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
 	}
 }
 
-// The empty base above is only half the answer. Without a marker the client
-// captions that pane with the ref it asked for, so an untracked or staged-new
-// file renders as "HEAD holds this file and holds it empty" — the same
-// dishonesty the not_in_repo mapping was added to fix, one case short. The key
-// is present ONLY when the path is genuinely absent at the ref, so a caller can
-// tell the two apart without a second request.
+// TestHandleShow_AbsentAtRefCarriesTheMarker: without the marker the client captions the empty base
+// pane with the ref, claiming the ref holds the file empty.
 func TestHandleShow_AbsentAtRefCarriesTheMarker(t *testing.T) {
 	work := t.TempDir()
 	initFixtureRepo(t, work)
@@ -307,9 +292,6 @@ func TestHandleShow_AbsentAtRefCarriesTheMarker(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("unmarshal %q: %v", rec.Body.String(), err)
 			}
-			// Presence rather than truthiness: a key that is always emitted, false
-			// on the ordinary path, would read as a marker the client can trust
-			// while saying nothing about which case it is in.
 			marker, present := body["absent"]
 			if present != tc.wantPresent {
 				t.Fatalf("absent key present = %v, want %v for path %q (body = %s)",
@@ -377,10 +359,8 @@ func TestOwnerOf(t *testing.T) {
 		wantRepo: "sub-longer", wantInner: "b.go", wantOK: true,
 		reason: "of two matching names the longer one is the nearer repo",
 	}, {
-		// The case a string-prefix test gets WRONG, and it is not exotic: a
-		// sibling directory whose name merely begins with a repo's name.
-		// strings.HasPrefix says "sub" owns "subx/file.go" and hands git the
-		// path "x/file.go", which resolves to nothing.
+		// A sibling directory whose name begins with a repo's name: a string-prefix test gets it
+		// wrong.
 		name: "ASiblingBeginningWithARepoNameIsNotInIt", path: "subx/file.go",
 		wantRepo: ".", wantInner: "subx/file.go", wantOK: true,
 		reason: "ownership is separator-precise, not a string prefix",
@@ -408,8 +388,6 @@ func TestOwnerOf_NoRepositoryMeansNoOwner(t *testing.T) {
 		t.Errorf("ownerOf = (%q, %q, true), want no owner in a workspace with no repos", repo, inner)
 	}
 }
-
-// --- pure function coverage ---
 
 func TestExtractCommitMessage(t *testing.T) {
 	tests := []struct {
@@ -459,10 +437,6 @@ func TestExtractCommitMessage(t *testing.T) {
 }
 
 func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
-	// Subject line must always be <=subjectMaxRunes RUNES after truncation, and
-	// must always be valid UTF-8. The unit matters: this assertion used to count
-	// bytes while its message said "chars", which is the same conflation
-	// capSubject itself had — so a non-ASCII subject cut mid-rune satisfied it.
 	inputs := []string{
 		"",
 		"short",
@@ -470,11 +444,8 @@ func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
 		strings.Repeat("a", 73),
 		strings.Repeat("x", 1000),
 		"feat: " + strings.Repeat("word ", 40),
-		// Multi-byte, no spaces: the branch that truncates without a word break.
 		strings.Repeat("日", 200),
-		// Multi-byte with a word break past the minimum.
 		"feat: " + strings.Repeat("変更 ", 60),
-		// A 4-byte rune, so a byte-slice cut lands mid-sequence at more offsets.
 		strings.Repeat("𝄞", 100),
 	}
 	for _, in := range inputs {
@@ -504,8 +475,6 @@ func TestPRRefShape(t *testing.T) {
 		{"gitlab ssh", "git@gitlab.com:owner/repo.git", "refs/merge-requests/%d/head"},
 		{"empty remote falls back to github shape", "", "refs/pull/%d/head"},
 		{"unknown remote falls back to github shape", "https://bitbucket.org/o/r.git", "refs/pull/%d/head"},
-		// Host-only matching: path segments containing "gitlab" on a
-		// non-GitLab host must not trigger the merge-requests shape.
 		{"github path contains gitlab", "https://github.com/gitlab/tooling.git", "refs/pull/%d/head"},
 		{"codeberg path contains gitlab", "https://codeberg.org/o/gitlab-clone.git", "refs/pull/%d/head"},
 		{"gitea scp path contains gitlab", "git@gitea.example.com:org/gitlab-runner.git", "refs/pull/%d/head"},
@@ -519,8 +488,6 @@ func TestPRRefShape(t *testing.T) {
 		})
 	}
 }
-
-// --- helpers.go coverage ---
 
 func TestRequirePOST_AcceptsPOST(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", nil)
@@ -594,7 +561,6 @@ func TestDecodePostBodyOptional_MalformedJSONIgnored(t *testing.T) {
 		t.Fatalf("decodePostBodyOptional(%q) = false, want true", `{not-json`)
 	}
 
-	// No response was written; caller continues as if body were zero.
 	if got.Repo != "" {
 		t.Errorf("Repo = %q, want empty on malformed optional body", got.Repo)
 	}
@@ -674,17 +640,12 @@ func TestWriteCmdResult_ErrorSetsErrorFieldNotOutput(t *testing.T) {
 	if !strings.Contains(body, `"error":"fatal: not a git repo"`) {
 		t.Errorf("body %q missing error field", body)
 	}
-	// Post-fix: on failure we emit {error: ...} only; no output field.
 	if strings.Contains(body, `"output"`) {
 		t.Errorf("body %q must not contain output on failure", body)
 	}
 }
 
 func TestWriteCmdResult_EmptyOutputFallsBackToErrMessage(t *testing.T) {
-	// When a subprocess fails to start (git missing, EACCES), `out` is
-	// empty and the err carries the useful message. The fix swaps to
-	// err.Error() so the response isn't identity-indistinguishable
-	// from a silent no-op.
 	rec := httptest.NewRecorder()
 	writeCmdResult(rec, "", errors.New(`exec: "git": executable file not found`))
 
@@ -711,20 +672,11 @@ func TestWriteCmdResult_ScrubsAuthInErrorOutput(t *testing.T) {
 	}
 }
 
-// --- gitExec env hardening regression pin ---
-
-// TestGitExec_ScrubsInheritedEnv pins gitExec's env scrub plus its cmdline -c hardening
-// against credential-prompt hijacking, runtime gitconfig injection
-// (GIT_CONFIG_COUNT/KEY/VALUE, GIT_CONFIG_PARAMETERS) and ext:: transport re-enabling;
-// dropping any of them re-opens CVE-2017-1000117 and kin. The ext:: guard is a
-// `-c protocol.ext.allow=never` flag, which always wins over gitconfig, rather than
-// GIT_CONFIG_GLOBAL=/dev/null — that also disabled the credential.helper line
-// `gh auth setup-git` writes, breaking HTTPS clones of private repos.
+// TestGitExec_ScrubsInheritedEnv pins gitExec's env scrub and its cmdline -c hardening against
+// prompt hijacking and runtime gitconfig injection.
 func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
-	// Simulate a compromised parent env attempting every known
-	// runtime-injection path. The scrub must win via os/exec's
-	// last-wins duplicate-key semantics, OR the cmdline -c flag
-	// must override (whichever applies).
+	// Every known runtime-injection path from a compromised parent env; the scrub must win by
+	// os/exec's last-wins duplicate-key semantics.
 	t.Setenv("GIT_TERMINAL_PROMPT", "1")
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "protocol.ext.allow")
@@ -741,9 +693,6 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	}
 	cmd := gitExec(t.Context(), t.TempDir(), "status")
 
-	// Build a map of cmd.Env entries; later duplicates (our appends)
-	// overwrite inherited values in the map lookup, matching the
-	// last-wins semantics os/exec follows at spawn time.
 	got := make(map[string]string, len(cmd.Env))
 	for _, kv := range cmd.Env {
 		k, v, ok := strings.Cut(kv, "=")
@@ -762,21 +711,14 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		}
 	}
 
-	// gitconfig FILES must remain loadable so credential helpers
-	// (gh auth git-credential, glab, etc.) work for HTTPS clones of
-	// private repos. Pinning them to /dev/null was the previous
-	// behavior and broke private clones — guard against the
-	// regression returning.
+	// gitconfig FILES stay loadable, so the registered credential helpers serve private HTTPS
+	// clones.
 	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
 		if v, ok := got[k]; ok {
 			t.Errorf("gitExec env %q = %q must not be set; pinning it disables credential helpers from gitconfig", k, v)
 		}
 	}
 
-	// Args must contain the cmdline -c hardening that takes
-	// priority over gitconfig. This is what blocks ext:: even when
-	// user gitconfig (or env-injected GIT_CONFIG_*) tries to enable
-	// it. Drop this and CVE-2017-1000117 class issues come back.
 	wantArgPair := []string{"-c", "protocol.ext.allow=never"}
 	foundExt := false
 	for i := range len(cmd.Args) - 1 {
@@ -789,31 +731,22 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		t.Errorf("gitExec args missing `-c protocol.ext.allow=never` (security regression: ext:: transport may be re-enabled by gitconfig); got %v", cmd.Args)
 	}
 
-	// Belt-and-braces: args[0] must be "git" (or end in "git" if
-	// the runner uses absolute path), and the requested subcommand
-	// must appear after the hardening prefix.
 	if len(cmd.Args) < 2 || cmd.Args[0] == "" {
 		t.Fatalf("gitExec args = %v, want [git, -c, ..., status, ...]", cmd.Args)
 	}
 	if !strings.HasSuffix(cmd.Args[0], "git") {
 		t.Errorf("gitExec arg[0] = %q, want binary ending in 'git'", cmd.Args[0])
 	}
-	// "status" must appear somewhere after the prefix.
 	foundStatus := slices.Contains(cmd.Args[1:], "status")
 	if !foundStatus {
 		t.Errorf("gitExec args missing 'status' subcommand: %v", cmd.Args)
 	}
 }
 
-// --- redactCredentials + sanitizeRepoPaths ---
-
 func TestRedactCredentials_Idempotent(t *testing.T) {
 	inputs := []string{
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
-		// A git:// URL with a userinfo chain: the scheme the deleted
-		// exec-side target contributed, and the one shape the seeds
-		// above do not reach (they are all http/https).
 		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
 		"Authorization: Bearer abc",
@@ -886,8 +819,6 @@ func TestSanitizeRepoPaths_TooManyPathsRejected(t *testing.T) {
 		t.Errorf("err = %v, want 'too many paths'", err)
 	}
 }
-
-// --- handleClone ---
 
 func TestHandleClone_MalformedBodyRejected(t *testing.T) {
 	h := NewHandler(t.TempDir())
@@ -1048,12 +979,8 @@ func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 	}
 }
 
-// stageFakeGit puts a fake `git` first on PATH that mimics a clone killed
-// mid-transfer: it runs the given script (which stages the debris a dead
-// git cannot clean up) and exits 1. A real git removes its destination on
-// an ordinary fatal error, so the SIGKILL shape — the client aborted the
-// request and the context kill left a commitless .git skeleton — is not
-// reproducible deterministically with the real binary.
+// stageFakeGit stages a fake `git` that mimics a clone killed mid-transfer: it runs script (staging
+// a dead git's debris), then fails.
 func stageFakeGit(t *testing.T, script string) {
 	t.Helper()
 	stageFakeGitExiting(t, script, 1)
@@ -1073,16 +1000,10 @@ func stageFakeGitExiting(t *testing.T, script string, exit int) {
 	if err := os.WriteFile(fake, []byte(content), 0o755); err != nil { // #nosec G306 -- a test-local executable needs the exec bit
 		t.Fatal(err)
 	}
-	// The SEAM is what stages the fake, because gitExec pins argv[0] to an
-	// absolute path from a fixed system-directory set and so cannot be shadowed
-	// by PATH. Before the seam existed these tests reached the real git and drove
-	// it against a real remote.
+	// Staged through the seam, because gitExec pins argv[0] and a PATH fake cannot shadow it.
 	prev := resolveGitBinary
 	resolveGitBinary = func() (string, bool) { return fake, true }
 	t.Cleanup(func() { resolveGitBinary = prev })
-	// PATH still gains the fake's directory: the script's own `mkdir` and friends
-	// resolve through it, and without the rest of PATH the debris is never staged
-	// — which makes every assertion below pass vacuously.
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -1144,7 +1065,6 @@ func TestClone_FailedAdoptionRemovesOnlyTheGitDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dest, "settings", "lsp.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The adoption's gitCmds run with the destination as cwd.
 	stageFakeGit(t, `mkdir -p .git`)
 	h := NewHandler(work)
 
@@ -1168,7 +1088,6 @@ func TestRunTransfer_KillsAStalledTransfer(t *testing.T) {
 	cloneStallTimeout = 200 * time.Millisecond
 	t.Cleanup(func() { cloneStallTimeout = prev })
 	work := t.TempDir()
-	// One progress token, then silence far past the stall window.
 	stageFakeGit(t, `echo 'Receiving objects:  42%' >&2
 sleep 30`)
 
@@ -1280,14 +1199,8 @@ func TestHandleClone_StreamEndsWithTheErrorEnvelope(t *testing.T) {
 	}
 }
 
-// serveFixtureRepo builds a fixture repo under work and publishes it over
-// git's dumb HTTP protocol, returning the remote URL.
-//
-// A local path cannot serve as the remote here: gitExec sets
-// GIT_PROTOCOL_FROM_USER=0, which is exactly what makes git refuse the
-// `file` transport ("fatal: transport 'file' not allowed"). Reaching the
-// real gitExec path therefore needs a real HTTP remote. The repo tracks
-// one file, README.md, on branch main.
+// serveFixtureRepo builds a fixture repo under work and publishes it over git's dumb HTTP protocol,
+// returning the remote URL, since the clone path accepts only https and scp-style remotes.
 func serveFixtureRepo(t *testing.T, work string) string {
 	t.Helper()
 	skipNoGit(t)
@@ -1309,8 +1222,6 @@ func serveFixtureRepo(t *testing.T, work string) string {
 func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
 	base := t.TempDir()
 	remote := serveFixtureRepo(t, base)
-	// serveFixtureRepo publishes the repo as srv.git, so the destination
-	// git would derive, and that h.clone must inspect, is "srv".
 	const name = "srv"
 
 	workDir := filepath.Join(base, "work")
@@ -1335,17 +1246,13 @@ func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
 	}
 }
 
-// TestAdoptDestination_ClonesIntoAnOccupiedDirectory is the regression test
-// for the reported defect. Cloning a repo NAMED .kiro failed because marotte
-// had already written <workspace>/.kiro/settings/lsp.json when it activated
-// code intelligence, so plain `git clone` refused the non-empty destination
-// in a few milliseconds and the repo could never be cloned at all.
+// TestAdoptDestination_ClonesIntoAnOccupiedDirectory — marotte writes
+// <workspace>/.kiro/settings/lsp.json when it activates code intelligence, so a
+// repo NAMED .kiro meets a non-empty destination that plain `git clone` refuses.
 func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
 	base := t.TempDir()
 	remote := serveFixtureRepo(t, base)
 
-	// The destination exactly as marotte leaves it: present, non-empty,
-	// not a git repository.
 	dest := filepath.Join(base, "work", ".kiro")
 	if err := os.MkdirAll(filepath.Join(dest, "settings"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1362,12 +1269,9 @@ func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(dest, "README.md")); statErr != nil {
 		t.Errorf("tracked file not checked out: %v", statErr)
 	}
-	// Without this the Sources row keeps offering Clone forever, which is
-	// the second half of the reported symptom.
 	if !IsRepo(t.Context(), dest) {
 		t.Error("IsRepo(dest) = false, want true")
 	}
-	// The pre-existing file is untouched. This is the whole safety claim.
 	got, readErr := os.ReadFile(lsp)
 	if readErr != nil {
 		t.Fatalf("read %s: %v", lsp, readErr)
@@ -1375,7 +1279,6 @@ func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
 	if string(got) != "{}" {
 		t.Errorf("lsp.json = %q, want %q", got, "{}")
 	}
-	// A tracking branch, exactly what a plain clone leaves behind.
 	branch, revErr := gitCmd(t.Context(), dest, "rev-parse", "--abbrev-ref", "HEAD")
 	if revErr != nil {
 		t.Fatalf("rev-parse --abbrev-ref HEAD: %v", revErr)
@@ -1396,7 +1299,6 @@ func TestAdoptDestination_RefusesToOverwriteUntrackedContent(t *testing.T) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Same name as a tracked file, different content.
 	readme := filepath.Join(dest, "README.md")
 	if err := os.WriteFile(readme, []byte("mine\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1457,8 +1359,6 @@ func TestHandleCheckout_InvalidBranchNames(t *testing.T) {
 		})
 	}
 }
-
-// --- handleRemove + handleReclone ---
 
 func TestHandleRemove_WorkspaceRootRejected(t *testing.T) {
 	for _, repo := range []string{"", "."} {
@@ -1552,8 +1452,6 @@ func TestHandleReclone_NonGitRepoRejected(t *testing.T) {
 	}
 }
 
-// --- handleCommit + handlePRFetch ---
-
 func TestHandleCommit_EmptyMessageRejected(t *testing.T) {
 	h := NewHandler(t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit", strings.NewReader(`{"message":""}`))
@@ -1601,16 +1499,7 @@ func TestHandlePRFetch_InvalidHeadRejected(t *testing.T) {
 	}
 }
 
-// --- handleShow: path validation ---
-
-// --- handleCommitMessage: nil guard ---
-
 func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
-	// With the AIHandler design, the prompter is non-nil by
-	// construction (NewAIHandler requires it). A nil-prompter
-	// AIHandler hits "no staged changes" before reaching the
-	// prompter call (tempdir isn't a repo), so we verify that
-	// the handler doesn't panic and returns the expected git error.
 	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -1620,23 +1509,16 @@ func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
 		}
 	}()
 	a.handleCommitMessage(rec, req)
-	// Tempdir isn't a repo → "no staged changes" before prompter is called.
 	if !strings.Contains(rec.Body.String(), "no_staged_changes") {
 		t.Errorf("body %q missing 'no_staged_changes'", rec.Body.String())
 	}
 }
 
-// --- handleRepos (fixture) ---
-
 func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	workDir := t.TempDir()
-	// Dot-NAMED repos (".github", ".kiro") are legitimate clone targets
-	// and must be discovered; only ".git" itself is excluded.
 	if err := os.MkdirAll(filepath.Join(workDir, ".hidden", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A workspace-root .git dir must not be listed as a repo named ".git"
-	// (the root repo itself is reported as "." by the workDir check).
 	if err := os.MkdirAll(filepath.Join(workDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1662,7 +1544,6 @@ func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// workDir itself has .git → "." leads; then subdir repos sorted.
 	want := []string{".", ".hidden", "repoA"}
 	if len(resp.Repos) != len(want) {
 		t.Fatalf("repos = %v, want %v", resp.Repos, want)
@@ -1693,8 +1574,6 @@ func TestHandleRepos_IncludesDotWhenWorkDirIsRepo(t *testing.T) {
 		t.Errorf("repos = %v, want [.]", resp.Repos)
 	}
 }
-
-// --- real git fixture tests ---
 
 // skipNoGit skips the test when the git binary isn't on PATH.
 func skipNoGit(t *testing.T) {
@@ -1747,14 +1626,8 @@ func writeCommit(t *testing.T, dir, file, content, msg string) {
 	runGit(t, dir, "commit", "-q", "-m", msg)
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for
-// the duration of the test and restores it on cleanup. Safe because the
-// git package's tests never run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler for the test and restores it
+// on cleanup.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -1780,10 +1653,10 @@ func behindRepo(t *testing.T) string {
 	if err := os.Mkdir(origin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	initFixtureRepo(t, origin) // origin main @ C1 ("initial commit")
+	initFixtureRepo(t, origin)
 	runGit(t, base, "clone", "-q", origin, work)
-	writeCommit(t, origin, "README.md", "second\n", "second commit") // C2
-	runGit(t, work, "fetch", "-q", "origin")                         // origin/main -> C2
+	writeCommit(t, origin, "README.md", "second\n", "second commit")
+	runGit(t, work, "fetch", "-q", "origin")
 	return work
 }
 
@@ -1910,19 +1783,12 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	}
 }
 
-// "Discard all" sends every dirty path in one request, so the handler must
-// clear tracked and untracked files together. Only the tracked half ever had a
-// test: `clean` was absent from the exec allowlist, so the untracked half ran
-// /bin/false and reported `clean:` with nothing after the colon while the
-// tracked half genuinely succeeded. The three file states below are what one
-// real "Discard all" click carries.
+// TestHandleDiscard_ClearsTrackedAndUntracked: "Discard all" sends every dirty path in one request,
+// so tracked and untracked files must clear together.
 func TestHandleDiscard_ClearsTrackedAndUntracked(t *testing.T) {
 	dir := t.TempDir()
-	initFixtureRepo(t, dir) // commits README.md ("hi\n") on main
+	initFixtureRepo(t, dir)
 
-	// A modified tracked file, an untracked file, and a STAGED new file —
-	// the last lands in the untracked bucket because the handler unstages
-	// before discarding, so it also exercises the clean path.
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("dirty\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1943,8 +1809,6 @@ func TestHandleDiscard_ClearsTrackedAndUntracked(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	// The failure is a 200 carrying an error envelope, so the status alone
-	// proves nothing — this is the assertion the bug would have tripped.
 	if strings.Contains(rec.Body.String(), `"error"`) {
 		t.Fatalf("body = %q, want no error envelope", rec.Body.String())
 	}
@@ -1961,23 +1825,19 @@ func TestHandleDiscard_ClearsTrackedAndUntracked(t *testing.T) {
 	}
 }
 
-// A discard failure must name a cause. The message is built by joining
-// per-subcommand failures, so an empty subprocess output used to render as a
-// bare "<subcommand>:" that told the user nothing.
+// A discard failure must name a cause: the message joins per-subcommand
+// failures, so an empty subprocess output would render as a bare "<subcommand>:".
 func TestHandleDiscard_FailureNamesACause(t *testing.T) {
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 
 	h := NewHandler(dir)
-	// A tracked path that does not exist: checkout fails with a real message.
 	body := `{"files":["no-such-file.txt"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/discard", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.handleDiscard(rec, req)
 
 	got := rec.Body.String()
-	// Either it succeeded (nothing to do) or it failed with a stated cause;
-	// what it may never do is fail with a message ending at its own colon.
 	for _, sub := range []string{subCheckout, subClean} {
 		if strings.Contains(got, sub+`: "`) || strings.Contains(got, sub+`:\n`) {
 			t.Errorf("body = %q, want a cause after %q, not an empty one", got, sub+":")
@@ -2102,11 +1962,9 @@ func TestIsValidGitRef(t *testing.T) {
 		{"has*asterisk", false},
 		{"has[bracket", false},
 		{"has\\backslash", false},
-		{"HEAD~3", false}, // ref-expression, not a plain ref
-		{"main^", false},  // ref-expression, not a plain ref
+		{"HEAD~3", false},
+		{"main^", false},
 
-		// git-check-ref-format's positional rules, all seven of which the
-		// pre-2026-09 denylist accepted while claiming to mirror them.
 		{"a..b", false},
 		{"foo.lock", false},
 		{".foo", false},
@@ -2118,22 +1976,18 @@ func TestIsValidGitRef(t *testing.T) {
 		{"refs/heads/.hidden", false},
 		{"refs/heads/x.lock", false},
 
-		// marotte's own screen, beyond git: git accepts every one of these in a
-		// refname, and a git-panel row and a slog attribute must not.
 		{"bidi\u202eoverride", false},
 		{"c1\u0085control", false},
 		{"line\u2028separator", false},
 		{"del\x7fbyte", false},
 
-		// The accept side that must not regress. An accented and a CJK name are
-		// what a full-match allowlist would refuse and git does not.
 		{"refs/heads/main", true},
 		{"9f2c1b4e6a8d0f3c5b7a9e1d2f4c6b8a0d2e4f60", true},
 		{"feature/café", true},
 		{"機能/ブランチ", true},
 		{"v1.2.3", true},
 		{"has.dots.inside", true},
-		{"lockfile", true}, // ".lock" is a SUFFIX rule, not a substring one
+		{"lockfile", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.ref, func(t *testing.T) {
@@ -2145,25 +1999,17 @@ func TestIsValidGitRef(t *testing.T) {
 }
 
 func TestRedactCredentials_LongUserInfoChain(t *testing.T) {
-	// 16-segment chain: redactCredentials must consume every userinfo
-	// segment in a single call (true fixed-point iteration), not
-	// bail out at 8 iterations and leak the residual head.
 	in := "http://a@b@c@d@e@f@g@h@i@j@k@l@m@n@o@p@host/path"
 	want := "http://host/path"
 	if got := redactCredentials(in); got != want {
 		t.Errorf("redactCredentials(long chain) = %q, want %q", got, want)
 	}
-	// Idempotency: a second call must not change the output.
 	if got := redactCredentials(redactCredentials(in)); got != want {
 		t.Errorf("redactCredentials idempotent = %q, want %q", got, want)
 	}
 }
 
 func TestRedactCredentials_DeeplyChainedUserinfo(t *testing.T) {
-	// Five @ segments before the host exercise the fixpoint loop
-	// at a depth realistic adversaries might actually try. Sits
-	// between the common 1-2 pass case and the 16-segment worst
-	// case pinned by TestRedactCredentials_LongUserInfoChain.
 	in := "http://a@b@c@d@e@host/path"
 	want := "http://host/path"
 	if got := redactCredentials(in); got != want {
@@ -2172,7 +2018,6 @@ func TestRedactCredentials_DeeplyChainedUserinfo(t *testing.T) {
 }
 
 func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
-	// Requires a real git binary to set up the fixture.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available in PATH")
 	}
@@ -2211,20 +2056,14 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	if !strings.Contains(resp.Error, "unsupported scheme") {
 		t.Errorf("error = %q, want substring 'unsupported scheme'", resp.Error)
 	}
-	// Tree must be preserved (reclone rejected BEFORE os.RemoveAll).
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		t.Errorf("repo dir destroyed by rejected reclone: %v", err)
 	}
 }
 
-// TestHandleReclone_RefusesAnIntermediateSymlinkEscape: {"repo":"link/victim"} passes
-// every other guard reclone has — non-empty, not ".", not the workspace root, `.git`
-// exists through the symlink, origin resolves, scheme allowed — so an unlink by name
-// destroys a repo outside the workspace. The surviving victim tree is the assertion.
-// TestHandleReclone_RejectsNonStandardScheme is the positive control that this guard is
-// not refusing everything.
+// TestHandleReclone_RefusesAnIntermediateSymlinkEscape: {"repo":"link/victim"} passes every lexical
+// guard, so only the pinned parent stops the delete escaping.
 func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
-	// Requires a real git binary to set up the fixture.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available in PATH")
 	}
@@ -2244,9 +2083,6 @@ func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 		}
 	}
 	run("init", "-q")
-	// An ALLOWED scheme deliberately: a rejected scheme would stop the request
-	// before os.RemoveAll for a reason that has nothing to do with the escape,
-	// and the test would pass with the guard removed.
 	run("remote", "add", "origin", "https://example.invalid/victim.git")
 
 	if err := os.Symlink(outside, filepath.Join(workDir, "link")); err != nil {
@@ -2268,14 +2104,11 @@ func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) body = %q, want it to name the refusal",
 			body)
 	}
-	// The assertion the guard exists for: the repo outside the workspace is intact.
 	if _, err := os.Stat(filepath.Join(victim, ".git")); err != nil {
 		t.Errorf("reclone deleted a repo outside the workspace: os.Stat(%q) = %v, want nil",
 			filepath.Join(victim, ".git"), err)
 	}
 }
-
-// --- handleStage validation (no git subprocess needed) ---
 
 func TestStagingHandlers_InputValidation(t *testing.T) {
 	type testCase struct {
@@ -2288,14 +2121,11 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 		wantCode int
 	}
 	cases := []testCase{
-		// handleStage
 		{"stage_malformed_body", http.MethodPost, "/api/git/stage", "stage", "{not", "bad request", http.StatusBadRequest},
 		{"stage_absolute_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["/etc/passwd"]}`, "absolute", http.StatusBadRequest},
 		{"stage_traversal_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["../etc/passwd"]}`, "escapes", http.StatusBadRequest},
-		// handleUnstage
 		{"unstage_malformed_body", http.MethodPost, "/api/git/unstage", "unstage", "garbage", "", http.StatusBadRequest},
 		{"unstage_traversal_path", http.MethodPost, "/api/git/unstage", "unstage", `{"files":["../../escape"]}`, "", http.StatusBadRequest},
-		// handleDiscard
 		{"discard_malformed_body", http.MethodPost, "/api/git/discard", "discard", "not json", "files required", http.StatusBadRequest},
 		{"discard_empty_files", http.MethodPost, "/api/git/discard", "discard", `{"files":[]}`, "files required", http.StatusBadRequest},
 		{"discard_null_byte_in_path", http.MethodPost, "/api/git/discard", "discard", "{\"files\":[\"bad\\u0000file\"]}", "null byte", http.StatusBadRequest},
@@ -2323,8 +2153,6 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 	}
 }
 
-// --- handlePRDescription validation (no git subprocess needed) ---
-
 func TestHandlePRDescription_MalformedBodyRejected(t *testing.T) {
 	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader("{not"))
@@ -2339,9 +2167,6 @@ func TestHandlePRDescription_MalformedBodyRejected(t *testing.T) {
 }
 
 func TestHandlePRDescription_NilUtilityPromptReturnsError(t *testing.T) {
-	// With the AIHandler design, the prompter is non-nil by
-	// construction. A nil-prompter AIHandler hits "no changes"
-	// before reaching the prompter call (tempdir isn't a repo).
 	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -2351,18 +2176,12 @@ func TestHandlePRDescription_NilUtilityPromptReturnsError(t *testing.T) {
 		}
 	}()
 	a.handlePRDescription(rec, req)
-	// Tempdir isn't a repo → "no changes" before prompter is called.
 	if !strings.Contains(rec.Body.String(), "no_changes") {
 		t.Errorf("body %q missing 'no_changes'", rec.Body.String())
 	}
 }
 
-// --- method enforcement on thin wrapper handlers ---
-
 func TestSimpleHandlers_NonPostRejected(t *testing.T) {
-	// POST-only endpoints must 405 without reaching the git subprocess
-	// layer — otherwise a misconfigured reverse proxy or a stray GET
-	// could trigger side effects.
 	tests := []struct {
 		handler func(h *Handler) http.HandlerFunc
 		name    string
@@ -2400,8 +2219,6 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	}
 }
 
-// --- WithUtilityPrompt wiring contract ---
-
 // mockPrompter implements UtilityPrompter for tests.
 type mockPrompter struct {
 	err    error
@@ -2415,17 +2232,12 @@ func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ marotte.Effo
 }
 
 func TestWithUtilityPrompt_WiresCallback(t *testing.T) {
-	// After constructing AIHandler with a prompter, handleCommitMessage
-	// must proceed past the nil guard. In a non-repo tempdir it
-	// short-circuits at the "no staged changes" branch.
 	mp := &mockPrompter{result: "feat: stub"}
 	a := NewAIHandler(t.TempDir(), mp)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message",
 		strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	a.handleCommitMessage(rec, req)
-	// Tempdir isn't a repo so we hit "no staged changes" before the
-	// callback fires.
 	if mp.called {
 		t.Errorf("utilityPrompt called before staged-changes check (guard order changed)")
 	}
@@ -2433,8 +2245,6 @@ func TestWithUtilityPrompt_WiresCallback(t *testing.T) {
 		t.Errorf("body %q missing 'no_staged_changes'; guard order may have changed", rec.Body.String())
 	}
 }
-
-// --- prRemoteHost ---
 
 func TestPRRemoteHost(t *testing.T) {
 	tests := []struct {
@@ -2463,11 +2273,6 @@ func TestPRRemoteHost(t *testing.T) {
 }
 
 func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
-	// Property: for any input prRemoteHost accepts, the output must
-	// not contain '/' or '@'. Empty string is always acceptable
-	// (unknown-remote signal). Guards against a regression that swaps
-	// url.Hostname for url.Host (port leak) or drops the userinfo
-	// strip.
 	inputs := []string{
 		"https://user:token@github.com/repo.git",
 		"https://a@b@c@host/path",
@@ -2490,10 +2295,7 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 	}
 }
 
-// --- fuzz targets ---
-
 func FuzzRedactCredentials(f *testing.F) {
-	// Seed corpus from existing test cases.
 	seeds := []string{
 		"",
 		"plain error",
@@ -2504,9 +2306,6 @@ func FuzzRedactCredentials(f *testing.F) {
 		"Authorization: Bearer ghp_TOKEN123",
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
-		// A git:// URL with a userinfo chain: the scheme the deleted
-		// exec-side target contributed, and the one shape the seeds
-		// above do not reach (they are all http/https).
 		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
 		"http://a@b@c@d@e@f@g@h@i@j@k@l@m@n@o@p@host/path",
@@ -2516,12 +2315,9 @@ func FuzzRedactCredentials(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data string) {
 		result := redactCredentials(data)
-		// Post-condition 1: no panic (implicit).
-		// Post-condition 2: idempotent.
 		if twice := redactCredentials(result); twice != result {
 			t.Errorf("redactCredentials not idempotent: f(%q)=%q, f(f(x))=%q", data, result, twice)
 		}
-		// Post-condition 3: no userinfo between :// and the next /.
 		if _, rest, ok := strings.Cut(result, "://"); ok {
 			if hostPart, _, hasSlash := strings.Cut(rest, "/"); hasSlash {
 				if strings.Contains(hostPart, "@") {
@@ -2560,7 +2356,6 @@ func FuzzPRRemoteHost(f *testing.F) {
 		if got == "" {
 			return
 		}
-		// Invariant: result must not contain '/', '@', ':', or control characters.
 		for _, c := range got {
 			if c == '/' || c == '@' || c == ':' {
 				t.Errorf("ParseRemoteHost(%q) = %q: contains forbidden char %q", data, got, string(c))
@@ -2591,16 +2386,8 @@ func FuzzExtractCommitMessage(f *testing.F) {
 		strings.Repeat("x", 100),
 		"feat: " + strings.Repeat("word ", 40),
 		"```go\nfeat: refactor\n```",
-		// Rune-boundary seeds. The cap cuts at subjectMaxRunes-len(ellipsis) =
-		// 69, so a multi-byte rune STARTING at byte 68 straddles that index:
-		// slicing bytes there emits half a rune, slicing runes keeps it whole.
-		// No space anywhere, so the word-break arm cannot mask the cut.
 		strings.Repeat("a", 68) + "\u00e9" + strings.Repeat("a", 10),
-		// Same straddle with a 3-byte rune, and with a space early enough that
-		// the word-break arm is rejected (<= subjectWordBreakMin), so this too
-		// reaches the ellipsis arm with the cut inside the rune.
 		"a " + strings.Repeat("b", 66) + "\u0c0b" + strings.Repeat("b", 10),
-		// A 4-byte rune straddling the same index.
 		strings.Repeat("a", 68) + "\U0001f680" + strings.Repeat("a", 10),
 	}
 	for _, s := range seeds {
@@ -2608,32 +2395,20 @@ func FuzzExtractCommitMessage(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data string) {
 		result := extractCommitMessage(data)
-		// Invariant 1: the subject is capped in RUNES — the unit capSubject
-		// documents and slices in. Counting BYTES here is what the weekly fuzz
-		// caught: a 72-rune subject carrying one 3-byte rune measures 74 bytes,
-		// so a byte count reports a correct cap as a violation. Read the bound
-		// off the production constant so the two cannot desync.
+		// The subject is capped in RUNES, the unit capSubject documents.
 		firstLine, _, _ := strings.Cut(result, "\n")
 		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
 			t.Errorf("extractCommitMessage(%q): subject %q is %d runes, want <=%d",
 				data, firstLine, n, subjectMaxRunes)
 		}
-		// Invariant 1b: capping never splits a rune. capSubject used to slice
-		// bytes while its doc said "chars", which cut a multi-byte rune in half;
-		// the JSON encoder then replaced the fragment with U+FFFD and the user
-		// saw a replacement character in a suggested commit message. Moving the
-		// cap to runes closed that, and this is what holds it closed.
 		if utf8.ValidString(data) && !utf8.ValidString(result) {
 			t.Errorf("extractCommitMessage(%q) = %q: valid UTF-8 in, invalid UTF-8 out",
 				data, result)
 		}
-		// Invariant 2: no surrounding quotes in output.
 		trimmed := strings.TrimSpace(result)
 		if len(trimmed) >= 2 {
 			if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
 				(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
-				// Only flag if the input didn't have mismatched quotes
-				// (mismatched quotes are preserved by design).
 				in := strings.TrimSpace(data)
 				if len(in) >= 2 &&
 					((in[0] == '"' && in[len(in)-1] == '"') ||
@@ -2643,7 +2418,6 @@ func FuzzExtractCommitMessage(f *testing.F) {
 				}
 			}
 		}
-		// Invariant 3: no "COMMIT MESSAGE:" prefix in output.
 		upper := strings.ToUpper(strings.TrimSpace(result))
 		if strings.HasPrefix(upper, "COMMIT MESSAGE:") {
 			t.Errorf("extractCommitMessage(%q) = %q: prefix not stripped", data, result)
@@ -2703,21 +2477,15 @@ func FuzzIsValidGitRef(f *testing.F) {
 		if !ok {
 			return
 		}
-		// Post-condition: if valid, must not start with '-'.
 		if strings.HasPrefix(data, "-") {
 			t.Errorf("isValidGitRef(%q) = true, but starts with '-'", data)
 		}
-		// Post-condition: if valid, must not contain forbidden chars.
 		if strings.ContainsAny(data, " \t\n\r\x00:?*[\\~^") {
 			t.Errorf("isValidGitRef(%q) = true, but contains forbidden char", data)
 		}
-		// Post-condition: must not be empty.
 		if data == "" {
 			t.Errorf("isValidGitRef(%q) = true, but is empty", data)
 		}
-		// The rules the three above cannot see. Until 2026-09 every one of
-		// these was reachable: the denylist screened characters and nothing
-		// positional, so the seed corpus could not fail whatever it drew.
 		if strings.Contains(data, "..") {
 			t.Errorf("isValidGitRef(%q) = true, but contains %q", data, "..")
 		}
@@ -2742,16 +2510,8 @@ func FuzzIsValidGitRef(f *testing.F) {
 	})
 }
 
-// TestIsValidGitRef_MatchesGitCheckRefFormat is the differential test, with the
-// real git binary as the oracle: `git check-ref-format refs/heads/<name>` is what
-// `git checkout -b` itself calls through strbuf_check_branch_ref.
-//
-// Only ONE direction is asserted table-wide — everything isValidGitRef accepts,
-// git must accept. The reverse cannot be: marotte is deliberately stricter than
-// git on hidden Unicode, so a name git accepts may legitimately be refused here.
-// The over-tightening direction is covered by the accept cases in
-// TestIsValidGitRef instead, which is where an "HEAD is reserved" or an
-// allowlist-shaped rewrite would fail.
+// TestIsValidGitRef_MatchesGitCheckRefFormat is the differential test with the real git binary as
+// the oracle (`git check-ref-format refs/heads/<name>`).
 func TestIsValidGitRef_MatchesGitCheckRefFormat(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not on PATH: %v", err)
@@ -2796,19 +2556,15 @@ func FuzzSanitizeRepoPaths(f *testing.F) {
 			return
 		}
 		for _, p := range got {
-			// Invariant 1: every returned path must be Clean.
 			if filepath.Clean(p) != p {
 				t.Errorf("sanitizeRepoPaths(%q): result %q is not Clean", data, p)
 			}
-			// Invariant 2: no returned path starts with ".." or contains ".."+separator.
 			if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
 				t.Errorf("sanitizeRepoPaths(%q): result %q escapes via ..", data, p)
 			}
-			// Invariant 3: no returned path is absolute.
 			if filepath.IsAbs(p) {
 				t.Errorf("sanitizeRepoPaths(%q): result %q is absolute", data, p)
 			}
-			// Invariant 4: no returned path contains a null byte.
 			if strings.ContainsRune(p, '\x00') {
 				t.Errorf("sanitizeRepoPaths(%q): result %q contains null byte", data, p)
 			}
@@ -2829,8 +2585,6 @@ func FuzzRepoDir(f *testing.F) {
 		workDir := "/home/user/work"
 		h := &Handler{workDir: workDir}
 		got := h.repoDir(data)
-		// Invariant 1: must not panic (implicit).
-		// Invariant 2: output must equal workDir OR be lexically rooted at workDir.
 		if got == workDir {
 			return
 		}
@@ -2845,11 +2599,8 @@ func FuzzRepoDir(f *testing.F) {
 	})
 }
 
-// --- tarch-b11-c7-p1: property-based test for extractCommitMessage ---
-
 func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate a random subject (0-200 chars) and optional body.
 		subject := rapid.StringMatching(`[a-z :(){}\-]{0,200}`).Draw(t, "subject")
 
 		hasBody := rapid.Bool().Draw(t, "hasBody")
@@ -2861,7 +2612,6 @@ func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
 			input = subject
 		}
 
-		// Optionally wrap with fence/prefix/quotes.
 		wrapper := rapid.IntRange(0, 3).Draw(t, "wrapper")
 		switch wrapper {
 		case 1:
@@ -2874,16 +2624,11 @@ func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
 
 		result := extractCommitMessage(input)
 
-		// Invariant 1: the subject line is capped in RUNES. This generator draws
-		// from an ASCII alphabet, so a byte count agreed here by accident; it is
-		// the cap's own unit that decides the assertion, not the alphabet a
-		// sibling draw happens to use.
 		firstLine, _, _ := strings.Cut(result, "\n")
 		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
 			t.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
 		}
 
-		// Invariant 2: if truncation fired, output ends with the ellipsis.
 		trimmedSubject := strings.TrimSpace(subject)
 		if wrapper == 0 && utf8.RuneCountInString(trimmedSubject) > subjectMaxRunes && result != "" {
 			subjectOut, _, _ := strings.Cut(result, "\n")
@@ -2892,14 +2637,11 @@ func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
 			}
 		}
 
-		// Invariant 3: output never starts or ends with whitespace.
 		if result != strings.TrimSpace(result) {
 			t.Fatalf("result has leading/trailing whitespace: %q", result)
 		}
 	})
 }
-
-// --- tarch-b11-c7-p3: table-driven TestHandlePush_ValidationMatrix ---
 
 func TestHandlePush_ValidationMatrix(t *testing.T) {
 	tests := []struct {
@@ -2925,12 +2667,9 @@ func TestHandlePush_ValidationMatrix(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			h.handlePush(rec, req)
-			// Push to a repo with no remote always fails at the git level
-			// but the handler itself returns 200 with an error envelope.
 			if rec.Code != tt.wantCode {
 				t.Errorf("code = %d, want %d, body = %s", rec.Code, tt.wantCode, rec.Body.String())
 			}
-			// Verify the response is valid JSON.
 			var resp map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Errorf("response is not valid JSON: %v, body = %s", err, rec.Body.String())
@@ -2938,8 +2677,6 @@ func TestHandlePush_ValidationMatrix(t *testing.T) {
 		})
 	}
 }
-
-// --- tarch-b11-c7-p4: FuzzCloneURLValidation ---
 
 func FuzzCloneURLValidation(f *testing.F) {
 	seeds := []string{
@@ -2960,8 +2697,6 @@ func FuzzCloneURLValidation(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, url string) {
 		accepted := isAllowedRemoteScheme(url)
-		// Invariant 1: never panics (implicit).
-		// Invariant 2: if accepted, must start with "https://" or "git@".
 		if accepted {
 			if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "git@") {
 				t.Errorf("isAllowedRemoteScheme(%q) = true but doesn't start with https:// or git@", url)
@@ -2969,8 +2704,6 @@ func FuzzCloneURLValidation(f *testing.F) {
 		}
 	})
 }
-
-// --- tarch-b11-c7-p6: table-driven TestHandlePull_ValidationMatrix ---
 
 func TestHandlePull_ValidationMatrix(t *testing.T) {
 	tests := []struct {
@@ -2996,12 +2729,9 @@ func TestHandlePull_ValidationMatrix(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			h.handlePull(rec, req)
-			// Pull on a repo with no remote always fails at the git level
-			// but the handler itself returns 200 with an error envelope.
 			if rec.Code != tt.wantCode {
 				t.Errorf("code = %d, want %d, body = %s", rec.Code, tt.wantCode, rec.Body.String())
 			}
-			// Verify the response is valid JSON.
 			var resp map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Errorf("response is not valid JSON: %v, body = %s", err, rec.Body.String())
@@ -3012,7 +2742,6 @@ func TestHandlePull_ValidationMatrix(t *testing.T) {
 
 func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Generate arbitrary UTF-8 strings (0-500 chars).
 		subject := rapid.String().Draw(rt, "subject")
 		if len(subject) > 500 {
 			subject = subject[:500]
@@ -3030,7 +2759,6 @@ func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
 			input = subject
 		}
 
-		// Optionally wrap with fence/prefix/quotes.
 		wrapper := rapid.IntRange(0, 4).Draw(rt, "wrapper")
 		switch wrapper {
 		case 1:
@@ -3046,27 +2774,16 @@ func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
 
 		result := extractCommitMessage(input)
 
-		// Invariant 1: the subject line is capped in RUNES, matching the
-		// contract capSubject implements. Counting bytes here contradicts
-		// that cap: a compliant 72-rune subject of multi-byte runes is far
-		// longer than 72 bytes, which rapid finds on most seeds.
 		firstLine, _, _ := strings.Cut(result, "\n")
 		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
 			rt.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
 		}
 
-		// Invariant 2: no leading/trailing whitespace.
 		if result != strings.TrimSpace(result) {
 			rt.Fatalf("result has leading/trailing whitespace: %q", result)
 		}
 	})
 }
-
-// --- conditional boundary / branch regression guards ---
-// These pin observable behaviour at the exact edge of conditionals that
-// general-purpose tests leave ambiguous (off-by-one boundaries, negated
-// guards). Each asserts an output whose value depends on the precise
-// operator at the site under test.
 
 // A subject longer than 72 chars whose only space within subject[:69]
 // sits at exactly column 30: extractCommitMessage's strict ">30"
@@ -3441,11 +3158,11 @@ func TestSanitizeRepoPaths_CountBoundary(t *testing.T) {
 // real `..` component is still refused.
 func TestValidateFilePath_DotDotIsAComponentNotASubstring(t *testing.T) {
 	accepted := []string{
-		"v1..v2.txt",     // the shape the old strings.Contains refused
-		"a..b/main.go",   // two adjacent dots mid-name, in a directory
-		"..extras/x.mkv", // first component merely BEGINS with two dots
-		"...",            // a legal directory name
-		"a/./b",          // unclean but not traversing: canonicality is not tested
+		"v1..v2.txt",
+		"a..b/main.go",
+		"..extras/x.mkv",
+		"...",
+		"a/./b",
 	}
 	for _, p := range accepted {
 		t.Run("accept/"+p, func(t *testing.T) {
@@ -3455,11 +3172,11 @@ func TestValidateFilePath_DotDotIsAComponentNotASubstring(t *testing.T) {
 		})
 	}
 	refused := []string{
-		"..",             // the component alone
-		"../x",           // leading traversal
-		"a/../b",         // buried traversal: RelEscapes would CLEAN this to "b"
-		"a/..",           // trailing traversal
-		"a/../../etc/pw", // multi-level
+		"..",
+		"../x",
+		"a/../b",
+		"a/..",
+		"a/../../etc/pw",
 	}
 	for _, p := range refused {
 		t.Run("refuse/"+p, func(t *testing.T) {
@@ -3504,8 +3221,6 @@ func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
 		t.Errorf("getRecentCommits(repo with a commit) returned the empty-history sentinel")
 	}
 
-	// A non-repo directory makes the git command error, so the sentinel
-	// is the correct result.
 	if got := getRecentCommits(t.Context(), t.TempDir(), 10); got != "No commit history available" {
 		t.Errorf("getRecentCommits(non-repo dir) = %q, want the sentinel", got)
 	}
@@ -3589,11 +3304,9 @@ func TestHandlePRDescription_UsesLocalLogWhenNonEmpty(t *testing.T) {
 	if err := os.Mkdir(origin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	initFixtureRepo(t, origin)                   // origin main @ C1
-	runGit(t, base, "clone", "-q", origin, work) // work main @ C1, origin/main @ C1
-	// Advance local main beyond origin/main with a recognizable commit.
-	writeCommit(t, work, "main.txt", "m\n", "MAIN_ONLY_COMMIT") // work main @ C2
-	// Branch off and add the feature commit (HEAD @ C3).
+	initFixtureRepo(t, origin)
+	runGit(t, base, "clone", "-q", origin, work)
+	writeCommit(t, work, "main.txt", "m\n", "MAIN_ONLY_COMMIT")
 	runGit(t, work, "checkout", "-q", "-b", "feature")
 	writeCommit(t, work, "feat.txt", "f\n", "FEATURE_ONLY_COMMIT")
 
@@ -3624,8 +3337,6 @@ func TestHandlePRDescription_FallsBackToOriginLogWhenLocalEmpty(t *testing.T) {
 	}
 	initFixtureRepo(t, origin)
 	runGit(t, base, "clone", "-q", origin, work)
-	// Commit on work's main (HEAD == main): `main..HEAD` is empty, but
-	// `origin/main..HEAD` carries this commit.
 	writeCommit(t, work, "README.md", "changed\n", "FALLBACK_LOG_COMMIT")
 
 	cp := &capturePrompter{result: "desc"}
@@ -3792,12 +3503,8 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 	}
 }
 
-// swappedAncestor stages the race a pinned parent exists for, returning the repo name to
-// remove and the on-disk path that must survive: a path whose directory component was a
-// real empty directory when the caller resolved it and is an IN-WORKSPACE symlink to a
-// protected tree by the time the remove runs. Computing the path before the swap makes
-// the window deterministic, and in-workspace is deliberate — a confined root follows an
-// in-root symlink by design, so only the pinned descent answers this case.
+// swappedAncestor stages the race a pinned parent exists for and returns the repo name to remove
+// and the on-disk path that must survive a swapped directory component.
 func swappedAncestor(t *testing.T, workDir string) (repo, victim string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(workDir, "store"), 0o750); err != nil {
@@ -3810,8 +3517,6 @@ func swappedAncestor(t *testing.T, workDir string) (repo, victim string) {
 	if err := os.WriteFile(filepath.Join(victim, "chats.json"), []byte("the chat store"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// "keep" does not exist inside the real x, so anything the remove touches is a
-	// path it was never pointed at.
 	if err := os.Mkdir(filepath.Join(workDir, "x"), 0o750); err != nil {
 		t.Fatal(err)
 	}

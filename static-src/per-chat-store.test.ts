@@ -1,9 +1,4 @@
-// The per-chat localStorage map two viewer-owned stores sit on (fold overrides,
-// banner dismissals). What is pinned is the BOUND, because that is the part with
-// no other guard: the cleanup calls that used to run on chat_deleted went with the
-// global blob they existed for, and a retention purge removes a chat with no
-// client involved at all, so nothing else will ever tell this module a chat is
-// gone.
+// The per-chat localStorage map two viewer-owned stores sit on (fold overrides, banner dismissals).
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { readPerChat, writePerChat, MAX_TRACKED_CHATS } from "./per-chat-store.js";
@@ -41,8 +36,8 @@ describe("reading", () => {
     expect(read()).toEqual({ c1: ["x", "y"] });
   });
 
-  // Bytes nothing wrote must not take the app down: the honest failure is a
-  // forgotten dismissal, not a blank transcript.
+  // Bytes nothing wrote must not take the app down: the honest failure is a forgotten dismissal,
+  // not a blank transcript.
   it("survives bytes that are not JSON", () => {
     localStorage.setItem(KEY, "{not json");
     expect(read()).toEqual({});
@@ -53,8 +48,8 @@ describe("reading", () => {
     expect(read()).toEqual({});
   });
 
-  // Per ENTRY rather than per document, so one hand-edited chat does not cost
-  // every other chat its state.
+  // Per ENTRY rather than per document, so one hand-edited chat does not cost every other chat its
+  // state.
   it("drops only the entries whose shape is wrong", () => {
     localStorage.setItem(KEY, JSON.stringify({ good: ["x"], bad: 42, alsoBad: {} }));
     expect(read()).toEqual({ good: ["x"] });
@@ -79,8 +74,8 @@ describe("writing", () => {
     expect(read()).toEqual({ c1: ["z"] });
   });
 
-  // An undefined value is a DELETE. Keeping an empty record would spend a slot on
-  // a chat with nothing to remember and evict one that has something.
+  // An undefined value is a DELETE. Keeping an empty record would spend a slot on a chat with
+  // nothing to remember and evict one that has something.
   it("deletes the chat when the value is undefined", () => {
     write("c1", ["x"]);
     write("c2", ["y"]);
@@ -112,10 +107,8 @@ describe("the bound", () => {
     expect(kept[`c${String(MAX_TRACKED_CHATS)}`]).toEqual(["x"]);
   });
 
-  // "Oldest" means least recently WRITTEN, not first ever seen, and the re-insert
-  // on every write is what makes that true. Without it the eviction order would
-  // be whatever the map happened to hold, so a chat the reader keeps coming back
-  // to would age out while ones they never touch again survive.
+  // "Oldest" means least recently WRITTEN, not first ever seen, and the re-insert on every write is
+  // what makes that true.
   it("counts a rewrite as touching the chat, so it is not the next to go", () => {
     write("first", ["x"]);
     for (let i = 0; i < MAX_TRACKED_CHATS - 1; i++) {

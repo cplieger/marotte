@@ -1,16 +1,9 @@
-// Actions for the Git Changes tab. The server answers HTTP 200 for BOTH
-// outcomes (internal/git/helpers.go writeCmdResult): a non-empty `error`
-// field is the failure, NOT the status. decodeGitResult turns it into an
-// ActionError (code "git", never retried: the command may have had side
-// effects), so the outcome carries git's words. No action toasts a failure:
-// the Changes tab says it beside the control that was pressed.
-// ---------------------------------------------------------------------------
+// Git Changes tab actions. The server answers HTTP 200 for both outcomes; failures surface beside
+// the pressed control, so no action toasts one.
 
 import { apiAction, ActionError, hasErrorString, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { summarizePullAll, type GitPullResult } from "../git-types.js";
-
-// --- Wire types ---
 
 interface GitRepoArgs {
   repo: string;
@@ -20,17 +13,13 @@ interface GitRepoFilesArgs extends GitRepoArgs {
   files: string[];
 }
 
-/** Result envelope of every /api/git mutation. Success carries an
- *  optional `output` (git's combined output, ScrubAuth'd server-side);
- *  failure carries a non-empty `error`. decodeGitResult converts the
- *  error arm into a thrown ActionError, so a RESOLVED dispatch is a
- *  genuine success and `error` is never set on returned values. */
+/** Result envelope of every /api/git mutation. decodeGitResult throws on the error arm, so a
+ *  RESOLVED dispatch is a genuine success and `error` is never set on returned values. */
 export interface GitCmdResult {
   output?: string;
   error?: string;
 }
 
-/** Narrow a parsed success body to the fields GitCmdResult carries. */
 function liftOutput(parsed: unknown): GitCmdResult {
   if (typeof parsed === "object" && parsed !== null && "output" in parsed) {
     const out = (parsed as { output?: unknown }).output;
@@ -41,17 +30,14 @@ function liftOutput(parsed: unknown): GitCmdResult {
   return {};
 }
 
-/** Composes the message a failed /api/git envelope should carry: the kind,
- *  plus `detail` when the server supplied one. The two callers passing an
- *  empty detail do so deliberately (their kind says everything). */
+/** The message a failed /api/git envelope carries: the kind, plus `detail` when supplied. */
 function errorMessage(data: { error: string }): string {
   const detail = (data as { detail?: unknown }).detail;
   return typeof detail === "string" && detail !== "" ? `${data.error}: ${detail}` : data.error;
 }
 
-/** Decodes the /api/git 200-with-error envelope (apiAction's decode seam).
- *  HTTP 200 + {"error": …} means the git subprocess failed; code "git"
- *  (never retried — the command may have had side effects). Shared with
+/** Decodes the /api/git 200-with-error envelope (internal/git/helpers.go writeCmdResult) into an
+ *  ActionError with code "git", never retried: the command may have had side effects. Shared with
  *  git-branch.ts. */
 export function decodeGitResult(data: unknown): GitCmdResult {
   if (hasErrorString(data) && data.error !== "") {
@@ -59,8 +45,6 @@ export function decodeGitResult(data: unknown): GitCmdResult {
   }
   return liftOutput(data);
 }
-
-// --- Actions ---
 
 /** Stage files (used for both "stage all" and single-file stage). */
 export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
@@ -80,10 +64,9 @@ export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   decode: decodeGitResult,
   error: false,
-  // Destructive: timed-out discard may have succeeded server-side
+  // Not retryable: a timed-out discard may have succeeded server-side.
 });
 
-/** Unstage a file. */
 export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
@@ -105,13 +88,8 @@ export const pull = apiAction<GitRepoArgs, GitCmdResult>({
   retry: RETRY_STANDARD,
 });
 
-/** Narrow the pull-all response into its per-repo rows.
- *
- *  A missing or non-array `repos` is a FAILURE rather than an empty pass: the
- *  caller reports counts from it and flags repos from it, so a body it cannot
- *  read must not resolve as "nothing to pull". Read as unknown and narrowed
- *  field by field, because asserting the shape is what would make these checks
- *  statically dead. */
+/** The pull-all response's per-repo rows. A missing or non-array `repos` is a FAILURE, not
+ *  "nothing to pull"; narrowed field by field from unknown, since a cast would make the checks dead. */
 function decodePullAll(data: unknown): GitPullResult[] {
   const rec = data as Record<string, unknown> | null;
   const repos = rec?.["repos"];
@@ -138,11 +116,8 @@ function decodePullAll(data: unknown): GitPullResult[] {
   return out;
 }
 
-/** Fast-forwards every repo where that is safe, and reports the rest. One
- *  request rather than a fan-out over `pull`: the fast-forward-safety
- *  judgement has to be atomic with the pull it guards. `dedupe` collapses a
- *  second press onto the pass already running; no retry — a timed-out pass
- *  may have pulled some repos, and Refresh is the recovery. */
+/** Fast-forwards every repo where safe and reports the rest, in one request: the safety judgement
+ *  must be atomic with the pull. `dedupe` collapses a second press; no retry, Refresh recovers. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no args
 export const pullAll = apiAction<void, GitPullResult[]>({
   name: "git.pull_all",
@@ -170,7 +145,7 @@ export const stash = apiAction<GitRepoArgs, GitCmdResult>({
   decode: decodeGitResult,
   error: false,
   idempotencyKey: true,
-  // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
+  // Idempotent server-side via Idempotency-Key; left non-retryable.
 });
 
 export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
@@ -180,7 +155,7 @@ export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
   decode: decodeGitResult,
   error: false,
   idempotencyKey: true,
-  // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
+  // Idempotent server-side via Idempotency-Key; left non-retryable.
 });
 
 export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>({
@@ -191,8 +166,7 @@ export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>
   success: "Committed",
   error: false,
   idempotencyKey: true,
-  // Not retryable: a timed-out commit may have succeeded server-side;
-  // retrying would create a duplicate commit.
+  // Not retryable: a timed-out commit may have succeeded; a retry duplicates it.
 });
 
 export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({

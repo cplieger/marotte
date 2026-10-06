@@ -1,22 +1,9 @@
-// ---------------------------------------------------------------------------
-// The composer band's run bar: one line per live workflow run the ACTIVE chat
-// launched.
-//
-// Every case names its observable, because the bar is a pure projection and the
-// only thing worth pinning is what it says about store state a reader can act on:
-// which runs it shows (the scope decision), what state it claims for each, where a
-// click goes, and that it advances its clock without refetching.
-//
-// The store is REAL. The run read is stubbed per run id so `invalidateRun` resolves
-// into the cells the bar reads, which is the same edge the transcript's own suites
-// mock. `run-view.js` is replaced so the click's destination is assertable without
-// dragging the exec page into the graph.
-// ---------------------------------------------------------------------------
+// The composer band's run bar: one line per live workflow run the ACTIVE chat launched.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// The graph reaches the shared DOM registry, which throws on a missing element.
-// Every id has to exist before the imports below are evaluated.
+// The graph reaches the shared DOM registry, which throws on a missing element. Every id has to
+// exist before the imports below are evaluated.
 for (const id of [
   "run-bar",
   "messages",
@@ -30,12 +17,12 @@ for (const id of [
   document.body.appendChild(el);
 }
 
-// scroll.ts is a self-initialising singleton over a real scroller; the canonical
-// mock is what every suite in this graph uses.
+// scroll.ts is a self-initialising singleton over a real scroller; the canonical mock is what every
+// suite in this graph uses.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
-// The click's destination. Replaced rather than spied so the real run page is never
-// linked into this file's graph.
+// The click's destination. Replaced rather than spied so the real run page is never linked into
+// this file's graph.
 const openRunView = vi.hoisted(() => vi.fn());
 vi.mock("./run-view.js", () => ({
   openRunView,
@@ -44,22 +31,21 @@ vi.mock("./run-view.js", () => ({
 const announce = vi.hoisted(() => vi.fn());
 vi.mock("@cplieger/ui-primitives/announce", () => ({ announce }));
 
-/** Per-run inspect answers, consulted by the stubbed run read. A run absent from
- *  this map answers a failed read, which is the honest "nothing fetched yet" case. */
+/** Per-run inspect answers, consulted by the stubbed run read. A run absent from this map
+ *  answers a failed read, which is the honest "nothing fetched yet" case. */
 const inspect = new Map<string, unknown>();
 vi.mock("./api-client.js", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("./api-client.js")),
-  // The OrError variant: the store spends a failed read's STATUS, so a run this map
-  // does not name answers 0 — no request — rather than the settled 404 that would
-  // skip its retry ladder.
+  // The OrError variant: the store spends a failed read's STATUS, so a run this map does not name
+  // answers 0 — no request — rather than the settled 404 that would skip its retry ladder.
   apiGetOrError: vi.fn((path: string) => {
     const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
     if (hit !== null) {
       const id = decodeURIComponent(hit[1] ?? "");
       const state = inspect.get(id);
-      // CLONED per call, because the real read parses fresh JSON: handing the same
-      // object back twice makes the run cell's signal dedupe by identity, and the
-      // refetch cases below would then pass with no re-render to protect.
+      // CLONED per call, because the real read parses fresh JSON: handing the same object back
+      // twice makes the run cell's signal dedupe by identity, and the refetch cases below would
+      // then pass with no re-render to protect.
       return Promise.resolve(
         state === undefined
           ? { ok: false, status: 0, data: null, error: "" }
@@ -91,17 +77,17 @@ function chatID(): string {
 }
 
 let runSeq = 0;
-/** A fresh run id per case. `run-store.ts`'s cells are module state with one bound
- *  (`forgetRun`, which only the transcript card may call), so reusing an id would
- *  let a case read the state a previous case fetched for it — and a stale SETTLED
- *  cell makes the row invisible, which is exactly what the filter is for. */
+/** A fresh run id per case. `run-store.ts`'s cells are module state with one bound (`forgetRun`,
+ *  which only the transcript card may call), so reusing an id would let a case read the state a
+ *  previous case fetched for it — and a stale SETTLED cell makes the row invisible, which is
+ *  exactly what the filter is for. */
 function runID(tag: string): string {
   runSeq++;
   return `wf-${tag}-${String(runSeq)}`;
 }
 
-/** A run state as `GET /api/runs/{id}` answers it. One running leaf, so the
- *  counters and the elapsed clock have something to read. */
+/** A run state as `GET /api/runs/{id}` answers it. One running leaf, so the counters and the
+ *  elapsed clock have something to read. */
 function state(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     workflowId: "wf",
@@ -121,8 +107,8 @@ function state(over: Record<string, unknown> = {}): Record<string, unknown> {
 async function activate(chat: string): Promise<void> {
   setSessions([{ id: chat, name: chat, messages: [] } as never]);
   setActive(chat);
-  // One macrotask per fetch generation: the first render triggers `invalidateRun`,
-  // whose resolution writes the cell the second render reads.
+  // One macrotask per fetch generation: the first render triggers `invalidateRun`, whose resolution
+  // writes the cell the second render reads.
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -135,8 +121,8 @@ function rowText(sel: string): string[] {
   return [...bar.querySelectorAll(sel)].map((n) => n.textContent ?? "");
 }
 
-/** A parked step's ask, the durable kind, keyed under the launching chat with the
- *  run stamped on it — the same shape `handlers/run.ts` enqueues. */
+/** A parked step's ask, the durable kind, keyed under the launching chat with the run stamped on
+ *  it — the same shape `handlers/run.ts` enqueues. */
 function pushRunAsk(chat: string, runID: string): void {
   pushDecision({
     kind: "run_input",
@@ -190,9 +176,8 @@ describe("the run bar", () => {
     expect(bar.children.length).toBe(0);
   });
 
-  // THE SCOPE DECISION. Another chat's run is surfaced by its own tab's activity
-  // dot, and a parentless run has no launching chat at all, so neither belongs on
-  // this chat's line.
+  // THE SCOPE DECISION. Another chat's run is surfaced by its own tab's activity dot, and a
+  // parentless run has no launching chat at all, so neither belongs on this chat's line.
   it("shows one row per live run of the ACTIVE chat and none of anyone else's", async () => {
     const mine = chatID();
     const theirs = chatID();
@@ -220,8 +205,8 @@ describe("the run bar", () => {
     live(running, c);
     live(parked, c);
     live(asking, c);
-    // Driven through the dock, not by faking the reader: `runPendingAsks` is what
-    // the bar consults and what the transcript card and the tab dot consult too.
+    // Driven through the dock, not by faking the reader: `runPendingAsks` is what the bar consults
+    // and what the transcript card and the tab dot consult too.
     pushRunAsk(c, asking);
     await activate(c);
 
@@ -251,23 +236,18 @@ describe("the run bar", () => {
     live(runID("unknown"), c);
     await activate(c);
 
-    // The row exists — the inventory says the run is live — and it claims no state
-    // rather than reporting "not started" for a run that has demonstrably started.
+    // The row exists — the inventory says the run is live — and it claims no state rather than
+    // reporting "not started" for a run that has demonstrably started.
     expect(rowStates()).toEqual(["unknown"]);
     expect(rowText(".run-bar-state")).toEqual([""]);
-    // No `data-status` at all, which is how the shared mark rule says "reserved box,
-    // nothing to show" — the same answer a tab row gets for a run it has not fetched.
-    // Asserted as the ATTRIBUTE's absence rather than as an empty glyph: the glyph has
-    // no children in any state now that the mark is painted by CSS, so a child count
-    // would pass whatever status this row carried.
+    // No `data-status` at all, which is how the shared mark rule says "reserved box, nothing to
+    // show" — the same answer a tab row gets for a run it has not fetched.
     expect(bar.querySelector(".run-bar-glyph")?.hasAttribute("data-status")).toBe(false);
   });
 
-  // The bar's glyph IS the workflow mark, so what it carries is the mark's own status
-  // vocabulary (`TabRunDotStatus`) rather than this row's `data-state`. The two differ
-  // for the state that matters most: `running` on the row, `working` on the mark, which
-  // is the tab strip's word. `outcome-mark.test.ts` pins that the two surfaces share
-  // one CSS rule; this pins that the bar feeds it the right value.
+  // The bar's glyph IS the workflow mark, so what it carries is the mark's own status vocabulary
+  // (`TabRunDotStatus`) rather than this row's `data-state`. The two differ for the state that
+  // matters most: `running` on the row, `working` on the mark, which is the tab strip's word.
   it("marks its glyph with the tab strip's status for every live state", async () => {
     const c = chatID();
     chats.push(c);
@@ -314,9 +294,9 @@ describe("the run bar", () => {
     expect(openRunView).toHaveBeenCalledWith(id, "nightly", c);
   });
 
-  // The visible span is ellipsized by CSS, responsively. A length cut in TS would
-  // travel into two places a cut does not belong: `openRunView` makes this string the
-  // run TAB's name, and it is the button's accessible name.
+  // The visible span is ellipsized by CSS, responsively. A length cut in TS would travel into two
+  // places a cut does not belong: `openRunView` makes this string the run TAB's name, and it is the
+  // button's accessible name.
   it("passes the run's whole name to the opener and to the accessible name", async () => {
     const c = chatID();
     chats.push(c);
@@ -349,9 +329,9 @@ describe("the run bar", () => {
     expect(bar.classList.contains("hidden")).toBe(true);
   });
 
-  // A settled state still sitting in the inventory means a `run_finished` this
-  // client missed. A completed row in a live-runs bar is the one wrong thing the bar
-  // can say, so the store's own answer wins over the inventory.
+  // A settled state still sitting in the inventory means a `run_finished` this client missed. A
+  // completed row in a live-runs bar is the one wrong thing the bar can say, so the store's own
+  // answer wins over the inventory.
   it("drops a row the store can prove has finished", async () => {
     const c = chatID();
     chats.push(c);
@@ -364,8 +344,8 @@ describe("the run bar", () => {
     expect(bar.classList.contains("hidden")).toBe(true);
   });
 
-  // What the `untracked` render protects: a refetch that does not move the key must
-  // not rebuild the row, or every `run_progress` re-fires the entry animation.
+  // What the `untracked` render protects: a refetch that does not move the key must not rebuild the
+  // row, or every `run_progress` re-fires the entry animation.
   it("keeps the same row node across a refetch that changes nothing", async () => {
     const c = chatID();
     chats.push(c);
@@ -383,12 +363,7 @@ describe("the run bar", () => {
     expect(bar.firstElementChild).toBe(row);
   });
 
-  // A rendered run whose store cell is BLANKED under it. `runCardFor`'s disposer
-  // forgets a run whose transcript card unmounts with no run tab open, and
-  // `unmountTurnBody` runs that disposal for every turn crossing past TURNS_WARM — so
-  // this is the ordinary case for a chat someone keeps talking in. An executing run
-  // refills on its next `run_progress` frame; a PAUSED one emits none, so the bar's
-  // own re-fetch is the only thing between it and a permanently nameless row.
+  // A rendered run whose store cell is BLANKED under it.
   it("refetches a rendered run whose store cell was forgotten", async () => {
     const c = chatID();
     chats.push(c);
@@ -401,10 +376,9 @@ describe("the run bar", () => {
     const { forgetRun } = await import("./run-store.js");
     forgetRun(parked);
 
-    // `forgetRun` DELETES the cell's signal rather than writing it, so no subscriber
-    // wakes on the forget itself: the blank is read by the next render, which any
-    // other live run of this chat arriving is enough to cause. The row must not be
-    // dropped in between, or a fresh hold would fetch it for the wrong reason.
+    // `forgetRun` DELETES the cell's signal rather than writing it, so no subscriber wakes on the
+    // forget itself: the blank is read by the next render, which any other live run of this chat
+    // arriving is enough to cause.
     const second = runID("second");
     inspect.set(second, state({ runLabel: "the other one" }));
     live(second, c);
@@ -421,17 +395,15 @@ describe("the run bar", () => {
     const id = runID("tick");
     inspect.set(id, state());
     live(id, c);
-    // PRIMED before the bar ever sees the run, so the row is built on the FIRST
-    // render rather than on a second one after the bar's own fetch lands. That is
-    // the ordinary case for a run already in the store (a chat switch back, a boot
-    // restore), and it is the case that catches a hold created after its row.
+    // PRIMED before the bar ever sees the run, so the row is built on the FIRST render rather than
+    // on a second one after the bar's own fetch lands.
     const { invalidateRun: prime } = await import("./run-store.js");
     prime(id);
     await new Promise((r) => setTimeout(r, 0));
 
-    // Fake timers installed BEFORE the render that creates the hold, or the interval
-    // the bar joins is a real one no `advanceTimersByTime` can reach.
-    // `shouldAdvanceTime` keeps the awaits below resolving.
+    // Fake timers installed BEFORE the render that creates the hold, or the interval the bar joins
+    // is a real one no `advanceTimersByTime` can reach. `shouldAdvanceTime` keeps the awaits below
+    // resolving.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       await activate(c);
@@ -439,8 +411,8 @@ describe("the run bar", () => {
       expect(before).not.toBe("");
       const fetches = vi.mocked(apiGetOrError).mock.calls.length;
 
-      // The 1s interval is `messages-blocks.ts`'s, shared with the transcript's
-      // cards; the bar joins it as a holder rather than starting one of its own.
+      // The 1s interval is `messages-blocks.ts`'s, shared with the transcript's cards; the bar
+      // joins it as a holder rather than starting one of its own.
       vi.advanceTimersByTime(2000);
 
       expect(rowText(".run-bar-clock")[0]).not.toBe(before);
@@ -461,8 +433,8 @@ describe("the run bar", () => {
     live(one, first);
     live(two, second);
 
-    // ARRIVING at a chat that already has a run is a switch, not news — the same
-    // rule `pending-steers.ts` applies to its own count.
+    // ARRIVING at a chat that already has a run is a switch, not news — the same rule
+    // `pending-steers.ts` applies to its own count.
     await activate(first);
     expect(announce).not.toHaveBeenCalled();
 
@@ -478,13 +450,11 @@ describe("the run bar", () => {
   });
 });
 
-// A live run re-renders this bar several times a minute, and re-inserting a node
-// restarts every animation in it and drops `:hover` and focus. Object
-// IDENTITY is the assertion in every case here: a rebuilt row is indistinguishable
-// from a patched one by content.
+// Object IDENTITY is the assertion in every case here: a rebuilt row is indistinguishable from a
+// patched one by content.
 describe("a render patches its rows rather than rebuilding them", () => {
-  /** Change what the run read answers, then make the bar re-read it the way a
-   *  `run_progress` frame does. */
+  /** Change what the run read answers, then make the bar re-read it the way a `run_progress`
+   *  frame does. */
   async function advance(id: string, over: Record<string, unknown>): Promise<void> {
     inspect.set(id, state(over));
     invalidateRun(id);
@@ -544,8 +514,8 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(rowText(".run-bar-steps")).toEqual(["step 3 of 3"]);
     const after = parts();
     expect(after.row).toBe(before.row);
-    // The mark is what carries the beat, and the clock is the element the shared
-    // 1s tick holds a pointer to — replacing either is what the fix is about.
+    // The mark is what carries the beat, and the clock is the element the shared 1s tick holds a
+    // pointer to, so neither may be replaced.
     expect(after.glyph).toBe(before.glyph);
     expect(after.clock).toBe(before.clock);
   });
@@ -567,9 +537,9 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  // A patch is not licence to go stale: the mark is written from the run's state on
-  // every pass, on the SAME element, so the row that keeps its glyph still tells the
-  // truth about what the run is doing.
+  // A patch is not licence to go stale: the mark is written from the run's state on every pass, on
+  // the SAME element, so the row that keeps its glyph still tells the truth about what the run is
+  // doing.
   it("rewrites the mark on the element it kept", async () => {
     const c = chatID();
     chats.push(c);
@@ -588,9 +558,9 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(glyph?.getAttribute("data-status")).toBe("input");
   });
 
-  // The name is resolved at CLICK time rather than captured at mount, because the row
-  // outlives its first paint now: a run whose label arrives with its first fetch
-  // would otherwise open a tab called "Workflow run" for the rest of the session.
+  // The name is resolved at CLICK time rather than captured at mount, because the row outlives its
+  // first paint now: a run whose label arrives with its first fetch would otherwise open a tab
+  // called "Workflow run" for the rest of the session.
   it("opens the tab under the label the run has NOW, not the one it was mounted with", async () => {
     const c = chatID();
     chats.push(c);

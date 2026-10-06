@@ -1,29 +1,18 @@
-// ---------------------------------------------------------------------------
-// The pre-session catalog's FETCH POLICY: which verdict is usable, how long to
-// keep asking, and what to say when the asking stops.
-//
-// Here rather than in app.ts because a composition root cannot be tested, and
-// those three decisions are where both previous rounds' defects were found. No
-// DOM and no app.ts import: the reader and the sinks arrive as parameters.
-// ---------------------------------------------------------------------------
+// The pre-session catalog's fetch policy. No DOM and no app.ts import, so it is
+// testable: the reader and the sinks arrive as parameters.
 
 import { pollUntil } from "./actions/index.js";
 // Type-only, so picker.ts stays the one owner of the phase state and its copy.
 import type { CatalogPhase } from "./picker.js";
 import type { CatalogState } from "./wire/types.gen.js";
 
-/** LONGER than the server's own 45s budget for this endpoint
- *  (configTemplateTimeout, internal/agent/config_template.go), which the
- *  library's 30s default made unreachable: the first call may spawn kiro-cli and
- *  unpack a ~240 MB KAS runtime, so the client used to abort every cold start
- *  before the server had finished. Move the two together. */
+/** Must exceed the server's 45s budget (configTemplateTimeout,
+ *  internal/agent/config_template.go): a cold first call spawns kiro-cli and
+ *  unpacks the KAS runtime. Move the two together. */
 export const CATALOG_REQUEST_TIMEOUT_MS = 50_000;
 
-// The four retry numbers, and the TOTAL BUDGET is the bound that actually binds.
-// At ~50s per attempt plus the backed-off waits, 180s admits about three
-// attempts, so MAX_ATTEMPTS is a ceiling that is never reached — kept as the
-// guard against a pathologically fast failure (a 4xx answering in milliseconds)
-// turning the budget into hundreds of requests.
+// The total budget is the bound that binds: about three ~50s attempts fit in
+// 180s. MAX_ATTEMPTS only guards a fast failure (a 4xx) multiplying requests.
 const RETRY_INTERVAL_MS = 2_000;
 const RETRY_BACKOFF = { factor: 2, maxMs: 30_000 };
 const MAX_ATTEMPTS = 6;
@@ -37,14 +26,9 @@ export interface CatalogAnswer {
 /** What a read's verdict means to the fetch policy: apply it, or keep asking. */
 export type CatalogVerdict = "usable" | "retry";
 
-/** The verdict mapping, total over the wire enum with no default arm — a fourth
- *  value is a compile error here rather than one the policy silently retries.
- *
- *  `empty` is USABLE for the same reason `ready` is: an empty catalog is a real
- *  answer KAS gave, and `_kiro/config/template` is a pure cache read that
- *  triggers no model refresh, so a second call re-reads the same empty cache.
- *  `unavailable` converges — the dominant real-world cause is a first call that
- *  never reached KAS at all. */
+/** Total over the wire enum with no default arm, so a new value is a compile error.
+ *  `empty` is usable: the endpoint is a pure cache read, so re-asking re-reads the
+ *  same cache. `unavailable` converges (usually a first call that never reached KAS). */
 export function readVerdict(catalog: CatalogState): CatalogVerdict {
   switch (catalog) {
     case "ready":
@@ -59,25 +43,18 @@ export function readVerdict(catalog: CatalogState): CatalogVerdict {
 export interface CatalogRefresh<T extends CatalogAnswer> {
   /** One read of the endpoint. `null` is a transient failure (network, decode). */
   readonly read: (signal: AbortSignal) => Promise<T | null>;
-  /** Apply a USABLE answer. Never called for a `retry` verdict, which is what
-   *  keeps a degraded read from replacing an effort vocabulary and a mode list a
-   *  successful boot fetch already landed. */
+  /** Apply a usable answer. Never called on `retry`, so a degraded read cannot
+   *  replace a vocabulary a successful fetch already landed. */
   readonly apply: (answer: T) => void;
-  /** Record where the fetch has got to. */
   readonly setPhase: (phase: CatalogPhase) => void;
 }
 
 /** The single refresh slot, held for the life of one bounded loop. */
 let inFlight: AbortController | undefined;
 
-/** Refresh the catalog: one read, then a bounded retry on the one verdict that
- *  can converge, settling `unavailable` when the budget is spent.
- *
- *  `reset` RESTARTS a loop already running rather than joining or refusing it: a
- *  login is exactly the new information that may have fixed the read, and
- *  refusing it means it contributes nothing until a 180s loop exhausts. Every
- *  other caller (boot, a transport gap) declines, because a live loop is already
- *  asking the same endpoint. */
+/** One read, then a bounded retry on the one verdict that can converge; settles
+ *  `unavailable` when the budget is spent. `reset` restarts a running loop (a
+ *  login may have fixed the read); every other caller declines while one runs. */
 export async function refreshCatalog<T extends CatalogAnswer>(
   deps: CatalogRefresh<T>,
   opts: { readonly reset?: boolean; readonly signal?: AbortSignal } = {},
@@ -90,16 +67,14 @@ export async function refreshCatalog<T extends CatalogAnswer>(
   }
   const own = new AbortController();
   inFlight = own;
-  // A caller's signal bounds the WHOLE loop, not one read: a read cancelled under a
-  // loop still polling would retry with reads that abort on arrival for the loop's
-  // whole budget.
+  // The caller's signal bounds the whole loop: a per-read cancel would retry
+  // reads that abort on arrival for the full budget.
   const signal =
     opts.signal === undefined ? own.signal : AbortSignal.any([own.signal, opts.signal]);
   try {
     await runRefresh(deps, signal);
   } finally {
-    // Identity-guarded: a reset aborts the previous loop and claims the slot
-    // immediately, so the loser's finally must not clear the winner's claim.
+    // Identity-guarded: a reset already claimed the slot, so the loser must not clear it.
     if (inFlight === own) {
       inFlight = undefined;
     }
@@ -120,8 +95,7 @@ async function runRefresh<T extends CatalogAnswer>(
   }
   const outcome = await pollUntil(deps.read, {
     intervalMs: RETRY_INTERVAL_MS,
-    // Checked BEFORE onPoll, so a terminal result never reaches it — which is why
-    // the success is applied from outcome.result below rather than there.
+    // Checked before onPoll, so a terminal result is applied from outcome.result below.
     until: (d) => readVerdict(d.catalog) === "usable",
     maxAttempts: MAX_ATTEMPTS,
     timeoutMs: RETRY_BUDGET_MS,
@@ -132,10 +106,8 @@ async function runRefresh<T extends CatalogAnswer>(
     accept(deps, outcome.result);
     return;
   }
-  // Exhausted: settling the phase is what turns a permanent "Loading models…"
-  // into a line that says the fetch failed. An ABORT reports nothing — a newer
-  // loop owns the slot and will answer for itself, where settling here would
-  // flash "couldn't load" over a live retry.
+  // Exhausted settles the phase, so "Loading models…" becomes a failure line. An
+  // abort reports nothing: a newer loop owns the slot.
   if (outcome.status === "timeout") {
     deps.setPhase("unavailable");
   }

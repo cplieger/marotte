@@ -1,7 +1,5 @@
-// ---------------------------------------------------------------------------
-// push-subject.ts's own suite. The cross-language PREFIX contract is
-// push-kinds.test.ts's; what is pinned here is what the module DECIDES.
-// ---------------------------------------------------------------------------
+// push-subject.ts's own suite. The cross-language PREFIX contract is push-kinds.test.ts's; what is
+// pinned here is what the module DECIDES.
 
 import { describe, it, expect } from "vitest";
 import pushTypesGo from "../internal/marotte/push_types.go?raw";
@@ -26,8 +24,8 @@ describe("parsePushTarget", () => {
       workflowID: "wf_1",
     });
     expect(parsePushTarget({ chatId: "c1", subject: "" })).toEqual({ kind: "chat", chatID: "c1" });
-    // A bare prefix is reachable only from a malformed envelope, and it resolves to the
-    // workspace rather than to /git or /run/.
+    // A bare prefix is reachable only from a malformed envelope, and it resolves to the workspace
+    // rather than to /git or /run/.
     expect(parsePushTarget({ chatId: "", subject: "pr:" })).toEqual({ kind: "workspace" });
     expect(parsePushTarget({ chatId: "", subject: "run:" })).toEqual({ kind: "workspace" });
     expect(parsePushTarget({ chatId: "", subject: "" })).toEqual({ kind: "workspace" });
@@ -72,8 +70,8 @@ describe("pushTargetTag", () => {
 describe("prIdentity", () => {
   it("is marotte.PRSubject's composition minus the prefix, keyed on the repository id", () => {
     // The Go side reads `PRSubjectPrefix + forgeID + ":" + repoID + "#" + strconv.Itoa(number)`;
-    // this is the same key with the prefix stripped, which is what makes the identity
-    // comparable against one the PRs tab builds for its own rows from their repo_id.
+    // this is the same key with the prefix stripped, which is what makes the identity comparable
+    // against one the PRs tab builds for its own rows from their repo_id.
     const m =
       /func PRSubject\([^)]*\)[^{]*\{\s*return PushSubject\{Key: PRSubjectPrefix \+ ([^}]+)\}/.exec(
         pushTypesGo,

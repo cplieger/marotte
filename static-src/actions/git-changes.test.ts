@@ -1,10 +1,6 @@
-// Tests for actions/git-changes.ts: stage, discard, unstage, pull, push,
-// commit, generateCommitMessage — including the HTTP-200 {error} envelope
-// guard (18-F1). The git server reports subprocess failure as HTTP 200 +
-// {"error": "<scrubbed git output>"} (internal/git/helpers.go writeCmdResult),
-// so a non-empty error body must reject the action (its outcome carries git's
-// words, and nothing toasts: the Changes tab says it in place) and an
-// {output}/{ok:true} body must resolve.
+// The git server reports a subprocess failure as HTTP 200 + {"error": …} (internal/git/helpers.go
+// writeCmdResult): a non-empty error body must reject without a toast, an {output}/{ok:true} body
+// must resolve.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -18,9 +14,7 @@ import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();
 
-/** Queue a fresh Response per fetch call. A Response body is single-use,
- *  so mockResolvedValue(new Response(...)) would break on any second
- *  read (retries, repeated dispatches). */
+/** Queue a fresh Response per fetch call: a body is single-use, so retries need their own. */
 function respondWith(body: unknown, status = 200): void {
   mockFetch.mockImplementation(() =>
     Promise.resolve(new Response(JSON.stringify(body), { status })),
@@ -115,8 +109,6 @@ describe("git.commit", () => {
 describe("git.generateCommitMessage", () => {
   it("POSTs to /api/git/commit-message and lifts the output field", async () => {
     // Real wire shape: {"output": "<message>"} (internal/git/handlers_ai.go).
-    // An earlier version of this test encoded apiAction's raw-body
-    // passthrough ({message: ...}); the runner now decodes the envelope.
     respondWith({ output: "feat: add X" });
     const { generateCommitMessage } = await import("./git-changes.js");
     const r = await generateCommitMessage.dispatch({ repo: "main" });
@@ -134,13 +126,6 @@ describe("git.generateCommitMessage", () => {
   });
 });
 
-// --- 18-F1: HTTP 200 + {"error": …} envelope guard ---
-//
-// Before the guard, these bodies resolved as success: the framework's
-// success toast fired ("Pulled X") while git had actually failed —
-// the "pull does nothing" bug. The guard turns a non-empty error field
-// into a thrown ActionError inside run().
-
 describe("error envelope (HTTP 200 + {error})", () => {
   it("pull: {error} body → git's message in the outcome, no toast, no retry", async () => {
     respondWith({ error: "fatal: Not possible to fast-forward, aborting." });
@@ -152,8 +137,7 @@ describe("error envelope (HTTP 200 + {error})", () => {
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
     expect(recentLog()[0]?.status).toBe("error");
-    // A "git" envelope error is not transient: pull's retryNetwork
-    // classifier must not re-run the command.
+    // A "git" envelope error is not transient: pull's retryNetwork must not re-run the command.
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 

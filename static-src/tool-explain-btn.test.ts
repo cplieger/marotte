@@ -1,21 +1,9 @@
-// ---------------------------------------------------------------------------
-// The failed card's "Explain this error" trigger: its contract and its geometry.
-//
-// One file because both halves need the same real path (`updateToolCall` against a
-// real `buildToolCard` card) and the same harness (the shipped stylesheet mounted,
-// the card IN the viewport so `content-visibility: auto` has rendered it).
-//
-// EVERY CLAIM HERE IS NUMERIC OR A HIT TEST, because none of them is visible in
-// source. The control is an icon-only button, so its accessible name is the only
-// thing identifying it; it is a CIRCLE, so `width === height` plus a 50% radius is
-// the shape rather than a class name; it floats in a strip the card reserves, so
-// "does not overlay the output" is a rect comparison; and its target is grown by an
-// `::after` expander, which reads identically in the cascade whether or not some
-// ancestor `overflow` has clipped it away — so only `elementFromPoint` can answer.
-//
-// `messages-tools-status.test.ts` keeps the GATING (a failure with output offers it,
-// a blank output and a declined tool do not). This file owns the shape.
-// ---------------------------------------------------------------------------
+// The failed card's "Explain this error" trigger: its contract and geometry, on a real
+// `buildToolCard` card with the shipped stylesheet, in the viewport. Every claim is numeric or a
+// hit test: the icon-only button is identified by its accessible name, a CIRCLE is `width ===
+// height` plus 50% radius, "does not overlay the output" is a rect comparison, and a clipped
+// `::after` expander is visible only to `elementFromPoint`. Gating is
+// `messages-tools-status.test.ts`'s.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import type { ToolCall } from "./types.js";
@@ -99,12 +87,9 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-touched");
 });
 
-/** Wait for Chromium to decide the mounted card is near the viewport. `.tool-call`
- *  carries `content-visibility: auto`, and until that lands the card's OWN box is
- *  the `contain-intrinsic-size` fallback while its descendants still report real
- *  geometry — the asymmetry that makes an outer-box assertion quietly read a
- *  constant. Measured in this Chromium at the second frame after the mount; three
- *  for margin, counted in lifecycle passes so load does not move it. */
+/** Wait for Chromium to decide the card is near the viewport: until `content-visibility: auto`
+ *  lands, the card's OWN box is the `contain-intrinsic-size` fallback while descendants report
+ *  real geometry. Measured at the second frame; three lifecycle passes for margin. */
 async function rendered(): Promise<void> {
   for (let i = 0; i < 3; i++) {
     await new Promise<void>((resolve) => {
@@ -150,11 +135,8 @@ function trigger(card: HTMLElement): HTMLButtonElement {
   return btn!;
 }
 
-/** A token's length in pixels for the tier currently set. A custom property reads
- *  back as its raw text, so only the engine can turn `max(var(--sp-2), calc(…))`
- *  into a number — which is what makes a token retune move the assertion instead of
- *  breaking it. Resolved INSIDE the card, because `--explain-inset` is declared
- *  there and inherited. */
+/** A token's length in pixels for the current tier; only the engine resolves a custom property's
+ *  raw text. Resolved INSIDE the card, where `--explain-inset` is declared. */
 function tokenPx(within: HTMLElement, value: string): number {
   const probe = document.createElement("div");
   probe.style.blockSize = value;
@@ -343,10 +325,8 @@ describe("it floats in the card's bottom-right and overlays nothing", () => {
 
 describe("the TARGET reaches the hit floor, past the box it paints", () => {
   it.each(["fine", "coarse"] as const)("on %s", async (tier) => {
-    // A real hit test rather than a style read: a declared `::after` that some
-    // ancestor `overflow` clips away reads identically in the cascade and hits
-    // nothing — and `.tool-call` carries `overflow: hidden`, which is exactly why
-    // the corner inset is derived from this reach rather than fixed at `--sp-2`.
+    // A real hit test: `.tool-call` is `overflow: hidden`, and a clipped `::after` reads the same in
+    // the cascade. Why the corner inset derives from this reach.
     document.documentElement.dataset["pointer"] = tier;
     const card = await failedCard(`ex-target-${tier}`);
     const btn = trigger(card);
@@ -379,12 +359,9 @@ describe("the TARGET reaches the hit floor, past the box it paints", () => {
   });
 
   it("survives the THIRD tier, where the floor moves and the control rung does not", async () => {
-    // `:root[data-touched]` raises `--hit-floor` to 44px ALONE (01-tokens.css), so a
-    // hybrid device driven by its mouse keeps 24px controls and a 44px target — a
-    // 10px expander against what would be an 8px corner inset. That is the ONE tier
-    // where a flat `--sp-2` puts the expander past the card's padding box and
-    // `.tool-call`'s `overflow: hidden` clips the target away, which is why
-    // `--explain-inset` is derived from the reach rather than fixed.
+    // `:root[data-touched]` raises `--hit-floor` to 44px ALONE (01-tokens.css), so a mouse-driven
+    // hybrid gets 24px controls with a 44px target: the one tier where a flat `--sp-2` inset lets
+    // `overflow: hidden` clip the expander.
     document.documentElement.dataset["pointer"] = "fine";
     document.documentElement.dataset["touched"] = "";
     const card = await failedCard("ex-target-touched");
@@ -423,11 +400,8 @@ describe("the pending face replaces the glyph rather than crowding it", () => {
 
 describe("nothing here suppresses the app-wide focus ring", () => {
   it("declares no outline at any state of this selector", () => {
-    // 40-a11y.css draws every `:focus-visible` ring at ZERO specificity, so it is a
-    // floor rather than a mandate — any rule here declaring `outline` would win and
-    // could silently take the ring away. Neither `CSS.forcePseudoState` nor
-    // synthetic mouse events drive `:focus-visible` from a test page, so a source
-    // sweep is the honest instrument.
+    // 40-a11y.css draws every `:focus-visible` ring at ZERO specificity, so any `outline` here would
+    // remove it. `:focus-visible` cannot be driven in this browser harness, so a source sweep it is.
     const rules = allRules(loadCSS("61-mcp-tools.css")).filter((r) =>
       r.selector.includes(".tool-explain-btn"),
     );

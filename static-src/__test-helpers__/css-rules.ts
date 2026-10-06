@@ -1,23 +1,5 @@
-// Reading the SHIPPED stylesheets as source, for the guards that cannot be
-// written any other way.
-//
-// Two jobs. `appCSS`/`mountAppCSS` assemble the bundle so a suite can measure
-// real LAYOUT against it. The three readers below assert SOURCE facts — which of
-// two rules applies, whether a declaration belongs to a given selector — which
-// computed style cannot answer: a synthetic hover drives no style recalc, and
-// `CSS.forcePseudoState` is a devtools protocol call rather than something a test
-// page can make.
-//
-// The stylesheets arrive as Vite `?raw` imports rather than `node:fs` reads, so
-// this helper — and the suites that import it — run in the browser project.
-// `import.meta.glob` is eager, so every sheet is inlined at transform time and
-// `loadCSS` is a map lookup.
-//
-// Extracted from pill-press.test.ts when a second suite (tab-dot.test.ts) needed
-// `ruleContaining`. The alternative was a second copy of a brace-matching
-// parser, which is the one kind of duplication a test helper directory exists to
-// prevent — the same reason the MANIFEST assembly moved here from
-// disclosure-row-css.test.ts when turn-header.test.ts needed it.
+// Reads the shipped stylesheets as source, for facts computed style cannot answer (a synthetic
+// hover drives no style recalc). Sheets are `?raw` imports, so importers run in the browser project.
 
 import { expect } from "vitest";
 import manifest from "../css/MANIFEST?raw";
@@ -45,10 +27,8 @@ export function loadCSS(name: string): string {
   return hit;
 }
 
-/** Every stylesheet `css/MANIFEST` declares, in declared order, each with its text.
- *  The manifest is READ rather than restated, so a sheet added to the bundle joins
- *  a sweep with no test edit — which is what a closed-list guard needs, and the
- *  reason this is exported beside the concatenated form below. */
+/** Every stylesheet `css/MANIFEST` declares, in declared order. Read rather than restated, so a
+ *  sheet added to the bundle joins a sweep with no test edit. */
 export function manifestSheets(): { name: string; css: string }[] {
   const names = manifest
     .split("\n")
@@ -64,21 +44,16 @@ export function manifestSheets(): { name: string; css: string }[] {
   return names.map((n) => ({ name: n, css: text(n) ?? "" }));
 }
 
-/** The shipped stylesheet, assembled from `css/MANIFEST` in declared order the
- *  way `cmd/bundle` concatenates it — which is the cascade, since equal-
- *  specificity ties in this app are decided by that order rather than by the
- *  selectors. Reading the built `static/style.css` instead would test a
- *  gitignored artifact that need not exist. */
+/** The shipped stylesheet in `css/MANIFEST` order, as `cmd/bundle` concatenates it: that order
+ *  decides this app's equal-specificity ties. */
 function appCSS(): string {
   return manifestSheets()
     .map((s) => s.css)
     .join("\n");
 }
 
-/** Install the shipped stylesheet into the test page, for a suite that measures
- *  real LAYOUT. Remove the returned element in `afterAll`. A suite asserting a
- *  SOURCE fact (which of two rules applies, whether a declaration belongs to a
- *  selector) wants `loadCSS` plus the readers below instead. */
+/** Install the shipped stylesheet for a suite that measures real layout; remove the returned
+ *  element in `afterAll`. */
 export function mountAppCSS(): HTMLStyleElement {
   const style = document.createElement("style");
   style.textContent = appCSS();
@@ -86,10 +61,8 @@ export function mountAppCSS(): HTMLStyleElement {
   return style;
 }
 
-/** Every style rule in the sheet, at-rule bodies included, as
- *  (selector, body) pairs. For sweeps over a whole vocabulary ("no reasoning
- *  selector carries an animation") where keying on one exact selector would
- *  miss the rule that regressed. A rule's body includes its nested blocks. */
+/** Every style rule, at-rule bodies included, as (selector, body) pairs; a body includes its
+ *  nested blocks. */
 export function allRules(css: string): { selector: string; body: string }[] {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, " ");
   const out: { selector: string; body: string }[] = [];
@@ -123,9 +96,7 @@ export function allRules(css: string): { selector: string; body: string }[] {
   return out;
 }
 
-/** The body of a top-level rule, by its exact selector line. Nested `&` blocks
- *  are included, which is what we want: a rule's declarations and its nested
- *  states are one authored unit. */
+/** The body of a top-level rule by its exact selector line, nested `&` blocks included. */
 export function ruleBody(css: string, selector: string): string {
   const at = css.indexOf(`\n${selector} {`);
   expect(at, `rule not found: ${selector}`).toBeGreaterThan(-1);
@@ -145,20 +116,9 @@ export function ruleBody(css: string, selector: string): string {
   throw new Error(`unbalanced braces after ${selector}`);
 }
 
-/**
- * The BODY of the at-rule whose prelude contains `prelude`, as CSS text.
- *
- * For a suite that has to COMPUTE against a media-gated block. The browser
- * project's viewport is fixed, so a `width <= 48rem` query never matches and the
- * whole block is inert under `mountAppCSS`; mounting its body unwrapped after the
- * bundle makes those rules the last word, which is what a phone gives them, so a
- * real cascade can answer a question about the narrow arm. `ruleContaining` reads
- * such a block as SOURCE instead, and that is the weaker question — it cannot see
- * whether a rule paints anything.
- *
- * Exactly one match is required, so a prelude that has gained a second home is a
- * failure rather than a silently-picked first hit.
- */
+/** The body of the one at-rule whose prelude contains `prelude`. The fixed test viewport never
+ *  matches a width query, so mounting the body unwrapped is how a suite computes the narrow arm.
+ *  Exactly one match is required. */
 export function atRuleBody(css: string, prelude: string): string {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, " ");
   const found: string[] = [];
@@ -186,37 +146,16 @@ export function atRuleBody(css: string, prelude: string): string {
   expect(found.length, `expected exactly one at-rule matching ${prelude}`).toBe(1);
   const [only] = found;
   if (only === undefined) {
-    // The expect above has already failed by the time this can run; stating the
-    // invariant as a throw is what lets the return type be the body rather than a
-    // maybe.
+    // Unreachable: `expect` is not a type guard, so the throw is what types the return.
     throw new Error(`no at-rule matching ${prelude}`);
   }
   return only;
 }
 
-/**
- * The rule whose SELECTOR LIST contains `selector`, with its body.
- *
- * This is the association `ruleBody` cannot make: `ruleBody` keys on an exact
- * selector line, and 70-selection.css's rules are 20-plus selectors long, so
- * pinning one member of such a list means finding the rule it belongs to and
- * reading THAT rule's declarations. Asserting a selector and a declaration
- * appear in the same FILE proves nothing about whether the declaration applies
- * to the selector.
- *
- * `@media` wrappers are descended into, since the selected hover and the
- * reduced-motion dot both live in one. `scope` says WHERE to look, and it has to
- * be sayable because a selector can legitimately appear twice — once at top
- * level and once inside `@media (prefers-reduced-motion)` — and the point of the
- * pair is that the two bodies differ:
- *
- *   "*"    anywhere (the default; a rule appearing once, wherever it sits)
- *   "top"  outside every at-rule
- *   other  inside an at-rule whose prelude contains this substring
- *
- * Exactly one match is required either way, so a selector that gained a second
- * home is a failure rather than a silently-picked first hit.
- */
+/** The one rule whose selector LIST contains `selector`, with its body; `@media` wrappers are
+ *  descended. `scope`: "*" anywhere (default), "top" outside every at-rule, any other string
+ *  inside an at-rule whose prelude contains it. Exactly one match is required, so a selector
+ *  that gained a second home fails rather than silently picking the first. */
 export function ruleContaining(
   css: string,
   selector: string,
@@ -266,9 +205,7 @@ export function ruleContaining(
   ).toBe(1);
   const [only] = found;
   if (only === undefined) {
-    // The expect above has already failed the test by the time this can run.
-    // It is here because `expect` is not a type guard, and stating the invariant
-    // as a throw is what lets the return type be the rule rather than a maybe.
+    // Unreachable: `expect` is not a type guard, so the throw is what types the return.
     throw new Error(`no rule listing ${selector} (scope: ${scope})`);
   }
   return only;

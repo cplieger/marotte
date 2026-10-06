@@ -1,26 +1,13 @@
-// ---------------------------------------------------------------------------
-// The agent-finished cue: raised when a turn ends and EVERYTHING that turn started
-// is over, withheld until then.
-//
-// The reported defect is that a chat launching a workflow raised the cue at the
-// moment its own turn ended, which is up to forty minutes before the work finished.
-// So the claims below are the two halves of the fix — the cue does not fire at the
-// turn's end while a run is live, and it DOES fire when the last outstanding thing
-// ends, including when that thing failed, was aborted or was cancelled.
-//
-// `notify.ts` is mocked because the real one reads `Notification` permission and
-// `document.visibilityState`; every other module here is the real thing, since the
-// release is an effect over `chat-settled.ts`'s tracked reads and a fake store would
-// prove nothing about it.
-// ---------------------------------------------------------------------------
+// The agent-finished cue fires when a turn ends and EVERYTHING it started is over: not at
+// the turn's end while a run is live, and when the last outstanding thing ends, whatever
+// its outcome. Only `notify.ts` is mocked (it reads permission and visibility); the
+// release is an effect over `chat-settled.ts`'s tracked reads, so the store is real.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 
-// The live-runs rebuild is the one server read a case here drives, and it answers the
-// EMPTY inventory: the case is a run that ended during a transport outage, so the
-// rebuild's job is to drop it.
+// The live-runs rebuild answers the EMPTY inventory: a run that ended during an outage.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async () => null),
   apiGetTyped: vi.fn(async (path: string) => (path === "/api/runs/live" ? { runs: [] } : null)),
@@ -38,9 +25,8 @@ vi.mock("./decision-dock.js", () => ({
   },
 }));
 
-// The gate is re-read at RAISE time in production, so it is a mutable fixture here
-// rather than a constant: a cue parked while the channel was on and released after it
-// was switched off must not fire.
+// Mutable, because production re-reads the gate at RAISE time: a cue parked while on and
+// released after switching off must not fire.
 const notify = vi.hoisted(() => ({
   raised: [] as string[],
   enabled: true,
@@ -110,9 +96,8 @@ describe("a settled chat raises immediately", () => {
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
 
-  // The dedup window is what an SSE reconnect's replayed `turn_closed` burst needs; it
-  // moved here from `handlers/turn.ts` so the immediate and deferred raises share ONE
-  // map and cannot disagree about whether a chat has already been told.
+  // The immediate and deferred raises share ONE dedup map, which a reconnect's replayed
+  // `turn_closed` burst needs.
   it("keeps the dedup window across a replayed burst", () => {
     cue.noteAgentFinished("c1", "Agent finished");
     cue.noteAgentFinished("c1", "Agent finished");
@@ -140,8 +125,7 @@ describe("a settled chat raises immediately", () => {
 });
 
 describe("a chat with a live run defers, then fires on settle", () => {
-  // THE REPORTED DEFECT. Before the fix this raised at the turn's end, which is when
-  // `run_workflow` returns rather than when the run is done.
+  // `run_workflow` returns at the turn's end, long before the run is done.
   it("raises nothing while the run is live", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     cue.noteAgentFinished("c1", "Agent finished");
@@ -161,9 +145,8 @@ describe("a chat with a live run defers, then fires on settle", () => {
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
 
-  // A failed, aborted or cancelled run all arrive as the same terminal `run_finished`
-  // frame, which is the release path — the cue is about the reader's attention, not
-  // about the run's verdict, so no outcome may leave it parked forever.
+  // Every outcome arrives as the same terminal `run_finished` frame, so none may leave the
+  // cue parked forever.
   it("releases on a run that FAILED just as on one that completed", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     cue.noteAgentFinished("c1", "Agent finished");
@@ -195,10 +178,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
     expect(notify.raised).toEqual(["Agent finished"]);
   });
 
-  // A `BUS_RECONCILE` rebuild replaces the inventory wholesale, and a run that ended
-  // during the outage simply is not in the new one. The release is an effect over the
-  // inventory's version, so a rebuild that drops the run releases the cue with no
-  // lifecycle frame at all.
+  // A `BUS_RECONCILE` rebuild that drops the run releases the cue with no lifecycle frame.
   it("releases when the run disappears from the inventory", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     cue.noteAgentFinished("c1", "Agent finished");
@@ -272,8 +252,7 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
 
-  // A cue for a conversation that no longer exists can never be acted on, so the tab
-  // close and the remote delete both drop it.
+  // A cue for a conversation that no longer exists can never be acted on.
   it("forgetDeferredCue means it never fires", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     cue.noteAgentFinished("c1", "Agent finished");
@@ -292,9 +271,8 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
   });
 });
 
-// The release effect needs a signal it reads BEFORE any chat is parked, or an effect
-// that found the set empty read nothing and would never run again. This is the case
-// that fails without it: the first park has to be what wakes the effect.
+// The release effect must read a signal BEFORE any chat is parked, or it read nothing and
+// never runs again; the first park has to wake it.
 describe("the subscriber wakes on the FIRST park", () => {
   it("releases a cue parked after the effect first ran empty", () => {
     // beforeEach installed the subscriber over an empty set, so its first pass read

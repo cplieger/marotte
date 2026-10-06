@@ -1,12 +1,8 @@
 package command
 
-// The tangent: a second chat that starts from another chat's real context
-// and then diverges. A rewind edits the conversation you are in (rewind.go);
-// a tangent keeps it and opens another beside it.
-//
-// The parent bridge is resumed on demand and `session/fork` carries KAS's own
-// context into the new session. The parent record must survive until the
-// tangent is minted.
+// A tangent keeps the conversation and opens another beside it (a rewind edits the one you are in).
+// The parent's bridge resumes on demand and `session/fork` carries KAS's own context; the parent
+// record must survive until the tangent is minted.
 
 import (
 	"context"
@@ -18,6 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // errForkParentUnknown is returned when the chat being forked has no record.
@@ -34,7 +31,9 @@ func forkPayload(cmd *marotte.ClientCommand) (marotte.ForkChatCommand, error) {
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > marotte.MaxChatNameBytes {
+	// One sanitized title serves the record and KAS, so the two cannot disagree.
+	p.Title = translate.SanitizeTitle(p.Title)
+	if !ids.ValidChatID(string(p.ParentChatID)) || userNameTooLong(p.Title) {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !ValidIdent(p.OpID) {
@@ -121,14 +120,10 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	}), nil
 }
 
-// loadForkedHistory gives the tangent the transcript KAS already holds for it and
-// answers with the RE-READ record, plus whether that record still names the session
-// the fork produced. The retirement chain is what says so: the fork binds its session
-// inside the create, so a non-empty chain means that session was retired and the
-// tangent inherited nothing.
-//
-// It refuses nothing, and a failure does not heal itself: the chat stays as it stands.
-// A merge that lands after the command answered is announced by the transcript swap.
+// loadForkedHistory gives the tangent the transcript KAS already holds for it and answers the
+// RE-READ record, plus whether it still names the session the fork produced: the fork binds its
+// session inside the create, so a non-empty retirement chain means that session was retired and the
+// tangent inherited nothing. It refuses nothing, and a failure does not heal itself.
 func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *marotte.Chat) (*marotte.Chat, bool) {
 	if c == nil || c.ACPSessionID == "" {
 		return c, false
@@ -192,14 +187,16 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 		ParentChat:  p.ParentChatID,
 		Init: func(c *marotte.Chat) {
 			c.Name = marotte.DefaultChatName
+			// KAS latches a tangent's fork title as the user's, so the record does too.
+			if p.Title != "" {
+				c.Name = p.Title
+				c.NameSetByUser = true
+			}
 			c.Model = parent.Model
 			c.CurrentModeID = parent.CurrentModeID
 			c.Effort = parent.Effort
-			// The review gate is inherited like the rest, overriding the global
-			// default the coordinator seeded: a tangent continues the same
-			// conversation, so taking the model, the mode and the effort while
-			// dropping the gate would silently downgrade safety — a supervised
-			// chat's tangent would start writing files without asking.
+			// Inherited like the model, mode and effort: dropping the review gate would let a
+			// supervised chat's tangent write files without asking.
 			c.SupervisedMode = parent.SupervisedMode
 			if sessionID != "" {
 				// RecordSession, not assignment: it is the sanctioned writer
@@ -218,11 +215,8 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p marotte.ForkChatCommand) string {
 	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
-		// Branching a conversation requires its context, so resume its bridge on
-		// demand. CmdRewindChat accepts the same trade for a context-dependent
-		// operation on a bridgeless chat.
-		//
-		// Empty model on purpose: the parent keeps the model recorded on its chat.
+		// Branching needs the parent's context, so its bridge resumes on demand, the trade
+		// CmdRewindChat also takes. Empty model: the parent keeps its own.
 		var err error
 		bridge, err = bridges.OpenBridge(ctx, p.ParentChatID, "")
 		if err != nil || bridge == nil || bridge.SessionID() == "" {

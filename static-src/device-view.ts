@@ -1,15 +1,9 @@
-// The per-device localStorage fields. ONE OWNER of the `marotte.ui-state` key,
-// and no second writer may be added: every write is a read-modify-write of one
-// JSON blob, so a second module doing its own drops whatever landed between its
-// read and its write. The key name cannot change either — nothing is migrated.
-//
-// prepaint.js reads this blob before first paint (theme, sidebar width, pointer
-// fields, shell panel) through these same readers; it never writes.
+// The per-device localStorage fields; the ONE owner of `marotte.ui-state`. Every write is a read-modify-write of one
+// blob, so a second writer drops fields. The key is never migrated. prepaint.js reads it through these readers.
 
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
-/** The recorded theme CHOICE. "system" is a real choice — the user asked to
- *  follow the OS — which is why it is a value here and not the absence of one. */
+/** The recorded theme choice; "system" (follow the OS) is a value, not an absence. */
 export type ThemeChoice = "dark" | "light" | "system";
 
 /** Which pointer this screen is driven by. "coarse" is a finger or a pen,
@@ -33,9 +27,7 @@ function validLength(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
-/** The whole blob, or an empty object. Never throws: storage can be disabled
- *  outright (a private window, a locked-down profile), and a device preference is
- *  not worth a boot failure. */
+/** The whole blob, or `{}`. Never throws: storage can be disabled. */
 function readBlob(): Record<string, unknown> {
   try {
     const raw = localStorage.getItem(LS_UI_STATE_KEY);
@@ -49,8 +41,7 @@ function readBlob(): Record<string, unknown> {
   }
 }
 
-/** Merge `patch` into the blob and write it back. The read-modify-write is here,
- *  once, for the reason in the header. */
+/** Merge `patch` into the blob: the one read-modify-write. */
 function writeBlob(patch: Record<string, unknown>): void {
   try {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ ...readBlob(), ...patch }));
@@ -59,10 +50,7 @@ function writeBlob(patch: Record<string, unknown>): void {
   }
 }
 
-/** Every field validated rather than spread: a hand-edited blob or one written
- *  by an older build can carry a string where a number belongs, and `shell_h`
- *  and `sidebar_w` feed sizing arithmetic directly. An invalid field falls back to
- *  its default while its valid siblings are kept. */
+/** Every field validated: an invalid one falls back to its default while valid siblings are kept. */
 export function loadDeviceView(): DeviceView {
   const o = readBlob();
   const e = empty();
@@ -110,17 +98,13 @@ export function setSidebarWidth(px: number): void {
   writeBlob({ sidebar_w: px });
 }
 
-/** The cached theme choice, or null when none was ever written. A CACHE of
- *  `config.json`'s value: it answers which theme to paint before the settings
- *  response arrives, and never outranks it. */
+/** The cached theme choice or null; a cache of `config.json`'s value that never outranks it. */
 export function cachedTheme(): ThemeChoice | null {
   const t = readBlob()["theme"];
   return t === "dark" || t === "light" || t === "system" ? t : null;
 }
 
-/** The last pointer tier OBSERVED on this screen, or null when none has been.
- *  The middle rung of `pointer-tier.ts`'s resolution: worth more than the
- *  capability guess below it, less than a choice the user stated. */
+/** The last observed pointer tier or null: above the capability guess, below a stated choice (`pointer-tier.ts`). */
 export function cachedPointerTier(): PointerTier | null {
   const t = readBlob()["pointer"];
   return t === "fine" || t === "coarse" ? t : null;
@@ -130,10 +114,7 @@ export function cachePointerTier(tier: PointerTier): void {
   writeBlob({ pointer: tier });
 }
 
-/** The tier the user CHOSE with the toggle, or null when they never have. The
- *  top rung, and a separate field from `pointer` so no input event can overturn
- *  it: a detector writing the same field would erase the choice on the first
- *  mouse move. */
+/** The tier the user chose, or null. A separate field so no input event can overturn it. */
 export function pointerModeChoice(): PointerTier | null {
   const t = readBlob()["pointer_mode"];
   return t === "fine" || t === "coarse" ? t : null;
@@ -143,9 +124,7 @@ export function setPointerModeChoice(tier: PointerTier): void {
   writeBlob({ pointer_mode: tier });
 }
 
-/** Whether a coarse pointer has EVER driven this screen. Sticky and never
- *  cleared, because it is what reveals the touch/mouse toggle. A non-boolean
- *  value reads false, so a hand-edited blob cannot reveal the control. */
+/** Whether a coarse pointer ever drove this screen; sticky (it reveals the toggle). A non-boolean reads false. */
 export function coarseEverSeen(): boolean {
   return readBlob()["pointer_coarse_seen"] === true;
 }
@@ -154,18 +133,14 @@ export function markCoarseSeen(): void {
   writeBlob({ pointer_coarse_seen: true });
 }
 
-/** Refresh the cache so the NEXT load paints the right theme before its fetch
- *  resolves. `null` clears the field, which makes prepaint.js fall back to the OS
- *  preference — the same answer an absent server value gets. */
+/** Refresh the cache for the next load's pre-paint; `null` clears it, so prepaint.js follows the OS. */
 export function cacheTheme(theme: ThemeChoice | null): void {
   if (theme === null) {
     const o = readBlob();
     delete o["theme"];
     try {
       localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify(o));
-    } catch {
-      // See writeBlob.
-    }
+    } catch {}
     return;
   }
   writeBlob({ theme });

@@ -1,70 +1,23 @@
-// ---------------------------------------------------------------------------
-// The rest of a tool call, fetched when a reader asks for it.
-//
-// A transcript response carries each tool call's claim line plus a windowed
-// PREVIEW of its input, output and diffs — one measured chat's 465 calls hold
-// 12.17 MB between them, and a single message reached 9.1 MB — so a card built
-// from a page load or a scroll-up sets `has_full` and the bulk is one request
-// away at `GET /api/chats/{id}/tools/{toolCallID}`.
-//
-// Its own module rather than a function in `tool-card.ts`, for two reasons. The
-// card builder has no network dependency today and every test that mounts a card
-// would inherit `api-client` behind it. And the memoisation belongs to the CALL,
-// not to a card: the same tool call can be on screen twice (a transcript card and
-// a subagent group's copy), and both must read one answer rather than race two
-// requests for a megabyte each.
-//
-// A BULK IS IMMUTABLE, and that is what makes holding one safe rather than a
-// staleness risk. The growth a tool call's content does — `adoptTerminalOutput`
-// replacing the ACP fragments with the terminal's full stream — happens on the
-// terminal status frame, in the live buffer, and the buffer is flushed to the
-// chat file at `turn_closed`. `HasFull` has exactly one writer server-side
-// (`previewToolCall`, reached only from the `GET /api/chats/{id}` read of
-// PERSISTED messages) and the live SSE frames never set it, so a card can only
-// ask for a bulk once its content is final. So there is no invalidation here and
-// there must not be one: what a cache of immutable megabytes needs is a BOUND.
-// ---------------------------------------------------------------------------
+// The rest of a `has_full` tool call (GET /api/chats/{id}/tools/{toolCallID}), memoised per CALL:
+// one call can be on screen twice. A BULK IS IMMUTABLE (`HasFull` is set only on persisted
+// messages), so there is no invalidation and must not be one; the cache needs only a BOUND.
 
 import { apiGetTyped } from "./api-client.js";
 import { decodeToolCallBulk } from "./wire/decoders.gen.js";
 import type { TextSpan, ToolCallBulk, ToolDiff } from "./wire/types.gen.js";
 
-/** What a reveal renders, and all this module holds.
- *
- *  Deliberately NOT the wire `ToolCallBulk`. The server sends `input` alongside
- *  these three and nothing reads it: a card's input block is gated on
- *  `opts.live`, and a `has_full` card is never live, so holding it would keep a
- *  written file's whole content for nobody. Dropping it at the door also leaves
- *  every field measurable in O(1), which the budget below is charged against —
- *  `input` is `unknown`, so costing it would mean walking or stringifying it.
- *
- *  Fields are total rather than optional so a caller reads them without
- *  restating a default per site.
- *
- *  Exported because `tool-card.ts` DECLARES a table of the content pieces a bulk
- *  can fill, and a member's `apply` signature has to name the thing it is handed.
- *  `NonNullable<Awaited<ReturnType<typeof toolCallBulk>>>` at that declaration is
- *  noise. Nothing else about this module is public: the cache is not invalidated
- *  and the byte budget is not configurable. */
+/** What a reveal renders, and all this module holds. Not the wire `ToolCallBulk`: its `input` is
+ *  read by nobody (a `has_full` card is never live) and is `unknown`, so dropping it keeps every
+ *  field O(1) to cost. Fields are total. Exported for `tool-card.ts`'s content-piece table. */
 export interface ToolBulk {
   readonly output: string;
   readonly outputSpans: TextSpan[];
   readonly diffs: ToolDiff[];
 }
 
-/** The ceiling on retained payload, in bytes.
- *
- *  BYTES rather than an entry count, because one entry's cost spans three orders
- *  of magnitude: the measured chat averages ~26 KB per call (12.17 MB over 465)
- *  while a single `execute` can carry the whole of a terminal's stream. A count
- *  cap sized for the average admits tens of megabytes of the tail — the bound
- *  `@cplieger/web-terminal-ui`'s scrollback store already had to correct once.
- *
- *  4 MiB because the DOM is the durable copy: a reveal writes its bulk into the
- *  page and never reads it again, so retention serves only a SECOND reader of the
- *  same call — the sibling copy on a subagent or run subpage, or a card dropped
- *  from the resident block window and re-opened. That is a handful of calls, not
- *  a session's worth, and a miss costs one re-request rather than any content. */
+/** The ceiling on retained payload, in bytes. BYTES, because one entry spans three orders of
+ *  magnitude (~26 KB average, a whole terminal stream at the tail). 4 MiB because the DOM is the
+ *  durable copy: retention serves only a SECOND reader of a call, and a miss costs one re-request. */
 export const MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
 /** A JS string is UTF-16, so a code unit is two bytes of heap. */
@@ -77,11 +30,8 @@ const BYTES_PER_SPAN = 48;
 
 interface Entry {
   readonly promise: Promise<ToolBulk | null>;
-  /** This entry's charge against the budget, or `undefined` while its request is
-   *  in flight — which is also what makes an in-flight entry unevictable, since
-   *  collapsing concurrent readers onto one request is this module's whole job.
-   *  A settled entry legitimately costs 0 (an empty output with no diffs), so the
-   *  distinction is the field's ABSENCE and never a zero. */
+  /** This entry's charge against the budget, or `undefined` while in flight, which also makes it
+   *  unevictable. A settled entry may cost 0, so the signal is ABSENCE, never zero. */
   cost: number | undefined;
 }
 
@@ -100,11 +50,8 @@ function costOf(bulk: ToolBulk): number {
   return units * BYTES_PER_CODE_UNIT + bulk.outputSpans.length * BYTES_PER_SPAN;
 }
 
-/** Evict settled entries, least recently read first, until the budget holds.
- *
- *  `Map` iterates in insertion order and a hit re-inserts, so insertion order IS
- *  read order. Deleting during that walk is defined behaviour: the iterator goes
- *  on to the entries it has not reached. */
+/** Evict settled entries, least recently read first, until the budget holds. A hit re-inserts, so
+ *  `Map` insertion order IS read order; deleting mid-iteration is defined. */
 function sweep(): void {
   for (const [k, e] of held) {
     if (retained <= MAX_RETAINED_BYTES) {
@@ -147,13 +94,8 @@ function settle(k: string, entry: Entry, d: ToolCallBulk | null): ToolBulk | nul
   return bulk;
 }
 
-/** Fetch one tool call's whole output, style spans and diffs.
- *
- *  `null` when the chat or the call is unknown to the server, or the request
- *  failed — a caller renders what it has rather than an error, because the
- *  preview it already holds is the honest fallback. A failure is not retained, so
- *  a reader who closes and re-opens the card retries rather than being told
- *  "unavailable" forever by a held rejection. */
+/** Fetch one tool call's whole output, style spans and diffs. `null` when unknown to the server or
+ *  failed: the held preview is the fallback. A failure is not retained, so a re-open retries. */
 export function toolCallBulk(chatID: string, toolCallID: string): Promise<ToolBulk | null> {
   if (chatID === "" || toolCallID === "") {
     return Promise.resolve(null);

@@ -7,9 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// JSON protocol key constants used across command response maps and
-// pending-permission payloads. These are wire-format identifiers;
-// centralising them makes renames visible in one place.
+// JSON protocol keys shared by command responses and pending-permission payloads.
 const (
 	keyError = "error"
 	keyName  = httpreply.JSONKeyName
@@ -19,19 +17,13 @@ const (
 // keySessionID references the canonical marotte.KeySessionID constant.
 const keySessionID = marotte.KeySessionID
 
-// ellipsis is the truncation suffix for display strings (session
-// titles, prompt previews, shell command labels). Kept as a constant
-// so the same visual indicator is used everywhere.
+// ellipsis is the truncation suffix for display strings.
 const ellipsis = "..."
 
-// responseOK is the standard success response for commands that have
-// no meaningful return value. Shared across all command handlers to
-// avoid allocating a new map on every call — the map is never mutated.
+// responseOK is the shared success response for commands with no return value; never mutated.
 var responseOK = map[string]bool{"ok": true}
 
-// responseWith returns a success response map with the given extra
-// fields merged in. Every response includes "ok": true; callers supply
-// only the command-specific payload fields.
+// responseWith returns a success response ("ok": true) with the command-specific fields merged in.
 func responseWith(extra map[string]any) map[string]any {
 	m := make(map[string]any, len(extra)+1)
 	m["ok"] = true

@@ -1,12 +1,7 @@
 package agent
 
-// The connect handshake's two projections are READ while the state under them is
-// WRITTEN: busyChatIDs takes every lifecycle's mutex under the registry's, and
-// liveRunRows projects the lease store while runs are granted and released.
-// live and openTurnIDs join them as the GET's registry reads. None of the four
-// is reached from another concurrent test in this package, so without this one the
-// detector has nothing to exercise at any of them and a read moved outside its lock
-// would ship green.
+// The connect handshake's projections are read while their state is written; nothing else in
+// this package races them, so a read moved outside its lock would otherwise ship green.
 
 import (
 	"fmt"
@@ -17,14 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// The invariant that holds WITHOUT the detector too, so the test is not merely a
-// harness: a projection may report any SUBSET of what is live, because it samples a
-// set that is moving under it — but never a value nothing minted, which is what a torn
-// read or a walk over a foreign map would produce.
-//
-// Bounded by the connects rather than by a lap count: the mutation has to still be in
-// flight while streamInitialState assembles both lists, and a lap count fast enough to
-// be cheap finishes before the first connect is written.
+// A projection may report any subset of what is live, never a value nothing minted. Bounded
+// by connects, so the mutation is in flight while streamInitialState runs.
 func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	const fixtureChats, fixtureRuns, readers = 4, 4, 3
@@ -45,8 +34,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 		knownRun[id] = true
 	}
 
-	// One chat holds an OPEN turn for the whole test, so the walk reads a live turn
-	// rather than only the reservation half of the predicate.
+	// One chat holds an open turn throughout.
 	rt.stagePromptTurn(t, chatIDs[0])
 
 	store := rt.runs.leaseStore()
@@ -56,8 +44,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	badRun := make(chan string, 1)
 	var wg sync.WaitGroup
 
-	// Writers: the reservation pair writes lc.reserved and lc.reservedSource, the two
-	// fields both registry reads below consult.
+	// Writers of lc.reserved and lc.reservedSource.
 	for _, id := range chatIDs[1:] {
 		wg.Go(func() {
 			for {
@@ -91,9 +78,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 		})
 	}
 
-	// Readers. Reported through channels rather than t.Errorf: a Fatal off the test's
-	// own goroutine ends the WRONG goroutine, and Errorf from many readers would name
-	// one cause several times.
+	// Readers report through channels: Fatal off the test goroutine ends the wrong goroutine.
 	for range readers {
 		wg.Go(func() {
 			for {
@@ -126,8 +111,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 		})
 	}
 
-	// The connect region, on the test's own goroutine so its assertions may Fatal, and
-	// TWICE so the second one lands with every writer above still running.
+	// On the test goroutine, twice, so the second lands with every writer running.
 	for range 2 {
 		if p := connectPayload(t, rt, ""); !p.BusyStated {
 			t.Error("a connect taken while the lifecycle set is mutating withholds its busy " +

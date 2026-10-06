@@ -1,17 +1,10 @@
-// Tests for sendPrompt: the early-ack lifecycle and the three-way 409 split.
-//
-// The server acks a prompt at ADMISSION ({accepted, message_id} the moment the
-// user row is persisted and the slot is held), so the POST is short-lived and
-// the action's whole job is mapping the ack and the failure classes:
-//   ack            → "sent" (thinking stays true; SSE owns the turn from here)
+// sendPrompt maps the admission ack and the 409 split:
+//   ack            → "sent" (thinking stays true; SSE owns the turn)
 //   plain 409      → "queued" (a steerable turn is in flight; submit.ts steers)
-//   409 "starting" → "starting" (the holder cannot take a steer; thinking is
-//                    retracted so the retry is a PROMPT, not a steer)
+//   409 "starting" → "starting" (thinking retracted, so the retry is a PROMPT)
 //   anything else  → null (rollback retracts thinking)
-//
-// `thinking` is the WHOLE of what the optimistic write puts at risk: the tab dot's
-// verdict reads the header's `last_turn_outcome`, which no client path writes, so a
-// refused send is state-neutral on the glance surfaces by construction.
+// `thinking` is all the optimistic write risks: the tab dot reads `last_turn_outcome`, which no
+// client path writes.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -25,21 +18,15 @@ vi.mock("../toast.js", () => ({
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   newOpID: vi.fn(() => "op-test"),
 }));
 
 const { mockGet } = vi.hoisted(() => ({
   mockGet: vi.fn(() => ({ id: "c1", model: "m1" }) as Record<string, unknown> | undefined),
 }));
-// The TOTAL store mock, plus the one reader this file drives: `get` is the
-// existence check every path takes before it writes, so each case sets its own
-// return. Browser Mode links real ESM, so every name any module in this graph
-// imports has to be present — which is what the shared helper is for, and what the
-// hand-listed factory that used to live here got wrong the moment store.ts gained
-// an export.
+// The TOTAL store mock (real ESM linking needs every name); each case sets `get`, the existence
+// check every path takes before it writes.
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: mockGet,
@@ -47,12 +34,11 @@ vi.mock("../store.js", async () => ({
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
+  setChatInterruptMode: vi.fn(),
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
 }));
@@ -61,9 +47,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
@@ -85,8 +69,7 @@ beforeEach(() => {
 
 describe("sendPrompt — the ack is the whole POST", () => {
   it("returns 'sent' on the admission ack alone, with thinking left on for SSE to clear", async () => {
-    // Ack-only fake: the server answers {accepted, message_id} at admission and
-    // the turn runs on its own goroutine — nothing else arrives on this POST.
+    // Ack-only: the turn runs server-side and nothing else arrives on this POST.
     mockSend.mockResolvedValue({
       ok: true,
       status: 200,
@@ -97,8 +80,7 @@ describe("sendPrompt — the ack is the whole POST", () => {
 
     expect(result).toBe("sent");
     expect(mockSend).toHaveBeenCalledTimes(1);
-    // The turn is running server-side; turn_closed (SSE) clears thinking, so the
-    // success path must not touch it after the optimistic set.
+    // turn_closed (SSE) clears thinking, so success must not touch it after the optimistic set.
     const calls = vi.mocked(setThinking).mock.calls;
     expect(calls).toContainEqual(["c1", true]);
     expect(calls).not.toContainEqual(["c1", false]);
@@ -124,19 +106,14 @@ describe("sendPrompt — the three-way 409 split", () => {
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "in-flight" });
     const result = await sendPrompt.dispatch(args);
     expect(result).toBe("queued");
-    // The action stays a PURE send: on 409 it reports and does nothing else.
-    // submit.ts owns what a busy chat means (it steers into the running turn),
-    // and the steer chip is written only by the server's own frame — so an
-    // action that recorded one here would put a chip on screen for a message
-    // KAS may yet refuse.
+    // The action stays a PURE send: submit.ts owns what a busy chat means, and the steer chip is
+    // written only by the server's frame, so a chip here could show a message KAS may yet refuse.
     expect(recordSteerQueued).not.toHaveBeenCalled();
-    // A steerable turn is in flight, so thinking correctly stays on.
     expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
   });
 
   it("returns 'starting' on 409 reason:'starting' — a VALUE, never error-prose matching", async () => {
-    // The error text is deliberately the same prose as the plain 409's: only
-    // the lifted `reason` field distinguishes the two, which is the contract.
+    // Same prose as the plain 409: only the lifted `reason` distinguishes them (the contract).
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "in-flight", reason: "starting" });
 
     const result = await sendPrompt.dispatch(args);
@@ -155,8 +132,8 @@ describe("sendPrompt — the three-way 409 split", () => {
   });
 
   it("returns 'gone' on 409 reason:'chat_not_found' and retracts the optimistic thinking", async () => {
-    // Same error prose as the plain 409 again: only the lifted `reason` decides it. A
-    // tombstoned chat has no turn, so `thinking` left true would offer a steer into nothing.
+    // Only the lifted `reason` decides it. A tombstoned chat has no turn, so `thinking` left true would
+    // offer a steer into nothing.
     mockSend.mockResolvedValue({
       ok: false,
       status: 409,
@@ -177,16 +154,14 @@ describe("sendPrompt — the three-way 409 split", () => {
   });
 });
 
-// The rollback retracts `setThinking(chatID, true)`, and that is the whole contract
-// on every failure class: a 400, a 413, a 5xx and a dead POST all leave the chat
-// promptable with no turn claimed.
+// On every failure class the rollback retracts `setThinking(chatID, true)`, leaving the chat
+// promptable.
 describe("sendPrompt — rollback retracts the optimistic thinking", () => {
   it("fails (null) on a pre-ack network death — the POST is short now, so no echo rescue", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, code: "network", error: "unreachable" });
 
     expect(await sendPrompt.dispatch(args)).toBeNull();
-    // Rollback cleared thinking: no turn started. submit.ts owns the
-    // text-restore + id-reuse discipline on this result.
+    // submit.ts owns the text-restore and id-reuse on this result.
     expect(vi.mocked(setThinking).mock.calls).toContainEqual(["c1", false]);
   });
 
@@ -200,9 +175,7 @@ describe("sendPrompt — rollback retracts the optimistic thinking", () => {
 
     await sendPrompt.dispatch({ ...args, messageID: "m3" });
 
-    // Both halves, and the ORDER: the optimistic set has to be observable before
-    // the retraction, or a rollback that never ran would pass on the last call
-    // alone.
+    // The ORDER too: a rollback that never ran would pass on the last call alone.
     expect(setThinking).toHaveBeenCalledWith("c1", true);
     expect(setThinking).toHaveBeenLastCalledWith("c1", false);
   });
@@ -220,8 +193,7 @@ describe("sendPrompt — rollback retracts the optimistic thinking", () => {
 
     await sendPrompt.dispatch({ ...args, messageID: "m6" });
 
-    // The negative control for every case above: without it a rollback that fired
-    // unconditionally would satisfy all of them.
+    // Negative control: an unconditional rollback would satisfy every case above.
     expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
   });
 });

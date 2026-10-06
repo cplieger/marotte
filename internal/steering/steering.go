@@ -1,12 +1,7 @@
-// Package steering generates the environment.md steering file kiro-cli
-// reads on every session. Regenerated at startup, before each bridge
-// spawn (so every session reads fresh content), when the MCP runtime
-// registry changes, and when the composition-layer forge snapshot
-// cache observes a change (login/disconnect or TTL revalidation). The
-// generator itself must stay fast and network-free: it runs
-// synchronously on the session-start path, so anything slow (forge
-// repository listings) is cached upstream and handed in via snapshot
-// callbacks.
+// Package steering generates the steering kiro-cli reads, in two outputs. environment.md
+// holds container-wide facts and is read by every session on this HOME. ChatDocs renders the
+// chat-only guidance a chat bridge's session door carries. Both run synchronously on the
+// session-start path, so they stay network-free: slow data arrives through snapshot callbacks.
 package steering
 
 import (
@@ -27,20 +22,13 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// Read caps bound untrusted workspace input so a crafted repo can't
-// OOM the container by committing a multi-GiB README or tools.json.
-// The workspace hosts agent-cloned upstreams whose contents are
-// attacker-controlled from our point of view; everywhere else in
-// marotte (bridge_fs, checkpoint blobs, forges, filebrowse) clamps
-// reads via io.LimitReader for the same reason.
+// Read caps bound untrusted workspace input (agent-cloned repos) so a crafted file cannot
+// OOM the container.
 const (
 	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
 	toolsManifestCap = 1 << 20 // any realistic tools.json stays well under 1 MiB
-	// steeringCompareCap bounds the read of the EXISTING environment.md that
-	// the skip-if-unchanged check compares against. Generously above any
-	// content this generator produces (tens of KiB), so the comparison is
-	// exact for every real file; anything larger is not a file this wrote and
-	// compares unequal, which replaces it.
+	// steeringCompareCap bounds the read of the existing environment.md for the unchanged check;
+	// anything larger is not a file this wrote, compares unequal, and is replaced.
 	steeringCompareCap = 4 << 20
 
 	inclusionAlways    = "always"
@@ -49,9 +37,7 @@ const (
 	inclusionAuto      = "auto"
 )
 
-// MCPSnapshot is the subset of the MCP runtime registry the steering
-// generator uses. Returned by the snapshot function wired at construct
-// time; steering has no direct dependency on agent internals.
+// MCPSnapshot is the subset of the MCP runtime registry the generator uses.
 type MCPSnapshot struct {
 	Servers []marotte.MCPSnapshotServer
 }
@@ -84,12 +70,8 @@ func New(workDir, configDir string) *Generator {
 	return &Generator{workDir: workDir, configDir: configDir}
 }
 
-// SetMCPSnapshot wires a snapshot callback. Called once after
-// construction. If unset, the generator omits the MCP section entirely.
-// The callback runs OUTSIDE the generator's mutex (so it may safely
-// take agent locks without re-entry risk); only the pointer assignment
-// and read are lock-guarded. Generate enforces this by snapshotting
-// g.mcpSnapshot under g.mu, then releasing the lock around the call.
+// SetMCPSnapshot wires a snapshot callback (unset omits the MCP section). The callback runs
+// OUTSIDE the generator's mutex, so it may take agent locks.
 func (g *Generator) SetMCPSnapshot(fn func() MCPSnapshot) {
 	g.mu.Lock()
 	g.mcpSnapshot = fn
@@ -104,19 +86,13 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 	g.mu.Unlock()
 }
 
-// Generate renders environment.md and writes it atomically. Holds
-// g.mu across the full write so concurrent Generate calls serialise
-// rather than racing. Skips the write when the rendered content is
-// byte-identical to the existing file (avoids mtime bumps from
-// frequent MCP-event triggered regenerations).
+// Generate renders environment.md and writes it atomically, holding g.mu across the write so
+// calls serialise, and skips a byte-identical write (MCP event storms regenerate often).
 func (g *Generator) Generate(ctx context.Context) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	// Snapshot the callback pointer under g.mu, then invoke it
-	// outside the read-only section. Matches the contract the
-	// SetMCPSnapshot doc promises: the callback may safely take
-	// agent locks without re-entry risk.
+	// Read the callback under g.mu, call it outside (see SetMCPSnapshot).
 	snapshotFn := g.mcpSnapshot
 	forgeFn := g.forgeSnapshot
 	var mcp MCPSnapshot
@@ -135,29 +111,15 @@ func (g *Generator) Generate(ctx context.Context) {
 	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil)
 	steeringFile := workspace.KiroSteeringPath("environment.md")
 
-	// Skip if the rendered content is byte-identical. MCP event
-	// storms fire Generate multiple times per second; rewriting
-	// the same bytes bumps mtime and wastes disk I/O.
-	//
-	// Through readCappedFile, not os.ReadFile: the Kiro home is a volume the
-	// operator reshapes by hand (invariant 6), so a FIFO or a symlink can be
-	// sitting at this name too, and a plain read here would hang before the
-	// write below ever got the chance to refuse it. Any error — including an
-	// over-cap file — falls through to the write, which is the outcome that
-	// heals: a bogus environment.md gets replaced rather than trusted.
+	// readCappedFile, not os.ReadFile: a FIFO or symlink may stand here (invariant 6). Any error
+	// falls through to the write, which replaces a bogus file.
 	if existing, readErr := readCappedFile(steeringFile, steeringCompareCap); readErr == nil && bytes.Equal(existing, content) {
 		slog.Debug("steering: content unchanged, skipping write", "path", steeringFile)
 		return
 	}
 
-	// Mode 0o600 matches the narrow-by-default stance of other
-	// marotte writes: this file lists the workspace layout and
-	// MCP server names which, while not secrets, are information
-	// that should stay scoped to the single user that runs
-	// kiro-cli. atomicfile.WriteFile is the atomic temp+rename helper so
-	// a crash mid-write can't leave a truncated file. WithMkdirMode(0o700)
-	// auto-creates the parent dir narrowly (the file has no group/world
-	// bits), so we don't MkdirAll explicitly — that would widen it to 0o755.
+	// 0600 for a file listing the workspace layout and MCP server names; WithMkdirMode creates the
+	// parent narrowly (MkdirAll would widen it to 0755).
 	if _, wErr := atomicfile.WriteFile(ctx, steeringFile, content,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); wErr != nil {
 		slog.Error("steering: write", "path", steeringFile, "error", wErr)
@@ -173,9 +135,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
 
-	// tools-state.json is the tools engine's machine state: what is
-	// actually installed (vs tools.json, which is intent). The agent
-	// only cares about binaries that exist.
+	// tools-state.json is what is INSTALLED (tools.json is intent).
 	state := filepath.Join(g.configDir, "tools-state.json")
 	if data, err := readCappedFile(state, toolsManifestCap); err == nil {
 		writeTools(&b, data)
@@ -189,47 +149,51 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 		writeForges(&b, forges)
 	}
 	writeWorkspace(ctx, &b, g.workDir)
-	writeGitPanel(&b, g.workDir, len(forges.Providers) > 0)
-	writeUIGuide(&b)
-	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
+	writeMemory(ctx, &b, g.workDir, g.configDir)
 	writeLimitations(&b)
 	writeCapabilities(&b, g.configDir)
 	return []byte(b.String())
 }
 
-// readCappedFile reads at most limit bytes from path. Used for untrusted
-// workspace input (README, tools.json) so a crafted large file can't
-// OOM the container. Returns the (possibly truncated) bytes and any
-// error from open/read; callers treat errors the same way os.ReadFile
-// did (log-and-omit, not a fatal).
-//
-// The open is atomicfile.OpenRegular rather than os.Open, and both of its
-// refusals are load-bearing here. Every path this reads is named by WORKSPACE
-// layout — `<repo>/README.md`, `<repo>/.git/{config,HEAD}`, `.kiro/**`,
-// tools-state.json — and the workspace is a tree the agent writes.
-//
-//   - A FIFO at any of those names hung the generator FOREVER. os.Open on a
-//     reader-less FIFO waits in open(2) with no deadline to interrupt it, and
-//     Generate runs SYNCHRONOUSLY before every bridge spawn while holding g.mu,
-//     so one `mkfifo /workspace/anyrepo/README.md` wedged every session start
-//     of every chat. Measured: the old form was still blocked after 2s against a
-//     2s context. O_NONBLOCK makes it an immediate ErrNotRegular instead.
-//   - A symlink at one of those names was an EXFILTRATION primitive, not merely
-//     a confinement leak. readFirstLine writes its result verbatim into
-//     environment.md, so `ln -s /config/mcp-secrets.json <repo>/README.md` put
-//     the first 100 characters of the MCP credential store into the file
-//     kiro-cli treats as authoritative agent context — measured end to end, an
-//     OAuth refresh token reached the steering file. O_NOFOLLOW makes the KERNEL
-//     refuse the final component, which no check-then-open can do without a
-//     race. Cost, stated: a repo that legitimately symlinks its README loses its
-//     one-line description. That is the right trade — the value forgone is a
-//     cosmetic line, the hazard closed is reading whatever the link names.
-//
-// Truncation is kept rather than moved to atomicfile.ReadBoundedFile, which
-// refuses an over-cap file outright. These caps mean "only the HEAD matters"
-// (front-matter, a README's first line), so refusing would drop the
-// classification of a large-but-legitimate document, where truncating still
-// reads it.
+// chatSteeringName is the client steering document's name on the session door.
+const chatSteeringName = "marotte"
+
+// ChatDocs renders the chat-only steering a chat bridge sends on the session door, writing
+// nothing to disk (a file would reach every session on this HOME).
+func (g *Generator) ChatDocs(context.Context) []marotte.ClientSteeringDoc {
+	g.mu.Lock()
+	forgeFn := g.forgeSnapshot
+	g.mu.Unlock()
+	var forges ForgeSnapshot
+	if forgeFn != nil {
+		forges = forgeFn()
+	}
+	return []marotte.ClientSteeringDoc{{
+		Name:      chatSteeringName,
+		Inclusion: inclusionAlways,
+		Content:   g.renderChat(forges),
+	}}
+}
+
+// renderChat produces the chat-only document.
+func (g *Generator) renderChat(forges ForgeSnapshot) string {
+	var b strings.Builder
+	b.WriteString("# Marotte chat\n\n")
+	b.WriteString("This session is a chat in marotte, the browser app the user is looking at. ")
+	b.WriteString("These sections describe what the user sees; the environment steering doc ")
+	b.WriteString("covers the container.\n\n")
+	writeGitPanel(&b, g.workDir, len(forges.Providers) > 0)
+	writeUIGuide(&b)
+	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
+	writeChatCapabilities(&b)
+	return b.String()
+}
+
+// readCappedFile reads at most limit bytes from path, for untrusted workspace input; errors
+// are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
+// runs synchronously before every bridge spawn, and a symlinked README would copy whatever it
+// names (an MCP credential, measured) into authoritative agent context. Truncation is kept:
+// only the head matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
 	f, _, err := atomicfile.OpenRegular(path)
 	if err != nil {
@@ -270,9 +234,7 @@ func writeTools(b *strings.Builder, data []byte) {
 		if len(bins) == 0 {
 			bins = []string{name}
 		}
-		// Defused: a binary name comes from the tools catalog or a hand-added
-		// entry, and a version string is whatever the installed binary printed
-		// for --version.
+		// Defused: names and versions come from the catalog, hand edits and --version output.
 		for _, bin := range bins {
 			all = append(all, tool{defuse(bin), defuse(st.InstalledVersion)})
 		}
@@ -310,12 +272,9 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("\n")
 }
 
-// writeForges renders the connected forge providers section. Git over HTTPS
-// through marotte's own credential helper is the one forge path it
-// authenticates for the agent, so the section offers no forge CLI and no scope
-// list (a connection's grant is not in the snapshot). The sentence "no auth
-// login or token setup needed" must not come back: it told the agent a real
-// boundary did not exist, and a public read succeeding unscoped hides it.
+// writeForges renders the connected forge providers. Git over HTTPS through marotte's own
+// credential helper is the one authenticated path, so the section offers no forge CLI and
+// must never claim no auth is needed.
 func writeForges(w io.Writer, snap ForgeSnapshot) {
 	if len(snap.Providers) == 0 {
 		return
@@ -329,12 +288,9 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 	}
 }
 
-// writeForgeProvider renders one connected forge: its auth line, clone hint,
-// and (capped) accessible-repository list. p is taken by pointer to avoid
-// copying the ~88-byte ForgeProvider value.
+// writeForgeProvider renders one connected forge: auth line, clone hint, capped repo list.
 func writeForgeProvider(w io.Writer, p *ForgeProvider) {
-	// Every field below is a remote forge's report, so it is defused like any
-	// other input marotte did not author.
+	// Every field is a remote forge's report, so it is defused.
 	user := cmp.Or(defuse(p.User), "(authenticated)")
 	fmt.Fprintf(w, "### %s (%s)\n\n", defuse(p.Kind), defuse(p.Host))
 	if p.Email != "" {

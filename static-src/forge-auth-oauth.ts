@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// OAuth device sign-in (GitHub, GitLab): the start state, the device prompt,
-// polling, and Cancel. Extracted from forge-auth.ts.
-// ---------------------------------------------------------------------------
-
 import { el } from "@cplieger/reactive";
 import { pollUntil } from "./actions/index.js";
 import { apiPostTyped } from "./api-client.js";
@@ -37,7 +32,6 @@ interface LiveGrant {
   grantId: string;
 }
 
-/** Every live grant by the element its prompt renders in. */
 const grants = new Map<HTMLElement, LiveGrant>();
 
 /** Abort every in-flight poll. Called from cleanup. */
@@ -71,7 +65,6 @@ const NOTE: Record<DeviceKind, string> = {
     "A sign-in token lasts two hours on gitlab.com, and Marotte renews it with the refresh token GitLab issues with it. If GitLab issued none or refuses a renewal, the account asks you to reconnect.",
 };
 
-/** What the client id field asks of another host's administrator. */
 const CLIENT_ID_HINT: Record<DeviceKind, string> = {
   github:
     "This server signs in with its own OAuth application. Enter the client ID its administrator registered.",
@@ -208,16 +201,15 @@ function beginGrant(
   void pollDevice(body, target.kind, host, start, poll.signal, deps).finally(forget);
 }
 
-/** Render the device prompt (verification link, user code, copy button,
- *  status line, Cancel) into `host` and return the Cancel button. Built with
- *  the `el()` factory so no untrusted value is ever parsed as HTML. */
+/**
+ * Render the device prompt into `host` and return the Cancel button. Built with `el()`, so no untrusted value is
+ * parsed as HTML.
+ */
 export function renderDevicePrompt(
   host: HTMLElement,
   start: DeviceFlowResponse,
 ): HTMLButtonElement {
-  // Only render an anchor for http(s) URIs; any other scheme (or a
-  // markup-injection payload) is shown as inert text. el() turns
-  // strings into text nodes, never markup, so there is no XSS surface.
+  // Only http(s) URIs become an anchor; any other scheme or a markup payload is inert text.
   const safeLink = /^https?:\/\//i.test(start.verification_uri);
   const uriNode: HTMLElement | string = safeLink
     ? el(
@@ -285,9 +277,7 @@ async function pollDevice(
   deps: OAuthFlowDeps,
 ): Promise<void> {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
-  // pollUntil has no host concept; the caller aborts `signal` on host
-  // teardown, and every status write is also guarded by host.isConnected
-  // so a detached node is never touched.
+  // The caller aborts `signal` on host teardown, and every status write also checks host.isConnected.
   const setStatus = (text: string): void => {
     if (host.isConnected && statusEl !== null) {
       statusEl.textContent = text;
@@ -304,7 +294,6 @@ async function pollDevice(
       ),
     {
       intervalMs: Math.max(start.interval, POLL_MIN_INTERVAL_SEC) * 1000,
-      // complete / expired / denied / error are terminal; "pending" keeps polling.
       until: (r) => r.status !== "pending",
       maxAttempts: POLL_MAX_ATTEMPTS,
       backoff: { factor: 2, maxMs: POLL_BACKOFF_CAP_SEC * 1000 },

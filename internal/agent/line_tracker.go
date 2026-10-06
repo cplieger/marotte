@@ -1,7 +1,3 @@
-// File line tracker HTTP handler. The LineTracker implementation lives in
-// internal/buffer; this file exposes it via
-// GET /api/file-changes?chat_id=<id>&path=<path>.
-
 package agent
 
 import (
@@ -13,8 +9,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// handleFileChanges delegates to the line tracker for
-// GET /api/file-changes?chat_id=<id>&path=<path>.
+// handleFileChanges serves GET /api/file-changes?chat_id=<id>&path=<path> from the line tracker.
 func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)

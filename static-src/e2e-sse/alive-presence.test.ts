@@ -1,15 +1,7 @@
-// The keepalive acknowledgement and the presence row it feeds, against the REAL marotte
-// binary (design 12.8, the browser-mode list's two presence bullets). A connected client
-// that acknowledges reads present; one whose acknowledgements stop while its socket
-// keeps reading keepalives reads gone at the alive window, with its socket still
-// counted, which is the whole reason the acknowledgement exists: the socket alone
-// cannot see a suspended page.
-//
-// The acknowledgement is switched off by a fixture flag on the INJECTED fetch, which
-// answers the alive POST locally instead of sending it, so the stream keeps reading
-// keepalives exactly as a locked phone's kernel keeps receiving them. The presence row
-// is read through the test-only probe. Real time: the fixture runs at the production
-// keepalive, so the gone half of this file waits the alive window out.
+// The keepalive acknowledgement and the presence row it feeds, against the REAL binary: a client
+// whose acknowledgements stop while its socket still reads keepalives reads gone at the alive
+// window (the socket alone cannot see a suspended page). A fixture flag on the injected fetch
+// answers the alive POST locally. Real time: the gone half waits the production window out.
 
 import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
 
@@ -29,9 +21,8 @@ if (FIXTURE === undefined || FIXTURE === "") {
   console.warn(`[vitest] ${SKIP_REASON}`);
 }
 
-/** Missed keepalives before a connected client reads gone (liveness.AliveWindow is two
- *  of them). The test derives the expected flip from the hello's keepalive_ms so no
- *  millisecond literal is duplicated here. */
+/** Missed keepalives before a connected client reads gone (liveness.AliveWindow); the expected
+ *  flip derives from the hello's keepalive_ms. */
 const ABSENCE_BEATS = 2;
 
 interface ProbeRow {

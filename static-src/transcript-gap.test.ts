@@ -1,9 +1,6 @@
-// A chat's transcript survives ONE lost SSE frame: the fold detects the gap, asks for one
-// range read, and the answer restores the state an undropped stream would have produced.
-//
-// Every drop position is enumerated rather than sampled, because the stream is a fixed list
-// and its positions are the whole input space. The last frame is the one position no `seq`
-// can see, so it is a case of its own and the `live_turn` digest stamp is what catches it.
+// A transcript survives ONE lost SSE frame: the fold detects the gap, makes one range read, and
+// reaches the undropped state. Every drop position is enumerated; the LAST frame is invisible to
+// `seq`, so the `live_turn` digest stamp catches it in its own case.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import type * as ApiClient from "./api-client.js";

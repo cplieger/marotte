@@ -20,13 +20,8 @@ func setModeReq(t *testing.T, chatID marotte.ChatID, modeID string) *marotte.Cli
 	return &marotte.ClientCommand{Type: marotte.CmdSetMode, ChatID: chatID, Payload: payload}
 }
 
-// A mode pick on a tombstoned id is a 404, and it now comes from the store's own
-// refusal rather than being inferred.
-//
-// The inference it replaces was a no-op mutation plus an absent record, which was
-// the only reading available while a refused write reported nil. It also could not
-// tell that case apart from a store that lost the chat between the two calls, and
-// it made every no-op pick pay a second read.
+// TestCmdSetMode_TombstonedChatIs404: the 404 comes from the store's own refusal rather than being
+// inferred from a no-op plus an absent record.
 func TestCmdSetMode_TombstonedChatIs404(t *testing.T) {
 	host := newTestHost(t, tombstonedChats{testsupport.NewInMemoryChatStore()})
 
@@ -40,13 +35,8 @@ func TestCmdSetMode_TombstonedChatIs404(t *testing.T) {
 	}
 }
 
-// The two ordinary outcomes, together, because they are what stops the refusal
-// above from being spelled as "anything that changed nothing is a 404".
-//
-// A repeat pick of the mode already in force changes nothing and must still
-// succeed silently — no error, and no mode_changed frame for a mode that did not
-// move. A pick on a chat that is not a server record yet must AUTO-CREATE it, or
-// every mode chosen before the first prompt is lost.
+// TestCmdSetMode_NoOpAndAutoCreate pins the two ordinary outcomes, so the refusal above cannot be
+// spelled as "anything that changed nothing is a 404".
 func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 	t.Run("a repeat pick succeeds and says nothing", func(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
@@ -84,16 +74,9 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 	})
 }
 
-// TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot pins the one
-// distinction applySessionConfig exists to make, from both sides and for both config
-// commands.
-//
-// A bridge that exists but has not STARTED is a chat with no session, because the
-// manager registers the record before Start so concurrent opens coalesce — so a click
-// during a cold spawn must persist for the session door exactly like a bridgeless
-// chat, not answer 502. A refusal by the SESSION is the opposite: reporting it is the
-// whole reason the live call leads, and persisting it would leave the record claiming
-// a setting the session never took.
+// TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot pins applySessionConfig's
+// distinction from both sides: a bridge not yet started is a chat with no session and persists, a
+// session refusal does not.
 func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) {
 	tests := map[string]struct {
 		callErr     error
@@ -142,14 +125,6 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 				}
 			})
 
-			// The third config command, and the one that used to answer this state
-			// differently: it persisted FIRST, called the bridge best-effort, discarded
-			// the outcome and answered 200 whatever the session said — so a refused
-			// toggle left the record, ChatHeader.supervised_mode and every client's
-			// checkbox claiming supervised over a session in autopilot, with the
-			// client's own optimistic rollback unreachable because a 200 is not an
-			// error. It seeds the chat because set_supervised_mode does NOT auto-create
-			// one, unlike its two siblings.
 			t.Run("set_supervised_mode", func(t *testing.T) {
 				store := testsupport.NewInMemoryChatStore()
 				seedEmptyChat(t, store, "c1")

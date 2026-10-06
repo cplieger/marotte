@@ -1,11 +1,7 @@
 package command
 
-// The tangent has TWO paths and the fallback is the interesting one, so these
-// tests drive a real REFUSAL rather than mocking the decision: every case here
-// hands the handler a bridge that answers the way KAS would, and the handler
-// picks its own path from that answer. A test that stubbed "the fork failed"
-// would assert that the branch exists without pinning what triggers it, which is
-// exactly the half that has to keep working.
+// These tests hand the handler a bridge that answers the way KAS would, so the handler picks its
+// own path from a real refusal.
 
 import (
 	"context"
@@ -154,26 +150,16 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 	if c.ACPSessionID != "sess_tangent" {
 		t.Errorf("acp_session_id = %q, want the forked sess_tangent", c.ACPSessionID)
 	}
-	// Bound means the replay supplies the transcript. Copying messages here would
-	// duplicate what the session already carries.
 	if c.TurnCount != 0 {
 		t.Errorf("tangent carries %d turns, want 0: the replay supplies them", c.TurnCount)
 	}
-	// The chain is what the reaper's keep-list reads, so a forked session must be
-	// IN it or the next sweep deletes the transcript the tangent is reading.
 	if chain := c.SessionChain(); len(chain) != 1 || chain[0] != "sess_tangent" {
 		t.Errorf("session chain = %v, want [sess_tangent]", chain)
 	}
 }
 
-// TestCmdForkChat_SendsTangentMeta pins the _meta.kiro block, which is entirely
-// caller-supplied on this verb. `createdReason` is KAS's own spelling for a
-// tangent (measured against the 2.18.0 sidecar) and is what a later session/load
-// reports back beside parentSessionId.
-//
-// It also pins the absence of `messageId`: KAS's own /tangent sends none, and
-// adding one would make the fork addressable to a user message that a tangent has
-// no reason to name.
+// TestCmdForkChat_SendsTangentMeta pins the caller-supplied _meta.kiro block; `createdReason` is
+// KAS's own spelling for a tangent (2.18.0 sidecar).
 func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
@@ -244,9 +230,7 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	if c.Effort != string(marotte.EffortHigh) {
 		t.Errorf("effort = %q, want the parent's", c.Effort)
 	}
-	// The NAME is deliberately not inherited: it stays the ordinary precedence
-	// (the agent's focus title, else the first prompt's truncation). Copying the
-	// parent's would give two tabs the same label with no way to tell them apart.
+	// The NAME is not inherited: two tabs would share a label.
 	if c.Name != marotte.DefaultChatName {
 		t.Errorf("name = %q, want the default; the parent's name is not inherited", c.Name)
 	}
@@ -256,15 +240,8 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 // The tangent still opens, but without a bound session or inherited context.
 func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
 	cases := map[string]*recordingBridge{
-		// A transport or JSON-RPC failure: KAS threw.
-		"call error": {sessionID: "sess_parent", callErr: errors.New("-32601 method not found")},
-		// A reply with no session id at all. KAS's own fork wrapper reads
-		// `.sessionId` off the result, so this is what a refusal it can explain
-		// looks like from here.
-		"no session id": {sessionID: "sess_parent", result: map[string]any{"error": "cannot fork"}},
-		// A session id that is not path-safe. Validated rather than trusted,
-		// because the value reaches a filesystem path inside KAS and marotte's own
-		// reaper keep-list.
+		"call error":        {sessionID: "sess_parent", callErr: errors.New("-32601 method not found")},
+		"no session id":     {sessionID: "sess_parent", result: map[string]any{"error": "cannot fork"}},
 		"unsafe session id": {sessionID: "sess_parent", result: map[string]any{"sessionId": "../../etc/passwd"}},
 	}
 	for name, br := range cases {
@@ -279,8 +256,6 @@ func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
 				t.Fatalf("status = %d, want 200: a refused fork still opens the tangent (err %v)",
 					statusOf(err), err)
 			}
-			// The handler RETURNS its body, so the assertion reads the value
-			// instead of decoding the JSON the dispatcher would have written.
 			reply, ok := body.(map[string]any)
 			if !ok {
 				t.Fatalf("body = %T, want map[string]any", body)
@@ -298,7 +273,6 @@ func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
 			if c.ACPSessionID != "" {
 				t.Errorf("acp_session_id = %q, want empty: no session was forked", c.ACPSessionID)
 			}
-			// Record-level settings do not depend on a successful session fork.
 			if c.Model != "parent-model" || c.CurrentModeID != "plan" {
 				t.Errorf("fresh tangent lost the parent's settings: model=%q mode=%q",
 					c.Model, c.CurrentModeID)
@@ -474,9 +448,8 @@ func TestCmdForkChat_LoadsTheForkedHistoryIntoTheNewChat(t *testing.T) {
 	if c.TurnCount != 2 {
 		t.Errorf("the tangent's record holds %d turns, want the parent's 2", c.TurnCount)
 	}
-	// The HEADER half is load-bearing too: the client's isEmptyChat reads that count, so
-	// a header captured before the swap makes it skip its own fetch and render exactly
-	// the empty transcript this closes.
+	// The header half is load-bearing: the client's isEmptyChat reads its count, so a header
+	// captured before the swap skips the fetch.
 	reply, ok := body.(map[string]any)
 	if !ok {
 		t.Fatalf("body = %T, want map[string]any", body)
@@ -612,7 +585,6 @@ func TestCmdForkChat_RepeatOpAfterAFellThroughLoadReportsFreshAndLoadsNothing(t 
 func TestCmdForkChat_AFreshTangentLoadsNothing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
-	// No bridge can be opened for the parent, so the fork is refused.
 	host := newForkHost(store, nil, "c-parent")
 
 	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
@@ -671,14 +643,11 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 		want    int
 		seed    bool
 	}{
-		// A tangent of itself would rebind the chat's own session through
-		// RecordSession and retire the session it is still using. The one shape
-		// here that corrupts rather than merely fails.
 		"self fork":       {newChat: "c-parent", parent: "c-parent", want: http.StatusBadRequest, seed: true},
 		"empty parent":    {newChat: "c-tangent", parent: "", want: http.StatusBadRequest, seed: true},
 		"unsafe parent":   {newChat: "c-tangent", parent: "../etc", want: http.StatusBadRequest, seed: true},
 		"unknown parent":  {newChat: "c-tangent", parent: "c-missing", want: http.StatusNotFound, seed: false},
-		"oversized title": {newChat: "c-tangent", parent: "c-parent", title: strings.Repeat("t", marotte.MaxChatNameBytes+1), want: http.StatusBadRequest, seed: true},
+		"oversized title": {newChat: "c-tangent", parent: "c-parent", title: strings.Repeat("🙂", 65), want: http.StatusBadRequest, seed: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -722,13 +691,8 @@ func TestCmdForkChat_RejectsAMalformedPayload(t *testing.T) {
 	}
 }
 
-// TestCmdForkChat_TheRecordSurvivesAClose is the History half of the tangent's
-// contract: closing the tab kills the WORK, not the record, so a tangent (like
-// any chat) is still there to reopen afterwards.
-//
-// It matters here specifically because a tangent is a SUB-tab: the parent's close
-// cascade closes it, so this is the ordinary way a tangent ends rather than an
-// edge case.
+// TestCmdForkChat_TheRecordSurvivesAClose asserts that closing the tab kills the work, not the record, so a
+// tangent is still there to reopen.
 func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
@@ -736,14 +700,12 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-	closeChatTeardown(t.Context(), host, host, host, "c-tangent")
+	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent")
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {
 		t.Fatal("the tab-close teardown deleted the tangent's record; History would not list it")
 	}
-	// The session stays in the chain so the reaper's keep-list still protects the
-	// transcript a reopen would load.
 	if chain := c.SessionChain(); len(chain) == 0 {
 		t.Error("the tangent lost its session chain on close")
 	}
@@ -756,21 +718,21 @@ func testWorkspace(t *testing.T) Workspace {
 	return Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}
 }
 
-// A title of exactly MaxChatNameBytes is legal: the oversized-title row in
-// TestCmdForkChat_Rejects pins the refusal one byte above it, and this pins
-// that the last accepted length really is accepted and reaches KAS verbatim.
-func TestCmdForkChat_AcceptsATitleAtTheCap(t *testing.T) {
-	atCap := strings.Repeat("t", marotte.MaxChatNameBytes)
+// A title at the user-name cap is legal, and KAS and the record receive the same
+// sanitized value: an unsanitized title would let the record and KAS disagree.
+func TestCmdForkChat_AcceptsATitleAtTheCapAndSendsItSanitized(t *testing.T) {
+	atCap := strings.Repeat("🙂", 64)
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
 	host := newForkHost(store, br, "c-parent")
 
-	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", atCap))
+	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", "  "+atCap+"\u202e  "))
 	if err != nil {
-		t.Fatalf("CmdForkChat with a %d-byte title = %v, want it accepted", len(atCap), err)
+		t.Fatalf("CmdForkChat with a 128-unit title = %v, want it accepted", err)
 	}
-	if _, ok := store.Get(t.Context(), "c-tangent"); !ok {
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
 		t.Fatal("no tangent was created for an accepted title")
 	}
 	meta, ok := br.gotParams["_meta"].(map[string]any)
@@ -781,9 +743,43 @@ func TestCmdForkChat_AcceptsATitleAtTheCap(t *testing.T) {
 	if !ok {
 		t.Fatalf("_meta.kiro = %T, want a map", meta["kiro"])
 	}
-	title, _ := kiro["title"].(string)
-	if title != atCap {
-		t.Errorf("title reached KAS as %d bytes, want the %d-byte title as given",
-			len(title), len(atCap))
+	if kiro["title"] != atCap || c.Name != atCap {
+		t.Errorf("KAS title = %q, record name = %q; want both %q", kiro["title"], c.Name, atCap)
+	}
+}
+
+// TestCmdForkChat_LatchesATitleAsTheUsersName: KAS stores a fork's supplied
+// title as the user's, so the tangent's record names it the same way and no
+// later focus or derived title replaces it.
+func TestCmdForkChat_LatchesATitleAsTheUsersName(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
+
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
+		t.Fatal("the tangent chat was not created")
+	}
+	if c.Name != "Reaper detour" || !c.NameSetByUser {
+		t.Errorf("name = %q, set by user = %v; want %q, true", c.Name, c.NameSetByUser, "Reaper detour")
+	}
+}
+
+// TestCmdForkChat_AnUntitledForkIsNotUserNamed: no title, no latch, so the
+// tangent can still take a derived or focus title.
+func TestCmdForkChat_AnUntitledForkIsNotUserNamed(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	c, _ := store.Get(t.Context(), "c-tangent")
+	if c.NameSetByUser {
+		t.Errorf("an untitled fork is marked user-named (name %q)", c.Name)
 	}
 }

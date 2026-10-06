@@ -1,44 +1,15 @@
-// ---------------------------------------------------------------------------
-// The SUBAGENT adapter: a delegate's slice of a chat, folded into the exec view's
-// model.
-//
-// The workflow half of that page is `run-exec-source.ts`; this is the second
-// adapter, and writing it is the whole test of whether `exec-view/` earned its
-// extraction. It needed two additions and no changes: `ExecRun.focus`, because a
-// subagent has one door PER delegate where a run has one door meaning "the run",
-// and `ExecPageOpts.icon`, because the header's glyph was the workflow's.
-//
-// WHERE THE DATA COMES FROM, and it is the one place this source is better off than
-// the workflow's. A delegate's blocks live in the chat file stamped with
-// `agent_subtask_id`, so they survive replay and a finished delegate's transcript is
-// readable weeks later. A workflow step's entries are the RUN's, in its own log, so
-// that adapter's empty note has to answer for the step-transcript read as well and
-// carries more cases than this one.
-//
-// TWO SHAPES, and the page picks between them by content rather than by a flag:
-//
-//   a plain `invoke_sub_agent`  -> ONE leaf. No tree pane (one root, no children),
-//                                 no timeline (it needs two leaves), so the whole
-//                                 width goes to the transcript being read.
-//   an `orchestrate_subagent`   -> the driver as a root with its stages beneath it.
-//                                 The tree appears, and the timeline shows which
-//                                 stages actually overlapped — which is the fact a
-//                                 pipeline has and a column cannot express, since
-//                                 two stages as consecutive rows look identical
-//                                 whether they ran in sequence or at once.
-//                                 EXCEPT at exactly one stage, which is the FIRST
-//                                 shape again: that stage becomes the root and no
-//                                 group row is produced, as the transcript promotes.
-//
-// A stage's page therefore shows the WHOLE pipeline with that stage selected. That is
-// why the ref names a subtask and never a driver: one door, and it lands you on the
-// delegate you clicked without hiding its siblings.
-// ---------------------------------------------------------------------------
+// The SUBAGENT adapter: a delegate's slice of a chat, folded into the exec view's model (the
+// workflow's is `run-exec-source.ts`). Its blocks persist in the chat file with `agent_subtask_id`.
+// TWO SHAPES, chosen by content:
+//   a plain `invoke_sub_agent`  -> ONE leaf: no tree pane, no timeline.
+//   an `orchestrate_subagent`   -> the driver with its stages (tree + timeline), except at one
+//                                  stage, which promotes to the first shape.
+// A stage's page shows the WHOLE pipeline with that stage selected, so the ref names a subtask.
 
 import type { ToolCall } from "./types.js";
 import { delegateStatusFor } from "./store.js";
 import { humanName, truncate } from "./strings.js";
-import { subagentLabel, subagentName } from "./roles.js";
+import { inlineAgentOf, subagentLabel, subagentName } from "./roles.js";
 import { inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecNode, ExecRun } from "./exec-view/model.js";
 import type { SubagentProjection } from "./subagent-slice.js";
@@ -46,16 +17,9 @@ import type { SubagentProjection } from "./subagent-slice.js";
 /** What a delegate with no resident invocation reads as. */
 const FALLBACK = "Subagent";
 
-/** The node path a delegate's content is filed under.
- *
- *  The subtask id, which is already stable and instance-unique — it is a fresh uuid
- *  per dispatch, so a stage re-run in a second pipeline is a different node, which is
- *  exactly what `ExecNode.path` requires. A stage NAME would not do: two pipelines in
- *  one turn can both have a `review` stage.
- *
- *  Exported because the view files content under it (`page.bodyFor(path)`) and the
- *  focus names it, so a second spelling would put a delegate's transcript in a host
- *  nothing selects. */
+/** The node path a delegate's content is filed under: the subtask id, a fresh uuid per dispatch (a
+ *  stage NAME can repeat across pipelines). Exported because `page.bodyFor(path)` and the focus must
+ *  agree on it. */
 export function subagentPath(subtaskID: string): string {
   return subtaskID;
 }
@@ -67,27 +31,12 @@ function driverPath(pipelineID: string): string {
   return `pipeline:${pipelineID}`;
 }
 
-/** A delegate's state, from its invocation TOOL CALL's status folded against the
- *  chat's turn liveness, so the page agrees with the dot and the card about a delegate
- *  whose turn died before its `tool_result` landed.
- *
- *  Not `stateOf` directly: a tool call speaks `ToolStatus` rather than a run
- *  node status, so each adapter maps its own closed vocabulary. */
+/** A delegate's state from its invocation's `ToolStatus` folded against the chat's turn liveness,
+ *  so page, dot and card agree when the turn died before `tool_result`. */
 function toolState(status: ToolCall["status"] | undefined, turnLive: boolean): ExecState {
   switch (status === undefined ? undefined : delegateStatusFor(status, turnLive)) {
-    // No invocation resident, so there is no status to report — which is a
-    // DIFFERENT fact from `pending`, whose word is "not started". That word is a
-    // positive claim about a delegate this adapter knows nothing about, and it is
-    // wrong in the case that produces it most often: a delegate that ran to
-    // completion in a turn the process died holding, so nothing persisted its
-    // invocation and the record the page reads simply has no status in it. The
-    // reader is then told the work never began.
-    //
-    // `unknown` is the member `exec-view/status.ts` already carries for exactly
-    // this, with its own word, its own ring and `inFlight` true — not knowing is
-    // not the same as finished, and the run adapter folds an unrecognised wire
-    // status the same way rather than absorbing it into a state that reads as an
-    // answer.
+    // No invocation resident: `unknown`, not `pending` ("not started" is wrong for a delegate whose turn
+    // died after it finished). The run adapter folds an unrecognised status the same way.
     case undefined:
       return "unknown";
     case "pending":
@@ -105,15 +54,8 @@ function toolState(status: ToolCall["status"] | undefined, turnLive: boolean): E
   }
 }
 
-/** The identity facts for one delegate, in the order they answer questions: what it
- *  is, which stage it was, and the handles for finding it again.
- *
- *  Deliberately short next to `run-exec-source.ts`'s twelve. A workflow step reports
- *  an agent, a model, an effort tier, a completion signal and a retry count because
- *  KAS's `inspect` carries them per node; a delegate's invocation tool call carries
- *  none of that, and inventing rows for it would be a page claiming facts it does not
- *  have. `ExecFact` being a list rather than named fields is what makes two facts and
- *  twelve equally legal. */
+/** The identity facts for one delegate. Model and effort rows appear only for an inline helper
+ *  (`inlineAgent`); a saved agent's input names neither. */
 function factsOf(invocation: ToolCall | undefined, stage: string): ExecFact[] {
   const facts: ExecFact[] = [];
   const add = (label: string, value: string, mono = false): void => {
@@ -123,16 +65,15 @@ function factsOf(invocation: ToolCall | undefined, stage: string): ExecFact[] {
   };
   if (invocation !== undefined) {
     add("Agent", subagentName(invocation));
+    const inline = inlineAgentOf(invocation);
+    if (inline !== null) {
+      add("Model", inline.model);
+      add("Effort", inline.effort);
+    }
   }
   add("Stage", stage);
   if (invocation !== undefined) {
-    // NO duration row, for the reason `output` carries none: the detail pane's own
-    // header states the node's elapsed time and its tree row states it again, so a
-    // third copy in the facts list is the same number three ways on one screen — and
-    // the first attempt spelled it `180s` while both others said `3m 0s`, because this
-    // list would have had to reach for the app's formatter to agree with them.
-    //
-    // Last, and monospace: handles rather than facts a reader acts on.
+    // No duration row: the detail header and tree row already state it. Handles last, monospace.
     add("Subtask", invocation.agent_subtask_id ?? "", true);
     add("Call", invocation.id, true);
   }
@@ -153,12 +94,8 @@ function subtitleOf(invocation: ToolCall | undefined, label: string): string {
   return id;
 }
 
-/** The prose an `orchestrate_subagent` driver declares for the whole pipeline.
- *
- *  `task` rather than `stages`: the stage list is the tree below, and the task is the
- *  one thing the pipeline was ASKED to do — the same slot `state.inputs` fills for a
- *  workflow run, which had no reader anywhere before that page. Truncated because it
- *  is a paragraph and the header renders one line per input. */
+/** The prose an `orchestrate_subagent` driver declares: its `task` (the stages are the tree),
+ *  truncated, since the header renders one line per input. */
 function driverInputs(driver: ToolCall | undefined): Record<string, string> | undefined {
   if (driver === undefined) {
     return undefined;
@@ -205,15 +142,8 @@ function toLeaf(
   if (sub !== "") {
     out.subtitle = sub;
   }
-  // The timeline's whole input, and it is derivable rather than absent: a tool call's
-  // `ts` is stamped in millis when KAS reports the call — for an invocation, when the
-  // delegate was dispatched — and `duration_ms` is its span. `end` stays absent while
-  // the call is in flight, which is what `ExecNode` means by "still going", and a
-  // settled call with no duration recorded gets no end rather than a zero-width bar.
-  //
-  // Without this a pipeline's timeline would draw nothing, and the overlap between
-  // stages is the one fact a pipeline has that a column cannot express: two stages as
-  // consecutive rows look identical whether they ran in sequence or at once.
+  // The timeline's input: a call's `ts` (dispatch time) plus `duration_ms`. `end` stays absent while
+  // in flight, and a settled call with no duration gets no end rather than a zero-width bar.
   if (invocation !== undefined && invocation.ts > 0) {
     out.start = new Date(invocation.ts).toISOString();
     const ms = invocation.duration_ms ?? 0;
@@ -225,25 +155,13 @@ function toLeaf(
   if (facts.length > 0) {
     out.facts = facts;
   }
-  // NO `output`, and that is the one field this adapter deliberately leaves empty.
-  //
-  // For a workflow step, `capturedOutput` is a durable field beside a transcript that
-  // is live-only, so the detail pane's Output region is the only place a finished
-  // step's result exists. A delegate's blocks ARE its transcript and its last text
-  // block IS its report, so filling `output` renders that report twice on one screen:
-  // once in the region above and once, in order and at full width, in the transcript
-  // below it. Measured in the sidecar before it was removed. The transcript is the
-  // better of the two — it keeps the report in the context of the work that produced
-  // it — so the region goes rather than the blocks.
+  // NO `output`: a delegate's last text block IS its report, so filling it renders the report twice;
+  // the transcript keeps it in context.
   return out;
 }
 
-/** The state a pipeline's driver reads as: the worst outcome beneath it.
- *
- *  Its own tool-call status is taken only when it says something terminal, for the
- *  reason `run-exec-source.ts` gives about containers: a driver reads `in_progress`
- *  for as long as anything under it is open, which tells a reader nothing they cannot
- *  see, while "a stage inside this failed" is what a collapsed group must still say. */
+/** A driver reads as the worst outcome beneath it; its own status counts only when terminal (an
+ *  `in_progress` driver tells the reader nothing). */
 function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   if (kids.length === 0) {
     return own;
@@ -254,27 +172,17 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
       return s;
     }
   }
-  // No `unknown` clause here, and it is unreachable rather than forgotten: a KID is
-  // only ever a pipeline stage, `SubagentMember.invocation` is non-optional, and
-  // `groupOf` admits a member only when `isSubagentInvocation` holds — so every stage
-  // has a status and `toolState`'s `undefined` arm cannot fire for one. `unknown`
-  // reaches this function as `own` alone, from a driver that is not resident.
+  // No `unknown` clause, unreachable: a KID is always a stage with a status (`groupOf` admits only
+  // `isSubagentInvocation` members). `unknown` arrives as `own` alone.
   if (states.has("ok")) {
     return states.has("pending") ? "running" : "ok";
   }
   return own;
 }
 
-/** Fold a delegate, and whatever it belongs to, into the exec view's model.
- *
- *  `projection` is `sliceSubagentGroup`'s one walk over the conversation, passed in
- *  rather than computed here because the view already holds it: it carries the GROUP
- *  this reads its structure from and a slice per member, which is what the view mounts
- *  into `page.bodyFor` and what it watches for streaming deltas. Computing either here
- *  would walk the same window a second time on every repaint.
- *
- *  `turnLive` is the chat's own turn liveness, defaulting to the answer that claims
- *  nothing, as `subagentStatusFor`'s does. */
+/** Fold a delegate and its group into the exec view's model. `projection` is
+ *  `sliceSubagentGroup`'s walk, passed in because the view already holds it. `turnLive` defaults
+ *  to the answer that claims nothing. */
 export function subagentToExec(
   subtaskID: string,
   projection: SubagentProjection,
@@ -318,13 +226,8 @@ export function subagentToExec(
   }
   const driverState = rollUp(toolState(group.driver?.status, turnLive), stages);
   const root: ExecNode = {
-    // No stage COUNT here: the page header's `step N of M` states it, and this row's
-    // own children are the list. The transcript's pipeline box carries the count
-    // because a collapsed card has neither.
-    //
-    // `Stages`, not the header's own words: `ExecRun.label` one row up already reads
-    // `Subagent pipeline` byte-identically, so naming the object twice stutters —
-    // this row says what it HOLDS. Not the bare `Pipeline`, which names no kind.
+    // No stage count (the header's `step N of M` states it). `Stages`: the label above already reads
+    // `Subagent pipeline`, so this row says what it HOLDS.
     path: driverPath(group.pipeline),
     label: "Stages",
     kind: "parallel",
@@ -334,19 +237,12 @@ export function subagentToExec(
   };
   const out: ExecRun = {
     id: subtaskID,
-    // The EXECUTION's name, which for a pipeline is the pipeline and not the stage the
-    // tab happens to name. The header states the whole thing's progress and elapsed
-    // time beside this label, so a stage's name here read as "review_gpt is on step 3
-    // of 4" — measured in the sidecar. The delegate the reader opened is named by the
-    // TAB and by the detail pane; this row is the one that has to be the container.
+    // The EXECUTION's name: a stage's name beside the header's progress would read as the stage's
+    // progress. The tab and detail pane name the delegate.
     label: "Subagent pipeline",
     state: driverState,
-    // ONE stage renders no group row, the page's twin of the transcript's promotion:
-    // a container over its only child is a wrapper rather than structure, and
-    // `exec-view/page.ts` hides the tree, the detail-pane name row and the timeline
-    // for exactly that. The pipeline's identity survives the row — its label and the
-    // driver's Task input are `ExecRun` fields the page HEADER renders, and the run's
-    // window comes from the LEAVES, never from a container's stamps.
+    // ONE stage renders no group row, as the transcript promotes; the pipeline's identity lives in
+    // `ExecRun` fields the header renders, and the window comes from the leaves.
     nodes: stages.length === 1 ? stages : [root],
     live: (own?.live ?? false) || inFlight(driverState),
     focus,
@@ -365,11 +261,8 @@ function factStage(node: ExecNode): string {
   return node.facts?.find((f) => f.label === "Stage")?.value ?? "";
 }
 
-/** The stage names an `orchestrate_subagent` call declared.
- *
- *  Read through guards: `input` is whatever the model produced, so a `stages` that is
- *  not an array of named objects yields nothing rather than throwing on a page whose
- *  other half renders fine. Same posture `indexPlan` takes with `nodePlan`. */
+/** The stage names an `orchestrate_subagent` call declared, read through guards (`input` is
+ *  model-produced), as `indexPlan` reads `nodePlan`. */
 function declaredStages(driver: ToolCall | undefined): string[] {
   const input = driver?.input;
   if (input === null || input === undefined || typeof input !== "object") {

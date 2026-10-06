@@ -1,9 +1,7 @@
 package chat
 
-// The staged-attachment writer. It is the draft's twin, so what is pinned here is
-// that the twinning actually holds: the same absent-UpdatedAt contract, the same
-// refusal to create a chat, the same refusal on a file holding another chat's id,
-// plus the caps that keep an unloadable list off disk.
+// The staged-attachment writer is the draft's twin: the same absent-UpdatedAt contract, no chat creation, refusal of
+// another chat's id, plus caps keeping an unloadable list off disk.
 
 import (
 	"strings"
@@ -36,10 +34,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// The property this method shares with SetDraft, and the reason it is not a
-	// Mutate call. The retention purge ages a chat from UpdatedAt, and this write
-	// rides the composer's 600ms debounce, so stamping it would push the cutoff
-	// out by a whole window every time a pill row changed.
+	// Not a Mutate call: retention ages a chat from UpdatedAt, and this rides the composer's 600ms debounce.
 	t.Run("does_not_move_the_retention_clock", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -73,9 +68,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// An empty list is a VALUE: it is how a send or an emptied pill row clears.
-	// Stored as nil rather than as an empty array so `omitempty` keeps the field
-	// out of the chat file entirely.
+	// An empty list clears, stored as nil so `omitempty` keeps the field out of the file.
 	t.Run("an_empty_list_clears_and_stores_nil", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -95,8 +88,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// It REPLACES rather than merging: the client's pill row is authoritative and
-	// sends the whole list, so a removed file has to disappear.
+	// Replaces: the client's pill row sends the whole list.
 	t.Run("replaces_rather_than_merges", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -116,8 +108,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// Same rule as the draft: staging a file must not turn a client-side chat into
-	// a row in every connected client's sidebar.
+	// Staging must not turn a client-side chat into a sidebar row.
 	t.Run("no_op_on_a_chat_that_does_not_exist", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -171,8 +162,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// A path that cannot round-trip through JSON would make the chat unloadable,
-	// which is the same reason the draft, the name and message content are checked.
+	// A path that cannot round-trip through JSON would make the chat unloadable.
 	t.Run("refuses_invalid_utf8", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -185,9 +175,7 @@ func TestSetAttachments(t *testing.T) {
 		}
 	})
 
-	// THE cross-chat corruption path, shared with SetDraft: this writer persists
-	// the WHOLE loaded object, so a c1.json holding `"id":"c2"` would write
-	// everything it loaded over c2.json under c1's mutex.
+	// This writer persists the whole loaded object, so a c1.json holding `"id":"c2"` would overwrite c2.json.
 	t.Run("refuses_a_chat_file_holding_another_chats_id", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -202,9 +190,7 @@ func TestSetAttachments(t *testing.T) {
 		if _, err := s.SetAttachments(t.Context(), "c1", []string{"a.txt"}); err == nil {
 			t.Error("SetAttachments accepted a chat file holding another chat's id")
 		}
-		// The clear is the same write with an empty list, and the planted file has
-		// no attachments, so this is the one that reaches the no-change shortcut.
-		// It must report the corruption rather than return nil.
+		// The clear reaches the no-change shortcut and must still report the corruption.
 		if _, err := s.SetAttachments(t.Context(), "c1", nil); err == nil {
 			t.Error("SetAttachments returned nil for an empty list on a mismatched file; the corruption stayed silent")
 		}
@@ -214,10 +200,8 @@ func TestSetAttachments(t *testing.T) {
 	})
 }
 
-// The returned state is what the draft_changed broadcast is built from, so
-// "nothing landed" and "this landed" have to be distinguishable — and the state
-// has to carry BOTH halves whichever writer produced it, or a frame from one
-// command would blank the other's field on every receiving device.
+// draft_changed is built from the returned state, so it must tell nothing-landed from landed and carry both halves,
+// or one command's frame blanks the other's field.
 func TestComposerWritersReportTheWholeState(t *testing.T) {
 	t.Parallel()
 	s, err := NewStore(t.TempDir())
@@ -237,8 +221,7 @@ func TestComposerWritersReportTheWholeState(t *testing.T) {
 		t.Errorf("state after SetDraft = %+v, want the text and no attachments", state)
 	}
 
-	// The attachment writer must report the draft that is already there, not an
-	// empty one.
+	// The attachment writer reports the draft already there.
 	state, err = s.SetAttachments(t.Context(), "c1", []string{"docs/spec.pdf"})
 	if err != nil {
 		t.Fatalf("SetAttachments: %v", err)
@@ -253,7 +236,7 @@ func TestComposerWritersReportTheWholeState(t *testing.T) {
 		t.Errorf("state.Attachments = %v, want docs/spec.pdf", state.Attachments)
 	}
 
-	// And the draft writer must report the attachments that are already there.
+	// And the draft writer the attachments.
 	state, err = s.SetDraft(t.Context(), "c1", "more of the question")
 	if err != nil {
 		t.Fatalf("SetDraft: %v", err)
@@ -266,9 +249,7 @@ func TestComposerWritersReportTheWholeState(t *testing.T) {
 	}
 }
 
-// A save that changes nothing reports nothing, which is what keeps a broadcast
-// off the wire for the common no-change case: a blur flush right behind a
-// debounced save, and the unload flush behind that.
+// A no-change save reports nothing, keeping broadcasts off the wire for blur and unload flushes.
 func TestComposerWritersReportNoWriteWhenNothingChanged(t *testing.T) {
 	t.Parallel()
 	s, err := NewStore(t.TempDir())
@@ -299,8 +280,7 @@ func TestComposerWritersReportNoWriteWhenNothingChanged(t *testing.T) {
 		t.Errorf("SetAttachments reported a write for an identical list: %+v", state)
 	}
 
-	// nil and an empty slice are the same value here, so neither counts as a
-	// change against an already-empty list.
+	// nil and empty are the same value here.
 	if _, err := s.SetAttachments(t.Context(), "c1", nil); err != nil {
 		t.Fatalf("SetAttachments clear: %v", err)
 	}
@@ -313,8 +293,7 @@ func TestComposerWritersReportNoWriteWhenNothingChanged(t *testing.T) {
 	}
 }
 
-// The state handed back is a COPY, so a caller building a broadcast payload from
-// it cannot reach into the slice the next load will compare against.
+// The returned state is a copy, so a broadcast cannot reach the slice the next load compares.
 func TestSetAttachments_ReturnedStateIsACopy(t *testing.T) {
 	t.Parallel()
 	s, err := NewStore(t.TempDir())
@@ -334,7 +313,7 @@ func TestSetAttachments_ReturnedStateIsACopy(t *testing.T) {
 	}
 }
 
-// manyPaths builds n distinct workspace paths, for the cap cases.
+// manyPaths builds n distinct workspace paths for the cap cases.
 func manyPaths(n int) []string {
 	out := make([]string, n)
 	for i := range out {

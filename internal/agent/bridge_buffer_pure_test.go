@@ -1,9 +1,5 @@
 package agent
 
-// Pure-function tests for bridge_buffer.go. Pins extractStopReason
-// branches that the existing suite only exercises via happy-path
-// turn-end flows.
-
 import (
 	"encoding/json"
 	"testing"

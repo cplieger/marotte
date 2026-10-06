@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// revertRecord appends one turn_revert into carrier, naming the window from..through.
-// The id has the store's own shape, so what a reader greps for is what the store writes.
+// revertRecord appends one turn_revert into carrier naming the window from..through, with the store's id shape.
 func revertRecord(f *logFixture, carrier, from, through string, fromN uint64) {
 	f.t.Helper()
 	f.append(carrier, "", from+":revert", marotte.EntryKindTurnRevert, marotte.EntryTurnRevert{
@@ -23,7 +22,7 @@ func revertRecord(f *logFixture, carrier, from, through string, fromN uint64) {
 	})
 }
 
-// railIDs is the rail index's turns, which answers the surviving view.
+// railIDs returns the rail index's turns, the surviving view.
 func railIDs(l *EntryLog) []string {
 	rows := l.RailRows()
 	ids := make([]string, 0, len(rows))
@@ -33,9 +32,7 @@ func railIDs(l *EntryLog) []string {
 	return ids
 }
 
-// turnsIn is the SET of turns the entries name, in first-seen order. A set rather
-// than a run-length pass because two turns of one log interleave in file order: the
-// prompt-plus-agent-turn state produces it and the merge's rewrite can re-produce it.
+// turnsIn is the set of turns the entries name, in first-seen order: turns of one log interleave in file order.
 func turnsIn(entries []marotte.Entry) []string {
 	seen := make(map[string]struct{}, len(entries))
 	var order []string
@@ -58,9 +55,8 @@ func mustAll(t *testing.T, l *EntryLog) []marotte.Entry {
 	return entries
 }
 
-// The skip rule's four properties over a real file: the window is
-// FILE order, bounded above by the turn the record NAMES, the carrier is excluded,
-// and the record itself stays visible because it lives in a surviving turn.
+// The skip rule over a real file: the window is file order, bounded by the named turn, the carrier is excluded, and
+// the record stays visible in its surviving turn.
 func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 	f := newLogFixture(t)
 	a, b := f.prompt("a"), f.prompt("b")
@@ -101,14 +97,12 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 		}
 	}
 
-	// The append path and the scan must build the SAME index, or a reload changes
-	// what the reader sees.
+	// The append path and the scan must build the same index, or a reload changes the view.
 	check("live")
 	f.reopen()
 	check("after a reopen")
 
-	// The record is lane-less and lives in the carrier, so it travels with the
-	// surviving view rather than being hidden with the range it names.
+	// The lane-less record lives in the carrier and survives with it.
 	var records int
 	for _, e := range mustAll(t, f.log) {
 		if e.Kind == marotte.EntryKindTurnRevert {
@@ -123,10 +117,8 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 	}
 }
 
-// The `T != C` exclusion, which is reachable only when the carrier's own turn_open
-// lies INSIDE the window: the no-survivor carrier the log mints. Without it the
-// record lands in a turn every reader skips, so a reload draws no boundary row and
-// the surviving view is EMPTY.
+// The carrier's own exclusion matters only when its turn_open is inside the window (the minted no-survivor carrier);
+// without it a reload shows no boundary row and an empty view.
 func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
 	f := newLogFixture(t)
 	a := f.prompt("a")
@@ -156,11 +148,8 @@ func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
 	check("after a reopen")
 }
 
-// A minted carrier's ONE crash state: its turn_open is on disk and its record is
-// not. The scan marks such a carrier reverted, which restores the pre-revert surviving
-// view AND keeps the store-open closer off it — a closer there would be stamped
-// interrupted/unterminated, which is the reconcile-needed signal, so every rewind to
-// turn 1 would raise a lost-history claim for a chat that lost nothing.
+// The carrier's crash state: its turn_open on disk, its record not. The scan marks it reverted, restoring the
+// pre-revert view and keeping the store-open closer, whose closer is the reconcile signal, off it.
 func TestRevert_IncompleteCarrierIsRevertedAndSynthesizesNoCloser(t *testing.T) {
 	f := newLogFixture(t)
 	a := f.prompt("a")
@@ -196,8 +185,7 @@ func TestRevert_IncompleteCarrierIsRevertedAndSynthesizesNoCloser(t *testing.T) 
 	}
 }
 
-// NewestRevert is a field read off the index's own order, never a comparison over
-// payloads: the LAST record the scan met.
+// NewestRevert reads the index's own order: the last record the scan met.
 func TestRevert_NewestRevertIsTheLastRecordInFileOrder(t *testing.T) {
 	f := newLogFixture(t)
 	if id, ok := f.log.NewestRevert(); ok || id != "" {
@@ -219,8 +207,7 @@ func TestRevert_NewestRevertIsTheLastRecordInFileOrder(t *testing.T) {
 	}
 }
 
-// AllWithReverted is the merge's read, and the one reader that sees past the
-// surviving view: every entry in file order beside the set the rule marks.
+// AllWithReverted, the merge's read, returns every entry in file order and the marked set.
 func TestRevert_AllWithRevertedHoldsEverything(t *testing.T) {
 	f := newLogFixture(t)
 	a, b := f.prompt("a"), f.prompt("b")
@@ -247,13 +234,8 @@ func TestRevert_AllWithRevertedHoldsEverything(t *testing.T) {
 	}
 }
 
-// The skip rule survives the merge's REWRITE, which is what the record's stated Through
-// exists for. A rewrite regroups by turn, so the record travels into its carrier's
-// group and the carrier PRECEDES the window it names by construction: a window
-// resolved while the order is still being built resolves against neither end and
-// marks nothing, handing the reverted range back with n values the survivors have
-// reused. The reopen arm is the one that measures it, because the rewrite's own
-// rescan is where the resolution happens.
+// The skip rule survives the merge's rewrite, the reason the record states Through: the rewrite puts the record in its
+// carrier's group before the window, so resolving mid-scan would mark nothing. The reopen arm measures it.
 func TestRevert_RewriteDoesNotUnRevert(t *testing.T) {
 	f := newLogFixture(t)
 	a, b := f.prompt("a"), f.prompt("b")
@@ -287,8 +269,7 @@ func TestRevert_RewriteDoesNotUnRevert(t *testing.T) {
 	}
 	check("live")
 
-	// The swap's store half, over the whole file including the reverted range: what
-	// MergeEntries hands Rewrite once AllWithReverted has its one caller.
+	// The swap's store half over the whole file, as MergeEntries hands Rewrite.
 	all, _, err := f.log.AllWithReverted()
 	if err != nil {
 		t.Fatalf("AllWithReverted(): %v", err)
@@ -301,9 +282,7 @@ func TestRevert_RewriteDoesNotUnRevert(t *testing.T) {
 	check("after a reopen")
 }
 
-// The carrier is the newest SURVIVOR, so reverting turn 1 of k reverts
-// all k, and the record still lands where every reader sees it. The append path picks
-// it; nothing hands the revert a turn.
+// The carrier is the newest survivor, so reverting turn 1 of k reverts all k and the record stays visible.
 func TestRevert_CarrierIsTheNewestSurvivor(t *testing.T) {
 	f := newLogFixture(t)
 	turns := make([]string, 0, 4)
@@ -340,10 +319,7 @@ func TestRevert_CarrierIsTheNewestSurvivor(t *testing.T) {
 	}
 }
 
-// A SECOND rewind chooses its carrier against the union of every window, not just its
-// own: without that clause the record lands in a turn the first revert took, where no
-// reader ever sees it — no boundary row on a reload, and a live frame the client
-// answers as a hole whose repair read this log refuses.
+// A second rewind picks its carrier against every window, or its record lands in a turn the first revert took.
 func TestRevert_ASecondRevertsRecordIsVisible(t *testing.T) {
 	f := newLogFixture(t)
 	turns := make([]string, 0, 7)
@@ -395,10 +371,8 @@ func TestRevert_ASecondRevertsRecordIsVisible(t *testing.T) {
 	check("after a reopen")
 }
 
-// When the window takes every turn, the log mints its own carrier at the
-// POST-revert high-water and CLOSES it before the record exists. The close is
-// load-bearing — an open carrier is synthesized `unterminated` at the next open, which
-// is the reconcile signal, so a rewind that lost nothing would raise it.
+// When the window takes every turn, the log mints a carrier at the post-revert high-water and closes it before the
+// record: an open carrier would raise the reconcile signal.
 func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 	f := newLogFixture(t)
 	turns := make([]string, 0, 3)
@@ -445,9 +419,7 @@ func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 	check("after a reopen")
 }
 
-// A between-turns append after a revert lands in a SURVIVING turn. Filed into the newest
-// turn instead, every model switch, mode switch and between-turns steer after a rewind
-// would land where no reader looks, with a live frame the client answers as a hole.
+// A between-turns append after a revert lands in a surviving turn; it once landed inside the window, unread.
 func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	f := newLogFixture(t)
 	a := f.prompt("a")
@@ -488,8 +460,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 		t.Error("the window does not hold the between-turns entry")
 	}
 
-	// The no-survivor revert leaves the carrier as the only turn, and a between-turns
-	// append then joins IT rather than minting a second one.
+	// With the carrier as the only turn, a between-turns append joins it.
 	if _, _, err := f.log.Revert(t.Context(), a, marotte.TurnRevertCauseRewind, ""); err != nil {
 		t.Fatalf("second Revert(): %v", err)
 	}
@@ -502,9 +473,7 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	}
 }
 
-// countingReaderAt is the byte accounting a window read's cost needs: the entries
-// two reads answer are identical, so only the bytes tell a per-range read from a
-// single span over the page.
+// countingReaderAt counts bytes read: two reads return the same entries, so only bytes tell per-range from one span.
 type countingReaderAt struct {
 	r    io.ReaderAt
 	read int64
@@ -516,8 +485,7 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-// bytesOfTurns is the sum of the set's own byte ranges, read off the file rather
-// than off the index: every line whose turn is in the set, newline included.
+// bytesOfTurns sums the set's own byte ranges from the file, newlines included.
 func bytesOfTurns(t *testing.T, path string, want map[string]struct{}) int64 {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -540,15 +508,9 @@ func bytesOfTurns(t *testing.T, path string, want map[string]struct{}) int64 {
 	return total
 }
 
-// A window read issues one pread per byte RANGE, which is what keeps its cost
-// proportional to the page after a rewind: two reverts leave the surviving turns
-// non-contiguous, and a carrier's newest entry is its revert record at the file's
-// tail, so one span over the page — or one per contiguous RUN of turns — reads every
-// reverted byte between the page's oldest turn and that record.
-//
-// The oracle is NOT equality with a single-span read, which the run-loop version
-// also satisfies: the entries equal the set's own, AND the bytes read are no greater
-// than the sum of the set's own ranges.
+// A window read issues one pread per byte range, keeping cost proportional to the page after a rewind: a span or a
+// per-run read would cross every reverted byte up to the carrier's record at the tail. The oracle is the entries plus a
+// byte bound.
 func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	f := newLogFixture(t)
 	a, b := f.prompt("a"), f.prompt("b")
@@ -558,8 +520,7 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	for _, turn := range []string{c, d, e} {
 		f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 	}
-	// Two records, so the surviving turns are {a, b, e} with a gap at c and another
-	// at d, and b holds two ranges of its own: its body, and its record at the tail.
+	// Two records leave {a, b, e} surviving with gaps at c and d; b holds two ranges, its body and its record.
 	revertRecord(f, b, c, c, 3)
 	revertRecord(f, e, d, d, 4)
 
@@ -589,10 +550,8 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 	}
 }
 
-// The scan carries the reconcile predicate's ANSWERS rather than making it re-scan:
-// the index row (the synthesized closer's own stop reason, a text-less
-// steer) and its three log-level sets (the reconciled turns, the reconciled sessions,
-// the sessions a turn_bind names). The predicate itself reads them at the door.
+// The scan precomputes the reconcile predicate's inputs: the index row (closer stop reason, text-less steer) and the
+// three sets (reconciled turns, reconciled sessions, bound sessions).
 func TestScan_CarriesTheReconcileAnswers(t *testing.T) {
 	f := newLogFixture(t)
 	crashed, live := f.prompt("crashed"), f.prompt("live")
@@ -643,12 +602,9 @@ func TestScan_CarriesTheReconcileAnswers(t *testing.T) {
 	check("after a reopen")
 }
 
-// An incomplete carrier is reverted at EITHER interruption point, and the flags follow
-// the RECORD rather than the attempt — so a failed revert answers in memory exactly what
-// a fresh open of the same bytes answers. The interruption is the k-th syncEntries: the
-// carrier's turn_open is the revert's first write, its turn_close the second, the record
-// the third. A failed sync leaves the LINE on disk, because the write returned before it,
-// so the "does not land" half of each arm is the unsynced tail going with the failure.
+// An incomplete carrier is reverted at either interruption point, and the flags follow the record, so a failed revert
+// matches a fresh open. The interruption is the k-th syncEntries (turn_open, turn_close, record); a failed sync leaves
+// the line on disk, so the crash drops the unsynced tail.
 func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -693,8 +649,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			}
 			t.Cleanup(func() { syncEntries = restore })
 
-			// Reverting the OLDEST turn takes b with it, so no turn survives and the
-			// log mints the carrier this arm interrupts.
+			// Reverting the oldest turn takes b too, so the carrier this arm interrupts is minted.
 			_, opened, err := f.log.Revert(t.Context(), a, marotte.TurnRevertCauseRewind, "kas-a")
 			if !errors.Is(err, boom) {
 				t.Fatalf("Revert(%q) with sync %d failing = %v, want the write error", a, tc.failAt, err)
@@ -724,8 +679,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 				t.Errorf("a later append answered %v, want the latch", err)
 			}
 
-			// The crash the arm names: the line whose sync failed never reached the
-			// device, so the next open reads the durable prefix.
+			// The line whose sync failed never reached the device; the next open reads the durable prefix.
 			if err := os.Truncate(filepath.Join(f.root, entriesFileName), durable); err != nil {
 				t.Fatalf("drop the unsynced tail: %v", err)
 			}
@@ -751,8 +705,7 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 	}
 }
 
-// kindsOfTurn is one turn's entry kinds read past the surviving view, because a
-// reverted turn is exactly what TurnRange refuses.
+// kindsOfTurn reads one turn's kinds past the surviving view; TurnRange refuses reverted turns.
 func kindsOfTurn(t *testing.T, l *EntryLog, turn string) []marotte.EntryKind {
 	t.Helper()
 	all, _, err := l.AllWithReverted()
@@ -779,11 +732,8 @@ func kindsOfTurn(t *testing.T, l *EntryLog, turn string) []marotte.EntryKind {
 	return kinds
 }
 
-// Store.NewestRevert is the provenance a resume's projection snapshots, and it is a
-// STORE read because the projection's open reaches no log: the log is reachable only
-// inside a Reconcile callback, which is the swap's own path. Three answers, and the
-// third is the one the gate depends on — a chat with nothing to snapshot must answer
-// the empty id rather than a failure, or every first resume would be discarded.
+// Store.NewestRevert is what a resume's projection snapshots, a store read because the log is only reachable inside
+// the swap. A chat with nothing to snapshot must answer the empty id, or every first resume is discarded.
 func TestStore_NewestRevertIsTheRecordAResumeSnapshots(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -814,11 +764,8 @@ func TestStore_NewestRevertIsTheRecordAResumeSnapshots(t *testing.T) {
 	}
 }
 
-// Ordinal REUSE is what makes the rewrite's group order load-bearing: a turn opened
-// after a revert takes the SURVIVING high-water plus one, so two turns in one log carry one
-// `n` and a sort over it is ambiguous — and it would interleave reverted turns with
-// surviving ones. groupByTurn therefore keeps the READ's order, which is this log's own file
-// order, and this is the fixture where the two orders differ.
+// A turn opened after a revert reuses an ordinal, so groupByTurn keeps the read's file order; here n order and file
+// order differ.
 func TestRevert_RewriteKeepsTheReadsOrderWhenAnOrdinalIsReused(t *testing.T) {
 	f := newLogFixture(t)
 	turns := make([]string, 0, 3)
@@ -827,7 +774,7 @@ func TestRevert_RewriteKeepsTheReadsOrderWhenAnOrdinalIsReused(t *testing.T) {
 		f.closeTurn(id, marotte.TurnOutcomeCompleted)
 		turns = append(turns, id)
 	}
-	// The window is b..c, so a survives as the carrier and the record lands in it.
+	// The window is b..c, so a carries the record.
 	if _, opened, err := f.log.Revert(t.Context(), turns[1], marotte.TurnRevertCauseRewind, "kas-1"); err != nil {
 		t.Fatalf("Revert(): %v", err)
 	} else if opened != nil {
@@ -840,8 +787,7 @@ func TestRevert_RewriteKeepsTheReadsOrderWhenAnOrdinalIsReused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AllWithReverted(): %v", err)
 	}
-	// Fixture honesty, on the NEIGHBOURING fact rather than the order under test: with no
-	// reuse the n order and the file order coincide and this test measures nothing.
+	// Guard: without reuse the two orders coincide and this measures nothing.
 	if got, want := ordinalOfTurnIn(t, all, fresh), ordinalOfTurnIn(t, all, turns[1]); got != want {
 		t.Fatalf("the new turn's n = %d and the reverted turn b's = %d; this fixture only "+
 			"discriminates while an ordinal is REUSED, so it is measuring nothing", got, want)
@@ -871,8 +817,7 @@ func TestRevert_RewriteKeepsTheReadsOrderWhenAnOrdinalIsReused(t *testing.T) {
 	check("after a reopen")
 }
 
-// turnOrderIn is a read's turn order: each turn id at its FIRST appearance, which is what
-// file order means for a log whose turns can interleave.
+// turnOrderIn is a read's turn order: each turn id at its first appearance.
 func turnOrderIn(entries []marotte.Entry) []string {
 	var order []string
 	seen := make(map[string]struct{}, len(entries))

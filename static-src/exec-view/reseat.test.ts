@@ -1,19 +1,7 @@
-// ---------------------------------------------------------------------------
-// A row the exec view has already seated is not re-seated.
-//
-// `appendChild` on an already-attached node is a remove plus an insert, so it
-// restarts every CSS animation in the subtree and drops the reader state that
-// lives on the element (`:hover`, focus). Both panes re-render on every store
-// bump and the timeline additionally on the 1s tick, so a live run paid that cost
-// several times a second: measured on the live app, a running row's `vk-spin`
-// ring was knocked back to its start angle 2.58 times a second against the 600ms
-// it needs for one revolution, so it never completed a turn. That is what was
-// reported as the spinner freezing and restarting, and as the row flickering.
-//
-// These cases run in real Chromium, which is what lets the first one assert on an
-// actual animation clock rather than on a proxy for it. Each was red-checked
-// against `place` restored to a bare `appendChild`.
-// ---------------------------------------------------------------------------
+// A row the exec view has already seated is not re-seated: `appendChild` on an attached node
+// restarts its subtree's CSS animations and drops `:hover` and focus, and both panes re-render
+// several times a second on a live run. Real Chromium, so the first case reads an actual
+// animation clock.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { buildExecTree } from "./tree.js";
@@ -60,14 +48,9 @@ describe("the tree pane", () => {
     const rowOf = (p: string): HTMLElement =>
       host.querySelector<HTMLElement>(`.ev-row[data-path="${p}"]`)!;
 
-    // PAUSED AT A KNOWN POINT, so the case depends on no clock at all. Reading elapsed
-    // `currentTime` needs the animation to have ADVANCED, and reading `startTime` needs it
-    // to have STARTED; under a cold full-suite run Chromium throttles rAF hard enough that
-    // neither happens inside any sleep worth writing — measured, a 1.6s poll for a
-    // non-null `startTime` timed out. Positioning the animation ourselves removes the
-    // premise: a paused animation holds its `currentTime`, and a re-seat cannot preserve
-    // it because the re-seat DESTROYS this animation and starts a fresh, running one from
-    // zero (measured on the live app: 7216ms to 17ms, with a new `startTime`).
+    // PAUSED at a known point, so no clock is needed (a cold full run throttles rAF too hard for
+    // `startTime` to arrive). A paused animation holds `currentTime`; a re-seat destroys it and
+    // starts a fresh one from zero.
     const animOf = (p: string): Animation | undefined => rowOf(p).getAnimations()[0];
     const anim = animOf("a");
     expect(anim, "the row needs an animation to probe").toBeDefined();

@@ -7,24 +7,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// HandleElicitationCreate processes a _kiro/mcp/elicitation request from
-// KAS. An MCP server has asked for structured input mid-tool-call; KAS
-// forwarded it to us because we advertised the elicitation client
-// capability. We surface a form to the user and the eventual reply is
-// sent by CmdElicitationResponse via bridge.Respond.
-//
-// The request is a real JSON-RPC request (envelope id present), routed
-// here the same way fs/read_text_file is — so the correlation id is
-// msg.ID. On v3 the elicitation body is NESTED under an "elicitation"
-// object; sessionId/toolCallId stay top-level. We reuse the
-// pending-permissions tracker for SSE replay so a dialog survives a
-// reconnect, exactly like a permission prompt. There is no v3
-// elicitation-complete method (upstream cancel is not signalled).
+// HandleElicitationCreate processes a _kiro/mcp/elicitation request: an MCP server asked for
+// structured input mid-tool-call. The form is surfaced and CmdElicitationResponse answers on
+// msg.ID. On v3 the body is NESTED under "elicitation". The pending-permissions tracker
+// replays it on reconnect. KAS signals no upstream cancel.
 func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
-		// The request must be answerable; without an id we cannot route
-		// a response, so drop rather than show a dialog the user's
-		// answer can't reach.
+		// No id means no route for the answer: drop rather than show an unanswerable dialog.
 		slog.Warn("elicitation missing id", "chat_id", chatID)
 		return
 	}
@@ -53,12 +42,8 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 	evt := marotte.NewEvent(marotte.EventElicitationNeeded, chatID, marotte.ElicitationNeededPayload{
 		RequestID: reqID,
 		Mode:      p.Elicitation.Mode,
-		// The message is what the user is accepting or declining, and an MCP
-		// server is further from marotte's trust than the agent is, so it gets
-		// the same treatment as a permission title. Mode, URL and the requested
-		// schema are not display text: the first two the client resolves, and
-		// the schema's own labels are a nested foreign document whose rendering
-		// is the client's business.
+		// The message is what the user accepts or declines, so it gets the permission title's
+		// treatment. Mode, URL and schema are not display text.
 		Message:         displayText(p.Elicitation.Message),
 		URL:             p.Elicitation.URL,
 		ToolCallID:      p.ToolCallID,

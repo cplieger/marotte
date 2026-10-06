@@ -1,11 +1,6 @@
-// Tests for the entry-log SSE handlers — the ROUTING, not the store's own rules. The store is
-// mocked, because position, holes, coalescing and every `seq` comparison are
-// `store.test.ts`'s subject; what belongs here is which operation an event reaches, with
-// which arguments, and the three facts applied BESIDE the position.
-//
-// TWO ORACLES ARE CARRIED from `handlers/messages.test.ts`, deleted by content with the
-// message model: a repo-mutating call SETTLING marks the git badge dirty with the paths it
-// touched, an empty list meaning a full rescan; and the latch runs on the TRANSITION only.
+// The entry-log handlers' ROUTING; the store is mocked (position, holes and `seq` rules are
+// `store.test.ts`'s). Also: a repo-mutating call SETTLING marks the git badge dirty with its paths
+// (empty = full rescan), and the latch runs on the TRANSITION only.
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../store.js", () => ({
@@ -143,15 +138,9 @@ describe("each event is one call into one store operation", () => {
 });
 
 describe("a RUN's frame belongs to the run store, not to a chat", () => {
-  // A run's log arrives with an EMPTY chat id and the workflow id in the payload, and one
-  // `onSSE` registration fans out to every subscriber — so each of the run-scoped six has
-  // to refuse it itself. Table-driven because the refusal is one rule with six registration
-  // sites, and a case per site is the only way a NEW handler that forgets it fails.
-  //
-  // `code_references` is the file's seventh registration and is deliberately NOT here: its
-  // payload carries no workflow id, because the producer drops a step's or a subagent's copy
-  // (`foreignSession`) and the chat's own copy already carries the identical list. A row for
-  // it would assert a refusal for a frame the wire cannot produce.
+  // A run's log arrives with an EMPTY chat id and one `onSSE` registration fans out to every
+  // subscriber, so each run-scoped handler refuses it itself; table-driven so a new handler that
+  // forgets fails. `code_references` is excluded: its payload carries no workflow id.
   const frames: [keyof SSEPayloads, unknown][] = [
     ["turn_opened", { entry: entry("turn_open", {}, { seq: 0 }) }],
     ["entry_opened", { open: { turn: TURN, id: "e1", kind: "text", text: "x", n: 1 } }],

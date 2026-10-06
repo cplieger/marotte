@@ -1,11 +1,3 @@
-// The model card with NO models, which used to render nothing at all: the scroller
-// mounted zero children, so the pill opened on an effort row above an empty
-// `role="listbox"` labelled "Available models" and said nothing.
-//
-// Its own file because the controller is a singleton that RETAINS its scroller,
-// and `model-switcher.test.ts` replaces `document.body` per test — so that
-// scroller has been detached since its second case. A separate file gets a fresh
-// registry and one durable fixture. The notice's COPY is picker.ts's to own.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelInfo } from "./types.js";
 import type * as Strings from "./strings.js";
@@ -44,12 +36,11 @@ vi.mock("./store.js", async () => {
     isThinking: () => false,
     setEffort: vi.fn(),
     setModel: vi.fn(),
+    setThinkingChoice: vi.fn(),
   };
 });
 
-// `retryCatalog` is the picker's door, so a mock is what proves this card asks
-// through it rather than growing a second handler. What the door itself DOES —
-// announcing the press and the answer it settles on — is picker.test.ts's.
+// A mock proves the card asks through picker's retryCatalog, not a handler of its own.
 const { retried } = vi.hoisted(() => ({ retried: { calls: 0 } }));
 vi.mock("./picker.js", () => ({
   getCachedModels: () => cachedModels,
@@ -67,17 +58,14 @@ vi.mock("./actions/index.js", () => ({
   RETRY_STANDARD: {},
 }));
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
-// The real reconcile, because a mocked one cannot show that a notice and a real
-// option row coexist correctly — the notice is unkeyed and reconcile inserts each
-// keyed row after every unkeyed sibling.
+// Real reconcile: the unkeyed notice must coexist with keyed option rows.
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
   setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
 }));
-// Only `humanName` is stubbed, to identity; `rateLabel` and the rest stay REAL —
-// see the note on the same mock in model-switcher.test.ts.
+// Only `humanName` is stubbed (see model-switcher.test.ts).
 vi.mock("./strings.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Strings>()),
   humanName: (s: string) => s,
@@ -104,8 +92,7 @@ function scroller(): HTMLElement {
 }
 
 describe("the model card with no models", () => {
-  // ONE fixture for the file: the controller keeps the scroller it builds, so a
-  // per-test card would strand it.
+  // One fixture: the controller keeps the scroller it builds.
   beforeAll(() => {
     const pill = document.createElement("button");
     pill.id = "switch-model-btn";
@@ -142,8 +129,6 @@ describe("the model card with no models", () => {
     onExpand.fn?.();
     expect(scroller().hasAttribute("aria-busy")).toBe(true);
 
-    // A settled verdict must drop it, or a screen reader is told the list is
-    // loading for as long as the card exists.
     notice = { text: "Could not load the model list.", busy: false, retry: true };
     onExpand.fn?.();
     expect(scroller().hasAttribute("aria-busy")).toBe(false);
@@ -153,16 +138,11 @@ describe("the model card with no models", () => {
     notice = { text: "No models available yet.", busy: false, retry: true };
     onExpand.fn?.();
 
-    // A listbox whose only child is a line of prose advertises a choice that is
-    // not there.
     expect(scroller().getAttribute("role")).toBe(null);
     expect(scroller().getAttribute("aria-label")).toBe(null);
   });
 
   it("stops being a listbox when a re-read answers with no models", () => {
-    // Reachable: a login re-runs the catalog fetch, and a `ready` verdict
-    // carrying an empty list is applied rather than dropped, so the scroller can
-    // legitimately go from holding options to holding none.
     cachedModels = [model("opus-4.7")];
     onExpand.fn?.();
     expect(scroller().getAttribute("role")).toBe("listbox");
@@ -189,16 +169,12 @@ describe("the model card with no models", () => {
     expect(el.querySelectorAll(".pill-model-item")).toHaveLength(1);
   });
 
-  // The card used to render the notice and DROP the `retry` flag, so the pill was
-  // a keyboard dead end in both states where the hero picker is one in neither.
   it("offers a way back when asking again can change the answer", () => {
     notice = { text: "Could not load the model list.", busy: false, retry: true };
     onExpand.fn?.();
 
     const btn = retryBtn();
     expect(btn).not.toBe(null);
-    // The picker's door, not a second one: this card knows nothing about how the
-    // catalog is fetched or what the press announces.
     btn?.click();
     expect(retried.calls).toBe(1);
   });
@@ -207,14 +183,10 @@ describe("the model card with no models", () => {
     notice = { text: "No models available yet.", busy: false, retry: true };
     onExpand.fn?.();
 
-    // "Retry" alone names no subject, and the button and the hero picker's must
-    // agree — one constant, read from picker.ts.
     expect(retryBtn()?.getAttribute("aria-label")).toBe("Retry loading the model list");
   });
 
   it("offers no Retry while an answer is still coming", () => {
-    // The bounded refresh is already asking and refuses a second caller, so the
-    // button would be inert.
     notice = { text: "Loading models…", busy: true, retry: false };
     onExpand.fn?.();
 
@@ -230,7 +202,6 @@ describe("the model card with no models", () => {
     notice = null;
     onExpand.fn?.();
 
-    // Both stand-ins go, or a real list keeps a control offering to reload it.
     expect(retryBtn()).toBe(null);
     expect(scroller().querySelector(".list-empty")).toBe(null);
   });

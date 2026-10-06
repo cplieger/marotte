@@ -1,21 +1,14 @@
-// AN ACTION INSIDE A DENSE LIST ROW TAKES THE DENSE TIER, NOT `--btn-h`: a
-// `.btn-small` (36px) inside a `.list-row` (24px floor) would DRIVE the row's height
-// and read as its subject (the Add-tool modal's Install button). TWO claims that
-// pull against each other: a `.btn-small` INSIDE a row shrinks, one standing ALONE
-// (a modal footer) keeps `--btn-h`; the first alone passes for a rule that shrank
-// every button. Real layout, because the claim is geometric; `data-pointer="fine"`
-// is stated so the mouse tier is a premise.
+// An action inside a dense list row takes the dense tier, not `--btn-h`: a `.btn-small` (36px) would otherwise drive a
+// `.list-row` (floor 24px) and read as its subject. A standalone `.btn-small` keeps `--btn-h`; pinning only the first
+// would pass for a rule shrinking every `.btn-small`. `data-pointer="fine"` is stated as a premise.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** `--ctl-h-dense` and `--btn-h` on the fine tier (01-tokens.css), in px. Stated
- *  here so a token retune fails this suite rather than silently redefining what it
- *  asserts. */
+/** `--ctl-h-dense` and `--btn-h` on the fine tier, stated so a token retune fails here. */
 const DENSE_PX = 32;
 const BTN_PX = 36;
-/** `--hit-floor` and `--ctl-h` on the COARSE tier, which share a value — 44px is
- *  both the touch target floor and the number the reporter read off the row. */
+/** `--hit-floor` and `--ctl-h` on the coarse tier, which share 44px. */
 const COARSE_PX = 44;
 
 let style: HTMLStyleElement;
@@ -28,8 +21,7 @@ function track<T extends HTMLElement>(el: T): T {
   return el;
 }
 
-/** A dense list row carrying one action, as `tools.ts` `renderSearchHit` builds
- *  the Add modal's result: the text column, then the Install button. */
+/** As `tools.ts` `renderSearchHit` builds the Add modal's result. */
 function rowWithAction(): { row: HTMLElement; btn: HTMLElement } {
   const row = document.createElement("div");
   row.className = "list-row tool-hit";
@@ -48,10 +40,7 @@ function rowWithAction(): { row: HTMLElement; btn: HTMLElement } {
   return { row, btn };
 }
 
-/** The Add modal's own close button (index.html `#tool-modal-close`), which is the
- *  height every other control on that surface already agrees on. The comparison
- *  the token number alone cannot make: this is what "one control height per row"
- *  is measured against. */
+/** The Add modal's close button, the height every control on that surface agrees on. */
 function modalIconButton(): HTMLElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -63,9 +52,7 @@ function modalIconButton(): HTMLElement {
   return track(btn);
 }
 
-/** A `.btn-small` that stands alone in a modal's action bar (index.html's PR
- *  dialogs). The negative control: nothing scopes it to a row, so it keeps the
- *  full-size tier. */
+/** The negative control: nothing scopes it to a row, so it keeps the full tier. */
 function standaloneButton(): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "modal-actions";
@@ -109,16 +96,13 @@ describe("a .btn-small inside a .list-row", () => {
   });
 
   it("keeps its row off the coarse tier", () => {
-    // The reported symptom, in the reporter's own terms: a 36px button in a row
-    // whose floor is 24px rendered a 44px row, which is `--ctl-h` on the COARSE
-    // tier — a touch-mode number on a fine-pointer desktop.
+    // The reported symptom: a 36px button in a 24px-floor row rendered a 44px row.
     const { row } = rowWithAction();
     expect(h(row), "a fine-pointer row must not measure the touch tier").toBeLessThan(COARSE_PX);
   });
 
   it("leaves a standing .btn-small at the full-size tier", () => {
-    // The control for the whole change. Without it the first case passes just as
-    // well for a rule that shrank every .btn-small in the app.
+    // The control: without it the first case passes for a rule that shrank every .btn-small.
     expect(h(standaloneButton()), "a button that stands alone keeps --btn-h").toBeCloseTo(
       BTN_PX,
       0,
@@ -126,11 +110,8 @@ describe("a .btn-small inside a .list-row", () => {
   });
 
   it("still clears the touch floor on a coarse pointer", () => {
-    // The other side of the same rule, and the reason it reads `max()`: the
-    // universal hit-target floor scores zero, so this rule OUTRANKS it, and a bare
-    // `--ctl-h-dense` (2.5rem coarse) would have put a 40px button beside the 44px
-    // `.list-row-btn` in its own row. Measured: 44px before this change and 44px
-    // after, so the fix is fine-tier only.
+    // Why the rule reads `max()`: it outranks the zero-specificity hit-target floor, and a bare `--ctl-h-dense` would put
+    // a 40px button beside the 44px `.list-row-btn`. Fine-tier only.
     document.documentElement.setAttribute("data-pointer", "coarse");
     try {
       const { btn } = rowWithAction();

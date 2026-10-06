@@ -1,11 +1,6 @@
-// ONE HOVER GATE FOR EVERY DISCLOSURE TRIGGER IN THE TRANSCRIPT. An ungated `:hover`
-// on a disclosure trigger LATCHES (the finger is still on the header when the tap
-// ends). `any-hover`, NEVER `hover`: `hover` reports only the PRIMARY input and
-// iPadOS answers `hover: none` with a trackpad attached. A SOURCE read, because
-// `getComputedStyle` cannot answer a question about a `:hover` rule (no synthetic
-// hover recalc, no `CSS.forcePseudoState`). The population is a DECLARED table: no
-// CSS marker says "disclosure trigger", so every row is also checked for existence,
-// and a tenth trigger needs a row.
+// One hover gate for every transcript disclosure trigger: an ungated `:hover` latches under a finger (the tap ends
+// with the finger on the header). `14-tools.css` states the rule at `.tool-group-header`; this asserts it across the
+// population. `any-hover`, never `hover`.
 import { describe, it, expect } from "vitest";
 
 import { manifestSheets } from "./__test-helpers__/css-rules.js";
@@ -46,9 +41,12 @@ const TRIGGERS: readonly Trigger[] = [
     what: "a tool card's summary row",
   },
   {
-    // The pipeline CONTAINER's header, a `role="button"` disclosure. Shares its
-    // rule with the leaf below; both rows are listed because they are two
-    // triggers, and a split that left one behind would still pass on the other.
+    file: "14-tools.css",
+    selector: ".tool-summary.opens-file:hover",
+    what: "a hook card's file-opening claim row",
+  },
+  {
+    // Shares its rule with the leaf below; listed twice because a split leaving one behind would pass on the other.
     file: "14-tools.css",
     selector: ".subagent-container.has-disclosure > .subagent-header:hover",
     what: "a delegate pipeline container's header",
@@ -75,22 +73,15 @@ const TRIGGERS: readonly Trigger[] = [
   },
 ];
 
-/** The gate every trigger must sit inside, and the one it must never sit inside. */
 const ANY_HOVER = /^@media\s*\(\s*any-hover\s*:\s*hover\s*\)$/u;
 const PRIMARY_ONLY = /\(\s*hover\s*:\s*hover\s*\)/u;
 
-/** Comments blanked rather than deleted, so nothing inside one is read as CSS. */
+/** Blanked, not deleted, so nothing inside a comment is read as CSS. */
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//gu, (m) => " ".repeat(m.length));
 }
 
-/**
- * A selector list split at TOP-LEVEL commas only.
- *
- * `.turn:not([data-running], [data-no-fold]) > .turn-header:hover` is ONE
- * selector holding a comma, so a naive `split(",")` yields two fragments and
- * the row is never found — which is a silent pass, not a failure.
- */
+/** Split at top-level commas only: `:not(a, b)` holds a comma, and a naive split silently finds nothing. */
 function members(prelude: string): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -110,15 +101,7 @@ function members(prelude: string): string[] {
   return out.filter((s) => s !== "");
 }
 
-/**
- * Every rule in the sheet whose selector LIST names `selector`, each with the
- * at-rule preludes enclosing it.
- *
- * A brace walk rather than the CSSOM, because the question is about the authored
- * source: an `@media` the engine does not match is absent from
- * `document.styleSheets`' matched rules, so a gate could only be observed by
- * reading the text.
- */
+/** A brace walk over the source: an unmatched `@media` is absent from the matched CSSOM rules. */
 function rulesNaming(css: string, selector: string): { readonly gates: string[] }[] {
   const text = stripComments(css);
   const found: { gates: string[] }[] = [];
@@ -157,8 +140,7 @@ describe("the disclosure trigger hover gate", () => {
 
       const rules = rulesNaming(css, selector);
       if (rules.length !== 1) {
-        // Zero means the selector moved or was renamed, so this row covers
-        // nothing; more than one means two rules disagree about the gate.
+        // Zero means the selector moved; more than one means two rules disagree about the gate.
         offenders.push(`${file} ${selector}: ${rules.length} rules name it (${what})`);
         continue;
       }

@@ -81,17 +81,9 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 	}
 }
 
-// TestSecurityMiddleware_HostAllowlist pins the ALLOWED_HOSTS
-// anti-DNS-rebinding gate inside the real security middleware: a rebinding
-// attack makes an attacker-controlled hostname resolve to this server, so
-// Origin and Host AGREE and the CSRF layer alone admits the request — the
-// exact-Host allowlist must reject it (with the baseline security headers
-// still applied), while an allowed Host passes through to the CSRF check
-// (which still rejects a forged cross-origin POST). The loopback peer+Host
-// carve-out keeps the image's own healthcheck working under a browser-facing
-// allowlist, a forged loopback Host from a remote peer stays rejected, and a
-// nil policy is a pass-through (unset ALLOWED_HOSTS stays backward
-// compatible).
+// TestSecurityMiddleware_HostAllowlist pins that a rebinding request (Origin and Host agree)
+// is rejected by the allowlist with baseline headers, the loopback carve-out keeps the
+// healthcheck, a forged loopback Host from a remote peer is rejected, and nil passes through.
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
 		webhttp.WithLoopbackExempt(true),
@@ -205,9 +197,7 @@ func scriptSrc(t *testing.T, policy string) string {
 	return ""
 }
 
-// TestBuildCSPPolicy_ScriptSrcIsSelfOnly: a page whose only scripts are
-// external files gets script-src 'self' exactly — no hash token and no
-// 'unsafe-inline', either of which would admit an inline script.
+// TestBuildCSPPolicy_ScriptSrcIsSelfOnly pins script-src 'self' exactly.
 func TestBuildCSPPolicy_ScriptSrcIsSelfOnly(t *testing.T) {
 	html := []byte(`<html><head><script src="/prepaint.js"></script></head>` +
 		`<script type="module" src="/app.js"></script></html>`)
@@ -285,8 +275,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 		if method == "" {
 			return
 		}
-		// Skip methods that would cause httptest.NewRequest to panic
-		// (contains spaces, control characters, or other invalid bytes).
+		// Skip methods httptest.NewRequest would panic on.
 		for _, b := range []byte(method) {
 			if b <= 0x20 || b == 0x7f {
 				t.Skip("invalid HTTP method character")
@@ -310,8 +299,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 
-		// Invariant 1: no panics (implicit).
-		// Invariant 2: GET always 200.
+		// GET always answers 200.
 		if method == http.MethodGet && rec.Code != http.StatusOK {
 			t.Errorf("GET with origin=%q got %d, want 200", origin, rec.Code)
 		}

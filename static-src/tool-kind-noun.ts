@@ -1,36 +1,11 @@
-// ---------------------------------------------------------------------------
-// The tool-kind NOUN vocabulary: one owner, read by the tool group's mixed
-// summary and by the turn footer's info panel.
-//
-// A LEAF on purpose — it imports the `ToolKind` type and nothing else. The
-// footer is a `fundamentals/` primitive, so reading this vocabulary out of
-// `tool-group.ts` would pull a disclosure controller, `scroll.ts` and a
-// ui-primitives disclosure into it; a second table in the footer would be a
-// second statement of one vocabulary.
-//
-// TOTAL over `ToolKind`, which is what removes the `?? "call"` fallback its
-// predecessor needed. That fallback was also a `Record<string, string>` indexed
-// by a caller's string, so `kindNoun("constructor", 1)` answered
-// `Object`'s own name off the prototype chain; a total table over the union has
-// no miss to fall through and no prototype to reach.
-// ---------------------------------------------------------------------------
+// The tool-kind NOUN vocabulary, read by the tool group's mixed summary and the turn footer. A LEAF
+// (imports only `ToolKind`), so the `fundamentals/` footer pulls in no disclosure machinery. TOTAL
+// over `ToolKind`: no fallback, and no prototype key to reach.
 
 import type { ToolKind } from "./types.js";
 
-/** Singular and plural per kind, spelled out rather than derived.
- *
- *  Both forms are written because the derivation its predecessor used —
- *  append `s`, or `es` after `x`/`h` — is a rule about English that has to be
- *  re-read at every call site to know what a kind says. Eleven of these are
- *  byte-identical to what that derivation produced, which is what keeps the
- *  group summaries unchanged.
- *
- *  The five the old table LACKED (`shell`, `hook`, `browser`, `command`,
- *  `other`) all answered "call" before, so a mixed group holding four shell
- *  commands read "4 calls". Four of them take the noun `TOOL_KIND_LABELS`
- *  already uses for the same kind, so the two surfaces agree; `other` keeps
- *  "call", which is the honest word for a kind whose name is the absence of
- *  one. */
+/** Singular and plural per kind, spelled out rather than derived. `other` is "call", the honest
+ *  word for a kind named by the absence of one; the rest match `TOOL_KIND_LABELS`. */
 const KIND_NOUNS: Readonly<Record<ToolKind, { one: string; many: string }>> = {
   read: { one: "read", many: "reads" },
   edit: { one: "edit", many: "edits" },

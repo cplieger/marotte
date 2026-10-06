@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
@@ -9,16 +10,8 @@ import (
 
 const modelAuto = marotte.ModelAuto
 
-// cheapestModel returns the cheapest reliable model id from the current
-// catalog, or "" if nothing is live. Filters out:
-//   - "auto" (task-based selection, not a real model)
-//   - [Deprecated], [Legacy] (end-of-life)
-//   - [Internal] (not available to all users)
-//   - [Experimental] (unstable, may produce poor results)
-//
-// Selects by lowest RateMultiplier among eligible models. If no model
-// has a rate (all zero, e.g. session/new doesn't send it), falls back
-// to the first eligible entry.
+// cheapestModel returns the lowest-RateMultiplier eligible model id, or "". "auto" and every
+// modelExcluded model are skipped; with no rates the first eligible entry wins.
 func cheapestModel(_ context.Context, catalog []marotte.SessionModel) string {
 	var bestID string
 	var bestRate float64
@@ -39,13 +32,16 @@ func cheapestModel(_ context.Context, catalog []marotte.SessionModel) string {
 	return bestID
 }
 
-// excludedTags are the bracketed markers that disqualify a model from
-// ambient-task selection: the hidden set plus [internal]/[experimental], which
-// are shown in the picker and only skipped here.
-var excludedTags = append(modeltext.HiddenTags(), "[internal]", "[experimental]")
+// excludedTags disqualify a model from ambient tasks: the hidden set plus [internal]/[experimental]/[eol].
+var excludedTags = append(modeltext.HiddenTags(), "[internal]", "[experimental]", "[eol]")
 
-// modelExcluded returns true if the text contains any bracketed tag
-// that marks the model as unreliable for ambient tasks.
+// experimentalPrefix marks a preview labelled in prose rather than tagged.
+const experimentalPrefix = "experimental preview"
+
+// modelExcluded reports whether the text marks the model unreliable for ambient tasks.
 func modelExcluded(text string) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), experimentalPrefix) {
+		return true
+	}
 	return modeltext.HasAnyTag(text, excludedTags)
 }

@@ -5,14 +5,8 @@ import (
 	"testing"
 )
 
-// FuzzEnforce pins the access-control contract across arbitrary paths:
-// enforce must deny exactly the paths the policy blocks — anything
-// outside the granted mounts (allow-list, deny-by-default) or a
-// sensitive path — and allow everything else. The oracle reuses the
-// real mountFor and Sensitive.Blocks functions (the policy sources of
-// truth), so the property catches a broken composition (wrong combine,
-// inverted check, missing deny-list call, wrong prefix match) rather
-// than restating a single copied expression.
+// FuzzEnforce pins the access-control contract across arbitrary paths: enforce denies exactly what
+// the policy blocks, anything outside the granted mounts or on a sensitive path.
 func FuzzEnforce(f *testing.F) {
 	f.Add("/workspace/file.txt")
 	f.Add("/workspace")
@@ -20,7 +14,7 @@ func FuzzEnforce(f *testing.F) {
 	f.Add("/config/chats/a.json")
 	f.Add("/config/kiro/steering/marotte.md")
 	f.Add("/config")
-	f.Add("/configextra/x") // prefix of a mount name, NOT inside it
+	f.Add("/configextra/x")
 	f.Add("/../etc/shadow")
 	f.Add("/app/../workspace")
 	f.Add("/\x00etc")
@@ -28,8 +22,6 @@ func FuzzEnforce(f *testing.F) {
 	f.Add("")
 	f.Add("/")
 
-	// Policy-level mounts (never touched by enforce, which is purely
-	// lexical): the standard container pair.
 	h := &Handler{mounts: []mount{
 		{dir: "/workspace", name: "workspace"},
 		{dir: "/config", name: "config"},
@@ -41,28 +33,21 @@ func FuzzEnforce(f *testing.F) {
 		granted := h.mountFor(path) != nil
 		blocked := !granted || h.sensitive.Blocks(path)
 
-		// Security invariant: anything the policy blocks must be denied.
 		if blocked && err == nil {
 			t.Fatalf("enforce(%q) = nil, want denial (granted=%v sensitive=%v)",
 				path, granted, h.sensitive.Blocks(path))
 		}
-		// No-over-block invariant: a denial must be backed by the policy.
 		if !blocked && err != nil {
 			t.Fatalf("enforce(%q) = %v, want allow (granted and not sensitive)", path, err)
 		}
-		// The returned mount is the owning mount.
 		if err == nil && m != h.mountFor(path) {
 			t.Fatalf("enforce(%q) returned mount %v, want %v", path, m, h.mountFor(path))
 		}
 	})
 }
 
-// FuzzIsProtectedDir pins the trailing-slash normalisation of the
-// protected-directory guard: the verdict must not depend on how many
-// trailing slashes the caller passes, since the guard normalises to a
-// single trailing slash before matching. A regression in that
-// normalisation would let `/config/chats` slip past while
-// `/config/chats/` is blocked (or vice versa).
+// FuzzIsProtectedDir pins that the protected-directory verdict does not depend on how many trailing
+// slashes the caller passes.
 func FuzzIsProtectedDir(f *testing.F) {
 	f.Add("/config")
 	f.Add("/config/chats")

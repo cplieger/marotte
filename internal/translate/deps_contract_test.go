@@ -12,13 +12,11 @@ import (
 func TestStubDeps_Contract(t *testing.T) {
 	d := newBaseDeps()
 
-	// Verify interface satisfaction at compile time.
 	var _ hostDouble = d
 
 	ctx := t.Context()
 
-	// Roles holds each interface directly, so the double implements the methods.
-	// What is worth asserting is that they WORK, not that a getter is non-nil.
+	// Roles holds each interface directly; assert the methods WORK.
 	if _, ok := d.Get(ctx, "no-such-chat"); ok {
 		t.Error("Get on the nop store reported found")
 	}
@@ -30,12 +28,10 @@ func TestStubDeps_Contract(t *testing.T) {
 	}
 	d.RecordFromDiffs("c1", nil, 0, "")
 
-	// MCPRecorder must be non-nil.
 	if d.MCPRecorder() == nil {
 		t.Error("MCPRecorder() returned nil")
 	}
 
-	// Broadcast must not panic.
 	d.Broadcast(ctx, marotte.ServerEvent{})
 }
 
@@ -45,9 +41,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	d := newBaseDeps()
 	ctx := t.Context()
 
-	// The default store is nopChatRecords, so what is assertable here is that the
-	// promoted methods reach it without panicking and report its no-op answers. A
-	// round-trip belongs to the tests that install a real store.
+	// The default store is nopChatRecords: assert reachability and its no-op answers.
 	t.Run("chat_store_methods_are_reachable", func(t *testing.T) {
 		if _, err := d.Mutate(ctx, "c1", func(*marotte.Chat, bool) bool { return true }); err != nil {
 			t.Errorf("Mutate on the nop store returned %v, want nil", err)
@@ -75,8 +69,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(ctx, "test-server", nil, nil, nil)
-		r.SignalReady()
+		r.RecordConnected(ctx, "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
@@ -99,8 +92,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {
-		// False is the default that matters: a manual run must never be reported
-		// as scheduled, so the stub's zero value is the manual case.
+		// A manual run must never read as scheduled, so the zero value is the manual case.
 		if d.IsScheduled("wf-unknown") {
 			t.Error("IsScheduled(unknown) = true, want false")
 		}

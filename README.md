@@ -79,7 +79,6 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
-| `MAROTTE_AGENT_WORKFLOWS` | Whether the agent can start workflow runs itself. | `true` |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |

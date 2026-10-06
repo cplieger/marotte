@@ -12,10 +12,6 @@ import {
 } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Table-driven tests for bus.ts dispatch/onSSE and onBus/emitBus.
-// ---------------------------------------------------------------------------
-
 describe("dispatch (SSE routing)", () => {
   const cases: {
     name: string;
@@ -111,9 +107,7 @@ describe("dispatch (SSE routing)", () => {
   it("unsubscribe removes a handler that already received an event", () => {
     const handler = vi.fn();
     const unsub = onSSE("chat_created", handler);
-    // The first dispatch is what builds the cached handler snapshot.
-    // Unsubscribing after it has to invalidate that cache, or the handler goes
-    // on firing for the life of the page.
+    // The first dispatch builds the cached snapshot; unsubscribing must invalidate it.
     dispatch({ type: "chat_created", chat_id: "c1", payload: { id: "c1", title: "First" } });
     unsub();
     dispatch({ type: "chat_created", chat_id: "c2", payload: { id: "c2", title: "Second" } });
@@ -321,9 +315,7 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// decodeEnvelope: the one door both a live frame and a pending_snapshot item take.
-// ---------------------------------------------------------------------------
+// decodeEnvelope: the one door for live frames and pending_snapshot items.
 
 describe("decodeEnvelope", () => {
   it("decodes the type, the chat id and a subject stamp", () => {

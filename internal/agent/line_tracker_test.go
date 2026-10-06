@@ -63,9 +63,8 @@ func TestLineTrackerRecordFromDiffs(t *testing.T) {
 	}
 }
 
-// TestLineTrackerRecordFromDiffs_WholeFileDiff pins the gutter contract the
-// /api/file-changes handler serves: KAS sends whole-file OldText/NewText for its
-// edit tools, and a one-line change must mark ONE line, not the whole file.
+// TestLineTrackerRecordFromDiffs_WholeFileDiff pins that KAS sends whole-file OldText/NewText, and a
+// one-line change must mark one line.
 func TestLineTrackerRecordFromDiffs_WholeFileDiff(t *testing.T) {
 	var old, edited string
 	for i := range 300 {
@@ -127,7 +126,6 @@ func BenchmarkLineTrackerRecord(b *testing.B) {
 	for _, n := range []int{1, 50, 200} {
 		b.Run(fmt.Sprintf("existing_%d", n), func(b *testing.B) {
 			lt := buffer.NewLineTracker()
-			// Pre-fill with n ranges.
 			for i := range n {
 				lt.Record("c1", "main.go", buffer.LineRange{StartLine: i * 10, EndLine: i*10 + 5, Turn: i, Kind: "edit"})
 			}

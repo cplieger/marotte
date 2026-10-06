@@ -12,7 +12,7 @@ func TestNew(t *testing.T) {
 		name    string
 		byteLen int
 		enc     Encoding
-		wantLen int // expected output string length: ceil(byteLen*8/5)
+		wantLen int
 	}{
 		{"HexUpper 8 bytes", 8, HexUpper, 13},
 		{"HexUpper 16 bytes", 16, HexUpper, 26},
@@ -89,30 +89,25 @@ func TestNewMessageID_RapidInvariants(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		id := NewMessageID()
 
-		// Length must be 36 (standard UUID format).
 		if len(id) != 36 {
 			t.Fatalf("len=%d, want 36", len(id))
 		}
 
-		// Dash positions: 8, 13, 18, 23.
 		for _, pos := range []int{8, 13, 18, 23} {
 			if id[pos] != '-' {
 				t.Fatalf("id[%d]=%c, want '-'", pos, id[pos])
 			}
 		}
 
-		// Version nibble (position 14) must be '7'.
 		if id[14] != '7' {
 			t.Fatalf("version nibble=%c, want '7'", id[14])
 		}
 
-		// Variant nibble (position 19) must be 8, 9, a, or b.
 		v := id[19]
 		if v != '8' && v != '9' && v != 'a' && v != 'b' {
 			t.Fatalf("variant nibble=%c, want 8/9/a/b", v)
 		}
 
-		// All non-dash characters must be hex digits.
 		for i, c := range id {
 			if i == 8 || i == 13 || i == 18 || i == 23 {
 				continue
@@ -126,12 +121,8 @@ func TestNewMessageID_RapidInvariants(t *testing.T) {
 }
 
 func TestNewMessageID_TimeOrdering(t *testing.T) {
-	// No sleep: uuid.NewV7 packs a 12-bit sub-millisecond fraction beside the
-	// timestamp and takes a mutex to guarantee the order, so consecutive ids
-	// are strictly increasing even inside one millisecond. The hand-rolled
-	// generator this replaced had millisecond granularity and random low bits,
-	// so 5007 of 9999 consecutive pairs were out of order and the only
-	// assertion available was one across a 2ms sleep.
+	// No sleep: uuid.NewV7 packs a sub-millisecond fraction and takes a mutex, so consecutive ids
+	// are strictly increasing.
 	const n = 1000
 	prev := NewMessageID()
 	for i := 1; i < n; i++ {

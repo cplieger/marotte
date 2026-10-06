@@ -1,6 +1,3 @@
-// Unit tests for mcp-content.ts: extracting insertable text from raw MCP
-// prompt/resource results (single-block, array-block, non-text, empty).
-
 import { describe, it, expect } from "vitest";
 import { blockText, promptResultToText, resourceResultToText } from "./mcp-content.js";
 
@@ -58,7 +55,7 @@ describe("resourceResultToText", () => {
     const res = {
       contents: [
         { uri: "demo://a", mimeType: "text/markdown", text: "# Doc" },
-        { uri: "demo://b", blob: "aGVsbG8=" }, // binary: no text → skipped
+        { uri: "demo://b", blob: "aGVsbG8=" }, // Binary: no text, skipped.
         { uri: "demo://c", text: "more" },
       ],
     };

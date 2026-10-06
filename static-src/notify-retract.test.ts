@@ -1,12 +1,3 @@
-// Tests for notify.ts's retraction half: a page notification tagged with its target
-// is closed when that target's ask is settled, and so is every banner the service
-// worker showed under the same tag.
-//
-// `Notification` is shadowed with a constructor that records instances, because the
-// real one needs a granted permission a headless browser will not give, and
-// `document.visibilityState` is forced hidden, which is the one branch that shows a
-// page notification at all.
-
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { NotificationRegistration } from "./notify.js";
 import { chatTarget, runTarget } from "./push-subject.js";
@@ -21,8 +12,7 @@ vi.mock("./actions/notify.js", () => ({
 
 const notify = await import("./notify.js");
 
-/** A notification the fake constructor minted: its tag, whether it was closed, and
- *  the listeners it registered (close() fires "close", as the real one does). */
+/** A minted notification; close() fires "close", as the real one does. */
 class FakeNotification extends EventTarget {
   static permission = "granted";
   static instances: FakeNotification[] = [];
@@ -132,9 +122,6 @@ describe("closeNotificationsFor", () => {
   });
 });
 
-// The fresh-hello sweep: the pending set is the whole truth about live asks, so every
-// chat and run banner it does not name is stale, whether or not this page ever
-// rendered the ask it announced.
 describe("closeNotificationsExcept", () => {
   it("closes every chat and run banner the live set does not name, in one registration read", async () => {
     const { reg, closed, asked } = fakeRegistration([
@@ -152,8 +139,6 @@ describe("closeNotificationsExcept", () => {
   });
 
   it("leaves a pull request's banner and the constant-tag cue alone", async () => {
-    // Neither has an ask the set could list: a PR's verdict stays until clicked, and
-    // the constant tag is the agent-finished cue this page showed for no one chat.
     const { reg, closed } = fakeRegistration(["marotte:pr:github:x#1", "marotte", "marotte:c1"]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
@@ -180,8 +165,6 @@ describe("closeNotificationsExcept", () => {
 
 describe("the default registration", () => {
   it("is the current registration or none, never a promise that waits for one", async () => {
-    // `serviceWorker.ready` never settles where registration failed or was refused, so a
-    // retraction awaiting it would hang for the page's life; getRegistration answers now.
     const getRegistration = vi.fn(() => Promise.resolve(undefined));
     vi.stubGlobal("navigator", {
       serviceWorker: { getRegistration, ready: new Promise(() => undefined) },

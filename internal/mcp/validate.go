@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -40,9 +41,7 @@ const NameMaxLen = 64
 // the tool namespace accepts.
 //
 // This and NameAllowedRune are the ONLY executable statement of the charset in the
-// package. There used to be three — a regexp, this pair, and a hard-coded grammar
-// string carrying its own copy of the bound — and a change to any one of them could
-// leave the others behind.
+// package: a second copy (a regexp, a hard-coded grammar string) drifts from it.
 func NameLeadRune(r rune) bool {
 	return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'
 }
@@ -122,10 +121,13 @@ const (
 	// client IDs are typically 20–80 chars (UUID-ish or app-id-ish);
 	// 256 leaves headroom and rejects clearly-malformed input.
 	oauthClientIDMax = 256
-	// oauthClientSecretMax bounds the OAuth 2.0 client_secret length.
-	// Secrets are typically 40-128 chars; 512 leaves ample headroom.
-	oauthClientSecretMax = 512
+	// oauthRedirectMinPort is the OAuth relay's own floor (agent relayMinPort):
+	// a privileged pin installs, then fails at the relay's paste-back step.
+	oauthRedirectMinPort = 1024
 )
+
+// oauthRedirectHosts are the loopback hosts KAS serves its OAuth callback on.
+var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
 
 // transportValidators maps each supported transport to its validation
 // function. Adding a new transport requires only a map entry, not a
@@ -135,13 +137,14 @@ const (
 // transports whose wire shape is url + headers (+ optional oauth), differing
 // only in the ACP `type` discriminator emitted at export time.
 var transportValidators = map[Transport]func(*Server) error{
-	TransportStdio: validateStdio,
-	TransportHTTP:  validateRemote,
-	TransportSSE:   validateRemote,
+	TransportStdio:    validateStdio,
+	TransportHTTP:     validateRemote,
+	TransportSSE:      validateRemote,
+	TransportRegistry: validateRegistry,
 }
 
 func init() {
-	for _, t := range []Transport{TransportStdio, TransportHTTP, TransportSSE} {
+	for _, t := range []Transport{TransportStdio, TransportHTTP, TransportSSE, TransportRegistry} {
 		if _, ok := transportValidators[t]; !ok {
 			panic("mcp: no validator registered for transport " + string(t))
 		}
@@ -162,12 +165,11 @@ const (
 	fieldEnvPairs      = "env"
 	fieldHeaderPairs   = "headers"
 	fieldDisabledTools = "disabled_tools"
-	fieldAutoApprove   = "auto_approve"
+	fieldTimeoutMS     = "timeout_ms"
 	fieldOAuthClientID = "oauth_client_id"
-	//nolint:gosec // G101: this is the NAME of a wire field, not a credential. The
-	// value it names is masked on read and merged from disk on write
-	// (see SecretMask / mergeSecret); nothing here holds a secret.
-	fieldOAuthClientSecret = "oauth_client_secret"
+
+	fieldOAuthClientMetadataURL = "oauth_client_metadata_url"
+	fieldOAuthRedirectURI       = "oauth_redirect_uri"
 )
 
 // FieldError is one validation failure, attributed to the wire field it
@@ -260,24 +262,23 @@ func FieldErrors(err error) []FieldError {
 	return out
 }
 
-// Validate checks a fully-populated Server record. Called on every
-// create/update before persist. Callers do not run their own checks;
-// this is the single source of truth.
-//
-// It ACCUMULATES rather than short-circuits, so a record with three
-// problems is answered once instead of over three round trips.
-//
-// One short-circuit stays: the transport chain. An unknown transport
-// means transportValidators has no entry, so the per-transport check
-// CANNOT run.
+// Validate checks a fully-populated Server record before every create or update persists, the
+// single source of truth. It ACCUMULATES problems, short-circuiting only on an unknown transport,
+// whose per-transport check cannot run.
 func Validate(s *Server) error {
 	var errs fieldErrs
 	errs.merge(ValidateName(s.Name))
 	errs.merge(validateTransportChain(s))
 	errs.merge(validateToolNames(fieldDisabledTools, s.DisabledTools))
-	errs.merge(validateToolNames(fieldAutoApprove, s.AutoApprove))
+	if s.TimeoutMS < 0 || s.TimeoutMS > maxTimeoutMS {
+		errs.addf(fieldTimeoutMS, "timeout_ms must be between 0 and %d, got %d", maxTimeoutMS, s.TimeoutMS)
+	}
 	return errs.join()
 }
+
+// maxTimeoutMS is ten minutes. KAS clamps a larger timeout silently, so a value
+// past it would be stored as one number and enforced as another.
+const maxTimeoutMS = 600_000
 
 // validateTransportChain is the dependent run: each step's input is the previous
 // step's verdict, so a failure ends the chain instead of joining a list.
@@ -318,7 +319,7 @@ func hasCtl(s string) bool {
 }
 
 // validateToolNames enforces the shared shape rules for a list of MCP
-// tool names (disabled_tools, auto_approve): bounded count, no control
+// tool names (disabled_tools): bounded count, no control
 // characters, per-entry length cap. field names the list in errors.
 //
 // The count cap and the per-entry checks are independent, and so is each entry
@@ -360,8 +361,11 @@ func validateStdio(s *Server) error {
 	if s.OAuthClientID != "" {
 		errs.addf(fieldOAuthClientID, "stdio transport cannot have oauth_client_id")
 	}
-	if s.OAuthClientSecret != "" {
-		errs.addf(fieldOAuthClientSecret, "stdio transport cannot have oauth_client_secret")
+	if s.OAuthClientMetadataURL != "" {
+		errs.addf(fieldOAuthClientMetadataURL, "stdio transport cannot have oauth_client_metadata_url")
+	}
+	if s.OAuthRedirectURI != "" {
+		errs.addf(fieldOAuthRedirectURI, "stdio transport cannot have oauth_redirect_uri")
 	}
 	errs.merge(validateArgs(s.Args))
 	errs.merge(validateKeyPairs(fieldEnvPairs, s.Env, maxEnvEntries, envValueMax, false))
@@ -403,6 +407,30 @@ func validateArgs(args []string) error {
 	return errs.join()
 }
 
+// validateRegistry refuses every field the catalog supplies: a registry entry
+// names a catalog server and KAS resolves the rest.
+func validateRegistry(s *Server) error {
+	var errs fieldErrs
+	for _, f := range []struct {
+		field string
+		set   bool
+	}{
+		{fieldCommand, s.Command != ""},
+		{fieldArgs, len(s.Args) > 0},
+		{fieldEnvPairs, len(s.Env) > 0},
+		{fieldURL, s.URL != ""},
+		{fieldHeaderPairs, len(s.Headers) > 0},
+		{fieldOAuthClientID, s.OAuthClientID != ""},
+		{fieldOAuthClientMetadataURL, s.OAuthClientMetadataURL != ""},
+		{fieldOAuthRedirectURI, s.OAuthRedirectURI != ""},
+	} {
+		if f.set {
+			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
+		}
+	}
+	return errs.join()
+}
+
 func validateRemote(s *Server) error {
 	var errs fieldErrs
 	// Three independent presence checks, three attributions — same reason as the
@@ -420,7 +448,8 @@ func validateRemote(s *Server) error {
 	}
 	errs.merge(validateRemoteURL(s.URL))
 	errs.merge(validateOAuthField(fieldOAuthClientID, s.OAuthClientID, oauthClientIDMax))
-	errs.merge(validateOAuthField(fieldOAuthClientSecret, s.OAuthClientSecret, oauthClientSecretMax))
+	errs.merge(validateOAuthMetadataURL(s.OAuthClientMetadataURL))
+	errs.merge(validateOAuthRedirectURI(s.OAuthRedirectURI))
 	errs.merge(validateKeyPairs(fieldHeaderPairs, s.Headers, maxHeaderEntries, headerValueMax, true))
 	return errs.join()
 }
@@ -448,7 +477,7 @@ func validateRemoteURL(raw string) error {
 			Msg:   fmt.Sprintf("url must be an absolute http(s) URL: %q", raw),
 		}
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if u.Scheme != schemeHTTP && u.Scheme != "https" {
 		return &FieldError{
 			Field: fieldURL,
 			Msg:   fmt.Sprintf("url scheme must be http or https: %q", u.Scheme),
@@ -467,11 +496,87 @@ func validateRemoteURL(raw string) error {
 	return nil
 }
 
-// validateOAuthField enforces the shared length-cap + control-character
-// rules for the optional oauth_client_id / oauth_client_secret fields. An
-// empty value is allowed (both are optional). The error wording matches
-// what the two inline call sites used, so validate_test.go substring
-// assertions still match.
+// validateOAuthMetadataURL mirrors KAS's check on clientMetadataUrl (an https
+// URL with a non-root path): a value KAS rejects drops the server from its
+// config with no status, so it is refused here, naming the field.
+func validateOAuthMetadataURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if err := validateOAuthField(fieldOAuthClientMetadataURL, raw, urlMax); err != nil {
+		return err
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.Path == "/" {
+		return &FieldError{
+			Field: fieldOAuthClientMetadataURL,
+			Msg:   fmt.Sprintf("oauth_client_metadata_url must be an https URL with a path: %q", raw),
+		}
+	}
+	return nil
+}
+
+// schemeHTTP is the plain-HTTP URL scheme, which shares its spelling with
+// TransportHTTP but is a different vocabulary.
+const schemeHTTP = "http"
+
+// validateOAuthRedirectURI mirrors KAS's three accepted redirectUri forms
+// ("host:port", ":port", or an http URL with no query or fragment) on a
+// loopback host, with the relay's port floor on top of KAS's 1-65535.
+func validateOAuthRedirectURI(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if err := validateOAuthField(fieldOAuthRedirectURI, raw, urlMax); err != nil {
+		return err
+	}
+	host, port, msg := splitOAuthRedirectURI(strings.TrimSpace(raw), raw)
+	switch {
+	case msg != "":
+	case !slices.Contains(oauthRedirectHosts, host):
+		msg = fmt.Sprintf("host must be localhost or 127.0.0.1, not %q", host)
+	case port == "":
+		msg = `needs a port, for example "localhost:7778"`
+	default:
+		n, err := strconv.Atoi(port)
+		if err != nil || strings.Trim(port, "0123456789") != "" || len(port) > 5 || n < oauthRedirectMinPort || n > 65535 {
+			msg = fmt.Sprintf("port must be between %d and 65535, got %q", oauthRedirectMinPort, port)
+		}
+	}
+	if msg != "" {
+		return &FieldError{Field: fieldOAuthRedirectURI, Msg: "oauth_redirect_uri " + msg}
+	}
+	return nil
+}
+
+// splitOAuthRedirectURI takes v apart into host and port; a non-empty msg is the
+// refusal. A ":port" form keeps the loopback default host.
+func splitOAuthRedirectURI(v, raw string) (host, port, msg string) {
+	shape := fmt.Sprintf(`must be "host:port", ":port", or an http URL: %q`, raw)
+	switch {
+	case strings.Contains(v, "://"):
+		u, err := url.Parse(v)
+		switch {
+		case err != nil:
+			return "", "", shape
+		case u.Scheme != schemeHTTP:
+			return "", "", "must use http: the loopback callback is served over plain HTTP"
+		case u.RawQuery != "" || u.Fragment != "" || u.ForceQuery:
+			return "", "", "cannot carry a query string or fragment"
+		}
+		return strings.ToLower(u.Hostname()), u.Port(), ""
+	case strings.HasPrefix(v, ":"):
+		return "127.0.0.1", v[1:], ""
+	}
+	h, p, ok := strings.Cut(v, ":")
+	if !ok || h == "" || strings.ContainsAny(h, " /@") {
+		return "", "", shape
+	}
+	return h, p, ""
+}
+
+// validateOAuthField enforces the shared length cap and control-character
+// rule for the optional oauth members. An empty value is allowed.
 func validateOAuthField(field, value string, maxLen int) error {
 	if value == "" {
 		return nil

@@ -1,7 +1,4 @@
-/**
- * Canonical toast mock factory. Use with vi.mock("../toast.js", toastMock).
- * Centralizes the mock shape so adding new toast exports only requires one update.
- */
+/** Canonical toast mock factory: `vi.mock("../toast.js", toastMock)`. */
 import { vi } from "vitest";
 
 export const toastMock = () => ({
@@ -10,4 +7,5 @@ export const toastMock = () => ({
   error: vi.fn(),
   errorWithAction: vi.fn(),
   showToast: vi.fn(),
+  notice: vi.fn(),
 });

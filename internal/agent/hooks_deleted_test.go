@@ -1,12 +1,7 @@
 package agent
 
-// The shape of what D69 removed, asserted so it cannot come back by accident.
-//
-// A compile error already guards most of it — every deleted identifier is gone,
-// so a caller would not build. What a compile cannot catch is the two things
-// below: a ROUTE re-registered with a fresh handler, and a METHOD NAME
-// reintroduced as a constant, which is the first step of re-adding the surface
-// and the one that makes it reachable again.
+// The removed Run-now surface, asserted absent: a compile error cannot catch a route
+// re-registered or a method name reintroduced as a constant.
 
 import (
 	"go/ast"
@@ -19,12 +14,8 @@ import (
 	"testing"
 )
 
-// TestHooksRoutes_HaveNoTriggerVerb pins the route table.
-//
-// POST /api/hooks/{id}/trigger was Run-now's whole entry point, and its absence is
-// what makes the shell path unreachable from the browser. Asserted through the real
-// mux rather than by reading the source, so a route registered anywhere else in the
-// package fails this too.
+// TestHooksRoutes_HaveNoTriggerVerb pins the route table through the real mux: POST
+// /api/hooks/{id}/trigger was Run-now's entry point.
 func TestHooksRoutes_HaveNoTriggerVerb(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -53,14 +44,8 @@ func TestHooksRoutes_HaveNoTriggerVerb(t *testing.T) {
 	}
 }
 
-// TestHookMethodConstants_OmitTheRunNowPair pins the wire vocabulary.
-//
-// Naming a KAS method in this package is what makes it reachable, so the two
-// Run-now names went with the surface instead of being kept "for reference".
-// Reading the DECLARATIONS rather than grepping the text is what lets the
-// don't-re-add-this comments keep saying the names out loud: a comment mentioning
-// executeHook is the record of why it went, while a `const` declaring it is the
-// first line of bringing it back.
+// TestHookMethodConstants_OmitTheRunNowPair pins the wire vocabulary by reading declarations,
+// so comments may still name executeHook while a const may not.
 func TestHookMethodConstants_OmitTheRunNowPair(t *testing.T) {
 	t.Parallel()
 	const gone = "_kiro/hooks/triggerHook, _kiro/hooks/executeHook"

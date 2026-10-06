@@ -1,24 +1,28 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"image"
+	"image/png"
+	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES
-// (src/document-types.ts in the @kiro/agent bundle, verified against KAS
-// 2.12.0). KAS's extractContentFromPrompt keeps an inline blob resource ONLY
-// when its MIME is in this set, with no else branch — so any documentExts
-// entry outside it is read, base64'd, transmitted, and then silently dropped.
-// Keep this in sync with the bundle if KAS's allowlist ever changes.
+// kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES (src/document-types.ts in
+// the @kiro/agent bundle, KAS 2.12.0).
 var kasSupportedDocumentMIMEs = map[string]bool{
 	"application/pdf":    true,
 	"text/csv":           true,
@@ -31,12 +35,8 @@ var kasSupportedDocumentMIMEs = map[string]bool{
 	"text/markdown": true,
 }
 
-// TestDocumentExtsSubsetOfKAS is the drift guard for the v3 attachment bug:
-// documentExts must be a subset of KAS's SUPPORTED_DOCUMENT_MIME_TYPES.
-// Anything marotte inlines as an embedded `resource` block whose MIME KAS
-// does not accept is silently dropped (the agent never sees the file and no
-// error surfaces). If this fails, either drop the extension from documentExts
-// or route it through unsupportedDocExts / the path-reference branch.
+// TestDocumentExtsSubsetOfKAS asserts that documentExts must be a subset of KAS's allowlist, or the inlined
+// resource is silently dropped.
 func TestDocumentExtsSubsetOfKAS(t *testing.T) {
 	for ext, mime := range documentExts {
 		if !kasSupportedDocumentMIMEs[mime] {
@@ -71,17 +71,8 @@ var kasImageExtensions = map[string]bool{
 	".webp": true,
 }
 
-// TestImageExtsMatchesKAS pins imageExts to KAS's own image extension set in
-// BOTH directions, and the two directions fail differently.
-//
-// An extension here that KAS does not know is one whose path-reference fallback
-// cannot be read either, so the attachment is unreachable by both routes. An
-// extension KAS accepts that is missing here silently costs the user the inline
-// channel, sending a path where a picture was meant.
-//
-// Note this is NOT the same list as utils-url.ts's INLINE_IMAGE_EXT, which also
-// carries svg and avif because a browser renders those. Two consumers, two
-// answers; do not unify them.
+// TestImageExtsMatchesKAS pins imageExts to KAS's image extension set in BOTH directions, which
+// fail differently.
 func TestImageExtsMatchesKAS(t *testing.T) {
 	for ext := range imageExts {
 		if !kasImageExtensions[ext] {
@@ -108,24 +99,18 @@ func TestImageExtsExcludesUnviewableFormats(t *testing.T) {
 	}
 }
 
-// TestAttachmentBlock_ImageInlinesAsImageBlock pins the wire shape measured off
-// the bundle: `{type:"image", data:<base64>, mimeType:<mime>}` and NO uri.
-//
-// The uri assertion is the load-bearing one. KAS's toDataUrl returns a present
-// uri INSTEAD of building the base64 data URL, so shipping one would replace the
-// bytes with a path the model cannot fetch — a silent failure with no error on
-// either side.
+// TestAttachmentBlock_ImageInlinesAsImageBlock pins `{type:"image", data:<base64>,
+// mimeType:<mime>}` and NO uri; the uri assertion is the load-bearing one (toDataUrl).
 func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "shot.png")
-	pixels := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01}
+	pixels := pngBytes(t, 8, 6)
 	if err := os.WriteFile(abs, pixels, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs, Name: "shot.png"},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs, Name: "shot.png"},
+		Workspace{Dir: dir}, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "image" {
 		t.Fatalf("block type = %v, want image", got)
@@ -151,13 +136,12 @@ func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "big.png")
-	if err := os.WriteFile(abs, make([]byte, 4096), 0o600); err != nil {
+	if err := os.WriteFile(abs, pngBytes(t, 64, 64), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
 
 	t.Run("over_turn_budget", func(t *testing.T) {
-		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, 10, true)
+		block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, Workspace{Dir: dir}, 10, true)
 		if got := block[keyType]; got != marotte.ContentTypeText {
 			t.Errorf("block type = %v, want text (a path reference)", got)
 		}
@@ -167,8 +151,8 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 	})
 
 	t.Run("path_escapes_workspace", func(t *testing.T) {
-		deny := func(string) (string, error) { return "", errors.New("escapes") }
-		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, deny, MaxInlineTurnEncodedBytes, true)
+		elsewhere := Workspace{Dir: t.TempDir()}
+		block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, elsewhere, MaxInlineTurnEncodedBytes, true)
 		if got := block[keyType]; got != marotte.ContentTypeText {
 			t.Errorf("block type = %v, want text", got)
 		}
@@ -178,25 +162,16 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 	})
 }
 
-// A .txt attachment takes the path-reference branch, and D6's large-paste spill
-// rests entirely on that: a paste over the threshold is written as a .txt in the
-// uploads folder and attached like any other file, so the agent reads it with
-// its file tools instead of receiving an opaque base64 blob.
-//
-// Do NOT add .txt to documentExts to "improve" this. TestDocumentExtsSubsetOfKAS
-// would still pass (KAS's allowlist covers text/plain), so nothing would fail —
-// the spilled paste would just silently become base64 the model cannot skim, and
-// it would start spending the turn's inline budget.
+// TestAttachmentBlock_TextFileTakesPathReference: a .txt takes the path-reference branch, which the
+// large-paste spill (written as a .txt in uploads) depends on.
 func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "paste-2026-08-16T01-42-33.txt")
 	if err := os.WriteFile(abs, []byte("a pasted log\nsecond line\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
-
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs, Name: filepath.Base(abs)},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs, Name: filepath.Base(abs)},
+		Workspace{Dir: dir}, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != marotte.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
@@ -216,13 +191,8 @@ func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	}
 }
 
-// TestEncodedCapCannotBeSubsumedByTheFileCap is the whole finding in one
-// assertion, and it is pure arithmetic on the shipped constants.
-//
-// A file that passes MaxDocumentBytes can still exceed MaxInlineEncodedBytes,
-// because base64 inflates by 4/3 and no check measuring file bytes can see that.
-// If this ever stops holding, one of the two caps moved and the encoded gate has
-// become dead code.
+// TestEncodedCapCannotBeSubsumedByTheFileCap asserts that pure arithmetic on the shipped constants; a file
+// under MaxDocumentBytes can exceed MaxInlineEncodedBytes once base64'd.
 func TestEncodedCapCannotBeSubsumedByTheFileCap(t *testing.T) {
 	if got := base64.StdEncoding.EncodedLen(MaxDocumentBytes); got <= MaxInlineEncodedBytes {
 		t.Errorf("a %d-byte file encodes to %d, which is inside the %d encoded cap: "+
@@ -231,26 +201,20 @@ func TestEncodedCapCannotBeSubsumedByTheFileCap(t *testing.T) {
 	}
 }
 
-// TestReadForInline_ChargesTheBudgetInEncodedBytes pins the UNIT at the boundary,
-// which is the property a large fixture would only test expensively.
-//
-// The budget is threaded, so the assertion needs no big file: a tiny attachment
-// plus a budget set one byte under its ENCODED length must be refused, and the same
-// attachment with exactly its encoded length must pass. With the budget counted in
-// file bytes instead, the first case has room and inlines — which is the regression
-// this catches.
+// TestReadForInline_ChargesTheBudgetInEncodedBytes pins the budget's UNIT with a tiny attachment,
+// since the budget is threaded.
 func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "shot.png")
-	pixels := make([]byte, 100)
+	pixels := pngBytes(t, 10, 10)
 	if err := os.WriteFile(abs, pixels, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 	encoded := base64.StdEncoding.EncodedLen(len(pixels))
 
 	t.Run("one encoded byte short is refused", func(t *testing.T) {
-		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, encoded-1, true)
+		block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, ws, encoded-1, true)
 		if got := block[keyType]; got != "text" {
 			t.Errorf("block type = %v, want a text path reference; the budget is in "+
 				"encoded bytes and %d of them do not fit in %d", got, encoded, encoded-1)
@@ -261,10 +225,8 @@ func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
 	})
 
 	t.Run("exactly the encoded length fits", func(t *testing.T) {
-		// Exactly-at-cap must be ACCEPTED, not refused. An off-by-one here is the
-		// classic mutant, and it is invisible in any test that stays away from the
-		// boundary.
-		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, encoded, true)
+		// Exactly-at-cap must be accepted: the classic off-by-one mutant.
+		block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, ws, encoded, true)
 		if got := block[keyType]; got != "image" {
 			t.Errorf("block type = %v, want the image inlined at exactly its encoded cost", got)
 		}
@@ -274,46 +236,35 @@ func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
 	})
 }
 
-// TestReadForInline_RefusesAnOversizedEncodedPayload covers the per-attachment
-// encoded cap with a real file, which is the one case that needs one: the
-// arithmetic above proves the gate is reachable, and this proves it fires.
-//
-// ~3.93 MiB of file is the interesting size — comfortably inside the 10 MiB file
-// cap, and over 5 MiB once encoded. Generated in-test rather than committed: a
-// binary fixture of this size has no business in the repo.
-func TestReadForInline_RefusesAnOversizedEncodedPayload(t *testing.T) {
+// TestReadForInline_AnImageOverTheEncodedCapIsFittedNotRefused is the image half
+// of the encoded cap: a picture whose raw bytes would encode past
+// MaxInlineEncodedBytes is re-encoded smaller and inlined, where the document
+// half of the same gate still refuses (TestReadForInline_EncodedCapAppliesToDocumentsToo).
+func TestReadForInline_AnImageOverTheEncodedCapIsFittedNotRefused(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "photo.png")
-	// One byte past the largest file whose encoding fits.
-	size := MaxInlineEncodedBytes/4*3 + 1
-	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
+	raw := noisePNG(t, 1024, 1024)
+	if base64.StdEncoding.EncodedLen(len(raw)) <= MaxInlineEncodedBytes || len(raw) > MaxDocumentBytes {
+		t.Fatalf("Setup: fixture of %d bytes must encode past %d and stay under the %d file cap",
+			len(raw), MaxInlineEncodedBytes, MaxDocumentBytes)
+	}
+	if err := os.WriteFile(abs, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if size > MaxDocumentBytes {
-		t.Fatalf("fixture of %d bytes is over the file cap; it would be refused by the "+
-			"wrong gate and the test would pass for the wrong reason", size)
-	}
-	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs},
+		Workspace{Dir: dir}, MaxInlineTurnEncodedBytes, true)
 
-	if got := block[keyType]; got != "text" {
-		t.Fatalf("block type = %v, want a text path reference: a %d-byte file encodes to "+
-			"%d, past the %d cap", got, size, base64.StdEncoding.EncodedLen(size), MaxInlineEncodedBytes)
+	if got := block[keyType]; got != "image" {
+		t.Fatalf("attachmentBlock(%d-byte png) type = %v, want an image block fitted under the cap; text = %q",
+			len(raw), got, block["text"])
 	}
-	if spent != 0 {
-		t.Errorf("spent = %d on a refused attachment, want 0", spent)
+	data := decodeBlockData(t, block)
+	if got := base64.StdEncoding.EncodedLen(len(data)); got > MaxInlineEncodedBytes || spent != got {
+		t.Errorf("fitted payload encodes to %d with spent = %d, want both equal and <= %d", got, spent, MaxInlineEncodedBytes)
 	}
-	// Fail CLOSED, and the fallback has to be OPENABLE. The agent's only route to
-	// the contents now is its file tools, so the block must carry the full path
-	// rather than a basename.
-	text, _ := block["text"].(string)
-	if !strings.Contains(text, abs) {
-		t.Errorf("fallback text %q does not carry the full path; the agent cannot open it", text)
-	}
-	if !strings.Contains(text, "file tools") {
-		t.Errorf("fallback text %q does not tell the agent what to do instead", text)
+	if got := block["mimeType"]; got != "image/png" {
+		t.Errorf("mimeType = %v, want image/png", got)
 	}
 }
 
@@ -328,10 +279,10 @@ func TestReadForInline_OversizedFileNamesThePath(t *testing.T) {
 	if err := os.WriteFile(abs, make([]byte, MaxDocumentBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	block, _ := attachmentBlock(marotte.Attachment{Path: abs},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, _ := attachmentBlock(t.Context(), marotte.Attachment{Path: abs},
+		ws, MaxInlineTurnEncodedBytes, true)
 
 	text, _ := block["text"].(string)
 	if !strings.Contains(text, abs) {
@@ -339,14 +290,8 @@ func TestReadForInline_OversizedFileNamesThePath(t *testing.T) {
 	}
 }
 
-// TestReadForInline_EncodedCapAppliesToDocumentsToo: the gate lives in the shared
-// gauntlet, not in the image branch, so a spreadsheet is bounded by the same rule.
-// Scoping it to images would leave the document path with the defect the whole
-// change exists to fix.
-//
-// It also pins the note, which is the third branch of the same finding: this gate
-// hands a .pdf the same "read it with your file tools" the sibling
-// unsupportedDocExts branch qualifies with a binary caveat.
+// TestReadForInline_EncodedCapAppliesToDocumentsToo: the gate lives in the shared gauntlet, not the
+// image branch.
 func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "book.pdf")
@@ -354,10 +299,10 @@ func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs},
+		ws, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "text" {
 		t.Errorf("block type = %v, want a text path reference; the encoded cap is not "+
@@ -367,21 +312,22 @@ func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 		t.Errorf("spent = %d on a refused attachment, want 0", spent)
 	}
 	text, _ := block["text"].(string)
+	if !strings.Contains(text, abs) || !strings.Contains(text, "file tools") {
+		t.Errorf("fallback text %q must carry the full path and name the file tools: "+
+			"they are the agent's only route to the contents now", text)
+	}
 	if !strings.Contains(text, "may not be readable as text") {
 		t.Errorf("fallback note %q tells the agent to read a PDF with no hint the bytes are "+
 			"binary, while the unsupportedDocExts branch carries that caveat for the same class", text)
 	}
 }
 
-// The companion of TestReadForInline_RefusesAnOversizedEncodedPayload: that one
+// The companion of TestReadForInline_EncodedCapAppliesToDocumentsToo: that one
 // uses the smallest file whose encoding does NOT fit, this one the largest that
 // does. Exactly at the cap must be inlined, and charged at exactly the cap.
 func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
 	dir := t.TempDir()
-	abs := filepath.Join(dir, "photo.png")
-	// The largest file whose base64 is exactly MaxInlineEncodedBytes: the cap
-	// is a multiple of 4, so three-quarters of it is a whole number of bytes
-	// and EncodedLen lands on the cap with no padding slack.
+	abs := filepath.Join(dir, "book.pdf")
 	size := MaxInlineEncodedBytes / 4 * 3
 	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
 		t.Fatal(err)
@@ -390,13 +336,13 @@ func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
 		t.Fatalf("fixture of %d bytes encodes to %d, want exactly %d; the test is not "+
 			"at the boundary it claims", size, encoded, MaxInlineEncodedBytes)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
-		resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs},
+		ws, MaxInlineTurnEncodedBytes, true)
 
-	if got := block[keyType]; got != "image" {
-		t.Errorf("block type = %v, want the image inlined: %d bytes encode to exactly "+
+	if got := block[keyType]; got != "resource" {
+		t.Errorf("block type = %v, want the document inlined: %d bytes encode to exactly "+
 			"the %d cap", got, size, MaxInlineEncodedBytes)
 	}
 	if spent != MaxInlineEncodedBytes {
@@ -404,23 +350,17 @@ func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
 	}
 }
 
-// TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools pins the one
-// refusal whose advice was unfollowable rather than merely terse.
-//
-// MaxDocumentBytes IS KAS's MAX_IMAGE_SIZE, so a file this gate refuses is a file
-// the image read tool refuses at the same threshold — the one tool that could look
-// at the picture. "Read it with your file tools" therefore named the only route
-// that was already closed, and the negative assertion below is the load-bearing
-// half: the remedy has to be a smaller file, because there is no tool to try.
+// TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools asserts that MaxDocumentBytes is KAS's
+// MAX_IMAGE_SIZE, so the image tool would refuse the file too.
 func TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "huge.png")
 	if err := os.WriteFile(abs, make([]byte, MaxDocumentBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, ws, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != marotte.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
@@ -441,15 +381,8 @@ func TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools(t *testin
 	}
 }
 
-// TestReadForInline_BudgetNoteFlagsBinaryBytesOnly covers the second gap and its
-// boundary in one table: the turn-budget refusal tells the agent to read the file,
-// which for a .pdf or .xlsx means reading bytes that are not text.
-//
-// The sibling unsupportedDocExts branch has always carried that caveat, so the
-// two branches disagreed about the same file class. The .csv case is the reason the
-// caveat is keyed on the MIME rather than on the document path: text/csv is the one
-// member of documentExts a file tool really can read, and telling the agent
-// otherwise would be a new false claim rather than a fixed one.
+// TestReadForInline_BudgetNoteFlagsBinaryBytesOnly asserts that the budget refusal's read-the-file advice is
+// flagged only for binary formats.
 func TestReadForInline_BudgetNoteFlagsBinaryBytesOnly(t *testing.T) {
 	const caveat = "may not be readable as text"
 	for _, tc := range []struct {
@@ -467,11 +400,9 @@ func TestReadForInline_BudgetNoteFlagsBinaryBytesOnly(t *testing.T) {
 			if err := os.WriteFile(abs, make([]byte, 4096), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			resolve := func(string) (string, error) { return abs, nil }
+			ws := Workspace{Dir: dir}
 
-			// A budget of 10 encoded bytes cannot hold 4 KiB, so this is the
-			// turn-budget gate rather than either size cap.
-			block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, 10, true)
+			block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, ws, 10, true)
 
 			if got := block[keyType]; got != marotte.ContentTypeText {
 				t.Fatalf("attachmentBlock(%q) type = %v, want text (a path reference)", tc.file, got)
@@ -499,18 +430,36 @@ func TestReadForInline_BudgetNoteFlagsBinaryBytesOnly(t *testing.T) {
 func TestBuildPromptBlocks_HistoryImageBudgetDegradesToPathReference(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "next.png")
-	if err := os.WriteFile(abs, []byte("image"), 0o600); err != nil {
+	if err := os.WriteFile(abs, pngBytes(t, 4, 4), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, ws, nil)
 	if got := blocks[1][keyType]; got != marotte.ContentTypeText {
 		t.Errorf("BuildPromptBlocks history-budget block type = %v, want text", got)
 	}
 	text, _ := blocks[1]["text"].(string)
 	if !strings.Contains(text, "replayed image history budget") {
 		t.Errorf("BuildPromptBlocks history-budget note = %q, want the history reason", text)
+	}
+}
+
+func TestBuildPromptBlocks_AnAttachmentOnlyPromptSendsNoEmptyTextPart(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(abs, pngBytes(t, 4, 4), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocks := BuildPromptBlocks(t.Context(), "", []marotte.Attachment{{Path: abs}}, 0, Workspace{Dir: dir}, nil)
+	if len(blocks) != 1 {
+		t.Fatalf("BuildPromptBlocks(\"\", 1 image) = %d blocks, want 1", len(blocks))
+	}
+	if got := blocks[0][keyType]; got != "image" {
+		t.Errorf("BuildPromptBlocks(\"\", 1 image) first block type = %v, want image", got)
+	}
+	if got := BuildPromptBlocks(t.Context(), "", nil, 0, Workspace{Dir: dir}, nil); len(got) != 1 || got[0][keyType] != marotte.ContentTypeText {
+		t.Errorf("BuildPromptBlocks(\"\", none) = %v, want the one text block", got)
 	}
 }
 
@@ -557,29 +506,206 @@ func TestBuildPromptBlocks_HistoryImageBudgetDoesNotAffectDocuments(t *testing.T
 	if err := os.WriteFile(abs, []byte("%PDF-1.7"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
+	ws := Workspace{Dir: dir}
 
-	blocks := BuildPromptBlocks(t.Context(), "read this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	blocks := BuildPromptBlocks(t.Context(), "read this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, ws, nil)
 	if got := blocks[1][keyType]; got != "resource" {
 		t.Errorf("BuildPromptBlocks document type at image budget = %v, want resource", got)
 	}
 }
 
-func TestBuildPromptBlocks_PerPromptCapsAreUnchanged(t *testing.T) {
+// An image the fit refuses keeps its own reason at a spent history budget: the
+// history gate runs last, so it never hides why the image itself was refused.
+func TestBuildPromptBlocks_AFitRefusalIsNotHiddenByTheHistoryGate(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "photo.png")
-	size := MaxInlineEncodedBytes/4*3 + 1
-	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
+	if err := os.WriteFile(abs, []byte("not an image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(string) (string, error) { return abs, nil }
 
-	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, Workspace{Dir: dir}, nil)
 	text, _ := blocks[1]["text"].(string)
-	if !strings.Contains(text, "too large to inline") {
-		t.Errorf("BuildPromptBlocks encoded-cap note = %q, want the per-attachment reason", text)
+	if !strings.Contains(text, "could not be decoded") {
+		t.Errorf("BuildPromptBlocks fit-refusal note = %q, want the image's own reason", text)
 	}
 	if strings.Contains(text, "history budget") {
-		t.Errorf("BuildPromptBlocks encoded-cap note = %q, history gate hid the per-attachment reason", text)
+		t.Errorf("BuildPromptBlocks fit-refusal note = %q, history gate hid the per-attachment reason", text)
 	}
+}
+
+// An image whose RAW size would not fit the turn budget is still inlined when its
+// fitted payload does: the raw size says nothing about what is sent.
+func TestBuildPromptBlocks_ImageBudgetIsChargedOnTheFittedPayload(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "wide.png")
+	raw := uncompressedPNG(t, 2500, 900)
+	if err := os.WriteFile(abs, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	budget := 1 << 20
+	if base64.StdEncoding.EncodedLen(len(raw)) <= budget {
+		t.Fatalf("Setup: raw fixture encodes to %d, want it over the %d budget", base64.StdEncoding.EncodedLen(len(raw)), budget)
+	}
+
+	block, spent := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, Workspace{Dir: dir}, budget, true)
+
+	if got := block[keyType]; got != "image" {
+		t.Fatalf("attachmentBlock(raw %d bytes, budget %d) type = %v, text = %q; want the fitted image inlined",
+			len(raw), budget, got, block["text"])
+	}
+	if spent > budget || spent == 0 {
+		t.Errorf("spent = %d, want the fitted payload's encoded size, within %d", spent, budget)
+	}
+}
+
+func TestAttachmentBlock_OverEdgeImageIsDownscaledToTheCap(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "screenshot.png")
+	if err := os.WriteFile(abs, pngBytes(t, 3000, 1000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	block, _ := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, Workspace{Dir: dir}, MaxInlineTurnEncodedBytes, true)
+
+	if got := block[keyType]; got != "image" {
+		t.Fatalf("attachmentBlock(3000x1000 png) type = %v, text = %q; want an image block", got, block["text"])
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(decodeBlockData(t, block)))
+	if err != nil {
+		t.Fatalf("decoding the block's image: %v", err)
+	}
+	if cfg.Width != 2000 || cfg.Height != 667 {
+		t.Errorf("attachmentBlock(3000x1000 png) sent %dx%d, want 2000x667", cfg.Width, cfg.Height)
+	}
+}
+
+// A FIFO at an attachment path must not block the turn in open(2): the read runs
+// with the turn slot and the bridge's prompt lock held, and the open ignores the
+// context.
+func TestReadForInline_RefusesAFifoInsteadOfBlocking(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "x.pdf")
+	if err := syscall.Mkfifo(abs, 0o600); err != nil {
+		t.Skipf("mkfifo unsupported here: %v", err)
+	}
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		block, _ := attachmentBlock(t.Context(), marotte.Attachment{Path: abs}, Workspace{Dir: dir}, MaxInlineTurnEncodedBytes, true)
+		done <- block
+	}()
+	select {
+	case block := <-done:
+		if text, _ := block["text"].(string); text != "Attached file (unreadable): x.pdf" {
+			t.Errorf("attachmentBlock(fifo) text = %q, want the unreadable note", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("attachmentBlock(fifo) still blocked after 5s")
+	}
+}
+
+// The confinement verdict and the open must name the same object. A component
+// swapped for a symlink between the two must not be followed out of the root.
+func TestReadForInline_DoesNotFollowAnAncestorSwappedOutsideTheRoot(t *testing.T) {
+	ws, outside := t.TempDir(), t.TempDir()
+	sub := filepath.Join(ws, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(sub, "a.pdf")
+	if err := os.WriteFile(inside, []byte("%PDF-inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte("%PDF-outside-secret")
+	if err := os.WriteFile(filepath.Join(outside, "a.pdf"), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := Workspace{Dir: ws}
+	root, rel, err := workspace.ConfineAnyAbs(w.attachmentRoots(), inside)
+	if err != nil {
+		t.Fatalf("Setup: ConfineAnyAbs: %v", err)
+	}
+
+	if err := os.Rename(sub, sub+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, sub); err != nil {
+		t.Fatal(err)
+	}
+
+	if f, _, err := openConfined(root, rel); err == nil {
+		got, _ := io.ReadAll(f)
+		f.Close()
+		t.Errorf("openConfined(%q, %q) after the swap = %q, want an error rather than the outside file", root, rel, got)
+	}
+	block, _ := attachmentBlock(t.Context(), marotte.Attachment{Path: inside}, w, MaxInlineTurnEncodedBytes, true)
+	if res, ok := block["resource"].(map[string]any); ok && res["blob"] == base64.StdEncoding.EncodeToString(secret) {
+		t.Error("attachmentBlock read the file the swapped symlink points at, outside the workspace")
+	}
+}
+
+func TestValidationGuidance_AToolReturnedImageIsRewoundNotReopened(t *testing.T) {
+	re := &marotte.RPCError{Code: -32603, Message: "ImageDimensionExceeded"}
+	for _, inlined := range []bool{true, false} {
+		text := validationGuidance(re, inlined)
+		if !strings.Contains(text, "Rewind") {
+			t.Errorf("validationGuidance(inlinedImage=%v) = %q, want it to name Rewind", inlined, text)
+		}
+		if strings.Contains(text, "Reopen the chat if") || strings.Contains(text, "reopen the chat to clear") {
+			t.Errorf("validationGuidance(inlinedImage=%v) = %q advises reopening; a tool-returned image survives a reload", inlined, text)
+		}
+	}
+}
+
+// pngBytes encodes a w x h opaque image as PNG.
+func pngBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 40, 90, 160, 255
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("Setup: png.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// noisePNG encodes w x h random pixels, which PNG cannot compress, so the file
+// size tracks the pixel count.
+func noisePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	rnd := rand.New(rand.NewPCG(1, 2))
+	for i := range img.Pix {
+		img.Pix[i] = byte(rnd.Uint32())
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("Setup: png.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// uncompressedPNG encodes a w x h solid image with compression off, so a small
+// fitted re-encode is far smaller than the file.
+func uncompressedPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := enc.Encode(&buf, img); err != nil {
+		t.Fatalf("Setup: png.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func decodeBlockData(t *testing.T, block map[string]any) []byte {
+	t.Helper()
+	s, _ := block["data"].(string)
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatalf("block data is not base64: %v", err)
+	}
+	return data
 }

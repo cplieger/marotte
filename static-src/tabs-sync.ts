@@ -1,97 +1,29 @@
-// ---------------------------------------------------------------------------
-// tabs-sync: the SYNC half of the tab projection.
-//
-// The tab set is server-owned. `tabs.ts` holds the rows and paints them; this
-// module decides WHICH frames reach it, in what order, and when a frame means
-// "you have fallen behind, ask again". It holds no rows, touches no DOM, and
-// knows nothing about a TabViewSpec — which is what lets the rules below be
-// tested against a Set.
-//
-// FOUR MECHANISMS, and each exists because a simpler shape was tried and lost:
-//
-//   1. THE VERSION RULES. The collection carries one monotonic version, bumped
-//      on every committed mutation and captured in the same critical section as
-//      the tabs it describes (internal/tabs.Store.List). Three rules, exhaustive:
-//      at or below local is a duplicate or a stale frame and is ignored; exactly
-//      one past local applies; more than one past means a frame was missed, so
-//      stop applying and re-list.
-//
-//      ONLY AN EVENT MAY ADVANCE THE LOCAL VERSION. A command response carries
-//      the version the mutation committed, and the pending-op machine CONSUMES
-//      it — but consuming is not adopting: the machine compares it against the
-//      watermark and never writes it there. An earlier revision had the response
-//      supply the watermark, which defeats the whole mechanism: a
-//      response-adopted v+2 makes another device's in-flight v+1 read as stale,
-//      so it is dropped and no gap is ever detectable again.
-//
-//   2. ONE SERIALIZED QUEUE, in arrival order. The SSE spec dispatches frames as
-//      it receives them, and the version rules are only well-defined against a
-//      sequential applier: two handlers fanning out into parallel async work
-//      could apply v+2 before v+1, at which point rule 1 discards the frame that
-//      was actually next. The re-list is the one await inside the drain, and
-//      frames that arrive during it are queued and re-tested afterwards against
-//      the version the list established — which is why a gap does NOT clear the
-//      queue.
-//
-//   3. THE STALE-SNAPSHOT GUARD. A re-list can lose a race with a local open: the
-//      GET is issued, an open commits v+1, and the answer describes v. Adopting
-//      it would close a tab this device just opened, which is the 2026-08-25
-//      defect in new clothes. A snapshot BELOW the local version is therefore
-//      discarded rather than applied; the next event or the next gap re-lists.
-//
-//   4. THE PENDING-OP MACHINE, which owns op correlation. Every mutation this
-//      device dispatches optimistically (an adopt painted from its response, a
-//      remove applied at gesture time, a reorder shown at the drop) is a
-//      PendingOp keyed by the dispatch's
-//      `op_id`, and the machine reconciles the three answers that can arrive for
-//      it — the response, the echo frame, and an authoritative snapshot — in
-//      whichever order the network delivers them. It is the ONE consumer of
-//      `takeLocalOp`: the drain asks it whether a frame is this device's own
-//      echo and forwards that answer to `apply`, so a locally dispatched
-//      removal's teardown runs once rather than once per device.
-//
-// WHAT THIS MODULE DELIBERATELY DOES NOT DO: it binds no SSE handler and
-// subscribes to no bus. The composition root feeds it (`ingestTabsChanged`,
-// `listTabs`) and registers the target, exactly the way `tabs.ts` already takes
-// `setReorderCallback`. Keeping the binding out means the rules can be exercised
-// without a transport.
-// ---------------------------------------------------------------------------
+// The SYNC half of the tab projection: which frames reach `tabs.ts`, in what order, and when to
+// re-list. No rows, no DOM, no SSE binding (the composition root feeds it).
+//  1. VERSION RULES over the collection's one monotonic version (internal/tabs.Store.List): at or
+//     below local ignore, local+1 apply, beyond re-list. ONLY AN EVENT advances the watermark; a
+//     response version is consumed by the pending-op machine, never adopted.
+//  2. ONE SERIALIZED QUEUE in arrival order; frames arriving during a re-list are re-tested after.
+//  3. STALE-SNAPSHOT GUARD: a snapshot BELOW local is discarded. 4. PENDING-OP MACHINE by `op_id`:
+//     reconciles response, echo and snapshot in any order; sole `takeLocalOp` consumer.
 
 import { apiGetTyped } from "./api-client.js";
 import { observeStamp } from "./subject-versions.js";
 import type { TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
 
-/** How long a mutation this device dispatched stays correlatable.
- *
- *  An entry is normally consumed by its own event within a round trip. The sweep
- *  exists for the frames that never come — an idempotent open commits nothing so
- *  it emits nothing, a refused mutation emits nothing, and a connection that dies
- *  between the POST and the frame emits nothing this client will see. Without a
- *  bound the set is a slow leak keyed by a value nothing will ever match. */
+/** How long a dispatched mutation stays correlatable: bounds the set for frames that never come
+ *  (an idempotent open, a refusal, a dropped connection). */
 const OP_TTL_MS = 60_000;
 
-/** The re-list cadence for a remove in `verifying`, per attempt, capped at the
- *  last entry. Bounded backoff rather than a fixed tick: a server that is down
- *  for a minute should not be asked thirty times, and the next authoritative
- *  frame or snapshot settles the op ahead of any tick anyway. */
+/** Re-list backoff for a `verifying` remove, capped at the last entry. */
 const VERIFY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
 
-/** What the sync layer needs from the thing holding the rows.
- *
- *  Two verbs, no getters. Declared HERE, at the consumer, so the projection is
- *  not obliged to publish an interface for its own store — and so a test can
- *  satisfy it with a Set. */
+/** What the sync layer needs from the row holder: two verbs, declared at the consumer. */
 export interface TabsTarget {
-  /** Replace the whole projection from a snapshot. Called by the boot list and
-   *  by every re-list; never by an event. The snapshot has already been
-   *  version-checked AND overlaid: rows a pending remove took out are filtered,
-   *  rows a pending adopt painted are merged back. */
+  /** Replace the projection from a version-checked, overlaid snapshot (boot list and re-lists only). */
   reset: (tabs: readonly TabSubject[]) => void;
-  /** Apply ONE committed mutation, already version-checked.
-   *
-   *  `local` is true when this frame echoes a mutation this device dispatched.
-   *  See mechanism 4 — it decides whether a removal's teardown re-dispatches. */
+  /** Apply ONE version-checked mutation; `local` marks this device's own echo (mechanism 4). */
   apply: (delta: TabsChangedPayload, local: boolean) => void;
 }
 
@@ -128,21 +60,15 @@ export function tabsVersion(): number {
   return localVersion;
 }
 
-/** Record that this device dispatched a mutation under `opID`, so its echo can be
- *  told from another device's.
- *
- *  Called at the DISPATCH SITE, never inside an action's `run()`: the actions
- *  framework re-invokes `run()` per retry attempt, so an id minted there would be
- *  fresh on every attempt and correlate nothing. */
+/** Record a dispatched `opID` at the DISPATCH SITE: `run()` re-runs per retry, so an id minted there
+ *  correlates nothing. */
 export function markLocalOp(opID: string): void {
   sweepOps();
   localOps.set(opID, Date.now());
 }
 
-/** Whether `opID` names a mutation this device dispatched. Consuming is
- *  deliberate: one frame per committed mutation, so a second frame carrying the
- *  same op is a duplicate and must not claim local authorship twice. The
- *  pending-op machine is the one caller (mechanism 4). */
+/** Whether `opID` names a mutation this device dispatched, CONSUMING it (one frame per committed
+ *  mutation). The pending-op machine is the one caller. */
 function takeLocalOp(opID: string | undefined): boolean {
   if (opID === undefined) {
     return false;
@@ -159,70 +85,17 @@ function sweepOps(): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The pending-op machine (mechanism 4).
-//
-// One record per optimistic mutation, keyed by the dispatch's opID — the one
-// identifier that exists before the server has minted anything. Three kinds
-// (adopt, remove, reorder) and three states:
-//
-//   awaiting-response        dispatched; neither the response nor the frame has
-//                            arrived. An adopt has no id yet (server-minted);
-//                            a remove knows its id and captured subtree; a
-//                            reorder knows the whole order it showed.
-//   confirmed-awaiting-frame the response committed (id/committedVersion known)
-//                            and the echo frame has not landed.
-//   verifying                REMOVE-ONLY. The dispatch got NO answer, so the
-//                            close may or may not have committed. Nothing is
-//                            restored and nothing retires: the removal stays
-//                            applied and one re-list runs per backoff tick until
-//                            authoritative evidence arrives.
-//
-// Six transitions, each pinned by a test (tabs-sync.test.ts):
-//
-//   1. Dispatch creates the op in awaiting-response.
-//   2. A frame with matching op_id confirms in ANY state, verifying included:
-//      onConfirm(), retire.
-//   3. Response success fills id/committedVersion, then retires immediately when
-//      the watermark already covers it (localVersion >= committedVersion) OR the
-//      mutation committed nothing — a close whose `closed` list is EMPTY is a
-//      SEMANTIC confirmation of absence whatever the watermark says (another
-//      device already closed it; this client may be arbitrarily behind), and an
-//      open with `created: false` commits nothing and emits no frame. Otherwise
-//      the op moves to confirmed-awaiting-frame.
-//   4. Any frame or adopted snapshot that advances the watermark to
-//      committedVersion or past it absorbs a confirmed-awaiting-frame op: the
-//      mutation is in what the projection now holds even when correlation was
-//      lost. onConfirm(), retire.
-//   5. DEFINITIVE response failure — the server answered an error, so nothing
-//      committed: retire, then rollback().
-//   6. TIMEOUT — no answer: the op enters verifying. It settles by the FIRST of
-//      a matching frame (transition 2) or an authoritative list/snapshot: row
-//      PRESENT → rollback(), retire; ABSENT → onConfirm(), retire. A failed or
-//      stale list keeps it verifying. Restore happens ONLY on authoritative
-//      presence, because a conservative restore could resurrect a family whose
-//      records a committed close already deleted.
-//
-// A PENDING REORDER is an overlay rather than a capture: every frame order and
-// every snapshot that could predate its commit is permuted by it (overlayOrder),
-// so a render between the drop and the confirming frame keeps the dropped order.
-//
-// A RETIRED OP IGNORES EVERY LATER SIGNAL. Retiring deletes the record, and
-// every entry point looks the op up first — so a frame-confirmed op whose
-// dispatch later reports failure does NOT roll back.
-//
-// `onConfirm` is MODE-FREE: it is the CLIENT-LOCAL teardown only (the
-// retention-off record delete is the server's close transaction). The callback
-// re-checks the CURRENT projection before any chat-scoped teardown — a row with
-// the same (kind, ref) open again at confirm time means the user reopened inside
-// the window, and the chat's client state must survive — which is why it runs
-// AFTER the frame or snapshot that settles it has been applied.
-// ---------------------------------------------------------------------------
+// The pending-op machine: one record per optimistic adopt/remove/reorder, keyed by opID. States:
+// awaiting-response → confirmed-awaiting-frame, or (REMOVE-ONLY, on timeout) verifying: the removal
+// stays applied and re-lists on backoff. A matching frame confirms in any state; a response retires
+// at once when the watermark covers it or nothing committed (empty `closed`, `created: false`); a
+// covering frame or snapshot absorbs; a definitive error rolls back; verifying settles on the first
+// matching frame or authoritative list (present → rollback, absent → confirm). A pending reorder is
+// an overlay. A RETIRED OP IGNORES LATER SIGNALS. `onConfirm` is client-local and runs AFTER the
+// settling frame is applied, so its reopen re-check sees the current projection.
 
-/** What the machine needs from a remove at dispatch. The full captured subtree
- *  (rows, specs, owned view state) is the projection's business and rides the
- *  `onConfirm`/`rollback` closures — this module holds no rows, so the tab ids
- *  are the whole overlap between a capture and the version rules. */
+/** What the machine needs from a remove: its tab ids; the captured subtree rides the
+ *  `onConfirm`/`rollback` closures. */
 export interface PendingRemoveSpec {
   /** The tab the close names. Presence of THIS id in an authoritative list is
    *  what settles a verifying op. */
@@ -388,11 +261,8 @@ export function adoptCommitted(
   op.state = "confirmed-awaiting-frame";
 }
 
-/** Transition 3 for a close: the response committed `closed` at
- *  `committedVersion`. An EMPTY list is a SEMANTIC confirmation of absence —
- *  another device already closed the tab, and the local watermark may be
- *  arbitrarily behind the version that did it — so it confirms regardless of any
- *  version comparison. */
+/** Transition 3 for a close. An EMPTY `closed` list confirms absence regardless of version (another
+ *  device closed it). */
 export function removeCommitted(
   opID: string,
   closed: readonly string[],
@@ -411,10 +281,7 @@ export function removeCommitted(
   op.state = "confirmed-awaiting-frame";
 }
 
-/** Transition 5: the server ANSWERED an error, so nothing committed and the
- *  reversible removal can be honestly undone. A retired op ignores this — a
- *  frame already confirmed the mutation, and rolling back now would revert a
- *  close the collection holds. */
+/** Transition 5: the server answered an error, so the removal is undone; a retired op ignores it. */
 export function opFailed(opID: string): void {
   const op = pendingOps.get(opID);
   if (op === undefined) {
@@ -423,11 +290,7 @@ export function opFailed(opID: string): void {
   failOp(op);
 }
 
-/** Transition 6: the dispatch got NO answer, so the mutation may or may not
- *  have committed. NO restore and NO retire — the removal stays applied and the
- *  op verifies: one re-list per backoff tick until a matching frame or an
- *  authoritative list settles it. Remove-only; an adopt's dispatch carries no
- *  deadline, and nothing is painted before its response anyway. */
+/** Transition 6: no answer, so NO restore and NO retire; the op verifies by re-listing. Remove-only. */
 export function opTimedOut(opID: string): void {
   const op = pendingOps.get(opID);
   if (op?.kind !== "remove" || op.state === "verifying") {
@@ -495,11 +358,7 @@ function cancelVerify(op: PendingRemove): void {
   }
 }
 
-/** One timer per verifying remove, re-armed after each attempt and canceled on
- *  every settlement path (retire clears it). Each tick issues ONE re-list; a
- *  failed or stale answer leaves the op verifying and the next tick asks again,
- *  while a successful one settles it inside `readList` before the re-arm check
- *  runs. */
+/** One timer per verifying remove, re-armed per attempt, cleared on retire; each tick re-lists once. */
 function armVerify(op: PendingRemove): void {
   const delay = VERIFY_BACKOFF_MS[Math.min(op.verifyAttempts, VERIFY_BACKOFF_MS.length - 1)] ?? 0;
   op.verifyTimer = setTimeout(() => {
@@ -521,19 +380,9 @@ function frameIsLocal(opID: string | undefined): boolean {
   return marked || (opID !== undefined && pendingOps.has(opID));
 }
 
-/** The changed-upsert suppression, keyed by the pending removes' captured TAB
- *  IDS and never by ref: a frame re-upserting a row the reversible removal took
- *  out (a pin committed before the close, delivered after the gesture) must not
- *  resurrect it, while a remote device reopening the same chat mints a NEW tab
- *  id, which must paint unsuppressed.
- *
- *  The LOCAL reopen inside the window is the override — open wins locally —
- *  and it is deliberately narrow: the adopt must have been gestured AFTER the
- *  newest remove that captured the id (an open the user performed before the
- *  close is not a reopen, and its late echo must stay suppressed or the close's
- *  own gesture un-applies), and the frame must carry the adopt's OWN subject id
- *  (the same-id reopen against a not-yet-processed close; a reopen the server
- *  answered with a fresh id passes the capture test on its own). */
+/** Suppress a frame re-upserting a row a pending remove captured, keyed by TAB ID (a remote reopen
+ *  mints a new id). Overridden only by a local adopt gestured AFTER that remove and carrying the
+ *  same subject id, so an earlier open's late echo stays suppressed. */
 function suppressChanged(changed: TabSubject): boolean {
   let capturedBy = -1;
   for (const op of pendingOps.values()) {
@@ -558,11 +407,8 @@ function suppressChanged(changed: TabSubject): boolean {
   return true;
 }
 
-/** The delta as the projection should see it: `changed` stripped when a pending
- *  remove suppresses it, and `order` permuted by every pending reorder the frame
- *  may predate, so a frame from before this device's drop cannot overwrite the
- *  order it shows. `removed_ids` always passes — a removal of a row the
- *  projection no longer holds is already a no-op there. */
+/** The delta as the projection should see it: `changed` suppressed by a pending remove, `order`
+ *  permuted by pending reorders it may predate; `removed_ids` always passes. */
 function overlayFrame(delta: TabsChangedPayload): TabsChangedPayload {
   let out = delta;
   if (out.order !== undefined) {
@@ -603,12 +449,8 @@ function absorbCommitted(): void {
   }
 }
 
-/** A snapshot with the pending overlay applied: rows a pending remove took out
- *  are filtered (the visual removal must survive a re-list that raced the
- *  close), a pending adopt's subject is merged back (a stale-but-adoptable list
- *  must not unpaint a row this device committed), and a pending reorder permutes
- *  what is left. Every overlay applies only while the list can predate the
- *  mutation — committedVersion unknown, or past the list's version. */
+/** A snapshot with the pending overlay: removed rows filtered, a pending adopt merged back,
+ *  reorders permuted, each only while the list can predate the mutation. */
 function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[] {
   let out = [...tabs];
   for (const op of pendingOps.values()) {
@@ -639,12 +481,8 @@ function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[]
   );
 }
 
-/** Hand one `tabs_changed` frame to the queue.
- *
- *  Returns nothing and never throws: a frame is a fact about the collection, and
- *  a caller has no decision to make about it. The version rules run in the drain
- *  rather than here, so arrival order is preserved even when a frame arrives
- *  while a re-list is in flight. */
+/** Hand one `tabs_changed` frame to the queue; never throws. The rules run in the drain, preserving
+ *  arrival order across a re-list. */
 export function ingestTabsChanged(delta: TabsChangedPayload): void {
   queue.push(delta);
   void drain();
@@ -660,23 +498,13 @@ async function drain(): Promise<void> {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the loop condition
       const delta = queue.shift()!;
       if (delta.version <= localVersion) {
-        // RULE 1. A duplicate, or a frame from before the snapshot we hold. The
-        // emit-anyway removal the coordinator sends when a chat is gone but its
-        // tab close failed is stamped at version + 1, so it lands here only for a
-        // client that has already moved past it — which is the stated cost of
-        // that path, not a defect in this one.
+        // RULE 1: a duplicate or a pre-snapshot frame. The coordinator's emit-anyway removal (version + 1)
+        // lands here only for a client already past it.
         continue;
       }
       if (delta.version > localVersion + 1) {
-        // RULE 3. A frame was missed, so nothing after it can be trusted as a
-        // delta: this frame's `order` may name tabs we never received and its
-        // `changed` may sit on top of a set we do not hold. Stop applying and ask
-        // for the set.
-        //
-        // The queue is NOT cleared. Frames behind this one are re-tested against
-        // the version the list establishes, so the ones the snapshot already
-        // contains fall out through rule 1 and a genuinely newer one still
-        // applies.
+        // RULE 3: a frame was missed, so re-list. The queue is NOT cleared: queued frames re-test against
+        // the new version.
         await relist();
         continue;
       }
@@ -691,19 +519,9 @@ async function drain(): Promise<void> {
   }
 }
 
-/** Read the collection and adopt it. The boot read, the answer to a detected gap,
- *  the answer to a `reorder_tabs` 409, and each verify tick are all this one
- *  call.
- *
- *  A 409 re-lists and NEVER re-sends: the exact-set check refused the order
- *  because the set moved under the drag, so the arrangement the gesture committed
- *  describes a set that no longer exists.
- *
- *  Answers whether a snapshot was ADOPTED, which is not the same as whether the
- *  request succeeded: a snapshot below the local version is discarded on purpose
- *  (mechanism 3) and answers false with nothing wrong. Boot is the one caller that
- *  reads it — there the strip is empty, so an unadopted read leaves the reader
- *  with no tabs and nothing saying why. */
+/** Read the collection and adopt it: the boot read, a gap, a `reorder_tabs` 409 (re-list, NEVER
+ *  re-send), each verify tick. Answers whether a snapshot was ADOPTED; a discarded stale one is false
+ *  with nothing wrong, which only boot reads. */
 export function listTabs(signal?: AbortSignal): Promise<boolean> {
   return relist(signal);
 }
@@ -720,27 +538,17 @@ function relist(signal?: AbortSignal): Promise<boolean> {
 async function readList(signal?: AbortSignal): Promise<boolean> {
   const list = await apiGetTyped("/api/tabs", decodeTabList, signal);
   if (list === null) {
-    // Unreachable or undecodable. The projection is left exactly as it stands:
-    // an arrangement is re-derivable and a client that cannot read it must still
-    // work with what it has. The next event that detects a gap re-lists — and a
-    // failed list settles NO pending op, so a verifying remove stays verifying.
+    // Unreachable or undecodable: keep the projection; a failed list settles NO pending op.
     return false;
   }
   if (list.version < localVersion) {
-    // MECHANISM 3. This snapshot describes a set we are already ahead of, so
-    // adopting it would remove a tab a committed mutation has already given us.
-    // Discard it; the frame that advanced us past it was authoritative. A
-    // discarded snapshot is NOT authoritative evidence either, so it settles no
-    // verifying op.
+    // MECHANISM 3: we are ahead of this snapshot, so discard it; it settles no verifying op.
     return false;
   }
   localVersion = list.version;
 
-  // The snapshot is authoritative, so it settles what a frame could not.
-  // Decisions and retirement happen BEFORE the reset (a settled op must not
-  // overlay the snapshot it was settled by); the callbacks run AFTER it, so a
-  // confirmation's reopen re-check and a rollback's restore both observe the
-  // post-reset projection.
+  // Authoritative: settle and retire BEFORE the reset (a settled op must not overlay it), run the
+  // callbacks AFTER it.
   const confirms: PendingRemove[] = [];
   const rollbacks: PendingRemove[] = [];
   for (const op of [...pendingOps.values()]) {
@@ -768,26 +576,13 @@ async function readList(signal?: AbortSignal): Promise<boolean> {
   // Transition 4 over the snapshot: an op whose committed version the adopted
   // list covers is absorbed, correlation or not.
   absorbCommitted();
-  // AFTER the adoption: the `tabs` digest stamp certifies the set the projection now
-  // holds. A `tabs_changed` frame carries no stamp — the collection `version` inside
-  // the payload is the client's watermark for the event stream, and the stamp is the
-  // same number spelled for the digest.
+  // AFTER the adoption: the `tabs` digest stamp certifies the set now held (frames carry no stamp).
   observeStamp(list.subject);
   return true;
 }
 
-/** Reorder `items` to match `order`, which is a PERMUTATION and never a
- *  membership statement.
- *
- *  An id `order` does not name keeps its relative position among the other
- *  unnamed items and sorts LAST. Two things that must both hold, and the second
- *  is the one that was wrong before: such an item is never CLOSED, and it never
- *  lands at position 0. Reading absence as closure is what closed tabs nobody
- *  closed on the live instance; sorting an unnamed item first would put a tab the
- *  server has not told us about ahead of the strip the reader arranged.
- *
- *  Pure and generic so the rule is testable without a row: `tabs.ts` passes its
- *  rows and their ids. */
+/** Reorder `items` to match `order`, a PERMUTATION, never membership: an unnamed id keeps its
+ *  relative position and sorts LAST, never closed and never first. Pure and generic. */
 export function permute<T>(
   items: readonly T[],
   idOf: (item: T) => string,

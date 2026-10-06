@@ -16,41 +16,33 @@ func TestRedactCredentials(t *testing.T) {
 		in   string
 		want string
 	}{
-		// Empty / no-op
 		{name: "empty", in: "", want: ""},
 		{name: "no_credentials", in: "https://github.com/foo/bar.git", want: "https://github.com/foo/bar.git"},
 
-		// urlCredPattern: scheme://user:pwd@host
 		{name: "https_userinfo", in: "https://user:secret@github.com/repo.git", want: "https://github.com/repo.git"},
 		{name: "http_token_only", in: "http://ghp_abc123@github.com/repo.git", want: "http://github.com/repo.git"},
 		{name: "ssh_scheme_userinfo", in: "ssh://deploy:key@gitlab.com/repo.git", want: "ssh://gitlab.com/repo.git"},
 		{name: "git_scheme_userinfo", in: "git://token@example.com/repo.git", want: "git://example.com/repo.git"},
 		{name: "chained_userinfo", in: "http://a@b@c@host.com/path", want: "http://host.com/path"},
 
-		// urlQueryTokenPattern: ?token=, ?access_token=, etc.
 		{name: "query_token", in: "https://gitea.io/repo?token=abc123", want: "https://gitea.io/repo?token=[REDACTED]"},
 		{name: "query_access_token", in: "https://host.com/r?access_token=xyz", want: "https://host.com/r?access_token=[REDACTED]"},
 		{name: "query_private_token", in: "https://gl.io/r?private_token=secret", want: "https://gl.io/r?private_token=[REDACTED]"},
 		{name: "query_api_key", in: "https://h.io/r?api_key=k1&other=v", want: "https://h.io/r?api_key=[REDACTED]&other=v"},
 		{name: "query_apikey", in: "https://h.io/r?apikey=k2", want: "https://h.io/r?apikey=[REDACTED]"},
 
-		// authHeaderPattern: Authorization: Bearer/Token/Basic
 		{name: "auth_bearer", in: "Authorization: Bearer ghp_secret123", want: "Authorization: Bearer [REDACTED]"},
 		{name: "auth_token", in: "authorization: token abc", want: "authorization: token [REDACTED]"},
 		{name: "auth_basic", in: "Authorization: Basic dXNlcjpwYXNz", want: "Authorization: Basic [REDACTED]"},
 
-		// Combined patterns
 		{name: "userinfo_and_query", in: "https://user:pw@host.com/r?token=s", want: "https://host.com/r?token=[REDACTED]"},
 
-		// Embedded in surrounding text — the shape every caller actually
-		// passes (git stderr / an error message, not a bare URL).
 		{
 			name: "userinfo_inside_message",
 			in:   "failed: https://user:pass@host.com/repo.git",
 			want: "failed: https://host.com/repo.git",
 		},
 
-		// Idempotency
 		{name: "already_scrubbed", in: "https://github.com/repo.git", want: "https://github.com/repo.git"},
 	}
 
@@ -81,8 +73,6 @@ func TestGitExec_RefusesWhenGitIsAbsent(t *testing.T) {
 		t.Errorf("gitExec refusal argv = %v, want just the binary — an interpolatable argv is the thing to avoid", cmd.Args)
 	}
 
-	// gitCmd reports WHY, because the refusal above exits 1 in silence and a
-	// caller composing that silence renders a message naming no cause.
 	if _, err := gitCmd(t.Context(), "/tmp", "status"); !errors.Is(err, errGitUnavailable) {
 		t.Errorf("gitCmd with no git resolved = %v, want errGitUnavailable", err)
 	}
@@ -97,15 +87,11 @@ func TestGitExec_Args(t *testing.T) {
 	if cmd.Dir != "/tmp" {
 		t.Errorf("gitExec.Dir = %q, want /tmp", cmd.Dir)
 	}
-	// argv[0] is the pin: an ABSOLUTE path ending in the binary's own name, never
-	// the bare name a PATH lookup would resolve. Asserted structurally rather than
-	// against /usr/bin/git so it states the invariant instead of the image's
-	// layout, and read off cmd rather than the resolver so this test stays
-	// parallel-safe while its sibling reassigns that seam.
+	// argv[0] must be an absolute path ending in the binary's name, never the bare name a PATH
+	// lookup would resolve.
 	if !filepath.IsAbs(cmd.Args[0]) || filepath.Base(cmd.Args[0]) != "git" {
 		t.Errorf("gitExec.Args[0] = %q, want an absolute path to git", cmd.Args[0])
 	}
-	// Args include the prepended -c hardening pairs, before the subcommand.
 	wantArgs := []string{
 		cmd.Args[0],
 		"-c", "protocol.ext.allow=never",
@@ -123,7 +109,6 @@ func TestGitExec_Args(t *testing.T) {
 		}
 	}
 
-	// Verify hardening env vars are set.
 	envMap := make(map[string]string)
 	for _, e := range cmd.Env {
 		parts := splitEnvVar(e)
@@ -132,11 +117,6 @@ func TestGitExec_Args(t *testing.T) {
 		}
 	}
 
-	// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are NOT pinned to
-	// /dev/null any more — they need to be loadable so the forge
-	// CLI's credential.helper line in ~/.gitconfig works for HTTPS
-	// clones of private repos. The ext:: hardening moved to a
-	// command-line -c flag (verified above), which beats gitconfig.
 	wantEnv := map[string]string{
 		"GIT_TERMINAL_PROMPT":    "0",
 		"GIT_ASKPASS":            "",
@@ -153,8 +133,6 @@ func TestGitExec_Args(t *testing.T) {
 			t.Errorf("env %s = %q, want %q", k, got, want)
 		}
 	}
-	// Explicitly verify the gitconfig file vars are NOT pinned:
-	// loading them is required so credential helpers work.
 	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
 		if got, ok := envMap[k]; ok {
 			t.Errorf("env %s = %q must not be set by gitExec (would disable credential helpers from ~/.gitconfig)", k, got)
@@ -162,14 +140,8 @@ func TestGitExec_Args(t *testing.T) {
 	}
 }
 
-// core.fsmonitor names a command git runs on status and diff, and a repo's own
-// .git/config can set it. A command-line -c always beats gitconfig, so clearing
-// it centrally is what makes it unreachable — on EVERY subcommand, since the
-// caller's argv is what varies and the hardening is not per call site.
-//
-// Asserted as a POSITION rather than mere membership: the pairs must precede the
-// subcommand, because `git status -c x=y` is not a config flag at all, it is an
-// argument to status.
+// TestGitExec_ClearsConfigDrivenExecution: a repo's .git/config can set core.fsmonitor, a command
+// git runs on status and diff; a `-c` clears it.
 func TestGitExec_ClearsConfigDrivenExecution(t *testing.T) {
 	t.Parallel()
 
@@ -194,16 +166,8 @@ func TestGitExec_ClearsConfigDrivenExecution(t *testing.T) {
 	}
 }
 
-// Without core.quotePath=false git C-quotes every path holding a byte above
-// 0x80, so café.txt reaches a caller as "caf\303\251.txt". Independent of the
-// locale: the image's LANG=C.UTF-8 does not change git's path quoting.
-//
-// The status parser is unaffected either way — it reads -z, which emits paths
-// verbatim — so what this pins is the non--z output handlers_ai.go folds into a
-// prompt, where an escaped filename ends up written into a commit message.
-//
-// Positioned like the pair above, and for the same reason: after the subcommand
-// it is an argument to it rather than a config flag.
+// TestGitExec_DisablesPathQuoting: without core.quotePath=false git C-quotes every non-ASCII path,
+// independent of the locale.
 func TestGitExec_DisablesPathQuoting(t *testing.T) {
 	t.Parallel()
 
@@ -242,12 +206,8 @@ func TestGitExec_RefusedSubcommandGetsNoHardening(t *testing.T) {
 	}
 }
 
-// A refused subcommand must fail with a message that NAMES it. The refusal
-// path used to run /bin/false, which exits 1 and writes nothing to either
-// stream, so a caller composing the output into its own message produced a
-// string ending at its own colon ("clean: ") that named no cause and read as
-// truncated. That is exactly how the missing `clean` entry presented, so the
-// output is asserted rather than only the exit status.
+// TestGitCmd_RefusedSubcommandSaysWhy: a refused subcommand fails with a message naming it, not the
+// silent exit of /bin/false.
 func TestGitCmd_RefusedSubcommandSaysWhy(t *testing.T) {
 	t.Parallel()
 
@@ -255,14 +215,9 @@ func TestGitCmd_RefusedSubcommandSaysWhy(t *testing.T) {
 	if err == nil {
 		t.Fatalf("gitCmd(cat-file) err = nil, want a refusal (out %q)", out)
 	}
-	// The reason travels in the ERROR, and no subprocess is spawned: giving the
-	// refusal branch a shell it could interpolate the name into would hand a
-	// command-injection taint path to the boundary the allowlist exists to close.
 	if !strings.Contains(err.Error(), "cat-file") {
 		t.Errorf("gitCmd(cat-file) err = %v, want it to name the refused subcommand", err)
 	}
-	// And cmdFailure is what turns it into something a user can read, since the
-	// subprocess output is empty on this path.
 	if got := cmdFailure(out, err); !strings.Contains(got, "cat-file") {
 		t.Errorf("cmdFailure(%q, %v) = %q, want it to name the subcommand", out, err, got)
 	}
@@ -332,9 +287,7 @@ func TestFirstSubcommand_skipsFlagValues(t *testing.T) {
 		want string
 		args []string
 	}{
-		// "-c" consumes its value ("status"); the real subcommand is "commit".
 		{name: "dash_c_skips_value", args: []string{"-c", "status", "commit"}, want: "commit"},
-		// "-C" consumes its value ("somedir"); the real subcommand is "log".
 		{name: "dash_C_skips_value", args: []string{"-C", "somedir", "log"}, want: "log"},
 	}
 	for _, tt := range tests {
@@ -496,20 +449,13 @@ func TestCommitURLPrefix_perForgeShapeElseEmpty(t *testing.T) {
 		{name: "gitea_no_suffix", in: "https://codeberg.org/foo/bar", want: "https://codeberg.org/foo/bar/commit/"},
 		{name: "gitlab_ssh", in: "ssh://git@gitlab.com/foo/bar.git", want: "https://gitlab.com/foo/bar/-/commit/"},
 		{name: "self_hosted_gitlab", in: "https://gitlab.example.com/grp/sub/bar.git", want: "https://gitlab.example.com/grp/sub/bar/-/commit/"},
-		// An http remote still yields an https page: the forge web UI is not
-		// the transport, and no forge serves its pages over cleartext.
 		{name: "http_remote_upgrades", in: "http://gitea.internal/foo/bar.git", want: "https://gitea.internal/foo/bar/commit/"},
-		// Credentials live in the userinfo segment, which neither parse keeps.
 		{name: "userinfo_dropped", in: "https://user:tok@github.com/foo/bar.git", want: "https://github.com/foo/bar/commit/"},
 		{name: "no_remote", in: "", want: ""},
 		{name: "host_only", in: "https://github.com", want: ""},
 		{name: "host_with_trailing_slash", in: "https://github.com/", want: ""},
 		{name: "ext_helper", in: "ext::sh -c payload", want: ""},
-		// sanitizeHost admits a space; url.Parse does not, so the round-trip
-		// check is what refuses this rather than the host filter.
 		{name: "space_in_host", in: "git@ev il.com:foo/bar.git", want: ""},
-		// A "#" or "?" in the path would truncate the href so the link pointed
-		// somewhere other than the commit.
 		{name: "fragment_in_path", in: "git@github.com:foo/bar#x.git", want: ""},
 		{name: "query_in_path", in: "git@github.com:foo/bar?x.git", want: ""},
 	}

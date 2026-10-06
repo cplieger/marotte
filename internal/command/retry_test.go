@@ -1,22 +1,5 @@
 package command
 
-// The retry LOOP, in synthetic time.
-//
-// prompt_failure_test.go covers the retry POLICY — which failure classes get a
-// second attempt — through a helper that mirrors callPromptWithRetry's
-// predicate. Nothing covered the loop that consumes it: how many attempts it
-// spends, how long it waits between them, or what it returns when the turn
-// context dies mid-wait. On a real clock it could not be covered cheaply, since
-// the shipped delay is 2s and the shipped attempt count is 2, so a faithful test
-// costs four seconds of wall time and can still only assert a tolerance.
-//
-// retry touches no process, socket or PTY — it calls a closure and waits on a
-// timer — so a synctest bubble reaches all of it. Each assertion below is an
-// EXACT equality on the bubble's synthetic clock against the SHIPPED
-// promptRetryDelay: a delay one nanosecond off fails, where a real-clock
-// tolerance wide enough not to flake would have admitted a loop that skipped its
-// wait entirely.
-
 import (
 	"context"
 	"errors"
@@ -44,13 +27,9 @@ func countingFn(succeedOn int, calls *int) func() (promptReply, error) {
 
 func alwaysRetry(error) bool { return true }
 
-// TestRetry_SpendsOneDelayPerAttemptAndNoMore pins the loop's whole cost.
-//
-// maxAttempts is the number of RETRIES, so a call that never succeeds invokes fn
-// 1+maxAttempts times and waits exactly maxAttempts delays. Both halves matter:
-// an off-by-one in the loop bound changes how many times an expensive prompt is
-// re-sent, and a missing wait would hammer a busy session as fast as the
-// scheduler allows.
+// TestRetry_SpendsOneDelayPerAttemptAndNoMore pins the loop's whole cost: maxAttempts counts
+// RETRIES, so a call that never succeeds invokes fn 1+maxAttempts times and waits exactly
+// maxAttempts delays.
 func TestRetry_SpendsOneDelayPerAttemptAndNoMore(t *testing.T) {
 	for _, maxAttempts := range []int{1, 2, 3} {
 		t.Run(fmt.Sprintf("maxAttempts=%d", maxAttempts), func(t *testing.T) {
@@ -117,17 +96,8 @@ func TestRetry_DoesNotWaitOnAClassItWillNotRetry(t *testing.T) {
 	})
 }
 
-// TestRetry_CancellationAbandonsTheWaitAndKeepsTheUPSTREAMError pins the two
-// halves of the cancellation path, and the second is the one a reader gets
-// wrong.
-//
-// The wait is abandoned the instant the context dies rather than run to term —
-// that is what lets a client disconnect free the chat's prompt slot instead of
-// holding it for the rest of the budget. And the error returned is the LAST fn
-// error, NOT ctx.Err(): the prompt path runs its result through
-// classifyPromptFailure and reports it to the user, so surfacing
-// "context canceled" would replace the cause with the symptom and classify the
-// turn as fatal when it was throttled or busy.
+// TestRetry_CancellationAbandonsTheWaitAndKeepsTheUPSTREAMError: the wait ends the instant the
+// context dies, and the error returned is the upstream one, not the context's.
 func TestRetry_CancellationAbandonsTheWaitAndKeepsTheUpstreamError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), promptRetryDelay/2)
@@ -173,19 +143,8 @@ func (c *countingCaller) CallAt(context.Context, string, any) (*marotte.RPCRespo
 	return nil, 0, c.err
 }
 
-// TestCallPromptWithRetry_LadderPerClass asserts the ladder through the REAL
-// function rather than through a mirror of its predicate.
-//
-// prompt_failure_test.go's retriesFor helper restates callPromptWithRetry's
-// expression, which is enough to pin the policy and not enough to pin the wiring:
-// a class constant that is never added to the predicate classifies correctly and
-// still gets retried, and the mirror would agree with it. So each row here sends
-// a real error through the real loop and counts the uploads it costs.
-//
-// The rejected row is the one this test was added for. A validation refusal is a
-// statement about the bytes that were sent, so the two extra attempts re-upload
-// the same rejected payload — on an oversized image, three uploads before the
-// user is told anything.
+// TestCallPromptWithRetry_LadderPerClass asserts the retry ladder through the REAL function rather
+// than a mirror of its predicate.
 func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 	cases := map[string]struct {
 		err       error
@@ -199,10 +158,15 @@ func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 			wantCalls: 1,
 			wantWait:  0,
 		},
-		"an unclassified internal error still spends the ladder": {
+		"an answered internal error is sent once": {
 			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "upstream connection reset",
 			}),
+			wantCalls: 1,
+			wantWait:  0,
+		},
+		"a busy session spends the ladder": {
+			err:       rpcErr(t, marotte.RPCCodeNotIdle, "session is not idle", nil),
 			wantCalls: 3,
 			wantWait:  2 * promptRetryDelay,
 		},

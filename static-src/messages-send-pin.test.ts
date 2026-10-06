@@ -1,21 +1,6 @@
-// ---------------------------------------------------------------------------
-// WHICH turn mounts ask for the live edge.
-//
-// `buildTurn` pins for a turn with a prompt trigger the paint recorded as an
-// ARRIVAL, and that pin publishes a READER GESTURE (`onReaderGesture`), which
-// revokes the rail's pick. So the gate answers "did the reader just send it",
-// not "does this turn have a trigger" — a replay, a refetched window and a
-// prepend all mount triggered turns. `appendNewIds` is the answer and
-// `renderCauseOf` is what tells a FETCHED window from a fresh chat's first
-// prompt: both paint with no tail behind them and want opposite answers. The
-// paged rail jump is where that meets the live defect, an ungated pin revoking
-// the pick its own click had just set.
-//
-// REAL scroll over REAL layout, and a REAL rail: `scroll.test.ts`'s fake emits no
-// scroll event, so under it every case here passes with the gate deleted. A
-// negative assertion waits for the POSITIVE precondition that would have produced
-// the publish and asserts afterwards; every wait polls an observable, see `until`.
-// ---------------------------------------------------------------------------
+// `buildTurn` pins to the live edge only for a turn the paint recorded as an arrival, since the pin publishes a
+// reader gesture that revokes the rail's pick; `renderCauseOf` tells a fetched window from a fresh chat's first
+// prompt. Real scroll, layout and rail: a fake scroller emits no scroll event, so every case would pass ungated.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { SessionOverrides } from "./__test-helpers__/model.js";
@@ -28,28 +13,18 @@ import type { Session, TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import type { TurnSummary } from "./rail-merge.js";
 
-// This file needs MORE than the suite's shared frame budget, so it states its own.
-// Its waits do not poll a single settled value: `quiet` waits for the scroller to
-// stop moving and `park` contests the controller's own re-assert window, so each
-// one spans several rounds of pin, settle and re-measure rather than one delivery.
-// 16 frames is the measured span of that contest at the 1Hz throttle. Both describes
-// below take `testTimeoutFor` of THIS budget rather than the default, or the
-// per-test deadline preempts the wait and the failure reads as a bare timeout
-// naming no assertion — the exact defect `frame-budget.ts` warns about.
+// These waits span several rounds of pin, settle and re-measure (16 frames measured at the 1Hz throttle), so the
+// describes take `testTimeoutFor` of this budget or the deadline preempts the wait as a bare timeout.
 const PIN_CONTEST_BUDGET_MS = framesBudgetMs(16);
 
-// The DOM the renderer's import graph resolves at load, nested the way the page
-// nests it: the rail mounts in the positioned OUTER wrapper, the scroller is the
-// wrapper, and `#messages` holds one `.transcript-view` per resident chat.
+// The DOM the import graph resolves at load, nested as the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
 const wrap = document.createElement("div");
 wrap.id = "messages-wrap";
-// `overflow-anchor: none` is production's (css/13-messages.css) and it is
-// load-bearing here: without it Chromium's own scroll anchoring adjusts scrollTop
-// when a page of older turns lands above the reader, which is the number these
-// cases read to decide whether a pin happened.
+// Production's `overflow-anchor: none`: without it Chromium's scroll anchoring moves scrollTop when older turns
+// land above, which is the number these cases read.
 wrap.style.cssText = "height:300px;overflow-y:auto;overflow-anchor:none;position:relative;";
 const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
@@ -69,30 +44,22 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Turn cards get their height from a stylesheet in production; these cases need
-// deterministic boxes, so the scene declares them. `t3` is deliberately SHORT: the
-// paged case asserts that the mark lands on the turn that was CLICKED rather than
-// on the taller neighbour an offset-derived mark would name.
+// Deterministic boxes; `t3` is short so an offset-derived mark would name its taller neighbour.
 const style = document.createElement("style");
 style.textContent =
   `.turn{block-size:200px}[data-reconcile-key="t3"]{block-size:40px}` +
-  // The rail's marker capacity is computed from its own measured height
-  // (`maxMarkers`), so a rail with no box holds one marker and no per-turn
-  // marker exists to click.
+  // The rail's marker capacity comes from its measured height, so a boxless rail holds one marker.
   `.turn-rail{position:absolute;inset-block-start:0;block-size:400px}`;
 document.head.appendChild(style);
 
-// The rail's session-wide index is its own fetch (`GET /api/chats/{id}/turns`), and
-// the pagination door is a network read. Both are staged: what is under test is the
-// sequencing around them.
+// The rail's turn index and the pagination door are staged network reads.
 const { served, apiGetMock } = vi.hoisted(() => ({
   served: { turns: [] as unknown[] },
   apiGetMock: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: apiGetMock,
-  // Present-but-inert so real-ESM linking succeeds: this graph reaches the run
-  // store and the window read, neither of which is this file's subject.
+  // Present-but-inert so real-ESM linking succeeds.
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetTypedOrError: vi.fn(),
@@ -128,9 +95,7 @@ function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknow
   };
 }
 
-/** The entry that OPENS a turn the reader sent: `source: "prompt"`, so the
- *  projection gives the turn a trigger and the card a header. That trigger is one
- *  half of the pin's gate; the paint's arrivals set is the other. */
+/** A reader-sent turn open (`source: "prompt"`): the trigger is one half of the pin's gate, arrivals the other. */
 function turnOpen(turnID: string, n: number): Entry {
   return sealed(turnID, 0, "turn_open", {
     prompt: { id: `${turnID}-p`, text: `prompt ${turnID}` },
@@ -176,9 +141,7 @@ function summary(n: number): TurnSummary {
   return { id: `t${String(n)}`, n, outcome: "completed", ts: n * MINUTE };
 }
 
-/** Poll `pred` until it holds; `what` is the sentence a timeout reads as. Bounded by
- *  the suite's FRAME budget rather than a wall-clock guess, because this browser
- *  throttles rAF partway through a full run (`__test-helpers__/frame-budget.ts`). */
+/** Poll `pred` until it holds; `what` is the timeout's sentence. Bounded by frames, since rAF throttles mid-run. */
 async function until(pred: () => boolean, what: string, budget = FRAME_BUDGET_MS): Promise<void> {
   const deadline = Date.now() + budget;
   while (!pred()) {
@@ -189,10 +152,7 @@ async function until(pred: () => boolean, what: string, budget = FRAME_BUDGET_MS
   }
 }
 
-/** A chat id no earlier case has used. Two module states make this necessary
- *  rather than tidy: `setActive` is a no-op for the id already active (so a reused
- *  id paints nothing and the case runs against an empty view), and the rail's own
- *  per-chat index records are keyed by it. */
+/** A fresh chat id: `setActive` is a no-op for the active id, and the rail keys per-chat index records on it. */
 let seq = 0;
 function nextChat(): string {
   seq += 1;
@@ -225,9 +185,7 @@ function markerFor(n: number): HTMLElement {
   return hit;
 }
 
-/** The markers the rail is CLAIMING a position with. Exactly one of `data-current`
- *  and `data-selected` is written per render, so this answers one element once any
- *  turn has been placed. */
+/** The markers the rail claims a position with; one of `data-current` / `data-selected` is written per render. */
 function marked(): HTMLElement[] {
   return markers().filter(
     (m) => m.dataset["selected"] !== undefined || m.dataset["current"] !== undefined,
@@ -238,10 +196,10 @@ function atLiveEdge(): boolean {
   return wrap.scrollTop === wrap.scrollHeight - wrap.clientHeight;
 }
 
-/** Wait until the scroller has stopped moving on its own. Required before a gesture:
- *  a paint's pin reaches the live edge through a rAF, so a scroll written while that
- *  frame is queued is overwritten by it (measured: a park at 120 came back as the
- *  live edge). Three identical reads is one frame with no write in it. */
+/**
+ * Wait until the scroller stops moving on its own: a queued pin frame overwrites a scroll written before it.
+ * Three identical reads is one frame with no write.
+ */
 async function quiet(): Promise<void> {
   let last = -1;
   let stable = 0;
@@ -260,29 +218,22 @@ async function quiet(): Promise<void> {
   );
 }
 
-/** Move the scroller AS THE READER: the input event that says whose scroll it is,
- *  then the position they reach.
- *
- *  Both halves are load-bearing. `scroll.ts` reads intent off the INPUT, so a bare
- *  `scrollTop` assignment is the shape the PLATFORM produces and is deliberately
- *  not read as the reader stating a position; the wheel's direction has to be the
- *  one that would have brought them there, because only an UPWARD aim enters
- *  Reading. */
+/**
+ * Move the scroller as the reader: an input event, then the position. `scroll.ts` reads intent off the input, and
+ * only an upward aim enters Reading.
+ */
 function readerScrollTo(top: number): void {
   wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -1 : 1 }));
   wrap.scrollTop = top;
 }
 
-/** Park the reader at `top` with a real gesture, so the state is the listener's
- *  own verdict rather than a seeded field — and CONFIRMED, both halves: the
- *  verdict the listener wrote on the event, and the position surviving it. */
+/** Park the reader at `top` with a real gesture, confirming both the listener's verdict and the position. */
 async function park(top: number): Promise<void> {
   await quiet();
   readerScrollTo(top);
   await until(
     () => {
-      // Re-assert until it sticks: the pin re-writes the SAME position every rAF,
-      // so `quiet()`'s positional stability cannot prove no frame is still queued.
+      // The pin re-writes the same position every rAF, so positional stability cannot prove no frame is queued.
       if (wrap.scrollTop !== top) {
         readerScrollTo(top);
         return false;
@@ -294,9 +245,7 @@ async function park(top: number): Promise<void> {
   );
 }
 
-/** Mount `chatID` as the active chat and wait for its first paint to have produced
- *  a card per turn. `setActive` paints synchronously; what the wait covers is the
- *  observers and the rAF the paint hands work to. */
+/** Mount the active chat and wait for a card per turn; the wait covers observers and the paint's rAF. */
 async function mount(s: Session): Promise<void> {
   store.setSessions([s]);
   store.setActive(s.id);
@@ -315,8 +264,7 @@ function requireSession(chatID: string): Session {
   return s;
 }
 
-/** The older-page prepend, exactly as `loadMessages`' own older-page branch applies
- *  it: the fetched turns in front of the resident window, one `load` bump. */
+/** The older-page prepend as `loadMessages` applies it: fetched turns in front, one `load` bump. */
 function prepend(chatID: string, ns: readonly number[], hasMore = false): void {
   const s = requireSession(chatID);
   seat(s, ns, "front");
@@ -324,13 +272,10 @@ function prepend(chatID: string, ns: readonly number[], hasMore = false): void {
   store.bumpMessages(chatID, "load");
 }
 
-/** The newest-page fetch, as `loadMessages`' own newest-page branch applies it: the
- *  server's window in place of the resident one, one `load` bump.
- *
- *  The CAUSE is the one thing this helper restates rather than drives, because
- *  `store-load.js` is mocked out of this file's graph; that `loadMessages` really
- *  announces a fetched window as `load` is pinned at the production call site, in
- *  store-load.test.ts. */
+/**
+ * The newest-page fetch as `loadMessages` applies it, one `load` bump. The cause is restated, not driven, since
+ * `store-load.js` is mocked here.
+ */
 function loadWindow(chatID: string, ns: readonly number[], hasMore = false): void {
   const s = requireSession(chatID);
   s.turns = new Map<string, TurnState>();
@@ -358,9 +303,7 @@ describe(
   { timeout: testTimeoutFor(PIN_CONTEST_BUDGET_MS) },
   () => {
     it("publishes a reader gesture for a turn the reader just sent", async () => {
-      // The genuine case, and the one the gate must not cost: the reader asked for
-      // this turn, so the pin takes them to it even though they were parked further
-      // up, and anything holding a position they have now abandoned has to hear it.
+      // The reader asked for this turn, so the pin takes them there even from a parked position.
       const chat = nextChat();
       await mount(chatWith(chat, [1, 2, 3]));
       await park(120);
@@ -370,9 +313,7 @@ describe(
       const off = scroll.onReaderGesture(seen);
       store.openTurn(chat, turnOpen("t4", 4));
       await until(() => cardFor("t4") !== null, "the sent turn's card to mount");
-      // Settle before unsubscribing so a second publish is caught. Not a live-edge
-      // wait: `pinToLiveEdge` also sets Following, so `autoScrollIfAnchored` reaches
-      // the bottom without the pin and that wait cannot fail.
+      // Settle before unsubscribing so a second publish is caught; a live-edge wait could not fail here.
       await quiet();
       off();
 
@@ -380,11 +321,7 @@ describe(
     });
 
     it("publishes for the first turn of a chat that had nothing in it", async () => {
-      // The paint before this one had no TAIL to append past, which is not the same
-      // as nothing having arrived: this is the reader's first prompt in a fresh chat,
-      // the one appended-tail paint with no tail behind it. A one-turn transcript
-      // cannot scroll, so the gesture is the observable — and with no scroll event
-      // possible here, the pin is the only thing that can publish one.
+      // A fresh chat's first prompt: a one-turn transcript cannot scroll, so only the pin can publish a gesture.
       const chat = nextChat();
       await mount(chatWith(chat, []));
       expect(cards()).toHaveLength(0);
@@ -400,9 +337,7 @@ describe(
     });
 
     it("stays silent for a turn card a pagination prepend built", async () => {
-      // The reader is reading old history; the turns a page of it mounts are not
-      // theirs. The live-edge assertion is the control that stops this passing
-      // because nothing mounted: a pin would take them to the live edge.
+      // The live-edge assertion is the control that stops this passing because nothing mounted.
       const chat = nextChat();
       await mount(chatWith(chat, [4, 5, 6], { turn_count: 6, has_more: true }));
       await park(120);
@@ -414,18 +349,13 @@ describe(
       off();
 
       expect(cardFor("t1")).not.toBeNull();
-      // NOT the exact offset the reader parked at, which the old message-model
-      // suite asserted: a prepend runs inside `preserveReadingPosition`, so the
-      // controller adds the height it inserted above the reader and the number
-      // moves BY DESIGN. What a pin would do is land them at the live edge, and
-      // that is what this denies.
+      // Not the exact park offset: a prepend runs inside `preserveReadingPosition`, which moves the number by design.
       expect(atLiveEdge()).toBe(false);
       expect(seen).toHaveBeenCalledTimes(0);
     });
 
     it("stays silent for a turn card a chat-switch replay built", async () => {
-      // Every turn of the incoming chat mounts at once, and none of them is a turn
-      // the reader just sent — they are a conversation being replayed.
+      // The incoming chat's turns are a replay, not turns the reader just sent.
       const first = nextChat();
       const second = nextChat();
       await mount(chatWith(first, [1, 2]));
@@ -435,9 +365,7 @@ describe(
       const off = scroll.onReaderGesture(seen);
       store.setActive(second);
       await until(() => cards().length === 3, "the switched-to chat's cards to mount");
-      // The control that stops the gate reading as a regression: an opened chat
-      // still lands at the live edge, because a Following reader is pinned there by
-      // the streaming auto-scroll rather than by this mount.
+      // An opened chat still lands at the live edge through the streaming auto-scroll, not this mount.
       await until(atLiveEdge, "the opened chat to land at the live edge");
       off();
 
@@ -445,11 +373,8 @@ describe(
     });
 
     it("stays silent for the window a cold open's own fetch filled", async () => {
-      // The case the arrivals rule cannot answer from the turn order: a chat whose
-      // transcript is not resident paints EMPTY first, so the fetched window is not a
-      // chat switch and its predecessor recorded no tail — the same state the
-      // fresh-chat case above is in, and the opposite answer. The paint's CAUSE is
-      // what separates them, and both consumers read it: the pin and the animation.
+      // A non-resident chat paints empty first, so its fetched window looks like a fresh chat; the paint's cause
+      // separates them for both the pin and the animation.
       const chat = nextChat();
       await mount(chatWith(chat, []));
 
@@ -461,9 +386,7 @@ describe(
       off();
 
       expect(seen).toHaveBeenCalledTimes(0);
-      // The other consumer, and the reason this window is not merely unpinned: a
-      // replay animates nothing, or every row of a reopened conversation fades in
-      // together — the contract the paint states three lines above the arrivals scan.
+      // A replay animates nothing, or every row of a reopened conversation would fade in together.
       expect(cards().filter((c) => c.hasAttribute("data-chat-entry"))).toHaveLength(0);
     });
   },
@@ -473,11 +396,10 @@ describe(
   "a rail jump onto a non-resident turn",
   { timeout: testTimeoutFor(PIN_CONTEST_BUDGET_MS) },
   () => {
-    /** The paged scene: turns 4..6 resident out of a session of 6, the index fetched,
-     *  and a pagination door answering with turns 1..3. NOTHING SEEDS A WINDOW BASE,
-     *  and the two lines that used to are dropped: a card's ordinal is `turn_open.n`,
-     *  session-absolute in every window, so the numbering collision they existed for
-     *  is unreachable and the paged path is the window not holding the turn. */
+    /**
+     * Turns 4..6 resident of 6, the index fetched, and a door answering 1..3. No window base: a card's ordinal is the
+     * session-absolute `turn_open.n`.
+     */
     async function pagedScene(): Promise<string> {
       const chat = nextChat();
       await mount(chatWith(chat, [4, 5, 6], { turn_count: 6, has_more: true }));
@@ -492,51 +414,32 @@ describe(
     }
 
     it("keeps the pick the click set, and marks the clicked turn rather than its neighbour", async () => {
-      // The end-to-end path: the click sets the pick, the jump pages history in, and
-      // every prepended turn used to fire the pin — which revoked the pick before the
-      // jump had resolved its target. `t3` is the SHORT card, so an offset-derived
-      // mark would name `t4` rather than agreeing with the pick by accident.
+      // An ungated prepend pin would revoke the pick before the jump resolved; `t3` is the short card.
       await pagedScene();
 
       markerFor(3).click();
-      // The whole path, read from its two ends: the target card is resident, and the
-      // jump's own pending state has been cleared by the `finally` that renders the
-      // rail one last time.
+      // The target card is resident and the jump's `finally` has cleared its pending state.
       await until(
         () => cardFor("t3") !== null && markers().every((m) => m.dataset["pending"] === undefined),
         "the paged jump to resolve",
       );
-      // AFTER the jump's own scroll has settled, which is the second half of what
-      // "survives the jump" means: the landing's own scroll event arrives a frame
-      // later, so a pick a gesture would revoke is revoked after the jump has
-      // otherwise resolved.
+      // The landing's own scroll event arrives a frame later, so wait for it.
       await quiet();
 
       expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
       expect(marked().map((m) => m.firstChild?.textContent)).toEqual(["3"]);
       expect(markerFor(3).getAttribute("aria-current")).toBe("true");
-      // WHICH of the two marks it is, and this is the assertion the case's own
-      // oracle needs: the rail writes `data-selected` for the reader's PICK and
-      // `data-current` for the offset-derived turn, exactly one per render. Measured
-      // — with the pin's arrivals gate deleted, the prepend's gesture revokes the
-      // pick and the mark falls to `data-current` on this same marker, so every
-      // assertion above still passes and only this one moves.
+      // `data-selected` marks the pick, `data-current` the offset-derived turn; with the gate deleted only this moves.
       expect(markerFor(3).dataset["selected"]).toBe("");
       expect(markerFor(3).dataset["current"]).toBeUndefined();
     });
 
     it("leaves the clicked turn's top on the reading line once the landing settles", async () => {
-      // The other half of "the click took me there": the turn is MARKED above, and
-      // here it is where the reader reads. A page landing in front of the target moves
-      // it after the scroll was aimed, so this is the correction loop's answer rather
-      // than the first scroll's, measured against the scroller's OWN reading line —
-      // the same line activation reads.
+      // The turn sits on the scroller's reading line after the correction loop, not just the first scroll.
       await pagedScene();
 
       markerFor(3).click();
-      // The correction loop's own EXIT, not a still scroller: `pending` clears in the
-      // `finally` spanning that loop, and under full-suite load the scroller sits
-      // still between the first scroll and the correction, which read as settled.
+      // Wait for the correction loop's exit: under load the scroller pauses between the two scrolls.
       await until(
         () => cardFor("t3") !== null && markers().every((m) => m.dataset["pending"] === undefined),
         "the paged jump's correction loop to finish",
@@ -545,13 +448,9 @@ describe(
 
       const card = cardFor("t3");
       expect(card).not.toBeNull();
-      // Rects in the scrollport's own frame, for `scroll.ts`'s reason: a turn card's
-      // offsetParent is its own row, so an offset-relative read answers about a
-      // different box.
+      // Rects in the scrollport's frame: a turn card's offsetParent is its own row.
       const fromTop = (card?.getBoundingClientRect().top ?? 0) - wrap.getBoundingClientRect().top;
-      // LANDING_TOLERANCE_PX, hardcoded: the module's own tolerance is what the
-      // correction loop stops at, and deriving it from the module would make this
-      // assertion agree with whatever the module believes.
+      // LANDING_TOLERANCE_PX hardcoded, so the assertion does not agree with whatever the module believes.
       expect(Math.abs(fromTop - scroll.readingLineOffset())).toBeLessThanOrEqual(8);
     });
   },

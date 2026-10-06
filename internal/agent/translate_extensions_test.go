@@ -1,23 +1,17 @@
 package agent
 
-// Tests for the v3 (KAS) _kiro/* translate handlers dispatched through
-// translateACPEvent:
-//   - _kiro/mcp/status            (translate/v3_notifications.go)
-//   - _kiro/customAgent/*         (translate/init_errors.go)
-//   - _kiro/error/rate_limit      (translate/init_errors.go)
-//   - _kiro/system/notify         (translate/init_errors.go)
-//   - session/update sub-kinds    (translate/v3_updates.go)
-//
-// Shared fixtures live in shared_test.go.
+// Tests for the v3 `_kiro/*` handlers through translateACPEvent: mcp/status, customAgent/*, error/rate_limit,
+// system/notify (translate/init_errors.go, v3_notifications.go) and session/update sub-kinds (v3_updates.go).
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
-
-// --- MCP (v3 consolidated status) ---
 
 func TestTranslateMCPStatus(t *testing.T) {
 	tests := []struct {
@@ -86,43 +80,150 @@ func TestTranslateMCPStatus(t *testing.T) {
 	}
 }
 
-// --- Available commands (v3 session/update sub-kind, deliberately IGNORED) ---
+// availableCommandsFrame is a chat's catalog frame: one prompt and one skill.
+func availableCommandsFrame(t *testing.T) *marotte.RPCResponse {
+	t.Helper()
+	update := map[string]any{
+		"sessionUpdate": "available_commands_update",
+		"availableCommands": []map[string]any{
+			{"name": "review", "description": "(file prompt)", "input": map[string]any{"hint": "[args]"}, "_meta": map[string]any{"kiro": map[string]any{"type": "prompt"}}},
+			{"name": "some-skill", "description": "a skill", "_meta": map[string]any{"kiro": map[string]any{"type": "skill"}}},
+		},
+	}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: mustJSON(t, map[string]any{"update": update})}
+}
 
-// TestTranslateV3_AvailableCommandsUpdateIsIgnored is the inverse of the test it
-// replaced, and it pins task C's done-when clause: no category of the
-// slash-command catalog is decoded and discarded, because nothing decodes it.
-//
-// KAS still sends the frame — marotte cannot stop it — so the contract is that
-// it falls through handleSessionUpdate silently: no event, no error, no log
-// noise. The palette this once fed was priced out (of 90 commands, 47 of the 49
-// agent names are already mode ids on the mode pill, the 5 workflow entries have
-// their own row, the 23 steering entries map onto attachment, and the 13 skills
-// have NO deterministic execution path anywhere in the bundle). Skills are
-// discoverable on the /docs Skills tab instead.
-func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
+// A chat's frame fills GET /api/slash-commands' catalog, announced once; a repeat changes nothing.
+func TestTranslateV3_AvailableCommandsUpdateFeedsTheCatalog(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
 
-	msg := &marotte.RPCResponse{
-		Method: marotte.MethodSessionUpdate,
-		Params: mustJSON(t, map[string]any{
-			"update": map[string]any{
-				"sessionUpdate": "available_commands_update",
-				"availableCommands": []map[string]any{
-					{"name": "/help", "description": "Show help"},
-				},
-			},
-		}),
-	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", availableCommandsFrame(t))
+	h.translateACPEvent("c1", availableCommandsFrame(t))
 
-	if types := extractTypes(t, bufferedSince(h, before)); len(types) != 0 {
-		t.Errorf("the catalog frame produced events %v, want none: nothing decodes it any more", types)
+	types := extractTypes(t, bufferedSince(h, before))
+	if !slices.Equal(types, []string{string(marotte.EventSlashCommandsChanged)}) {
+		t.Errorf("events = %v, want one slash_commands_changed", types)
+	}
+	rec := httptest.NewRecorder()
+	h.handleSlashCommands(rec, httptest.NewRequest(http.MethodGet, "/api/slash-commands", nil))
+	var got marotte.SlashCommandsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET /api/slash-commands: %v", err)
+	}
+	if len(got.Commands) != 1 || got.Commands[0].Name != "review" || got.Commands[0].Hint != "[args]" {
+		t.Errorf("GET /api/slash-commands = %+v, want only the review prompt", got.Commands)
 	}
 }
 
-// --- Compaction (v3 session_info_update summarization) ---
+// documents_changed fills the issues map keyed by KiroDoc.Path, announced once;
+// a failed frame changes nothing.
+func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
+	h, _, _ := newTestHub()
+	before := h.bus.fanout.Position().Head
+	frame := func(status string) *marotte.RPCResponse {
+		return &marotte.RPCResponse{Method: methodV3SteeringDocs, Params: mustJSON(t, map[string]any{
+			"sessionId": "s1", "status": status,
+			"documents": []map[string]any{{
+				"name": "a", "uri": "file:///workspace/.kiro/steering/a.md", "inclusion": "always", "content": "body",
+				"_meta": map[string]any{"kiro": map[string]any{"configIssues": []map[string]any{{
+					"code": "contextReferenceUnresolved", "reference": "#[[file:x]]", "reason": "notFound", "remediation": "Fix it.",
+				}}}},
+			}},
+		})}
+	}
+
+	h.translateACPEvent("c1", frame("success"))
+	h.translateACPEvent("c1", frame("failed"))
+
+	types := extractTypes(t, bufferedSince(h, before))
+	if !slices.Equal(types, []string{string(marotte.EventSteeringIssuesChanged)}) {
+		t.Errorf("events = %v, want one steering_issues_changed", types)
+	}
+	got := h.steeringIssues.Snapshot()
+	issues := got["workspace/.kiro/steering/a.md"]
+	if len(got) != 1 || len(issues) != 1 || issues[0].Code != "contextReferenceUnresolved" || issues[0].Remediation != "Fix it." {
+		t.Errorf("issues = %+v, want one contextReferenceUnresolved keyed workspace/.kiro/steering/a.md", got)
+	}
+}
+
+// A chat's catalog carries MCP prompts the utility session cannot see, so the
+// utility list seeds an empty catalog and never replaces a chat's.
+func TestSlashCatalog_UtilityNeverOverwritesChat(t *testing.T) {
+	var c slashCatalog
+	utility := []marotte.SlashCommand{{Name: "u", Kind: marotte.SlashKindPrompt}}
+	chat := []marotte.SlashCommand{{Name: "c", Kind: marotte.SlashKindPrompt}}
+
+	if !c.SetFromUtility(utility) {
+		t.Fatal("SetFromUtility on an empty catalog = false, want true")
+	}
+	if !c.SetFromChat(chat) {
+		t.Fatal("SetFromChat over a utility list = false, want true")
+	}
+	if c.SetFromUtility(utility) {
+		t.Error("SetFromUtility after a chat frame = true, want false")
+	}
+	if got, _ := c.Snapshot(); len(got) != 1 || got[0].Name != "c" {
+		t.Errorf("Snapshot() = %+v, want the chat's list", got)
+	}
+}
+
+// Not ready until KAS sends a catalog; an empty one still counts, letting the client release unknown names.
+func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
+	var c slashCatalog
+	if cmds, ready := c.Snapshot(); ready || len(cmds) != 0 {
+		t.Fatalf("Snapshot() before any frame = (%+v, %v), want ([], false)", cmds, ready)
+	}
+	if !c.SetFromChat([]marotte.SlashCommand{}) {
+		t.Error("SetFromChat(empty) on an unready catalog = false, want true so clients refetch")
+	}
+	if cmds, ready := c.Snapshot(); !ready || len(cmds) != 0 {
+		t.Errorf("Snapshot() after an empty catalog = (%+v, %v), want ([], true)", cmds, ready)
+	}
+	if c.SetFromChat([]marotte.SlashCommand{}) {
+		t.Error("SetFromChat(empty) again = true, want false: nothing changed")
+	}
+}
+
+// The utility seed fills the menu but never lets the client release an unknown name.
+func TestSlashCatalog_UtilitySeedIsNotReady(t *testing.T) {
+	var c slashCatalog
+	seed := []marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}}
+	if !c.SetFromUtility(seed) {
+		t.Fatal("SetFromUtility(seed) on an empty catalog = false, want true so clients refetch")
+	}
+	if cmds, ready := c.Snapshot(); ready || len(cmds) != 1 {
+		t.Errorf("Snapshot() after a utility seed = (%+v, %v), want one command, not ready", cmds, ready)
+	}
+	if !c.SetFromChat(seed) {
+		t.Error("SetFromChat(same list) after a utility seed = false, want true: readiness changed")
+	}
+	if _, ready := c.Snapshot(); !ready {
+		t.Error("Snapshot() after a chat frame: ready = false, want true")
+	}
+}
+
+func TestHandleSlashCommands_ReportsReadiness(t *testing.T) {
+	h, _, _ := newTestHub()
+	get := func() marotte.SlashCommandsResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.handleSlashCommands(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/slash-commands", http.NoBody))
+		var resp marotte.SlashCommandsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode %q: %v", rec.Body.String(), err)
+		}
+		return resp
+	}
+	if resp := get(); resp.Ready || len(resp.Commands) != 0 {
+		t.Errorf("before any frame: %+v, want {commands:[] ready:false}", resp)
+	}
+	h.slash.SetFromChat([]marotte.SlashCommand{{Name: "review", Kind: marotte.SlashKindPrompt}})
+	if resp := get(); !resp.Ready || len(resp.Commands) != 1 {
+		t.Errorf("after a catalog: %+v, want ready with one command", resp)
+	}
+}
 
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
@@ -190,8 +291,6 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	}
 }
 
-// --- Usage (v3 usage_update sub-kind) ---
-
 func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -213,8 +312,6 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 		t.Errorf("context_pct = %v, want 25", chat.Usage.ContextPct)
 	}
 }
-
-// --- Init errors (v3 _kiro/customAgent/* + _kiro/error/rate_limit) ---
 
 func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	h, cs, _ := newTestHub()
@@ -278,22 +375,73 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	}
 }
 
-// --- System notify (v3 replacement for session/retry) ---
+func TestTranslateKnowledgeIndexing_ReachesTheTranslator(t *testing.T) {
+	for _, method := range []string{"_kiro/knowledge/indexingStarted", "_kiro/knowledge/indexingCompleted"} {
+		t.Run(method, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+			before := h.bus.fanout.Position().Head
+			h.translateACPEvent("c1", &marotte.RPCResponse{
+				Method: method,
+				Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "name": "docs", "fileCount": 2, "status": "success"}),
+			})
+			types := extractTypes(t, bufferedSince(h, before))
+			if missing := missingEvents(types, "knowledge_indexing"); len(missing) > 0 {
+				t.Errorf("translateACPEvent(%s): missing %v; got %v", method, missing, types)
+			}
+		})
+	}
+}
 
-func TestTranslateSystemNotify_EmitsError(t *testing.T) {
-	h, _, _ := newTestHub()
-	before := h.bus.fanout.Position().Head
-	// No sessionId on _kiro/system/notify — broadcast at bridge scope.
-	msg := &marotte.RPCResponse{
+func systemNotifyMsg(t *testing.T) *marotte.RPCResponse {
+	t.Helper()
+	return &marotte.RPCResponse{
 		Method: "_kiro/system/notify",
 		Params: mustJSON(t, map[string]any{
 			"level":   "warning",
 			"message": "The selected model is experiencing high load.",
 		}),
 	}
-	h.translateACPEvent("", msg)
+}
+
+func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
+	h, _, _ := newTestHub()
+	before := h.bus.fanout.Position().Head
+	h.translateACPEvent("c1", systemNotifyMsg(t))
 	types := extractTypes(t, bufferedSince(h, before))
-	if missing := missingEvents(types, "error"); len(missing) > 0 {
+	if missing := missingEvents(types, "system_notice"); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, types)
+	}
+	if slices.Contains(types, "error") {
+		t.Errorf("a system notice raised an error event: %v", types)
+	}
+}
+
+func TestTranslateSystemNotify_ARunBridgeNamesItsRun(t *testing.T) {
+	h, _, _ := newTestHub()
+	before := h.bus.fanout.Position().Head
+	h.translateACPEvent(runChatID("wf_1"), systemNotifyMsg(t))
+	var got []marotte.ChatID
+	for _, e := range bufferedSince(h, before) {
+		var msg marotte.ServerEvent
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if msg.Type == marotte.EventSystemNotice {
+			got = append(got, msg.ChatID)
+		}
+	}
+	if len(got) != 1 || got[0] != runChatID("wf_1") {
+		t.Errorf("system_notice chat ids = %v, want one on %q", got, runChatID("wf_1"))
+	}
+}
+
+func TestUtilitySession_ForwardsASystemNotify(t *testing.T) {
+	var seen []string
+	us := &utilitySession{hooks: utilitySessionHooks{
+		onSystemNotify: func(msg *marotte.RPCResponse) { seen = append(seen, msg.Method) },
+	}}
+	if !us.dispatchNotification(systemNotifyMsg(t)) || len(seen) != 1 {
+		t.Errorf("dispatchNotification took %v, want the notify handed to its hook", seen)
 	}
 }

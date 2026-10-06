@@ -13,8 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// --- Unexported Store methods ---
-
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
 // are never removed from the map: removing an entry races with any
 // caller that already fetched the *sync.Mutex pointer, letting two
@@ -25,20 +23,16 @@ func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// --- archive.StoreAccess interface methods ---
-
 // Lock returns the per-chat mutex for the archive package.
 func (s *Store) Lock(chatID marotte.ChatID) *sync.Mutex { return s.lock(chatID) }
 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Remove deletes a chat's directory and records its tombstone, so a racing Mutate
-// cannot resurrect the id; the log is closed and tombstoned FIRST, so a turn still
-// folding cannot re-create entries.jsonl under a directory the unlink is about to
-// take. Only a chat that existed is tombstoned. The caller must hold Lock for
-// chatID. Answers the `chats` version the removal minted, for the chat_deleted
-// frame that follows, or "" when nothing was removed.
+// Remove deletes a chat's directory and tombstones the id (only a chat that existed). The log is
+// closed and tombstoned first, so a folding turn cannot re-create entries.jsonl under the directory
+// being unlinked. The caller must hold Lock for chatID. Returns the `chats` version minted, or ""
+// when nothing was removed.
 func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	dir, err := s.pathFor(chatID)
 	if err != nil {
@@ -52,6 +46,7 @@ func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	// The index entry goes whatever the remove reports: a chat that was already gone
 	// has no business staying findable.
 	s.index.drop(chatID)
+	s.dequeued.forget(chatID)
 	if _, err := os.Stat(filepath.Join(dir, headerFileName)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// A directory with no header is not a chat; sweep whatever is there.
@@ -60,41 +55,57 @@ func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 		}
 		return "", err
 	}
+	var name string
+	if c, err := s.header(chatID).Read(context.Background()); err == nil {
+		name = c.Name
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
-	s.markDeleted(chatID)
+	s.markDeleted(chatID, name)
 	return s.versions.BumpCounter(subject.KindChats, ""), nil
 }
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.
-func (s *Store) markDeleted(chatID marotte.ChatID) {
+func (s *Store) markDeleted(chatID marotte.ChatID, name string) {
 	now := time.Now()
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
-	s.tombstone[chatID] = now
+	s.tombstone[chatID] = tombstone{at: now, name: name}
 	cutoff := now.Add(-tombstoneTTL)
 	for id, t := range s.tombstone {
-		if t.Before(cutoff) {
+		if t.at.Before(cutoff) {
 			delete(s.tombstone, id)
 		}
 	}
 }
 
-// isTombstoned reports whether chatID was deleted within tombstoneTTL.
-func (s *Store) isTombstoned(chatID marotte.ChatID) bool {
+func (s *Store) liveTombstone(chatID marotte.ChatID) (tombstone, bool) {
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
 	t, ok := s.tombstone[chatID]
 	if !ok {
-		return false
+		return tombstone{}, false
 	}
-	if time.Since(t) > tombstoneTTL {
+	if time.Since(t.at) > tombstoneTTL {
 		delete(s.tombstone, chatID)
-		return false
+		return tombstone{}, false
 	}
-	return true
+	return t, true
+}
+
+// isTombstoned reports whether chatID was deleted within tombstoneTTL.
+func (s *Store) isTombstoned(chatID marotte.ChatID) bool {
+	_, ok := s.liveTombstone(chatID)
+	return ok
+}
+
+// DepartedName is the display name chatID had when it was deleted, within
+// tombstoneTTL; false for a chat this store has not deleted.
+func (s *Store) DepartedName(chatID marotte.ChatID) (string, bool) {
+	t, ok := s.liveTombstone(chatID)
+	return t.name, ok
 }
 
 // Exists reports whether chatID is a chat this store serves: its header is present

@@ -1,55 +1,22 @@
-// ---------------------------------------------------------------------------
-// Find-in-Chat tests.
-//
-//   1. FindEngine — match discovery, case-insensitivity, highlight/unwrap,
-//      visibility pruning, and next/prev stepping with wraparound.
-//   2. Ctrl-F overlay integration — hotkey open, eligibility, search, stepping,
-//      close + focus restore, and the "second Ctrl-F -> native find" escape
-//      hatch.
-//
-// ./scroll.js is mocked so importing find-in-chat.ts doesn't trigger the
-// ScrollController's eager DOM init (which needs #messages / #scroll-bottom).
-// ---------------------------------------------------------------------------
+// Find-in-chat: the FindEngine itself, the Ctrl-F overlay, and stepping through the server's hit list.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
-  // Inert registration: these tests drive re-runs by calling the module's own
-  // paths, not by mutating a transcript nothing here renders.
+  // Inert: these tests drive re-runs through the module's own paths.
   onTranscriptMutate: vi.fn(() => () => undefined),
 }));
-// Spy-wrapped rather than replaced: every export keeps its real implementation
-// and becomes observable. `vi.spyOn(namespace, name)` cannot do this in a real
-// browser — an ESM module namespace is not configurable, so the assignment
-// throws — and this suite needs to see one call that the DOM cannot show.
+// Spy-wrapped: `vi.spyOn(namespace, name)` cannot patch an ESM namespace in a real browser.
 vi.mock("./chat-search.js", { spy: true });
-// Same treatment for the store and the pagination entry point: the navigation
-// tests hand them a fixture chat, and everything else calls through to the
-// real implementations (whose defaults — no active chat — are what the
-// overlay tests always ran against).
+// The store and pagination likewise, handed a fixture chat.
 vi.mock("./store.js", { spy: true });
 vi.mock("./store-load.js", { spy: true });
-// A one-export factory, unlike the three above: this module is NOT in
-// find-in-chat's own import graph (it is reached by a lazy `await import`), so
-// nothing here needs its real implementation, and replacing it keeps the
-// exec-view chunk out of this suite entirely.
+// A one-export factory: reached by a lazy `await import`, so replacing it keeps the exec-view chunk out.
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
-// Same shape and same reason for the delegate tab: reached by a lazy `await import`, so
-// replacing it keeps `exec-view/**` out of this suite.
+// Same for the delegate tab.
 vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
-// The renderer's PROSE-RUN offset table (design 8.5), the one export find-in-chat
-// reaches here: a hit's ELEMENT is resolved from the card's own `data-entry-id` /
-// `data-entries` stamps now, so no map stands between the fixtures and the module.
-// A REPLACING factory rather than a spy — the real dispatcher's graph reaches
-// `preserveReadingPosition` on the `./scroll.js` stubbed above, so loading it fails
-// linking for the whole file.
-//
-// STAGED per case, never a constant: `undefined` is the default and is the answer for
-// an entry no run holds, so `wantFraction` falls back to the hit's own segment
-// fraction, and a case staging a real `{offset, total}` is what reaches its other arm.
-// Pinned to a constant, that arm was unreachable and a mutant deleting it left the
-// suite green.
+// The renderer's prose-run offset table, the one export reached: elements resolve from the card's own stamps.
 const { runOffsetOf } = vi.hoisted(() => ({
   runOffsetOf: vi.fn<
     (turnID: string, entryID: string) => { offset: number; total: number } | undefined
@@ -60,19 +27,7 @@ vi.mock("./messages-blocks.js", () => ({ runOffsetOf }));
 import { FindEngine } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster: `vi.resetModules()` does not re-evaluate in Browser Mode, whose module map is URL-keyed. */
 let bootSeq = 0;
 
 function root(html: string): HTMLElement {
@@ -85,10 +40,6 @@ function root(html: string): HTMLElement {
 function marks(el: HTMLElement): HTMLElement[] {
   return [...el.querySelectorAll<HTMLElement>("mark.find-hit")];
 }
-
-// ---------------------------------------------------------------------------
-// FindEngine: matching + highlighting
-// ---------------------------------------------------------------------------
 
 describe("FindEngine matching", () => {
   it("wraps every match across multiple nodes and marks the first current", () => {
@@ -176,7 +127,6 @@ describe("FindEngine matching", () => {
     eng.clear();
     expect(marks(el)).toHaveLength(0);
     expect(el.textContent).toBe(original);
-    // Re-search after clear finds the same matches (text nodes were merged back).
     expect(eng.search("TODO")).toBe(2);
   });
 
@@ -190,10 +140,6 @@ describe("FindEngine matching", () => {
     expect(marks(el).map((m) => m.textContent)).toEqual(["ba", "ba"]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// FindEngine: visibility pruning
-// ---------------------------------------------------------------------------
 
 describe("FindEngine visibility", () => {
   it("skips text inside .hidden, [hidden], and aria-hidden subtrees", () => {
@@ -228,10 +174,6 @@ describe("FindEngine visibility", () => {
     expect(new FindEngine(el).search("TODO")).toBe(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// FindEngine: stepping
-// ---------------------------------------------------------------------------
 
 describe("FindEngine stepping", () => {
   function threeHits(): { el: HTMLElement; eng: FindEngine } {
@@ -282,29 +224,20 @@ describe("FindEngine stepping", () => {
     const { eng } = threeHits();
     eng.setCurrent(2);
     expect(eng.currentIndex).toBe(2);
-    eng.setCurrent(99); // out of range -> ignored
+    eng.setCurrent(99);
     expect(eng.currentIndex).toBe(2);
-    eng.setCurrent(-5); // out of range -> ignored
+    eng.setCurrent(-5);
     expect(eng.currentIndex).toBe(2);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Ctrl-F overlay integration
-// ---------------------------------------------------------------------------
-
 describe("Ctrl-F overlay", () => {
-  // The overlay controller keeps module-level singleton state (the built
-  // overlay, the popup). beforeEach wipes the DOM, so we re-import a fresh
-  // module graph each test to avoid reusing a now-detached overlay. The
-  // ./scroll.js mock persists across resetModules.
+  // The controller keeps module singletons and beforeEach wipes the DOM, so each test imports a fresh graph.
   let onHotkey: (e: KeyboardEvent) => void;
   let toggle: () => void;
   let close: () => void;
   let isOpenFn: () => boolean;
-  /** The tab-change emitter from THIS test's module graph. `vi.resetModules()`
-   *  gives find-in-chat.js a fresh bus, so a top-level import here would write
-   *  to a different instance than the one it subscribed to. */
+  /** From this test's graph: a fresh find-in-chat.js has its own bus. */
   let switchTab: () => void;
 
   beforeEach(async () => {
@@ -337,12 +270,7 @@ describe("Ctrl-F overlay", () => {
     };
   });
 
-  /** The box is revealed through the popup primitive's `[hidden]` attribute plus
-   *  the `is-open` state class, NOT the `.hidden` utility. That swap is the whole
-   *  point of item 6: `.hidden` is `display: none !important` (40-a11y.css) and
-   *  `display` is discrete, so the close could never animate. Asserting on
-   *  `is-open` also reads the state SYNCHRONOUSLY, where `[hidden]` lands only
-   *  after the leave transition settles. */
+  /** Revealed through the popup's `[hidden]` plus `is-open`, never `.hidden` (`display: none !important`, 40-a11y.css). */
   function boxIsOpen(): boolean {
     return document.getElementById("chat-find")?.classList.contains("is-open") === true;
   }
@@ -376,20 +304,10 @@ describe("Ctrl-F overlay", () => {
   }
 
   it("takes no clicks while closed or fading, in the stylesheet", async () => {
-    // A SOURCE fact, because the test page loads no app stylesheet and the pre-open
-    // instant is not observable from outside `ensureBuilt`.
-    //
-    // The primitive writes `[hidden]` only at the END of a leave, so between
-    // `is-leaving` and that moment the box is still in the layout — and this box
-    // is position:absolute at z-index 60 over the transcript. A fully transparent
-    // rectangle taking clicks meant for the messages under it is the worst
-    // combination available, so the resting state disables pointer events and
-    // `.is-open` restores them.
+    // A source fact: the page loads no stylesheet, and `[hidden]` lands only at the end of a leave.
     const { loadCSS, ruleContaining } = await import("./__test-helpers__/css-rules.js");
     const css = loadCSS("24-find.css");
-    // On `.search-pop`, the skin class this box shares with the four page search
-    // popups: they are positioned over their own content and inherit the same
-    // hazard, so the pair belongs to the shared layer rather than to this box.
+    // On `.search-pop`, the skin shared with the page search popups, which carry the same hazard.
     expect(ruleContaining(css, ".search-pop", "top").body).toMatch(/pointer-events:\s*none/);
     expect(ruleContaining(css, ".search-pop.is-open", "top").body).toMatch(
       /pointer-events:\s*auto/,
@@ -425,18 +343,15 @@ describe("Ctrl-F overlay", () => {
     onHotkey(ctrlF());
     const count = document.getElementById("chat-find-count");
 
-    // Type "TODO" + Enter: lands on the first of three matches.
     typeAndEnter("TODO");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(3);
     expect(count?.textContent).toBe("1 of 3");
 
-    // Enter again steps forward; Shift+Enter steps back.
     typeAndEnter("TODO");
     expect(count?.textContent).toBe("2 of 3");
     typeAndEnter("TODO", true);
     expect(count?.textContent).toBe("1 of 3");
 
-    // Escape closes, clears highlights, and restores focus.
     const el = input();
     el?.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
@@ -446,9 +361,7 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("re-runs the search when the match-case toggle flips, without retyping", () => {
-    // step() decides whether to re-search by comparing the query STRING, and
-    // the toggle changes neither the string nor the input event — so the toggle
-    // has to force the search itself or nothing at all would happen.
+    // step() re-searches only on a changed string, so the case toggle must force the search.
     onHotkey(ctrlF());
     const count = document.getElementById("chat-find-count");
     const toggle = document.querySelector<HTMLButtonElement>(".chat-find-case");
@@ -459,7 +372,6 @@ describe("Ctrl-F overlay", () => {
 
     toggle?.click();
     expect(toggle?.getAttribute("aria-pressed")).toBe("true");
-    // The transcript says "TODO" three times and "todo" never.
     expect(count?.textContent).toBe("No matches");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
@@ -472,10 +384,9 @@ describe("Ctrl-F overlay", () => {
     onHotkey(ctrlF());
     const count = document.getElementById("chat-find-count");
     typeAndEnter("TODO");
-    typeAndEnter("TODO"); // step to 2 of 3
+    typeAndEnter("TODO");
     expect(count?.textContent).toBe("2 of 3");
     document.querySelector<HTMLButtonElement>(".chat-find-case")?.click();
-    // The match set changed, so a position in the previous one means nothing.
     expect(count?.textContent).toBe("1 of 3");
   });
 
@@ -486,26 +397,16 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("lets a second Ctrl-F fall through to the browser (escape hatch) while the field is focused", () => {
-    onHotkey(ctrlF()); // open, input focused
+    onHotkey(ctrlF());
     expect(document.activeElement).toBe(input());
     const second = ctrlF();
     onHotkey(second);
     expect(second.defaultPrevented).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // The close, on every path. Items 1, 2 and 5.
-  //
-  // The teardown is the part that matters and the part that was missing: marks
-  // left in the transcript are welded there for the rest of the session, and a
-  // skipped fold reset permanently rearranges a transcript as a side effect of
-  // having searched it. So every path asserts the SAME three things — the box is
-  // closed, no marks survive, and the trigger stops claiming pressed.
-  // -------------------------------------------------------------------------
+  // The close on every path: marks left behind are welded into the transcript, and a skipped fold reset rearranges it.
 
-  /** Open, type a query that matches, and confirm the state a teardown has to
-   *  undo actually exists. Without this precondition a teardown assertion could
-   *  pass over a box that never highlighted anything. */
+  /** Confirms the state a teardown must undo exists, or a teardown assertion passes vacuously. */
   function openWithMatches(): void {
     onHotkey(ctrlF());
     typeAndEnter("TODO");
@@ -528,8 +429,7 @@ describe("Ctrl-F overlay", () => {
 
   it("closes on a click ANYWHERE outside the box, with the full teardown", () => {
     openWithMatches();
-    // The primitive installs its outside-click listener one tick after the open,
-    // so the click that opened a popup cannot immediately close it.
+    // The popup installs its outside-click listener one tick after the open.
     return new Promise<void>((resolve) => {
       setTimeout(() => {
         document
@@ -542,9 +442,7 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("closes on Escape pressed OUTSIDE the field, not only inside it", () => {
-    // Escape used to be bound to the find INPUT, so clicking into the transcript
-    // to read a match made the key stop working — the box had no way out but the
-    // mouse. It is a document-level listener now (the popup primitive's).
+    // Escape is a document-level listener, so it works after clicking into the transcript.
     openWithMatches();
     const transcript = document.getElementById("messages");
     return new Promise<void>((resolve) => {
@@ -559,20 +457,14 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("closes on a TAB SWITCH rather than being hidden with its state intact", () => {
-    // The defect this replaces: a tab switch hid the box by hiding its ancestor
-    // view, leaving the open flag true, the MutationObserver connected, the marks
-    // in the DOM and the search-opened folds open — so returning to the chat
-    // re-revealed a search mid-flight.
+    // A tab switch closes the box fully: hiding its ancestor left marks, folds and the observer live.
     openWithMatches();
     switchTab();
     expectFullyTornDown("tab switch");
   });
 
   it("FORGETS the query on a tab switch, so the next tab's find opens empty", () => {
-    // Closing alone was not enough. The box kept its text, and the open path runs
-    // the search — so the next chat's find opened holding the previous chat's
-    // query and immediately searched a transcript that query was never typed
-    // against. Reported as the search state being global rather than per tab.
+    // A tab switch clears the query too, or the next chat's find searches with it.
     openWithMatches();
     expect(input()?.value).toBe("TODO");
     switchTab();
@@ -580,16 +472,14 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("KEEPS the query across an ordinary close, the way the browser's find does", () => {
-    // The split is deliberate: only a tab switch is a change of subject. Reopening
-    // on the same chat should still remember what you were looking for.
+    // Only a tab switch changes subject; reopening on the same chat keeps the query.
     openWithMatches();
     close();
     expect(input()?.value).toBe("TODO");
   });
 
   it("closes on the toolbar toggle, and a second toggle re-opens", () => {
-    // The trigger was not a toggle at all: it called the OPEN path, so a second
-    // click re-focused, re-selected and re-ran the search of an already-open box.
+    // The trigger toggles rather than re-running the open path.
     openWithMatches();
     toggle();
     expectFullyTornDown("trigger toggle");
@@ -599,10 +489,7 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("announces the open state on the trigger with aria-pressed", () => {
-    // aria-pressed, not `.active`: find is a toggle, while `.active` in this app
-    // means "this singleton tab is active" (tabs.ts syncSidebarButtons owns it).
-    // 70-selection.css already styles `.icon-btn[aria-pressed="true"]`, so this
-    // is the announced state AND the visual with no new rule.
+    // aria-pressed, not `.active` (which means "this singleton tab is active").
     expect(findBtn()?.getAttribute("aria-pressed")).toBe("false");
     onHotkey(ctrlF());
     expect(findBtn()?.getAttribute("aria-pressed")).toBe("true");
@@ -611,12 +498,7 @@ describe("Ctrl-F overlay", () => {
   });
 
   it("re-folds the turns the search opened, on every close path", async () => {
-    // The OTHER half of the teardown, and the one the DOM cannot show: the server
-    // pre-pass opens folded turns so the walker can see their hits, and a close
-    // that skipped the reset would leave a transcript permanently rearranged as a
-    // side effect of having been searched. `getActiveId()` is "" in this fixture,
-    // so the reset early-returns and cannot be observed through the DOM — the call
-    // itself is the assertion.
+    // The fold reset the DOM cannot show: the server pre-pass opens folded turns.
     const chatSearch = await import("./chat-search.js");
     const reset = vi.mocked(chatSearch.resetServerSearch);
     for (const path of ["escape", "toggle", "tab-switch"] as const) {
@@ -648,16 +530,7 @@ describe("Ctrl-F overlay", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Server-hit navigation.
-//
-// When the DOM walker marked NOTHING and the server found the text anyway —
-// every occurrence inside collapsed delegate bodies, on a non-resident page,
-// or in markdown the renderer never paints — stepping navigates the server
-// hits instead of going dead under a counter that says "N in chat". Each case
-// asserts the navigated-to state AND that failure states something on the
-// aria-live counter, never a silent no-op.
-// ---------------------------------------------------------------------------
+// Server-hit navigation: when the walker marked nothing but the server found the text, stepping reveals the hit.
 
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import type { Session } from "./types.js";
@@ -681,9 +554,7 @@ describe("server-hit navigation", () => {
   let scroll: typeof ModScroll;
   let runView: typeof ModRunView;
   let subagentView: typeof ModSubagentView;
-  /** The tab-change emitter from THIS test's module graph, for the cross-tab
-   *  jump's return trip. A top-level import would write to a different bus
-   *  instance than the freshly-imported module subscribed to. */
+  /** From this graph's bus, for the cross-tab return trip. */
   let switchTab: () => void;
 
   beforeEach(async () => {
@@ -736,8 +607,7 @@ describe("server-hit navigation", () => {
     return document.getElementById("chat-find-note")?.textContent ?? "";
   }
 
-  /** A hit on design 8.9's key: `[turn_id, entry_id, segment_kind, offset]`, with the
-   *  lane absent, which is the chat's own agent and the only phase-1 destination. */
+  /** A hit keyed `[turn_id, entry_id, segment_kind, offset]`; no lane means the chat's own agent. */
   function serverHit(over: Partial<Hit> = {}): Hit {
     return {
       turn_id: "u1",
@@ -751,12 +621,7 @@ describe("server-hit navigation", () => {
     };
   }
 
-  /** Stage a chat the navigation can read: an ACTIVE id and a live session whose
-   *  RESIDENT WINDOW is a set of turn ids (tests mutate it to simulate pagination).
-   *
-   *  A turn id is all residency asks for — `ensureHitResident` reads
-   *  `turns.has(hit.turn_id)` and pages from `turn_order[0]` — so a fixture turn's
-   *  entries stay empty and the DOM the walk reads is `mountTurnCard`'s. */
+  /** A chat whose resident window is a set of turn ids; residency reads `turns.has`. */
   function stageChat(turnIDs: string[], hasMore = false): Session {
     const session: Session = {
       ...makeSession({ id: "c1", has_more: hasMore }),
@@ -769,18 +634,13 @@ describe("server-hit navigation", () => {
     return session;
   }
 
-  /** Page an OLDER turn into a staged session, the way `loadMessages` does: prepended
-   *  to `turn_order` so the cursor `?before=` takes moves. */
+  /** Prepended to `turn_order` as `loadMessages` does, so the `?before=` cursor moves. */
   function prependTurn(session: Session, turnID: string): void {
     session.turns.set(turnID, { entries: [], openEntries: new Map() });
     session.turn_order.unshift(turnID);
   }
 
-  /** Arm the search half: the server answer as the ENVELOPE the overlay adopts
-   *  whole, and an inert reveal (each test that needs a building reveal overrides
-   *  it). `matched` defaults to the list's own length, the uncut answer; a case
-   *  staging a cut sets it higher and names the messages it read, since those are
-   *  the two figures the note renders. */
+  /** The server answer as the envelope the overlay adopts whole; `matched` defaults to the list's length. */
   function stageHits(hits: Hit[], tally: Partial<Tally> = {}): void {
     vi.mocked(chatSearch.runServerSearch).mockResolvedValue({
       matches: hits,
@@ -792,16 +652,10 @@ describe("server-hit navigation", () => {
     vi.mocked(chatSearch.revealHitTurn).mockResolvedValue(undefined);
   }
 
-  /** A production-shaped turn card. `bodyHTML === null` builds a STUB:
-   *  header only, no `.turn-body` — what pagination prepends and what the
-   *  reveal has to build before anything inside it can be marked. */
+  /** `bodyHTML === null` builds a stub: header only, which the reveal must build before anything is marked. */
   function mountTurnCard(turnID: string, bodyHTML: string | null): HTMLElement {
     const card = document.createElement("div");
-    // `turn` as well as the key, because that is what production builds
-    // (`buildTurn` makes `el("div", { className: "turn" })` and the outer
-    // reconcile keys it by the turn's opening message id) and what `turnCardEl`
-    // selects. Without it the two turn-level kinds resolve nothing here while
-    // resolving correctly in the app.
+    // Class `turn` as production builds it, which `turnCardEl` selects.
     card.className = "turn";
     card.setAttribute("data-reconcile-key", turnID);
     card.innerHTML = `<div class="turn-header">turn</div>`;
@@ -815,13 +669,7 @@ describe("server-hit navigation", () => {
     return card;
   }
 
-  // A delegate-box wiring helper stood here. Nothing needs one: a delegate's entries
-  // are rendered on its own page, so a hit in that lane opens the page rather than a
-  // collapsed body in this transcript.
-
-  /** Wire a fixture tool card through the REAL disclosure primitive, the way
-   *  tool-card.ts wires it: the output region collapsed, so it carries the
-   *  `aria-hidden` + `inert` the walker prunes until the chevron is activated. */
+  /** Through the real disclosure, so the collapsed region carries the `aria-hidden` + `inert` the walker prunes. */
   function wireToolCard(card: HTMLElement): void {
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
     const details = card.querySelector<HTMLElement>(".tool-details");
@@ -831,17 +679,14 @@ describe("server-hit navigation", () => {
     createDisclosure(toggle, details, { open: false });
   }
 
-  /** One macrotask turn, which drains the microtask chain between the shell's
-   *  `query` callback and its `render` — the hop that records the standing answer. */
+  /** One macrotask drains the hop between the shell's `query` and `render`. */
   function settle(): Promise<void> {
     return new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
   }
 
-  /** Open, run one query, and wait for the answer to be ADOPTED. Unlike
-   *  `openAndSearch` it waits on no counter text, so it serves a fixture whose
-   *  resident marks make the two figures agree (which prints no "in chat" at all). */
+  /** Waits on adoption, not counter text, for fixtures whose figures agree. */
   async function openAndAdopt(query: string): Promise<void> {
     onHotkey(ctrlF());
     typeAndEnter(query);
@@ -851,46 +696,27 @@ describe("server-hit navigation", () => {
   async function openAndSearch(query: string): Promise<void> {
     onHotkey(ctrlF());
     typeAndEnter(query);
-    // The server answer landed and the counter carries its figure — beside the
-    // marks when there are some, as the empty state when the walker has nothing —
-    // which is the state navigation starts from.
     await vi.waitFor(() => {
       expect(countText()).toMatch(/in chat|matched, not shown here/);
     });
-    // The counter is painted by the QUERY callback synchronously; the shell's
-    // render — which records the navigable hits — lands a few microtask hops
-    // later (the async query's promise adoption). One macrotask turn drains
-    // them all before the test steps.
+    // The counter paints synchronously; the recorded hits land a few microtasks later.
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
   }
 
-  // The "steps into a collapsed delegate" case was here. Its subject is gone: the transcript
-  // renders none of a delegate's output, so there is no collapsed body to step into and no
-  // disclosure chain to open. A hit inside that output now has no DOM segment at all — the
-  // same position a workflow step's hit is in — and `chat-search.ts` still COUNTS it,
-  // because the server searches the chat file. Routing such a hit to the delegate's own tab
-  // the way a step's goes to the run tab is the obvious follow-up and is deliberately not
-  // done here.
-
-  // The cut, on the two surfaces that report it: the counter carries the
-  // whole-chat COUNT and the note carries the SENTENCE. The list is cut exactly
-  // when `matched` exceeds it; no flag stands in for that comparison.
+  // The cut is reported twice: the counter carries the whole-chat count, the note the sentence.
 
   it("reports a cut answer as the whole-chat count and the note's sentence", async () => {
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
-    // Nothing marked locally, so the counter is the empty state the whole-chat
-    // count decides — matched, and not shown here — rather than a flat total.
     expect(countText()).toBe("347 matched, not shown here");
     expect(noteText()).toBe("1 of 347 matches shown; 24 messages scanned");
   });
 
   it("stays silent on an answer the list holds whole", async () => {
-    // A sentence restating the counter is noise: with every occurrence in the
-    // list, the counter already says everything the note could.
+    // With every occurrence in the list, the note would restate the counter.
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24 });
     await openAndSearch("retry");
@@ -899,9 +725,7 @@ describe("server-hit navigation", () => {
   });
 
   it("does not read the scan's own reach as a cut", async () => {
-    // `truncated` says the scan did not read everything; a cut is a different fact,
-    // carried by `matched`. One list of one hit, matched once, is whole however far
-    // the scan reached, so the note has no cut to report.
+    // `truncated` means the scan stopped; a cut is `matched` exceeding the list.
     stageChat(["u1"]);
     stageHits([serverHit()], { truncated: true });
     await openAndSearch("retry");
@@ -922,9 +746,7 @@ describe("server-hit navigation", () => {
   });
 
   it("clears the note when the query is refined to zero hits", async () => {
-    // Refining is exactly the gesture a cut invites, so the sentence has to go
-    // even on the path that renders nothing else — which is why the note is set
-    // ABOVE render's early return rather than after it.
+    // Refining is what a cut invites, so the note clears above render's early return.
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
@@ -938,11 +760,7 @@ describe("server-hit navigation", () => {
   });
 
   it("resolves the entry a hit names when the mounted window starts above the turn's first", async () => {
-    // The window holds entries 2..7 of eight, which is what per-entry residency makes
-    // ordinary. An ORDINAL counted from the turn's first entry names the FIFTH mounted
-    // trace for a hit in the third, and every consumer downstream then opens, walks,
-    // marks and reports success on the wrong entry — which is why the key is the
-    // entry's own ID and never a position (design 8.9).
+    // Entries 2..7 of eight are resident; an ordinal from the turn's first entry would name the wrong trace.
     const traces = Array.from(
       { length: 8 },
       (_, i) => `paragraph ${String(i)} weighs the retry budget`,
@@ -973,8 +791,7 @@ describe("server-hit navigation", () => {
     ]);
 
     await openAndSearch("retry");
-    // Every trace is a CLOSED <details>, so the walker marked nothing and stepping
-    // navigates the server hit — which is the only path that resolves an element.
+    // Every trace is a closed <details>, so only server-hit navigation resolves an element.
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
     typeAndEnter("retry");
@@ -983,15 +800,11 @@ describe("server-hit navigation", () => {
     });
     const current = document.querySelector("mark.find-hit-current");
     expect(current?.closest("[data-entry-id]")?.getAttribute("data-entry-id")).toBe("e4");
-    // And the one it opened is the one it marked: no other trace was touched.
     expect(document.querySelectorAll("details.reasoning-block[open]")).toHaveLength(1);
   });
 
   it("selects the entry and says so when its subtree is not rendered", async () => {
-    // The hit's entry IS mounted and the walker still cannot mark it: the subtree is
-    // `content-visibility: hidden`, so `checkVisibility` prunes it and no mark can be
-    // placed either way. What the reader gets instead is the entry's own element,
-    // flashed, and the sentence saying why.
+    // `content-visibility: hidden` blocks marking either way; the fallback tells the reader and lands on the row.
     stageChat(["u1"]);
     const row = mountTurnCard(
       "u1",
@@ -1000,9 +813,7 @@ describe("server-hit navigation", () => {
            <div class="message assistant">see the retry backoff here</div>
          </div>
        </div>`,
-      // The BUBBLE, not the row: a prose run is stamped on its row (that is what a
-      // window drop removes) and `entryElement` answers with the `.message` inside it,
-      // which is what every consumer downstream flashes, walks and jumps to.
+      // The bubble, not the row: `entryElement` answers with the `.message` inside.
     ).querySelector('[data-entry-id="e1"] > .message') as HTMLElement;
     stageHits([
       serverHit({
@@ -1015,8 +826,6 @@ describe("server-hit navigation", () => {
 
     typeAndEnter("retry");
 
-    // The hidden subtree is why no mark can be placed either way; what the fallback
-    // buys is that the reader is told, and taken to the row they can act on.
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 not in rendered text");
     });
@@ -1025,11 +834,8 @@ describe("server-hit navigation", () => {
   });
 
   it("counts the server's hits with the no-results skin absent when the DOM holds none", async () => {
-    // The matches are all in entries the window does not hold, so the walker can mark
-    // nothing. Painting the box as a miss would contradict the count beside it and
-    // read as data loss — the reason enumeration moved server-side at all.
+    // Matches in unmounted entries: a miss would contradict the count beside it.
     stageChat(["u1"]);
-    // A body holding the LAST entry only: the two the hits name are unmounted.
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
@@ -1055,16 +861,13 @@ describe("server-hit navigation", () => {
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      // A prose RUN is stamped on its row, not on the bubble, so
-      // this shape is what the renderer registers and what the normalization has to
-      // step through to reach the element the flash belongs on.
+      // A prose run is stamped on its row, the shape the normalization steps through.
       `<div data-reconcile-key="a1" class="msg-row">
            <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">see docs for more</div>
            </div>
        </div>`,
     );
-    // The hit is the link TARGET: real markdown, never rendered as text.
     stageHits([
       serverHit({
         excerpt: "see [docs](https://retry.example) for more",
@@ -1080,19 +883,13 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(bubble?.classList.contains("find-target-flash")).toBe(true);
     });
-    // Stated on the live-region counter, never a silent no-op.
     expect(countText()).toBe("1 of 1 \u00b7 not in rendered text");
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(bubble, expect.anything());
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
   it("resolves a hit on a prose RUN's later entry through the run's data-entries stamp", async () => {
-    // Design 8.5 mounts consecutive `text` entries of one lane as ONE element with ONE
-    // parser, so a run carries TWO stamps: `data-entry-id` is its FIRST member's and
-    // `data-entries` is every member's (`writeRunEntries`, messages-blocks.ts). A hit on
-    // any member after the first is reachable only through the second stamp, and that is
-    // the ORDINARY shape rather than an edge — a seal inside a run renders nothing, so a
-    // turn whose reply arrived in three entries is one element with three ids on it.
+    // A prose run carries two stamps: `data-entry-id` (first member) and `data-entries` (all).
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1102,25 +899,15 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    // The THIRD member's own segment, offset inside IT: a hit the first stamp cannot
-    // answer for, and the same shape the server sends for any resumed prose run.
     stageHits([
       serverHit({ entry_id: "e3", excerpt: "then the retry backoff.", offset: 9, segment_len: 23 }),
     ]);
 
-    // `openAndAdopt`, not `openAndSearch`: the marks are resident, so the two figures
-    // agree and the counter prints no "in chat" clause for that helper to wait on.
+    // The marks are resident, so the figures agree and no "in chat" clause is printed.
     await openAndAdopt("retry");
     typeAndEnter("retry");
 
-    // TWO occurrences in the run and the hit names the SECOND, which is what makes this
-    // case falsifiable: `FindEngine.search` marks its first match current on its own, so
-    // an assertion that ANY mark is current — or that the counter reads its DOM grammar —
-    // holds before the press and proves nothing. Selecting mark 1 is the landing's own
-    // work: `pickNearestMark` ranks equal-similarity candidates by relative position, and
-    // it is reached only once `entryElement` has resolved the run through `data-entries`.
-    // With that stamp unread the entry resolves to nothing, the press answers "could not
-    // be shown", and the current mark stays where the walk left it.
+    // Two occurrences, the hit naming the second: `FindEngine.search` makes the first current on its own.
     const bubble = document.querySelector(".message.assistant") as HTMLElement;
     await vi.waitFor(() => {
       expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
@@ -1130,14 +917,7 @@ describe("server-hit navigation", () => {
   });
 
   it("ranks a hit inside a prose RUN through the run's own offset table, not its segment", async () => {
-    // The OTHER arm of `wantFraction`: a member of a prose RUN is one of several entries
-    // in ONE element, so its own offset means nothing against the text the walk measures
-    // until `runOffsetOf` re-bases it over the whole run.
-    //
-    // The fixture makes the two arms disagree — `e2`'s match is at offset 0 of its own
-    // segment (fraction 0, mark 0) and at rune 12 of a 24-rune run (fraction 0.5, mark 1)
-    // — and both marks carry the same surrounding text, so similarity ties and position
-    // alone decides.
+    // A run member's offset is re-based by `runOffsetOf` over the whole run.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1147,8 +927,7 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    // What the renderer's table answers for the run's SECOND member: eleven runes of
-    // `e1`'s own text plus its separator behind it, in a run of twenty-four.
+    // The table's answer for the run's second member.
     runOffsetOf.mockImplementation((_turnID, entryID) =>
       entryID === "e2" ? { offset: 12, total: 24 } : undefined,
     );
@@ -1161,22 +940,14 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
     });
-    // The falsifying half: `FindEngine.search` leaves mark 0 current on its own, so with
-    // the run arm gone the segment fraction of 0 re-selects it and this assertion fails.
+    // Fails with the run arm gone: fraction 0 re-selects mark 0.
     expect(marks(bubble)[0]?.classList.contains("find-hit-current")).toBe(false);
     expect(runOffsetOf).toHaveBeenCalledWith("u1", "e2");
     expect(countText()).toBe("1 of 1");
   });
 
   it("walks again once the jump has rendered a skipped card, rather than reporting a miss", async () => {
-    // The transcript's cards carry `content-visibility: auto` (css/14-tools.css),
-    // so an OFF-SCREEN card holds no walkable text at all — the walker prunes at
-    // `checkVisibility({contentVisibilityAuto: true})`. Stepping onto a hit inside
-    // one therefore finds nothing on the first walk, and the thing that renders
-    // the card is the navigation itself.
-    //
-    // Real containment and a real off-screen box: Chromium decides relevancy from
-    // the viewport, which is what makes the first walk genuinely blind here.
+    // An off-screen card under `content-visibility: auto` holds no walkable text until jumped to.
     stageChat(["u1"]);
     const wrap = document.getElementById("messages-wrap") as HTMLElement;
     wrap.style.cssText = "height: 400px; overflow-y: auto";
@@ -1198,14 +969,11 @@ describe("server-hit navigation", () => {
         segment_len: 26,
       }),
     ]);
-    // The premise, and it is the platform's answer rather than the harness's:
-    // relevancy is decided in a rendering update, so it holds once the browser has
-    // laid this fixture out.
+    // Relevancy is decided in a rendering update, so the premise holds once laid out.
     await vi.waitFor(() => {
       const skipped = document.querySelector<HTMLElement>('[data-entry-id="e1"]');
       expect(skipped?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
     });
-    // The platform's half of the contract: a jump scrolls its target into view.
     vi.mocked(scroll.jumpTo).mockImplementation((el: Element) => {
       el.scrollIntoView();
     });
@@ -1216,17 +984,12 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelector(".message.assistant mark.find-hit-current")).not.toBeNull();
     });
-    // Not the miss notice: the text was there, it just had not rendered yet. The
-    // position is the SESSION list's, which is the grammar a step through the
-    // server's own list reads in; WHICH mark it landed on is asserted above.
+    // Not the miss notice; the position is the session list's.
     expect(countText()).toBe("1 of 1");
   });
 
   it("releases next/prev when the frame the re-walk waits for is never delivered", async () => {
-    // A HIDDEN PAGE IS DELIVERED NO ANIMATION FRAMES. The re-walk above awaits two
-    // `requestAnimationFrame` hops inside `stepServerHit`'s `navBusy` latch, so
-    // backgrounding the tab between the jump and the re-walk left find's next/prev
-    // inert until the tab came forward. A rAF that never calls back is that page.
+    // A hidden page gets no animation frames, so the rAF re-walk inside `navBusy` needs a ceiling.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1248,19 +1011,14 @@ describe("server-hit navigation", () => {
     vi.stubGlobal("requestAnimationFrame", () => 0);
     typeAndEnter("retry");
 
-    // The ceiling released the wait, and the verdict says which kind of miss it
-    // is: nothing rendered, so the text may well be there. Without the ceiling
-    // this promise never settles and the counter keeps its pre-navigation text;
-    // with a ceiling that does not report how it settled, the notice reads
-    // "not in rendered text" — a definite absence the walk cannot have observed.
+    // The ceiling released the wait, and the verdict names the miss kind.
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 not rendered yet");
     });
   });
 
   it("steps into a tool card mounted in ANOTHER row of the turn", async () => {
-    // Run-card hosting: the run card owns every later step entry's card, so the
-    // stepping call's card is mounted inside the launching entry's row.
+    // The run card owns later step cards, so the stepping call's card is in the launching entry's row.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1293,9 +1051,7 @@ describe("server-hit navigation", () => {
       }),
     ]);
 
-    // The output is behind the card's own disclosure, so the walker marks nothing
-    // and the counter carries the server's figure: navigation is the only path
-    // that resolves an element.
+    // Behind the card's own disclosure, so navigation is the only path.
     await openAndSearch("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
@@ -1303,33 +1059,18 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(card?.querySelector("mark.find-hit-current")).not.toBeNull();
     });
-    // The walk now reaches what the server matched, so the two figures agree and
-    // the counter carries one.
     expect(countText()).toBe("1 of 1");
   });
 
-  // ---------------------------------------------------------------------------
-  // tool_diff: the card is the target, the mini-diff is the walk, and the notice
-  // has THREE states rather than two.
-  // ---------------------------------------------------------------------------
+  // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
 
-  /** The mini-diff `insertDiffPreview` builds, as the two fixtures below need it:
-   *  one mounts it with the card and the other lands it after an open. */
   function previewHTML(row: string): string {
     return `<div class="tool-diff-preview">
               <div class="diff-pane tool-diff-mini"><div class="diff-row">${row}</div></div>
             </div>`;
   }
 
-  /** A production-shaped `edit` card: the mini-diff sits BEFORE `.tool-details`
-   *  (`insertDiffPreview` inserts it there), so it is in the card's resting state
-   *  and needs no disclosure opened — and must not have one opened for it, which
-   *  is what `wireDeferredDiff`'s request count pins. `previewRow === null` builds
-   *  the majority case instead — a call whose diff exceeded the preview budget, so
-   *  the card renders NO diff in that slot at all and LOADS one from the bulk when
-   *  the card is opened. Since that is what find now does for such a hit, the two
-   *  endings are its own: the diff arrives and the walk lands on it, or nothing
-   *  arrives and the third notice state below says so. */
+  /** The mini-diff sits before `.tool-details`, so it is in the card's resting state. */
   function editCard(previewRow: string | null): string {
     const preview = previewRow === null ? "" : previewHTML(previewRow);
     return `<div class="tool-call" data-tool-id="t1" data-entry-id="e1">
@@ -1342,22 +1083,7 @@ describe("server-hit navigation", () => {
             </div>`;
   }
 
-  /** Wire the DEFERRED half of a card the way `tool-card.ts` does: the first open
-   *  requests the call's bulk and inserts the mini-diff when it lands, before
-   *  `.tool-details`, exactly where `insertDiffPreview` puts it.
-   *
-   *  Stood in for here rather than mocked at the network, because this suite mounts
-   *  no real card: the fetch a card issues on open is not otherwise observable, and
-   *  "issues NO bulk" is a property two of these cases have to assert. `lands`
-   *  chooses between the two endings — a bulk that answers a diff, and one that
-   *  answers nothing (no chat id, a null bulk, a zero-change diff), which is what
-   *  the wait's ceiling exists for. Async on a macrotask, like the real `then`, so
-   *  the observer is already watching when it fires.
-   *
-   *  `into` lands the preview inside that element instead of as a DIRECT child of the
-   *  card, which is the shape a nested insert added later would have: the resting-state
-   *  guard and the observer's callback both ask the card a DESCENDANT question, so the
-   *  observer has to watch the subtree or such an insert is invisible to it. */
+  /** The deferred half as `tool-card.ts` wires it: the first open fetches the bulk and inserts the mini-diff. */
   function wireDeferredDiff(
     card: HTMLElement,
     previewRow: string,
@@ -1365,11 +1091,7 @@ describe("server-hit navigation", () => {
     into?: HTMLElement,
   ): { requests: () => number } {
     let requests = 0;
-    // PAST `RENDER_WAIT_CEILING_MS` (64ms), deliberately: `landOrNotice` already
-    // recovers a first-walk miss by jumping and waiting one rendered frame, so a
-    // diff landing inside that window is found whether or not anything awaited the
-    // bulk — which would make the landing case below pass with the await deleted.
-    // A real bulk is a round trip, so this is also the honest cadence.
+    // Past `RENDER_WAIT_CEILING_MS` (64ms) on purpose, so only the deferred-diff wait can cover it.
     const bulkMs = 120;
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
     if (toggle === null) {
@@ -1397,11 +1119,7 @@ describe("server-hit navigation", () => {
     return { requests: () => requests };
   }
 
-  /** Mount that card in the transcript and wire its own disclosure the way
-   *  `tool-card.ts` does, so `.tool-details` carries the `aria-hidden` + `inert`
-   *  the walker prunes. `rowStyle` is the one lever the diff cases need: the
-   *  mini-diff sits OUTSIDE that region, so hiding it from the first walk takes a
-   *  skipped-rendering ROW rather than a closed disclosure. */
+  /** Wired as `tool-card.ts` does, so `.tool-details` carries what the walker prunes. */
   function mountEditCard(previewRow: string | null, rowStyle = ""): HTMLElement {
     mountTurnCard(
       "u1",
@@ -1417,27 +1135,17 @@ describe("server-hit navigation", () => {
     return card;
   }
 
-  /** The chat behind those fixtures: one turn, whose `tool_call` entry the card
-   *  carries as its own `data-entry-id`, which is what `entryElement` selects. */
   function stageEditChat(): void {
     stageChat(["u1"]);
   }
 
   const DIFF_ROW = "return retry(ctx, fetchOnce)";
 
-  /** The elapsed budget the two "the ceiling was not paid" cases assert against.
-   *  `DEFERRED_DIFF_WAIT_MS` is 1500 and the fast path is the fixture's 120ms bulk plus
-   *  a frame plus this poll's interval, so any threshold in roughly (400, 1500)
-   *  discriminates; 1200 leaves the most headroom for a loaded worker, where a cold
-   *  full run is what fails wall-clock assertions. Elapsed time is the only channel
-   *  that sees these defects (an existence assertion is green with `childList` alone). */
+  /** The budget the "ceiling not paid" cases assert against (`DEFERRED_DIFF_WAIT_MS` is 1500). */
   const CEILING_NOT_PAID_MS = 1200;
 
   it("lands a tool_diff hit on the rendered mini-diff row", async () => {
-    // Real containment and a real off-screen box, the same shape the skipped-card
-    // case above uses: the preview is in the card's RESTING state, so the only
-    // thing that can hide it from the first walk is rendering the walker skips —
-    // which is also the ordinary case, a card the reader has not scrolled to.
+    // Real containment and an off-screen box: the preview is resting state, so only relevance hides it.
     stageEditChat();
     const wrap = document.getElementById("messages-wrap") as HTMLElement;
     wrap.style.cssText = "height: 400px; overflow-y: auto";
@@ -1468,23 +1176,13 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-diff-preview mark.find-hit-current")).not.toBeNull();
     });
-    // A card whose diff is ALREADY on screen opens nothing: `insertDiffPreview`
-    // inserts the mini-diff BEFORE `.tool-details`, so the card's own disclosure
-    // stays shut.
+    // A diff already on screen opens nothing.
     expect(document.querySelector<HTMLElement>(".tool-disclosure")?.ariaExpanded).toBe("false");
     expect(countText()).toBe("1 of 1");
   });
 
   it("opens a preview-less card and lands on the diff its bulk brings back", async () => {
-    // The MAJORITY case — 4,625 of 7,285 diff-bearing calls exceed the preview
-    // budget — and the new capability: the card renders no diff at rest, opening it
-    // is what loads one, so find opens it and waits before deciding the text is not
-    // there. The hit is inside the hunks the diff shows, so it becomes reachable.
-    //
-    // Red check: drop the `await arriving` in `navigateToHit` (keep the open) and
-    // this reads "1 of 1 · only in this call's diff, which did not load" — the walk
-    // ran before the bulk landed, which is exactly why widening
-    // `OPENS_TOOL_DETAILS` alone would not have worked.
+    // The majority case (most diff-bearing calls exceed the preview budget): opening the card makes the diff exist.
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
@@ -1504,17 +1202,14 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-diff-preview mark.find-hit-current")).not.toBeNull();
     });
-    // The open is what made the diff exist, so it stays open — and it cost exactly
-    // ONE bulk, for the one hit the reader stepped onto.
+    // It stays open, at one bulk fetch.
     expect(card.querySelector<HTMLElement>(".tool-disclosure")?.ariaExpanded).toBe("true");
     expect(bulk.requests()).toBe(1);
     expect(countText()).toBe("1 of 1");
   });
 
   it("says the match is not in the SHOWN hunks when the card renders a preview", async () => {
-    // `windowHunks` keeps 24 rows, so a diff longer than that renders a preview
-    // whose text does not carry the match. The text IS in the diff, so "not in
-    // rendered text" would be wrong and "open the diff" is the action.
+    // `windowHunks` keeps 24 rows, so a longer diff's preview can lack the match.
     stageEditChat();
     mountEditCard("return fetchOnce(ctx)");
     stageHits([
@@ -1533,21 +1228,13 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(preview?.classList.contains("find-target-flash")).toBe(true);
     });
-    // The NARROWED region is what the flash and the jump land on, so the reader's
-    // eye goes to the diff rather than to the whole card.
+    // The narrowed region is what the flash and jump land on.
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(preview, expect.anything());
     expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks, so open the diff");
   });
 
   it("opens no disclosure and requests no bulk when the card already renders its diff", async () => {
-    // THE REGRESSION THIS CHANGE RISKED. A card whose diff is on screen is in the
-    // state that has always been walked, so it must stay exactly there: nothing
-    // opened, nothing fetched, no wait. Async by construction — the shown hunks do
-    // not carry the match, so `landInPlace` finds no credible mark and the whole
-    // pipeline runs, which is what makes these two assertions reachable at all.
-    //
-    // Red check: remove the resting-preview guard from `awaitDeferredDiff` and the
-    // disclosure reads "true" with one bulk requested.
+    // A diff already on screen must stay exactly as it was: nothing opened, nothing fetched.
     stageEditChat();
     const card = mountEditCard("return fetchOnce(ctx)");
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
@@ -1572,15 +1259,7 @@ describe("server-hit navigation", () => {
   });
 
   it("says the diff did not load when the open brings nothing back", async () => {
-    // The third state, reworded: opening the card IS what find just did, so
-    // "open it from the card" would be advice for a state the reader is not in.
-    // Three ordinary endings arrive here — a card with no chat id requests nothing,
-    // a null bulk applies nothing, a zero-change diff inserts nothing — and each
-    // has to reach this sentence rather than hang the walk, which is what the
-    // wait's ceiling is for.
-    //
-    // Red check: delete the ceiling from `waitForDiffPreview` and this case never
-    // paints a notice at all (the walk is still waiting when the timeout fires).
+    // The third state's wording: opening the card is what find just did.
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, false);
@@ -1600,19 +1279,15 @@ describe("server-hit navigation", () => {
       () => {
         expect(countText()).toBe("1 of 1 \u00b7 only in this call's diff, which did not load");
       },
-      // Past the module's own ceiling, which this case is here to reach.
       { timeout: 4000 },
     );
-    // It TRIED: the card is open and one bulk was asked for, which is what the
-    // sentence reports as having failed.
+    // It tried: the card is open and one bulk was asked for.
     expect(card.querySelector<HTMLElement>(".tool-disclosure")?.ariaExpanded).toBe("true");
     expect(bulk.requests()).toBe(1);
     expect(card.querySelector(".tool-diff-preview")).toBeNull();
   });
 
-  /** The two hits of the dead-diff fixture, so a second Enter is a second VISIT to
-   *  the same card rather than a wrap onto the same hit — which is what makes the
-   *  counter's own text distinguish the two landings. */
+  /** A second Enter is a second visit to the same card, not a wrap. */
   function deadDiffHits(): Hit[] {
     return [0, 40].map((offset) =>
       serverHit({
@@ -1625,18 +1300,7 @@ describe("server-hit navigation", () => {
   }
 
   it("answers a second visit to a dead diff hit AT ONCE rather than waiting again", async () => {
-    // A hit whose bulk brings nothing back leaves the preview absent and the
-    // disclosure present, and `detailsBody`'s builder has already run and will not run
-    // again — so before the per-card mark every later visit re-entered and paid the
-    // whole 1500ms ceiling for an answer nothing was going to send. `toolCallBulk`'s
-    // memo cannot cover it: only the SUCCESS path is free.
-    //
-    // ELAPSED time is the assertion, not the notice text, which is the same either
-    // way; the open count cannot separate them either, since an already-open card is
-    // never clicked a second time.
-    //
-    // Red check: drop the `openBroughtNoDiff` arm from `awaitDeferredDiff`'s guard and
-    // the second landing takes ~1550ms.
+    // An empty bulk leaves the preview absent and `detailsBody` will not run again.
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, false);
@@ -1659,36 +1323,12 @@ describe("server-hit navigation", () => {
       },
       { timeout: 4000 },
     );
-    // Under the 1500ms ceiling: what is left is the walk's own rendered-frame wait
-    // plus this poll's interval.
     expect(performance.now() - started).toBeLessThan(CEILING_NOT_PAID_MS);
-    // And it re-opened nothing and re-fetched nothing on the way.
     expect(bulk.requests()).toBe(1);
   });
 
   it("paints NOTHING when the reader has retyped away under the wait", async () => {
-    // The window a deferred diff opened: the landing is up to 1500ms after the press,
-    // where before this change it was bounded by one rendered frame (64ms). So a
-    // position or a miss notice for a hit the reader has typed away from could be
-    // painted over a counter that already describes their new query.
-    //
-    // The retype is a direct write to the box, deliberately: `shell.value` IS "the
-    // query the reader has", and dispatching an input event would start a debounced
-    // re-run whose mocked answer re-adopts ownership mid-flight — which is the case
-    // BELOW, with its own clause and its own red check.
-    //
-    // Red check: drop the `serverHitsQuery === query` term from `stepsOwnedList` and
-    // the counter reads "1 of 1 · not in the shown hunks — open the diff" while the
-    // preview carries the flash. Remove `landOrNotice`'s two ownership guards INSTEAD,
-    // leaving the counter's gate intact, and the flash alone goes red — the silent
-    // motion that guard exists to refuse, which the counter cannot see.
-    //
-    // THE BULK LANDS HERE, and that is what makes the negative observable: the diff's
-    // ARRIVAL is what ends `waitForDiffPreview`, so waiting for the preview is waiting
-    // for the landing to have resolved — where the flash cannot say it, being one of
-    // the writes `landOrNotice`'s ownership guard withholds (a wait for it demands the
-    // very term the red check says must be present). The dead-diff ending has its own
-    // two cases above; this one needs an END to the wait, not a ceiling.
+    // A deferred diff lands up to 1500ms after the press, so a landing must be refused once the reader moved on.
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
@@ -1703,30 +1343,15 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
     });
-    // One macrotask past the arrival, so the walk this press would have run has had
-    // its turn: the wait resolves on a microtask off the observer's callback.
+    // The wait resolves on a microtask off the observer's callback.
     await settle();
-    // There WAS a landing to refuse: the card was opened and its bulk asked for.
     expect(bulk.requests()).toBe(1);
-    // NOTHING — neither the counter nor the landing's own flash, anywhere.
     expect(countText()).toBe(before);
     expect(document.querySelectorAll(".find-target-flash")).toHaveLength(0);
   });
 
   it("paints NOTHING when a fresh answer has landed under the wait", async () => {
-    // The other half of the same window, and the reason the gate is the whole
-    // stepped-branch condition rather than ownership alone: the reader retypes AND the
-    // new answer arrives, so the box and the standing answer agree again while the
-    // cursor this press was walking belongs to the list that has just been replaced.
-    // `render` resets the cursor to -1 for a fresh answer, which is exactly what
-    // `updateCounter`'s stepped branch already refuses to print a position for.
-    //
-    // Red check: drop the `hitCursor >= 0` term from `stepsOwnedList` and this goes red
-    // in `openAndSearch` before it reaches its own assertion — with that term gone the
-    // stepped grammar prints for a cursor of -1, so the counter reads "0 of 1" where the
-    // helper waits for the tally form. `landOrNotice`'s own guards are the sharper
-    // check, as above: remove those two and the flash alone goes red. The bulk LANDS
-    // here for the reason the case above states.
+    // The gate is the whole stepped-branch condition, not ownership alone: a retype adopts a new answer mid-wait.
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
@@ -1734,9 +1359,7 @@ describe("server-hit navigation", () => {
 
     await openAndSearch("retry");
     typeAndEnter("retry");
-    // A real retype-and-search inside the wait: Enter on a changed box runs the query
-    // rather than stepping, so the answer for the new text is adopted while the first
-    // press is still waiting for its diff.
+    // Enter on a changed box runs the query rather than stepping.
     typeAndEnter("budget");
     await settle();
     const afterRetype = countText();
@@ -1751,19 +1374,7 @@ describe("server-hit navigation", () => {
   });
 
   it("sees a diff the bulk inserts NESTED inside the card, on arrival", async () => {
-    // The observer's scope has to match the question its own callback asks: both it and
-    // `awaitDeferredDiff`'s resting-state guard read
-    // `card.querySelector(".tool-diff-preview")`, a DESCENDANT query, so watching direct
-    // children only makes a nested insert invisible to the subscription.
-    //
-    // ELAPSED time is the assertion, because the failure is SILENT: the walk still runs
-    // when the ceiling fires and still finds a preview that landed inside it, so the
-    // landing is merely 1500ms late rather than wrong — which is the worst failure shape
-    // available here and the reason the option is preferred over pinning the
-    // direct-child coincidence.
-    //
-    // Red check: put `waitForDiffPreview`'s observer back on `{ childList: true }` and
-    // the mark appears after ~1550ms instead of the bulk's own 120ms.
+    // The observer's scope matches its callback's question: both read `card.querySelector(".tool-diff…")`.
     stageEditChat();
     const card = mountEditCard(null);
     const slot = document.createElement("div");
@@ -1794,14 +1405,7 @@ describe("server-hit navigation", () => {
   });
 
   it("says only NOT RENDERED YET for a diff miss with no frame delivered", async () => {
-    // The precedence's first arm, and it outranks the kind: a diff on a hidden
-    // tab is UNPAINTED rather than windowed out, so "open the diff" would send
-    // the reader to a control for a problem they do not have. A rAF that never
-    // calls back is that page.
-    //
-    // Red check: key the diff sentences on the preview alone (drop the
-    // `!rendered` arm from `missNotice`) and this case reads "not in the shown
-    // hunks" while the two cases above stay green.
+    // A hidden tab's diff is unpainted rather than windowed out; that arm outranks the kind.
     stageEditChat();
     mountEditCard("return fetchOnce(ctx)");
     stageHits([
@@ -1824,14 +1428,9 @@ describe("server-hit navigation", () => {
     expect(countText()).not.toContain("this call's diff");
   });
 
-  // ---------------------------------------------------------------------------
-  // tool_input: the `<pre>` lives INSIDE `.tool-details`, so reaching it opens
-  // the card, and the narrowing is what keeps the output's mark from winning.
-  // ---------------------------------------------------------------------------
+  // tool_input: the `<pre>` is inside `.tool-details`, and the narrowing keeps the output's mark from winning.
 
-  /** A production-shaped card carrying both an input and an output. `detailsBody`
-   *  inserts the input `<pre>` at the START of `.tool-details` and appends the
-   *  output after it, so both regions are behind the card's own disclosure. */
+  /** `detailsBody` puts the input first and the output last in `.tool-details`. */
   function inputCard(input: unknown, output: string): string {
     const pretty = JSON.stringify(input, null, 2);
     return `<div class="tool-call" data-tool-id="t1" data-entry-id="e1">
@@ -1874,8 +1473,6 @@ describe("server-hit navigation", () => {
       }),
     ]);
 
-    // Behind the closed disclosure the walker prunes the region, so the first
-    // walk marks nothing and the counter carries the server's figure alone.
     await openAndSearch("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
@@ -1888,16 +1485,7 @@ describe("server-hit navigation", () => {
   });
 
   it("keeps a tool_input hit inside .tool-input when the output matches too", async () => {
-    // TWO properties in one card, because one fixture carries both honestly. The
-    // output ALSO matches, so the whole card holds two credible marks and the
-    // narrowing is what decides between them. And the input is several SHORT
-    // leaves — a path, a pattern, a flag — which is where token overlap between
-    // the server's `\n`-joined excerpt and the rendered pretty-printed JSON is
-    // thinnest, so it is the similarity floor's own case for this kind. A long
-    // payload leaf would clear any floor and would not test the link.
-    //
-    // Red check: drop the `tool_input` row from `TOOL_TARGET` (so the walk takes
-    // the whole card) and the winner moves to the `.tool-output` mark.
+    // The output also matches, so the narrowing is what picks the input.
     stageEditChat();
     mountInputCard(
       { path: "internal/chat/retry.go", pattern: "retry", flag: "-n" },
@@ -1922,25 +1510,12 @@ describe("server-hit navigation", () => {
     const current = document.querySelector<HTMLElement>("mark.find-hit-current");
     expect(current?.closest(".tool-input")).not.toBeNull();
     expect(current?.closest(".tool-output")).toBeNull();
-    // A mark, not the "not in rendered text" notice: the counter reports the
-    // position in the SERVER's list, which is the grammar every stepped landing
-    // gets (the sibling case above reads the same). It used to read "1 of 3" — the
-    // DOM grammar, over the three marks this card carries — and that was the
-    // teardown speaking: find's own disclosure click bubbled to `document`, where
-    // the popup's outside-dismissal closed the overlay and reset the stepped state,
-    // so the final paint fell through to the DOM branch. `activateQuietly` keeps
-    // the click off the document, so the stepped state survives its own landing.
+    // A mark, not the notice; the counter reports the server's list position.
     expect(countText()).toBe("1 of 1");
   });
 
-  // --- The five remaining rendered fields ---
-  //
-  // The two TURN-LEVEL kinds resolve from the hit's own turn card, ahead of the row
-  // lookup; `plan` keeps the row path and is narrowed to the plan card; `tool_denial`
-  // is a `.tool-details` member like the input.
+  // Turn-level kinds resolve from the turn card ahead of the row lookup; `plan` keeps the row path.
 
-  /** Stage the chat both turn-level cases read: one turn, whose entries carry
-   *  nothing that could answer for either kind. */
   function stageTurnLevelChat(): void {
     stageChat(["u1"]);
   }
@@ -1969,17 +1544,13 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelector(".turn-notice mark.find-hit-current")).not.toBeNull();
     });
-    // The kind resolves ahead of the row lookup, so the card came from the hit's
-    // own `turn_id` alone.
     expect(document.querySelector("mark.find-hit-current")?.textContent).toBe("retry");
   });
 
   it("lands an attachment hit on a pill in the turn header", async () => {
     stageTurnLevelChat();
     const name = "retry-notes.md";
-    // The production shape: the pills are `header > .turn-req > .turn-req-attachments`,
-    // so the resolver's `:scope > .turn-header .turn-req-attachments` has to reach
-    // through `.turn-req` rather than expecting a direct child.
+    // Pills are `header > .turn-req > .turn-req-attachments`, which the resolver's scope must reach.
     mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row"></div>`)
       .querySelector<HTMLElement>(".turn-header")
       ?.insertAdjacentHTML(
@@ -2009,13 +1580,7 @@ describe("server-hit navigation", () => {
   });
 
   it("resolves a turn-level hit on a STUB turn, which has no row at all", async () => {
-    // The case the PLACEMENT is for: a tier-3 stub carries a header and a notice
-    // and NO `.turn-body`, so the row lookup answers null. With that lookup ahead
-    // of the turn-level arm this reads "could not be shown" on exactly the turns
-    // where the notice is the whole rendered content.
-    //
-    // Red check: move `const row = messageRowEl(...)` and its null return back
-    // above the turn-level arm and this fails with that sentence.
+    // A tier-3 stub has a header and notice but no `.turn-body`, so the row lookup is null.
     stageTurnLevelChat();
     const reason = "the retry budget ran out";
     mountTurnCard("u1", null).insertAdjacentHTML(
@@ -2041,10 +1606,7 @@ describe("server-hit navigation", () => {
   });
 
   it("selects the turn card and says so when the reason is not rendered", async () => {
-    // A CANCELLED turn: `turnFailureText` renders nothing at all for that
-    // severity, so the reason is in the record and on no surface. The hit is
-    // still counted and still navigable — it selects the TURN CARD and reports
-    // what happened rather than claiming the text does not exist.
+    // A cancelled turn renders no reason; the hit still counts and steps.
     stageTurnLevelChat();
     const reason = "the retry budget ran out";
     const card = mountTurnCard(
@@ -2074,12 +1636,7 @@ describe("server-hit navigation", () => {
   });
 
   it("lands a plan hit on the plan card, not on the prose beside it", async () => {
-    // A `plan` entry IS the plan card, so the hit's own entry id is what decides
-    // which of the two credible marks wins: the prose run beside it holds the
-    // needle too, and it is a different entry.
-    //
-    // Red check: point the hit at the prose run's entry id instead and the mark
-    // lands outside `.plan-message`.
+    // A `plan` entry is the plan card, so the hit's entry id decides between two credible marks.
     stageChat(["u1"]);
     const entry = "Trace the retry path";
     mountTurnCard(
@@ -2113,12 +1670,7 @@ describe("server-hit navigation", () => {
   });
 
   it("opens the card's disclosure for a tool_denial hit and lands on .tool-denial", async () => {
-    // `detailsBody` BUILDS the denial block on the card's first open, exactly like
-    // the input `<pre>`, so the kind is in `OPENS_TOOL_DETAILS` and the narrowing
-    // has to run after that open rather than inside `resolveSegmentEl`.
-    //
-    // Red check: drop `tool_denial` from `OPENS_TOOL_DETAILS` and the region stays
-    // pruned, so the walk misses and the notice replaces the mark.
+    // `detailsBody` builds the denial block on first open, so the kind is in `OPENS_TOOL_DETAILS`.
     stageEditChat();
     const resource = "rm -rf /config/retry";
     mountInputCard({ command: resource }, "");
@@ -2157,9 +1709,7 @@ describe("server-hit navigation", () => {
          <div class="tool-call">tool card furniture</div>
        </div>`,
     );
-    // The filter-only contract: one synthetic hit locating the ENTRY — offset 0,
-    // zero segment length, kind `entry`. Container navigation is what keeps the
-    // ranker's segment_len division unreachable for this kind.
+    // The filter-only contract: one synthetic `entry` hit at offset 0, zero length.
     stageHits([
       serverHit({
         excerpt: "List files a.go b.go",
@@ -2178,14 +1728,10 @@ describe("server-hit navigation", () => {
     });
     expect(countText()).toBe("1 of 1");
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(row, expect.anything());
-    // Nothing was marked: the hit names no span, so no mark could be honest.
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
-  // The reasoning trace whose markdown the server matched is LONGER than what
-  // the walker sees rendered, and the needle occurs twice. The excerpt is the
-  // discriminator: its window surrounds the SECOND occurrence, so similarity
-  // must pick mark #2 even though mark #1 comes first in document order.
+  // The trace is longer than rendered and the needle occurs twice; the excerpt discriminates.
   const TRACE =
     "Enable retry on the uploader so flaky links recover without operator " +
     "attention and keep the queue draining smoothly overnight. When the " +
@@ -2202,8 +1748,7 @@ describe("server-hit navigation", () => {
            </details>
        </div>`,
     );
-    // Text content set programmatically so the fixture cannot drift from the
-    // TRACE the hit's coordinates are computed against.
+    // Set programmatically so the fixture cannot drift from the trace the coordinates use.
     const quote = card.querySelector(".reasoning-body");
     if (quote !== null) {
       quote.textContent = TRACE;
@@ -2219,27 +1764,22 @@ describe("server-hit navigation", () => {
     ]);
 
     await openAndSearch("retry");
-    // The closed <details> hid the trace from the walker entirely.
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
     typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
     });
-    // The chain opened the reasoning disclosure…
     expect(document.querySelector<HTMLDetailsElement>("details.reasoning-block")?.open).toBe(true);
-    // …and the SECOND occurrence is the one selected.
     const marks = [...document.querySelectorAll("mark.find-hit")];
     expect(marks[1]?.classList.contains("find-hit-current")).toBe(true);
     expect(marks[0]?.classList.contains("find-hit-current")).toBe(false);
-    // The mark classes above are what pin the RANKING; the counter is reporting
-    // the position in the session list the step is walking, which is one hit long.
+    // The marks pin the ranking; the counter reports the one-hit session list.
     expect(countText()).toBe("1 of 1");
   });
 
   it("falls back to relative position when the excerpt cannot discriminate", async () => {
-    // Both occurrences share one short context (the excerpt window covers the
-    // whole trace), so similarity ties and offset/segment_len decides.
+    // A shared excerpt ties similarity, so offset and length decide.
     const short = "retry then retry";
     stageChat(["u1"]);
     const card = mountTurnCard(
@@ -2274,9 +1814,7 @@ describe("server-hit navigation", () => {
   });
 
   it("declines a mark below the similarity floor: block selection, stated", async () => {
-    // A STALE hit: the trace re-rendered since the search answered, so the
-    // needle still occurs but nothing around it matches the excerpt. Selecting
-    // that mark would claim a precision the ranker does not have.
+    // A stale hit: nothing around the needle matches the excerpt.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2308,8 +1846,7 @@ describe("server-hit navigation", () => {
   });
 
   it("pages older history in until the hit's TURN is resident", async () => {
-    // Residency is one map lookup now (`turns.has(hit.turn_id)`) and the cursor is the
-    // oldest resident TURN id, which is the same value `?before=` takes.
+    // Residency is `turns.has(hit.turn_id)`; the cursor is the oldest resident turn id.
     const session = stageChat(["u9"], true);
     stageHits([
       serverHit({
@@ -2324,7 +1861,6 @@ describe("server-hit navigation", () => {
       session.has_more = false;
       return Promise.resolve(true);
     });
-    // The paged-in turn arrives as a stub; the reveal is what mounts it.
     vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
       if (document.querySelector('[data-reconcile-key="u1"]') === null) {
         mountTurnCard("u1", `<div data-entry-id="e1" class="msg-row">the old answer</div>`);
@@ -2340,7 +1876,6 @@ describe("server-hit navigation", () => {
         document.querySelector('[data-entry-id="e1"]')?.classList.contains("find-target-flash"),
       ).toBe(true);
     });
-    // Paged from the resident window's edge, exactly once.
     expect(vi.mocked(storeLoad.loadMessages)).toHaveBeenCalledExactlyOnceWith("c1", "u9");
     expect(countText()).toBe("1 of 1");
   });
@@ -2359,8 +1894,7 @@ describe("server-hit navigation", () => {
   });
 
   it("states it when the revealed turn still holds no element for the entry", async () => {
-    // The reveal resolved but the window no longer holds the entry (a rewind, an
-    // eviction race): stepping must SAY so, not shrug.
+    // The window no longer holds the entry after the reveal, and stepping must say so.
     stageChat(["u1"]);
     mountTurnCard("u1", null);
     stageHits([serverHit({ segment_kind: "entry", offset: 0, segment_len: 0 })]);
@@ -2373,15 +1907,8 @@ describe("server-hit navigation", () => {
     });
   });
 
-  // THE STEP ARM IS DELETED, with the two cases whose subject it was ("routes a step hit
-  // to the run tab" and "falls through to the DOM path for a malformed wf: id"). A run's
-  // steps are entries of the RUN's own log, so no hit in a chat's log can name one and
-  // there is no `wf:` id left to malform. Design 14 item 9 records the capability cost.
-
   it("sends an ordinary DELEGATE's hit to that delegate's page", async () => {
-    // The counter reads the SERVER's figure, so a hit inside a delegate's output is
-    // reported however little of it the transcript renders — which is none. Before the
-    // delegate route this ended at "could not be shown" on the launching turn's row.
+    // The counter reads the server's figure, so a delegate-output hit is counted though the transcript renders none of it.
     stageChat(["u1"]);
     mountTurnCard("u1", `<div class="msg-row" data-entry-id="e1"></div>`);
     stageHits([
@@ -2401,30 +1928,15 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledWith("c1", "sub-9");
     });
-    // The transcript is not paged in or revealed for a destination in another tab.
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
     expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
     expect(countText()).not.toContain("could not be");
   });
 
-  // ---------------------------------------------------------------------------
-  // The SPINE: an owned server answer is the step list, whatever the walker
-  // marked. Each case below names the single-point mutation that must fail it.
-  // ---------------------------------------------------------------------------
+  // The spine: an owned server answer is the step list, whatever the walker marked.
 
   it("walks the server's list even while resident marks exist for the same query", async () => {
-    // The fixture the old gate was wrong on, kept: 2 DOM marks inside the resident
-    // entry (from `retry retry`) against 2 server hits, one of them in a turn the
-    // transcript has not mounted. `serverHits.length > engine.total` reads as `2 > 2` = false
-    // here, which is why a count comparison could not have detected the divergence
-    // and why the gate had to become ownership instead.
-    //
-    // Red check: restore the `engine.total === 0` conjunct in `step` — Enter then
-    // cycles the two marks and the unmounted hit is never reached.
-    //
-    // Both turns are RESIDENT and only the first is MOUNTED, which is the shape the
-    // reveal exists for: residency is one map lookup, so a turn the store holds and
-    // the paint has not built is what `revealHitTurn` is asked to build.
+    // 2 DOM marks against 2 server hits, one in a non-resident turn.
     stageChat(["u1", "u9"]);
     mountTurnCard(
       "u1",
@@ -2448,14 +1960,12 @@ describe("server-hit navigation", () => {
     await settle();
     vi.mocked(chatSearch.revealHitTurn).mockClear();
 
-    // The first press walks the SERVER's list and lands on the resident mark with
-    // no reveal at all — the synchronous landing.
+    // The first press lands on the resident mark synchronously.
     typeAndEnter("retry");
     expect(countText()).toBe("1 of 2");
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
 
-    // The second reaches the hit the walker could never mark, which is the whole
-    // point: it is REVEALED rather than skipped.
+    // The second reveals the hit the walker could never mark.
     typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(vi.mocked(chatSearch.revealHitTurn)).toHaveBeenCalledExactlyOnceWith("c1", elsewhere);
@@ -2464,13 +1974,7 @@ describe("server-hit navigation", () => {
   });
 
   it("steps a resident hit synchronously, so held Enter presses are not dropped", async () => {
-    // `navBusy` DROPS an Enter arriving while a navigation is in flight, so without
-    // the synchronous landing a reader holding Enter would lose presses on hits
-    // whose text is already on screen. Two presses in ONE task is the assertion the
-    // async pipeline cannot satisfy.
-    //
-    // Red check: delete the `landInPlace` call from `stepServerHit` — the second
-    // press is swallowed and the counter stays at 1.
+    // `navBusy` drops an Enter mid-navigation, so resident hits must land synchronously.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2493,12 +1997,7 @@ describe("server-hit navigation", () => {
   });
 
   it("walks all 38 hits behind one resident mark without ever going dead", async () => {
-    // The reported shape: one mark on screen, dozens of matches the server found.
-    // The old gate spent every press re-selecting that one mark, so the counter
-    // admitted 38 matches while Enter reached exactly one of them.
-    //
-    // Red check: restore the `engine.total === 0` conjunct — the counter never
-    // leaves the DOM grammar and no hit past the first is visited.
+    // One mark on screen, dozens of server matches.
     const HITS = 38;
     stageChat(["u1"]);
     mountTurnCard(
@@ -2509,9 +2008,6 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    // Every hit names the resident message and the resident block, which is what
-    // lets each press land in place; their offsets differ, so they are 38 distinct
-    // positions in the conversation rather than one hit counted 38 times.
     stageHits(
       Array.from({ length: HITS }, (_, i) =>
         serverHit({ excerpt: "retry", offset: i, segment_len: HITS + 8 }),
@@ -2526,23 +2022,13 @@ describe("server-hit navigation", () => {
     }
     expect(seen[0]).toBe(`1 of ${String(HITS)}`);
     expect(seen[HITS - 1]).toBe(`${String(HITS)} of ${String(HITS)}`);
-    // Never a failure notice, on any of the 38 presses.
     expect(seen.filter((line) => line.includes("could not be"))).toEqual([]);
-    // And the walk wraps rather than stopping at the end.
     typeAndEnter("retry");
     expect(countText()).toBe(`1 of ${String(HITS)}`);
   });
 
   it("steps the resident marks while the standing answer belongs to the previous query", async () => {
-    // The in-flight window, which is on the PRIMARY path because a cut answer's note
-    // invites the reader to refine the query: the shell's `query` callback runs the DOM pass
-    // synchronously and RETURNS the fetch, so `engine.query === shell.value` holds
-    // for the whole debounce-plus-round-trip while `serverHits` still belongs to the
-    // text the reader has replaced.
-    //
-    // Red check: drop the `serverHitsQuery === shell.value` clause from `step` — the
-    // stale hit is navigated and this chat's delegate page opens for a query the
-    // reader has already abandoned.
+    // The in-flight window: the `query` callback runs the DOM pass before the answer lands.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2552,12 +2038,9 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    // The standing answer's one hit lives in a delegate, so navigating it is
-    // observable as a tab opening.
     stageHits([serverHit({ entry_id: "e2", lane: "sub-9", offset: 9 })]);
     await openAndSearch("retry");
 
-    // The next fetch never resolves: this is the window, held open.
     vi.mocked(chatSearch.runServerSearch).mockReturnValue(new Promise(() => undefined));
     typeAndEnter("budget");
     await vi.waitFor(() => {
@@ -2565,12 +2048,10 @@ describe("server-hit navigation", () => {
     });
 
     typeAndEnter("budget");
-    // The DOM mark is stepped, and the counter drops the session figure rather than
-    // reporting the previous query's total for this one.
+    // The counter drops the session figure rather than report the previous query's.
     expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
     expect(countText()).toBe("1 of 1");
-    // NOT the miss skin: "unknown" and "zero" are different states, and flashing it
-    // on every keystroke would be a worse lie than a stale number.
+    // Not the miss skin: unknown is not zero.
     expect(document.getElementById("chat-find")?.classList.contains("chat-find-no-results")).toBe(
       false,
     );
@@ -2578,14 +2059,8 @@ describe("server-hit navigation", () => {
   });
 
   it("visits hits in transcript order even when the only mark is in the last entry", async () => {
-    // Order is the server's, so where the marks happen to be cannot decide it. With
-    // the DOM gate the walk started (and ended) at the one mark, which sits in the
-    // NEWEST entry — the reverse of how a reader reads a conversation.
-    //
-    // Red check: restore the `engine.total === 0` conjunct — the first press steps
-    // the one DOM mark, so the walk both starts and ends in the LAST entry.
+    // Order is the server's, not where marks happen to be.
     stageChat(["u1"]);
-    // Only the LAST entry's row carries walkable text.
     mountTurnCard(
       "u1",
       `<div class="msg-row" data-entry-id="e1"></div>
@@ -2601,19 +2076,13 @@ describe("server-hit navigation", () => {
     ]);
 
     await openAndSearch("retry");
-    // The two entries with nothing rendered in them are visited FIRST, in the
-    // server's order, and each is revealed because the walker can mark neither.
     for (const id of ["e1", "e2"]) {
       typeAndEnter("retry");
       await vi.waitFor(() => {
         expect(vi.mocked(chatSearch.revealHitTurn).mock.lastCall?.[1].entry_id).toBe(id);
       });
     }
-    // No assertion here that the one mark on screen is not yet current: the ENGINE
-    // marks its first match current when the walker runs, independently of stepping,
-    // so such a check would fail for a reason that is not this rule.
-    // The third press reaches the mark, in place: its entry is mounted and holds the
-    // text, so nothing has to be revealed for it.
+    // The engine marks its first match current on its own, so that is not asserted.
     typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector('[data-entry-id="e3"] mark.find-hit-current')).not.toBeNull();
@@ -2622,14 +2091,7 @@ describe("server-hit navigation", () => {
   });
 
   it("partitions the walk by destination, announcing the boundary once per answer", async () => {
-    // A cross-tab step tears the overlay down (BUS_TAB_CHANGED -> closeChatFind), so
-    // an interleaved walk would destroy the local one rather than merely interrupt
-    // it. The partition is by the hit's LANE — the client's own ROUTING — so a
-    // hit EARLIER in the transcript is still visited second when it answers by
-    // opening another view.
-    //
-    // Red check: make `buildStepOrder` return `hits` unpartitioned — the first Enter
-    // opens the delegate's page.
+    // A cross-tab step tears the overlay down, so local hits are walked first.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2637,8 +2099,6 @@ describe("server-hit navigation", () => {
          <div class="message assistant">local retry</div>
        </div>`,
     );
-    // WIRE order puts the cross-tab hit first, which is where it sits in the
-    // conversation; the walk must not.
     stageHits([
       serverHit({ entry_id: "e1", lane: "sub-1", excerpt: "delegate retried" }),
       serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
@@ -2647,8 +2107,6 @@ describe("server-hit navigation", () => {
     await openAndSearch("retry");
 
     typeAndEnter("retry");
-    // Phase 1: answered in place, no tab opened, and the denominator is the whole
-    // server list — both phases of it — rather than the one resident mark.
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 2");
     });
@@ -2661,12 +2119,10 @@ describe("server-hit navigation", () => {
         "sub-1",
       );
     });
-    // The crossing states the rule, on the same live region, before the switch.
     expect(countText()).toBe(
       "2 of 2 \u00b7 the rest are in delegate pages and run tabs \u00b7 opening the delegate's page",
     );
 
-    // Wrapping round says it once per ANSWER, not once per crossing.
     typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 2");
@@ -2675,29 +2131,17 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(countText()).toBe("2 of 2 \u00b7 opening the delegate's page");
     });
-    // Waited on the OPEN rather than the counter alone, because the counter is
-    // painted before the lazy import: a test ending in between leaves that import
-    // to resolve inside the next one, where the call reads as a stray navigation.
+    // Waits on the open: the counter paints before the lazy import resolves.
     await vi.waitFor(() => {
       expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledTimes(2);
     });
   });
 
   it("puts a MOUNTED delegate invocation in phase 2, because the routing decides", async () => {
-    // The transcript draws exactly one of a delegate's entries — its invocation, as
-    // the card's header — so a `tool_title` hit on it is visible on screen with no
-    // reader action. It is still phase 2: `navigateToHit` routes every non-empty LANE
-    // to another view, and the partition uses that same predicate rather than asking
-    // what the transcript happens to have mounted.
-    //
-    // Red check: partition on whether `resolveSegmentEl` answers an element (a
-    // "mounted means local" classification) — the invocation is then visited FIRST
-    // and answers with a tab switch on the first press.
+    // The transcript draws one delegate entry, its invocation header, so a `tool_title` hit is visible there.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      // The delegate's card IS in the transcript, stamped like any other entry — and
-      // it carries the invocation's OWN entry id, which is in the turn's lane.
       `<div class="subagent-block" data-entry-id="e1">
          <div class="subagent-header"><span class="tool-title">Sub-agent: retry-sweeper</span></div>
        </div>
@@ -2717,8 +2161,6 @@ describe("server-hit navigation", () => {
       serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
     ]);
 
-    // `openAndAdopt` rather than `openAndSearch`: both marks are resident here, so
-    // the two figures agree and the counter prints no session figure to wait on.
     await openAndAdopt("retry");
 
     typeAndEnter("retry");
@@ -2737,14 +2179,7 @@ describe("server-hit navigation", () => {
   });
 
   it("resumes the walk after a cross-tab jump, keeping the query", async () => {
-    // The return trip. Today's subscriber closes the box AND clears the query, so a
-    // jump was a dead end: the reader came back to an empty box and had to retype
-    // and re-walk. The jump records BOTH resume values immediately before the lazy
-    // import, because the switch tears the overlay down in the same turn.
-    //
-    // Red checks: clear `resumeKey` in `teardown` (the close runs before the
-    // subscriber can spend it), or clear the input unconditionally in the
-    // BUS_TAB_CHANGED subscriber — either way the walk restarts from the top.
+    // The return trip: the box closes but keeps the query, and coming back restores the cursor.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2761,23 +2196,20 @@ describe("server-hit navigation", () => {
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry"); // phase 1
+    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 3");
     });
-    typeAndEnter("retry"); // the first cross-tab hit
+    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledWith("c1", "sub-1");
     });
 
-    // The tab switch this client caused: the box closes and the query STAYS, because
-    // activating a delegate's page does not change the active chat.
+    // Activating a delegate's page does not change the active chat, so the query stays.
     switchTab();
     const input = document.getElementById("chat-find-input") as HTMLInputElement;
     expect(input.value).toBe("retry");
 
-    // Coming back re-runs the query, and the cursor is restored to the hit the
-    // reader left on — so the next press CONTINUES rather than restarting.
     onHotkey(ctrlF());
     await settle();
     typeAndEnter("retry");
@@ -2786,10 +2218,7 @@ describe("server-hit navigation", () => {
     });
   });
 
-  // The handoff from the History page: its cross-chat search found the
-  // conversation and counted its matches, and the row's click opens this box
-  // carrying the query and stepped to the hit it named. Before it, the reader
-  // landed in the chat with nothing marked and the count unreachable.
+  // The History page's handoff opens this box with the query and a named hit.
 
   it("opens on a handoff carrying the query, landed on the hit it names rather than the first", async () => {
     stageChat(["u1"]);
@@ -2816,7 +2245,6 @@ describe("server-hit navigation", () => {
     openAt("retry", second);
     const input = document.getElementById("chat-find-input") as HTMLInputElement;
     expect(input.value).toBe("retry");
-    // The counter is the stepped position IN the answer, at the named hit.
     await vi.waitFor(() => {
       expect(countText()).toBe("2 of 2");
     });
@@ -2824,18 +2252,13 @@ describe("server-hit navigation", () => {
     expect(hits).toHaveLength(2);
     expect(hits[1]?.classList.contains("find-hit-current")).toBe(true);
     expect(hits[0]?.classList.contains("find-hit-current")).toBe(false);
-    // ONE scroll, to the hit: the open's own reveal of the first mark is withheld
-    // while a landing is pending, or the reader watches two jumps. Counted rather
-    // than matched against the first mark, because the answer's re-walk replaces
-    // every mark element, so the one the open scrolled to is no longer in the DOM.
+    // One scroll: the open's own reveal is withheld while a landing is pending.
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[1], expect.anything());
   });
 
   it("opens on the answer it has when the handoff's hit is not in it", async () => {
-    // The chat moved on between the two searches (a rewind, a compaction), so the
-    // named hit is nowhere in the fresh answer. Chasing it would page history in
-    // for a turn that is gone; the box opens as an ordinary open would.
+    // The named hit is gone from the fresh answer, so nothing is paged in for it.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2853,15 +2276,12 @@ describe("server-hit navigation", () => {
     const hits = [...document.querySelectorAll<HTMLElement>("mark.find-hit")];
     expect(hits[0]?.classList.contains("find-hit-current")).toBe(true);
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[0], expect.anything());
-    // Nothing was paged in or revealed for the missing turn.
     expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
   });
 
   it("does not carry a handoff's landing into a later open the reader makes", async () => {
-    // Closed before its answer landed. The next Ctrl-F keeps what every close keeps
-    // — the query, and the cursor restored to the hit — and jumps nowhere: the
-    // landing belonged to the open that asked for it, and this one is the reader's.
+    // Closed before the answer landed: the next open keeps query and cursor and jumps nowhere.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2881,7 +2301,6 @@ describe("server-hit navigation", () => {
       offset: 10,
       segment_len: 15,
     });
-    // An answer that never lands, for as long as the handoff's open is up.
     vi.mocked(chatSearch.runServerSearch).mockReturnValue(new Promise(() => undefined));
     openAt("retry", second);
     closeFind();
@@ -2898,15 +2317,7 @@ describe("server-hit navigation", () => {
   });
 
   it("steps the marks when there is no server list to walk", async () => {
-    // The DOM pass keeps being the WHOLE step list wherever no list is owned, and
-    // this is the shape that reaches it in production: a mark the server never
-    // matched. Transcript chrome and markdown-joined text (`**work**flow` renders as
-    // one word) are marked by the walker and absent from the answer, so an owned
-    // answer can legitimately be empty while marks are on screen — the same state a
-    // failed FIRST fetch leaves, where nothing is owned at all.
-    //
-    // Red check: drop the `serverHits.length > 0` conjunct from `step` — Enter then
-    // routes into an empty walk and goes dead on content the reader can see.
+    // The DOM pass is the whole step list wherever no list is owned (a mark the server never matched).
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2927,12 +2338,7 @@ describe("server-hit navigation", () => {
   });
 
   it("keeps the standing answer whole when a later fetch fails", async () => {
-    // Seven values stand or none does: the hits, their tally, the walk order, the
-    // cursor, the cut note, the reveal and the OWNERSHIP. A transient failure must
-    // not un-say something true about the answer the reader is looking at.
-    //
-    // Red check: return an empty envelope instead of `null` on the fetch's null arm
-    // — the answer is replaced by nothing, every clause below goes red at once.
+    // A transient failure must not unseat the standing answer: hits, tally, order, cursor, note, reveal and ownership.
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -2957,7 +2363,6 @@ describe("server-hit navigation", () => {
     await openAndAdopt("retry");
     expect(noteText()).toBe("2 of 3 matches shown; 3 messages scanned");
 
-    // A forced re-run of the SAME query (the case toggle) whose fetch fails.
     vi.mocked(chatSearch.runServerSearch).mockResolvedValue(null);
     document.querySelector<HTMLElement>(".chat-find-case")?.click();
     await settle();
@@ -2966,8 +2371,6 @@ describe("server-hit navigation", () => {
     expect(document.getElementById("chat-find")?.classList.contains("chat-find-no-results")).toBe(
       false,
     );
-    // Still the SERVER's list, still owned by the text in the box, still cut against
-    // the same whole-chat count.
     typeAndEnter("retry");
     expect(countText()).toBe("1 of 2 \u00b7 3 in chat");
     typeAndEnter("retry");
@@ -2975,13 +2378,7 @@ describe("server-hit navigation", () => {
   });
 
   it("clears the cut note when a failed fetch leaves an answer for older text", async () => {
-    // The note describes ONE answer, so it may only be painted while that answer
-    // belongs to the text in the box. A failed fetch leaves the previous answer
-    // standing — deliberately — and the reader has meanwhile typed something else,
-    // so the sentence would describe a query they have abandoned.
-    //
-    // Red check: drop the `owned ?` gate from render's `setNote` — the note
-    // survives the query change.
+    // The note describes one answer, so it paints only while that answer belongs to the box's text.
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
@@ -2992,9 +2389,6 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(noteText()).toBe("");
     });
-    // The session FIGURE is gated on the same predicate and drops with it: the
-    // standing total describes the earlier query, so reporting it here would put a
-    // number beside text nothing has counted.
     expect(countText()).toBe("No matches");
     expect(document.getElementById("chat-find")?.classList.contains("chat-find-no-results")).toBe(
       false,
@@ -3002,12 +2396,7 @@ describe("server-hit navigation", () => {
   });
 
   it("withholds the no-results skin until an owned answer says the text is nowhere", async () => {
-    // "Unknown" and "zero" are different states. The skin claims the text is not in
-    // the conversation, which only the server can say, so it waits for the answer
-    // rather than flashing on every keystroke of a query still in flight.
-    //
-    // Red check: drop the `owned` conjunct from `noResults` — the skin paints during
-    // the in-flight window, over a query nothing has answered yet.
+    // The miss skin claims what only the server can say, so it waits for the answer.
     stageChat(["u1"]);
     const skinOn = (): boolean =>
       document.getElementById("chat-find")?.classList.contains("chat-find-no-results") === true;
@@ -3031,16 +2420,7 @@ describe("server-hit navigation", () => {
   });
 
   it("does not step a mark that appeared after the answer was taken", async () => {
-    // The accepted loss, pinned as BEHAVIOUR rather than left as an omission. The
-    // standing answer is frozen for the life of one open at one query — the live
-    // re-run (`scheduleRerun`) re-runs the DOM engine only and never re-issues the
-    // server search — so text that arrives afterwards is highlighted, counted in the
-    // LOCAL figure until the reader starts stepping, never steppable, and never in
-    // the session figure. Re-opening the box or editing the query recovers it.
-    //
-    // Red check: restore the `engine.total === 0` conjunct in `step` — Enter then
-    // walks the marks and DOES reach the new one, which is the behaviour this case
-    // exists to say we do not have.
+    // Accepted loss: the standing answer is frozen for one open at one query.
     stageChat(["u1"]);
     const card = mountTurnCard(
       "u1",
@@ -3054,27 +2434,21 @@ describe("server-hit navigation", () => {
     await openAndAdopt("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(1);
 
-    // A turn SEALS after the answer was taken: the walker can mark it (find-engine
-    // prunes `.streaming`, so an in-flight turn is invisible to both sides — this is
-    // the population that is invisible to the SERVER's frozen answer alone).
+    // A turn sealing after the answer: the walker can mark it, the answer does not hold it.
     const sealed = document.createElement("div");
     sealed.className = "message assistant";
     sealed.textContent = "retry again";
     card.querySelector(".msg-row")?.appendChild(sealed);
 
-    // The live re-run, driven through the transcript observer the module registers.
     const rerun = vi.mocked(scroll.onTranscriptMutate).mock.calls[0]?.[0];
     expect(rerun).toBeTypeOf("function");
     rerun?.();
     await vi.waitFor(() => {
       expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
     });
-    // Counted in the DOM figure, and the session figure does not claim it: the
-    // whole-chat count (1) sits below the marks (2), so no second figure is shown.
     expect(countText()).toBe("1 of 2");
 
-    // Stepping walks the ANSWER, so the new mark is never visited however many
-    // presses the reader makes.
+    // Stepping walks the answer, so the new mark is never visited.
     const first = document.querySelectorAll<HTMLElement>("mark.find-hit")[0];
     for (let i = 0; i < 3; i++) {
       typeAndEnter("retry");

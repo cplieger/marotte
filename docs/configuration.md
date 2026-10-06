@@ -2,7 +2,7 @@
 
 This page lists every environment variable marotte reads and explains the ones that guard access or change what the agent can do. Most people need none of them. Models, permissions, tools, notifications and chat retention are set on the page under **Settings**.
 
-Variables go in the `environment:` block of `compose.yaml` and are read at start, so recreate the container after a change. A malformed duration logs a warning and falls back to its default.
+Variables go in the `environment:` block of `compose.yaml` and are read at start, so recreate the container after a change.
 
 ## All variables
 
@@ -12,7 +12,6 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
-| `MAROTTE_AGENT_WORKFLOWS` | Whether the agent can start workflow runs itself. | `true` |
 | `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |
@@ -22,13 +21,8 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `MAROTTE_TOOLS_DIR` | Where the tools engine installs tools, on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `MAROTTE_TOOL_CATALOG` | Tool catalog built into the image, used at first start and offline. | `/opt/marotte/tool-catalog.json` |
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
-| `MAROTTE_TOOL_CATALOG_REFRESH` | How often the catalog updates, as a Go duration from `1h` to `30d`. `off` or `0` keeps only the manual refresh. | `24h` |
 | `MAROTTE_BUNDLED_TOOLS` | File inside the image naming the tools marotte bundles. A wrong path leaves the suggested language servers unable to install. | `/opt/marotte/bundled-tools.json` |
 | `VAPID_SUBJECT` | Contact address placed in the keys used for push notifications. | `mailto:marotte@noreply.invalid` |
-| `MAROTTE_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in link. | `10s` |
-| `MAROTTE_AUTH_LOGIN_TIMEOUT` | Time limit for a whole sign-in, including confirming the code in your browser. | `16m` |
-| `MAROTTE_AUTH_LOGOUT_TIMEOUT` | Time limit for `kiro-cli logout`. | `10s` |
-| `MAROTTE_AUTH_WHOAMI_TIMEOUT` | Time limit for the check that reads who is signed in. | `5s` |
 
 ## Host allowlist (`ALLOWED_HOSTS`)
 
@@ -68,20 +62,9 @@ environment:
 
 Mount each folder with `volumes:` first. Credential and internal files under `/config` stay hidden whatever you add. That covers SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration.
 
-## Agent-started workflow runs (`MAROTTE_AGENT_WORKFLOWS`)
+## Agent-started workflow runs
 
-The chat agent holds the workflow tools, so a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page are not affected.
-
-A run the agent started can be stopped, but pause, resume and retry work only on a run you started from the Workflows tab.
-
-To turn the capability off, set the variable to `false`. `0`, `no` and `off` work too.
-
-```yaml
-environment:
-  MAROTTE_AGENT_WORKFLOWS: "false"
-```
-
-The agent then loses the workflow tools and answers questions about workflows in text. The change reaches the next chat, so recreate the container to apply it everywhere.
+Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page work either way. A change reaches the next chat, and an open chat picks it up when it reloads.
 
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 
@@ -98,9 +81,9 @@ This applies to what the agent asks for, not to variables you set on the contain
 
 ## Credentials in the container environment (`MAROTTE_ALLOW_BRIDGE_ENV`)
 
-kiro-cli and everything it runs inherit the container's `environment:`. A `GITHUB_TOKEN` added there for another reason would be a credential every agent turn can read and use.
+The shell commands the agent runs inherit the container's full `environment:`. A `GITHUB_TOKEN` added there for another reason is a credential those commands can read and use. The kiro-cli process gets a screened copy instead.
 
-marotte therefore drops credential-looking names before kiro-cli starts and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included.
+marotte drops credential-looking names from the kiro-cli process and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `KIRO_API_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included. An allowlisted `KIRO_API_KEY` makes the agent run as that key's identity instead of the signed-in account, and marotte logs a warning at start when it does.
 
 Keep credentials out of the container environment anyway. Forge credentials belong in the git panel's Sources tab, which keeps them in marotte's own store. If a variable only looks like a credential, name it:
 
@@ -116,6 +99,18 @@ environment:
 ## Uploads
 
 Files you attach to a message, by drag and drop, paste or the `+` menu, are written to `/uploads`, and the agent reads them from there. The image creates the folder itself, so attaching works with no volume. Without a volume, though, the files are lost when the container is recreated, and a saved draft that still lists them points at files that no longer exist. Mount a volume, owned by the same user as the other mounts, to keep them. The file browser shows `/uploads`, so you can rename and delete files there.
+
+## What `/config` holds
+
+`/config` is the one volume marotte keeps its state in. Back it up as a whole.
+
+| Path | Contents |
+| --- | --- |
+| `/config/chats/` | Chat history, one folder per chat |
+| `/config/home/` | The container's home folder: sign-ins, SSH keys, git settings, build caches |
+| `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
+| `/config/tools/` | Installed tools. `bin/` is on `PATH` |
+| `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
 
 ## OS packages
 

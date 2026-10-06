@@ -22,17 +22,14 @@ const (
 )
 
 const (
-	// diagnosticsMaxBytes caps the report returned to the browser. stdout past
-	// this is dropped and the report is marked "[truncated]".
-	diagnosticsMaxBytes = 256 * 1024 // 256 KiB
+	// diagnosticsMaxBytes caps the report returned to the browser; the rest is "[truncated]".
+	diagnosticsMaxBytes = 256 * 1024
 
-	// cliStderrCap bounds a hostile child's stderr in memory. stderr is never
-	// returned, and its log line carries only logsafe.Field's MaxFieldBytes prefix.
-	cliStderrCap = 32 * 1024 // 32 KiB
+	// cliStderrCap bounds stderr capture in RunStdoutCapped (logged, never returned).
+	cliStderrCap = 32 * 1024
 
-	// settingsListMaxBytes caps the `settings list` document. The whole object is
-	// a few hundred bytes, so this is the hostile-output bound, not a budget.
-	settingsListMaxBytes = 64 * 1024 // 64 KiB
+	// settingsListMaxBytes is the hostile-output bound on the `settings list` document.
+	settingsListMaxBytes = 64 * 1024
 )
 
 // CLIRunner abstracts subprocess execution for kiro-cli commands.
@@ -45,23 +42,13 @@ type CLIRunner interface {
 	RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error)
 }
 
-// execCLIRunner is the production CLIRunner that shells out to the kiro-cli
-// binary cliPath resolves to.
-//
-// The path is a FUNCTION, not a string: the install manager selects the active
-// version after the listener binds and can switch it later, so a value captured
-// at construction would pin every shell-out to whatever was installed first —
-// and on a first boot that is the empty string.
+// execCLIRunner is the production CLIRunner. The path is a FUNCTION: the install manager
+// selects and can switch the active version after construction.
 type execCLIRunner struct {
 	cliPath func() string
-	// env is the environment overlay for a kiro-cli spawn — pinstall's
-	// Manager.PathEnv, which leads PATH with the active version directory.
-	//
-	// Load-bearing rather than symmetric with cliPath: kiro-cli is a multi-call
-	// binary and `settings` re-execs a SIBLING (kiro-cli-chat) resolved by a plain
-	// PATH search, so the absolute path alone does not reach it. Measured on 2.20.2,
-	// `settings list` exits 1 with "No such file or directory" when the version
-	// directory does not lead PATH. OPTIONAL: nil inherits the parent environment.
+	// env is the spawn's environment overlay (pinstall's Manager.PathEnv). Load-bearing:
+	// `settings` re-execs kiro-cli-chat by a PATH search, which fails unless the version
+	// directory leads PATH. nil inherits the parent environment.
 	env func() []string
 }
 
@@ -69,8 +56,7 @@ type execCLIRunner struct {
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	if r.env != nil {
-		// The overlay lands LAST: os/exec keeps the last value for a repeated key,
-		// so the container's own PATH would otherwise win the search.
+		// The overlay lands LAST: os/exec keeps the last value for a repeated key.
 		cmd.Env = append(os.Environ(), r.env()...)
 	}
 	return cmd
@@ -109,11 +95,8 @@ func defaultCLITimeouts() cliTimeouts {
 	}
 }
 
-// settingKind distinguishes boolean-only from numeric-only kiro-cli settings.
-//
-// No key in allowedKiroSettings currently declares settingInt. The kind and its
-// arm in safeKiroSettingValueFor stay anyway: they are the endpoint's
-// value-validation vocabulary, so the next numeric setting arrives already bounded.
+// settingKind distinguishes boolean-only from numeric-only kiro-cli settings. settingInt has
+// no user yet; it stays as the validation vocabulary for the next numeric setting.
 type settingKind int
 
 const (
@@ -130,23 +113,16 @@ type settingMeta struct {
 	Kind settingKind
 }
 
-// allowedKiroSettings bounds what /api/kiro-settings can read and write.
-//
-// A key belongs here only if it has a kiro-cli-SIDE role. KAS's ACP path reads no
-// kiro-cli setting at all — measured on the stock 2.19.2 bundle, whose only
-// `chat.*` occurrences are `@see kiro-cli:` cross-references in the settings schema
-// rather than reads. So a write here reaches the TUI, the index builder and
-// marotte's own suppression logic, and can never reach a running marotte chat.
-// Anything that must change a chat goes through `internal/kascap`'s table instead.
+// allowedKiroSettings bounds what /api/kiro-settings can read and write. Only keys with a
+// kiro-cli-SIDE role belong: KAS's ACP path reads no kiro-cli setting, so a chat change
+// goes through internal/kascap's table instead.
 var allowedKiroSettings = map[string]settingMeta{
 	"chat.enableKnowledge":   {Kind: settingBool},
 	"chat.enableSubagent":    {Kind: settingBool},
 	"chat.enablePromptHints": {Kind: settingBool},
 	"hooks.showStatus":       {Kind: settingBool},
 	"telemetry.enabled":      {Kind: settingBool},
-	// cleanup.periodDays is deliberately NOT here: marotte pins it to 0/never at
-	// boot and owns chat retention itself, so exposing it would let the UI
-	// re-enable kiro-cli's competing purge.
+	// cleanup.periodDays is NOT here: marotte owns chat retention and pins kiro-cli's purge off.
 	"chat.disableInheritingDefaultResources": {Kind: settingBool},
 }
 
@@ -190,16 +166,11 @@ func parseKiroSettingOutput(s string) string {
 	return s
 }
 
-// settingsListArgs reads EVERY kiro-cli setting in ONE invocation: measured on
-// 2.20.2 with the version directory leading PATH, it exits 0 and writes one flat
-// JSON object of every key, dotted names with native JSON types. The per-key form
-// cost one spawn per key, three of them concurrently on the General panel.
+// settingsListArgs reads every kiro-cli setting in ONE invocation (one flat JSON object).
 var settingsListArgs = []string{"settings", "list", "--format", "json"}
 
-// parseKiroSettingsList maps the settings-list document to the string values the
-// per-key form answers, keeping only the allowlisted keys. One spelling for two
-// doors: values are native JSON here and a scope-suffixed string in the per-key
-// form, and the client compares against "true"/"false" either way.
+// parseKiroSettingsList maps the settings-list document to the string values the per-key
+// form answers, keeping only allowlisted keys.
 func parseKiroSettingsList(raw []byte) (map[string]string, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -229,9 +200,8 @@ func kiroSettingValueText(v json.RawMessage) string {
 // Named so unknownKiroSettingsQuery and the reader cannot disagree about it.
 const kiroSettingsKeysParam = "keys"
 
-// unknownKiroSettingsQuery reports whether q carries a parameter this endpoint
-// does not read. An ignored parameter is indistinguishable from no selection,
-// which here means "answer the whole allowlist" — so ignoring one fails OPEN.
+// unknownKiroSettingsQuery reports whether q carries a parameter this endpoint does not
+// read: ignoring one would fail OPEN to "the whole allowlist".
 func unknownKiroSettingsQuery(q url.Values) bool {
 	for name := range q {
 		if name != kiroSettingsKeysParam {
@@ -241,10 +211,8 @@ func unknownKiroSettingsQuery(q url.Values) bool {
 	return false
 }
 
-// requestedKiroSettings resolves the ?keys= parameter to the allowlisted keys to
-// answer, sorted so one request over one set always answers the same document. An
-// absent parameter means every allowlisted key, and the one spawn behind it costs
-// the same either way. Unknown names are dropped rather than answered.
+// requestedKiroSettings resolves ?keys= to the allowlisted keys, sorted; absent means every
+// key, and unknown names are dropped.
 func requestedKiroSettings(spec string) []string {
 	if strings.TrimSpace(spec) == "" {
 		return slices.Sorted(maps.Keys(allowedKiroSettings))

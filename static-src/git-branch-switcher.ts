@@ -1,22 +1,6 @@
-// ---------------------------------------------------------------------------
-// Per-repo branch switcher: small popover anchored to a repo's
-// section header that lists the local branches and offers a
-// "Create new branch" action. Click → checkout, type a new name +
-// Enter → checkout -b.
-//
-// Used by git-changes-tab.ts: each repo section's branch chip is
-// wired to openBranchSwitcher(repo, anchorEl). The popover is a
-// singleton (only one open at a time); reopening swaps the anchor.
-//
-// The floating-panel mechanics are @cplieger/ui-primitives': createPopover
-// owns anchored placement (flip + clamp, min-width matched to the chip),
-// LIVE anchor tracking on scroll/resize/visualViewport (the old hand-rolled
-// version positioned once and detached from its anchor when the git pane
-// scrolled), outside-click + Escape dismissal, aria-expanded on the anchor,
-// and focus return to the chip. rovingFocus supplies the WAI-ARIA menu
-// keyboard contract over the branch rows. This module keeps only what is
-// marotte's: the panel content, the branches load, and the checkout actions.
-// ---------------------------------------------------------------------------
+// Per-repo branch switcher: a singleton popover on a repo section's branch chip listing local branches, with a
+// "Create new branch" form. Placement, anchor tracking, dismissal, aria-expanded and focus return are createPopover's;
+// rovingFocus supplies the menu keyboard contract. This module keeps the content, the load and the checkout actions.
 
 import { apiGet } from "./api-client.js";
 import { checkoutBranch, suggestBranchName } from "./actions/git-branch.js";
@@ -44,26 +28,22 @@ let popoverNav: RovingFocusController | null = null;
 let activeAnchor: HTMLElement | null = null;
 let branchController: AbortController | null = null;
 let popoverBindingCleanups: (() => void)[] = [];
-/** Per-branch-row checkout-action loading-state unbinds, keyed by
- *  branch name. Cleared via reconcile.onRemove during filter typing
- *  and en masse via closePopover(). */
+/** Per-row checkout loading-state unbinds by branch, cleared by reconcile.onRemove and en masse by closePopover(). */
 const rowUnbinds = new Map<string, () => void>();
 registerCleanup(() => branchController?.abort());
 
-/** Wrap an input in a field carrying a leading glyph.
- *
- *  The icon is a sibling of the input rather than a background image, so it
- *  inherits `currentColor` and stays a real node the CSP allows; the input
- *  reserves the room for it (`.git-branch-field > .tool-form-input` in
- *  22-git-multirepo.css). Both fields in this popover use it, which is what
- *  makes the two rows read as the same kind of control at the same height. */
+/**
+ * The icon is a sibling node rather than a background image, so it inherits `currentColor` and the CSP allows it;
+ * the input reserves its room in CSS. Both fields use it so the two rows read as one kind of control.
+ */
 function branchField(glyph: string, input: HTMLInputElement): HTMLDivElement {
   return el("div", { className: "git-branch-field" }, iconEl(glyph), input) as HTMLDivElement;
 }
 
-/** Open the branch switcher anchored to anchorEl for repo. Idempotent
- *  on the same anchor (re-clicks toggle close); on a different anchor
- *  the previous popover closes and a new one opens. */
+/**
+ * Open the branch switcher anchored to anchorEl for repo. A re-click on the same anchor closes it; another anchor
+ * closes the previous popover and opens a new one.
+ */
 export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   if (openPopover !== null && activeAnchor === anchorEl) {
     closePopover();
@@ -72,12 +52,8 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   closePopover();
   activeAnchor = anchorEl;
 
-  // No role on the panel itself. It used to carry role="menu", which is a
-  // CRITICAL aria-required-children violation (axe, measured): a menu may only
-  // contain menuitem/group children and this panel holds a filter input and a
-  // create form. The menu is the branch LIST one level in, so the role moves
-  // there — onto the element whose children really are menuitems — and the
-  // panel stays a plain container the popover library manages aria-expanded for.
+  // No role here: role="menu" on a panel holding an input and a form is an axe aria-required-children violation. The
+  // menu role sits on the branch list, whose children are menuitems.
   const pop = el("div", { className: "git-branch-popover" }) as HTMLDivElement;
   const filter = el("input", {
     type: "search",
@@ -91,13 +67,8 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     role: "menu",
     "aria-label": "Branches",
   }) as HTMLDivElement;
-  // Loading / empty / failure text is a STATUS LINE beside the menu, never a
-  // child of it. A role="menu" holding a bare text node is the same
-  // aria-required-children violation the panel used to carry, and it would fire
-  // on every open, because "Loading…" is the first thing every open shows. An
-  // EMPTY menu is fine (measured with axe), so the list simply has no children
-  // until the rows arrive. role="status" also means the reader is TOLD the
-  // outcome instead of having to notice an empty box.
+  // Loading, empty and failure text is a status line beside the menu, never a child: a text node inside role="menu" is
+  // the same violation, firing on every open. An empty menu is fine (measured with axe).
   const status = el(
     "div",
     { className: "git-branch-popover-status", role: "status" },
@@ -110,9 +81,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     autocomplete: "off",
     "aria-label": "New branch name",
   }) as HTMLInputElement;
-  // AI branch-name suggestion: fills the create input from the repo's
-  // work in progress; the user edits, then presses Enter or the send button
-  // to accept. Same pattern as the commit box's "AI message" button.
+  // Fills the create input from the repo's work in progress; the user edits, then accepts.
   const suggestBtn = el(
     "button",
     {
@@ -127,31 +96,22 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     void withAsyncFeedback(suggestBtn, async () => {
       const o = await suggestBranchName.dispatch({ repo }).outcome;
       if (o.status !== "success") {
-        // Reject so the feedback helper shows the ✗ glyph, carrying the
-        // real failure instead of a synthetic message (the framework
-        // already toasted it).
+        // Reject so the feedback helper shows ✗ with the real failure (the framework already toasted it).
         throw new Error(o.status === "error" ? o.error.message : "suggestion cancelled");
       }
       const res = o.value;
-      // Only fill while this popover is still the open one, and never
-      // wipe a name the user already typed past the suggestion.
+      // Only while this popover is still the open one, and never over a name the user typed.
       if (res.output !== undefined && res.output !== "" && openPopover === pop) {
         createInput.value = res.output;
         createInput.focus();
-        // Select the whole name and scroll back to its head. Both halves earn
-        // their line: a plain focus() leaves the caret at the end, so a name
-        // longer than the field shows its TAIL — the half a reader does not
-        // need — and the selection says the value is a suggestion, so typing
-        // replaces it rather than appending to it.
+        // Select the whole name and scroll to its head: a plain focus() leaves a long name showing its tail, and the
+        // selection marks it a suggestion that typing replaces.
         createInput.setSelectionRange(0, res.output.length);
         createInput.scrollLeft = 0;
       }
     });
   });
-  // The submit control. Enter in the input already submits the form, but a
-  // suggestion lands the caret in that input and the next thing a reader looks
-  // for is the button that accepts it — a row whose only visible action
-  // GENERATES a name reads as though there is nothing left to press.
+  // Enter already submits, but after a suggestion a reader looks for a button that accepts it.
   const createBtn = el(
     "button",
     {
@@ -177,20 +137,17 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     margin: 8,
     matchAnchorWidth: 340,
     haspopup: "menu",
-    // Focus goes back to the chip on any close path; the library guards
-    // against a detached anchor (git tab re-rendered mid-request).
+    // The library guards against a detached anchor (git tab re-rendered mid-request).
     returnFocus: anchorEl,
     onClose: cleanupSwitcher,
   });
   openPopover = pop;
   popoverCtl = ctl;
-  // Menu keyboard contract over the rows. Items are queried live, so rows
-  // appearing after the async load (or a filter re-render) just work;
-  // refresh() after each reconcile restores the single-Tab-stop invariant.
+  // Items are queried live, so rows arriving later just work; refresh() after each reconcile restores the
+  // single-Tab-stop invariant.
   popoverNav = rovingFocus(pop, ".git-branch-popover-row");
   ctl.show();
 
-  // Load branches.
   branchController?.abort();
   branchController = new AbortController();
   void apiGet<BranchesResponse>(
@@ -210,11 +167,8 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           rowUnbinds.delete(key);
         }
       };
-      // ONE reconcile for both outcomes. The empty case used to need a second
-      // call with a stub spec plus a placeholder-stripping sweep, because the
-      // "No branches." text went INTO the list and `textContent =` wiped the
-      // keyed rows out from under reconcile's bookkeeping. With the text in the
-      // status line, mount/update simply never run on an empty list.
+      // One reconcile for both outcomes: the empty-state text lives in the status line, so `textContent =` never wipes
+      // keyed rows out from under reconcile.
       reconcile(list, filtered, {
         key: (b: BranchEntry) => b.name,
         mount: (b: BranchEntry) => {
@@ -237,8 +191,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           return row;
         },
         update: (row, b: BranchEntry) => {
-          // current-flag may flip when the active branch changes mid-popover
-          // (e.g. the user picks a different one and the popover stays open).
+          // The current flag may flip while the popover stays open.
           row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
           if (b.current) {
             row.setAttribute("data-tooltip", "Current branch");
@@ -260,13 +213,12 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     });
     if (openPopover === pop) {
       popoverNav?.refresh();
-      // Content just grew from "Loading…" to the row list — re-clamp.
+      // Content grew from "Loading…" to the rows: re-clamp.
       popoverCtl?.reposition();
     }
     filter.focus();
   });
 
-  // Create-new submission.
   createForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const name = createInput.value.trim();
@@ -279,17 +231,15 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createBtn));
 }
 
-/** Close the open switcher (if any) through the popover controller; its
- *  onClose runs cleanupSwitcher below. Outside-click and Escape arrive here
- *  too, via the controller's own dismissal wiring. */
+/** Outside-click and Escape arrive here too, via the controller's dismissal wiring. */
 function closePopover(): void {
   popoverCtl?.hide();
 }
 
-/** onClose cleanup: unbind loading states, abort the in-flight branches
- *  load, and drop the panel. Focus return + aria-expanded are the popover
- *  controller's job. Removing the panel immediately also ends the (unskinned)
- *  leave fade — matching the old instant removal. */
+/**
+ * Unbind loading states, abort the branches load, drop the panel. Focus return and aria-expanded are the popover
+ * controller's.
+ */
 function cleanupSwitcher(): void {
   if (openPopover === null) {
     return;
@@ -313,9 +263,8 @@ function cleanupSwitcher(): void {
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
-  // Capture anchor + optimistic state in the closure (not in action args)
-  // so structuredClone-on-retry never sees the DOM element. The action
-  // is purely data-driven; UI mutation is the caller's responsibility.
+  // Anchor and optimistic state live in the closure, not the action args, so structuredClone-on-retry never sees a
+  // DOM element.
   const anchor = activeAnchor;
   const prevText = anchor?.textContent ?? "";
   if (anchor !== null) {
@@ -332,7 +281,6 @@ async function doCheckout(repo: string, branch: string, create: boolean): Promis
           });
       },
       onError: () => {
-        // Restore the previous label if the anchor is still in the DOM.
         if (anchor?.isConnected === true) {
           anchor.textContent = prevText;
         }

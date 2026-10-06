@@ -1,18 +1,8 @@
 package command
 
-// fork_chat and resume_session RETURN the chat they created.
-//
-// Both used to take the new chat's id on the envelope and answer with something
-// that did not name it — fork with `{outcome, session_id}`, resume with `{ok}`.
-// That was sufficient only while the client chose the id. Once the server mints
-// one, an answer that omits it leaves the caller holding a session it adopted or a
-// tangent it forked with nothing to open, so the return is the conversion rather
-// than a convenience on top of it.
-//
-// The op ledger reaches both for a reason each has separately: a retried resume
-// would bind a SECOND chat to one KAS session (two chats claiming one transcript,
-// two entries in the reaper's keep-list for one chain), and a retried fork would
-// ask KAS to fork again, creating a session nothing binds.
+// fork_chat and resume_session RETURN the chat they created, since the server mints its id. Both
+// use the op ledger: a retried resume would bind a second chat to one KAS session, and a retried
+// fork would fork a session nothing binds.
 
 import (
 	"encoding/json"
@@ -119,8 +109,6 @@ func TestCmdForkChat_MintsAndReturnsTheChat(t *testing.T) {
 	if c.ACPSessionID != "sess_tangent" {
 		t.Errorf("acp_session_id = %q, want the forked sess_tangent", c.ACPSessionID)
 	}
-	// The outcome still travels beside the chat: it is what lets a report about a
-	// vague answer say whether the context was forked or re-narrated.
 	m, _ := body.(map[string]any)
 	if m["outcome"] != marotte.ForkOutcomeForked {
 		t.Errorf("outcome = %v, want %q", m["outcome"], marotte.ForkOutcomeForked)
@@ -169,7 +157,6 @@ func TestCmdForkChat_RepeatOpDoesNotForkTwice(t *testing.T) {
 func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
-	// No bridge can be opened, so the tangent is created unbound.
 	host := newForkHost(store, nil, "c-parent")
 	ops := newTestMembership(t, host)
 

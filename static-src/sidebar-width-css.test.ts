@@ -1,5 +1,5 @@
-// Measured against the assembled stylesheet at real viewport sizes, because the
-// clamp is resolved by the engine, not by script.
+// Measured against the assembled stylesheet at real viewport sizes, because the clamp is resolved
+// by the engine, not by script.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
@@ -32,8 +32,8 @@ interface Shell {
   rail: HTMLElement;
 }
 
-/** The production shell, cut to what the readers and the rail's container query
- *  touch. The rail carries a marker because `.turn-rail:empty` hides it. */
+/** The production shell, cut to what the readers and the rail's container query touch. The rail
+ *  carries a marker because `.turn-rail:empty` hides it. */
 function mountShell(): Shell {
   const app = document.createElement("div");
   app.id = "app";
@@ -142,9 +142,9 @@ describe("the clamp renders the preference, bounded by the window", () => {
     }
   });
 
-  // A fractional root font size is what a non-default zoom or text size produces.
-  // 16.2px at 1280 is a combination where the max expression without its `- 1px`
-  // leaves the chat area a layout unit under 57.5rem and the rail hidden.
+  // A fractional root font size is what a non-default zoom or text size produces. 16.2px at 1280 is
+  // a combination where the max expression without its `- 1px` leaves the chat area a layout unit
+  // under 57.5rem and the rail hidden.
   it.each([
     ["16.2px", 1280],
     ["15.37px", 1310],

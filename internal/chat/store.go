@@ -39,7 +39,6 @@ var (
 )
 
 // broadcaster is the SSE fan-out this store emits chat lifecycle events through.
-// *agent.Runtime satisfies it.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
@@ -76,8 +75,9 @@ type Store struct {
 	hasOpenTab  func(chatID marotte.ChatID) bool
 	live        func(chatID marotte.ChatID) bool
 	openTurns   func(chatID marotte.ChatID) []OpenTurnTail
-	tombstone   map[marotte.ChatID]time.Time
+	tombstone   map[marotte.ChatID]tombstone
 	archive     *archive.Service
+	dequeued    dequeues
 	locks       sync.Map
 	logs        sync.Map
 	dir         string
@@ -91,20 +91,23 @@ type Store struct {
 // than any real prompt roundtrip, short enough not to blacklist a recycled id.
 const tombstoneTTL = 10 * time.Minute
 
-// NewStore opens (or creates) the chat directory at dir. Returns an error if the
-// directory cannot be created — callers must fail startup rather than return a
-// store whose every op fails. A mode that cannot be ENFORCED is not one of those
-// errors: it warns and continues, because the container coming up is the
-// operator's only way in to repair /config (invariant 6).
+// tombstone keeps the display name a deleted chat had, because the record goes before
+// its bridge's teardown and a notice that bridge raises meanwhile still names it.
+type tombstone struct {
+	at   time.Time
+	name string
+}
+
+// NewStore opens (or creates) the chat directory at dir; an error means startup must fail. A mode
+// that cannot be enforced only warns, because the running container is the operator's way in to
+// repair /config.
 func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return nil, fmt.Errorf("chat store: mkdir %s: %w", dir, err)
 	}
-	// MkdirAll applies its mode only on CREATION, and even then the mode is a
-	// REQUEST: a setgid parent adds its bit, and an inheritable group-write ACL
-	// stores 0770 for a 0o700 mkdir. EnforceDir re-stats the descriptor it
-	// chmod'ed, so the mode logged below is a fact, and it refuses a symlink at
-	// the name instead of chmod'ing through it.
+	// MkdirAll's mode is only a request (setgid parents, inheritable ACLs). EnforceDir re-stats the
+	// descriptor it chmod'ed, so the mode logged below is what the filesystem stored, and it
+	// refuses a symlink at the name.
 	stored, err := filemode.EnforceDir(dir, dirMode)
 	mode := stored.String()
 	if err != nil {
@@ -114,13 +117,11 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		// breadcrumb must not print a zero FileMode as an observation.
 		mode = "unverified"
 	}
-	// The mode logged is the one the FILESYSTEM stored, read back from the handle,
-	// not the constant asked for.
 	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
 		fileCap:   resolveChatFileCap(),
-		tombstone: make(map[marotte.ChatID]time.Time),
+		tombstone: make(map[marotte.ChatID]tombstone),
 		versions:  &subject.Versions{},
 	}
 	// Options land AFTER the derivation so WithChatFileCap overrides it, and the
@@ -242,18 +243,12 @@ func (s *Store) restStamp(kind subject.Kind, ref, version string) *marotte.Subje
 	return stamp
 }
 
-// Mutate is the header's mutation primitive: load → apply → save → broadcast. The
-// mutator runs under the per-chat mutex on the current header, or on a fresh
-// zero-value chat when it does not exist; returning false aborts without side
-// effects. A write to a recently deleted id is refused with ErrTombstoned.
+// Mutate is the header's mutation primitive: load → apply → save → broadcast, under the per-chat
+// mutex, on the current header or a fresh zero-value chat. Returning false aborts without side
+// effects; a write to a recently deleted id is refused with ErrTombstoned.
 //
-// A mutator must not overwrite c.ID — that retargets the save to another directory
-// under the wrong per-chat mutex, so Mutate refuses it. c.CreatedAt is snapshotted
-// and restored, so a zero-value overwrite cannot corrupt the sidebar sort order.
-//
-// The returned version is the `chat:<id>` version this save minted, bumped under
-// the per-chat mutex so a frame the caller broadcasts next can carry it. A mutator
-// that declines returns "" and moves no counter.
+// A mutator must not overwrite c.ID (refused); c.CreatedAt is restored. The returned version is the
+// `chat:<id>` version this save minted, or "" when the mutator declined.
 func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -272,20 +267,27 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 		return "", err
 	}
 	if !exists {
-		// Delete-during-turn race: a concurrent Delete may have removed the
-		// directory while a late write is about to resurrect it as a ghost row.
-		// The refusal is NAMED rather than reported as success, because a caller
-		// that cannot tell it from a persisted write spawns a bridge and spends
-		// credits for output discarded at persist.
+		// A late write must not resurrect a deleted chat as a ghost row. The refusal is named
+		// because a caller reading it as success would spawn a bridge for output discarded at
+		// persist.
 		if s.isTombstoned(chatID) {
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
 			return "", ErrTombstoned
 		}
 		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
+	stripped := exists && s.dequeued.strip(chatID, c)
 	originalCreatedAt := c.CreatedAt
 	if !mutate(c, exists) {
-		return "", nil
+		if !stripped {
+			return "", nil
+		}
+		// The mutator declined and may have touched c, so the pending removal is
+		// written alone from a fresh read.
+		if c, err = s.load(ctx, chatID); err != nil {
+			return "", err
+		}
+		s.dequeued.strip(chatID, c)
 	}
 	// A reassigned id would let s.save write under a mismatched per-chat mutex.
 	if c.ID != string(chatID) {
@@ -299,6 +301,9 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	}
 	if err := s.save(ctx, chatID, c); err != nil {
 		return "", err
+	}
+	if stripped {
+		s.dequeued.settle(chatID)
 	}
 	// The cross-chat filter indexes the title, so a header write invalidates it.
 	s.index.drop(chatID)
@@ -321,12 +326,9 @@ func validateChatUTF8(c *marotte.Chat) error {
 	return nil
 }
 
-// broadcastMutation mints the `chats` version for a successful Mutate and emits the
-// post-save lifecycle event stamped with it: chat_created for a freshly created
-// chat, chat_updated otherwise. The header list is a live projection of every
-// saved Mutate (title, updated_at and sort order move on each), which is why every
-// save bumps `chats` and not only a create. The bump happens with or without a
-// broadcaster, so a digest never reads unchanged for a list that moved.
+// broadcastMutation mints the `chats` version for a successful Mutate and emits chat_created or
+// chat_updated stamped with it. Every save bumps `chats`, broadcaster or not, because title,
+// updated_at and sort order move on each.
 func (s *Store) broadcastMutation(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat, exists bool) {
 	chatsVersion := s.versions.BumpCounter(subject.KindChats, "")
 	if s.broadcast == nil {
@@ -341,13 +343,9 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID marotte.ChatID, c 
 	s.broadcast.Broadcast(ctx, frame)
 }
 
-// SetDraft persists the chat's unsent composer text. Deliberately not a Mutate
-// call: it must leave UpdatedAt alone (the retention purge ages a chat from it) and
-// it broadcasts nothing. Silent on a missing chat, because a chat only becomes a
-// server record on its first prompt.
-//
-// The returned state is nil when nothing was written and the chat's WHOLE composer
-// state otherwise, so the caller can broadcast draft_changed without a second read.
+// SetDraft persists the chat's unsent composer text. Not a Mutate: it leaves UpdatedAt alone
+// (retention ages from it) and broadcasts nothing; a missing chat is a no-op. Returns nil when
+// nothing was written, else the whole composer state for the draft_changed broadcast.
 func (s *Store) SetDraft(ctx context.Context, chatID marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -430,10 +428,8 @@ func (s *Store) setComposer(ctx context.Context, chatID marotte.ChatID, what str
 		return nil, err
 	}
 	state := c.Composer()
-	// The composer is part of the `chat` projection: a draft typed on one device
-	// is a change every other device must see, so the write bumps `chat` even
-	// though it bypasses save. The version rides the returned state, so the
-	// broadcaster's draft_changed stamp comes from this critical section.
+	// The composer is part of the `chat` projection, so the write bumps `chat` even though it
+	// bypasses save; the version rides the returned state.
 	state.Version = s.versions.BumpCounter(subject.KindChat, string(chatID))
 	return &state, nil
 }

@@ -1,28 +1,14 @@
-// ---------------------------------------------------------------------------
-// Canonical icon -> DOM helper for the whole client. Every module that turns
-// an ICON_* / FILE_ICONS SVG string into a node goes through this one
-// function; icons.ts and tabs.ts no longer carry their own copies.
-//
-// Each unique SVG string is parsed once into a detached <template> and the
-// resulting element is cached; callers get a fresh clone. Parsing via the
-// HTML template (rather than DOMParser with "image/svg+xml") is what places
-// the <svg> in the SVG namespace even though our icon strings carry no
-// explicit xmlns -- an XML parse would leave it in the null namespace and the
-// glyph would never paint. innerHTML is safe here: the inputs are static
-// compile-time constants, never user input.
-// ---------------------------------------------------------------------------
+// The one icon string → DOM helper. Each SVG string is parsed once into a <template> and cached; callers get clones.
+// The HTML template puts <svg> in the SVG namespace though the strings carry no xmlns (an XML parse would not paint).
+// innerHTML is safe: the inputs are compile-time constants.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// Lazily created on first call so importing this module never touches the
-// DOM (keeps it safe to import from node-environment unit tests that never
-// render an icon).
+// Lazy, so importing this module never touches the DOM (node-environment tests).
 let iconTemplate: HTMLTemplateElement | null = null;
 const iconCache = new Map<string, Element>();
 
-/** Parse an SVG string once via <template>, cache it, and return a fresh
- *  clone on each call. Falls back to an empty <svg> when the string has no
- *  element root so callers never have to guard. */
+/** Parse an SVG string once, cache it, and return a fresh clone. An input with no element root yields an empty <svg>. */
 export function iconEl(svg: string): Element {
   let cached = iconCache.get(svg);
   if (cached === undefined) {

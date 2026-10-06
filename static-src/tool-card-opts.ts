@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolStatus, ToolLocation, ToolDiff, TextSpan, ToolCall } from "./types.js";
-import type { ToolDenial, ToolDisclosed } from "./types.js";
+import type { ToolDenial, ToolDisclosed, ToolInteraction, ToolOffload } from "./types.js";
 
 export interface BuildToolCardOpts {
   id: string;
@@ -42,11 +42,19 @@ export interface BuildToolCardOpts {
   disclosed?: ToolDisclosed | undefined;
   /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
   denial?: ToolDenial | undefined;
+  /** Where KAS wrote the full output when it was too large for the model;
+   *  `output` is then its preview. */
+  offload?: ToolOffload | undefined;
+  /** How the call's approval or question was answered. */
+  interaction?: ToolInteraction | undefined;
   /** The tool RAN CORRECTLY AND REFUSED — the fifth card outcome, and a different
    *  fact from `status`, which stays `completed` because the call is over. The
    *  REASON is not here: it is the tool's own `output`, which a declined card
    *  opens without a click. */
   declined?: boolean;
+  /** The workspace-relative file a hook card's hook is defined in; absent when
+   *  KAS named none inside the workspace, which leaves the card without a link. */
+  sourcePath?: string;
   /** `input`, `output` and `diffs` above are a windowed PREVIEW and the whole of
    *  them is at `GET /api/chats/{id}/tools/{id}`. Set only by the transcript read
    *  path — a card built from the stream holds every byte already. */
@@ -113,8 +121,17 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   if (tc.denial !== undefined) {
     opts.denial = tc.denial;
   }
+  if (tc.offload !== undefined) {
+    opts.offload = tc.offload;
+  }
+  if (tc.interaction !== undefined) {
+    opts.interaction = tc.interaction;
+  }
   if (tc.declined === true) {
     opts.declined = true;
+  }
+  if (tc.source_path !== undefined && tc.source_path !== "") {
+    opts.sourcePath = tc.source_path;
   }
   return opts;
 }

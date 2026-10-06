@@ -1,20 +1,7 @@
-// ---------------------------------------------------------------------------
-// Tests for fundamentals/subagent-block.ts — the delegated-work boxes.
-//
-// Five subjects. The header identity glyph: while active the slot shows the
-// spinner, once settled the SVG icon — the shared agent hexagon by default, or
-// the per-known-subagent glyph installed via setIcon (roles.ts iconForSubagent
-// keys it off the invoke_sub_agent input name). The two SHAPES: a card discloses
-// nothing, takes its tail from outside, and its head is the door to the delegate's
-// page; a container discloses its stages. The card's HEAD AS A CONTROL: what
-// activating it does, what a modified click does instead, and that nothing
-// interactive sits inside it. The container's WITHDRAWAL: a body with nothing in it
-// loses the control. And what a screen reader is told about any of them.
-//
-// The tail's CONTENT is not tested here any more, because this file no longer
-// derives it: `subagent-tail.test.ts` owns the projection and this one owns the
-// sink.
-// ---------------------------------------------------------------------------
+// The delegated-work boxes: the header identity glyph (spinner while active, then the agent icon
+// or a per-subagent glyph via setIcon), the two shapes (a card's head is the door to the
+// delegate's page; a container discloses its stages), the head as a control, the container's
+// withdrawal when empty, and accessible names. The tail's content is subagent-tail.test.ts's.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
@@ -26,10 +13,8 @@ vi.mock("../icons.js", async (importOriginal) => ({
   ICON_TAB_AGENT: '<svg data-icon="agent-hexagon"></svg>',
 }));
 
-// scroll.ts is a self-initialising singleton over a real `#messages`; the canonical
-// mock is what every other suite in this graph uses, and its compensation helpers run
-// their mutation, so a fold still reaches the DOM. It is also what makes the
-// compensation itself observable — see "the compensator wraps both height changes".
+// scroll.ts is a singleton over a real `#messages`; the canonical mock runs its compensation
+// helpers' mutation, which also makes the compensation observable.
 vi.mock("../scroll.js", () =>
   import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
 );
@@ -77,12 +62,9 @@ const opener = (open: () => void = () => undefined): { href: string; open: () =>
   open,
 });
 
-/** A click carrying modifiers or a non-primary button, which `HTMLElement.click()`
- *  cannot express. Returns whether the head cancelled it.
- *
- *  The trailing guard is what keeps a NOT-cancelled click from navigating the test
- *  page — an anchor follows its href even detached. Registered after the head's own
- *  listener, so it reads that listener's verdict before stopping the default. */
+/** A click with modifiers or a non-primary button, which `HTMLElement.click()` cannot express;
+ *  returns whether the head cancelled it. The trailing guard, registered after the head's
+ *  listener, stops a not-cancelled click navigating the test page. */
 function clickWith(head: HTMLElement, init: MouseEventInit): boolean {
   let prevented = false;
   const guard = (e: Event): void => {
@@ -161,7 +143,7 @@ describe("buildSubagentCard icon", () => {
   });
 });
 
-// A CARD HAS NO BODY, which is the whole of this change: the transcript renders
+// A CARD HAS NO BODY: the transcript renders
 // none of a delegate's output, so there is nothing here to disclose and a toggle
 // that toggles nothing is worse than no toggle.
 describe("a delegate's card is not a disclosure", () => {
@@ -195,8 +177,7 @@ describe("a delegate's card is not a disclosure", () => {
     clickWith(headerOf(sa.root), {});
     expect(opened).toHaveLength(1);
     expect(sa.root.classList.contains("collapsed")).toBe(false);
-    // Nor on a failure, which used to open the box to show the reason. The reason
-    // is on the delegate's page now, and the head is the way to it.
+    // Nor on a failure: the reason is on the delegate's page, and the head is the way to it.
     sa.setStatus("failed");
     expect(sa.root.classList.contains("collapsed")).toBe(false);
   });
@@ -209,10 +190,7 @@ describe("a delegate's card is not a disclosure", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The card's HEAD is the door to the delegate's page. One `it` per claim, so a
-// failure names one thing.
-// ---------------------------------------------------------------------------
+// The card's HEAD is the door to the delegate's page; one `it` per claim.
 describe("the card's head is the door to the delegate's page", () => {
   /** A card with an opener, plus the calls its head made. */
   function door(): { head: HTMLElement; opened: number[]; root: HTMLElement } {
@@ -345,10 +323,7 @@ describe("the pipeline container", () => {
   });
 
   it("renders expanded while it is the newest box, and folds when it is superseded", async () => {
-    // The rule, at box scope. The expanded state goes to the box the reader is
-    // currently being shown; the next element posted after it is what earns the fold.
-    // (What this replaced asserted the inverse — born collapsed, no auto-toggle in
-    // either direction — and called the newest-is-open reading "exactly backwards".)
+    // The box being shown is expanded; the next element posted after it earns the fold.
     const box = buildSubagentContainer("pipeline", "completed");
     await populate(box);
     expect(box.root.classList.contains("collapsed")).toBe(false);
@@ -386,15 +361,8 @@ describe("the pipeline container", () => {
   });
 
   it("does not fold a container whose body is empty", async () => {
-    // The INVERTED bare carve-out: an empty body withdraws the whole control, so the
-    // disclosure is not the box's to drive — folding one would animate a box shut on
-    // its way to having no chevron at all.
-    //
-    // Asserted BEFORE the withdrawal microtask, which is the window the guard is
-    // reachable in and the one production takes: composition builds a box and runs
-    // `syncContainerCollapse` in the same synchronous pass. After the microtask the
-    // withdrawn controller is already closed, so a fold there is a no-op and the
-    // assertion could not fail.
+    // An empty body withdraws the whole control, so folding one would animate a box shut on its way to
+    // having no chevron. Asserted BEFORE the withdrawal microtask, the window production takes.
     const box = buildSubagentContainer("pipeline", "completed");
     box.setSuperseded(true);
     expect(box.root.classList.contains("collapsed")).toBe(false);
@@ -445,14 +413,8 @@ describe("the pipeline container", () => {
   });
 
   it("routes the fold through the scroll compensator", async () => {
-    // `scroll.ts` calls `preserveReadingPosition` THE ONE ENTRY POINT for a transcript
-    // height change, and an auto fold removes height ABOVE the reader — this body is N
-    // stage cards, taller than the tool-group case the helper was made mandatory for.
-    // `autoCollapseGroup` wraps its own fold for exactly this reason.
-    //
-    // Withholding the wrapped mutation is what makes the wrapping falsifiable: a
-    // `ctl.close()` sitting OUTSIDE the wrapper folds the box regardless, so the last
-    // two assertions go red the moment the compensation is dropped.
+    // An auto fold removes height ABOVE the reader, so it must go through `preserveReadingPosition`.
+    // Withholding the wrapped mutation makes that falsifiable.
     const box = buildSubagentContainer("pipeline", "completed");
     await populate(box);
     scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
@@ -533,21 +495,9 @@ describe("the pipeline container", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A container whose body holds nothing loses its disclosure.
-//
-// One shape reaches it, probed: a driver that SETTLED having dispatched no stage.
-// That box is deliberately kept, because nothing else stands in for a failed
-// dispatch — so the header stays on screen and what goes is the CONTROL, through
-// the primitive's region-only mode, the third use of it here after
-// `tool-group.ts`. (A CARD cannot reach this at all: it has no body and no
-// disclosure to withdraw.)
-//
-// The container is BUILT with its control and withdraws on a construction
-// microtask, so every case here awaits one: the pass that builds a box fills it in
-// the same task or never will, and the microtask beats the paint. Defaulting the
-// other way would pop the chevron in on every box in a transcript.
-// ---------------------------------------------------------------------------
+// A container whose body holds nothing loses its disclosure. The one shape: a driver that SETTLED
+// having dispatched no stage, kept because nothing else shows a failed dispatch; the CONTROL goes
+// (region-only mode). It withdraws on a construction microtask, so every case awaits one.
 
 describe("a container with nothing in its body", () => {
   /** A built container whose withdrawal has landed. */
@@ -595,10 +545,7 @@ describe("a container with nothing in its body", () => {
   });
 
   it("is not auto-opened by a failure", async () => {
-    // The refusal `expandToolDetails` makes on a bare tool card, for the same
-    // reason: there is no chevron to close the region again, so an open one is
-    // stranded — and worse than a control over nothing, it is an OPEN region
-    // containing nothing.
+    // As `expandToolDetails` refuses on a bare tool card: no chevron could close an open region.
     const box = await bare("failed");
     expect(box.body.getAttribute("aria-hidden")).toBe("true");
     expect(box.root.classList.contains("collapsed")).toBe(true);
@@ -656,11 +603,8 @@ describe("a container with nothing in its body", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// What a screen reader is told. After the drop the delegate's output is reachable
-// only through the foot's link, so the card has to name itself and name where that
-// link goes — a transcript can hold a dozen of them.
-// ---------------------------------------------------------------------------
+// After the drop the delegate's output is reachable only through the foot's link, so the card
+// names itself and where that link goes.
 describe("accessible names", () => {
   it("announces the state as a word, not as the glyph's colour", () => {
     const sa = buildSubagentCard("introspect", "in_progress");
@@ -692,6 +636,16 @@ describe("accessible names", () => {
     // cannot be announced twice.
     expect(head.querySelector(".sr-only")).toBeNull();
   });
+
+  it("shows an inline helper's detail beside the name and in the head's name", () => {
+    const sa = buildSubagentCard("x (inline agent)", "in_progress", { open: opener() });
+    const head = headerOf(sa.root);
+    sa.setDetail("m · high");
+    expect(head.querySelector(".subagent-detail")?.textContent).toBe("m · high");
+    expect(head.getAttribute("aria-label")).toBe("x (inline agent), m · high, running");
+    sa.setDetail("");
+    expect(head.getAttribute("aria-label")).toBe("x (inline agent), running");
+  });
 });
 
 describe("the footer", () => {
@@ -702,11 +656,8 @@ describe("the footer", () => {
   });
 
   it("is turn-footer reused, updated in place, and the card's last region", () => {
-    // `kindCounts` BESIDE the aggregates, because that is the only shape a producer
-    // emits: `subagentSummary` fills the counter and the kind map in ONE walk over
-    // the same `tool_calls`. `earnsTurnFooter` reads the fact list, and `turnFacts`
-    // derives its counts from the kind map, so aggregates alone earn no footer —
-    // deliberately, since that combination cannot reach production.
+    // `kindCounts` BESIDE the aggregates, the only shape `subagentSummary` emits; `turnFacts` counts
+    // from the kind map, so aggregates alone earn no footer.
     const summary = { kindCounts: { execute: 3, read: 2 } } as const;
     const sa = buildSubagentCard("Subagent", "in_progress");
     sa.setSummary({ ...summary, changedFiles: {} });
@@ -727,20 +678,11 @@ describe("the footer", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The footer's INFO PANEL on a delegate card. This is the second consumer of
-// `fundamentals/turn-footer.ts`, and the sections it can never fill are the point:
-// nothing on the ACP wire carries credits, a model id or a stop reason PER
-// delegate, so Cost, Model and Diagnostics withhold on every delegate card there
-// will ever be. `messages-blocks.ts`'s `subagentSummary` is what shapes the data
-// below — the fields it fills, and the three it deliberately leaves absent.
-// ---------------------------------------------------------------------------
+// The delegate card's footer info panel: no ACP field carries credits, a model id or a stop reason
+// per delegate, so Cost, Model and Diagnostics always withhold (`subagentSummary` shapes the data).
 
 describe("the delegate footer's info panel", () => {
-  /** A settled delegate as `subagentSummary` produces one: the member calls' counts
-   *  and kinds, the tool time, a nested delegate, the invocation's own stamp, and the
-   *  end DERIVED from that stamp plus this call's measured duration. No credits, no
-   *  model, no stop reason. */
+  /** A settled delegate as `subagentSummary` produces one; no credits, model or stop reason. */
   const DELEGATE = {
     outcome: "completed",
     changedFiles: { "a.go": { lines_added: 4, lines_removed: 1 } },
@@ -796,11 +738,8 @@ describe("the delegate footer's info panel", () => {
   });
 
   it("withholds Cost, Model and Diagnostics, which the wire cannot carry per delegate", () => {
-    // Asserted on an UNCLEAN delegate, which is the sharp case: `aborted` opens the
-    // Diagnostics gate (the section is withheld only on a clean or running turn) and
-    // the section is STILL absent, because no stop reason or truncation flag exists
-    // for a delegate to put in it. So the withholding rests on the absent fields
-    // rather than on the outcome, which is what makes it permanent.
+    // On an UNCLEAN delegate `aborted` opens the Diagnostics gate and the section is STILL absent, so
+    // the withholding rests on the absent fields, not the outcome.
     const sa = buildSubagentCard("context-gatherer", "aborted");
     sa.setSummary({ ...DELEGATE, outcome: "cancelled" });
     expect(panelSections(sa.root)).toEqual(["Timings", "Work", "Delegates"]);
@@ -821,20 +760,9 @@ describe("the delegate footer's info panel", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The lazy rendering of a closed CONTAINER, measured rather than read off the
-// source.
-//
-// `content-visibility` cannot be checked with a `toMatch` on the rule body: what
-// matters is which of two rules WINS on the element in each state, and that is a
-// cascade question only a layout engine answers. The browser project is a real
-// headless Chromium, so the shipped sheet is injected and the computed value read
-// — the pattern reasoning-live-cue.test.ts uses for the count's alignment.
-//
-// `01-tokens.css` rides along because the body's transition reads duration and
-// easing tokens; without it the transition shorthand is invalid and the whole
-// rule could be dropped.
-// ---------------------------------------------------------------------------
+// Lazy rendering of a closed container, COMPUTED: which `content-visibility` rule wins is a
+// cascade question only a layout engine answers. `01-tokens.css` rides along, or the body's
+// transition shorthand is invalid and the rule could drop.
 describe("lazy rendering of a closed container, computed", () => {
   let style: HTMLStyleElement;
   let host: HTMLElement;
@@ -852,18 +780,8 @@ describe("lazy rendering of a closed container, computed", () => {
     host.remove();
   });
 
-  /** A mounted pipeline container plus its body, in the styled host, born CLOSED —
-   *  which is what composition passes for a box the store already holds something
-   *  after, and the state every case below is about.
-   *
-   *  Born closed rather than folded by `setSuperseded`, deliberately: a fold ANIMATES,
-   *  and `content-visibility` is a discrete property under `allow-discrete`, so it
-   *  still reads its from-value for the length of the transition (the last two cases
-   *  are about exactly that). `createDisclosure` does not animate at construction, so
-   *  this is the resting closed state with no transition in the question.
-   *
-   *  Populated, because the disclosure these cases read is withdrawn while the body is
-   *  empty. */
+  /** A mounted, populated pipeline container in the styled host, born CLOSED: a fold ANIMATES and a
+   *  discrete `content-visibility` keeps its from-value during the transition. */
   async function container(): Promise<{ root: HTMLElement; body: HTMLElement }> {
     const box = buildSubagentContainer("pipeline", "completed", { startOpen: false });
     host.appendChild(box.root);
@@ -882,13 +800,8 @@ describe("lazy rendering of a closed container, computed", () => {
 
   it("renders it again the moment the reader opens the box", async () => {
     const { root, body } = await container();
-    // Transitions off for this element first, and the reason is the subject of the
-    // last two cases: `content-visibility` is DISCRETE, so with `allow-discrete`
-    // the value is still the from-value while the transition runs and a read in the
-    // click's own tick reports `hidden` however the cascade resolved. What this
-    // case is about is the CASCADE — which of the two rules wins once
-    // `.collapsed` is gone — so the animation is taken out of the question here and
-    // asserted on its own below.
+    // Transitions off: a discrete `content-visibility` under `allow-discrete` reads the from-value
+    // mid-transition. This case is about the CASCADE; the animation is asserted below.
     body.style.transition = "none";
     headerOf(root).click();
     expect(root.classList.contains("collapsed")).toBe(false);
@@ -896,13 +809,8 @@ describe("lazy rendering of a closed container, computed", () => {
   });
 
   it("is keyed on the ROOT's collapsed class, not the body's aria-hidden", async () => {
-    // The load-bearing half, and the one a source read cannot express.
-    // `createDisclosure`'s `set` writes aria-hidden (reflectAria) BEFORE it starts
-    // the height animation (applyHeight), and a collapse begins by reading
-    // `region.scrollHeight` for a concrete start height. An aria-keyed rule would
-    // already be in effect for that read, making it 0, so the box would snap shut
-    // instead of animating. Asserted by putting the element in the state that
-    // separates the two rules: aria-hidden set, `.collapsed` absent.
+    // `createDisclosure`'s `set` writes aria-hidden BEFORE the collapse reads `region.scrollHeight`,
+    // so an aria-keyed rule would make that 0 and the box snap shut. aria-hidden set, `.collapsed` absent.
     const { root, body } = await container();
     body.style.transition = "none";
     headerOf(root).click();
@@ -912,10 +820,7 @@ describe("lazy rendering of a closed container, computed", () => {
   });
 
   it("defers the flip to the end of the collapse, so content animates away first", async () => {
-    // `content-visibility` is a discrete property: without `allow-discrete` the
-    // flip is immediate and the box animates shut already empty. Read off the
-    // computed transition rather than the source for the same reason as above —
-    // the shorthand has to survive the cascade and token resolution.
+    // Without `allow-discrete` the flip is immediate and the box animates shut already empty.
     const { body } = await container();
     const t = getComputedStyle(body).transition;
     expect(t).toContain("content-visibility");
@@ -934,9 +839,9 @@ describe("lazy rendering of a closed container, computed", () => {
   });
 
   it("advertises the header as a control only while there is one", async () => {
-    // The three `.subagent-header` affordance declarations were UNGATED, so a
-    // container whose control had been withdrawn still answered the pointer like
-    // one — and so did a card with no opener, which controls nothing at all.
+    // The three `.subagent-header` affordance declarations are gated: a container
+    // whose control is withdrawn, or a card with no opener, must not answer the
+    // pointer like a control.
     const bareBox = buildSubagentContainer("pipeline", "completed");
     host.appendChild(bareBox.root);
     const card = buildSubagentCard("Subagent", "completed");
@@ -951,13 +856,8 @@ describe("lazy rendering of a closed container, computed", () => {
   });
 
   it("keeps an INERT header's own text selectable, and a control's not", async () => {
-    // The other half of the same gate: `user-select: none` exists so a drag across a
-    // live header activates instead of selecting its label, and a header that does
-    // nothing has no reason to take the selection away.
-    //
-    // The accepted loss: a card whose head IS the control matches the tool card, so
-    // the delegate's NAME can no longer be dragged out of it. The tail's lines, which
-    // carry the delegate's own output, sit outside the control and stay selectable.
+    // `user-select: none` lets a drag across a live header activate it; a do-nothing header keeps
+    // selection. Accepted loss: the delegate's NAME cannot be dragged out of a card head.
     const bareBox = buildSubagentContainer("pipeline", "completed");
     host.appendChild(bareBox.root);
     const door = buildSubagentCard("Subagent", "completed", { open: opener() });
@@ -969,13 +869,8 @@ describe("lazy rendering of a closed container, computed", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The leaf's chevron points RIGHTWARD, permanently.
-//
-// The closed angle lives in 10-shell-app.css and the container's open rule in
-// 14-tools.css, so only the ASSEMBLED bundle answers the cascade question — hence
-// `mountAppCSS()` rather than this file's two-sheet host.
-// ---------------------------------------------------------------------------
+// The closed angle (10-shell-app.css) and the container's open rule (14-tools.css) live apart, so
+// only the assembled bundle (`mountAppCSS()`) answers the cascade.
 describe("the leaf's navigation chevron never turns", () => {
   let style: HTMLStyleElement;
   let host: HTMLElement;

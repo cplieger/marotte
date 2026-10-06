@@ -6,18 +6,15 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The values KAS does not send today, so a case that passes without the door's gate
-// is passing on a value the enum already holds.
+// Values KAS does not send today, so a passing case proves the door's gate.
 const (
 	unknownToolKind   = "quantum_tunnel"
 	unknownToolStatus = "queued"
 	unknownPlanStatus = "skipped"
 )
 
-// TestHandleToolCall_AnUnknownKindOrStatusIsNormalisedAtTheDoor pins that a create
-// frame's kind and status reach the entry log inside marotte's own sets, because the
-// wire validates both against a closed set and an unknown value costs the reader the
-// card or the whole window.
+// TestHandleToolCall_AnUnknownKindOrStatusIsNormalisedAtTheDoor pins that a create frame's
+// kind and status reach the entry log inside marotte's own sets.
 func TestHandleToolCall_AnUnknownKindOrStatusIsNormalisedAtTheDoor(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -64,9 +61,8 @@ func TestHandleToolCall_AnUnknownKindOrStatusIsNormalisedAtTheDoor(t *testing.T)
 	}
 }
 
-// TestToolCallUpdate_AnUnknownStatusKeepsTheCallOpen pins the update door: an
-// unrecognized status is in_progress, so the call stays open for the close's abort
-// rule rather than claiming an outcome the tool never reported.
+// TestToolCallUpdate_AnUnknownStatusKeepsTheCallOpen pins that an unrecognized update
+// status is in_progress, left for the close's abort rule.
 func TestToolCallUpdate_AnUnknownStatusKeepsTheCallOpen(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -86,9 +82,8 @@ func TestToolCallUpdate_AnUnknownStatusKeepsTheCallOpen(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_AnAbsentStatusStillMeansUnchanged falsifies the gate's own empty
-// clause: an update names only what changed, so a door that substituted a default here
-// would write pending over an in-flight call on every content-only frame.
+// TestToolCallUpdate_AnAbsentStatusStillMeansUnchanged falsifies the gate's empty clause:
+// a substituted default would write pending over an in-flight call.
 func TestToolCallUpdate_AnAbsentStatusStillMeansUnchanged(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -107,9 +102,8 @@ func TestToolCallUpdate_AnAbsentStatusStillMeansUnchanged(t *testing.T) {
 	}
 }
 
-// TestHandlePlan_AnUnknownEntryStatusIsPending pins the plan door: a plan row's status
-// is KAS's verbatim string and the wire closes it over three values, so an unknown one
-// under-claims as pending rather than blanking the plan entry at the reader.
+// TestHandlePlan_AnUnknownEntryStatusIsPending pins that an unknown plan row status
+// under-claims as pending.
 func TestHandlePlan_AnUnknownEntryStatusIsPending(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -132,8 +126,7 @@ func TestHandlePlan_AnUnknownEntryStatusIsPending(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequest_AnUnknownToolKindIsOther pins the permission door, whose
-// kind rides the same closed enum into the ask card.
+// TestHandlePermissionRequest_AnUnknownToolKindIsOther pins the permission door's kind.
 func TestHandlePermissionRequest_AnUnknownToolKindIsOther(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -155,9 +148,8 @@ func TestHandlePermissionRequest_AnUnknownToolKindIsOther(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AnUnknownKindOrStatusIsNormalisedAtTheDoor pins the replay door,
-// which decodes the same two frames from KAS's own log: a chat whose log holds a kind
-// this build does not know must still open.
+// TestEntryProjection_AnUnknownKindOrStatusIsNormalisedAtTheDoor pins the replay door: a
+// log holding a kind this build does not know must still open.
 func TestEntryProjection_AnUnknownKindOrStatusIsNormalisedAtTheDoor(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),

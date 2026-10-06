@@ -1,5 +1,3 @@
-// A pull-request row's actions: their state, their presses and the merge outcome.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 import { prIdentity } from "./push-subject.js";
@@ -89,7 +87,6 @@ describe("PRs tab merge outcome", () => {
     return mount().querySelector(".git-pr-row-status[role='status']")?.textContent ?? "";
   }
 
-  /** How many times the tab read the merge state back. */
   async function statusReads(): Promise<number> {
     const { readMergeStatus } = await actions();
     return vi.mocked(readMergeStatus.dispatch).mock.calls.length;
@@ -106,7 +103,7 @@ describe("PRs tab merge outcome", () => {
     });
   }
 
-  /** A shown GitHub list of one mergeable row, its paint bound as the app's boot does. */
+  /** A shown GitHub list of one mergeable row, its paint bound as boot does. */
   async function shownMergeable(): Promise<void> {
     routeAPI();
     serveRows(mergeable());
@@ -115,7 +112,6 @@ describe("PRs tab merge outcome", () => {
     await refreshPRs();
   }
 
-  /** Click Merge with the forge answering `state`. */
   async function mergeAnswering(state: string): Promise<void> {
     const { mergePR } = await actions();
     vi.mocked(mergePR.dispatch).mockReturnValueOnce(
@@ -157,7 +153,7 @@ describe("PRs tab merge outcome", () => {
     routeAPI({ forges: [githubForge, gitlabForge] });
     serve(entry(githubForge, "3", mergeable()), entry(gitlabForge, "3", [pr(2, 1)]));
     const { refreshPRs, initPRsTab } = await load();
-    // Binds this instance's paint to the shared state, as the app's boot does.
+    // Binds this instance's paint to the shared state, as boot does.
     initPRsTab();
     await refreshPRs();
 
@@ -168,8 +164,7 @@ describe("PRs tab merge outcome", () => {
     expect(mount().querySelector('[data-repo="cplieger/one"]')).toBeNull();
   });
 
-  // GitHub's merge runs in the background: the row it answers for is still open,
-  // so removing it at once would show a merge that has not happened.
+  // GitHub merges in the background: the row is still open, so removing it at once would show a merge not yet done.
   it("keeps an accepted row merging, and follows it until the forge reads it merged", async () => {
     await shownMergeable();
     await statusAnswers("no", "no", "yes");
@@ -307,8 +302,7 @@ describe("PRs tab merge outcome", () => {
     expect(await statusReads()).toBe(0);
   });
 
-  // The library arms the forge's own auto-merge on every family (ADR-0103), so
-  // every forge's row offers the control.
+  // The library arms the forge's own auto-merge on every family.
   it("offers Merge when green on GitHub, Gitea and GitLab", async () => {
     const pending = pr(
       7,
@@ -339,7 +333,7 @@ describe("the pull-request row's action state", () => {
     );
   }
 
-  /** The row's button labelled `label`, read with any spinner beside it. */
+  /** Read with any spinner beside it. */
   function buttonOf(r: HTMLElement | null, label: string): HTMLButtonElement | undefined {
     return [...(r?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
       (b) => b.textContent.trim() === label,
@@ -403,7 +397,7 @@ describe("the pull-request row's action state", () => {
 
     expect(buttonOf(row(9), "Merge")?.disabled).toBe(false);
     expect(row(9)?.querySelector(".git-pr-row-note")).toBeNull();
-    // No row fails its checks, so no Re-run waits on the connection's capability.
+    // No row fails its checks, so no Re-run waits on the capability.
     const { readCapabilities } = await actions();
     expect(vi.mocked(readCapabilities.dispatch)).not.toHaveBeenCalled();
   });
@@ -549,8 +543,7 @@ describe("the pull-request row's action state", () => {
     );
   });
 
-  // Merge, Merge when green, Re-run and Reopen each start a request once their
-  // dialog is confirmed.
+  // Each starts a request once its dialog is confirmed.
   const presses = [
     {
       label: "Merge",
@@ -568,7 +561,6 @@ describe("the pull-request row's action state", () => {
     { label: "Reopen", action: "reopenPR", row: pr(7, 0, { state: "closed" }), forge: githubForge },
   ] as const;
 
-  /** The row #7 of `forge`, wherever it is painted. */
   function row7(forge: Forge): HTMLElement | null {
     return mount().querySelector<HTMLElement>(
       `[data-pr="${CSS.escape(prIdentity(forge.id, repos[0]?.repo_id ?? "", 7))}"]`,
@@ -585,7 +577,7 @@ describe("the pull-request row's action state", () => {
       await shown([c.row], c.forge);
 
       buttonOf(row7(c.forge), c.label)?.click();
-      // The dialog answers on a microtask; no timer, and so no frame, runs.
+      // The dialog answers on a microtask; no timer, so no frame, runs.
       for (let i = 0; i < 5; i++) {
         await Promise.resolve();
       }
@@ -594,7 +586,7 @@ describe("the pull-request row's action state", () => {
       expect(pressed?.getAttribute("aria-busy")).toBe("true");
       expect(vi.mocked(a[c.action].dispatch)).toHaveBeenCalledTimes(1);
 
-      // A cycle lands while the request runs, and the row is painted again.
+      // A cycle lands while the request runs, and the row repaints.
       frame(entry(c.forge, "2", [{ ...c.row, title: "a newer title" }]));
       const repainted = buttonOf(row7(c.forge), c.label);
       expect(repainted).not.toBe(pressed);
@@ -678,8 +670,7 @@ describe("the pull-request row's action state", () => {
     applyFilter("");
     expect(statusOf(row(7))).toBe("Re-run started.");
 
-    // The next entry repeats the row exactly, through the same decoded read: it is
-    // the cycle, not new data, that ends the sentence.
+    // The next entry repeats the row exactly: the cycle, not new data, ends the sentence.
     serveRows([pr(7, 0, {}, failing)], githubForge, "2");
     await refreshPRs();
     expect(statusOf(row(7))).toBe("");

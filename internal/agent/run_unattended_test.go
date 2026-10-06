@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,19 +12,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
-// TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant.
-//
-// The schedule form states the budget in words ("the ask is refused after 3
-// minutes"), because a user deciding whether to schedule a job needs to know what
-// happens when it asks for something nobody is there to answer. There is no
-// endpoint carrying the number, so the client holds its own copy —
-// UNATTENDED_BUDGET_MINUTES in static-src/schedule-picker.ts — and two copies of
-// one fact drift silently in exactly the direction that matters: the form would
-// keep promising three minutes after the server moved to thirty.
-//
-// This is the whole mechanism keeping them together. Change both.
+// TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant: the schedule form promises the
+// budget in words from UNATTENDED_BUDGET_MINUTES in static-src/schedule-picker.ts. Change both.
 func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 	t.Parallel()
 	const disclaimerMinutes = 3 // UNATTENDED_BUDGET_MINUTES, schedule-picker.ts
@@ -33,13 +27,8 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 	}
 }
 
-// TestIsScheduledRun_ReadsTheLeasesOrigin pins the read the run_started event's
-// `scheduled` flag is derived from.
-//
-// The flag exists because the CLIENT cannot make this distinction: a parentless
-// run's lifecycle frames are workspace-global with an empty chat id, and a manual
-// launch is parentless too, so watching events cannot separate the two. Only the
-// launch path knows, and the lease is where it says so.
+// TestIsScheduledRun_ReadsTheLeasesOrigin pins the `scheduled` flag's source: only the launch path can tell a
+// scheduled parentless run from a manual one, and the lease records it.
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	h := &Runs{}
 
@@ -57,26 +46,34 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	if h.IsScheduled("wf_2") {
 		t.Error("the origin leaked to another run")
 	}
-	// A terminal run_complete releases the lease, and the flag must go with it: the
-	// run is over, so a later frame naming it is not a scheduled run starting.
+	// Released with the terminal frame, and the flag with it.
 	h.releaseLease(t.Context(), "wf_1")
 	if h.IsScheduled("wf_1") {
 		t.Error("a released run still reported scheduled")
 	}
-	// An empty id is not a run. Answering true here would mark every frame that
-	// arrived without one.
+	// An empty id is not a run.
 	if h.IsScheduled("") {
 		t.Error("the empty workflow id reported scheduled")
 	}
 }
 
-// TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart is the risk the durable
-// lease closes, at the surface that has teeth.
-//
-// The mark used to be in memory, so a restart while a scheduled run was parked
-// removed the deny-fast budget with no trace: the run's next permission ask at
-// 03:00 waited for a human indefinitely, and under the single-run rule that parked
-// the whole recipe. The floor reads the lease now, and the lease is on disk.
+func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
+	h := &Runs{}
+	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch())
+	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}))
+	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
+		t.Errorf("RunLabel(scheduled) = %q, want %q", got, "publish · scheduled")
+	}
+	if got := h.RunLabel("wf_manual"); got != "" {
+		t.Errorf("RunLabel(manual) = %q, want empty: a manual launch sends no label", got)
+	}
+	if got := h.RunLabel("wf_unknown"); got != "" {
+		t.Errorf("RunLabel(unknown) = %q, want empty", got)
+	}
+}
+
+// TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart pins that the durable lease keeps the deny-fast budget across a
+// restart, or a parked scheduled run waits on a human and parks its recipe.
 func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	dir := t.TempDir()
 	store, err := runlease.NewStore(dir)
@@ -86,8 +83,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	h := &Runs{leases: store}
 	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}))
 
-	// The restart: a brand-new store over the same directory, and a runtime that
-	// launched nothing.
+	// The restart: a new store over the same directory, a runtime that launched nothing.
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -109,15 +105,8 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	}
 }
 
-// TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins the third clause of the
-// floor's guard, which is the one protecting the process rather than the policy.
-//
-// The floor answers a scheduled run's permission ask after the budget by
-// REQUEST ID, so an ask that carries none cannot be answered at all — there is
-// nothing to route a reply to. Arming for it would dereference an id that is not
-// there, taking down the whole runtime over one malformed frame from KAS. The
-// ordinary handler still runs either way: dropping the frame is the permission
-// path's decision, not the floor's.
+// TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
+// not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	rs := &Runs{}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
@@ -130,7 +119,7 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	noteAsk := func(context.Context, marotte.ChatID, *marotte.RPCResponse) { inner++ }
 	wrapped := rs.permissionWithUnattendedFloor(noteAsk)
 
-	// A permission frame with no id: nothing can answer it, and nothing may try.
+	// A permission frame with no id.
 	wrapped(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{
 		Method: marotte.MethodRequestPermission,
 		ID:     nil,
@@ -142,12 +131,8 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	}
 }
 
-// TestPermissionToolName_PrefersTheMachineAuthoredName walks the precedence
-// against the six shapes the backend's permission-request call sites produce.
-//
-// It is a precedence rather than a gate on toolId because only one of the six
-// carries one: keying on that field and failing closed would blank the operator's
-// only description of the other five, which is a regression from naming something.
+// TestPermissionToolName_PrefersTheMachineAuthoredName walks the six backend ask shapes; a gate on toolId
+// would blank five of them.
 func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
@@ -164,14 +149,12 @@ func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
 			want:   "lint",
 		},
 		"turn approval gets marotte's own name": {
-			// KAS titles this one the literal "Review changes", which tells an
-			// operator nothing about what the run needed.
+			// KAS's literal "Review changes" tells an operator nothing.
 			params: `{"toolCall":{"title":"Review changes"},"_meta":{"kiro":{"type":"turn_approval","executionId":"e1"}}}`,
 			want:   turnApprovalName,
 		},
 		"no _meta at all falls back to the title": {
-			// The hook-ask, hook-confirm and safety-override frames: three of the
-			// six carry no _meta, so the title stays the only thing available.
+			// Three of the six carry no _meta, so the title is all there is.
 			params: `{"toolCall":{"title":"Allow this hook to run?","kind":"other"}}`,
 			want:   "Allow this hook to run?",
 		},
@@ -193,20 +176,14 @@ func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
 	}
 }
 
-// TestPermissionToolName_DefusesTheModelsTitle is the security half.
-//
-// The title is composed upstream by the MODEL, so an agent that read a poisoned
-// file can put a bidi override in it — and it lands unescaped in a log line and,
-// worse, in the schedule row an operator reads the next morning to decide which
-// permission rule to write. The sibling permission card has defused the identical
-// string through this primitive all along; this path applied none of it.
+// TestPermissionToolName_DefusesTheModelsTitle pins that the model composes the title, so a poisoned file can put a
+// bidi override in the log and in the schedule row an operator reads.
 func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a bidi override cannot reach the row", func(t *testing.T) {
 		t.Parallel()
-		// Renders as an innocuous find command while `rm -rf /workspace` is what
-		// the run actually asked to be approved.
+		// Renders as a harmless find while asking to approve `rm -rf /workspace`.
 		const title = "Run \u202ednuof-emaN- ecapskrow/ fr- mr\u202c"
 		got := permissionToolName([]byte(`{"toolCall":{"title":` + jsonString(title) + `}}`))
 		for _, r := range []rune{'\u202e', '\u202c'} {
@@ -219,8 +196,7 @@ func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 
 	t.Run("an unbounded title is capped", func(t *testing.T) {
 		t.Parallel()
-		// The preset's truncation marker rides OUTSIDE the cap, so the bound is on
-		// the CONTENT and the ceiling is that plus the marker.
+		// The truncation marker rides outside the cap.
 		const ceiling = maxToolNameBytes + len("...")
 		got := permissionToolName([]byte(`{"toolCall":{"title":"` + strings.Repeat("a", 4096) + `"}}`))
 		if len(got) > ceiling {
@@ -236,8 +212,7 @@ func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 
 	t.Run("a legitimate name is byte-identical", func(t *testing.T) {
 		t.Parallel()
-		// The sanitizer replaces rather than deletes, so the cost is paid only by
-		// a name that could also be the attack.
+		// The sanitizer replaces rather than deletes, so ordinary names pass unchanged.
 		for _, want := range []string{"execute_bash", "fs_write", "Modifier le fichier", "ファイルを書く"} {
 			got := permissionToolName([]byte(`{"toolCall":{"title":` + jsonString(want) + `}}`))
 			if got != want {
@@ -247,17 +222,11 @@ func TestPermissionToolName_DefusesTheModelsTitle(t *testing.T) {
 	})
 }
 
-// TestOptionIDByKind_MatchesTheKindExactly pins the whole safety property of the
-// widened reader.
-//
-// A persistable ask advertises `allow_always` and `reject_always` beside the
-// one-shot pair, and selecting either makes the backend PERSIST a rule — so a
-// prefix match would turn one unattended refusal into a standing deny nobody
-// wrote, which is the exact mirror of the persistent-allow hazard the approve side
-// has always refused.
+// TestOptionIDByKind_MatchesTheKindExactly pins that a prefix match would pick a persisting `_always` kind and turn one
+// unattended refusal into a standing rule.
 func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 	t.Parallel()
-	// All four kinds, as a persistable ask advertises them.
+	// All four kinds, as a persistable ask advertises.
 	const persistable = `{"options":[
 		{"optionId":"accept","kind":"allow_once"},
 		{"optionId":"always-accept","kind":"allow_always"},
@@ -270,17 +239,12 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 	if got := optionIDByKind([]byte(persistable), optionKindAllowOnce); got != "accept" {
 		t.Errorf("optionIDByKind(allow_once) = %q, want %q", got, "accept")
 	}
-	// The advertised id is `reject`, not `reject_once`: the kind is what is
-	// matched and the id is what is echoed back, and confusing the two answers
-	// with a choice the request never offered.
+	// The kind is matched and the id echoed; confusing them answers with an unoffered choice.
 	if got := optionIDByKind([]byte(persistable), "reject"); got != "" {
 		t.Errorf("optionIDByKind(%q) = %q, want no match: the kind is matched, never the id",
 			"reject", got)
 	}
-	// The hazard directly, with the ordering that exposes it: only the PERSISTENT
-	// twin is advertised, so a prefix match would select it and turn one
-	// unattended refusal into a standing deny rule. Exact match declines, and the
-	// caller falls back to cancelled.
+	// Only the persistent twin advertised: exact match declines and the caller falls back to cancelled.
 	const persistentOnly = `{"options":[{"optionId":"always-reject","kind":"reject_always"},
 		{"optionId":"always-accept","kind":"allow_always"}]}`
 	for _, kind := range []string{optionKindRejectOnce, optionKindAllowOnce} {
@@ -290,8 +254,7 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 				kind, got)
 		}
 	}
-	// A request offering only the one-shot pair yields nothing for the twins,
-	// which is what keeps the fall-back reachable.
+	// Only the one-shot pair: the twins yield nothing.
 	const oneShot = `{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]}`
 	for _, kind := range []string{"allow_always", "reject_always"} {
 		if got := optionIDByKind([]byte(oneShot), kind); got != "" {
@@ -306,18 +269,14 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 	}
 }
 
-// TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption is the deny side of the
-// same rule the approve side already followed: answer with a choice the request
-// offered, and never invent one.
-//
-// The claim ordering is the load-bearing part of the surrounding code and this
-// test rides on it: TakePendingPerm runs BEFORE the response, because the floor
-// races a human who has the run's page open.
+// TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption pins that answer with an offered choice. TakePendingPerm runs
+// before the response, since the floor races a human.
 func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 	for name, tc := range map[string]struct {
 		options     string
 		wantOpt     string
 		wantOutcome string
+		wantReason  string
 	}{
 		"a reject option is selected by id": {
 			options: `[{"optionId":"accept","kind":"allow_once"},
@@ -325,6 +284,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 				{"optionId":"always-reject","kind":"reject_always"}]`,
 			wantOpt:     "reject",
 			wantOutcome: "selected",
+			wantReason:  unattendedRejectionReason,
 		},
 		"no reject option advertised falls back to cancelled": {
 			options:     `[{"optionId":"accept","kind":"allow_once"}]`,
@@ -362,8 +322,14 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			if outcome.Outcome.OptionID != tc.wantOpt {
 				t.Errorf("optionId = %q, want %q", outcome.Outcome.OptionID, tc.wantOpt)
 			}
-			// Never the persistent twin: selecting it would make the backend write a
-			// standing deny rule out of one unattended refusal.
+			var reason string
+			if outcome.Meta != nil {
+				reason = outcome.Meta.Kiro.RejectionReason
+			}
+			if reason != tc.wantReason {
+				t.Errorf("rejectionReason = %q, want %q", reason, tc.wantReason)
+			}
+			// Never the persistent twin.
 			if outcome.Outcome.OptionID == "always-reject" {
 				t.Error("the floor selected the PERSISTENT reject; one automated refusal became a " +
 					"standing rule nobody wrote")
@@ -372,9 +338,48 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 	}
 }
 
-// TestAnswerUnattended_ADenialFailsTheScheduleRow: the refusal is what the
-// Workflows row shows, so it must read as a failure whose reason names the tool,
-// with no status word folded into the reason.
+// TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove pins that KAS treats any allow_once as satisfying an administrator ask.
+func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	dir := t.TempDir()
+	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.runs.lifecycle.configDir = dir
+	chatID := runChatID("wf_admin")
+	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+
+	id := int64(4242)
+	h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}))
+
+	h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash", []byte(`{
+		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
+		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
+
+	select {
+	case <-br.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the floor answered nothing")
+	}
+	br.respMu.Lock()
+	got := br.response
+	br.respMu.Unlock()
+	outcome, ok := got.result.(*marotte.PermissionOutcome)
+	if !ok {
+		t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+	}
+	if outcome.Outcome.OptionID != "reject" {
+		t.Errorf("optionId = %q, want %q: an administrator ask was auto-approved with nobody watching",
+			outcome.Outcome.OptionID, "reject")
+	}
+}
+
+// TestAnswerUnattended_ADenialFailsTheScheduleRow pins that the row reads as a failure naming the tool.
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
@@ -411,8 +416,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	}
 }
 
-// jsonString quotes s as a JSON string literal, so a test case can carry a bidi
-// control without the fixture itself being unreadable.
+// jsonString quotes s as a JSON literal, so a case can carry a bidi control readably.
 func jsonString(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {

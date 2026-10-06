@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests for navigate.ts — the seam router.
-//
-// Each case pins WHICH surface a subject routes to, because that is the decision
-// the module exists to centralise. Four call sites used to pick their own opener
-// for the same intent (a changed filename in a tool card, the same filename in
-// the turn ledger, a turn-approval row in the dock, and soon a file-browser row)
-// and they had already started to disagree.
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const calls: string[] = [];
@@ -22,13 +12,7 @@ vi.mock("./editor-openers.js", () => ({
     calls.push(`diff:${p}:${oldText}>${newText}`);
   },
 }));
-// Every name `navigate.ts` imports has to be here, whether a case drives it or
-// not: Browser Mode links the module for real, so one missing export fails the
-// whole file's import rather than the case that would have called it. The five
-// beyond `openGitView` are `openSpec`'s, and each answers the EMPTY value for its
-// type rather than a plausible one, so nothing here can make a case pass for a
-// reason production does not supply. `openSpec` itself is covered in
-// spec-view.test.ts, against that file's own tab store.
+// Browser Mode links the module for real: one missing export fails the whole file.
 vi.mock("./tabs.js", () => ({
   openGitView: (tab: string) => {
     calls.push(`gitview:${tab}`);
@@ -56,8 +40,6 @@ beforeEach(() => {
 
 describe("openChange", () => {
   it("opens the file's diff against HEAD", () => {
-    // vs HEAD is the honest source: the write already landed, so the working
-    // tree IS the after state and git holds the before.
     openChange("src/a.ts");
     expect(calls).toEqual(["gitdiff:src/a.ts:HEAD"]);
   });
@@ -75,8 +57,6 @@ describe("openChange", () => {
 
 describe("openCallDiff", () => {
   it("opens the call's own before/after pair rather than a git diff", () => {
-    // A card's two affordances answer two questions: the filename opens the file
-    // against git, `+N -M` opens what this one call did.
     openCallDiff("src/a.ts", "one", "two");
     expect(calls).toEqual(["diff:src/a.ts:one>two"]);
   });
@@ -89,15 +69,6 @@ describe("openCallDiff", () => {
 
 describe("openChangeSet", () => {
   it("routes the multi-file review to the git view's changes tab", () => {
-    // Not a bespoke turn-scoped viewer: the ladder's rule is that depth 2 lands
-    // in a surface that already exists, and the git view already lists every
-    // changed file and opens each one's diff.
-    //
-    // ONE call, and that is the change: `openGitView(tab)` applies the sub-tab
-    // itself, through the same setter the router uses, so a caller that also poked
-    // `setGitTab` would be a second definition of where this lands. A singleton's
-    // ref is empty, so a subject cannot carry a sub-tab and the correction channel
-    // belongs to the tab helper.
     openChangeSet();
     expect(calls).toEqual(["gitview:changes"]);
   });
@@ -120,14 +91,6 @@ describe("openAtLine", () => {
   });
 });
 
-// This module is the seam between the client's two path spaces, and the ONE
-// place the crossing happens. Its callers cannot be made to agree: three of them
-// (turn-footer ledger row, tool-card filename, approval row) carry the agent's
-// workspace-RELATIVE path while the file browser carries an absolute one, and the
-// editor addresses files absolutely because that is the namespace /api/file*
-// serves. Without the conversion the three relative callers produced
-// GET /api/file?path=hello.sh, which the granted-roots allow-list denied 403 — so
-// clicking a changed filename could never load its diff.
 describe("path-space normalisation", () => {
   beforeEach(() => {
     setWorkspaceRoot("/workspace");
@@ -140,7 +103,6 @@ describe("path-space normalisation", () => {
   });
 
   it("leaves an absolute change path alone", () => {
-    // The file browser's row already holds a real filesystem path.
     expect.assertions(1);
     openChange("/workspace/sub/a.go");
     expect(calls).toEqual(["gitdiff:/workspace/sub/a.go:HEAD"]);
@@ -153,15 +115,12 @@ describe("path-space normalisation", () => {
   });
 
   it("makes a relative stats path absolute", () => {
-    // The `+N -M` link reaches the editor, so it is denied the same way.
     expect.assertions(1);
     openCallDiff("main.go", "one", "two");
     expect(calls).toEqual(["diff:/workspace/main.go:one>two"]);
   });
 
   it("makes a relative line reference absolute", () => {
-    // A read card's filename and a `path:line` reference in the agent's prose
-    // are both relative and were both denied the same way.
     expect.assertions(1);
     openAtLine("src/a.ts", 42);
     expect(calls).toEqual(["file:/workspace/src/a.ts:42"]);

@@ -10,9 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// recorder is a Sink that assigns seq per turn and keeps every line, so a test can
-// read back the order the accumulator sealed things in. The entry log does the same
-// two things; nothing here depends on it.
+// recorder is a Sink that assigns seq per turn and keeps every line, so a test can read
+// back the seal order.
 type recorder struct {
 	t       *testing.T
 	seq     map[string]uint64
@@ -20,9 +19,8 @@ type recorder struct {
 	entries []marotte.Entry
 }
 
-// seal fails the test on an operation error and answers what it sealed. A METHOD
-// rather than a function taking t, because Go cannot spread an operation's two
-// return values into a call that also passes t.
+// seal fails the test on an operation error and answers what it sealed; a method because
+// Go cannot spread two return values into a call that also passes t.
 func (r *recorder) seal(sealed []Sealed, err error) []Sealed {
 	r.t.Helper()
 	if err != nil {
@@ -83,10 +81,8 @@ func equalShape(t *testing.T, got, want []string, what string) {
 	}
 }
 
-// The sealing table of design section 4, one case per row. Every case drives the
-// accumulator and asserts WHICH entries were sealed and in what order, because that
-// order is the whole rule: at the moment any entry takes a seq, no open entry that
-// started before it in the same lane is still open.
+// The sealing table, one case per row, asserting WHICH entries sealed in what order: when
+// any entry takes a seq, no earlier entry in the same lane is still open.
 func TestSealingTable(t *testing.T) {
 	ctx := t.Context()
 
@@ -274,10 +270,8 @@ func TestASplitSayTakesASegmentSuffix(t *testing.T) {
 	}
 }
 
-// The carry rule at a seal, both outcomes. A carry that already bears the committing
-// prefix is a marker the model never closed and is DROPPED; anything shorter is prose
-// and becomes the sealed entry's last delta. Either way the text on each side of a
-// card stays on its own side.
+// The carry rule at a seal: a carry bearing the committing prefix is DROPPED; anything
+// shorter becomes the sealed entry's last delta.
 func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 	ctx := t.Context()
 
@@ -334,9 +328,8 @@ func TestSteerCarryIsSettledAtTheSeal(t *testing.T) {
 	})
 }
 
-// SealLane ends ONE lane's prose with nothing of its own to append, which is what
-// lets a caller carrying only metadata — a refusal explanation — split the prose
-// before it from whatever follows without a barrier entry standing between them.
+// SealLane ends ONE lane's prose with nothing to append, so metadata (a refusal) splits the
+// prose without a barrier entry.
 func TestSealLaneEndsOneLanesProse(t *testing.T) {
 	ctx := t.Context()
 
@@ -413,9 +406,8 @@ func TestSealLaneEndsOneLanesProse(t *testing.T) {
 	})
 }
 
-// A close seals every lane, aborts every unsettled call in its own lane, and then
-// writes the turn_close: it is the aggregate's carrier, so nothing after it belongs
-// to this turn.
+// A close seals every lane, aborts every unsettled call in its own lane, then writes the
+// turn_close, the aggregate's carrier.
 func TestCloseSealsAbortsThenWritesTheAggregate(t *testing.T) {
 	ctx := t.Context()
 	turn, rec := open(t)
@@ -475,10 +467,8 @@ func TestCloseSealsAbortsThenWritesTheAggregate(t *testing.T) {
 	}
 }
 
-// The changed-files aggregate is keyed by path: an empty path is skipped (a diff
-// with no file names nothing the footer can list), a repeated path sums both
-// counters, and the create flag is the FIRST edit's (a file created and then
-// edited in one turn is still a file the turn created).
+// The changed-files aggregate is keyed by path: an empty path is skipped, a repeated path
+// sums, and the create flag is the FIRST edit's.
 func TestChangedFileAggregatesByPath(t *testing.T) {
 	type edit struct {
 		path           string
@@ -581,10 +571,8 @@ func TestASinkFailureIsReported(t *testing.T) {
 	}
 }
 
-// A stop reason marotte has never heard of (KAS added `tool_use` without notice)
-// reaches the turn_close verbatim as a plain string beside a derived outcome, so a
-// chat holding one stays readable: the raw field is what the upstream said, and only
-// the outcome is the closed vocabulary.
+// An unknown stop reason (KAS added `tool_use` without notice) reaches the turn_close
+// verbatim beside a derived outcome, so the chat stays readable.
 func TestCloseCarriesAnUnknownRawStopReasonVerbatim(t *testing.T) {
 	turn, rec := open(t)
 	rec.seal(turn.Close(t.Context(), marotte.ConcludeStopReason("tool_use")))

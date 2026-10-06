@@ -1,8 +1,5 @@
-// The TypeScript half of the fold contract shared with Go's textsearch.Fold: the
-// simple per-code-point lowercase, with the one code point whose lowercase grows
-// repaired, so an index into the fold is an index into the original. Browser
-// project on purpose: `toLowerCase` is the engine's, and the engine this client
-// ships into is the one whose answer counts.
+// The TypeScript half of the fold contract with Go's textsearch.Fold. Browser project: the
+// shipping engine's `toLowerCase` is the one whose answer counts.
 
 import { describe, it, expect } from "vitest";
 import { fold } from "./fold.js";

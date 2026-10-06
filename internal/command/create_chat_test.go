@@ -1,18 +1,8 @@
 package command
 
-// Server-minted chat ids, and the idempotency that has to replace what they took
-// away.
-//
-// While the CLIENT chose the id, a retry carried the same id and every creating
-// handler's `if exists { return false }` made the second attempt a no-op — a free,
-// structural idempotency nobody had to implement. Minting server-side removes it:
-// a retry mints again, so one gesture produces two chats. The Idempotency-Key
-// header covers a retry inside its 5-minute cache; the op ledger covers the
-// fall-through past it, which is where a user pressing Retry on a failure toast
-// lands.
-//
-// These tests drive the handler directly and read the STORE, because "one chat and
-// not two" is a fact about the store rather than about a response body.
+// Server-minted ids remove the free idempotency a client-chosen id gave, so a retry would mint a
+// second chat; the Idempotency-Key header covers its 5-minute cache and the op ledger the
+// fall-through. These tests read the STORE, since "one chat, not two" is a store fact.
 
 import (
 	"encoding/json"
@@ -87,8 +77,8 @@ func TestCmdCreateChat_MintsAndReturns(t *testing.T) {
 	}
 }
 
-// TestCmdCreateChat_RepeatOpReturnsOneChat is the defect server minting
-// introduces, and the ledger's whole reason to exist. Both attempts carry the same
+// TestCmdCreateChat_RepeatOpReturnsOneChat — a server-minted id must not be minted
+// twice for one op, which is the ledger's whole reason to exist. Both attempts carry the same
 // op id, which is what the client sends when the action framework retries a
 // dispatch or the user presses Retry on the failure toast.
 func TestCmdCreateChat_RepeatOpReturnsOneChat(t *testing.T) {
@@ -116,18 +106,10 @@ func TestCmdCreateChat_RepeatOpReturnsOneChat(t *testing.T) {
 	}
 }
 
-// TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats pins the rule the CLIENT has
-// to follow rather than assuming it: `op_id` is a dispatch ARGUMENT, never minted
-// inside an action's run().
-//
-// Verified against node_modules/@cplieger/actions/src/define.ts: `runWithRetry`
-// re-invokes `def.run(args, signal, ctx)` per attempt with the same `args`, while
-// the idempotency key is computed ONCE in `runOnce` outside that loop. So an id
-// minted inside run() is fresh on every attempt, and this test states what the
-// server then does with it — two chats, silently, for one gesture. There is no
-// server-side guard that could save it, which is exactly why the rule lives at the
-// dispatch site and why the failure is asserted here rather than argued in a
-// comment.
+// TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats pins the client's rule: `op_id` is a dispatch
+// ARGUMENT, never minted inside run(), because @cplieger/actions' runWithRetry re-invokes run() per
+// attempt while the idempotency key is computed once. A per-attempt id makes two chats, and no
+// server guard can prevent it.
 func TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
@@ -213,8 +195,6 @@ func TestCmdCreateChat_Refusals(t *testing.T) {
 		})
 	}
 }
-
-// --- the ledger itself ---
 
 // TestCreateLedger_ResolvesOncePerOp is the property every caller relies on:
 // reserve and mint happen under ONE lock, so an overlapping repeat cannot mint a

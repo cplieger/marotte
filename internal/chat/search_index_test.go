@@ -12,9 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A filter that has filled up says yes to everything, which is the unindexed
-// behaviour: a chat too large for its filter is read for every query, never
-// skipped for one.
+// A full filter admits everything, so an oversized chat is read for every query, never skipped.
 func TestChatFilter_SaturatedAdmitsEveryQuery(t *testing.T) {
 	f := new(chatFilter)
 	for i := range f.words {
@@ -29,9 +27,7 @@ func TestChatFilter_SaturatedAdmitsEveryQuery(t *testing.T) {
 	}
 }
 
-// One trigram sets three positions and a lookup demands all three: clear any one
-// of them and the trigram is rejected. Forcing the step odd is what keeps the
-// three distinct, so the count is exact rather than at most three.
+// One trigram sets three positions and clearing any one rejects it; the odd step keeps the count exact.
 func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 5))
 	for range 200 {
@@ -62,8 +58,7 @@ func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 	}
 }
 
-// Distinct trigrams never share a key, so a filter holding one rejects the three
-// single-rune variants of it: the rune packing has to keep all three fields.
+// Distinct trigrams never share a key: a filter rejects each single-rune variant.
 func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
 	f := new(chatFilter)
 	f.addText("abc")
@@ -85,11 +80,8 @@ func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
 	}
 }
 
-// Under three runes there is no trigram to demand, so every chat is a candidate;
-// at three the demand is one trigram of RUNES, whatever their byte lengths, and
-// case is folded out of it. Invalid bytes in the query collapse per run before the
-// fold, exactly as NewNeedle repairs them, so the filter is asked for the string
-// the needle scans with and never for one the needle would not.
+// Under three runes nothing is demanded; at three, one trigram of runes, case-folded. Invalid bytes collapse per run
+// as NewNeedle does.
 func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -119,12 +111,8 @@ func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 	}
 }
 
-// An append extends the filter the last query built rather than dropping it, so
-// text written after a query is found by the next one without a rebuild: the
-// filter is the same object across the append, and a stale one would reject the
-// new word and the chat would silently stop being searchable for it. Every append
-// path extends: the turn_open's prompt, a text entry, and an entry filed between
-// turns.
+// An append extends the last query's filter (the same object), so text written later is found without a rebuild.
+// Every append path extends: prompt, text entry, between-turns entry.
 func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -166,9 +154,7 @@ func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *t
 	}
 }
 
-// A rewind's record makes the lines the filter indexed unreadable, so the filter is
-// dropped and the next query rebuilds it over what survived: the reverted turn's word
-// is no longer found, the kept turn's still is.
+// A revert drops the filter; the rebuild finds the kept turn's word but not the reverted one's.
 func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -201,9 +187,7 @@ func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
 	}
 }
 
-// A merge rewrite replaces the whole log, so the filter is dropped and the next
-// query rebuilds it over the rewritten entries. Reconcile is the production path a
-// rewrite arrives through, and its swap calls the log's Rewrite directly.
+// A merge rewrite drops the filter; Reconcile's swap calls Rewrite directly.
 func TestSearchIndex_ARewriteDropsTheFilter(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -249,8 +233,7 @@ func TestSearchIndex_ARewriteDropsTheFilter(t *testing.T) {
 	}
 }
 
-// A delete drops the entry too, so the index never holds a filter for a file that
-// is gone.
+// A delete drops the filter too.
 func TestSearchIndex_ADeleteDropsTheEntry(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -268,9 +251,7 @@ func TestSearchIndex_ADeleteDropsTheEntry(t *testing.T) {
 	}
 }
 
-// Nothing is indexed at open: a store over an existing directory holds no filter
-// until the first query, which then records one for EVERY chat it read, matching
-// or not, and a second query reuses them rather than rebuilding.
+// Nothing is indexed at open: the first query records a filter for every chat it read, and the next reuses them.
 func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 	dir := t.TempDir()
 	seeder, err := NewStore(dir)
@@ -311,11 +292,8 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 	}
 }
 
-// A chat whose filter rejects the query is not opened, and the filter answers for
-// it: it counts as scanned and leaves Truncated alone. The file is made
-// undecodable AFTER its filter was recorded, which no writer of this store can do,
-// so a read would report the chat unread; the query the filter rejects never
-// makes that read, and the one it admits does.
+// A rejecting filter answers without a read and the chat counts as scanned. The file is corrupted after the filter
+// was recorded, so a read would report it unread.
 func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -345,10 +323,7 @@ func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 	}
 }
 
-// The filters are asked about the FREE text the needle scans with, never the raw
-// query: a scoped filter's `turn:1` token and the whitespace the parser
-// collapses are not text any chat holds, and demanding their trigrams would prune
-// every chat a scoped or loosely-typed query should match.
+// Only the free text reaches the filters: `turn:1` and collapsed whitespace would prune every chat.
 func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
@@ -366,8 +341,7 @@ func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	}
 }
 
-// The index costs chats x 64 KiB and nothing else: one fixed-size filter per chat,
-// sized as a power of two so a position is a mask rather than a division.
+// The index costs 64 KiB per chat, a power of two so a position is a mask.
 func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	if got := unsafe.Sizeof(chatFilter{}); got != 64<<10 {
 		t.Errorf("sizeof(chatFilter) = %d, want %d", got, 64<<10)

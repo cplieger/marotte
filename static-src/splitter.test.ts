@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { attachSplitter, type SplitterOptions } from "./splitter.js";
 
-/** Back the three pointer-capture methods with a Set, as shell.test.ts does: a
- *  synthetic event carries no real pointer for the browser to capture. */
+/** Back the three pointer-capture methods with a Set, as shell.test.ts does: a synthetic event
+ *  carries no real pointer for the browser to capture. */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
   el.setPointerCapture = (id: number): void => {

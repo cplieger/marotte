@@ -1,10 +1,7 @@
 package command
 
-// User-input answer forwarding: the user answered (or dismissed) the
-// agent's structured question (_kiro/userInput, kiro-cli 2.14+); relay
-// the result to kiro-cli on the same JSON-RPC id the request carried.
-// Mirrors CmdElicitationResponse — the flow is request/response shaped
-// just like permission prompts.
+// Relays the answer to the agent's structured question (_kiro/userInput) on the request's JSON-RPC
+// id, as CmdElicitationResponse does.
 
 import (
 	"context"
@@ -26,9 +23,7 @@ func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms Pendi
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// An "answered" action needs answer text (KAS ignores an empty answer
-	// and would advance anyway — reject so the client bug is visible);
-	// "dismissed" carries none.
+	// KAS ignores an empty answer and advances anyway, so "answered" without text is rejected.
 	switch p.Action {
 	case marotte.UserInputActionAnswered:
 		if p.Answer == "" {

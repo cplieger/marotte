@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// styleAt returns the style covering offset off, or the zero style when no
-// span covers it. Spans never overlap, so the first match is the answer.
+// styleAt returns the style covering off, or the zero style; spans never overlap.
 func styleAt(spans []Span, off int) (Span, bool) {
 	for _, s := range spans {
 		if off >= s.Start && off < s.End {
@@ -34,13 +33,11 @@ func TestParse_StripsSequencesFromTheText(t *testing.T) {
 		in   string
 		want string
 	}{
-		// The shapes measured in real tool output: gitleaks' zerolog console
-		// writer and hadolint both colour unconditionally.
+		// Shapes from real tool output: gitleaks' zerolog writer and hadolint colour unconditionally.
 		{name: "sgr colour", in: "\x1b[90m1:47AM\x1b[0m \x1b[32mINF\x1b[0m ok", want: "1:47AM INF ok"},
 		{name: "bright fg", in: "\x1b[92minfo\x1b[0m", want: "info"},
 		{name: "reset shorthand", in: "\x1b[1mbold\x1b[mplain", want: "boldplain"},
-		// Grid operations are dropped, not interpreted: this is a pipe, so
-		// there is no cursor to move and no screen to erase.
+		// Grid operations are dropped: a pipe has no cursor or screen.
 		{name: "cursor move", in: "a\x1b[2Ab", want: "ab"},
 		{name: "erase line", in: "a\x1b[2Kb", want: "ab"},
 		{name: "erase display", in: "a\x1b[3Jb", want: "ab"},
@@ -53,23 +50,16 @@ func TestParse_StripsSequencesFromTheText(t *testing.T) {
 		{name: "dcs", in: "a\x1bPq~~\x1b\\b", want: "ab"},
 		{name: "two byte escape", in: "a\x1bcb", want: "ab"},
 		{name: "lone escape at end becomes U+FFFD", in: "ab\x1b", want: "ab\ufffd"},
-		// A sequence whose LAST byte is also the stream's last byte is
-		// complete and must be dropped, not held and then released as text.
-		// One byte short of complete is the case above; exactly complete is
-		// this one, and the two are one comparison apart.
+		// A sequence ending exactly at the stream's end is complete and dropped, one comparison from the held case above.
 		{name: "two byte escape ends the stream", in: "a\x1bc", want: "a"},
 		{name: "charset designation ends the stream", in: "a\x1b(B", want: "a"},
 		{name: "utf8 charset selection ends the stream", in: "a\x1b%G", want: "a"},
-		// The CSI byte ranges ECMA-48 defines, at their edges. A byte the
-		// parser fails to recognise as part of the sequence ends it early and
-		// leaks the remainder into the text as letters and digits.
+		// The ECMA-48 CSI byte ranges at their edges; a missed byte ends the sequence early and leaks the rest.
 		{name: "csi intermediate byte space", in: "a\x1b[2 pb", want: "ab"},
 		{name: "csi intermediate byte solidus", in: "a\x1b[1/pb", want: "ab"},
 		{name: "csi final byte at 0x40", in: "a\x1b[1@b", want: "ab"},
 		{name: "csi final byte at 0x7e", in: "a\x1b[3~b", want: "ab"},
-		// The three-byte forms whose FINAL byte leaks into the text when only
-		// two bytes are consumed. `ESC % G` (select UTF-8) is the plausible
-		// one from a pipe; each of these left a stray capital letter behind.
+		// Three-byte forms whose final byte leaked as a stray capital when only two were consumed.
 		{name: "utf8 charset selection", in: "a\x1b%Gb", want: "ab"},
 		{name: "96 char set designation", in: "a\x1b-Ab", want: "ab"},
 		{name: "line attribute", in: "a\x1b#8b", want: "ab"},
@@ -114,8 +104,7 @@ func TestParse_SpansAddressTheRightRanges(t *testing.T) {
 	}
 }
 
-// Every SGR attribute is covered. `ESC[7m` appears in real measured output and
-// rendered unstyled before the parse moved here.
+// Every SGR attribute. `ESC[7m` appears in real output and rendered unstyled before the server parse.
 func TestApplySGR_AllAttributes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -148,11 +137,8 @@ func TestApplySGR_AllAttributes(t *testing.T) {
 	}
 }
 
-// The attribute bit VALUES are a cross-language contract, not an internal
-// detail: web-terminal-engine's vt.WireRun.A uses these exact bits, and the
-// client's one constant table (output-render.ts) serves both renderers. A
-// reordering of the iota block would keep every other test in this file green
-// while silently repainting bold as italic in the browser.
+// The bit values are a cross-language contract with web-terminal-engine's vt.WireRun.A and the client's one table
+// (output-render.ts); an iota reorder would repaint bold as italic with every other test green.
 func TestAttrBits_MatchTheWireRunContract(t *testing.T) {
 	want := map[string]uint16{
 		"bold": 1, "italic": 2, "underline": 4, "inverse": 8, "strike": 16,
@@ -169,7 +155,7 @@ func TestAttrBits_MatchTheWireRunContract(t *testing.T) {
 			t.Errorf("Attr%s = %d, want %d (vt.WireRun.A contract)", name, got[name], w)
 		}
 	}
-	// Bit 1024 is WireRun's AttrAutolink. Nothing here may claim it.
+	// Bit 1024 is WireRun's AttrAutolink; nothing here may claim it.
 	var all uint16
 	for _, v := range got {
 		all |= v
@@ -222,14 +208,11 @@ func TestApplySGR_Colours(t *testing.T) {
 		{name: "bright bg maps above 8", seq: "101", wantFG: ColorDefault, wantBG: 9},
 		{name: "256 palette fg", seq: "38;5;208", wantFG: 208, wantBG: ColorDefault},
 		{name: "256 palette bg", seq: "48;5;17", wantFG: ColorDefault, wantBG: 17},
-		// The palette's own ends. Index 0 is black, which is a colour and not
-		// "unset", and 255 is the last entry; a range check that excludes
-		// either drops the colour and paints the run with the default instead.
+		// Index 0 is black, a colour and not unset, and 255 is the last entry; excluding either paints the default.
 		{name: "256 palette first index", seq: "38;5;0", wantFG: 0, wantBG: ColorDefault},
 		{name: "256 palette last index", seq: "38;5;255", wantFG: 255, wantBG: ColorDefault},
 		{name: "truecolour fg", seq: "38;2;10;20;30", wantFG: RGB(10, 20, 30), wantBG: ColorDefault},
 		{name: "truecolour bg", seq: "48;2;1;2;3", wantFG: ColorDefault, wantBG: RGB(1, 2, 3)},
-		// Every component at an end of its range, in one colour.
 		{name: "truecolour component extremes", seq: "38;2;0;255;0", wantFG: RGB(0, 255, 0), wantBG: ColorDefault},
 		{name: "truecolour white", seq: "48;2;255;255;255", wantFG: ColorDefault, wantBG: RGB(255, 255, 255)},
 		{name: "39 resets fg only", seq: "31;41;39", wantFG: ColorDefault, wantBG: 1},
@@ -253,8 +236,7 @@ func TestApplySGR_Colours(t *testing.T) {
 }
 
 func TestApplySGR_MalformedExtendedColourDoesNotCorruptLaterParams(t *testing.T) {
-	// `38;5` with no index is truncated. The parser must not swallow the
-	// following bold, or a malformed colour would eat unrelated styling.
+	// `38;5` without an index must not swallow the following bold.
 	_, spans := Parse("\x1b[38;5m\x1b[1mx")
 	if len(spans) != 1 {
 		t.Fatalf("got %d spans, want 1", len(spans))
@@ -264,9 +246,7 @@ func TestApplySGR_MalformedExtendedColourDoesNotCorruptLaterParams(t *testing.T)
 	}
 }
 
-// A parameter this parser cannot honour must be IGNORED, never folded in as 0 —
-// 0 is a full reset, so the "unknown means zero" reading turns every one of
-// these into a silent style wipe. Each case here is a real emitter.
+// An unhonourable parameter is ignored, never read as 0, which is a full reset. Each case is a real emitter.
 func TestApplySGR_UnhonourableParametersDoNotReset(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -343,9 +323,7 @@ func TestParse_ResetClosesTheSpan(t *testing.T) {
 	}
 }
 
-// Streaming: a chunk boundary anywhere inside an escape sequence must not leak
-// escape bytes into the text, and an open colour must still apply afterwards.
-// This is what the pump does on every 4 KB read.
+// A chunk boundary inside an escape must not leak bytes, and an open colour still applies (the pump's 4 KB reads).
 func TestParser_SplitSequenceAcrossWrites(t *testing.T) {
 	const full = "a\x1b[31mred\x1b[0mb"
 	for cut := 1; cut < len(full); cut++ {
@@ -361,7 +339,6 @@ func TestParser_SplitSequenceAcrossWrites(t *testing.T) {
 			if text != "aredb" {
 				t.Fatalf("cut at %d: text = %q, want %q", cut, text, "aredb")
 			}
-			// "red" occupies [1,4) of the reassembled text however it was cut.
 			covered := 0
 			for _, s := range spans {
 				for off := s.Start; off < s.End; off++ {
@@ -380,8 +357,7 @@ func TestParser_SplitSequenceAcrossWrites(t *testing.T) {
 	}
 }
 
-// Open style carries across writes: a colour set in one chunk styles text that
-// arrives in the next, which is why each stream needs its own Parser.
+// A colour set in one chunk styles the next chunk's text, hence one Parser per stream.
 func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
 	p := NewParser()
 	t1, s1 := p.Write("\x1b[31mfirst")
@@ -396,24 +372,20 @@ func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
 	if len(s2) != 1 || s2[0].FG != 1 {
 		t.Fatalf("second write spans = %+v, want the colour to carry", s2)
 	}
-	// Offsets are absolute across the parser's life, so the second write's
-	// span starts where the first left off.
+	// Offsets are absolute, so the second write's span starts where the first left off.
 	if s2[0].Start != len(t1) {
 		t.Errorf("second span starts at %d, want %d (absolute offsets)", s2[0].Start, len(t1))
 	}
 }
 
-// Offset is the parser's own count of emitted UTF-16 units, and the runtime reports
-// it on the wire as the base of the chunk it is broadcasting. The property that
-// makes that correct: Offset read BEFORE a Write equals the absolute Start the
-// first span of that Write will carry. A second counter kept in step by hand is
-// exactly what this accessor exists to remove, so this test is the contract.
+// Offset read before a Write equals the absolute Start of that Write's first span; the runtime reports it as the
+// chunk's base.
 func TestParser_OffsetIsTheBaseOfTheNextWrite(t *testing.T) {
 	p := NewParser()
 	if got := p.Offset(); got != 0 {
 		t.Fatalf("fresh parser Offset = %d, want 0", got)
 	}
-	// A lead-in with a surrogate pair, so a byte-based counter would disagree.
+	// A surrogate pair, so a byte counter would disagree.
 	lead, _ := p.Write("ok\U0001F600")
 	wantAfterLead := 4 // "ok" + 2 units for the emoji
 	if got := p.Offset(); got != wantAfterLead {
@@ -427,7 +399,7 @@ func TestParser_OffsetIsTheBaseOfTheNextWrite(t *testing.T) {
 	if spans[0].Start != base {
 		t.Errorf("span starts at %d, want the pre-write Offset %d", spans[0].Start, base)
 	}
-	// And the flush path reports the same way.
+	// The flush path reports the same way.
 	_, _ = p.Write("tail\x1b[3")
 	flushBase := p.Offset()
 	tail, _ := p.Flush()
@@ -462,12 +434,8 @@ func TestParser_FlushReleasesHeldBytes(t *testing.T) {
 	}
 }
 
-// A rune split across a chunk boundary must reassemble, not degrade into one
-// replacement character per fragment. The assertion is an oracle over the
-// production path itself — the same input at every possible split has to
-// produce the text one-shot parsing produces — which is what makes it survive
-// later changes to what the path does to its input. Scoped to valid UTF-8 well
-// inside maxPendingBytes, the class where streaming and one-shot must agree.
+// A rune split across chunks reassembles: every split of the input must produce the one-shot text. Scoped to valid
+// UTF-8 well inside maxPendingBytes.
 func TestParser_MultiByteRuneSplitAcrossWrites(t *testing.T) {
 	cases := []struct {
 		name string
@@ -502,9 +470,7 @@ func TestParser_MultiByteRuneSplitAcrossWrites(t *testing.T) {
 	}
 }
 
-// A style that opens and never covers a character must produce no span. A
-// zero-length span paints nothing, and the client indexes the text by these
-// offsets, so an empty range is a range it has to special-case.
+// A style that covers no character produces no span; the client would have to special-case an empty range.
 func TestParse_StyleWithNoTextProducesNoSpan(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -534,10 +500,7 @@ func TestParse_StyleWithNoTextProducesNoSpan(t *testing.T) {
 	}
 }
 
-// The held-bytes bound decides whether an unterminated run is still a
-// candidate sequence. At the bound it is held for the next chunk; one byte
-// past it, it is not a sequence any more and is released as text so a command
-// emitting `ESC [` and then gigabytes cannot grow the buffer without limit.
+// At the bound an unterminated run is held for the next chunk; one byte past, it is released as text.
 func TestParser_UnterminatedSequenceIsHeldUpToTheBound(t *testing.T) {
 	atBound := "\x1b[" + strings.Repeat("1", maxPendingBytes-2)
 	overBound := atBound + "1"
@@ -580,8 +543,7 @@ func TestRGB_RoundTripsAndIsDistinctFromPaletteIndices(t *testing.T) {
 	if c < rgbFlag {
 		t.Errorf("RGB(...) = %d, want it above rgbFlag (%d)", c, rgbFlag)
 	}
-	// The two encodings share one int32, so a palette index must never land in
-	// the truecolour range or a 256-colour span would render as an RGB triple.
+	// The encodings share one int32, so no palette index may land in the truecolour range.
 	for i := range 256 {
 		if idx := int32(i); idx >= rgbFlag {
 			t.Fatalf("palette index %d collides with the RGB range", idx)
@@ -598,8 +560,7 @@ func TestRGB_RoundTripsAndIsDistinctFromPaletteIndices(t *testing.T) {
 	}
 }
 
-// Agent command output is untrusted: the agent chooses the command and the
-// command chooses the bytes. Four invariants hold for every input.
+// Agent command output is untrusted: the agent picks the command and the command the bytes.
 func FuzzParse(f *testing.F) {
 	f.Add("plain text")
 	f.Add("\x1b[31mred\x1b[0m")
@@ -616,24 +577,15 @@ func FuzzParse(f *testing.F) {
 	f.Add("\x1b[4:3munderline\x1b[m")
 	f.Add("\x1b[>4;2mx")
 	f.Add("a\x1b%Gb")
-	// The fuzzer's own finds, kept as seeds because each cost a real defect.
-	// A long string-terminated sequence, where the pending bound and the
-	// chunked/one-shot agreement meet:
+	// The fuzzer's own finds, each a real defect. A long string-terminated sequence, where the pending bound meets
+	// chunked agreement:
 	f.Add("\x1bX" + strings.Repeat("0", 63) + "\x07")
-	// An escape sequence sitting between a rune's lead byte and its
-	// continuation bytes, which made piecewise UTF-16 offsets address past the
-	// end of the string the client holds:
+	// An escape between a rune's lead and continuation bytes, which pushed UTF-16 offsets past the end:
 	f.Add("\xe6\x1b[1m\xbd\xbd")
-	// A run of invalid bytes, which strings.ToValidUTF8 collapses into ONE
-	// replacement and so breaks the additivity offsets depend on:
+	// A run of invalid bytes, which strings.ToValidUTF8 collapses into one replacement:
 	f.Add("\xbd\xbd\xbd")
-	// The five bytes that LOOK like multi-byte leads to a mask test and are not
-	// valid leads at all: 0xC0/0xC1 would be overlong two-byte forms and
-	// 0xF5-0xF7 encode past U+10FFFF. No continuation can complete one, so a
-	// tail-hold that waits for one waits forever. Seeded because the corpus
-	// reached none of them, and incompleteRuneTail's answer for them is exactly
-	// where a hand-rolled lead-byte table and unicode/utf8 disagree — measured
-	// at 853,573 divergences over all 33.6M strings of up to 4 bytes.
+	// Bytes that pass a lead-byte mask but never lead a valid rune (0xC0/0xC1 overlong, 0xF5-0xF7 past U+10FFFF), so a
+	// tail-hold waiting for a continuation waits forever. Seeded because the corpus reached none of them.
 	f.Add("\xc0")
 	f.Add("\xc0\x80")
 	f.Add("\xc1\xbf")
@@ -644,17 +596,13 @@ func FuzzParse(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in string) {
 		text, spans := Parse(in)
 
-		// 1. The text never grows, counted in the unit offsets use. Bytes would
-		//    be the wrong measure: an invalid byte is replaced by U+FFFD, which
-		//    is three bytes but one code unit. Every input byte yields at most
-		//    one unit, and escapes are removed, so this bounds the result.
+		// 1. The text never grows in UTF-16 units: each input byte yields at most one unit (U+FFFD is three bytes but one
+		// unit).
 		if utf16Len(text) > len(in) {
 			t.Fatalf("text grew: %d UTF-16 units out of %d input bytes", utf16Len(text), len(in))
 		}
 
-		// 2. Every span addresses a real range of the text, in order, without
-		//    overlapping. Bounds are checked in UTF-16 space because that is
-		//    the offset unit; a bad offset would slice garbage in the client.
+		// 2. Spans address real, ordered, non-overlapping ranges, checked in UTF-16 space.
 		limit := utf16Len(text)
 		prevEnd := 0
 		for i, s := range spans {
@@ -667,30 +615,20 @@ func FuzzParse(f *testing.F) {
 			prevEnd = s.End
 		}
 
-		// 3. A span is never emitted for default styling, or unstyled output
-		//    would carry spans that paint nothing.
+		// 3. No span carries default styling.
 		for i, s := range spans {
 			if s.FG == ColorDefault && s.BG == ColorDefault && s.Attrs == 0 {
 				t.Fatalf("span %d styles nothing: %+v", i, s)
 			}
 		}
 
-		// 4. The plain text never carries an escape byte. This is the invariant
-		//    that lets the parser stand in for sanitize.StripANSI: the text is
-		//    persisted to a JSON chat file and re-served, so a surviving ESC
-		//    would be a residual escape in stored output.
+		// 4. The text never carries an ESC: it is persisted and re-served, so this is what replaces sanitize.StripANSI.
 		if strings.ContainsRune(text, 0x1b) {
 			t.Fatalf("plain text still contains ESC: %q", text)
 		}
 
-		// 5. Streaming agrees with one-shot. The pump feeds chunks, so a split
-		//    must produce the same text as parsing the whole string. Scoped to
-		//    inputs within maxPendingBytes: past that bound the parser releases
-		//    an unterminated run as text rather than holding it, and a
-		//    bounded-memory streaming parser cannot agree with an unbounded
-		//    one-shot parser there (the fuzzer found exactly that case with a
-		//    4 KB `ESC X ... BEL` string sequence). Invariants 1-4 still hold
-		//    for every input.
+		// 5. Streaming agrees with one-shot for inputs within maxPendingBytes; past it a bounded streaming parser cannot
+		// (the fuzzer found a 4 KB `ESC X ... BEL`). 1-4 hold for every input.
 		if len(in) > maxPendingBytes {
 			return
 		}
@@ -702,9 +640,7 @@ func FuzzParse(f *testing.F) {
 			if a+b+tail != text {
 				t.Fatalf("split at %d gave %q, one-shot gave %q", cut, a+b+tail, text)
 			}
-			// 6. Offset agrees with the text actually emitted, at every split.
-			//    The runtime reports Offset as a chunk's base, so a drift here
-			//    would rebase every live span onto the wrong character.
+			// 6. Offset matches the emitted text at every split, or live spans rebase onto the wrong character.
 			if got, want := p.Offset(), utf16Len(text); got != want {
 				t.Fatalf("split at %d: Offset = %d, want %d units of emitted text", cut, got, want)
 			}
@@ -715,10 +651,8 @@ func FuzzParse(f *testing.F) {
 	})
 }
 
-// Span offsets are UTF-16 code units because the consumer indexes the text with
-// JavaScript string offsets. A byte offset would point into the middle of a
-// character the moment a command printed a box-drawing glyph, an accented name
-// or an emoji, and the client would slice garbage.
+// Span offsets are UTF-16 code units for JavaScript indexing; a byte offset would slice garbage past the first
+// non-ASCII character.
 func TestParse_OffsetsAreUTF16CodeUnits(t *testing.T) {
 	cases := []struct {
 		name string
@@ -726,15 +660,13 @@ func TestParse_OffsetsAreUTF16CodeUnits(t *testing.T) {
 		want int    // expected UTF-16 offset of the styled word
 	}{
 		{name: "ascii", lead: "abc", want: 3},
-		// U+00E9 is 2 bytes in UTF-8, 1 UTF-16 unit.
+		// U+00E9: 2 bytes, 1 unit.
 		{name: "latin1 supplement", lead: "caf\u00e9", want: 4},
-		// U+2502 (box drawing) is 3 bytes, 1 UTF-16 unit.
+		// U+2502: 3 bytes, 1 unit.
 		{name: "box drawing", lead: "\u2502\u2502", want: 2},
-		// U+FFFF is the last rune below the surrogate range: 3 bytes, still 1
-		// UTF-16 unit. A parser that counted a pair here would shift every
-		// span after it by one character.
+		// U+FFFF, the last rune below the surrogate range: 3 bytes, 1 unit.
 		{name: "last single unit rune", lead: "\uffff\uffff", want: 2},
-		// U+1F600 is 4 bytes and a SURROGATE PAIR: 2 UTF-16 units.
+		// U+1F600: 4 bytes, a surrogate pair of 2 units.
 		{name: "emoji is a surrogate pair", lead: "\U0001F600", want: 2},
 		{name: "mixed", lead: "a\u00e9\u2502\U0001F600", want: 5},
 	}
@@ -750,8 +682,7 @@ func TestParse_OffsetsAreUTF16CodeUnits(t *testing.T) {
 			if spans[0].End != tc.want+3 {
 				t.Errorf("span ends at %d, want %d", spans[0].End, tc.want+3)
 			}
-			// The invariant the client relies on: slicing the text by the
-			// span's offsets in UTF-16 space yields exactly the styled word.
+			// Slicing by the span's UTF-16 offsets yields exactly the styled word.
 			if got := utf16Slice(text, spans[0].Start, spans[0].End); got != "red" {
 				t.Errorf("utf16 slice = %q, want %q", got, "red")
 			}
@@ -759,8 +690,7 @@ func TestParse_OffsetsAreUTF16CodeUnits(t *testing.T) {
 	}
 }
 
-// utf16Slice indexes s the way a browser would, so a test can assert what the
-// client will actually paint.
+// utf16Slice indexes s as a browser would, so a test asserts what the client paints.
 func utf16Slice(s string, start, end int) string {
 	units := 0
 	var out []rune
@@ -786,8 +716,7 @@ func TestUTF16Len(t *testing.T) {
 		{in: "abc", want: 3},
 		{in: "caf\u00e9", want: 4},
 		{in: "\u2502", want: 1},
-		// U+FFFF is the last rune that still costs one code unit; U+10000 is
-		// the first that costs a surrogate pair.
+		// U+FFFF is the last one-unit rune; U+10000 the first surrogate pair.
 		{in: "\uffff", want: 1},
 		{in: "\U00010000", want: 2},
 		{in: "\U0001F600", want: 2},

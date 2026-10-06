@@ -1,50 +1,22 @@
-// ---------------------------------------------------------------------------
 // The WORKFLOW adapter: KAS's `inspect` reply folded into the exec view's model.
-//
-// The whole workflow-specific half of the `/run/{id}` page lives here, so the panes
-// under `exec-view/` name no workflow concept and a subagent tab is a second
-// adapter rather than a second page.
-//
-// It is also where two things that were on the wire and unread finally get read:
-//
-//   `state.inputs`  — what the run was ASKED to do. Zero readers before this, on
-//                     any surface. `recipes.ts` renders a recipe's DECLARED input
-//                     names for the launch form; the VALUES a run actually
-//                     received were displayed nowhere in the app.
-//   `nodePlan`      — zero readers before this. Passed through verbatim by
-//                     `GET /api/runs/{id}` and decoded by nothing. Its only
-//                     content the state tree lacks is a repeat's `maxIterations`,
-//                     `onMaxIterations` and `stopCondition`, so a loop's bound and
-//                     its exit condition had never been on screen.
-//
-// And the structure itself. The state tree's CONTAINERS — `sequence`, `repeat`,
-// `parallel`, `watch` — were dropped by the leaf-flattening the page and the
-// transcript card both do, so a run's control flow was invisible: that there IS a
-// loop, that two steps ran concurrently, where a watch sits. Those are the two
-// things a single column cannot express and the two a run always has.
-//
-// `completionSignal`, `effortLevel`, `sessionId` and `watchTerminal` also had zero
-// render sites and become facts on the detail pane here.
-// ---------------------------------------------------------------------------
 
 import { truncate } from "./strings.js";
 import {
   isNeedInputPark,
   nodePathSegment,
   pauseDetailPhrase,
+  pausePendingSentence,
   type RunNode,
   type RunState,
+  userStopSentence,
 } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
 
-/** The per-node facts `nodePlan` carries that the state tree does not.
- *
- *  Keyed by node id rather than by path, because the PLAN is the definition: it
- *  describes a node once, while the state tree describes every execution of it. A
- *  repeat's two iterations share the plan entry that bounds them, which is exactly
- *  the join wanted here. */
+/** The per-node facts `nodePlan` carries that the state tree does not. Keyed by node id rather
+ *  than by path, because the PLAN is the definition: it describes a node once, while the state
+ *  tree describes every execution of it. */
 interface PlanEntry {
   maxIterations?: number;
   onMaxIterations?: string;
@@ -55,15 +27,7 @@ interface PlanEntry {
   watch?: string;
 }
 
-/** Walk the raw plan and index every node id it names.
- *
- *  Structural rather than schema-driven, and defensively so: this is a foreign
- *  shape whose members grow between kiro-cli releases, and the reply is useful
- *  whether or not this walk understood all of it. Every field is read through a
- *  guard, an unrecognised container still has its children visited, and a plan that
- *  is not an array at all yields an empty index instead of throwing on a page whose
- *  other half renders fine.
- */
+/** Walk the raw plan and index every node id it names. */
 export function indexPlan(plan: unknown): Map<string, PlanEntry> {
   const out = new Map<string, PlanEntry>();
   const str = (v: unknown): string | undefined =>
@@ -99,10 +63,8 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
           entry[field] = v;
         }
       }
-      // `stopWhen` is the other spelling of a stop condition; the engine rejects a
-      // node declaring both, so taking either into one field cannot lose one. The
-      // guard rather than `??=` because the field is optional under
-      // exactOptionalPropertyTypes, which refuses `undefined` as a value.
+      // `stopWhen` is the other spelling of a stop condition; the engine rejects a node declaring
+      // both, so taking either into one field cannot lose one.
       if (entry.stopCondition === undefined) {
         const when = str(o["stopWhen"]);
         if (when !== undefined) {
@@ -118,8 +80,8 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
         out.set(id, entry);
       }
     }
-    // Every container spelling the engine uses, plus a generic `children` so a
-    // node type added upstream still has its descendants indexed.
+    // Every container spelling the engine uses, plus a generic `children` so a node type added
+    // upstream still has its descendants indexed.
     for (const key of ["steps", "branches", "children", "body", "nodes"]) {
       walk(o[key]);
     }
@@ -128,13 +90,7 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
   return out;
 }
 
-/** A container's state, derived from its children.
- *
- *  KAS does stamp a status on a container, and it is taken when it says something
- *  terminal — but a container reads `running` for as long as anything inside it is
- *  open, which tells a reader nothing they cannot see. What is worth surfacing is
- *  the WORST outcome beneath it, so a collapsed group still says a step inside it
- *  failed. Precedence follows what a reader must act on. */
+/** A container's state, derived from its children. */
 function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   if (kids.length === 0) {
     return own;
@@ -151,8 +107,8 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   return own;
 }
 
-/** The kind, mapped rather than passed through, so an upstream addition lands on
- *  `group` (which the CSS has a rule for) instead of on nothing. */
+/** The kind, mapped rather than passed through, so an upstream addition lands on `group` (which
+ *  the CSS has a rule for) instead of on nothing. */
 function kindOf(type: string): ExecKind {
   switch (type) {
     case "step":
@@ -166,8 +122,8 @@ function kindOf(type: string): ExecKind {
   }
 }
 
-/** The identity facts for a step, in the order they answer questions: who ran it,
- *  on what, how it ended, and what it took to get there. */
+/** The identity facts for a step, in the order they answer questions: who ran it, on what, how
+ *  it ended, and what it took to get there. */
 function stepFacts(node: RunNode, plan: PlanEntry | undefined): ExecFact[] {
   const facts: ExecFact[] = [];
   const add = (label: string, value: string | undefined, mono = false): void => {
@@ -176,12 +132,12 @@ function stepFacts(node: RunNode, plan: PlanEntry | undefined): ExecFact[] {
     }
   };
   add("Agent", node.agentName);
-  // `auto` is not a model, it is the absence of a choice, and naming it as one
-  // implies a pin that never happened.
+  // `auto` is not a model, it is the absence of a choice, and naming it as one implies a pin that
+  // never happened.
   add("Model", node.modelId === "auto" ? undefined : node.modelId);
   add("Effort", node.effortLevel);
-  // KAS's own statement of WHY the node ended, which is different information from
-  // its status: a step can complete having asked for input.
+  // KAS's own statement of WHY the node ended, which is different information from its status: a
+  // step can complete having asked for input.
   add("Signal", node.completionSignal);
   if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
     add("Retries", String(node.continuationAttempts));
@@ -196,8 +152,8 @@ function stepFacts(node: RunNode, plan: PlanEntry | undefined): ExecFact[] {
   add("Stops when", plan?.stopCondition, true);
   add("Join", plan?.join);
   add("Waits for", plan?.watch, true);
-  // Last, and monospace: it is the handle for the step's own session rather than
-  // something a reader acts on, so it sits below the facts that describe the work.
+  // Last, and monospace: it is the handle for the step's own session rather than something a reader
+  // acts on, so it sits below the facts that describe the work.
   add("Session", node.sessionId, true);
   return facts;
 }
@@ -230,14 +186,10 @@ function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined):
   return bits.join(" \u00b7 ");
 }
 
-/** Fold one state node and its subtree.
- *
- *  `path` goes through `nodePathSegment`, so a step's tree row is addressed the
- *  way KAS addresses its FRAMES — otherwise a step inside a loop had its live
- *  transcript filed under a path no tree node ever selected, which is the other
- *  symptom of the same key defect that duplicated the transcript's step rows.
- *  `label` deliberately keeps `nodeId`, so an iteration row still reads
- *  `build-loop#0`. */
+/** Fold one state node and its subtree. `path` goes through `nodePathSegment`, so a step's tree
+ *  row is addressed the way KAS addresses its FRAMES — otherwise a step inside a loop had its
+ *  live transcript filed under a path no tree node ever selected, which is the other symptom of
+ *  the same key defect that duplicated the transcript's step rows. */
 function toNode(
   node: RunNode,
   trail: readonly string[],
@@ -280,22 +232,15 @@ function toNode(
   if (node.artifacts !== undefined && Object.keys(node.artifacts).length > 0) {
     out.artifacts = node.artifacts;
   }
-  // A LEAF can host a transcript; a container cannot, and saying so is what lets
-  // the detail pane distinguish "nothing streams here" from "nothing has arrived".
+  // A LEAF can host a transcript; a container cannot, and saying so is what lets the detail pane
+  // distinguish "nothing streams here" from "nothing has arrived".
   if (children.length === 0) {
     out.transcript = true;
   }
   return out;
 }
 
-/** The run's alert, and the five things that put it in front of a person.
- *
- *  Order is by what the reader can DO: an unanswered ask is the one state a click
- *  resolves right now, a deliberate stop needs nothing, a pause may need an action,
- *  a transient-error park is informational, and a failure needs reading. Only one
- *  shows — a run has one reason it is not moving. Ahead of the run's own status
- *  deliberately: the run still reads `running` while a step's ask blocks it, so the
- *  status would report nothing wrong. */
+/** The run's alert, and the five things that put it in front of a person. */
 function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): ExecRun["alert"] {
   if (asks.count > 0) {
     const head =
@@ -307,26 +252,16 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
       text: asks.count > 1 ? `${head} (${String(asks.count)} asks waiting)` : head,
     };
   }
-  if (state.stopInitiator === "user") {
-    const why =
-      state.stopReason === undefined || state.stopReason === "" ? "" : `: ${state.stopReason}`;
-    return {
-      kind: "stopped",
-      text: (state.status === "completed" ? "Marked complete by you" : "Stopped by you") + why,
-    };
+  const stopped = userStopSentence(state);
+  if (stopped !== undefined) {
+    return { kind: "stopped", text: stopped };
+  }
+  const pending = pausePendingSentence(state);
+  if (pending !== undefined) {
+    return { kind: "paused", text: pending };
   }
   if (state.status === "paused") {
-    // The two `need_input` literals are REPLACED rather than quoted. Both name a
-    // tool and a mechanism (`send_message`, a node id) where what the reader needs
-    // to know is that somebody owes an answer, and the ask arm above already renders
-    // the question itself whenever one reached the dock — so this is the case where
-    // it did not: a restart lost the text, or this client has not been handed it yet.
-    //
-    // It also says what Resume alone will do, because on this page Resume is a
-    // BUTTON the reader can see: KAS's resume clears the run's pause reason and
-    // leaves the step's own signal, so the next step execution parks again. Waiving
-    // the question is the run card's "Continue without answering", which is in the
-    // dock beside the answer box.
+    // The two `need_input` literals are REPLACED rather than quoted.
     const bits = [
       isNeedInputPark(state)
         ? "A step is waiting for your answer. Resume alone will park it again, " +
@@ -358,15 +293,7 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
   return undefined;
 }
 
-/** Fold KAS's `inspect` reply into the exec view's model.
- *
- *  `plan` is the raw `nodePlan`; `asks` is the dock's answer about which node is
- *  blocked on a person, which no source's status can carry. `focus` is the node a
- *  DOOR named — the transcript card's step row is one — and it is the workflow's
- *  first use of `ExecRun.focus`, which the subagent adapter has always set. Empty
- *  means "no door named one", so the field is withheld rather than sent blank:
- *  `undefined` is what tells `exec-view/page.ts` to follow the work, and an
- *  optional property may not carry `undefined` under exactOptionalPropertyTypes. */
+/** Fold KAS's `inspect` reply into the exec view's model. */
 export function runToExec(
   workflowID: string,
   state: RunState,
@@ -375,10 +302,9 @@ export function runToExec(
   focus = "",
 ): ExecRun {
   const plans = indexPlan(plan);
-  // The root is a container KAS names after the workflow itself, so its children
-  // are the run's real top level. Kept as a root only when it carries siblings
-  // worth showing — otherwise it would be one group wrapping everything, which is
-  // an indent for no information.
+  // The root is a container KAS names after the workflow itself, so its children are the run's real
+  // top level. Kept as a root only when it carries siblings worth showing — otherwise it would be
+  // one group wrapping everything, which is an indent for no information.
   const root = state.root;
   const nodes =
     root === undefined

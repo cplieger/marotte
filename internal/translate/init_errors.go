@@ -1,23 +1,17 @@
 package translate
 
-// v3 (KAS) init-error, rate-limit, and system-notify handlers.
-
 import (
 	"context"
 	"errors"
 	"log/slog"
 
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// HandleAgentNotFound handles the _kiro/customAgent/not_found notification:
-// the requested agent (a mode id on v3) doesn't exist. Persists the
-// fallback mode (always "vibe" on v3) as the chat's CurrentModeID and
-// broadcasts a typed error — on v3 the fallback agent IS a mode id. v3
-// carries no model fields here — a bad model is an InvalidModelError RPC
-// error on the set_config_option/prompt call, not a notification, so there
-// is no model-not-found handler.
+// HandleAgentNotFound handles _kiro/customAgent/not_found: the requested agent (a mode id on
+// v3) does not exist. It persists the fallback mode ("vibe") and broadcasts a typed error.
 func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Requested string `json:"requestedAgent"`
@@ -63,9 +57,7 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID marotte.
 	}))
 }
 
-// HandleRateLimit handles the _kiro/error/rate_limit notification
-// ({message}); the extra v3 sessionId is ignored. Rendered as an
-// auto-clearing amber banner.
+// HandleRateLimit handles _kiro/error/rate_limit ({message}) as a typed error.
 func (t *Translator) HandleRateLimit(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Message string `json:"message"`
@@ -79,13 +71,9 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID marotte.ChatID,
 	}))
 }
 
-// HandleSystemNotify handles the v3 _kiro/system/notify notification
-// ({level, message}) — the replacement for v2's session/retry banner. KAS
-// emits it as a connection-level "model under high load" notice: no attempt
-// counter and no sessionId, so it is a bridge-scope broadcast (chatID may
-// be empty). The message is surfaced verbatim as an auto-clearing banner;
-// level (info/warning/error) is decoded for forward-compatibility but not
-// separately surfaced — banner styling keys off the error code.
+// HandleSystemNotify handles _kiro/system/notify ({level, message}). The frame carries
+// no sessionId, so chatID is the bridge that received it. The message is forwarded
+// verbatim and never parsed: KAS sends several unrelated texts on this one method.
 func (t *Translator) HandleSystemNotify(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Level   string `json:"level"`
@@ -94,8 +82,24 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID marotte.Chat
 	if !ok || p.Message == "" {
 		return
 	}
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-		Code:    marotte.ErrCodeRateLimit,
+	payload := marotte.SystemNoticePayload{
+		Level:   noticeLevel(p.Level),
 		Message: displayText(p.Message),
-	}))
+	}
+	if c, ok := t.chats.Get(ctx, chatID); ok {
+		payload.ChatName = c.Name
+	} else if name, ok := t.chats.DepartedName(chatID); ok {
+		payload.ChatName = name
+	}
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSystemNotice, chatID, payload))
+}
+
+// noticeLevel folds a wire level onto the closed vocabulary; an unknown one is info.
+func noticeLevel(raw string) marotte.NoticeLevel {
+	switch l := marotte.NoticeLevel(raw); l {
+	case marotte.NoticeInfo, marotte.NoticeWarning, marotte.NoticeError:
+		return l
+	}
+	slog.Debug("system/notify: unrecognised level, shown as info", "level", logsafe.Field(raw))
+	return marotte.NoticeInfo
 }

@@ -1,12 +1,6 @@
-// Guards Chromium's `--disable-frame-rate-limit` (`vitest.config.ts`), whose loss
-// is silent: the suite still PASSES, four times slower. Runtime is the only signal.
-//
-// MAX_MS is near the geometric midpoint of the two measured runs, so it clears a
-// healthy run on a slower box and still catches a throttled one: in this container,
-// cold, 490 files, 236.9s with the flag against 1016s without.
-//
-// CI-only because a dev box shares its cores, so a wall-clock bound false-fires
-// there; it always prints, so a local run still reports the number.
+// Guards Chromium's `--disable-frame-rate-limit` (`vitest.config.ts`), whose loss is silent: the
+// suite still PASSES, about four times slower. MAX_MS sits near the geometric midpoint of a run
+// with and without it. CI-only (a dev box shares cores); it always prints the number.
 
 import { readFileSync } from "node:fs";
 

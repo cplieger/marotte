@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The cross-language pin for the file-search reply.
-//
-// filebrowse.FileSearchResult, FileMatch and FileMatchKind are wiregen-registered;
-// Go's TestFileSearchWireContract writes the fixture from the real handler over a
-// seeded tree, and this decodes it through the generated decodeFileSearchResult —
-// the decoder files-search.ts runs on every live reply — so the encoder cannot
-// drift from what the file browser reads.
-//
-// Node placement because the fixture is a disk read.
-// ---------------------------------------------------------------------------
+// The cross-language pin for the file-search reply: Go's TestFileSearchWireContract writes the fixture from the real
+// handler, decoded here through the generated decoder.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";

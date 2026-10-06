@@ -1,8 +1,5 @@
 package agent
 
-// Tests for mcp_registry.go: the in-memory runtime view of MCP
-// servers reported connected / needing OAuth / failed by kiro-cli.
-
 import (
 	"context"
 	"encoding/json"
@@ -17,20 +14,14 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
-// fakeMCPConfig is the registry filter tests' MCP name census.
-//
-// The three sets are independent fields rather than one set plus derived views,
-// so a test can stage the case that matters: a name in `configured` but not
-// `enabled` is a server the user switched off, and a name in `all` but not
-// `configured` is a Power's. The fake does NOT auto-nest them, because a test
-// asserting the guard's precedence needs to be able to stage each boundary on
-// its own; newHubWithMCPConfig's helpers below build the nested shapes.
+// fakeMCPConfig is the filter tests' name census. The sets are independent so a test can stage a
+// configured-but-disabled name; enabledConfig builds the nested shape.
 type fakeMCPConfig struct {
 	enabled    map[string]struct{}
 	configured map[string]struct{}
-	all        map[string]struct{}
 	mu         sync.Mutex
 }
 
@@ -40,10 +31,6 @@ func (f *fakeMCPConfig) EnabledNames(_ context.Context) map[string]struct{} {
 
 func (f *fakeMCPConfig) ConfiguredNames(_ context.Context) map[string]struct{} {
 	return f.copyOf(f.configured)
-}
-
-func (f *fakeMCPConfig) AllNames(_ context.Context) map[string]struct{} {
-	return f.copyOf(f.all)
 }
 
 func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
@@ -70,7 +57,7 @@ func newHubWithMCPConfig(cfg mcpNameSets) *Runtime {
 
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "github", nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want 1 server", snap)
@@ -82,8 +69,8 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "linear", nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(t.Context(), "linear", "https://oauth.example/auth")
+	h.mcpRegistry.RecordConnected(t.Context(), "linear", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordOAuth(t.Context(), "linear", marotte.MCPSource{}, "https://oauth.example/auth")
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
@@ -100,7 +87,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	before := h.bus.fanout.Position().Head
-	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", "connection refused")
+	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", marotte.MCPSource{}, "connection refused")
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 || snap[0].Name != "broken" {
@@ -112,7 +99,6 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	if snap[0].Error != "connection refused" {
 		t.Errorf("error = %q", snap[0].Error)
 	}
-	// mcp_failed SSE must be emitted.
 	types := extractTypes(t, bufferedSince(h, before))
 	found := false
 	for _, tp := range types {
@@ -127,8 +113,8 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "a", nil, nil, nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "b", nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "b", marotte.MCPSource{}, nil, nil, nil, nil)
 
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll(t.Context())
@@ -157,89 +143,174 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	}
 }
 
-func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
-	cfg := enabledConfig("github")
-	// The two names below are marotte's own, switched off — the only case the
-	// guard still drops. A name in NEITHER set is a different verdict entirely
-	// (see TestMCPRegistry_RecordsUnconfiguredServerWithOrigin).
-	cfg.configured["disabled-server"] = struct{}{}
-	cfg.all["disabled-server"] = struct{}{}
-	cfg.configured["another-disabled"] = struct{}{}
-	cfg.all["another-disabled"] = struct{}{}
-	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.RecordConnected(t.Context(), "github", nil, nil, nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "disabled-server", nil, nil, nil)
-	h.mcpRegistry.RecordInitFailure(t.Context(), "another-disabled", "x")
-
-	snap := h.mcpRegistry.Snapshot()
-	if len(snap) != 1 || snap[0].Name != "github" {
-		t.Errorf("snapshot = %+v, want only github", snap)
-	}
-}
-
-// TestMCPRegistry_RecordsUnconfiguredServerWithOrigin is the T15 core: a server
-// marotte never configured is RECORDED (not dropped like a user-disabled one),
-// carrying the origin that tells the UI the row is read-only. Before the guard
-// was narrowed, every one of these cases produced no row at all while the
-// server's tools sat in the agent's tool list.
+// TestMCPRegistry_RecordsUnconfiguredServerWithOrigin pins that an unconfigured server is recorded with KAS's origin.
 func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 	cases := map[string]struct {
-		inAllNames bool
+		src        marotte.MCPSource
 		wantOrigin marotte.Origin
+		wantRoot   string
+		wantPower  string
 	}{
-		"a power's server is named by the config file's powers block": {
-			inAllNames: true, wantOrigin: marotte.OriginPower,
+		"a power's server carries the power's name": {
+			src:        marotte.MCPSource{Origin: "power", Power: "aws-docs"},
+			wantOrigin: marotte.OriginPower, wantPower: "aws-docs",
 		},
-		"a server from a source marotte cannot read is unattributable": {
-			inAllNames: false, wantOrigin: marotte.OriginUnknown,
+		"a workspace server carries the root that defines it": {
+			src:        marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"},
+			wantOrigin: marotte.OriginWorkspace, wantRoot: "/workspace/app",
+		},
+		"a bundled server": {
+			src:        marotte.MCPSource{Origin: "bundled"},
+			wantOrigin: marotte.OriginBundled,
+		},
+		"an origin marotte has no word for is unattributable": {
+			src:        marotte.MCPSource{Origin: "agent"},
+			wantOrigin: marotte.OriginUnknown,
+		},
+		"a user-stamped name marotte does not hold is unattributable": {
+			src:        marotte.MCPSource{Origin: "user"},
+			wantOrigin: marotte.OriginUnknown,
+		},
+		"no stamp and an unknown name is unattributable": {
+			wantOrigin: marotte.OriginUnknown,
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg := enabledConfig("mine")
-			if tc.inAllNames {
-				cfg.all["theirs"] = struct{}{}
-			}
-			h := newHubWithMCPConfig(cfg)
-			h.mcpRegistry.RecordConnected(t.Context(), "theirs", []string{"do_thing"}, nil, nil)
+			h := newHubWithMCPConfig(enabledConfig("mine"))
+			h.mcpRegistry.RecordConnected(t.Context(), "theirs", tc.src, []string{"do_thing"}, nil, nil, nil)
 
 			snap := h.mcpRegistry.Snapshot()
 			if len(snap) != 1 {
 				t.Fatalf("snapshot = %+v, want the unconfigured server recorded", snap)
 			}
-			if snap[0].Name != "theirs" || snap[0].State != mcpStateConnected {
-				t.Errorf("snapshot[0] = %+v", snap[0])
+			got := snap[0]
+			if got.Name != "theirs" || got.State != mcpStateConnected {
+				t.Errorf("snapshot[0] = %+v", got)
 			}
-			if snap[0].Origin != tc.wantOrigin {
-				t.Errorf("origin = %q, want %q", snap[0].Origin, tc.wantOrigin)
+			if got.Origin != tc.wantOrigin || got.OriginRoot != tc.wantRoot || got.OriginPower != tc.wantPower {
+				t.Errorf("provenance = (%q, %q, %q), want (%q, %q, %q)",
+					got.Origin, got.OriginRoot, got.OriginPower, tc.wantOrigin, tc.wantRoot, tc.wantPower)
+			}
+			if got.Shadows {
+				t.Error("Shadows = true for a name marotte does not hold")
 			}
 		})
 	}
 }
 
-// TestMCPRegistry_StampsUserOriginOnConfiguredServers pins the other side of the
-// same rule: the row for the user's own server must NOT claim a foreign origin,
-// or the UI would withhold its edit and delete affordances.
+// TestMCPRegistry_WireOriginBeatsTheName pins that a workspace definition can override marotte's name, so the
+// status says workspace and marks the shadowing.
+func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
+	h := newHubWithMCPConfig(enabledConfig("github"))
+	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
+	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
+
+	snap := h.mcpRegistry.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot = %+v, want one row", snap)
+	}
+	if snap[0].Origin != marotte.OriginWorkspace || !snap[0].Shadows {
+		t.Errorf("row = %+v, want origin workspace shadowing marotte's entry", snap[0])
+	}
+}
+
+// TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne pins a foreign row for a workspace server reusing a disabled name.
+func TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne(t *testing.T) {
+	cfg := enabledConfig()
+	cfg.configured["github"] = struct{}{}
+	h := newHubWithMCPConfig(cfg)
+	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
+	h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
+
+	snap := h.mcpRegistry.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot = %+v, want the workspace server recorded", snap)
+	}
+	if snap[0].Origin != marotte.OriginWorkspace || !snap[0].Shadows || snap[0].OriginRoot != "/workspace/app" {
+		t.Errorf("row = %+v, want workspace origin, its root, and the shadow mark", snap[0])
+	}
+}
+
+// TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes pins ownership, not enablement, as the attribution.
+func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
+	for name, src := range map[string]marotte.MCPSource{
+		"user stamp": {Origin: "user"},
+		"no stamp":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := enabledConfig()
+			cfg.configured["github"] = struct{}{}
+			h := newHubWithMCPConfig(cfg)
+			h.mcpRegistry.RecordConnected(t.Context(), "github", src, nil, nil, nil, nil)
+			snap := h.mcpRegistry.Snapshot()
+			if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].Shadows {
+				t.Fatalf("after RecordConnected: snapshot = %+v, want one user row with no shadow mark", snap)
+			}
+			h.mcpRegistry.RecordInitFailure(t.Context(), "github", src, "x")
+			snap = h.mcpRegistry.Snapshot()
+			if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].State != mcpStateFailed {
+				t.Errorf("after RecordInitFailure: snapshot = %+v, want one failed user row", snap)
+			}
+		})
+	}
+}
+
+// TestMCPRegistry_NoMetaFallsBackToTheName pins the fallback for an unstamped entry.
+func TestMCPRegistry_NoMetaFallsBackToTheName(t *testing.T) {
+	h := newHubWithMCPConfig(enabledConfig("github"))
+	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
+
+	snap := h.mcpRegistry.Snapshot()
+	if len(snap) != 1 || snap[0].Origin != marotte.OriginUser || snap[0].Shadows {
+		t.Errorf("snapshot = %+v, want one user row with no shadow mark", snap)
+	}
+}
+
+// TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds pins the spoof case.
+func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
+	cases := map[string]struct {
+		server string
+		want   marotte.Origin
+	}{
+		"user stamp on marotte's enabled name": {server: "github", want: marotte.OriginUser},
+		"user stamp on a name marotte lacks":   {server: "theirs", want: marotte.OriginUnknown},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHubWithMCPConfig(enabledConfig("github"))
+			h.mcpRegistry.RecordConnected(t.Context(), tc.server, marotte.MCPSource{Origin: "user"}, nil, nil, nil, nil)
+			snap := h.mcpRegistry.Snapshot()
+			if len(snap) != 1 {
+				t.Fatalf("snapshot = %+v, want one row", snap)
+			}
+			if snap[0].Origin != tc.want {
+				t.Errorf("RecordConnected(%q, user stamp): Origin = %q, want %q", tc.server, snap[0].Origin, tc.want)
+			}
+		})
+	}
+}
+
+// TestMCPRegistry_StampsUserOriginOnConfiguredServers pins that the user's own server never claims a foreign origin.
 func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("github"))
 	ctx := t.Context()
-	h.mcpRegistry.RecordConnected(ctx, "github", nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(ctx, "github", "https://oauth.example/auth")
+	h.mcpRegistry.RecordConnected(ctx, "github", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordOAuth(ctx, "github", marotte.MCPSource{}, "https://oauth.example/auth")
 	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
 		t.Errorf("origin after recordOAuth = %q, want %q", got, marotte.OriginUser)
 	}
-	h.mcpRegistry.RecordInitFailure(ctx, "github", "boom")
+	h.mcpRegistry.RecordInitFailure(ctx, "github", marotte.MCPSource{}, "boom")
 	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
 		t.Errorf("origin after recordInitFailure = %q, want %q", got, marotte.OriginUser)
 	}
 }
 
-// TestMCPRegistry_RecordDisabled: KAS's "disabled" status becomes a read-only row for a
-// server marotte never configured, and stays discarded for one it did. The second half
-// is what keeps the guard from resurrecting a server the user switched off mid-session.
+// TestMCPRegistry_RecordDisabled pins a read-only row for a foreign disabled server and a discard for marotte's own.
 func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	cases := map[string]struct {
 		cfg        func() *fakeMCPConfig
+		src        marotte.MCPSource
 		wantRow    bool
 		wantOrigin marotte.Origin
 	}{
@@ -251,17 +322,13 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 			cfg: func() *fakeMCPConfig {
 				c := enabledConfig()
 				c.configured["mine"] = struct{}{}
-				c.all["mine"] = struct{}{}
 				return c
 			},
 			wantRow: false,
 		},
 		"a power's server: the only evidence it exists": {
-			cfg: func() *fakeMCPConfig {
-				c := enabledConfig()
-				c.all["mine"] = struct{}{}
-				return c
-			},
+			cfg:     func() *fakeMCPConfig { return enabledConfig() },
+			src:     marotte.MCPSource{Origin: "power", Power: "aws-docs"},
 			wantRow: true, wantOrigin: marotte.OriginPower,
 		},
 		"an unattributable server: still shown, origin unknown": {
@@ -272,7 +339,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(tc.cfg())
-			h.mcpRegistry.RecordDisabled(t.Context(), "mine")
+			h.mcpRegistry.RecordDisabled(t.Context(), "mine", tc.src)
 
 			snap := h.mcpRegistry.Snapshot()
 			if !tc.wantRow {
@@ -294,15 +361,11 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	}
 }
 
-// TestMCPRegistry_StatusJSONCarriesOrigin pins origin onto the wire. It is not
-// omitempty on purpose: the client decides read-only from this field, so an
-// absent one would make it guess.
+// TestMCPRegistry_StatusJSONCarriesOrigin pins origin on the wire, never omitted.
 func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
-	cfg := enabledConfig("mine")
-	cfg.all["theirs"] = struct{}{}
-	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.RecordConnected(t.Context(), "mine", nil, nil, nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "theirs", nil, nil, nil)
+	h := newHubWithMCPConfig(enabledConfig("mine"))
+	h.mcpRegistry.RecordConnected(t.Context(), "mine", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "theirs", marotte.MCPSource{Origin: "power", Power: "aws-docs"}, nil, nil, nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
@@ -323,11 +386,42 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 	}
 }
 
+// TestMCPStatus_CarriesProvenanceFields pins the workspace root, power name and shadow mark on the wire.
+func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
+	h := newHubWithMCPConfig(enabledConfig("github"))
+	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "docs", marotte.MCPSource{Origin: "power", Power: "aws-docs"}, nil, nil, nil, nil)
+
+	rec := httptest.NewRecorder()
+	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
+	var body struct {
+		Servers []statusServer `json:"servers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Servers) != 2 {
+		t.Fatalf("servers = %+v, want 2", body.Servers)
+	}
+	// Alphabetical: docs, github.
+	docs, gh := body.Servers[0], body.Servers[1]
+	if docs.Origin != marotte.OriginPower || docs.OriginPower != "aws-docs" || docs.Shadows {
+		t.Errorf("docs = %+v, want power aws-docs, no shadow", docs)
+	}
+	if gh.Origin != marotte.OriginWorkspace || gh.OriginRoot != "/workspace/app" || !gh.Shadows {
+		t.Errorf("github = %+v, want workspace /workspace/app shadowing", gh)
+	}
+	if raw := rec.Body.String(); !strings.Contains(raw, `"origin_root":"/workspace/app"`) ||
+		!strings.Contains(raw, `"origin_power":"aws-docs"`) || !strings.Contains(raw, `"shadows":true`) {
+		t.Errorf("body = %s, want origin_root, origin_power and shadows on the wire", raw)
+	}
+}
+
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "zulu", nil, nil, nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "alpha", nil, nil, nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "mike", nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "zulu", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "alpha", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordConnected(t.Context(), "mike", marotte.MCPSource{}, nil, nil, nil, nil)
 
 	names := make([]string, 0)
 	for _, s := range h.mcpRegistry.Snapshot() {
@@ -349,22 +443,19 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 		mu.Unlock()
 		done <- struct{}{}
 	})
-	h.mcpRegistry.RecordConnected(t.Context(), "a", nil, nil, nil)
-	h.mcpRegistry.RecordOAuth(t.Context(), "a", "url")
-	h.mcpRegistry.RecordInitFailure(t.Context(), "a", "err")
+	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordOAuth(t.Context(), "a", marotte.MCPSource{}, "url")
+	h.mcpRegistry.RecordInitFailure(t.Context(), "a", marotte.MCPSource{}, "err")
 	h.mcpRegistry.clearAll(t.Context())
 
-	// With debounced onChange, rapid-fire mutations coalesce into
-	// fewer callbacks. Wait for at least one callback to confirm
-	// the notifier fires outside the lock.
+	// Debounced, so wait for at least one callback.
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("onChange never fired")
 	}
-	// Allow debounce to settle.
+	// Let the debounce settle.
 	time.Sleep(200 * time.Millisecond)
-	// Drain any additional callbacks.
 	for {
 		select {
 		case <-done:
@@ -378,27 +469,16 @@ drained:
 	if count < 1 {
 		t.Errorf("onChange count = %d, want >= 1", count)
 	}
-	// Shutdown to clean up the notifier goroutine.
+	// Shut down the notifier goroutine.
 	close(h.lifecycle.done)
 }
 
-// A burst of mutations is ONE change to the subscriber. Any real config edit
-// mutates the registry several times in a row (a server recorded connected, then
-// its tools, then a sibling's failure), and the subscriber is the steering
-// generator: it walks .kiro and rewrites environment.md per call, so a burst that
-// arrived as separate invocations would rewrite the file three times for one
-// edit.
-//
-// On the bubble's clock the window is exact rather than probabilistic, which is
-// what makes the count assertable at all: the same test on a real clock can only
-// sleep and hope.
+// A burst of mutations is one change: the subscriber is the steering generator, which rewrites
+// environment.md per call. The bubble's clock makes the window exact.
 func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHubWithMCPConfig(nil)
-		// Ends the notifier and New's two ticker loops. A defer rather than
-		// t.Cleanup on purpose: Test waits for the bubble's goroutines to exit
-		// BEFORE running cleanups, so a cleanup-time close deadlocks the bubble,
-		// and the defer also runs on the t.Fatalf path.
+		// A defer, not t.Cleanup: Test waits for bubble goroutines before cleanups, so a cleanup close deadlocks.
 		defer close(h.lifecycle.done)
 		start := time.Now()
 		var mu sync.Mutex
@@ -414,8 +494,7 @@ func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 		h.mcpRegistry.signalChange()
 		synctest.Sleep(30 * time.Millisecond)
 		h.mcpRegistry.signalChange()
-		// Past the window the FIRST signal opened, so a coalescing notifier has
-		// fired once by now and one that does not coalesce has fired per signal.
+		// Past the first signal's window: a coalescing notifier has fired once.
 		synctest.Sleep(150 * time.Millisecond)
 
 		mu.Lock()
@@ -426,10 +505,7 @@ func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 	})
 }
 
-// The other half of the same rule: the window coalesces a burst, it does not
-// swallow a later edit. Two signals further apart than the window are two
-// changes, and the subscriber must see both — a config edit made after the
-// steering file was rewritten still has to reach it.
+// The window coalesces a burst but never swallows a later edit.
 func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHubWithMCPConfig(nil)
@@ -457,8 +533,8 @@ func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.RecordConnected(t.Context(), "github", nil, nil, nil)
-	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", "no auth")
+	h.mcpRegistry.RecordConnected(t.Context(), "github", marotte.MCPSource{}, nil, nil, nil, nil)
+	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", marotte.MCPSource{}, "no auth")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil)
 	rec := httptest.NewRecorder()
@@ -488,15 +564,13 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	}
 }
 
-// BenchmarkMCPRegistrySnapshot measures the sorted-snapshot hot path
-// with varying numbers of registered servers. Snapshot is called on
-// every SSE reconnect and bridge spawn.
+// BenchmarkMCPRegistrySnapshot measures Snapshot, called on every SSE reconnect and bridge spawn.
 func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 	for _, n := range []int{1, 5, 20} {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			h := newHubWithMCPConfig(nil)
 			for i := range n {
-				h.mcpRegistry.RecordConnected(b.Context(), fmt.Sprintf("server-%02d", i), nil, nil, nil)
+				h.mcpRegistry.RecordConnected(b.Context(), fmt.Sprintf("server-%02d", i), marotte.MCPSource{}, nil, nil, nil, nil)
 			}
 			b.ResetTimer()
 			for b.Loop() {
@@ -506,123 +580,192 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 	}
 }
 
-// The real *mcp.Store's run of MCPConfigContractTest lives in internal/mcp's
-// own test binary (TestStore_MCPConfigContract). It used to be duplicated here
-// as well, which spent a second run on the identical assertion and made the
-// runtime's test binary import internal/mcp for nothing else.
+// The real *mcp.Store's MCPConfigContractTest run lives in internal/mcp (TestStore_MCPConfigContract).
 
-// TestMCPRegistry_PendingSummaryPartitionsByCause: one case per bucket. The
-// ENABLED-but-unreported case needs the census rather than the registry, because
-// a server that never reported appears nowhere in the registry, so "absent from
-// the reported set" is the only way to name it. A CONNECTED server is in no
-// bucket, which is what stops a healthy set of servers reading as pending.
-func TestMCPRegistry_PendingSummaryPartitionsByCause(t *testing.T) {
-	cfg := &fakeMCPConfig{
-		enabled: map[string]struct{}{
-			"quiet": {}, "broken": {}, "needsauth": {}, "working": {},
+// The `#` menu lists the active chat's own pool: a mention resolves only there.
+func TestMCPRegistry_PoolAnswersOnlyThatChatsResources(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	ba, bb := newFakeBridge(), newFakeBridge()
+	h.bridge.mgr.insert("c-a", &sharedBridge{bridge: ba, state: bridgeIdle})
+	h.bridge.mgr.insert("c-b", &sharedBridge{bridge: bb, state: bridgeIdle})
+	h.mcpRegistry.setPool(ba, []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "a", URI: "a://x"}}}})
+	h.mcpRegistry.setPool(bb, []translate.MCPPoolServer{
+		{Name: "extra", Resources: []marotte.MCPResourceInfo{{Name: "e", URI: "e://x"}}},
+		{
+			Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "b", URI: "b://x"}},
+			ResourceTemplates: []marotte.MCPResourceTemplateInfo{{Name: "t", URITemplate: "b://{id}"}},
+		},
+	})
+
+	if got, want := poolBody(t, h, "c-a"), `{"servers":[{"name":"docs","resources":[{"name":"a","uri":"a://x"}],"resource_templates":[]}]}`; got != want {
+		t.Errorf("chat A pool = %s, want %s", got, want)
+	}
+	wantB := `{"servers":[{"name":"docs","resources":[{"name":"b","uri":"b://x"}],"resource_templates":[{"name":"t","uri_template":"b://{id}"}]},` +
+		`{"name":"extra","resources":[{"name":"e","uri":"e://x"}],"resource_templates":[]}]}`
+	if got := poolBody(t, h, "c-b"); got != wantB {
+		t.Errorf("chat B pool = %s, want %s", got, wantB)
+	}
+	if got, want := poolBody(t, h, "c-none"), `{"servers":[]}`; got != want {
+		t.Errorf("pool of a chat with no bridge = %s, want %s", got, want)
+	}
+}
+
+// A status frame lists every server, so a server a later frame omits leaves the pool.
+func TestMCPRegistry_StatusFrameReplacesThePoolWhole(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	br := newFakeBridge()
+	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x", "extra": "e://x"}))
+	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
+
+	want := `{"servers":[{"name":"docs","resources":[{"name":"d://x","uri":"d://x"}],"resource_templates":[]}]}`
+	if got := poolBody(t, h, "c1"); got != want {
+		t.Errorf("pool after a frame without extra = %s, want %s", got, want)
+	}
+}
+
+// The last-bridge wipe must leave every bridge's pool to that bridge's own exit.
+func TestMCPRegistry_ClearAllLeavesALiveBridgesPool(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	br := newFakeBridge()
+	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.mcpRegistry.setPool(br, []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "d", URI: "d://x"}}}})
+
+	h.mcpRegistry.clearAll(t.Context())
+
+	want := `{"servers":[{"name":"docs","resources":[{"name":"d","uri":"d://x"}],"resource_templates":[]}]}`
+	if got := poolBody(t, h, "c1"); got != want {
+		t.Errorf("pool after clearAll = %s, want %s", got, want)
+	}
+}
+
+// A pool replaced or dropped is announced, so a client holding pool rows re-reads
+// them even when no server changed state.
+func TestMCPRegistry_PoolChangesAreAnnounced(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	br := newFakeBridge()
+	before := h.bus.fanout.Position().Head
+
+	h.coord.recordPool(br, mcpStatusFrame(t, map[string]string{"docs": "d://x"}))
+	h.mcpRegistry.dropPool(br)
+
+	want := string(marotte.EventMCPPoolChanged)
+	if got := extractTypes(t, bufferedSince(h, before)); len(filterTypes(got, want)) != 2 {
+		t.Errorf("events after a pool set and drop = %v, want two %s", got, want)
+	}
+}
+
+// filterTypes keeps the entries of types equal to want.
+func filterTypes(types []string, want string) []string {
+	var out []string
+	for _, ty := range types {
+		if ty == want {
+			out = append(out, ty)
+		}
+	}
+	return out
+}
+
+// onPoolSelected runs fn between the pool endpoint's bridge selection and its
+// pool read, for the rest of the test.
+func onPoolSelected(t *testing.T, fn func()) {
+	t.Helper()
+	prev := poolSelected
+	poolSelected = fn
+	t.Cleanup(func() { poolSelected = prev })
+}
+
+// A read straddling a bridge swap answers the bridge serving the chat afterwards, never the departed one.
+func TestMCPRegistry_PoolFollowsABridgeReplacedMidRead(t *testing.T) {
+	poolOf := func(uri string) []translate.MCPPoolServer {
+		return []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: uri, URI: uri}}}}
+	}
+	newWant := `{"servers":[{"name":"docs","resources":[{"name":"new://r","uri":"new://r"}],"resource_templates":[]}]}`
+	cases := []struct {
+		name  string
+		moves int
+		swap  func(h *Runtime, sb *sharedBridge, next ACPBridge)
+		want  string
+	}{
+		{
+			name: "bridge swapped in the entry", moves: 1, want: newWant,
+			swap: func(_ *Runtime, sb *sharedBridge, next ACPBridge) { sb.swapBridge(next) },
+		},
+		{
+			name: "entry replaced", moves: 1, want: newWant,
+			swap: func(h *Runtime, sb *sharedBridge, next ACPBridge) {
+				h.bridge.mgr.removeIfSame("c1", sb)
+				h.bridge.mgr.insert("c1", &sharedBridge{bridge: next, state: bridgeIdle})
+			},
+		},
+		{
+			name: "bridge keeps moving", moves: servingPoolAttempts, want: `{"servers":[]}`,
+			swap: func(_ *Runtime, sb *sharedBridge, next ACPBridge) { sb.swapBridge(next) },
 		},
 	}
-	cfg.configured = cfg.copyOf(cfg.enabled)
-	cfg.all = cfg.copyOf(cfg.enabled)
-	h := newHubWithMCPConfig(cfg)
-	ctx := t.Context()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHubWithMCPConfig(nil)
+			old := newFakeBridge()
+			sb := &sharedBridge{bridge: old, state: bridgeIdle}
+			h.bridge.mgr.insert("c1", sb)
+			h.mcpRegistry.setPool(old, poolOf("old://r"))
+			moved := 0
+			onPoolSelected(t, func() {
+				if moved == tc.moves {
+					return
+				}
+				moved++
+				next := newFakeBridge()
+				h.mcpRegistry.setPool(next, poolOf("new://r"))
+				tc.swap(h, h.bridge.mgr.get("c1"), next)
+			})
 
-	h.mcpRegistry.RecordConnected(ctx, "working", nil, nil, nil)
-	h.mcpRegistry.RecordInitFailure(ctx, "broken", "connection refused")
-	h.mcpRegistry.RecordOAuth(ctx, "needsauth", "https://oauth.example/auth")
-
-	got := h.mcpRegistry.PendingSummary(ctx)
-
-	if want := []string{"quiet"}; !slices.Equal(got.Silent, want) {
-		t.Errorf("Silent = %v, want %v: an enabled server that reported nothing is nameable only from the census", got.Silent, want)
-	}
-	if want := []string{"needsauth"}; !slices.Equal(got.AwaitingAuth, want) {
-		t.Errorf("AwaitingAuth = %v, want %v", got.AwaitingAuth, want)
-	}
-	if len(got.Failed) != 1 {
-		t.Fatalf("Failed = %v, want one entry", got.Failed)
-	}
-	if !strings.Contains(got.Failed[0], "broken") || !strings.Contains(got.Failed[0], "connection refused") {
-		t.Errorf("Failed[0] = %q, want the server name and the upstream error; the error is the whole diagnostic", got.Failed[0])
-	}
-	for _, bucket := range [][]string{got.Silent, got.Failed, got.AwaitingAuth} {
-		if slices.ContainsFunc(bucket, func(s string) bool { return strings.Contains(s, "working") }) {
-			t.Errorf("a connected server appears in %v; a readiness timeout must not name the servers that answered", bucket)
-		}
+			if got := poolBody(t, h, "c1"); got != tc.want {
+				t.Errorf("c1 pool after %d replacement(s) mid-read = %s, want %s", tc.moves, got, tc.want)
+			}
+		})
 	}
 }
 
-// The bounds are the method's, not the caller's, because the server list is
-// backend-controlled: a Power's servers reach this registry through KAS's own
-// config file, so an unbounded list would push the attributes an operator needs
-// off the end of a log record. The cap keeps mcpSummaryNameCap names and the
-// marker keeps the total honest: truncating silently would report nine servers
-// as eight.
-func TestMCPRegistry_PendingSummaryBoundsEachBucket(t *testing.T) {
-	const extra = 3
-	cfg := &fakeMCPConfig{enabled: map[string]struct{}{}}
-	for i := range mcpSummaryNameCap + extra {
-		cfg.enabled[fmt.Sprintf("server-%02d", i)] = struct{}{}
-	}
-	cfg.configured = cfg.copyOf(cfg.enabled)
-	cfg.all = cfg.copyOf(cfg.enabled)
-	h := newHubWithMCPConfig(cfg)
+// The endpoint and a failed load's swap run on different goroutines (-race).
+func TestMCPRegistry_PoolReadRacesABridgeSwap(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	a, b := newFakeBridge(), newFakeBridge()
+	sb := &sharedBridge{bridge: a, state: bridgeIdle}
+	h.bridge.mgr.insert("c1", sb)
+	pool := []translate.MCPPoolServer{{Name: "docs", Resources: []marotte.MCPResourceInfo{{Name: "d", URI: "d://x"}}}}
+	h.mcpRegistry.setPool(a, pool)
+	h.mcpRegistry.setPool(b, pool)
 
-	got := h.mcpRegistry.PendingSummary(t.Context())
-
-	if len(got.Silent) != mcpSummaryNameCap+1 {
-		t.Fatalf("Silent has %d entries, want %d names plus one marker", len(got.Silent), mcpSummaryNameCap)
-	}
-	if marker := got.Silent[mcpSummaryNameCap]; marker != fmt.Sprintf("+%d more", extra) {
-		t.Errorf("last entry = %q, want a +%d more marker", marker, extra)
-	}
-	// Sorted, so two reads of identical state produce the identical line. An
-	// unsorted bucket comes off a map iteration and reorders itself, which reads
-	// as two different situations.
-	if !slices.IsSorted(got.Silent[:mcpSummaryNameCap]) {
-		t.Errorf("Silent = %v, want the names sorted", got.Silent)
-	}
-}
-
-// Every name and every upstream error goes through the log-safety helper, because
-// both are text this process did not write and the summary's only consumer is a
-// log record. A raw newline there forges a line, and a C1 introducer writes
-// terminal escapes into whatever reads the log.
-func TestMCPRegistry_PendingSummarySanitizesBackendText(t *testing.T) {
-	cfg := &fakeMCPConfig{enabled: map[string]struct{}{"ok\nlevel=ERROR msg=forged": {}}}
-	cfg.configured = cfg.copyOf(cfg.enabled)
-	cfg.all = cfg.copyOf(cfg.enabled)
-	h := newHubWithMCPConfig(cfg)
-	ctx := t.Context()
-	h.mcpRegistry.RecordInitFailure(ctx, "broken", "boom\nlevel=ERROR msg=forged")
-
-	got := h.mcpRegistry.PendingSummary(ctx)
-
-	for _, bucket := range [][]string{got.Silent, got.Failed} {
-		for _, entry := range bucket {
-			if strings.ContainsAny(entry, "\n\r") {
-				t.Errorf("entry %q carries a raw newline; a backend-controlled string can forge a log record", entry)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		next := ACPBridge(b)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				next = sb.swapBridge(next)
 			}
 		}
+	})
+	want := `{"servers":[{"name":"docs","resources":[{"name":"d","uri":"d://x"}],"resource_templates":[]}]}`
+	for range 200 {
+		if got := poolBody(t, h, "c1"); got != want && got != `{"servers":[]}` {
+			t.Fatalf("c1 pool during swaps = %s, want %s or an empty pool", got, want)
+		}
 	}
+	close(done)
+	wg.Wait()
 }
 
-// A registry with no name census answers empty rather than guessing. That is the
-// build a test hub has, and it is also the state a composition with no MCP config
-// leaves: with nothing to compare the reported set against, "which enabled server
-// is silent" has no answer, and inventing one would name every server the agent
-// reached through a Power as missing.
-func TestMCPRegistry_PendingSummaryWithNoCensusNamesNoSilentServers(t *testing.T) {
+func TestMCPRegistry_PoolRequiresAChatID(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	ctx := t.Context()
-	h.mcpRegistry.RecordInitFailure(ctx, "broken", "connection refused")
-
-	got := h.mcpRegistry.PendingSummary(ctx)
-
-	if len(got.Silent) != 0 {
-		t.Errorf("Silent = %v, want empty: there is no census to subtract the reported set from", got.Silent)
-	}
-	if len(got.Failed) != 1 {
-		t.Errorf("Failed = %v, want the reported failure: a missing census must not suppress what IS known", got.Failed)
+	rec := httptest.NewRecorder()
+	h.mcpRegistry.handlePool(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/pool", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("GET /api/mcp/pool with no chat_id status = %d, want 400", rec.Code)
 	}
 }

@@ -1,77 +1,38 @@
-// The vertical centring of a text label inside a flex row, pinned as a SOURCE
-// fact because the test page loads neither the app stylesheet nor its webfont.
-//
-// The defect: `align-items: center` centres a flex item's BOX, and a text item's
-// box is not symmetric about the letterforms in it. With the baseline `ascent`
-// from the box top, the box centre lands at `baseline + (ascent - descent)/2`
-// while the glyph band's optical centre is at `baseline + band/2`, so the label
-// renders low by ((ascent - descent)/2 - band/2)/unitsPerEm em. Measured off real
-// font files: +0.120em at Noto Sans, +0.083em at Liberation Sans, +0.073em at
-// DejaVu Sans, +0.164em at Segoe UI.
-//
-// The reason this test exists rather than a `line-height` declaration: the
-// formula has NO line-height term. CSS2.1 10.8.1 distributes leading half above
-// and half below, so the box centre is `baseline + (ascent - descent)/2` for
-// every value including `normal`, and `line-height: 1` moves the glyphs by
-// exactly zero while shrinking the box enough that the descenders overflow it.
-// On a label that clips for its ellipsis, that overflow is cut. So the two things
-// worth guarding are the two that are easy to get wrong again: that no numeric
-// line-height reappears here claiming to be the fix, and that every trimmed label
-// which clips has symmetric room for its descenders.
-//
-// Node environment: this reads the shipped stylesheets as text.
+// Vertical centring of a text label in a flex row, pinned as a source fact (no app stylesheet or webfont here).
+// `align-items: center` centres the box, which sits low of the glyph band by ((ascent - descent)/2 - band/2)/em.
+// Line-height cannot fix it (CSS2.1 10.8.1 leading is symmetric) and `line-height: 1` clips descenders. Guarded: no
+// numeric line-height returns, and every trimmed label that clips has symmetric descender room.
 
 import { describe, it, expect } from "vitest";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 
-/** The labels the trim applies to, and where each one's rule lives. Both pill
- *  labels and the sidebar address are the same defect in two files. */
+/** The labels the trim applies to, and where each rule lives. */
 const TRIMMED: { name: string; sheet: string; clips: boolean }[] = [
-  // Digits and a percent sign only, so it can never have a descender.
+  // Digits and a percent sign only: no descender.
   { name: "context-label", sheet: "15-input.css", clips: false },
   { name: "ctx-model-pill", sheet: "15-input.css", clips: true },
   { name: "pill-role-label", sheet: "15-input.css", clips: true },
   { name: "sidebar-email", sheet: "10-shell-app.css", clips: true },
-  // The tab strip's title, enrolled last and the row a reader looks at most: it sits
-  // in an `align-items: center` row beside an 8px dot, a workflow mark and the ×, so
-  // the untrimmed box left the words low against all three.
+  // Sits beside an 8px dot, a workflow mark and the ×, so an untrimmed box read low against all three.
   { name: "tab-name", sheet: "10-shell-app.css", clips: true },
-  // The model pill's reasoning-tier readout, which shares its flex line with the
-  // trimmed `#ctx-model-pill` — so the two labels of one control disagreed with each
-  // other by the offset above rather than merely sitting low together.
+  // Shares its flex line with `#ctx-model-pill`, so untrimmed the two labels disagreed.
   { name: "pill-model-effort", sheet: "15-input.css", clips: false },
-  // The model list's rows. Every row was low; only the ACTIVE one showed it, because
-  // that is the one carrying an accent fill for the offset to be measured against.
+  // Every row was low; the active one's accent fill showed it.
   { name: "pill-model-item", sheet: "15-input.css", clips: false },
-  // The effort slider's knob label was a seventh member and left with the label: the
-  // knob carries no text now, and the caption that names its tier (`.effort-label`)
-  // sits on its own line rather than in a centred flex row, so it has no offset to
-  // correct.
+  // The effort knob carries no text, and `.effort-label` sits on its own line.
 ];
 
 const SHEETS = ["15-input.css", "10-shell-app.css"];
 
-/** Strip comments so prose ABOUT a declaration is never mistaken for one. The
- *  comments here quote `line-height: 1` to explain why it is wrong. */
+/** The comments here quote `line-height: 1` to explain why it is wrong. */
 function source(sheet: string): string {
   return loadCSS(sheet).replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
-/**
- * Every rule body whose SELECTOR mentions `name`, in either the id form
- * (`#name`), the attribute form (`[id="name"]`) or the class form (`.name`).
- *
- * A substring scan over selectors rather than `ruleContaining`, because these
- * labels are addressed three different ways across two files and one of them
- * (`#ctx-model-pill`) is reached through a NESTED `& [id="ctx-model-pill"]`
- * block inside `.pill-model`. Asserting on one spelling would let the others
- * drift.
- */
+/** Selectors in id, attribute and class form across two files, one nested (`& [id="ctx-model-pill"]`). */
 function declarationsFor(sheet: string, name: string): string {
   const css = source(sheet);
-  // Boundary-anchored: a bare `.pill` must not match `.pill-expand-content`,
-  // whose `line-height: 1.4` is correct for a multi-line card and has nothing to
-  // do with centring a single-line label.
+  // Boundary-anchored: `.pill` must not match `.pill-expand-content`.
   const wanted = [
     new RegExp(`#${name}(?![\\w-])`),
     new RegExp(`\\[id="${name}"\\]`),
@@ -89,12 +50,8 @@ function declarationsFor(sheet: string, name: string): string {
       depth--;
       const frame = stack.pop();
       if (frame !== undefined && wanted.some((w) => w.test(frame.sel))) {
-        // Own declarations only: drop nested blocks so a child's rules are not
-        // read as the parent's. `[^{};]*` for the nested SELECTOR rather than
-        // `[^{}]*`, because the latter reaches back across every `;` before it
-        // and takes the parent's own declarations with the block — which silently
-        // emptied this scanner for any rule that has nested states, and `.pill`
-        // has two.
+        // Own declarations only. `[^{};]*` for the nested selector: `[^{}]*` reaches back across `;` and takes the parent's
+        // declarations with the block.
         out.push(css.slice(frame.bodyStart, i).replace(/[^{};]*\{[^{}]*\}/g, " "));
       }
       selStart = i + 1;
@@ -118,11 +75,8 @@ describe("label centring", () => {
   });
 
   it("gives every trimmed label that clips symmetric descender room", () => {
-    // The trim moves the block-END edge up to the baseline, so a 'g' or a 'p'
-    // leaves the content box. `overflow: hidden` (which these labels carry for
-    // `text-overflow: ellipsis`) then cuts it. Symmetric padding is the answer
-    // that does not undo the centring: `align-items: center` centres the MARGIN
-    // box, so equal padding leaves the cap band exactly where the trim put it.
+    // The trim lifts the block-end edge to the baseline and `overflow: hidden` cuts descenders; symmetric padding keeps the
+    // cap band centred, since `align-items: center` centres the margin box.
     const missing: string[] = [];
     for (const label of TRIMMED) {
       const decls = declarationsFor(label.sheet, label.name);
@@ -135,8 +89,7 @@ describe("label centring", () => {
       if (!clips) {
         continue;
       }
-      // Symmetric by construction: `padding-block` with ONE value, or the
-      // logical pair set equal. A block-end-only pad would shift the cap band.
+      // One `padding-block` value or an equal logical pair: a block-end-only pad shifts the cap band.
       if (!/padding-block:\s*[\d.]+em\s*;/.test(decls)) {
         missing.push(
           `${label.sheet}: ${label.name} is trimmed and clips, with no symmetric padding-block`,
@@ -151,12 +104,8 @@ describe("label centring", () => {
   });
 
   it("declares no numeric line-height on any of them", () => {
-    // `line-height` cannot move a glyph band relative to its box centre — the
-    // leading is symmetric — so one added here would be a change that looks like
-    // the fix, measures as nothing, and costs the descenders on the labels that
-    // clip. `.pill-role-icon`'s `line-height: 0` is a DIFFERENT mechanism and
-    // stays: its content is a replaced element sitting on the baseline, so the
-    // strut is what oversizes it, and collapsing the strut is the fix for that.
+    // A `line-height` here looks like the fix and measures as nothing. `.pill-role-icon`'s `line-height: 0` stays: its
+    // content is a replaced element whose strut oversizes it.
     const offenders: string[] = [];
     for (const sheet of SHEETS) {
       for (const label of [...TRIMMED.map((t) => t.name), "pill"]) {

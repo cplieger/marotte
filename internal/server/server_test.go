@@ -21,18 +21,14 @@ import (
 
 func TestSyncPushPreferences(t *testing.T) {
 	mp := &testPush{}
-	// An empty configDir would resolve the persisted-settings lookup against the
-	// package directory, so the fixture names a directory that has no config.json
-	// rather than depending on the cwd not growing one.
+	// A config dir with no config.json, rather than the cwd.
 	s := &Server{push: mp, configDir: t.TempDir()}
 
-	// Both true by default.
 	s.syncPushPreferences(map[string]json.RawMessage{})
 	if !mp.prefs[marotte.PushKindAgentFinished] || !mp.prefs[marotte.PushKindPermission] {
 		t.Error("defaults should be true")
 	}
 
-	// Set agent_finished to false.
 	s.syncPushPreferences(map[string]json.RawMessage{
 		"notify_agent_finished": json.RawMessage(`false`),
 	})
@@ -50,8 +46,7 @@ type testPush struct {
 
 var _ pushService = (*testPush)(nil)
 
-// Two methods, because pushService is two methods. This fake used to carry
-// eight, six of which this package can never call.
+// RegisterRoutes and SetPreferences: the two methods pushService declares.
 func (p *testPush) RegisterRoutes(*http.ServeMux)                  {}
 func (p *testPush) SetPreferences(prefs map[marotte.PushKind]bool) { p.prefs = prefs }
 
@@ -60,39 +55,24 @@ func TestSafeKiroSetting(t *testing.T) {
 		key  string
 		want string
 	}{
-		// Allowed: every one has a kiro-cli-SIDE role, which is the whole
-		// membership test now that KAS's ACP path is known to read no kiro-cli
-		// setting at all.
+		// Allowed: each has a kiro-cli-SIDE role.
 		{"chat.enableKnowledge", "chat.enableKnowledge"},
 		{"telemetry.enabled", "telemetry.enabled"},
 		{"chat.enableSubagent", "chat.enableSubagent"},
 		{"chat.enablePromptHints", "chat.enablePromptHints"},
 		{"hooks.showStatus", "hooks.showStatus"},
 		{"chat.disableInheritingDefaultResources", "chat.disableInheritingDefaultResources"},
-		// Rejected settings
 		{"chat.defaultModel", ""},
 		{"api.timeout", ""},
 		{"arbitrary.key", ""},
-		// Removed from the allowlist: it only affected kiro-cli's own TUI
-		// prompt line (which marotte never renders) and is absent from
-		// kiro-cli 2.12; marotte reads context usage from usage_update.
+		// Removed: TUI-only, absent from kiro-cli 2.12.
 		{"chat.enableContextUsageIndicator", ""},
-		// Removed 2026-08 on a measurement of the stock 2.19.2 bundle, and the
-		// two groups are rejected for DIFFERENT reasons — which is why they are
-		// listed apart rather than folded into one comment.
-		//
-		// Zero readers upstream, so no door could have carried them: the
-		// `checkpoint` and `todoList` settings KAS declares are never read, and
-		// neither is the `compaction` object these two numeric keys write into.
+		// Removed: nothing upstream reads them.
 		{"chat.enableCheckpoint", ""},
 		{"chat.enableTodoList", ""},
 		{"compaction.excludeContextWindowPercent", ""},
 		{"compaction.excludeMessages", ""},
-		// Live readers upstream, but not through THIS endpoint. `toolSearch`
-		// moved to kascap's `_meta.kiro.settings` door, which is the one that
-		// reaches its reader. `disableAutoCompaction` is read as well and is
-		// still withheld, because its ON state makes a context overflow fail the
-		// turn — see internal/kascap/table.go for the three prerequisites.
+		// Live upstream readers, but reached through internal/kascap's doors, not this endpoint.
 		{"toolSearch.enabled", ""},
 		{"chat.disableAutoCompaction", ""},
 	}
@@ -131,11 +111,8 @@ func TestSafeKiroSettingValue(t *testing.T) {
 }
 
 func TestParseKiroSettingOutput(t *testing.T) {
-	// kiro-cli appends a " (global)" or " (local)" scope suffix to
-	// every non-empty settings value. Left unstripped, the settings
-	// page compared `"true (global)"` against `"true"` and showed
-	// every enabled toggle as off. Verify the stripper handles the
-	// cases we've actually observed plus a couple of defensive ones.
+	// kiro-cli appends " (global)" or " (local)" to every non-empty value; unstripped, every
+	// enabled toggle rendered off.
 	tests := []struct {
 		in, want string
 	}{
@@ -150,8 +127,7 @@ func TestParseKiroSettingOutput(t *testing.T) {
 		{"plain-value", "plain-value"},
 		// No leading paren: nothing to strip, bare text survives.
 		{"name (with parens) (global)", "name (with parens)"},
-		// A '(' at index 0 must not trigger a trim (that would return the
-		// empty string); the whole value survives untouched.
+		// A '(' at index 0 must not trim the whole value.
 		{"(foo)", "(foo)"},
 	}
 	for _, tt := range tests {
@@ -177,8 +153,7 @@ func FuzzSafeKiroSettingValue(f *testing.F) {
 		if got == "" {
 			return // rejected — fine
 		}
-		// Invariant: accepted values are either "true"/"false" or
-		// numeric strings of 1-4 digits (non-negative integer).
+		// Accepted values are "true"/"false" or 1-4 digit non-negative integers.
 		if got == "true" || got == "false" {
 			return
 		}
@@ -194,7 +169,6 @@ func FuzzSafeKiroSettingValue(f *testing.F) {
 }
 
 func FuzzParseKiroSettingOutput(f *testing.F) {
-	// Seed corpus from existing test cases.
 	seeds := []string{
 		"true (global)", "false (global)", "true (local)",
 		"7 (global)", "true (global)\n", "  true (global)  ",
@@ -215,7 +189,6 @@ func FuzzParseKiroSettingOutput(f *testing.F) {
 		if len(output) > len(trimmed) {
 			t.Errorf("output %q longer than trimmed input %q", output, trimmed)
 		}
-		// Must never panic (implicit: reaching here means no panic).
 	})
 }
 
@@ -338,9 +311,7 @@ func TestSpaHandler(t *testing.T) {
 			wantBody: "<html>root</html>",
 		},
 		{
-			// HTML (and the SPA fallback) is never cached: fresh HTML on
-			// every load is what makes a new release's script graph take
-			// effect immediately (assets revalidate via ETag instead).
+			// HTML is never cached, so a release takes effect on the next load.
 			name: "html gets no-store",
 			fs: fstest.MapFS{
 				"index.html": {Data: []byte("<html></html>")},
@@ -406,7 +377,6 @@ func findSubstring(s, sub string) bool {
 }
 
 func FuzzParseSteeringInclusion(f *testing.F) {
-	// Seed corpus from existing unit test inputs.
 	seeds := []string{
 		"---\ninclusion: manual\ndescription: test\n---\n# Doc",
 		"---\ninclusion: always\n---\n# Doc",
@@ -416,7 +386,6 @@ func FuzzParseSteeringInclusion(f *testing.F) {
 		"---\ndescription: no inclusion key\n---\n# Doc",
 		"---\ninclusion: manual\n# No closing fence",
 		"---\ninclusion:   manual  \n---\n# Doc",
-		// Adversarial cases.
 		"---\n---\n",
 		"---\n\n---\n",
 		"---\n---",
@@ -427,7 +396,6 @@ func FuzzParseSteeringInclusion(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, content string) {
-		// Must not panic (implicit: reaching here means no panic).
 		_ = parseSteeringInclusion([]byte(content))
 	})
 }
@@ -444,9 +412,7 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 			},
 		}
 		for i := range n {
-			// strconv.Itoa, not a 26-letter alphabet: the old
-			// "doc"+rune('a'+i%26) COLLIDED after 26 entries, so makeDocs(50)
-			// built 26 distinct steering docs rather than 50.
+			// strconv.Itoa: a 26-letter suffix collided past 26 entries.
 			name := "steering/doc" + strconv.Itoa(i) + ".md"
 			m[name] = &fstest.MapFile{
 				Data: []byte("---\ninclusion: manual\ndescription: benchmark doc\n---\n# Heading\nContent here for realism.\n"),
@@ -455,13 +421,7 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 		return m
 	}
 
-	// The axis FLATTENS at maxSteeringPerDir (20): scanSteering stops once it
-	// has 20 items, so the 50 case measures the capped path — 50 directory
-	// entries read, 20 files opened — not 50 docs' worth of work. Measured on
-	// go1.27.0 at -benchtime=200x: 5 docs 6.3 µs / 7,688 B / 71 allocs, 20 docs
-	// 20.8 µs / 30,268 B / 210 allocs, 50 docs 29.5 µs / 32,664 B / 211 allocs.
-	// The near-flat allocation count between the last two IS the cap, and it is
-	// stated here because the name says 50 and the work does not.
+	// The axis FLATTENS at maxSteeringPerDir (20): the 50 case measures the capped path.
 	for _, count := range []int{5, 20, 50} {
 		b.Run(strconv.Itoa(count)+"_docs", func(b *testing.B) {
 			m := makeDocs(count)
@@ -516,12 +476,9 @@ func FuzzScanKiroDirFS(f *testing.F) {
 	})
 }
 
-// TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties this
-// handler shares with webhttp.ReadinessHandler. KEY ORDER: its verdict is
-// composite, so it cannot be the library's handler and matches the shape by hand;
-// a map would sort "reason" before "status". CACHE: a 200 with no explicit
-// freshness is heuristically cacheable (RFC 9111), and a cached "ok" outliving its
-// readiness keeps traffic arriving at a draining instance.
+// TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
+// webhttp.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
+// no-store (RFC 9111 would heuristically cache a 200).
 func TestHandleHealth_envelopeMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -570,16 +527,8 @@ func TestHandleHealth_returns_ok(t *testing.T) {
 	}
 }
 
-// TestHandleHealth_DegradedWhenKiroUnready pins the degraded-not-dead start
-// (invariant 6): the server is up (ready=true) but the install manager has no
-// usable kiro-cli, so health must report 503 with the reason this app publishes
-// for the manager's verdict — the signal `docker ps`, monitoring and the client's
-// degraded banner all key off.
-//
-// Each reason is a distinct operator situation, and carrying them separately is
-// what the version-aware gate buys over the existence check it replaced: that
-// one could only ever say "unavailable", and said "ok" for a binary drifted from
-// the pin or one whose auto-update could not be switched off.
+// TestHandleHealth_DegradedWhenKiroUnready pins the degraded-not-dead start (invariant 6):
+// listener up, no usable kiro-cli, 503 with each distinct reason.
 func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 	for why, want := range map[pinstall.Reason]string{
 		pinstall.ReasonInstalling:  reasonInstalling,
@@ -608,11 +557,8 @@ func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 	}
 }
 
-// TestHandleHealth_OKWhenKiroReady covers the two shapes that answer 200: a
-// manager reporting ready, and no manager at all (a bare `go run` with no pins,
-// where readiness stays pure-listener). The verdict is read per
-// probe, so an install completing flips the same server to ok with no restart —
-// asserted by flipping the verdict between two probes.
+// TestHandleHealth_OKWhenKiroReady pins 200 for a ready manager and for no manager, and that
+// the verdict is re-read per probe.
 func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 	t.Run("manager reports ready", func(t *testing.T) {
 		s := &Server{kiroReady: func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }}
@@ -691,11 +637,8 @@ func TestDefaultCLITimeouts(t *testing.T) {
 	}
 }
 
-// TestSyncPushPreferences_permissionIsAFloor pins the removal of the
-// notify_permission off switch at the WRITE path: the key is gone, so a body
-// still carrying it — a hand-edited config.json, an older client, a replayed
-// request — must not be able to silence a turn-blocking ask. The permission
-// preference stays true whatever the patch says.
+// TestSyncPushPreferences_permissionIsAFloor pins that a body still carrying
+// notify_permission cannot silence a turn-blocking ask.
 func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
 	bodies := map[string]string{
 		"BareFalse":             `{"notify_permission":false}`,
@@ -734,8 +677,7 @@ func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 	}
 }
 
-// hasKiroConfigItem reports whether items contains an entry of the given Type
-// and Name. Used to assert that each scan stage actually contributed an item.
+// hasKiroConfigItem reports whether items contains an entry of the given Type and Name.
 func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
 	for _, it := range items {
 		if it.Type == typ && it.Name == name {
@@ -745,11 +687,7 @@ func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
 	return false
 }
 
-// TestScanKiroDirFS_returnsAllSections verifies that a single scan over a
-// populated .kiro tree returns an item for every section it walks — steering
-// docs, skills, and agents — under a live (non-cancelled) context. A
-// regression that early-returned or skipped an append for any section would
-// drop that section's items.
+// TestScanKiroDirFS_returnsAllSections pins an item from every section of one scan.
 func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 	mfs := fstest.MapFS{
 		"steering":            &fstest.MapFile{Mode: fs.ModeDir},
@@ -774,14 +712,9 @@ func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 	}
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the
-// duration of the test and restores it on cleanup. The default is process-wide,
-// so a test using it must not run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
+// along with the log package's writer and flags, which slog.SetDefault also redirects.
+// The default is process-wide, so a test using it must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}

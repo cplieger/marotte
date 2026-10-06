@@ -7,18 +7,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// ChatStoreContract is the subject of ChatStoreContractTest: the 5 HEADER methods
-// of a chat store this suite exercises. There is no shared ChatStore interface —
-// each consumer declares the methods it needs — and a contract suite has no
-// business naming a method it does not assert on. The log operations (OpenTurn,
-// Append, Window, ...) are the real store's alone and are pinned by its own tests;
-// the fakes here hold headers only.
-//
-// SetDraft is here only for its version contract (the returned state carries the
-// `chat` version the write minted); its other three properties (no UpdatedAt
-// stamp, no broadcast, a silent no-op on a chat that does not exist) are still a
-// GAP no shared case pins. RegisterRoutes is absent because a store's HTTP
-// mounting is not a storage behaviour.
+// ChatStoreContract is the subject of ChatStoreContractTest: the 5 HEADER methods this suite
+// exercises. Log operations are the real store's alone; the fakes hold headers only. SetDraft
+// is here for its version contract only.
 type ChatStoreContract interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	List(ctx context.Context) []marotte.ChatHeader
@@ -27,10 +18,8 @@ type ChatStoreContract interface {
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 }
 
-// ChatStoreContractTest exercises the behavioral expectations of any chat store
-// implementation. Run against both fakes and real implementations to catch
-// drift. Each behavior lives in its own helper so the
-// suite stays flat; this is the dispatcher.
+// ChatStoreContractTest exercises the behaviour any chat store must hold, against fakes and
+// the real store; each behaviour is its own helper.
 func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreContract) {
 	t.Helper()
 
@@ -55,11 +44,8 @@ func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
 	}
 }
 
-// testGetReturnsIndependentCopy pins that a Get result shares nothing with the
-// stored record: a caller editing what it got back must not be a write path, or
-// "Mutate is the only write path" means nothing. Checked on a scalar and on a
-// slice field, because the two fail independently (a shallow copy keeps the slice
-// header).
+// testGetReturnsIndependentCopy pins that a Get result shares nothing with the stored record
+// (or Mutate is not the only write path), on a scalar and a slice field.
 func testGetReturnsIndependentCopy(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	const tampered = "tampered"

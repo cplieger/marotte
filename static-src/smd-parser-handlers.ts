@@ -1,10 +1,4 @@
-// ---------------------------------------------------------------------------
 // Per-context handlers for the streaming markdown parser.
-//
-// Extracted from smd-parser.ts — each handler returns `true` when it fully
-// consumed the character and the outer loop should `continue`; `false` when
-// the character should fall through to the common-check section.
-// ---------------------------------------------------------------------------
 
 import type { Parser, Token } from "./smd-parser-types.js";
 import {
@@ -71,10 +65,10 @@ import {
 } from "./smd-parser-types.js";
 import { NAMED_ENTITIES, MAX_ENTITY_NAME_LENGTH } from "./smd-entities.js";
 
-/** The five names XML predefines, held here rather than in the generated table.
- *  `apos` is the one that needs it: HTML 4.01 does not define it, so the table
- *  cannot carry it. The other four are the spellings escaping turns on, and
- *  owning them here means no regeneration of that file can drop them. */
+/** The five names XML predefines, held here rather than in the generated table. `apos` is the
+ *  one that needs it: HTML 4.01 does not define it, so the table cannot carry it. The other four
+ *  are the spellings escaping turns on, and owning them here means no regeneration of that file
+ *  can drop them. */
 const XML_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
   apos: "'",
@@ -83,10 +77,10 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
-/** Everything a delimiter row may contain. One character outside this set rules
- *  the line out, which is what bounds the held candidate to two lines. Must stay
- *  a superset of what `is_delimiter_row` accepts, or a row the test would take
- *  never reaches it and the whole table is lost. */
+/** Everything a delimiter row may contain. One character outside this set rules the line out,
+ *  which is what bounds the held candidate to two lines. Must stay a superset of what
+ *  `is_delimiter_row` accepts, or a row the test would take never reaches it and the whole table
+ *  is lost. */
 const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
 
 function is_hex_digit(cc: number): boolean {
@@ -97,9 +91,8 @@ function is_ascii_alpha(cc: number): boolean {
   return (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122);
 }
 
-/** Whether `char` can extend the reference candidate held in `pending`, which
- *  starts at the `&`. Returning false is what ends the hold: the run is flushed
- *  verbatim and `char` is re-fed. */
+/** Whether `char` can extend the reference candidate held in `pending`, which starts at the `&`.
+ *  Returning false is what ends the hold: the run is flushed verbatim and `char` is re-fed. */
 function can_continue_entity(pending: string, char: string): boolean {
   const cc = char.charCodeAt(0);
   if (pending === "&") {
@@ -117,8 +110,8 @@ function can_continue_entity(pending: string, char: string): boolean {
   return pending.length < 1 + MAX_ENTITY_NAME_LENGTH && (is_ascii_alpha(cc) || is_digit(cc));
 }
 
-/** CommonMark 6.2: a code point that is not a valid Unicode scalar decodes to
- *  U+FFFD rather than failing. */
+/** CommonMark 6.2: a code point that is not a valid Unicode scalar decodes to U+FFFD rather than
+ *  failing. */
 function scalar_or_replacement(cp: number): string {
   if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
     return "\ufffd";
@@ -126,9 +119,9 @@ function scalar_or_replacement(cp: number): string {
   return String.fromCodePoint(cp);
 }
 
-/** Decode one reference body — everything between the `&` and the `;` — or null
- *  when it names nothing. A lookup miss is exactly the "an invalid reference
- *  stays literal" rule, so no extra guard is needed for it. */
+/** Decode one reference body — everything between the `&` and the `;` — or null when it names
+ *  nothing. A lookup miss is exactly the "an invalid reference stays literal" rule, so no extra
+ *  guard is needed for it. */
 function decode_entity(body: string): string | null {
   if (body.startsWith("#x") || body.startsWith("#X")) {
     const hex = body.slice(2);
@@ -141,13 +134,8 @@ function decode_entity(body: string): string | null {
   return lookup_named(body);
 }
 
-/** The character `body` names, or null when nothing names it — which is the
- *  stays-literal answer.
- *
- *  `body` is author text and both maps are object literals, so the own-member
- *  test is what keeps this total: a bare index answers `&constructor;` with the
- *  inherited `Object` constructor. Guarding the READ rather than each table means
- *  a regenerated `smd-entities.ts` cannot reintroduce it. */
+/** The character `body` names, or null when nothing names it — which is the stays-literal
+ *  answer. */
 function lookup_named(body: string): string | null {
   if (Object.hasOwn(XML_ENTITIES, body)) {
     return XML_ENTITIES[body] ?? null;
@@ -155,14 +143,11 @@ function lookup_named(body: string): string | null {
   return Object.hasOwn(NAMED_ENTITIES, body) ? (NAMED_ENTITIES[body] ?? null) : null;
 }
 
-/** Every reference in a COMPLETE string, decoded. For a link destination and a
- *  title, where the whole run has arrived by the time it is read, so there is no
- *  streaming hold on this path.
- *
- *  A destination must be decoded BEFORE it reaches `isSafeUrl` (smd-renderer.ts)
- *  and never after: `javascript&#58;alert(1)` does not START with `javascript:`,
- *  so a gate handed the undecoded string passes it and the browser then decodes
- *  a live scheme. */
+/** Every reference in a COMPLETE string, decoded. For a link destination and a title, where the
+ *  whole run has arrived by the time it is read, so there is no streaming hold on this path. A
+ *  destination must be decoded BEFORE it reaches `isSafeUrl` (smd-renderer.ts) and never after:
+ *  `javascript&#58;alert(1)` does not START with `javascript:`, so a gate handed the undecoded
+ *  string passes it and the browser then decodes a live scheme. */
 function decode_entities(s: string): string {
   if (!s.includes("&")) {
     return s;
@@ -173,19 +158,12 @@ function decode_entities(s: string): string {
   );
 }
 
-/** A table row's cells, split the way the row handlers split them: a leading `|`
- *  opens the row rather than a cell, a trailing one closes the last cell rather
- *  than opening another, and neither a backslash-escaped pipe nor one inside a
- *  code span is a delimiter.
- *
- *  Those two are the halves a plain `split("|")` gets wrong, and both matter for
- *  the same reason: this count is what the delimiter row is measured against, so
- *  a count the CELL WALKER would never produce loses the whole table or opens
- *  one whose header and body disagree. `handleCommon`'s `\` arm consumes `\|`
- *  into the cell text, and CODE_INLINE is dispatched with `actionAlwaysContinue`
- *  so the `|` arm never runs inside a code span — which is why marotte keeps
- *  `` `a | b` `` as ONE cell where the GFM reference splits it into two, and why
- *  the delimiter row has to agree with one cell rather than two. */
+/** A table row's cells, split the way the row handlers split them: a leading `|` opens the row
+ *  rather than a cell, a trailing one closes the last cell rather than opening another, and
+ *  neither a backslash-escaped pipe nor one inside a code span is a delimiter. Those two are the
+ *  halves a plain `split("|")` gets wrong, and both matter for the same reason: this count is
+ *  what the delimiter row is measured against, so a count the CELL WALKER would never produce
+ *  loses the whole table or opens one whose header and body disagree. */
 function table_row_cells(row: string): string[] {
   const body = row.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
   const cells: string[] = [];
@@ -197,8 +175,8 @@ function table_row_cells(row: string): string[] {
       cell += ch + body.charAt(i + 1);
       i += 1;
     } else if (ch === "`") {
-      // A run closes the span only at its own length, which is what makes
-      // ``` ``a | b`` ``` one cell as well.
+      // A run closes the span only at its own length, which is what makes ``` ``a | b`` ``` one
+      // cell as well.
       let run = 1;
       while (body.charAt(i + run) === "`") {
         run += 1;
@@ -224,17 +202,12 @@ function table_row_cells(row: string): string[] {
   return cells;
 }
 
-/** GFM's delimiter row: a cell count matching the header's, and every cell a run
- *  of dashes with an optional colon on either side.
- *
- *  A pipe is deliberately NOT required, so a single-column header over a bare
- *  `---` is a table. Requiring one would read that as a thematic break, where
- *  the GFM reference reads a table; the multi-column case needs no rule of its
- *  own, since a pipeless line cannot match a header of two cells or more. */
+/** GFM's delimiter row: a cell count matching the header's, and every cell a run of dashes with
+ *  an optional colon on either side. */
 function is_delimiter_row(row: string, cells: string[], header_cells: number): boolean {
-  // GFM reads a `-`, `*` or `+` followed by a space or tab at line start as a
-  // BULLET, and that outranks the delimiter row. The space is what keeps `-|-`
-  // a delimiter row; `- - -` is already ruled out by the per-cell test.
+  // GFM reads a `-`, `*` or `+` followed by a space or tab at line start as a BULLET, and that
+  // outranks the delimiter row. The space is what keeps `-|-` a delimiter row; `- - -` is already
+  // ruled out by the per-cell test.
   if (/^[ \t]*[-*+][ \t]/u.test(row)) {
     return false;
   }
@@ -244,8 +217,8 @@ function is_delimiter_row(row: string, cells: string[], header_cells: number): b
   return cells.every((cell) => /^[ \t]*:?-+:?[ \t]*$/u.test(cell));
 }
 
-/** Per-column `text-align` from the delimiter row's colons, comma-joined, or ""
- *  when the row asks for no alignment at all. */
+/** Per-column `text-align` from the delimiter row's colons, comma-joined, or "" when the row
+ *  asks for no alignment at all. */
 function column_alignments(cells: string[]): string {
   const out = cells.map((cell) => {
     const c = cell.trim();
@@ -285,15 +258,14 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       p.blockquote_idx = 0;
       p.fence_start = 0;
       if (!has_token_room(p.len, 1)) {
-        // Past the cap no block opens, so this line break is the only thing left
-        // to separate one line of text from the next.
+        // Past the cap no block opens, so this line break is the only thing left to separate one
+        // line of text from the next.
         p.textBuf += "\n";
       }
       p.pending = char;
       return true;
     case "#":
-      // Heading: #..###### + space, or a bare run, which CommonMark 4.2 reads
-      // as an empty heading.
+      // Heading: #..###### + space, or a bare run, which CommonMark 4.2 reads as an empty heading.
       if (char === "#") {
         if (p.pending.length < 6) {
           p.pending = pending_with_char;
@@ -309,8 +281,8 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         if (opened) {
           p.atx_close = true;
           if (char === "\n") {
-            // Handed on rather than consumed, or the next line's text lands
-            // inside the heading this newline has to close.
+            // Handed on rather than consumed, or the next line's text lands inside the heading this
+            // newline has to close.
             p.pending = char;
           }
         }
@@ -322,9 +294,9 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       if (next_blockquote_idx === -1) {
         end_tokens_to_len(p, p.blockquote_idx);
         if (!add_token(p, BLOCKQUOTE)) {
-          // Past the cap the line is text, and so is the `>` that started it.
-          // `blockquote_idx` stays put: advancing it past `len` leaves every
-          // later search for an enclosing block starting above the stack.
+          // Past the cap the line is text, and so is the `>` that started it. `blockquote_idx`
+          // stays put: advancing it past `len` leaves every later search for an enclosing block
+          // starting above the stack.
           break;
         }
         p.blockquote_idx += 1;
@@ -407,8 +379,8 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       if (char === "\n") {
         end_tokens_to_indent(p, p.indent_len);
         if (!add_token(p, CODE_FENCE)) {
-          // The info string must not be emitted here: with no fence to carry it
-          // the attribute lands on the enclosing element as its `class`.
+          // The info string must not be emitted here: with no fence to carry it the attribute lands
+          // on the enclosing element as its `class`.
           p.textBuf += p.indent + pending_with_char;
           clear_root_pending(p);
           p.fence_start = 0;
@@ -459,8 +431,8 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         return true;
       } else {
         const cc = char.charCodeAt(0);
-        // CommonMark 5.2 bounds the marker at nine digits, so a longer run of
-        // them is prose — an order number, a phone number, a byte count.
+        // CommonMark 5.2 bounds the marker at nine digits, so a longer run of them is prose — an
+        // order number, a phone number, a byte count.
         if (cc === 46 || cc === 41 || (is_digit(cc) && p.pending.length < 9)) {
           p.pending = pending_with_char;
           return true;
@@ -468,16 +440,8 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       }
       break;
     case "|": {
-      // GFM needs a delimiter row on the line AFTER the header, so the header is
-      // HELD in `pending` until the next line decides. Painting the pipes as a
-      // paragraph and then restructuring them into a table would change the
-      // height of content the reader has already scrolled past, which
-      // `overflow-anchor: none` gives no net for; one late insertion does not.
-      //
-      // A rejected candidate needs no state: the promotion below consumes its
-      // first line as paragraph text and the rest is offered to this arm again,
-      // which is how a table starting on the SECOND line of a rejected candidate
-      // still opens, as GFM opens it.
+      // GFM needs a delimiter row on the line AFTER the header, so the header is HELD in `pending`
+      // until the next line decides.
       const nl = p.pending.indexOf("\n");
       if (nl !== -1 && char === "\n") {
         const header = p.pending.slice(0, nl);
@@ -487,11 +451,9 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
           break;
         }
         end_tokens_to_len(p, p.blockquote_idx);
-        // TABLE, TABLE_ROW and TABLE_CELL must ALL fit: a failed row or cell
-        // push leaves the cell text as a text node directly inside the
-        // `<table>`, and `handleTableRow`'s default arm re-feeds its character,
-        // so a failure there recurses without bound. Past the depth limit the
-        // held lines are text, as they are for a paragraph.
+        // TABLE, TABLE_ROW and TABLE_CELL must ALL fit: a failed row or cell push leaves the cell
+        // text as a text node directly inside the `<table>`, and `handleTableRow`'s default arm
+        // re-feeds its character, so a failure there recurses without bound.
         if (!has_token_room(p.len, 3)) {
           break;
         }
@@ -502,14 +464,13 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         }
         add_token(p, TABLE_ROW);
         p.pending = "";
-        // Replayed through the row handlers rather than emitted here, so the
-        // header and the delimiter row go through exactly the path they took
-        // before the deferral existed.
+        // Replayed through the row handlers rather than emitted here, so the header and the
+        // delimiter row go through exactly the path they took before the deferral existed.
         p.write(p, header.slice(1) + "\n" + delim + "\n");
         return true;
       }
-      // No line follows the newline `parser_end` writes, so a candidate still
-      // being held at end of input can never become a table.
+      // No line follows the newline `parser_end` writes, so a candidate still being held at end of
+      // input can never become a table.
       if (p.at_end) {
         break;
       }
@@ -542,24 +503,22 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       pushed = add_token(p, PARAGRAPH);
     }
     if (!pushed) {
-      // No block opened, so the leading whitespace one would have consumed is
-      // text as well — the four columns that mark indented code included.
-      // Promotion runs once per two characters past the cap, so without this a
-      // space landing on a promotion boundary disappears.
+      // No block opened, so the leading whitespace one would have consumed is text as well — the
+      // four columns that mark indented code included. Promotion runs once per two characters past
+      // the cap, so without this a space landing on a promotion boundary disappears.
       to_write = p.indent + pending_with_char;
     }
   }
 
   clear_root_pending(p);
   if (!pushed) {
-    // The stack is at its cap, so nothing changed and re-feeding would re-enter
-    // this function with identical state. Past the depth limit the line is text.
+    // The stack is at its cap, so nothing changed and re-feeding would re-enter this function with
+    // identical state. Past the depth limit the line is text.
     p.textBuf += to_write;
     if (to_write.endsWith("\n")) {
-      // The newline arm never ran for this newline, and it owns the two pieces
-      // of line-scoped state below. Left alone, `blockquote_idx` still names the
-      // blockquote the PREVIOUS line ended in, so the next line's `>` run
-      // searches above the stack and reads as literal text.
+      // The newline arm never ran for this newline, and it owns the two pieces of line-scoped state
+      // below. Left alone, `blockquote_idx` still names the blockquote the PREVIOUS line ended in,
+      // so the next line's `>` run searches above the stack and reads as literal text.
       p.blockquote_idx = 0;
       p.fence_start = 0;
     }
@@ -569,24 +528,17 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
   return true;
 }
 
-/** The ATX closing sequence at the end of a held run: whitespace, an optional
- *  run of `#`, then whitespace. Anchored at the end, so `" ## #"` loses only the
- *  LAST run and keeps the first as content, which is CommonMark 4.2's reading. */
+/** The ATX closing sequence at the end of a held run: whitespace, an optional run of `#`, then
+ *  whitespace. Anchored at the end, so `" ## #"` loses only the LAST run and keeps the first as
+ *  content, which is CommonMark 4.2's reading. */
 const ATX_CLOSE_TAIL = /[ \t]*(?:#+[ \t]*)?$/u;
 
-/** Hold a candidate ATX closing sequence, so a `#` run that turns out to be
- *  syntax never reaches the renderer as text.
- *
- *  The hold is at most one whitespace run plus a `#` run plus another
- *  whitespace run, and it is released on the newline that ends the line — so a
- *  heading's text lags by the length of its own trailing run and by nothing
- *  else. Every other character falls through, which leaves `handleCommon`'s
- *  consecutive-space trim and every inline construct inside a heading exactly as
- *  they were. */
+/** Hold a candidate ATX closing sequence, so a `#` run that turns out to be syntax never reaches
+ *  the renderer as text. */
 export function handleHeading(p: Parser, char: string, pending_with_char: string): boolean {
   if (char === "\n") {
-    // A whitespace-only hold is the line's trailing whitespace, which 4.2 strips
-    // from a heading's content whether or not a closing run follows it.
+    // A whitespace-only hold is the line's trailing whitespace, which 4.2 strips from a heading's
+    // content whether or not a closing run follows it.
     if (p.atx_close || /^[ \t]+$/u.test(p.pending)) {
       p.textBuf += p.pending.replace(ATX_CLOSE_TAIL, "");
       p.pending = "";
@@ -595,8 +547,8 @@ export function handleHeading(p: Parser, char: string, pending_with_char: string
     return false;
   }
   if (char === "#") {
-    // A closing run must be preceded by whitespace. `atx_close` covers the run
-    // that starts the content, whose whitespace was the opening sequence's own.
+    // A closing run must be preceded by whitespace. `atx_close` covers the run that starts the
+    // content, whose whitespace was the opening sequence's own.
     if (p.atx_close || /^[ \t]+$/u.test(p.pending)) {
       p.pending = pending_with_char;
       p.atx_close = true;
@@ -655,9 +607,8 @@ function is_blank(s: string): boolean {
   return true;
 }
 
-/** The row and cell pushes here are unchecked because the `|` arm in
- *  `handleRootContext` reserves room for all three table tokens before it opens
- *  the table. */
+/** The row and cell pushes here are unchecked because the `|` arm in `handleRootContext`
+ *  reserves room for all three table tokens before it opens the table. */
 export function handleTableRow(p: Parser, char: string, _pending_with_char: string): boolean {
   switch (p.pending) {
     case "":
@@ -675,11 +626,8 @@ export function handleTableRow(p: Parser, char: string, _pending_with_char: stri
       p.write(p, char);
       return true;
     default:
-      // GFM makes the trailing pipe optional and trims every cell, so whitespace
-      // between the last pipe and the newline is not a cell. Opening one for it
-      // left the row unterminated: `table_state` never advanced, the delimiter
-      // row was read as a fresh table, and which of the two happened depended on
-      // where the write boundary fell.
+      // GFM makes the trailing pipe optional and trims every cell, so whitespace between the last
+      // pipe and the newline is not a cell.
       if (is_blank(p.pending)) {
         if (char === "\n") {
           p.pending = char;
@@ -704,11 +652,7 @@ export function handleTableCell(p: Parser, char: string, _pending_with_char: str
     return true;
   }
   if (p.pending === "\n") {
-    // GFM makes the trailing pipe optional, so a newline ends the last cell as
-    // well as the row. `handleTableRow` has always had this arm; without the
-    // cell's own the newline reached handleCommon and became a LINE BREAK, the
-    // row never terminated, and the delimiter row underneath was read as more
-    // header cells.
+    // GFM makes the trailing pipe optional, so a newline ends the last cell as well as the row.
     add_text(p);
     end_token(p);
     p.pending = "\n";
@@ -745,9 +689,9 @@ export function handleCodeBlock(p: Parser, char: string, pending_with_char: stri
   }
 }
 
-/** Whether a held line is a closing fence per CommonMark 4.5: at most three
- *  spaces of indent, then a run of at least `fence_start` backticks, then
- *  nothing but spaces and tabs. `line` may carry the newline that started it. */
+/** Whether a held line is a closing fence per CommonMark 4.5: at most three spaces of indent,
+ *  then a run of at least `fence_start` backticks, then nothing but spaces and tabs. `line` may
+ *  carry the newline that started it. */
 function is_fence_close(line: string, fence_start: number): boolean {
   let i = line.startsWith("\n") ? 1 : 0;
   const indent_start = i;
@@ -774,11 +718,8 @@ function is_fence_close(line: string, fence_start: number): boolean {
 }
 
 export function handleCodeFence(p: Parser, char: string, pending_with_char: string): void {
-  // `p.fence_end` is the current line's verdict: 0 while the line could still be
-  // the closing fence, 1 once a character ruled it out. While it could, the line
-  // is HELD in `pending` — a closing fence swallows the newline before it, so
-  // the newline that started the line is held with it and only reaches `textBuf`
-  // if the line turns out to be content.
+  // `p.fence_end` is the current line's verdict: 0 while the line could still be the closing fence,
+  // 1 once a character ruled it out.
   if (p.fence_end === 0) {
     switch (char) {
       case "`":
@@ -887,9 +828,9 @@ export function handleStrong(p: Parser, char: string): boolean {
       p.pending = "";
       return true;
     }
-    // Same delimiter-run rule as handleCommon, on the nested open only: the
-    // close above must stay ungated, or `__run_progress__` would never close.
-    // Falling through leaves the `_` to handleCommon's literal path.
+    // Same delimiter-run rule as handleCommon, on the nested open only: the close above must stay
+    // ungated, or `__run_progress__` would never close. Falling through leaves the `_` to
+    // handleCommon's literal path.
     if (isUnd && prev_is_word_char(p)) {
       return false;
     }
@@ -912,10 +853,9 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
         if (p.tokens[p.len - 1] === strong) {
           p.pending = pending_with_char;
         } else if (isUnd && prev_is_word_char(p)) {
-          // Same rule again, on the nested open. handleCommon cannot be
-          // delegated to here: it grows `pending` to `__`, which the next
-          // character reads as "close both" and fires two end_token calls
-          // against one open token. Consume the run as text instead.
+          // Same rule again, on the nested open. handleCommon cannot be delegated to here: it grows
+          // `pending` to `__`, which the next character reads as "close both" and fires two
+          // end_token calls against one open token. Consume the run as text instead.
           p.textBuf += pending_with_char;
           p.pending = "";
         } else {
@@ -924,12 +864,8 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
           p.pending = "";
         }
       } else if (isUnd && prev_is_word_char(p) && is_word_char(char)) {
-        // CommonMark 6.2 rule 6: a `_` run with a word character on both sides is
-        // both left- and right-flanking, so it cannot close either. Refused IN
-        // PLACE rather than delegated to handleCommon, which would grow `pending`
-        // to `__`, have the next character read that as "close both", and fire
-        // two end_token calls against one open token. The token stays open and is
-        // unwrapped at block close, restoring the whole run as literal text.
+        // CommonMark 6.2 rule 6: a `_` run with a word character on both sides is both left- and
+        // right-flanking, so it cannot close either.
         p.textBuf += p.pending;
         p.pending = char;
       } else {
@@ -959,8 +895,8 @@ export function handleMaybeEqBlock(p: Parser, char: string): void {
   if (char === "\n") {
     add_text(p);
     if (!add_token(p, EQUATION_BLOCK)) {
-      // Past the cap the opener is literal text, and the token that would have
-      // consumed the rest of the expression does not exist.
+      // Past the cap the opener is literal text, and the token that would have consumed the rest of
+      // the expression does not exist.
       p.token = p.tokens[p.len] as Token;
       p.textBuf += p.pending + char;
       p.pending = "";
@@ -1003,11 +939,10 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
   p.write(p, char);
 }
 
-/** Index of the innermost open token from `wanted`, reachable through inline
- *  tokens only, or -1. Used where a structural delimiter has to win over an
- *  inline token that never closed: CommonMark resolves a link before emphasis,
- *  and GFM splits a table row into cells before parsing inline content at all.
- *  Stopping at the first other block token keeps the search inside one block. */
+/** Index of the innermost open token from `wanted`, reachable through inline tokens only, or -1.
+ *  Used where a structural delimiter has to win over an inline token that never closed:
+ *  CommonMark resolves a link before emphasis, and GFM splits a table row into cells before
+ *  parsing inline content at all. */
 function enclosing_idx(p: Parser, wanted: readonly Token[]): number {
   for (let i = p.len; i > 0; i -= 1) {
     const token = p.tokens[i] as Token;
@@ -1027,9 +962,8 @@ const CELL_TOKENS: readonly Token[] = [TABLE_CELL];
 /** The closer for each title delimiter CommonMark 6.3 allows. */
 const TITLE_CLOSE: Readonly<Record<string, string>> = { '"': '"', "'": "'", "(": ")" };
 
-/** Whether a backslash before `ch` is an escape that consumes it. Mirrors
- *  handleCommon's `\` arm, which keeps the backslash before an alphanumeric and
- *  drops it before anything else. */
+/** Whether a backslash before `ch` is an escape that consumes it. Mirrors handleCommon's `\`
+ *  arm, which keeps the backslash before an alphanumeric and drops it before anything else. */
 function is_escaped_char(ch: string): boolean {
   const cc = ch.charCodeAt(0);
   return !(is_digit(cc) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122));
@@ -1038,22 +972,13 @@ function is_escaped_char(ch: string): boolean {
 interface Destination {
   url: string;
   title: string | null;
-  /** Whether a `)` belongs to the run rather than ending it: an unbalanced `(`
-   *  in the destination, or a `(…)` title whose closer it would be. The caller
-   *  keeps accumulating instead of closing the link. */
+  /** Whether a `)` belongs to the run rather than ending it: an unbalanced `(` in the
+   *  destination, or a `(…)` title whose closer it would be. The caller keeps accumulating
+   *  instead of closing the link. */
   open: boolean;
 }
 
-/** Split the run between `](` and a candidate closing `)` into a destination and
- *  a title.
- *
- *  A run that does not read as `destination [whitespace title] whitespace*`
- *  keeps the whole run as the destination, which is what every link got before
- *  titles were parsed — a destination containing a space is the common shape
- *  that reaches it, and routing it to a literal instead would change every real
- *  link written with an unencoded space. The backslash keeps its literal
- *  reading in the destination for the same reason, and is unescaped only in the
- *  title, which had no reading to preserve. */
+/** Split the run between `](` and a candidate closing `)` into a destination and a title. */
 function scan_destination(run: string): Destination {
   const whole: Destination = { url: run, title: null, open: false };
   let i = 0;
@@ -1067,12 +992,8 @@ function scan_destination(run: string): Destination {
       url += run.charAt(i);
     }
     if (i === run.length) {
-      // No `>` yet, so this `)` is INSIDE the brackets and does not close the link
-      // — the angle form's twin of the bare branch's `depth > 0`. Reported as
-      // `open` rather than keeping the run, or `[a](<javascript:alert(1)>)` closes
-      // at the inner `)` and the mis-split `<javascript:alert(1` becomes the href
-      // instead of reaching the scheme gate. An unterminated run is unwrapped as
-      // literal text at block close, which is what the reference renders.
+      // No `>` yet, so this `)` is INSIDE the brackets and does not close the link — the angle
+      // form's twin of the bare branch's `depth > 0`.
       return { url: run, title: null, open: true };
     }
     i += 1;
@@ -1125,8 +1046,8 @@ function scan_destination(run: string): Destination {
     title += ch;
   }
   if (i === run.length) {
-    // A `(…)` title is closed by the `)` the caller is holding, so keep
-    // accumulating. A quoted one cannot be, so the run is a destination.
+    // A `(…)` title is closed by the `)` the caller is holding, so keep accumulating. A quoted one
+    // cannot be, so the run is a destination.
     return close === ")" ? { url: run, title: null, open: true } : whole;
   }
   i += 1;
@@ -1137,10 +1058,8 @@ function scan_destination(run: string): Destination {
 }
 
 export function handleLinkOrImage(p: Parser, char: string, pending_with_char: string): boolean {
-  // CommonMark 6.3 allows balanced brackets in a label, so the label ends at a
-  // `]` only when no `[` is open. A counter rather than a re-scan: a label that
-  // fails to close would make every later `[` restart the scan, which is
-  // quadratic on bracket-heavy input and a streaming parser sees every prefix.
+  // CommonMark 6.3 allows balanced brackets in a label, so the label ends at a `]` only when no `[`
+  // is open.
   if (p.pending === "[") {
     p.link_depth += 1;
     p.textBuf += p.pending;
@@ -1158,11 +1077,8 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
     if (char === "(") {
       p.pending = pending_with_char;
     } else {
-      // No destination, so this was never a link: an anchor with no href is not
-      // focusable and not followable, and the transcript styles it as link text.
-      // The renderer unwraps it and restores the `[` or `![` it consumed; the
-      // `]` goes to the PARENT, after the close, since the element it would
-      // otherwise land in has just left the document.
+      // No destination, so this was never a link: an anchor with no href is not focusable and not
+      // followable, and the transcript styles it as link text.
       end_token_unresolved(p);
       p.textBuf += "]";
       p.pending = char;
@@ -1180,9 +1096,8 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
       return true;
     }
     const type = p.token === LINK ? HREF : SRC;
-    // Decoded HERE and not in the renderer: this string is what reaches
-    // `isSafeUrl`, and a reference decoded after that gate walks straight past
-    // it. See `decode_entities`.
+    // Decoded HERE and not in the renderer: this string is what reaches `isSafeUrl`, and a
+    // reference decoded after that gate walks straight past it. See `decode_entities`.
     p.renderer.set_attr(p.renderer.data, type, decode_entities(dest.url));
     if (dest.title !== null) {
       p.renderer.set_attr(p.renderer.data, TITLE, decode_entities(dest.title));
@@ -1194,10 +1109,9 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
   return false;
 }
 
-// Characters a bare URL may not END on: the markdown emphasis and code
-// delimiters, plus the trailing punctuation GFM already trims. ASCII
-// parentheses are absent deliberately — trimming one needs GFM's balance rule,
-// and without it a Wikipedia disambiguation link is cut short.
+// Characters a bare URL may not END on: the markdown emphasis and code delimiters, plus the
+// trailing punctuation GFM already trims. ASCII parentheses are absent deliberately — trimming one
+// needs GFM's balance rule, and without it a Wikipedia disambiguation link is cut short.
 const RAW_URL_TAIL = new Set(["*", "_", "~", "`", ".", ",", ":", ";", "!", "?", "'", '"']);
 
 /** CJK punctuation: U+3000-U+303F and U+FF00-U+FF65. */
@@ -1206,19 +1120,16 @@ function isCJKPunctuation(ch: string): boolean {
   return (cc >= 0x3000 && cc <= 0x303f) || (cc >= 0xff00 && cc <= 0xff65);
 }
 
-/** The CJK marks that separate clauses rather than end sentences. Sentence
- *  enders (`。．！？…｡`) are deliberately absent: a URL genuinely containing one
- *  is indistinguishable from a sentence that ends after a URL, so the only
- *  honest answer there is to leave the run alone. */
+/** The CJK marks that separate clauses rather than end sentences. Sentence enders (`。．！？…｡`) are
+ *  deliberately absent: a URL genuinely containing one is indistinguishable from a sentence that
+ *  ends after a URL, so the only honest answer there is to leave the run alone. */
 const CJK_SEPARATOR = new Set(["，", "、", "；", "：", "､"]);
 
-/** Split an accumulated bare URL into the href and the trailing run that is not
- *  part of it.
- *
- *  Computed from the WHOLE accumulated pending and only at its END: `.` and `,`
- *  are legal inside a path, so terminating on one would break every domain
- *  name, and a trim derived from the incoming character alone would not be
- *  chunk-size invariant, which the property and fuzz suites assert. */
+/** Split an accumulated bare URL into the href and the trailing run that is not part of it.
+ *  Computed from the WHOLE accumulated pending and only at its END: `.` and `,` are legal inside
+ *  a path, so terminating on one would break every domain name, and a trim derived from the
+ *  incoming character alone would not be chunk-size invariant, which the property and fuzz
+ *  suites assert. */
 function splitRawURLTail(pending: string): { url: string; tail: string } {
   let end = pending.length;
   while (end > 0) {
@@ -1231,19 +1142,14 @@ function splitRawURLTail(pending: string): { url: string; tail: string } {
   return { url: pending.slice(0, end), tail: pending.slice(end) };
 }
 
-/** Close the open RAW_URL at the last character that can belong to it, then
- *  re-feed the trimmed tail plus `trailing`.
- *
- *  Re-fed rather than dropped, so a stripped emphasis close still closes its
- *  token and the punctuation still reaches the paragraph. The terminator rides
- *  along: with the tail ahead of it, leaving it in `pending` would overwrite
- *  whatever the tail left there. */
+/** Close the open RAW_URL at the last character that can belong to it, then re-feed the trimmed
+ *  tail plus `trailing`. */
 function endRawURL(p: Parser, trailing: string): void {
   const { url, tail } = splitRawURLTail(p.pending);
   p.renderer.set_attr(p.renderer.data, HREF, url);
-  // `textBuf` holds only the href half already (see below), so the visible text
-  // is cut at the SAME point as the href — a link whose label shows a `**` its
-  // href no longer carries would be worse than the bug.
+  // `textBuf` holds only the href half already (see below), so the visible text is cut at the SAME
+  // point as the href — a link whose label shows a `**` its href no longer carries would be worse
+  // than the bug.
   add_text(p);
   end_token(p);
   p.pending = "";
@@ -1256,21 +1162,17 @@ export function handleRawURL(p: Parser, char: string, pending_with_char: string)
   if (char === " " || char === "\n" || char === "\\") {
     endRawURL(p, char);
   } else if (RAW_URL_TAIL.has(char) || isCJKPunctuation(char)) {
-    // A CJK separator immediately followed by a backtick is the one shape that
-    // PROVES the URL ended: RFC 3986 excludes the backtick, so it cannot be in
-    // the URL. Letting it ride is not just a wrong href — it eats the opening
-    // delimiter of the code span that follows and shifts every later backtick
-    // pairing in the paragraph. Punctuation followed by anything else is not
-    // evidence, because real URLs carry it raw (…/wiki/苹果（公司）,
-    // …/wiki/我，机器人, …/wiki/モーニング娘。).
+    // A CJK separator immediately followed by a backtick is the one shape that PROVES the URL
+    // ended: RFC 3986 excludes the backtick, so it cannot be in the URL. A CJK separator
+    // immediately followed by a backtick is the one shape that PROVES the URL ended: RFC 3986
+    // excludes the backtick, so it cannot be in the URL.
     if (char === "`" && CJK_SEPARATOR.has(p.pending.charAt(p.pending.length - 1))) {
       endRawURL(p, char);
       return;
     }
-    // HELD, not appended. `add_text` hands text to the renderer, which appends
-    // and cannot take it back, and `parser_write` flushes at every chunk
-    // boundary — so a character that may turn out to be the tail must not
-    // reach `textBuf` until the URL is known to continue past it.
+    // HELD, not appended. `add_text` hands text to the renderer, which appends and cannot take it
+    // back, and `parser_write` flushes at every chunk boundary — so a character that may turn out
+    // to be the tail must not reach `textBuf` until the URL is known to continue past it.
     p.pending = pending_with_char;
   } else {
     // The URL continues, so everything held is part of it after all.
@@ -1282,18 +1184,14 @@ export function handleRawURL(p: Parser, char: string, pending_with_char: string)
 /** The `<br…>` shapes the angle deferral accepts, held or complete. */
 const BR_CANDIDATE = /^<br *\/? *$/u;
 
-/** CommonMark 6.5's absolute URI: a scheme of an ASCII letter then one to
- *  thirty-one of letter, digit, `+`, `.` or `-`, a `:`, then anything but
- *  whitespace, `<` or `>`. */
+/** CommonMark 6.5's absolute URI: a scheme of an ASCII letter then one to thirty-one of letter,
+ *  digit, `+`, `.` or `-`, a `:`, then anything but whitespace, `<` or `>`. */
 const URI_AUTOLINK = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$/u;
 
 /** CommonMark 6.5's email autolink. */
 const EMAIL_AUTOLINK =
   /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/u;
 
-/** The href for an autolink's content, or null when the content is not one of
- *  CommonMark 6.5's two forms — in which case the run is escaped text, as every
- *  angle-bracket run was before this carve-out existed. */
 function autolink_url(content: string): string | null {
   if (URI_AUTOLINK.test(content)) {
     return content;
@@ -1301,9 +1199,8 @@ function autolink_url(content: string): string | null {
   return EMAIL_AUTOLINK.test(content) ? "mailto:" + content : null;
 }
 
-/** Whether `char` can extend the held angle-bracket candidate. An autolink's
- *  content admits no whitespace, `<` or `>`; the one exception is the space in
- *  `<br />`. */
+/** Whether `char` can extend the held angle-bracket candidate. An autolink's content admits no
+ *  whitespace, `<` or `>`; the one exception is the space in `<br />`. */
 function can_continue_angle(pending: string, char: string): boolean {
   if (char === " ") {
     return BR_CANDIDATE.test(pending);
@@ -1311,15 +1208,8 @@ function can_continue_angle(pending: string, char: string): boolean {
   return char !== "\t" && char !== "\n" && char !== "<";
 }
 
-/** Hold an angle-bracket run until the `>` decides what it is: a line break, an
- *  autolink, or — as every such run was before — escaped text.
- *
- *  The autolink is a CARVE-OUT in the wholesale escaping of `<`, and the only
- *  one. It routes through the SAME `set_attr(HREF)` and therefore the same
- *  `isSafeUrl` gate as an inline link's destination, so it introduces no scheme a
- *  destination could not already carry, and `Vec<String>`, `<div>` and
- *  `<!-- -->` still render as the text that was typed. A nested anchor is
- *  invalid HTML, so an autolink inside a link label stays text too. */
+/** Hold an angle-bracket run until the `>` decides what it is: a line break, an autolink, or —
+ *  as every such run was before — escaped text. */
 export function handleMaybeAngle(p: Parser, char: string, pending_with_char: string): boolean {
   if (char === ">") {
     if (BR_CANDIDATE.test(p.pending)) {
@@ -1329,8 +1219,8 @@ export function handleMaybeAngle(p: Parser, char: string, pending_with_char: str
       p.pending = "";
       return true;
     }
-    // Decoded before the shape test and before the href, for the same reason a
-    // destination is: a gate that only ever sees the encoded spelling passes it.
+    // Decoded before the shape test and before the href, for the same reason a destination is: a
+    // gate that only ever sees the encoded spelling passes it.
     const label = decode_entities(p.pending.slice(1));
     const url = autolink_url(label);
     if (url !== null && enclosing_idx(p, LABEL_TOKENS) === -1) {
@@ -1361,17 +1251,9 @@ export function handleMaybeAngle(p: Parser, char: string, pending_with_char: str
   return true;
 }
 
-/** Hold a candidate entity or numeric character reference from its `&` until a
- *  `;` decodes it or a character rules it out.
- *
- *  The hold is bounded at 33 characters — `&`, the longest name, `;` — which is
- *  SHORTER than `handleRawURL`'s, so the text lag this adds is already inside
- *  what the streaming path carries.
- *
- *  A decoded character goes straight to `textBuf` and is NEVER re-fed through
- *  `p.write`. That is a security rule, not a nicety: routed back into the state
- *  machine, `&#42;x&#42;` would emphasise and `&#96;` would open a code span, so
- *  a reference could synthesise markup the author never wrote. */
+/** Hold a candidate entity or numeric character reference from its `&` until a `;` decodes it or
+ *  a character rules it out. A decoded character goes straight to `textBuf` and is NEVER re-fed
+ *  through `p.write`. */
 export function handleMaybeEntity(p: Parser, char: string, pending_with_char: string): boolean {
   if (char === ";") {
     const decoded = decode_entity(p.pending.slice(1));
@@ -1384,9 +1266,8 @@ export function handleMaybeEntity(p: Parser, char: string, pending_with_char: st
     p.pending = pending_with_char;
     return true;
   }
-  // Not a reference after all, so the run is the text that was typed. Re-feed
-  // the disqualifying character rather than consuming it, the recovery shape
-  // handleMaybeURL already uses.
+  // Not a reference after all, so the run is the text that was typed. Re-feed the disqualifying
+  // character rather than consuming it, the recovery shape handleMaybeURL already uses.
   p.token = p.tokens[p.len] as Token;
   p.textBuf += p.pending;
   p.pending = "";
@@ -1412,8 +1293,8 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
           return true;
         case "\n":
           if (p.at_end) {
-            // Nothing follows the synthetic newline, so this is a literal
-            // backslash rather than a hard line break.
+            // Nothing follows the synthetic newline, so this is a literal backslash rather than a
+            // hard line break.
             p.textBuf += p.pending;
           }
           p.pending = char;
@@ -1462,10 +1343,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "&":
-      // Not guarded on IMAGE the way the markdown delimiters are: a reference in
-      // an image label is TEXT, `add_text_dom` routes text inside an `<img>` to
-      // its alt, and CommonMark decodes there too. Guarded on the equation
-      // tokens, whose content is LaTeX source rather than markdown.
+      // Not guarded on IMAGE the way the markdown delimiters are: a reference in an image label is
+      // TEXT, `add_text_dom` routes text inside an `<img>` to its alt, and CommonMark decodes there
+      // too. Guarded on the equation tokens, whose content is LaTeX source rather than markdown.
       if (
         p.token !== EQUATION_BLOCK &&
         p.token !== EQUATION_INLINE &&
@@ -1482,9 +1362,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         break;
       }
       if (char === "\n") {
-        // A code span cannot open on the last character of a line, so the held
-        // backticks are literal text. Without this they were consumed into a
-        // token that never received any content.
+        // A code span cannot open on the last character of a line, so the held backticks are
+        // literal text. Without this they were consumed into a token that never received any
+        // content.
         p.fence_start = 0;
         break;
       }
@@ -1494,8 +1374,8 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       } else {
         p.fence_start += 1;
         add_text(p);
-        // The space after the opening run is dropped from the content, so it is
-        // part of the delimiter for restoration purposes.
+        // The space after the opening run is dropped from the content, so it is part of the
+        // delimiter for restoration purposes.
         add_inline_token(p, CODE_INLINE, "`".repeat(p.fence_start) + (char === " " ? " " : ""));
         if (char !== " " && char !== "\n") {
           p.textBuf += char;
@@ -1517,10 +1397,8 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       const isUnd = symbol === "_";
       const italic = isUnd ? ITALIC_UND : ITALIC_AST;
       const strong = isUnd ? STRONG_UND : STRONG_AST;
-      // CommonMark 6.2: a `_` run preceded by a word character is both left- and
-      // right-flanking, so it cannot open emphasis whatever follows — which is
-      // why this needs the lookbehind only. `*` is deliberately exempt: rules 1
-      // and 2 put no such exclusion on it, so `foo*bar*baz` still emphasises.
+      // CommonMark 6.2: a `_` run preceded by a word character is both left- and right-flanking, so
+      // it cannot open emphasis whatever follows — which is why this needs the lookbehind only.
       const undBlocked = isUnd && prev_is_word_char(p);
 
       if (p.pending.length === 1) {
@@ -1570,13 +1448,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "$":
-      // The equation guard every sibling case in this switch already carries,
-      // and its absence was a real defect: inside an OPEN equation the closing
-      // `$$` fell through to the opener below, re-entered MAYBE_EQ_BLOCK and
-      // opened a nested block that never closed. So `$$\nx^2\n$$` rendered its
-      // source as text with an empty second wrapper inside it — invisible while
-      // the tokens mapped to meaningless custom elements, and wrong the moment
-      // they started rendering as mathematics.
+      // The equation guard every sibling case in this switch already carries, and its absence was a
+      // real defect: inside an OPEN equation the closing `$$` fell through to the opener below,
+      // re-entered MAYBE_EQ_BLOCK and opened a nested block that never closed.
       if (
         p.token !== IMAGE &&
         p.token !== STRIKE &&
@@ -1605,8 +1479,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         p.token !== EQUATION_BLOCK &&
         p.token !== EQUATION_INLINE &&
         char !== "]" &&
-        // A label cannot open on the last character of a line; the held `[` is
-        // literal text.
+        // A label cannot open on the last character of a line; the held `[` is literal text.
         char !== "\n"
       ) {
         add_text(p);
@@ -1617,10 +1490,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "]":
-      // CommonMark resolves a link before emphasis (6.3 before 6.2), so a `]`
-      // ends the label even when an inline token opened inside it never closed.
-      // Without this the label end is never seen, the link loses its href and
-      // the destination shows up as visible text.
+      // CommonMark resolves a link before emphasis (6.3 before 6.2), so a `]` ends the label even
+      // when an inline token opened inside it never closed. Without this the label end is never
+      // seen, the link loses its href and the destination shows up as visible text.
       if (p.pending === "]" && p.link_depth === 0) {
         const label_idx = enclosing_idx(p, LABEL_TOKENS);
         if (label_idx !== -1) {
@@ -1631,11 +1503,8 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "|":
-      // GFM splits a row into cells BEFORE parsing their inline content, so a
-      // `|` ends the cell even when an inline token opened inside it never
-      // closed. Without this the run swallowed the cell delimiters and collapsed
-      // the rest of the row — and, once the delimiter row is required, the rest
-      // of the table with it.
+      // GFM splits a row into cells BEFORE parsing their inline content, so a `|` ends the cell
+      // even when an inline token opened inside it never closed.
       if (p.pending === "|") {
         const cell_idx = enclosing_idx(p, CELL_TOKENS);
         if (cell_idx !== -1) {

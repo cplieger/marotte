@@ -1,14 +1,8 @@
-// ---------------------------------------------------------------------------
-// The knowledge list is SERVER-canonical — kiro-cli's own store, not marotte's —
-// so this module fetches and refetches it and never holds an authoritative copy.
-// Indexing runs in the background and progress is POLLED, never pushed: the two
-// indexing notifications that existed named a per-agent store this endpoint
-// cannot read, so they were deleted rather than kept as a no-op.
-// ---------------------------------------------------------------------------
+// The list is kiro-cli's own store, so this module refetches and never holds an authoritative copy. Progress is polled:
+// knowledge_indexing frames name a per-agent store this endpoint cannot read (handlers/knowledge-indexing.ts shows them).
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { sigChanged } from "./paint-sig.js";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
@@ -16,11 +10,18 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { addKnowledge, reindexKnowledge, removeKnowledge } from "./actions/knowledge.js";
-import { ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
+import { paintIfChanged, sigChanged } from "./paint-sig.js";
+import {
+  addKnowledge,
+  cancelKnowledgeIndexing,
+  clearKnowledge,
+  reindexKnowledge,
+  removeKnowledge,
+} from "./actions/knowledge.js";
+import { ICON_CLOSE_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
 import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./validators.js";
 
-// --- Wire type + decoder (matches internal/hub/knowledge.go knowledgeContext) ---
+// Wire type and decoder, matching internal/hub/knowledge.go knowledgeContext.
 
 interface KnowledgeContext {
   name: string;
@@ -65,18 +66,8 @@ const decodeList: Decoder<{ contexts: KnowledgeContext[] }> = (v) => {
   return { contexts: decodeArray(o["contexts"], decodeContext, "$.knowledge.contexts") };
 };
 
-// --- Fetch + poll state ---
-
-/** Poll cadence while any base is still indexing. */
 const POLL_MS = 1500;
-/**
- * Consecutive polls with NO OBSERVABLE PROGRESS before giving up.
- *
- * Stall-based rather than a flat tick cap: "taking a long time" and "wedged"
- * are different conditions and only the second is worth abandoning, so a big
- * index polls as long as it keeps advancing. The flat 200-tick cap this
- * replaced silently froze the UI at ~5 minutes while KAS carried on indexing.
- */
+/** Consecutive polls with no observable progress before giving up: a long index polls as long as it advances. */
 const MAX_STALLED_POLLS = 30;
 
 const listSlot = new CancellableSlot();
@@ -97,10 +88,7 @@ function clearPoll(): void {
   }
 }
 
-/** Collapse the show output to one row per base. During an add, `show` returns
- *  both the placeholder context (item_count 0, "(indexing...)") AND the active
- *  operation (indexing:true, progress) under the same name — the indexing
- *  entry wins so the row shows live progress. */
+/** During an add, `show` returns both the placeholder and the active operation under one name; the indexing entry wins. */
 function mergeByName(contexts: KnowledgeContext[]): KnowledgeContext[] {
   const byName = new Map<string, KnowledgeContext>();
   for (const c of contexts) {
@@ -112,13 +100,10 @@ function mergeByName(contexts: KnowledgeContext[]): KnowledgeContext[] {
   return [...byName.values()];
 }
 
-/** A signature of how far indexing has got, so a stall is distinguishable from
- *  slowness. Counts items per indexing base — the only progress this endpoint
- *  exposes.
- *
- *  `keyenc.join` per component because a base NAME is free text: a template
- *  literal lets a separator in one name collapse two progress states onto one
- *  signature, which abandons a healthy index early. */
+/**
+ * Items per indexing base, the only progress exposed. `keyenc.join` per component: a base name is free text, and a
+ * separator in it could collapse two states and abandon a healthy index.
+ */
 function progressSignature(contexts: KnowledgeContext[]): string {
   return join(
     ...contexts
@@ -128,9 +113,10 @@ function progressSignature(contexts: KnowledgeContext[]): string {
   );
 }
 
-/** Fetch + render the knowledge list. `fromPoll` distinguishes a poll tick from a
- *  user-triggered load, which resets the stall budget. Reschedules itself while
- *  any base is still indexing. */
+/**
+ * Fetch and render the knowledge list, rescheduling while any base indexes. `fromPoll` marks a poll tick; a user load
+ * resets the stall budget.
+ */
 export function loadKnowledge(fromPoll = false): void {
   if (!fromPoll) {
     stalledPolls = 0;
@@ -155,14 +141,12 @@ export function loadKnowledge(fromPoll = false): void {
     if (signature === lastProgress) {
       stalledPolls++;
     } else {
-      // Advanced, so the budget resets: a long index is not a wedged one.
+      // Advanced, so the budget resets.
       stalledPolls = 0;
       lastProgress = signature;
     }
     if (stalledPolls >= MAX_STALLED_POLLS) {
-      // Say so: the row's last paint reads `Indexing… n%` and nothing will move
-      // it, so leaving it claims the client is still watching an index it has
-      // given up on. Re-activating the tab re-fires `loadKnowledge`, hence the copy.
+      // Nothing will move the row's last paint, so say the client gave up; re-activating the tab re-fires the load.
       renderList(merged, true);
       return;
     }
@@ -170,30 +154,34 @@ export function loadKnowledge(fromPoll = false): void {
       loadKnowledge(true);
     }, POLL_MS);
   });
-  // Read only on a user-triggered load: the setting cannot change under a poll tick.
+  // The setting cannot change under a poll tick.
   if (!fromPoll) {
     void refreshHint(signal);
   }
 }
 
-/** Show/hide the "knowledge is off" hint from marotte's own knowledge_enabled
- *  setting (the General toggle), which is what gates the agent's knowledge tool —
- *  kiro-cli's own knowledge flag drives its TUI and index builder, not a marotte
- *  chat. Management works either way; the hint only explains that the agent won't
- *  consult these bases during chats while it's off. */
+/**
+ * The hint reads marotte's knowledge_enabled, which gates the agent's knowledge tool (kiro-cli's own flag drives its
+ * TUI). Management works either way.
+ */
 async function refreshHint(signal: AbortSignal): Promise<void> {
   const s = await apiGetTyped("/api/settings", decodeEffectiveSettings, signal);
   if (s === null) {
-    // Network, non-2xx, abort or a rejected payload — none of which means
-    // "knowledge is off", so leave the hint as it stands.
+    // None of these failures means "knowledge is off", so the hint stands.
     return;
   }
   byId<HTMLParagraphElement>("knowledge-hint").hidden = s.knowledge_enabled;
 }
 
-// --- Rendering ---
+let listedCount = 0;
+
+function setListed(n: number): void {
+  listedCount = n;
+  byId<HTMLButtonElement>("knowledge-clear-btn").classList.toggle("hidden", n === 0);
+}
 
 function renderError(): void {
+  setListed(0);
   const container = byId<HTMLDivElement>("knowledge-list");
   container.replaceChildren(
     el("div", { className: "list-empty" }, "Could not load knowledge bases."),
@@ -201,8 +189,9 @@ function renderError(): void {
 }
 
 function renderList(items: KnowledgeContext[], stalled = false): void {
+  setListed(items.length);
   const container = byId<HTMLDivElement>("knowledge-list");
-  // Drop any prior non-keyed placeholder (empty / error) before reconcile.
+  // Drop any prior non-keyed placeholder before reconcile.
   for (const child of [...container.children]) {
     if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
       child.remove();
@@ -210,9 +199,7 @@ function renderList(items: KnowledgeContext[], stalled = false): void {
   }
   if (items.length === 0) {
     container.replaceChildren();
-    // Two concrete examples, one a named repository: the section hint above
-    // defines what a base is, and a wording that only described shapes left
-    // readers unable to tell what an entry looks like.
+    // Two concrete examples, one a named repository, so readers can tell what an entry looks like.
     container.appendChild(
       el(
         "div",
@@ -241,29 +228,28 @@ function mountRow(c: KnowledgeContext, stalled: boolean): HTMLElement {
   return row;
 }
 
-/** Rebuild a row's children only when its rendered state changed, so a stable row
- *  keeps its DOM identity (and any focus) across polls. Guard owned by
- *  `paint-sig.ts`. */
+/**
+ * Two guards, so a poll tick repaints only the progress readout and an indexing row's Stop keeps its identity and
+ * focus. Guards owned by `paint-sig.ts`.
+ */
 function fillRow(row: HTMLElement, c: KnowledgeContext, stalled: boolean): void {
-  if (
-    !sigChanged(row, [
-      c.indexing === true ? "1" : "0",
-      String(c.item_count),
-      c.items_display ?? "",
-      c.path ?? "",
-      stalled ? "1" : "0",
-    ])
-  ) {
-    return;
+  const parts = c.indexing === true ? ["1"] : ["0", String(c.item_count), c.path ?? ""];
+  if (sigChanged(row, parts)) {
+    row.classList.toggle("knowledge-indexing", c.indexing === true);
+    row.replaceChildren(...rowChildren(c));
   }
-  row.classList.toggle("knowledge-indexing", c.indexing === true);
-  row.replaceChildren(...rowChildren(c, stalled));
+  const progress = row.querySelector(".knowledge-progress");
+  if (progress !== null) {
+    paintIfChanged(progress, [c.items_display ?? "", stalled ? "1" : "0"], () =>
+      progressChildren(c.items_display, stalled),
+    );
+  }
 }
 
-function rowChildren(c: KnowledgeContext, stalled: boolean): HTMLElement[] {
+function rowChildren(c: KnowledgeContext): HTMLElement[] {
   const name = el("span", { className: "list-row-name" }, c.name);
   if (c.indexing === true) {
-    return [name, progressEl(c.items_display, stalled)];
+    return [name, el("span", { className: "knowledge-progress" }), cancelBtn(c.name)];
   }
   const count = `${String(c.item_count)} item${c.item_count === 1 ? "" : "s"}`;
   const metaText = c.path !== undefined && c.path !== "" ? `${count} · ${c.path}` : count;
@@ -271,51 +257,63 @@ function rowChildren(c: KnowledgeContext, stalled: boolean): HTMLElement[] {
   return [name, meta, reindexBtn(c.name), removeBtn(c.name)];
 }
 
-/** Parse the leading integer percentage from an items_display string
- *  ("42%", "42% · ETA 3s", "0%"); null when there's no percentage
- *  ("Cancelled", "Failed"). */
+/** The leading integer percentage ("42%", "42% · ETA 3s"); null for "Cancelled" or "Failed". */
 function parsePct(display: string | undefined): number | null {
   const m = /^(\d+)%/.exec(display ?? "");
   return m ? Math.min(100, Number(m[1])) : null;
 }
 
-/** The in-flight indexing readout: a native <progress> plus its text.
- *
- *  <progress> rather than <meter>: this row exists only while `indexing` is true
- *  and moves toward completion, where a meter measures within a static range.
- *  `aria-label` rather than `aria-labelledby`: one row per indexing base, so an
- *  id-based name needs a unique id minted per row. The `pct !== null` guard is
- *  load-bearing — `items_display` can read "Cancelled" or "Failed", where a
- *  valueless <progress> animates a claim of work that is not happening. */
-function progressEl(display: string | undefined, stalled: boolean): HTMLElement {
-  const wrap = el("span", { className: "knowledge-progress" });
+/**
+ * <progress>, not <meter>: the row moves toward completion. `aria-label`, since one row per base would need minted
+ * ids. The `pct !== null` guard is load-bearing: a valueless <progress> animates work that is not happening.
+ */
+function progressChildren(display: string | undefined, stalled: boolean): HTMLElement[] {
   if (stalled) {
-    // No <progress> at all: the bar reports a value nothing is going to advance,
-    // and an indeterminate one would claim work the client has stopped watching.
-    wrap.appendChild(
+    // No bar: nothing will advance it, and an indeterminate one would claim work the client stopped watching.
+    return [
       el(
         "span",
         { className: "knowledge-progress-text" },
         "Indexing stalled. Reopen this tab to check again",
       ),
-    );
-    return wrap;
+    ];
   }
+  const out: HTMLElement[] = [];
   const pct = parsePct(display);
   if (pct !== null) {
-    // `value`/`max` assigned on the typed element rather than passed to `el`,
-    // which routes some names to a DOM property and the rest to setAttribute.
+    // Set on the typed element: `el` routes some names to a property and the rest to setAttribute.
     const bar = el("progress", {
       className: "knowledge-bar",
       "aria-label": "Indexing",
     }) as HTMLProgressElement;
     bar.max = 100;
     bar.value = pct;
-    wrap.appendChild(bar);
+    out.push(bar);
   }
   const text = display !== undefined && display !== "" ? `Indexing… ${display}` : "Indexing…";
-  wrap.appendChild(el("span", { className: "knowledge-progress-text" }, text));
-  return wrap;
+  out.push(el("span", { className: "knowledge-progress-text" }, text));
+  return out;
+}
+
+function cancelBtn(name: string): HTMLElement {
+  const btn = el("button", {
+    type: "button",
+    className: "list-row-btn knowledge-cancel",
+    "data-tooltip": "Stop indexing",
+    "aria-label": `Stop indexing knowledge base ${name}`,
+  }) as HTMLButtonElement;
+  btn.innerHTML = ICON_CLOSE_UI;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void onCancel(name);
+  });
+  return btn;
+}
+
+/** No confirm: stopping keeps the base. The refetch runs whatever the answer: a refusal usually means it finished. */
+async function onCancel(name: string): Promise<void> {
+  await cancelKnowledgeIndexing.dispatch({ name }).outcome;
+  loadKnowledge();
 }
 
 function reindexBtn(name: string): HTMLElement {
@@ -333,11 +331,10 @@ function reindexBtn(name: string): HTMLElement {
   return btn;
 }
 
-/** Rebuild a base's index from its directory as it stands now. No confirm
- *  dialog: the base itself survives and only its index is rebuilt, so there is
- *  nothing to undo. The refetch is what picks up the new indexing row and
- *  restarts the progress poll — kiro-cli's `update` starts the build and returns,
- *  so the operation is already in `show`'s active list by the time we re-read. */
+/**
+ * No confirm: only the index is rebuilt. kiro-cli's `update` starts the build and returns, so the refetch finds the
+ * indexing row and restarts the poll.
+ */
 function onReindex(name: string): void {
   void reindexKnowledge.dispatch(
     { name },
@@ -384,8 +381,6 @@ async function onRemove(name: string): Promise<void> {
   );
 }
 
-// --- Add form (inline, toggled by the + button) ---
-
 function buildAddForm(): HTMLFormElement {
   const pathInput = el("input", {
     type: "text",
@@ -410,9 +405,7 @@ function buildAddForm(): HTMLFormElement {
   cancel.addEventListener("click", () => {
     hideAddForm();
   });
-  // `<output>` because this IS a result of the reader's submit: it carries an
-  // implicit `status` live region, so a message written into it is announced
-  // without an aria-live attribute of its own.
+  // `<output>` carries an implicit `status` live region, so its message is announced without aria-live.
   const error = el("output", {
     className: "knowledge-add-error",
     id: "knowledge-add-error",
@@ -447,9 +440,8 @@ async function onAdd(
     return;
   }
   const name = nameInput.value.trim();
-  // `.outcome` rather than the dispatch's own resolution: `error: false` keeps
-  // this off the toast stack, so the field beside the input is the only surface
-  // the server's message can reach, and only the typed outcome carries it.
+  // `error: false` keeps this off the toasts, so the field is the only surface for the server's message, carried only by
+  // the typed outcome.
   const out = await addKnowledge.dispatch({ path, name }).outcome;
   if (out.status !== "success") {
     error.textContent =
@@ -473,8 +465,6 @@ function hideAddForm(): void {
   byId<HTMLFormElement>("knowledge-add-form").hidden = true;
 }
 
-// --- Init (once, at settings init) ---
-
 export function initKnowledge(): void {
   const addBtn = byId<HTMLButtonElement>("knowledge-add-btn");
   addBtn.innerHTML = ICON_PLUS_UI;
@@ -490,8 +480,26 @@ export function initKnowledge(): void {
     }
   });
 
-  // There is no knowledge_indexing subscription. The notification fired only for
-  // a non-builtin mode's declared bases, whose per-agent store is disjoint from
-  // the default store this list reads, so the refetch it triggered could not show
-  // what it announced. The poll is the whole progress channel.
+  const clearBtn = byId<HTMLButtonElement>("knowledge-clear-btn");
+  clearBtn.innerHTML = ICON_TRASH_UI;
+  clearBtn.addEventListener("click", () => {
+    void onClearAll();
+  });
+}
+
+/** The list is kiro-cli's own, so clearing it clears it for the TUI on this machine too; the confirm says so. */
+async function onClearAll(): Promise<void> {
+  const ok = await confirmDialog(
+    `Remove all ${String(listedCount)} knowledge base${listedCount === 1 ? "" : "s"}? kiro-cli on this machine uses the same list.`,
+    "Remove all",
+    "destructive",
+  );
+  if (!ok) {
+    return;
+  }
+  void clearKnowledge.dispatch(undefined, {
+    onSuccess: () => {
+      loadKnowledge();
+    },
+  });
 }

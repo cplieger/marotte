@@ -2,12 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { API_TIMEOUT_MS } from "@cplieger/fetch";
 
-// The cross-language half of the admission-wait bound. The Go side
-// (internal/command/prompt_admission_test.go) asserts AdmissionWait stays
-// below the client API timeout, reading the value from this shared fixture;
-// this side asserts the fixture equals the INSTALLED library's constant. A
-// fetch release that moves API_TIMEOUT_MS fails here, forcing a fixture
-// update, which the Go assertion then re-checks — no hand-maintained mirror.
+// The cross-language half of the admission-wait bound: the Go side
+// (internal/command/prompt_admission_test.go) keeps AdmissionWait under this fixture's
+// value, and this side asserts the fixture equals the installed library's API_TIMEOUT_MS.
 const FIXTURE_PATH = "../internal/command/testdata/client_api_timeout.json";
 
 describe("client API timeout fixture", () => {

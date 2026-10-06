@@ -8,18 +8,11 @@ import (
 	"testing"
 )
 
-// TestCappedBuffer_CutsOnALineBoundarySoARedactionPatternCannotStraddleIt is the
-// test for the leak class, and the composition is the subject rather than either
-// half: runTransfer composes this buffer's contents into its output and a caller
-// then runs redactCredentials over the result, so a cut that lands INSIDE a credential
-// URL leaves redactCredentials looking at a URL with no userinfo left to match.
-//
-// The payload puts the 64-byte boundary in the middle of the userinfo, which is
-// the shape a byte cut mishandles and a line cut cannot produce.
+// TestCappedBuffer_CutsOnALineBoundarySoARedactionPatternCannotStraddleIt tests the leak class
+// through the composition: cappedBuffer's cut, then the redactor.
 func TestCappedBuffer_CutsOnALineBoundarySoARedactionPatternCannotStraddleIt(t *testing.T) {
 	const secret = "s3cr3t-token-value"
 	url := "https://user:" + secret + "@example.com/org/repo.git"
-	// One complete line, then a second line whose credential straddles the cap.
 	first := "Cloning into 'repo'...\n"
 	c := &cappedBuffer{cap: len(first) + len("fatal: could not read from https://user:s3cr3")}
 	if _, err := c.Write([]byte(first + "fatal: could not read from " + url + "\n")); err != nil {
@@ -27,11 +20,8 @@ func TestCappedBuffer_CutsOnALineBoundarySoARedactionPatternCannotStraddleIt(t *
 	}
 
 	got := redactCredentials(c.String())
-	// The assertion is on the USERINFO surviving, not on the whole secret: a byte
-	// cut inside the credential leaves a PREFIX of it ("https://user:s3cr3"),
-	// which is still a leak and which a whole-secret check cannot see. What the
-	// redactor guarantees is that no unredacted userinfo reaches a sink, so that
-	// is what to assert.
+	// Asserts no USERINFO survives, not the whole secret: a byte cut leaks a PREFIX of the
+	// credential.
 	if strings.Contains(got, "user:") {
 		t.Errorf("the retained output leaks userinfo after redaction: %q", got)
 	}
@@ -66,8 +56,6 @@ func TestCappedBuffer_DropsAPartialLineWholeAndReportsEveryByteWritten(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Every byte must be reported as written, or exec kills the subprocess with
-	// an I/O error instead of letting it finish.
 	if n != len(payload) {
 		t.Errorf("Write reported %d of %d bytes; a short write kills the subprocess", n, len(payload))
 	}
@@ -125,24 +113,15 @@ func TestProgressReader_TokenizesOnEitherTerminator(t *testing.T) {
 	}
 }
 
-// TestProgressReader_SurvivesAnOversizeToken is the defect the Scanner could not
-// survive: bufio.ErrTooLong is terminal, so one token over the cap ended the read
-// permanently, the watchdog starved, and the transfer was killed and reported as
-// "stalled" — a false diagnosis for a remote that printed one long line.
-//
-// The oversize token is reported as truncated, and the stream RESYNCHRONISES: the
-// token after it must arrive intact. Both cases below are oversize; they differ in
-// WHERE the terminator lands relative to the read that crosses the cap, which is
-// what selects between the reader's two paths — and each path had its own defect.
+// TestProgressReader_SurvivesAnOversizeToken asserts that bufio.ErrTooLong ended the Scanner permanently on one
+// oversize token; this reader must resynchronise.
 func TestProgressReader_SurvivesAnOversizeToken(t *testing.T) {
 	tests := map[string]struct{ length int }{
-		// Terminator inside the SAME read as the byte that crosses the cap, so the
-		// cap must be applied to the token the terminator BOUNDS. Checking it only
-		// against unterminated bytes let a token of any length through here.
+		// Terminator in the same read as the byte crossing the cap: the cap applies to the token
+		// the terminator bounds.
 		"terminated within the crossing read": {length: progressTokenCap + 4096},
-		// Terminator only in a LATER read, so the reader enters its draining state:
-		// the prefix is abandoned, the bytes are counted, and the state must be
-		// CLEARED at the terminator or every later token reads as truncated too.
+		// Terminator only in a later read: the reader drains, and the state must clear at the
+		// terminator.
 		"terminated in a later read": {length: 2 * progressTokenCap},
 	}
 	for name, test := range tests {
@@ -153,8 +132,6 @@ func TestProgressReader_SurvivesAnOversizeToken(t *testing.T) {
 			if tok != "first" || truncated || err != nil {
 				t.Fatalf("first token = (%q, %v, %v), want (\"first\", false, nil)", tok, truncated, err)
 			}
-			// The oversize one: no bytes claimed (a cut at an arbitrary offset can
-			// split a rune AND a credential pattern), but the loss is reported.
 			tok, truncated, err = pr.readToken()
 			if tok != "" || !truncated || err != nil {
 				t.Fatalf("oversize token = (%q, %v, %v), want (\"\", true, nil)", tok, truncated, err)

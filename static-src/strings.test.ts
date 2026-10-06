@@ -183,9 +183,8 @@ describe("rateLabel", () => {
     expect(rateLabel(0.25)).toBe("0.25x");
   });
 
-  // The defect this function exists for: an absent rate used to be coerced to 1,
-  // so every model in the picker read `1x` — the credit readout wrong for all of
-  // them at once, and indistinguishable from a catalog reporting real parity.
+  // Coercing an absent rate to 1 would read `1x` on every model, indistinguishable
+  // from a catalog reporting real parity.
   it("withholds a readout when the catalog carried no rate", () => {
     expect(rateLabel(undefined)).toBe("");
   });
@@ -234,12 +233,8 @@ describe("windowOutput", () => {
 });
 
 describe("windowOutput line splitting", () => {
-  // The splitter was rewritten to record each line's source offset, so these pin
-  // that it still agrees element-for-element with the `split("\n")` + pop it
-  // replaced — INCLUDING the one place it deliberately does not: the elided
-  // branch used to join head and tail without the trailing newline the
-  // non-elided branch kept, so the same input reported a different last line
-  // depending only on how long it was.
+  // Element-for-element agreement with the `split("\n")` + pop it replaced, except that the elided
+  // branch now keeps the trailing newline like the non-elided one.
   it("agrees with split-and-pop on the boundary inputs", async () => {
     const { windowOutput } = await import("./strings.js");
     const oldSplit = (text: string): string[] => {
@@ -251,8 +246,7 @@ describe("windowOutput line splitting", () => {
     };
     for (const text of ["", "\n", "a\nb", "a\nb\n", "a\n\nb", "\na", "a"]) {
       // n is large enough that nothing is elided, so the reported text is the
-      // input and `kept` covers all of it — which is what makes the line count
-      // comparable to the old splitter's.
+      // input and `kept` covers all of it.
       const win = windowOutput(text, 100);
       expect(win.text, `text for ${JSON.stringify(text)}`).toBe(text);
       expect(win.elided).toBe(0);
@@ -268,8 +262,8 @@ describe("windowOutput line splitting", () => {
     const { windowOutput } = await import("./strings.js");
     const text = Array.from({ length: 10 }, (_, i) => `l${String(i)}`).join("\n") + "\n";
     const win = windowOutput(text, 2);
-    // `l9` is the last real line; the old elided branch dropped it because
-    // `slice(-n)` picked up the empty remainder the trailing newline left.
+    // `l9` is the last real line; a `slice(-n)` elision would drop it for the empty
+    // remainder the trailing newline leaves.
     expect(win.text.split("\n")).toEqual(["l0", "l1", "l8", "l9", ""]);
     expect(win.elided).toBe(6);
   });
@@ -309,10 +303,8 @@ describe("windowOutput boundaries", () => {
 
   it("reads the last line's offset from the source when there is no trailing newline", async () => {
     const { windowOutput } = await import("./strings.js");
-    // "c" is the remainder after the final newline, so its start offset is
-    // recorded on a different branch from every other line's. At n=1 that
-    // offset IS the tail range, and losing it widens the tail to the whole
-    // text — the elided middle comes back, duplicated.
+    // "c"'s start offset is recorded on a different branch; at n=1 it IS the tail range, and losing it
+    // duplicates the elided middle.
     expect(windowOutput("a\nb\nc", 1)).toEqual({
       text: "a\nc",
       elided: 1,
@@ -380,15 +372,8 @@ describe("windowSpans", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A span's two spellings. `formatElapsed` writes the words and `isoDuration`
-// writes the `datetime` beside them, and `<time>`'s own contract is that the
-// attribute is a machine-readable form of the element's CONTENTS — so a pair that
-// disagrees is not two views of one value, it is a wrong attribute.
-//
-// The pair is asserted here rather than at the rail that renders it because both
-// functions live here; the rail's own tests cover the ELEMENT.
-// ---------------------------------------------------------------------------
+// `formatElapsed` and `isoDuration` must agree: a `<time datetime>` is a machine form of the
+// element's CONTENTS. Asserted here, where both live; the rail's tests cover the element.
 
 describe("a span's text and its machine-readable twin", () => {
   /** `[ms, text, datetime]`, hardcoded on all three axes. Computing either
@@ -416,20 +401,8 @@ describe("a span's text and its machine-readable twin", () => {
   });
 
   it("never carries a seconds component the words do not show", () => {
-    // The invariant the doc states, checked against the TEXT rather than against a
-    // second copy of the thresholds: above an hour `formatElapsed` prints `1h 1m`
-    // and nothing finer, so a `PT1H1M1S` beside it claims a precision the reader
-    // cannot see. That is the exact pair this caught.
-    //
-    // ONE DIRECTION, and the converse is deliberately not asserted: ISO 8601 omits
-    // a ZERO component, so `1m 0s` is spelled `PT1M` and that is the same span at
-    // the same precision rather than a coarser one. What must never happen is the
-    // attribute naming a unit the reader has no digit for.
-    //
-    // BOTH SIDES ARE COMPUTED: the table supplies only the input here. Reading its
-    // expected `iso` column instead would assert a property of a string literal,
-    // which no change to either function could ever falsify — the first draft of
-    // this case did exactly that and survived the red-check.
+    // Checked against the TEXT: the attribute must never name a unit the words have no digit for. One
+    // direction only (ISO 8601 omits zero components). BOTH sides computed, or no change could falsify it.
     for (const [ms] of PAIRS) {
       const text = formatElapsed(ms);
       const iso = isoDuration(ms);

@@ -237,10 +237,8 @@ func depsWithStore(t *testing.T, chatID marotte.ChatID) (*baseDeps, *[]marotte.S
 	return deps, events, store
 }
 
-// TestHandleSafetyStatusChanged_BlockedPersistsEvent pins the enforce-mode
-// surface: a blocked status appends a durable safety_blocked entry carrying the
-// violated properties, IN ADDITION to the transient safety_status banner SSE.
-// The permanent record is what makes the refusal outlive the fleeting banner.
+// TestHandleSafetyStatusChanged_BlockedPersistsEvent pins a durable safety_blocked entry with
+// the violated properties, in addition to the transient banner.
 func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -306,10 +304,8 @@ func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 	}
 }
 
-// The block event's append logs when the persist FAILS and stays quiet when it
-// works. Enforce mode blocks are the one safety outcome that is meant to be
-// durable, so an error line on every successful record is what would hide the
-// one time a refusal really did not survive the write.
+// TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure pins a log line only when the
+// persist fails.
 func TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure(t *testing.T) {
 	tests := []struct {
 		appendErr  error

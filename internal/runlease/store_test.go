@@ -10,9 +10,7 @@ import (
 	"time"
 )
 
-// TestStore_RoundTripsALeaseAcrossARestart is the durability everything else rests on:
-// a run outlives the process, so a lease that did not would silently remove the only
-// bound on it and the deny-fast budget that keeps an unattended run answerable.
+// TestStore_RoundTripsALeaseAcrossARestart pins lease durability: a run outlives the process.
 func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -37,7 +35,6 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	// The restart.
 	reopened, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -61,17 +58,14 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	if !got.FirstAbsentAt.Equal(absentAt) {
 		t.Errorf("FirstAbsentAt = %v, want %v; the continuous-absence clock did not survive restart", got.FirstAbsentAt, absentAt)
 	}
-	// The DEADLINE must NOT survive: it was set by a process that no longer exists,
-	// and the bound is on executing time.
+	// The DEADLINE must NOT survive: it was set by a dead process.
 	if got.Bounded() {
 		t.Errorf("the reloaded lease carries deadline %v; a stale deadline would cancel a run "+
 			"the moment it resumed", got.Deadline)
 	}
 }
 
-// TestStore_FileShapeIsAVersionedObject pins the format decision: schedules.json is a
-// bare array with nowhere to put a version, so this file carries one from the first
-// write, which is the one genuinely irreversible part of the lease work.
+// TestStore_FileShapeIsAVersionedObject pins that the file carries a version from the first write.
 func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -105,9 +99,7 @@ func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	}
 }
 
-// TestStore_RoundTripsTheLaunchingChat: the chat id is the live-runs projection's whole
-// payload, so dropping it leaves a live agent run unable to exempt its chat from
-// client-side eviction.
+// TestStore_RoundTripsTheLaunchingChat: the chat id is the live-runs projection's payload.
 func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -135,14 +127,11 @@ func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
 	}
 }
 
-// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins why ChatID is ADDITIVE at
-// Version 1: an empty chat id already means "no chat to exempt" (the value a parentless
-// launch mints), where a version bump would discard the file and strip every live
-// lease of its deadline at boot.
+// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins ChatID as additive at Version 1:
+// an empty chat id already means "no chat"; a version bump would discard every live lease.
 func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// Version-1 bytes exactly as a pre-upgrade build wrote them: no chat_id key.
 	body := `{"version":1,"leases":[{"started_at":"2026-08-01T03:00:00Z",` +
 		`"workflow_id":"wf_old","recipe":"nightly","origin":"scheduled",` +
 		`"schedule_id":"sched-1","unattended":true}]}`
@@ -166,10 +155,8 @@ func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 	}
 }
 
-// TestStore_RejectsAVersionItDoesNotKnow is why it DISCARDS rather than refuses: acting
-// on half-understood leases is how a sweep cancels a live run, but refusing to open the
-// store leaves every run with no wall clock at all. So a usable empty store plus an
-// error the caller logs.
+// TestStore_RejectsAVersionItDoesNotKnow pins discard-not-refuse: a usable empty store plus
+// an error the caller logs.
 func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{
@@ -224,9 +211,8 @@ func TestStore_RefusesALeaseItCouldNotActOn(t *testing.T) {
 	}
 }
 
-// TestStore_DropsUnusableLeasesOnLoad is the same rule on the read side, separate because
-// the file is not written only by this build's Put: a hand-edited or partially-written
-// record must not become a sweep candidate.
+// TestStore_DropsUnusableLeasesOnLoad is the read-side rule: a hand-edited or partial record
+// must not become a sweep candidate.
 func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -301,7 +287,6 @@ func TestStore_SetDeadlineIsTheReArm(t *testing.T) {
 		t.Errorf("deadline = %v, want %v", got.Deadline, first)
 	}
 
-	// The pause.
 	if err := s.SetDeadline(t.Context(), id, time.Time{}); err != nil {
 		t.Fatalf("park: %v", err)
 	}
@@ -309,7 +294,7 @@ func TestStore_SetDeadlineIsTheReArm(t *testing.T) {
 		t.Error("a parked lease still reports bounded, so its timer could still cancel it")
 	}
 
-	// The resume, with a FRESH budget rather than the first one's remainder.
+	// The resume gets a FRESH budget, not the first one's remainder.
 	second := time.Now().Add(time.Hour)
 	if err := s.SetDeadline(t.Context(), id, second); err != nil {
 		t.Fatalf("re-arm: %v", err)
@@ -381,9 +366,8 @@ func TestStore_MemoryPersistsNothing(t *testing.T) {
 	}
 }
 
-// TestStore_WritesA0600File covers the two shapes that would catch a regression: a
-// permissive umask, which a bare O_CREATE mode loses to, and a mode widened between two
-// writes. Not parallel — it sets the process umask, which is per-process state.
+// TestStore_WritesA0600File covers a permissive umask and a mode widened between writes.
+// Not parallel: it sets the process umask.
 func TestStore_WritesA0600File(t *testing.T) {
 	dir := t.TempDir()
 	// Restored before any assertion runs, so a failure cannot leak it into the package.
@@ -425,10 +409,8 @@ func TestStore_WritesA0600File(t *testing.T) {
 	}
 }
 
-// TestStore_ListStampedPairsTheSetWithItsVersion pins the `runs` subject's
-// contract: every mutation that changed the set moves the collection version, a
-// mutation that changed nothing leaves it, and ListStamped reads both in one
-// section so the version always describes the set beside it.
+// TestStore_ListStampedPairsTheSetWithItsVersion pins that a changing mutation moves the
+// version, a no-op leaves it, and ListStamped reads both in one critical section.
 func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
 	s := NewMemory()
 	if got, version := s.ListStamped(); len(got) != 0 || version != "0" {

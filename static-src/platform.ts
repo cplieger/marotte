@@ -1,7 +1,5 @@
-// ---------------------------------------------------------------------------
-// Platform detection & iOS workarounds.
-// Runs once at import time; everything is a static read after that.
-// ---------------------------------------------------------------------------
+// Platform detection & iOS workarounds. Runs once at import time; everything is a static read after
+// that.
 
 export const isStandalone: boolean =
   (navigator as { standalone?: boolean }).standalone === true ||
@@ -17,16 +15,11 @@ export const isIOS: boolean =
 // `touch-action: manipulation`. Keyboard activations are never filtered.
 // ---------------------------------------------------------------------------
 
-// A duplicate dispatch replays one gesture within a few ms; no deliberate human
-// input falls under 50 ms (fastest sustained clicking is ~60 ms+ apart).
+// A duplicate dispatch replays one gesture within a few ms; no deliberate human input falls under
+// 50 ms (fastest sustained clicking is ~60 ms+ apart).
 export const GHOST_CLICK_MS = 50;
 
-/**
- * Wraps an activation handler, absorbing only mechanical duplicates: same
- * pointerType, pointer-initiated (detail > 0), arriving within GHOST_CLICK_MS
- * of the previously accepted pointer activation. A keyboard activation
- * (detail 0 / no pointerType) always dispatches. `now` is a test seam.
- */
+/** A keyboard activation (detail 0 / no pointerType) always dispatches. `now` is a test seam. */
 export function guardDuplicateActivation(
   fn: (e: MouseEvent) => void,
   now: () => number = () => performance.now(),
@@ -47,17 +40,9 @@ export function guardDuplicateActivation(
   };
 }
 
-// ---------------------------------------------------------------------------
-// fixIOSViewport — keeps a focused input visible when the iOS virtual keyboard
-// raises and the VISUAL VIEWPORT shrinks under it. Debounced so it fires once
-// after the keyboard animation settles, and never blurs the input.
-//
-// The subject is that shrink, and it happens IDENTICALLY in a Safari tab and in
-// an installed PWA — the keyboard is the OS's, not the app shell's. So the only
-// gate is whether the platform exposes the API to observe it at all. A tab is
-// also the MAJORITY case, because a shared URL opens one: gating this on
-// standalone withheld the fix from nearly every reader who hit the defect.
-// ---------------------------------------------------------------------------
+// fixIOSViewport — keeps a focused input visible when the iOS virtual keyboard raises and the
+// VISUAL VIEWPORT shrinks under it. Debounced so it fires once after the keyboard animation
+// settles, and never blurs the input.
 
 export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
   if (window.visualViewport == null) {
@@ -79,11 +64,8 @@ export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
   };
 }
 
-// ---------------------------------------------------------------------------
-// initSidebarSwipe — edge-swipe-to-open and swipe-left-to-close gestures for
-// the PWA sidebar. Only active in standalone (PWA) mode; browser Safari's
-// back-gesture conflicts with this otherwise.
-// ---------------------------------------------------------------------------
+// initSidebarSwipe — edge-swipe-to-open and swipe-left-to-close gestures for the PWA sidebar. Only
+// active in standalone (PWA) mode; browser Safari's back-gesture conflicts with this otherwise.
 
 export function initSidebarSwipe(chatArea: HTMLElement, sidebar: HTMLElement): void {
   if (!isStandalone) {

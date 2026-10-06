@@ -1,35 +1,16 @@
-// Package policyfile reads and writes kiro-cli's native Cedar permission
-// policy files (permissions.yaml) for the user and workspace scopes.
-//
-// marotte is the sole programmatic writer of these files on the acp bridge:
-// KAS only READS them there (its acp consent dialog offers allow_once /
-// reject_once, never a persisted "always", so KAS's own addRuleToFile
-// never runs on the acp path). KAS hot-reloads the file on change via a
-// chokidar watcher, emitting _kiro/policy/changed — so a write here takes
-// effect on every live session with no bridge restart (verified live).
-//
-// On-disk shape (verified against the KAS 2.12 acp-server bundle + live):
+// Package policyfile reads and writes kiro-cli's native Cedar permission files (permissions.yaml)
+// for the user and workspace scopes. marotte is the only writer on the acp bridge; KAS hot-reloads
+// the file and emits _kiro/policy/changed, so a write reaches every live session. Load accepts
+// block YAML or JSON; Save writes block YAML (KAS 2.12):
 //
 //	rules:
-//	  - capability: fs_write        # required; one of the known capabilities
+//	  - capability: fs_write        # required
 //	    effect: ask                 # required; allow | deny | ask
 //	    match: ["src/**"]           # optional glob list
 //	    exclude: ["**/secret.txt"]  # optional glob list
 //
-// Load tolerates BOTH block YAML (KAS's / a hand-editing user's format) and
-// JSON (JSON is valid YAML 1.2). We MARSHAL block YAML so files stay human
-// readable and consistent with KAS's own writer.
-//
-// Path facts (verified live — KAS resolves the base from $HOME via
-// os.homedir(), NOT KIRO_HOME):
-//
-//	user:      <home>/.kiro/settings/permissions.yaml
-//	workspace: <home>/.kiro/workspace-roots/<hash>/permissions.yaml
-//	           hash = hex(sha256(abs(workDir)))[:16]   (KAS computeWorkspaceHash)
-//
-// POLICY_FILENAMES is ["permissions.yaml", "permissions.json"] and KAS's
-// loadPolicyFromDir returns the FIRST that EXISTS, so we always target the
-// .yaml name to stay authoritative.
+// Paths resolve from $HOME, not KIRO_HOME: <home>/.kiro/settings/permissions.yaml and
+// <home>/.kiro/workspace-roots/<WorkspaceHash>/permissions.yaml.
 package policyfile
 
 import (
@@ -64,16 +45,8 @@ const (
 )
 
 // Rule is one policy rule. Field order (capability, effect, match, exclude) is
-// the canonical KAS order.
-//
-// YAML TAGS ONLY. This type had json tags too, on the stated grounds that they
-// "keep it decodable from the REST layer" — measured false: nothing in the
-// workspace ever encodes or decodes a Rule or a File as JSON. The REST layer
-// decodes into its own policyRuleBody and maps the fields across by name, so the
-// tags were dead. They also carried a latent surprise: `omitempty` on a slice
-// changes the wire under encoding/json/v2, where a nil slice emits `[]` instead
-// of being omitted, and sanitizePatterns returns nil for the empty case that the
-// relaxation's own rules carry on every one of them. Deleting them removes both.
+// the canonical KAS order. YAML tags only: the REST layer decodes into its own
+// policyRuleBody, so nothing encodes a Rule as JSON.
 type Rule struct {
 	Capability string   `yaml:"capability"`
 	Effect     string   `yaml:"effect"`
@@ -100,21 +73,10 @@ const (
 	EffectAsk   = "ask"
 )
 
-// suggestedCapabilities seeds the UI picker, and that is now its ONLY job.
-//
-// It is a hand-copied snapshot of KAS's VALID_CAPABILITIES, and there is no
-// discovery method to derive it from — VALID_CAPABILITIES is internal to KAS and
-// no `_kiro/*` method exposes it. So it goes stale by construction the day the
-// agent server gains a capability, and it used to drive TWO things: this picker
-// and rule VALIDATION. That second job made the staleness a refusal: a rule
-// naming a capability KAS had gained but this list had not was rejected with a
-// 400, so marotte would refuse to write the very rule the new capability
-// existed for, and never offer it in the picker either.
-//
-// Validation is gone (see SanitizeRule) and the picker is no longer limited to
-// this set (see the view handler, which unions in every capability the rules KAS
-// reports already use). What is left is a suggestion list: being incomplete now
-// costs a dropdown entry, not a write.
+// suggestedCapabilities seeds the UI picker, its only job: a hand-copied snapshot of KAS's internal
+// VALID_CAPABILITIES with no discovery method. It never validates (SanitizeRule), and the view
+// handler unions in every capability KAS's rules use, so staleness costs a dropdown entry, not a
+// refused write.
 var suggestedCapabilities = map[string]struct{}{
 	"all": {}, "builtin": {}, "filesystem": {},
 	"fs_read": {}, "fs_write": {}, "shell": {},
@@ -140,25 +102,10 @@ func Capabilities() []string {
 // pathological value out of the file (see SanitizeRule).
 const maxCapabilityLen = 128
 
-// Errors surfaced to the HTTP edge.
-//
-// There is deliberately no "unknown capability" error. The capability VOCABULARY
-// is KAS's to define and KAS's to enforce, and duplicating it here bought nothing
-// while costing the ability to write a rule for any capability newer than this
-// file.
-//
-// How KAS reports one, read off 2.18.0, because the obvious guess is wrong: an
-// unrecognised capability is NOT fatal. validateRule returns
-// `{rule: null, warning: "Skipping rule N in <source>: unknown capability …"}`,
-// so that ONE rule is dropped and the rest of the file still loads — unlike a bad
-// effect, which throws PolicyParseError and fails the whole file (marotte cannot
-// write that: ValidEffect gates it). Because the entry is `fatal: false`, it does
-// NOT arrive on _kiro/policy/error, which KAS emits only `if (hasFatalErrors)`.
-// It rides _kiro/policy/changed instead, with `status: "success"` and the warning
-// in that notification's `errors` array — which marotte decodes
-// (translate/policy.go) into the permissions_changed SSE, and the client renders
-// from `payload.errors` in permissions-ui.ts. So the user IS told; the channel is
-// just not the one named "error".
+// Errors surfaced to the HTTP edge. There is no "unknown capability" error: the vocabulary is
+// KAS's. KAS 2.18.0 skips such a rule non-fatally and reports it in _kiro/policy/changed's `errors`
+// array (not _kiro/policy/error, which is fatal-only); translate/policy.go carries it to
+// permissions_changed and the client renders it.
 var (
 	ErrInvalidScope    = errors.New("scope must be user or workspace")
 	ErrInvalidEffect   = errors.New("effect must be allow, deny, or ask")
@@ -179,16 +126,9 @@ func ValidEffect(effect string) bool {
 	return effect == EffectAllow || effect == EffectDeny || effect == EffectAsk
 }
 
-// WorkspaceHash mirrors KAS computeWorkspaceHash on Linux: the first 16 hex
-// chars of sha256 over the workspace root. The root is canonicalized here —
-// absolute, lexically cleaned, no "." / ".." segments, no trailing slash —
-// to match the path.resolve output KAS hashes on its side. Canonicalizing at
-// the hash (rather than trusting workDir verbatim) keeps marotte's
-// workspace-roots/<hash> directory in lockstep with KAS's for any
-// non-canonical KIRO_WORK_DIR — a trailing slash, a "/a/../b" form, or a
-// relative value. A divergent hash would silently write workspace-scope rules
-// to a directory KAS never reads, so the rules would persist yet never be
-// enforced.
+// WorkspaceHash mirrors KAS's computeWorkspaceHash on Linux: the first 16 hex chars of sha256 over
+// the canonicalized root (absolute, cleaned, no trailing slash), matching KAS's path.resolve. A
+// divergent hash would write workspace rules to a directory KAS never reads.
 func WorkspaceHash(workDir string) string {
 	sum := sha256.Sum256([]byte(canonicalWorkDir(workDir)))
 	return hex.EncodeToString(sum[:])[:16]
@@ -207,16 +147,9 @@ func canonicalWorkDir(workDir string) string {
 	return filepath.Clean(abs)
 }
 
-// Roots are the two filesystem roots a permissions.yaml path resolves against.
-//
-// A struct because PathFor used to take them as `(scope, home, workDir string)`
-// and two of those three were paths: a transposition compiled, resolved, and
-// wrote a security policy file under the wrong root — user-scope rules landing
-// beneath a workspace hash KAS reads for a different workspace, or workspace
-// rules at the user path where they apply everywhere. Nothing detects that; the
-// file is valid YAML at a valid location and KAS loads it. Named fields make the
-// swap unrepresentable, and a runtime guard could not have caught it at all
-// (both values are absolute directories that exist).
+// Roots are the two filesystem roots a permissions.yaml path resolves against. A struct because a
+// transposition of two path strings would write a security policy under the wrong root with nothing
+// to detect it.
 type Roots struct {
 	// Home is the base KAS resolves both scopes from ($HOME).
 	Home string
@@ -241,27 +174,11 @@ func PathFor(scope string, roots Roots) (string, error) {
 	}
 }
 
-// Load reads and parses a permissions file. A missing file yields an empty
-// File and nil error (the common "no rules yet" case). Parse failures and
-// oversize files are errors so the caller never silently clobbers a
-// hand-authored file it couldn't understand.
-//
-// The open is atomicfile.OpenRegular rather than os.ReadFile for two reasons,
-// both measured. A FIFO at the name blocks os.ReadFile in open(2) with no
-// context deadline able to rescue it (still blocked past 2s on go1.27.0), and
-// this file lives under $HOME/.kiro, which the agent's own shell can write — so
-// one mkfifo wedged the whole permissions REST surface permanently. And
-// os.ReadFile sized its buffer from the file and read all of it BEFORE the
-// maxPolicyFileSize check ran on the result, so the 1 MiB bound was enforced
-// after an arbitrarily large file had been pulled into memory; ReadBoundedFile
-// stats the descriptor first. OpenRegular also refuses a symlink at the final
-// component, which matches Save: atomicfile's write entry points already refuse
-// to write through one, so a policy marotte would not write is now a policy it
-// will not read either.
-//
-// The path is made absolute first because OpenRegular requires that. os.ReadFile
-// resolved a relative path against the process cwd, and filepath.Abs preserves
-// exactly that, so no caller's meaning changes.
+// Load reads and parses a permissions file; a missing file yields an empty File. Parse failures and
+// oversize files are errors, so a hand-authored file is never clobbered. Through
+// atomicfile.OpenRegular: a FIFO at the name (the agent can write $HOME/.kiro) would block
+// os.ReadFile forever, the size is checked off the descriptor before reading, and a final-component
+// symlink is refused as Save refuses it.
 func Load(path string) (*File, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -319,20 +236,10 @@ func Save(ctx context.Context, path string, f *File) error {
 	return err
 }
 
-// SanitizeRule validates + normalizes a rule for writing. It trims and de-dups
-// match/exclude, enforces the length/count caps, checks the effect, and checks
-// the capability's SHAPE. It does NOT default the effect — the caller applies
-// the conservative "default to ask" policy so the choice is explicit at the
-// edge.
-//
-// The split on capability is deliberate. Its VOCABULARY is not checked: an
-// unrecognised name is written through, because KAS's loader is the authority on
-// which capabilities exist and reports the skip on _kiro/policy/changed's
-// `errors` array (see the Errors block above — it is non-fatal, so it does not
-// reach _kiro/policy/error). Its SHAPE is checked, in the same class as the
-// pattern checks below: an empty, oversized or control-character-bearing token
-// is not a capability KAS could ever have, so forwarding one only puts a rule in
-// a security policy file that the user then has to hand-edit out.
+// SanitizeRule validates and normalizes a rule for writing: trims and de-dups match/exclude,
+// enforces the caps, checks the effect and the capability's SHAPE (not empty, oversized or
+// control-bearing). Its VOCABULARY is KAS's to judge. It does not default the effect; the caller
+// applies "default to ask".
 func SanitizeRule(r *Rule) (Rule, error) {
 	capability := strings.TrimSpace(r.Capability)
 	if capability == "" || len(capability) > maxCapabilityLen ||
@@ -389,20 +296,10 @@ func sanitizePatterns(in []string) ([]string, error) {
 	return out, nil
 }
 
-// isCtrl reports whether r is a control character, which a capability token or a
-// match pattern may not contain.
-//
-// unicode.IsControl rather than the `r < 0x20 || r == 0x7f` this used to be: that
-// form covered C0 and DEL and left the whole C1 block (U+0080-U+009F) through,
-// 32 runes the gate's own doc says it rejects. Measured on go1.27.0 —
-// unicode.Cc has 65 members and the hand-rolled predicate matched 33 of them.
-// The direction of that gap is what makes it worth closing: this is a REFUSE
-// gate, so a missed rune fails OPEN and the pattern lands in permissions.yaml,
-// where U+0085 NEXT LINE is a line break to a good many renderers.
-//
-// Version-stable by construction, so this does not trade one exposure for
-// another: Cc is the fixed set U+0000-U+001F plus U+007F-U+009F, it cannot gain
-// members, and the changelog's Unicode 15-to-17 diff measures it unmoved at 65.
+// isCtrl reports whether r is a control character (unicode.Cc, all 65: C0, DEL and C1), which a
+// capability or pattern may not hold. A hand-rolled C0-and-DEL check let C1 through, and this is a
+// refuse gate, so a miss fails open; U+0085 is a line break to many renderers. Cc is fixed and
+// cannot gain members.
 func isCtrl(r rune) bool { return unicode.IsControl(r) }
 
 // Signature is the dedup/equality key for a rule: capability + effect +

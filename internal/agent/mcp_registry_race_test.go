@@ -3,46 +3,42 @@ package agent
 import (
 	"sync"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestMCPRegistry_ConcurrentRecordClear exercises recordConnected,
-// recordInitFailure, and clearAll in parallel. Under -race this
-// validates that the registry's RWMutex correctly guards the servers
-// map and that Broadcast doesn't deadlock against clearAll.
+// TestMCPRegistry_ConcurrentRecordClear races record and clearAll under -race, and checks
+// Broadcast does not deadlock against clearAll.
 func TestMCPRegistry_ConcurrentRecordClear(t *testing.T) {
 	h, _, _ := newTestHub()
 	reg := h.mcpRegistry
 
-	// mcpConfig == nil makes originFor short-circuit to (OriginUser, true), so
-	// every record lands and this exercises the lock rather than the filter.
+	// A nil mcpConfig attributes every name to OriginUser, so this exercises the lock.
 	h.mcpConfig = nil
 
 	const N = 100
 	var wg sync.WaitGroup
 
-	// Recorders.
 	wg.Go(func() {
 		for i := range N {
 			name := "server-" + string(rune('A'+i%10))
-			reg.RecordConnected(h.lifecycle.shutdownCtx, name, nil, nil, nil)
+			reg.RecordConnected(h.lifecycle.shutdownCtx, name, marotte.MCPSource{}, nil, nil, nil, nil)
 		}
 	})
 
 	wg.Go(func() {
 		for i := range N {
 			name := "server-" + string(rune('A'+i%10))
-			reg.RecordInitFailure(h.lifecycle.shutdownCtx, name, "timeout")
+			reg.RecordInitFailure(h.lifecycle.shutdownCtx, name, marotte.MCPSource{}, "timeout")
 		}
 	})
 
-	// Clearers.
 	wg.Go(func() {
 		for range N / 10 {
 			reg.clearAll(h.lifecycle.shutdownCtx)
 		}
 	})
 
-	// Snapshot readers.
 	wg.Go(func() {
 		for range N {
 			_ = reg.Snapshot()
@@ -50,28 +46,4 @@ func TestMCPRegistry_ConcurrentRecordClear(t *testing.T) {
 	})
 
 	wg.Wait()
-}
-
-// TestMCPRegistry_SignalReadyConcurrent verifies that calling
-// signalReady from multiple goroutines doesn't double-close the
-// readyCh channel (which would panic).
-func TestMCPRegistry_SignalReadyConcurrent(t *testing.T) {
-	h, _, _ := newTestHub()
-	reg := h.mcpRegistry
-
-	var wg sync.WaitGroup
-	for range 20 {
-		wg.Go(func() {
-			reg.SignalReady()
-		})
-	}
-	wg.Wait()
-
-	// Verify readyCh is closed.
-	select {
-	case <-reg.readyCh:
-		// good
-	default:
-		t.Fatal("readyCh not closed after signalReady")
-	}
 }

@@ -1,9 +1,4 @@
-// THE FOOTER'S DIVIDER, in both themes. `.sidebar-footer`'s `border-block-start`
-// separates the tab strip from the footer. Pinned: it is SOLID, matching the
-// header's hairline; it costs the band nothing (`sidebar-band-css.test.ts` owns
-// that equality); and it re-resolves per theme from one `--c-border` declaration,
-// checked as SOURCE because a computed read cannot tell a token from a literal
-// that currently agrees with it.
+// THE FOOTER'S DIVIDER, in both themes.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -27,8 +22,8 @@ afterEach(() => {
   delete document.documentElement.dataset["touched"];
 });
 
-/** The panel's two ends, each with its own identity element and trailing button —
- *  the shape the shared band is about. */
+/** The panel's two ends, each with its own identity element and trailing button — the shape the
+ *  shared band is about. */
 function mountSidebar(): { header: HTMLElement; footer: HTMLElement } {
   const sidebar = document.createElement("nav");
   sidebar.id = "sidebar";
@@ -94,8 +89,8 @@ describe("the footer's divider", () => {
   });
 
   it.each(THEMES)("takes the header's own hairline colour in the %s theme", (theme) => {
-    // ONE token at both ends: the divider and the header's hairline are the same kind
-    // of edge, so a reader learns one colour.
+    // ONE token at both ends: the divider and the header's hairline are the same kind of edge, so a
+    // reader learns one colour.
     if (theme === "light") {
       document.documentElement.dataset["theme"] = "light";
     }
@@ -106,10 +101,9 @@ describe("the footer's divider", () => {
   });
 
   it.each(THEMES)("costs the band nothing in the %s theme", (theme) => {
-    // The boxes still agree AND both content bands are box − 1, which is the symmetry
-    // the border-box model buys. Asserted here per THEME, because a per-theme colour
-    // literal is the drift the source case below catches and a per-theme WIDTH would
-    // show up right here.
+    // The boxes still agree AND both content bands are box − 1, which is the symmetry the
+    // border-box model buys. Asserted here per THEME, because a per-theme colour literal is the
+    // drift the source case below catches and a per-theme WIDTH would show up right here.
     if (theme === "light") {
       document.documentElement.dataset["theme"] = "light";
     }
@@ -122,8 +116,8 @@ describe("the footer's divider", () => {
   });
 
   it.each(TIERS)("keeps all of that at the %s pointer tier", (tier) => {
-    // The band's height is tier-dependent through the hit floor lifting its buttons,
-    // so the border being spent out of it is worth checking at both.
+    // The band's height is tier-dependent through the hit floor lifting its buttons, so the border
+    // being spent out of it is worth checking at both.
     document.documentElement.dataset["pointer"] = tier;
     const { header, footer } = mountSidebar();
     expect(parseFloat(getComputedStyle(footer).borderTopWidth)).toBeCloseTo(1, 1);
@@ -136,10 +130,9 @@ describe("the footer's divider", () => {
 
 describe("read as source: neither end spells a colour", () => {
   it("declares the divider from a token, so it re-resolves per theme", () => {
-    // A computed read cannot answer this: a per-theme literal that happens to equal
-    // the token today passes every assertion above and drifts on the next retune.
-    // `--c-border` is declared once and the light block redeclares the ink it mixes,
-    // so nothing is added to the light block at all.
+    // A computed read cannot answer this: a per-theme literal that happens to equal the token today
+    // passes every assertion above and drifts on the next retune. `--c-border` is declared once and
+    // the light block redeclares the ink it mixes, so nothing is added to the light block at all.
     const footerRule = /\n\.sidebar-footer \{([^}]*)\}/u.exec(shell);
     expect(footerRule, ".sidebar-footer's rule is in this sheet").not.toBeNull();
     const body = footerRule?.[1] ?? "";
@@ -155,13 +148,8 @@ describe("read as source: neither end spells a colour", () => {
   });
 
   it("adds nothing to ANY light theme block for it", () => {
-    // The whole point of deriving the colour: a `:root[data-theme="light"]` rule
-    // naming `.sidebar-footer` would be a second writer of one edge.
-    //
-    // Swept over EVERY sheet rather than this one, and that is not pedantry — the
-    // first version of this case searched `10-shell-app.css` alone, which carries no
-    // light block at all, so it asserted nothing and passed over nothing. A light
-    // override could legitimately be written in any slice.
+    // The whole point of deriving the colour: a `:root[data-theme="light"]` rule naming
+    // `.sidebar-footer` would be a second writer of one edge.
     const sheets = manifestSheets();
     expect(sheets.length, "the manifest resolves").toBeGreaterThan(1);
     let lightBlocks = 0;

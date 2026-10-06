@@ -1,16 +1,4 @@
-// ---------------------------------------------------------------------------
 // shell.ts wiring tests.
-//
-// shell.ts is a thin panel controller over @cplieger/web-terminal-ui's
-// createTerminal, so these tests pin its wiring with the UI package, the engine
-// and the sibling modules mocked; the terminal internals (canvas measurement,
-// the WebSocket) are the UI package's concern.
-//
-// Each test re-imports shell.ts fresh (vi.resetModules) so its module-level
-// singletons reset. createTerminal is mocked to return a handle carrying a send
-// spy and to run each feature's setup against a fake context whose `wire:screen`
-// bus the harness can fire.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type {
@@ -22,31 +10,10 @@ import type {
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as Shell from "./shell.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
-/** The per-test spies and elements the mock factories below read.
- *
- * The factories are registered ONCE, at module scope, and they resolve through
- * this holder rather than closing over a per-test value. That indirection is
- * required rather than stylistic: `vi.resetModules()` does not re-evaluate a
- * module in Browser Mode, so a mocked module is evaluated the FIRST time it is
- * imported and cached forever. A per-test `vi.doMock` therefore re-registers a
- * factory that never runs again, and the fresh shell instance kept binding its
- * listeners to the first test's buttons while the test clicked its own.
- */
+/** The per-test spies and elements the mock factories below read. */
 interface Live {
   createTerminal: (root: HTMLElement, opts: CreateTerminalOptions) => TerminalHandle;
   localScrollbackStorage: (opts: unknown) => unknown;
@@ -70,9 +37,9 @@ vi.mock("@cplieger/web-terminal-ui", () => ({
     live.createTerminal(root, opts),
   localScrollbackStorage: (opts: unknown): unknown => live.localScrollbackStorage(opts),
 }));
-// presetTouch is NOT mocked because the panel no longer imports it: it composes
-// presetSingle with its own externally-toggled mobileToolbar, so the key grid's
-// trigger can live in the panel header instead of floating over the terminal.
+// presetTouch is NOT mocked because the panel does not import it: it composes presetSingle with
+// its own externally-toggled mobileToolbar, so the key grid's trigger can live in the panel header
+// instead of floating over the terminal.
 vi.mock("@cplieger/web-terminal-ui/presets/single", () => ({
   presetSingle: (...args: unknown[]): unknown => live.presetSingle(...args),
 }));
@@ -83,8 +50,8 @@ vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScroll
 vi.mock("./code-blocks.js", () => ({
   setShellRunCallback: (cb: (cmd: string) => void): void => live.setShellRunCallback(cb),
 }));
-// The three per-device fields moved out of the arrangement document into their
-// own module; only the two this panel owns are stubbed.
+// The three per-device fields moved out of the arrangement document into their own module; only the
+// two this panel owns are stubbed.
 vi.mock("./device-view.js", () => ({
   shellOpen: (): boolean => live.storedShellOpen(),
   shellHeight: (): number => live.shellHeight(),
@@ -138,21 +105,21 @@ interface Harness {
   getRunCb: () => ((cmd: string) => void) | null;
   /** Report the definitive process-exited close, as the kernel does. */
   endSession: () => void;
-  /** Deliver a screen frame on the feature bus, as the kernel does on every
-   *  frame it renders; `rows` is the row count the frame carries. */
+  /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
+   *  `rows` is the row count the frame carries. */
   screenFrame: (rows: number) => void;
 }
 
-/** The mock features are a string and a bare `{ setup: vi.fn() }`, so the
- *  guard reads the shape rather than trusting the declared type. */
+/** The mock features are a string and a bare `{ setup: vi.fn() }`, so the guard reads the shape
+ *  rather than trusting the declared type. */
 function hasSetup(f: unknown): f is TerminalFeature<unknown> {
   return (
     typeof f === "object" && f !== null && typeof (f as { setup?: unknown }).setup === "function"
   );
 }
 
-/** Back the three pointer-capture methods with a Set so the
- *  resize handlers' capture-gated move/up paths run. */
+/** Back the three pointer-capture methods with a Set so the resize handlers' capture-gated
+ *  move/up paths run. */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
   el.setPointerCapture = (id: number): void => {
@@ -164,9 +131,8 @@ function stubPointerCapture(el: HTMLElement): void {
   el.hasPointerCapture = (id: number): boolean => captured.has(id);
 }
 
-/** Synthetic pointer event: the handlers do not need a real PointerEvent, and
- *  the handlers only read pointerId/isPrimary/clientY, so a plain Event with
- *  those fields assigned is sufficient. */
+/** Synthetic pointer event: the handlers do not need a real PointerEvent, and the handlers only
+ *  read pointerId/isPrimary/clientY, so a plain Event with those fields assigned is sufficient. */
 function ptr(
   type: string,
   clientY: number,
@@ -191,9 +157,9 @@ async function setup(
   const shellKeysBtn = document.createElement("button");
   shellKeysBtn.setAttribute("aria-pressed", "false");
   const shellFullscreenBtn = document.createElement("button");
-  // The real button ships a glyph in index.html and the toggle swaps its `d`,
-  // so the harness carries one too — without it the icon assertions below pass
-  // vacuously against a button that has no path to write.
+  // The real button ships a glyph in index.html and the toggle swaps its `d`, so the harness
+  // carries one too — without it the icon assertions below pass vacuously against a button that has
+  // no path to write.
   shellFullscreenBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 3H5"/></svg>';
   const shellPanel = document.createElement("div");
   shellPanel.classList.add("shell-closed");
@@ -201,24 +167,23 @@ async function setup(
   const shellResize = document.createElement("div");
   stubPointerCapture(shellResize);
   shellPanel.append(shellResize, shellTerminal);
-  // Panel + toolbar button live in the document so focus()/activeElement and
-  // contains() checks behave; replaceChildren drops the previous test's DOM.
+  // Panel + toolbar button live in the document so focus()/activeElement and contains() checks
+  // behave; replaceChildren drops the previous test's DOM.
   document.body.replaceChildren(shellPanel, shellBtn);
 
-  // The v6 handle's host controls: send routes the sanitizing funnel, reset
-  // drops the local scrollback + screen, reattach picks up the PTY the server
-  // serves now.
+  // The v6 handle's host controls: send routes the sanitizing funnel, reset drops the local
+  // scrollback + screen, reattach picks up the PTY the server serves now.
   const sendSpy = vi.fn();
   const resetSpy = vi.fn();
   const termFocus = vi.fn();
   const reattachSpy = vi.fn();
-  // The panel's half of the ended contract is the callback it passes, so the mock
-  // captures it. Without that the reattach path would only be reachable through
-  // the Restart button, and the `exit` half of the same defect would go untested.
+  // The panel's half of the ended contract is the callback it passes, so the mock captures it.
+  // Without that the reattach path would only be reachable through the Restart button, and the
+  // `exit` half of the same defect would go untested.
   let endedCb: (() => void) | null = null;
-  // The feature bus, reduced to the one event the panel's own feature listens
-  // for. The kernel runs every feature's setup with the real context; here the
-  // fake records the `wire:screen` listeners so a test can deliver a frame.
+  // The feature bus, reduced to the one event the panel's own feature listens for. The kernel runs
+  // every feature's setup with the real context; here the fake records the `wire:screen` listeners
+  // so a test can deliver a frame.
   let screenListeners: ((msg: unknown) => void)[] = [];
   const fakeCtx = {
     on: (event: string, fn: (msg: unknown) => void): (() => void) => {
@@ -233,9 +198,9 @@ async function setup(
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       endedCb = opts.onSessionEnded ?? null;
-      // The kernel resolves the features thunk inside its own try, and the panel
-      // mints its key-grid feature there, so a mock that never calls it leaves
-      // that feature unbuilt and every trigger assertion vacuous.
+      // The kernel resolves the features thunk inside its own try, and the panel mints its key-grid
+      // feature there, so a mock that never calls it leaves that feature unbuilt and every trigger
+      // assertion vacuous.
       const features: readonly unknown[] = opts.features?.() ?? [];
       for (const f of features) {
         if (hasSetup(f)) {
@@ -252,10 +217,7 @@ async function setup(
     },
   );
   const presetSingle = vi.fn(() => ["preset-feature"]);
-  // The key-grid feature, standing in for what the kernel hands back. `api` is
-  // populated by the kernel after the feature's setup resolves; createTerminal is
-  // a mock here, so the harness carries it from the start — which is faithful,
-  // because a click cannot reach the trigger before setup has run.
+  // The key-grid feature, standing in for what the kernel hands back.
   let kbOpen = false;
   const kbToggleSpy = vi.fn(() => {
     kbOpen = !kbOpen;
@@ -271,8 +233,8 @@ async function setup(
       onCtrlArmedChange: () => (): void => undefined,
     },
   }));
-  // A sentinel, so the assertion below checks the panel hands the LIBRARY's
-  // localStorage store through rather than inventing storage of its own.
+  // A sentinel, so the assertion below checks the panel hands the LIBRARY's localStorage store
+  // through rather than inventing storage of its own.
   const localScrollbackStorage = vi.fn(() => ({ kind: "scrollback-store" }));
   const scrollEl = document.createElement("div");
   const getScrollEl = vi.fn(() => scrollEl);
@@ -345,9 +307,8 @@ async function setup(
       endedCb();
     },
     screenFrame: (rows: number) => {
-      // A frame carries every visible row, so a row count is what separates a
-      // drawn screen from the rows-less signal frame; a row is a run list and an
-      // empty one is still a row.
+      // A frame carries every visible row, so a row count is what separates a drawn screen from the
+      // rows-less signal frame; a row is a run list and an empty one is still a row.
       const msg = { rows: Array.from({ length: rows }, () => []) };
       for (const fn of [...screenListeners]) {
         fn(msg);
@@ -357,9 +318,9 @@ async function setup(
 }
 
 afterEach(() => {
-  // No doUnmock: the mocks above are registered once at module scope and stay,
-  // because a mocked module is evaluated once and cached. Each test gets its
-  // isolation from a fresh `live` holder plus a busted shell specifier.
+  // No doUnmock: the mocks above are registered once at module scope and stay, because a mocked
+  // module is evaluated once and cached. Each test gets its isolation from a fresh `live` holder
+  // plus a busted shell specifier.
   vi.useRealTimers();
   vi.resetModules();
   bootSeq++;
@@ -385,33 +346,29 @@ describe("shell.ts: lazy terminal creation", () => {
     const [root, opts] = call as [HTMLElement, CreateTerminalOptions];
     expect(root).toBe(h.shellTerminal);
     expect(opts.wsPath).toBe("/api/shell/ws");
-    // The companion ALONE, not the theme's two-family stack: naming the overlay
-    // first makes WebKit resolve the gate before the text face loads, so the PTY
-    // is sized on fallback metrics (`@cplieger/web-terminal-ui`, `fontReady`).
+    // The companion ALONE, not the theme's two-family stack: naming the overlay first makes WebKit
+    // resolve the gate before the text face loads, so the PTY is sized on fallback metrics
+    // (`@cplieger/web-terminal-ui`, `fontReady`).
     expect(opts.fontReady).toBe('14px "Monaspace Neon NF"');
-    // The glyph family FIRST, ahead of the text face: it carries only the
-    // codepoints that have to tile, so dropping it or reordering it takes box
-    // drawing and the block elements back to Monaspace's own, which is the row-gap
-    // defect this stack exists to fix. Asserted as the whole declaration rather
-    // than a `toContain`, because order is the property.
+    // The glyph family FIRST, ahead of the text face: it carries only the codepoints that have to
+    // tile, so dropping it or reordering it takes box drawing and the block elements back to
+    // Monaspace's own, which is the row-gap defect this stack exists to fix.
     expect(opts.theme?.["--font-mono"]).toBe(
       '"Web Terminal Glyphs", "Monaspace Neon NF", monospace',
     );
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
-    // A THUNK, not a built array (ui v5's lazy `features`), so a throw while
-    // composing the list fails inside createTerminal rather than at this call
-    // site. Embedded in container layout (the panel is the terminal's
-    // boundary; no page-level styling, no bridge feature).
+    // A THUNK, not a built array (ui v5's lazy `features`), so a throw while composing the list
+    // fails inside createTerminal rather than at this call site. Embedded in container layout (the
+    // panel is the terminal's boundary; no page-level styling, no bridge feature).
     expect(typeof opts.features).toBe("function");
     expect(opts.features?.()).toContain("preset-feature");
     expect(opts.layout).toBe("container");
   });
 
   it("composes the key grid with its own toggle hidden, so nothing floats over the terminal", async () => {
-    // presetTouch leaves externalToggle off, which parks a 54px pill in the
-    // terminal's top-right corner on every coarse-pointer device — iPad desktop
-    // mode included — with the panel's own control row 8px above it. The trigger
-    // belongs in that row, so the grid must be composed rather than presetTouch'd.
+    // presetTouch leaves externalToggle off, which parks a 54px pill in the terminal's top-right
+    // corner on every coarse-pointer device — iPad desktop mode included — with the panel's own
+    // control row 8px above it.
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
@@ -423,23 +380,16 @@ describe("shell.ts: lazy terminal creation", () => {
   });
 
   it("persists the shell scrollback through the library's store, in marotte's namespace", async () => {
-    // The server keeps the PTY across a reload but the client comes back holding
-    // nothing, so without this a reopened panel refills its whole buffer over the
-    // wire — visible as the history filling in, and routine on a phone where iOS
-    // discards the tab.
-    //
-    // It must be the LIBRARY's store: a hand-rolled one here would be another copy
-    // of the same logic across the consumers, and the part a copy omits is the
-    // orphan sweep, whose absence is invisible until the origin quota fills. The
-    // prefix keeps it in marotte's own localStorage namespace, beside
-    // `marotte.ui-state`.
+    // The server keeps the PTY across a reload but the client comes back holding nothing, so
+    // without this a reopened panel refills its whole buffer over the wire — visible as the history
+    // filling in, and routine on a phone where iOS discards the tab.
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
 
-    // Built at MODULE load, not on first open: constructing the store is what runs
-    // its orphan sweep, and a user who never opens the shell would otherwise leave
-    // old snapshots in this origin's localStorage indefinitely.
+    // Built at MODULE load, not on first open: constructing the store is what runs its orphan
+    // sweep, and a user who never opens the shell would otherwise leave old snapshots in this
+    // origin's localStorage indefinitely.
     expect(h.localScrollbackStorage).toHaveBeenCalledWith({
       prefix: "marotte.shell-scrollback.",
     });
@@ -459,11 +409,9 @@ describe("shell.ts: lazy terminal creation", () => {
 });
 
 describe("shell.ts: host-driven actions", () => {
-  // The Restart button replaced a Reset that only cleared the screen. It exists
-  // because terminal.Handler is single-use server-side: a child that exits (or a
-  // wedged foreground process) leaves a panel that can never start again, and a
-  // screen clear cannot help with either. Confirmed, because unlike the clear it
-  // kills whatever is running.
+  // The Restart button replaced a Reset that only cleared the screen. It exists because
+  // terminal.Handler is single-use server-side: a child that exits (or a wedged foreground process)
+  // leaves a panel that can never start again, and a screen clear cannot help with either.
   it("the Restart button confirms, calls the server, then reattaches to the new PTY", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -474,11 +422,9 @@ describe("shell.ts: host-driven actions", () => {
 
     expect(h.confirmMock).toHaveBeenCalledTimes(1);
     expect(h.restartDispatch).toHaveBeenCalledTimes(1);
-    // Reattaching is the half that was missing: the server kills the PTY and
-    // installs a fresh one lazily, INSIDE the next connect, so a client that
-    // only cleared its screen left the panel reading "Session ended" forever.
-    // The clear rides along inside reattach(), which is why this asserts nothing
-    // about reset(): ordering it against the connect is the library's job.
+    // Reattaching is the half that was missing: the server kills the PTY and installs a fresh one
+    // lazily, INSIDE the next connect, so a client that only cleared its screen left the panel
+    // reading "Session ended" forever.
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
     expect(h.resetSpy).not.toHaveBeenCalled();
   });
@@ -496,8 +442,6 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.reattachSpy).not.toHaveBeenCalled();
   });
 
-  // A failed restart must not reattach: the old PTY is still live, so dropping
-  // the buffer and taking a full replay would blank a working shell for nothing.
   it("a failed restart leaves the terminal alone", async () => {
     const h = await setup();
     h.restartDispatch.mockResolvedValueOnce(null);
@@ -510,9 +454,9 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.reattachSpy).not.toHaveBeenCalled();
   });
 
-  // The restart's own kill closes this client's socket, so the ended state
-  // normally reattaches while the POST is still in flight. The response must not
-  // then reconnect a second time over the prompt that reattach just drew.
+  // The restart's own kill closes this client's socket, so the ended state normally reattaches
+  // while the POST is still in flight. The response must not then reconnect a second time over the
+  // prompt that reattach just drew.
   it("does not reattach twice when the ended close won the race", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -537,8 +481,8 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
   });
 
-  // Enter on a PTY is CR (0x0d), the byte the engine's keyboard module sends for
-  // the key, so LF must not appear.
+  // Enter on a PTY is CR (0x0d), the byte the engine's keyboard module sends for the key, so LF
+  // must not appear.
   it("runs the command: the text followed by one CR, in a single send", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
@@ -557,8 +501,8 @@ describe("shell.ts: host-driven actions", () => {
     expect(sent.includes(0x0a)).toBe(false);
   });
 
-  // The reader is in the transcript, so the open must not take focus. The first
-  // open is also what connects, which is what `firstFrameGate` has to wait for.
+  // The reader is in the transcript, so the open must not take focus. The first open is also what
+  // connects, which is what `firstFrameGate` has to wait for.
   it("opens a closed panel without focusing it and sends once the first frame lands", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -616,11 +560,9 @@ describe("shell.ts: host-driven actions", () => {
 });
 
 describe("shell.ts: reattaching after the session ends", () => {
-  // The other half of the same defect, and the more common one: typing `exit`
-  // ends the child, the engine's process-exited close suppresses its own backoff
-  // reconnect (definitive, not transient), and the server only swaps in a fresh
-  // PTY on the next connect. Nothing was making that connect, so the panel sat
-  // on "Session ended" until a page reload.
+  // The other half of the same defect, and the more common one: typing `exit` ends the child, the
+  // engine's process-exited close suppresses its own backoff reconnect (definitive, not transient),
+  // and the server only swaps in a fresh PTY on the next connect.
   it("reattaches with no user gesture when the child exits", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -640,17 +582,17 @@ describe("shell.ts: reattaching after the session ends", () => {
     expect(typeof opts.onSessionEnded).toBe("function");
   });
 
-  // A shell that dies as fast as it is spawned (a login file that exits, a
-  // missing interpreter) must not be respawned in a loop: the ladder backs off
-  // and then stops, leaving the honest "Session ended" banner standing.
+  // A shell that dies as fast as it is spawned (a login file that exits, a missing interpreter)
+  // must not be respawned in a loop: the ladder backs off and then stops, leaving the honest
+  // "Session ended" banner standing.
   it("gives up after four consecutive respawns", async () => {
     vi.useFakeTimers();
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
 
-    // Six deaths, each one landing while the previous spawn is still fresh, so
-    // the ladder never resets: immediate, +250ms, +500ms, +1000ms, then nothing.
+    // Six deaths, each one landing while the previous spawn is still fresh, so the ladder never
+    // resets: immediate, +250ms, +500ms, +1000ms, then nothing.
     for (let i = 0; i < 6; i++) {
       h.endSession();
       await vi.advanceTimersByTimeAsync(1000);
@@ -659,8 +601,8 @@ describe("shell.ts: reattaching after the session ends", () => {
     expect(h.reattachSpy).toHaveBeenCalledTimes(4);
   });
 
-  // A session that ran for a while ended on its own terms, so its end is a new
-  // incident rather than another failure of the spawn that replaced the last one.
+  // A session that ran for a while ended on its own terms, so its end is a new incident rather than
+  // another failure of the spawn that replaced the last one.
   it("starts a fresh ladder once a session has run for a while", async () => {
     vi.useFakeTimers();
     const h = await setup();
@@ -682,9 +624,8 @@ describe("shell.ts: reattaching after the session ends", () => {
   it("does nothing before the terminal exists", async () => {
     const h = await setup();
     h.mod.initShellPanel();
-    // No open, so no terminal, no feature and no socket. Nothing can emit the
-    // state here — which is the assertion: the panel's first open is what
-    // connects, so there is no reattach path to take.
+    // No open, so no terminal, no feature and no socket. Nothing can emit the state here — which is
+    // the assertion: the panel's first open is what connects, so there is no reattach path to take.
     expect(h.createTerminal).not.toHaveBeenCalled();
     expect(h.reattachSpy).not.toHaveBeenCalled();
   });
@@ -797,24 +738,12 @@ describe("shell.ts: resize handle", () => {
 
   it("seeds the separator's VALUE from the panel's own CSS default height", async () => {
     // TWO facts in one case, deliberately, because they are one fact from two ends.
-    //
-    // (a) A focusable `role="separator"` is a splitter, so ARIA requires
-    // `aria-valuenow` — axe reports its absence as a critical `aria-required-attr`,
-    // measured on the deployed panel, and a screen-reader user arrowing the handle
-    // otherwise hears no value at all. `shellHeight()` is mocked to 0 here, which is
-    // the case with no height to read: the panel is closed, so its box measures 0.
-    //
-    // (b) `SHELL_DEFAULT_H` is therefore shadowed in shell.ts, and the EXPECTATION
-    // here is read off `.shell-panel`'s own `height` fallback instead — an
-    // independent oracle, so a drift on either side fails, and moving both together
-    // (a genuine redesign of the default) passes. The constant stays module-private:
-    // exporting it to be asserted would add surface the app has no use for.
     const shell = loadCSS("21-shell-panel.css");
     const panel = ruleContaining(shell, ".shell-panel", "top");
     const fallback = /height:\s*var\(--shell-h,\s*([\d.]+rem)\)/u.exec(panel.body);
     expect(fallback, "the panel declares its height with a rem fallback").not.toBeNull();
-    // rem to px through the engine rather than a hardcoded 16, so a root font-size
-    // does not silently move the expectation.
+    // rem to px through the engine rather than a hardcoded 16, so a root font-size does not
+    // silently move the expectation.
     const probe = document.createElement("div");
     probe.style.cssText = `position:fixed;width:${fallback?.[1] ?? "0"}`;
     document.body.appendChild(probe);
@@ -830,14 +759,14 @@ describe("shell.ts: resize handle", () => {
     ).toBe(String(Math.min(cssDefault, max)));
     expect(h.shellResize.getAttribute("aria-valuemin")).toBe("96");
     expect(h.shellResize.getAttribute("aria-valuemax")).toBe(String(max));
-    // And the seed does NOT pin the panel's height: writing --shell-h here would
-    // take it off CSS for the session.
+    // And the seed does NOT pin the panel's height: writing --shell-h here would take it off CSS
+    // for the session.
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("");
   });
 
   it("moves the separator's value with every applied height", async () => {
-    // One writer, so the value cannot describe a height the panel does not have.
-    // Both doors: the drag and the keyboard step.
+    // One writer, so the value cannot describe a height the panel does not have. Both doors: the
+    // drag and the keyboard step.
     const h = await setup();
     h.mod.initShellPanel();
 
@@ -856,7 +785,6 @@ describe("shell.ts: resize handle", () => {
     const h = await setup();
     h.mod.initShellPanel();
     // The harness panel is unstyled, so its rect is 0-height and startH = 0; dragging up
-    // by 200px (500 → 300) must yield --shell-h: 200px.
     h.shellResize.dispatchEvent(ptr("pointerdown", 500));
     expect(h.shellResize.classList.contains("dragging")).toBe(true);
     expect(h.shellPanel.classList.contains("resizing")).toBe(true);
@@ -899,7 +827,6 @@ describe("shell.ts: resize handle", () => {
   it("ArrowUp/ArrowDown resize from the keyboard and persist each step", async () => {
     const h = await setup();
     h.mod.initShellPanel();
-    // The unstyled panel's rect height is 0 → 0 + 32 clamps to the 96px floor.
     h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
     expect(h.setShellHeight).toHaveBeenCalledWith(96);
@@ -923,14 +850,9 @@ describe("shell.ts: key-toolbar trigger", () => {
   });
 
   it("is inert before the panel's first open, when no terminal exists", async () => {
-    // The button lives in the header, which only exists while the panel is open,
-    // but nothing stops a boot-time click reaching it — and the feature has no
-    // api until the kernel has run its setup.
-    //
-    // The observable is the ERROR, not the spy: without the guard the listener
-    // dereferences an undefined api and throws, and the spy stays uncalled either
-    // way, so an assertion on the spy alone passes with the guard deleted. A
-    // listener throw does not propagate to click(), so it is caught off window.
+    // The button lives in the header, which only exists while the panel is open, but nothing stops
+    // a boot-time click reaching it — and the feature has no api until the kernel has run its
+    // setup.
     const h = await setup();
     h.mod.initShellPanel();
     const errors: string[] = [];
@@ -951,16 +873,13 @@ describe("shell.ts: key-toolbar trigger", () => {
 });
 
 describe("shell.ts: fullscreen toggle", () => {
-  // The toggle moved here from agent-terminal.ts when that module was deleted.
-  // Nothing else wired this button, so without the move it would have gone dead
-  // silently — the panel's CLOSE path already cleared the class, so the only
-  // visible symptom was a header button that did nothing.
+  // Nothing else wires this button, and the panel's CLOSE path clears the class, so a missing
+  // wire shows only as a header button that does nothing.
   const face = (btn: HTMLButtonElement): string =>
     btn.querySelector("path")?.getAttribute("d") ?? "";
-  /** How many of the glyph's four corner arcs sweep the given way. Sweep is the
-   *  ONLY difference between the two faces — the corner set is rotationally
-   *  symmetric, so this is the assertion that "the corners point the other
-   *  way", and a rotated copy of one face would fail it. */
+  /** How many of the glyph's four corner arcs sweep the given way. Sweep is the ONLY difference
+   *  between the two faces — the corner set is rotationally symmetric, so this is the assertion
+   *  that "the corners point the other way", and a rotated copy of one face would fail it. */
   const sweeps = (d: string, flag: "0" | "1"): number => d.split(`a2 2 0 0 ${flag}`).length - 1;
 
   it("enters fullscreen and mirrors the state on aria-pressed", async () => {
@@ -984,8 +903,8 @@ describe("shell.ts: fullscreen toggle", () => {
     expect(face(h.shellFullscreenBtn)).toMatch(/^M8 3v3/);
     expect(sweeps(face(h.shellFullscreenBtn), "1")).toBe(4);
 
-    // Restored with aria-pressed, on the CLICK rather than at animationend: the
-    // button already reads as off, so its face has to agree immediately.
+    // Restored with aria-pressed, on the CLICK rather than at animationend: the button already
+    // reads as off, so its face has to agree immediately.
     h.shellFullscreenBtn.click();
     expect(face(h.shellFullscreenBtn)).toMatch(/^M8 3H5/);
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
@@ -1029,8 +948,8 @@ describe("shell.ts: close behavior", () => {
     h.shellToggleBtn.click(); // close
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);
     expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
-    // The close path is the third writer of this state; it must reset the face
-    // too, or the next open shows a docked panel offering to shrink itself.
+    // The close path is the third writer of this state; it must reset the face too, or the next
+    // open shows a docked panel offering to shrink itself.
     expect(h.shellFullscreenBtn.querySelector("path")?.getAttribute("d")).toMatch(/^M8 3H5/);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
   });

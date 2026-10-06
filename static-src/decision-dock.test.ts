@@ -1,48 +1,22 @@
-// ---------------------------------------------------------------------------
-// Tests for decision-dock.ts — the queue, not the cards.
-//
-// Each case pins something the three modals got wrong or could not do:
-//   - the permission modal had NO queue, so a second request overwrote the
-//     first and its callback was dropped, leaving KAS waiting on an id nothing
-//     would ever answer
-//   - the SSE handlers gated on the active chat, so an ask raised on a
-//     background chat vanished until a reconnect happened to replay it
-//   - SSE reconnect replays every unanswered permission, so a re-delivery must
-//     not stack a duplicate
-//   - answering twice on one request id is worse than a dropped click
-//
-// The MOTION half is here too, because the phases are a property of the dock's
-// state machine rather than of any card: an answered card stays on screen for
-// the length of a phase, so every lookup in this file is scoped to the LIVE card
-// (`:scope > .dock-card`) or it would find the answered one first. The phase
-// timer is the only clock the dock has — the test page links no app stylesheet,
-// so no transition or animation event ever fires here — which is why the timers
-// are faked rather than awaited.
-// ---------------------------------------------------------------------------
+// The dock's queue, not its cards: a second request must not overwrite the first, a background chat's ask must not
+// vanish, a replayed ask must not stack, and one request id is answered once. Every lookup is scoped to the LIVE card
+// (`:scope > .dock-card`) because an answered card stays on screen for a phase. The phase timer is the dock's only
+// clock (the page links no stylesheet, so no transition event fires), so timers are faked.
 
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
 
-// The store is NOT mocked: the dock's chat-switch trigger is an effect over the
-// real `activeSession` computed, and a stubbed signal would test the stub's
-// reactivity rather than the wiring that ships. Only the two leaves that reach
-// for DOM the dock does not own are mocked.
+// The store is real: the chat-switch trigger is an effect over the real `activeSession` computed.
 vi.mock("./editor-openers.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined so Browser Mode's real ESM linking succeeds for a name another module imports.
   openFile: undefined,
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
 }));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
-// The attribution toast is the observable half of a card collapsing under the
-// reader, so it is mocked to be asserted rather than to be silenced.
+// Mocked to be asserted: the attribution toast is the observable half of a card collapsing under the reader.
 const { mockToastInfo } = vi.hoisted(() => ({ mockToastInfo: vi.fn() }));
-// The rest of the surface comes from the canonical factory: the dock's graph
-// reaches failure-notice.ts through the tab projection now, and that module
-// imports `errorWithAction`, so a one-name mock no longer links.
+// The canonical factory: failure-notice.ts, in this graph, imports `errorWithAction`.
 vi.mock("./toast.js", () =>
   import("./__test-helpers__/toast-mock.js").then((m) => ({
     ...m.toastMock(),
@@ -69,9 +43,8 @@ import { BUS_USER_INPUT_ANSWERED, onBus } from "./bus.js";
 import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { clampObservationCount } from "./clamp-text.js";
-// Not reachable through `loadCSS`: its glob is `../css/*.css`, and the MANIFEST
-// carries no extension. Read directly, because the file ORDER it declares is a
-// load-bearing cascade fact for the reduced-motion disarm below.
+// Read directly (`loadCSS` globs `*.css`; MANIFEST has no extension): its file order is a cascade fact for the
+// reduced-motion disarm below.
 import cssManifest from "./css/MANIFEST?raw";
 import { setSessions, setActive } from "./store.js";
 import type { PermissionNeededPayload, RunInputNeededPayload, Session } from "./types.js";
@@ -127,9 +100,7 @@ function pushPerm(chatID: string, requestID: number, submit = vi.fn()): typeof s
   return submit;
 }
 
-/** The LIVE cards, excluding an answered one still on screen for the length of a
- *  phase. `:scope >` excludes it by construction: the outgoing content sits one
- *  level deeper, inside `.dock-outgoing`. */
+/** The live cards: `:scope >` excludes an answered one, which sits inside `.dock-outgoing`. */
 function liveCards(h: HTMLElement = host()): HTMLElement[] {
   return [...h.querySelectorAll<HTMLElement>(":scope > .dock-card")];
 }
@@ -138,8 +109,7 @@ function liveCard(h: HTMLElement = host()): HTMLElement | null {
   return h.querySelector<HTMLElement>(":scope > .dock-card");
 }
 
-/** The live depth row. Scoped for the same reason: a stale depth row inside
- *  `.dock-outgoing` sits earlier in document order. */
+/** Scoped likewise: a stale depth row inside `.dock-outgoing` sits earlier in document order. */
 function liveDepth(h: HTMLElement = host()): HTMLElement | null {
   return h.querySelector<HTMLElement>(":scope > .dock-depth");
 }
@@ -156,18 +126,13 @@ function clickButton(label: string, h: HTMLElement = host()): void {
   btn?.click();
 }
 
-/** Let every phase's cleanup timer fire. The phase is purely visual — the
- *  response went out synchronously on the click — but `.hidden` and the removal
- *  of the answered card land at the END of it, so a test asserting the settled
- *  DOM has to get there. */
+/** The response went out on the click, but `.hidden` and the answered card's removal land at the phase's end. */
 function settleMotion(): void {
   vi.advanceTimersByTime(Math.max(...Object.values(DOCK_PHASE_MS)) + 1);
 }
 
 beforeEach(() => {
-  // Only the two functions the dock uses. Faking Date and performance as well
-  // would reach the reactive graph and the announcer for no benefit; the phase
-  // timer is the whole clock under test.
+  // Only the two functions the dock uses; faking Date and performance would reach the reactive graph.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   _resetForTest();
   mockToastInfo.mockClear();
@@ -178,8 +143,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // `restoreMocks` does not undo fake timers, and a leaked fake clock breaks
-  // every later file in this worker.
+  // `restoreMocks` does not undo fake timers, and a leaked fake clock breaks every later file in this worker.
   vi.useRealTimers();
 });
 
@@ -195,9 +159,7 @@ describe("the dock's visibility", () => {
     expect(liveCard()).not.toBeNull();
 
     clickButton("Allow");
-    // `.hidden` lands at the END of the collapse, not on the click: the utility
-    // class is `display: none !important` and cannot be animated out, which is
-    // why the old collapse rule never rendered a frame.
+    // `.hidden` lands at the collapse's end: `display: none !important` cannot be animated out.
     settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
@@ -209,21 +171,18 @@ describe("the queue", () => {
     const first = pushPerm("c1", 1);
     const second = pushPerm("c1", 2);
 
-    // Only the head is rendered, and the depth line reports the rest.
     expect(liveCards().length).toBe(1);
     expect(liveDepth()?.textContent).toBe("1 more waiting");
 
     clickButton("Allow");
-    expect(first).toHaveBeenCalledWith("allow_once", undefined);
+    expect(first).toHaveBeenCalledWith({ optionID: "allow_once" });
     expect(second).not.toHaveBeenCalled();
 
-    // The second is now the head, and its depth line is empty. The answered
-    // card is still on screen behind it for the length of the advance, which is
-    // why these lookups are scoped to the live one.
+    // The answered card is still on screen behind the new head for the advance.
     expect(liveCards().length).toBe(1);
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
     clickButton("Reject");
-    expect(second).toHaveBeenCalledWith("reject_once", undefined);
+    expect(second).toHaveBeenCalledWith({ optionID: "reject_once" });
   });
 
   it("answers a request at most once", () => {
@@ -231,8 +190,7 @@ describe("the queue", () => {
     const allow = [...host().querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent === "Allow",
     );
-    // The card is detached by the first click; clicking its retained handle
-    // again must not produce a second reply on the same request id.
+    // The card is detached by the first click; its retained handle must not reply twice on one request id.
     allow?.click();
     allow?.click();
     expect(submit).toHaveBeenCalledTimes(1);
@@ -248,13 +206,12 @@ describe("the queue", () => {
 describe("per-chat routing", () => {
   it("holds a background chat's ask instead of dropping it, and shows it on switch", () => {
     const bg = pushPerm("c2", 1);
-    // Nothing on screen: it is not this chat's ask.
     expect(host().classList.contains("hidden")).toBe(true);
 
     setActive("c2");
     expect(host().classList.contains("hidden")).toBe(false);
     clickButton("Allow");
-    expect(bg).toHaveBeenCalledWith("allow_once", undefined);
+    expect(bg).toHaveBeenCalledWith({ optionID: "allow_once" });
   });
 
   it("keeps an unanswered ask across a switch away and back", () => {
@@ -291,7 +248,10 @@ describe("turn approval", () => {
       submit,
     });
     clickButton("Keep selected");
-    expect(submit).toHaveBeenCalledWith("allow_once", { "act-1": true, "act-2": true });
+    expect(submit).toHaveBeenCalledWith({
+      optionID: "allow_once",
+      fileDecisions: { "act-1": true, "act-2": true },
+    });
   });
 
   it("an unchecked row becomes a false decision, not an absent one", () => {
@@ -305,9 +265,12 @@ describe("turn approval", () => {
     });
     const boxes = liveCard()?.querySelectorAll<HTMLInputElement>(".dock-file-check") ?? [];
     expect(boxes.length).toBe(2);
-    boxes[1]?.click(); // uncheck b.ts
+    boxes[1]?.click();
     clickButton("Keep selected");
-    expect(submit).toHaveBeenCalledWith("allow_once", { "act-1": true, "act-2": false });
+    expect(submit).toHaveBeenCalledWith({
+      optionID: "allow_once",
+      fileDecisions: { "act-1": true, "act-2": false },
+    });
   });
 
   it("groups files sharing one action id into a single undividable row", () => {
@@ -319,8 +282,7 @@ describe("turn approval", () => {
       payload: perm({
         request_id: 6,
         title: "Review changes",
-        // A multi-file semantic rename: KAS keys the decision map by action, so
-        // these two paths cannot disagree.
+        // KAS keys the decision map by action, so these two paths cannot disagree.
         files: [
           { path: "old.py", action_id: "ren-1" },
           { path: "new.py", action_id: "ren-1" },
@@ -332,7 +294,10 @@ describe("turn approval", () => {
     expect(liveCard()?.querySelectorAll(".dock-file-check").length).toBe(1);
     expect(host().querySelector(".dock-file-atomic")).not.toBeNull();
     clickButton("Keep selected");
-    expect(submit).toHaveBeenCalledWith("allow_once", { "ren-1": true });
+    expect(submit).toHaveBeenCalledWith({
+      optionID: "allow_once",
+      fileDecisions: { "ren-1": true },
+    });
   });
 
   it("Roll back all answers with the reject option and no map", () => {
@@ -345,7 +310,7 @@ describe("turn approval", () => {
       submit,
     });
     clickButton("Roll back all");
-    expect(submit).toHaveBeenCalledWith("reject_once", undefined);
+    expect(submit).toHaveBeenCalledWith({ optionID: "reject_once" });
   });
 });
 
@@ -359,9 +324,8 @@ describe("the spec page's dock", () => {
   }
 
   it("renders the named chat's ask, whether or not that chat is active", () => {
-    // The composer's own dock filters on the ACTIVE chat; this one filters on
-    // the chat its host was mounted for, so a spec page whose chat is in the
-    // background still shows the checkpoint it is waiting on.
+    // This dock filters on the chat its host was mounted for, not the active chat, so a background spec page shows its
+    // checkpoint.
     setSessions([session("c1"), session("c2")]);
     setActive("c2");
     const specHost = mountSpecHost(() => "c1");
@@ -374,7 +338,6 @@ describe("the spec page's dock", () => {
     });
     expect(specHost.classList.contains("hidden")).toBe(false);
     expect(liveCard(specHost)).not.toBeNull();
-    // And the composer's dock, pointed at c2, shows nothing.
     expect(host().classList.contains("hidden")).toBe(true);
   });
 
@@ -391,9 +354,7 @@ describe("the spec page's dock", () => {
   });
 
   it("shows nothing while its getter answers empty, and re-keys when it fills", () => {
-    // The getter is a getter because re-parenting changes the id during the
-    // host's life; an empty answer must match no decision at all rather than
-    // matching every chat-less one.
+    // A getter because re-parenting changes the id; an empty answer must match no decision rather than every chat-less one.
     let shown = "";
     const specHost = mountSpecHost(() => shown);
     pushDecision({
@@ -434,8 +395,7 @@ describe("the run tab's dock", () => {
   });
 
   it("renders an AGENT-LAUNCHED run's ask — keyed to the launching chat — in sync with the chat's dock", () => {
-    // The done-when's "banner in both, in sync": one decision object, two
-    // hosts rendering it, one answer clearing both.
+    // One decision object, two hosts, one answer clearing both.
     setSessions([session("c1")]);
     setActive("c1");
     const runHost = mountRunHost(() => "wf_2");
@@ -450,12 +410,10 @@ describe("the run tab's dock", () => {
       submit,
     });
 
-    // Both surfaces show it.
     expect(liveCard()).not.toBeNull();
     expect(liveCard(runHost)).not.toBeNull();
 
-    // Answer from the CHAT's dock; the run tab's rendering clears too. Each host
-    // owns its own phase, so both have to be let through it.
+    // Each host owns its own phase, so both have to be let through it.
     liveCard()?.querySelector<HTMLButtonElement>("button")?.click();
     expect(submit).toHaveBeenCalledTimes(1);
     settleMotion();
@@ -476,8 +434,7 @@ describe("the run tab's dock", () => {
   });
 
   it("re-keys when the shared view shows a different run", () => {
-    // One #run-dock element serves every run tab; the run id is a getter and a
-    // tab switch re-renders through rerenderDocks.
+    // One #run-dock serves every run tab; the run id is a getter and a tab switch re-renders through rerenderDocks.
     let shown = "wf_a";
     const runHost = mountRunHost(() => shown);
     pushDecision({
@@ -493,8 +450,7 @@ describe("the run tab's dock", () => {
     expect(runHost.classList.contains("hidden")).toBe(false);
   });
 
-  // The transcript's run card reads this instead of mounting a dock: it has no
-  // surface to answer on, and what it needs is which STEP is blocked.
+  // The transcript's run card reads this: it has no surface to answer on and needs which step is blocked.
   describe("runPendingAsks", () => {
     it("joins both keyings and names the steps", () => {
       pushDecision({
@@ -566,11 +522,8 @@ describe("the run tab's dock", () => {
   });
 
   it("lets the run tab answer an ask sitting BEHIND the chat's own head", () => {
-    // Settle guards on membership, not head position: the chat's queue can hold
-    // its own ask first, and the run tab renders (and answers) the step's ask
-    // behind it. Answering out of queue order is protocol-correct — each
-    // request id is its own JSON-RPC exchange — and refusing it would leave a
-    // dead button in the run tab.
+    // Settle guards on membership, not head position: each request id is its own JSON-RPC exchange, so answering out of
+    // queue order is correct and refusing it would leave a dead button in the run tab.
     setSessions([session("c1")]);
     setActive("c1");
     const runHost = mountRunHost(() => "wf_4");
@@ -586,25 +539,15 @@ describe("the run tab's dock", () => {
       submit: stepSubmit,
     });
 
-    // The chat's dock shows its head (20); the run tab shows the step's (21).
     runHost.querySelector<HTMLButtonElement>("button")?.click();
     expect(stepSubmit).toHaveBeenCalledTimes(1);
     expect(chatSubmit).not.toHaveBeenCalled();
-    // The chat's own ask is still on screen, unharmed.
     expect(liveCard()).not.toBeNull();
   });
 });
 
-// ---------------------------------------------------------------------------
-// The FOURTH kind: a workflow step's question.
-//
-// It is the one decision that is not request-shaped — no int64 request id, a
-// string ask id instead — which is why the dock's internal key had to become a
-// per-kind composition. Every case here pins something that composition or the
-// second settle entry point could get wrong, and the whole point of the feature
-// is the first one: the prompt has to reach the PARENT TAB, the chat that
-// launched the run.
-// ---------------------------------------------------------------------------
+// A workflow step's question: not request-shaped (a string ask id, not an int64), hence the per-kind key. The prompt
+// must reach the parent tab, the chat that launched the run.
 
 describe("a workflow step's question", () => {
   function runInput(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPayload {
@@ -653,9 +596,7 @@ describe("a workflow step's question", () => {
   }
 
   it("renders in the PARENT TAB, keyed to the launching chat", () => {
-    // The bug: a step paused to ask and no prompt appeared anywhere. The
-    // envelope's chat id is the launching chat for an agent-parented run, so
-    // the composer dock's own matcher is what puts the card in the parent tab.
+    // The envelope's chat id is the launching chat, so the composer dock's own matcher puts the card in the parent tab.
     pushAsk("c1");
     expect(host().classList.contains("hidden")).toBe(false);
     expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
@@ -664,12 +605,9 @@ describe("a workflow step's question", () => {
   });
 
   it("renders a PARENTLESS run's ask too, keyed to the synthetic run chat", () => {
-    // A manual or scheduled run has no launching chat, so the server keys its
-    // ask to `run:<workflowId>`. That must not regress: the run tab's own dock
-    // is the only surface such a run has.
+    // A manual or scheduled run has no launching chat, so its ask is keyed `run:<workflowId>` and the run tab is its surface.
     const runHost = mountRunHost(() => "wf_1");
     pushAsk("run:wf_1");
-    // Not the composer's — `run:wf_1` is not a chat and has no tab.
     expect(host().classList.contains("hidden")).toBe(true);
     expect(liveCard(runHost)).not.toBeNull();
   });
@@ -685,7 +623,6 @@ describe("a workflow step's question", () => {
       box.value = "  yes, ship it  ";
     }
     clickButton("Send answer");
-    // Trimmed, because leading and trailing whitespace is not part of an answer.
     expect(submit).toHaveBeenCalledWith("yes, ship it");
     settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
@@ -693,9 +630,7 @@ describe("a workflow step's question", () => {
   });
 
   it("sends null for continue-without-answering", () => {
-    // The post-restart door: the ask registry is in memory, so a restart leaves
-    // the run parked with the question gone and a reader cannot answer what they
-    // cannot read. `null` re-drives the step with KAS's own continuation.
+    // The ask registry is in memory, so after a restart the question is gone; `null` re-drives the step with KAS's continuation.
     const submit = pushAsk("c1", { question: "" });
     expect(liveCard()?.textContent).toContain(RUN_INPUT_FALLBACK);
     expect(liveCard()?.textContent).toContain("lost when the server restarted");
@@ -707,7 +642,6 @@ describe("a workflow step's question", () => {
     const submit = pushAsk("c1");
     clickButton("Send answer");
     expect(submit).not.toHaveBeenCalled();
-    // Still on screen: the box is the instruction, and waiving is its own button.
     expect(liveCard()).not.toBeNull();
   });
 
@@ -725,13 +659,8 @@ describe("a workflow step's question", () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
-  // -------------------------------------------------------------------------
-  // The held answer. `settle` splices the entry BEFORE the answer goes out, so
-  // the card carrying the reader's text is already gone when the server refuses
-  // it — and the one refusal that is RETRYABLE re-offers the SAME ask on a fresh
-  // `run_input_needed`. Invariant 2 grants the optimistic dock its carve-out on a
-  // refusal returning the TEXT as well as the row, so these pin both directions.
-  // -------------------------------------------------------------------------
+  // `settle` splices the entry before the answer goes out, so on a retryable refusal the same ask returns on a fresh
+  // `run_input_needed` and the held text must come back with it, in both directions.
   describe("the words a refused send is holding", () => {
     function sendAnswer(text: string): void {
       const box = textarea();
@@ -745,8 +674,7 @@ describe("a workflow step's question", () => {
       pushAsk("c1");
       sendAnswer("the release branch");
       settleMotion();
-      // What the server does on a between-steps refusal: restoreAsk re-broadcasts
-      // the same ask, so the client pushes it again against a fresh card.
+      // restoreAsk re-broadcasts the same ask on a between-steps refusal.
       pushAsk("c1");
       expect(textarea()?.value).toBe("the release branch");
     });
@@ -756,16 +684,13 @@ describe("a workflow step's question", () => {
       sendAnswer("the release branch");
       settleMotion();
       collapseSettledRunInput("wf_1", "notify:7", "user");
-      // A second ask carrying that id is a NEW question — a run can park on the
-      // same node again — so seeding it with words answering the old one would put
-      // a stale sentence in front of the reader as though they had typed it.
+      // A second ask with that id is a new question, so the old answer must not seed it.
       pushAsk("c1");
       expect(textarea()?.value).toBe("");
     });
 
     it("is dropped when the run itself ends", () => {
-      // The path the per-ask settle cannot cover: a run's terminal sweep drops
-      // cards without a settle frame per ask, so nothing else frees the words.
+      // A run's terminal sweep drops cards without a per-ask settle frame, so nothing else frees the words.
       pushAsk("c1");
       sendAnswer("the release branch");
       settleMotion();
@@ -786,8 +711,7 @@ describe("a workflow step's question", () => {
     });
 
     it("is held per ASK, so a second parked step cannot evict the first's", () => {
-      // One slot would lose the older answer here, which is why the store is keyed
-      // by ask rather than holding the last send.
+      // Keyed by ask, not one slot, or the older answer is lost here.
       pushAsk("c1", { ask_id: "notify:1" });
       sendAnswer("the release branch");
       settleMotion();
@@ -800,12 +724,8 @@ describe("a workflow step's question", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Deferring to the launching agent. The dock's part is a PASS-THROUGH, and the
-  // one thing it must not do is settle: every other action in `buildCard` splices
-  // its entry, and doing that here would take the card off every surface while the
-  // run is still parked with the question open.
-  // -------------------------------------------------------------------------
+  // Deferring is a pass-through and must not settle: splicing would take the card off every surface while the run is
+  // still parked.
   describe("deferring to the launching agent", () => {
     it("hands the deferral through and leaves the ask OPEN", () => {
       const defer = vi.fn();
@@ -813,18 +733,15 @@ describe("a workflow step's question", () => {
       clickButton("Defer to parent agent");
 
       expect(defer).toHaveBeenCalledTimes(1);
-      // A deferral is not an answer, so the step's session is told nothing.
       expect(submit).not.toHaveBeenCalled();
       settleMotion();
-      // Both halves, because either alone would pass with the card spliced: the DOM
-      // could be a phase's leftover, and the count could be a card nobody can see.
+      // Both halves: the DOM could be a phase's leftover and the count a card nobody can see.
       expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
       expect(runPendingAsks("wf_1").count).toBe(1);
     });
 
     it("offers no deferral for an ask the decision carries none for", () => {
-      // A parentless run has no launching agent to ask, and the dock invents nothing:
-      // it passes the callback through verbatim, so the card is today's card.
+      // A parentless run has no launching agent; the callback passes through verbatim.
       const runHost = mountRunHost(() => "wf_1");
       pushAsk("run:wf_1");
       const labels = [
@@ -835,18 +752,14 @@ describe("a workflow step's question", () => {
   });
 
   it("ignores a re-delivered ask (the connect replay re-offers every parked one)", () => {
-    // The server replays every parked step's question on connect, exactly as it
-    // replays every unanswered permission, so a reconnect must not stack a
-    // second copy. Identity is the ASK ID, not a request number.
+    // The server replays every parked question on connect; identity is the ask id.
     pushAsk("c1");
     pushAsk("c1");
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
   });
 
   it("keys separately from a permission carrying the same number", () => {
-    // A run ask id is arbitrary server-composed text. Pushing a permission with
-    // request id 1 beside an ask id of "1" must leave two decisions, or the
-    // per-kind identity has collapsed into one id space.
+    // An ask id is arbitrary text: permission 1 beside ask "1" must stay two decisions, or the per-kind key collapsed.
     pushPerm("c1", 1);
     pushAsk("c1", { ask_id: "1" });
     expect(liveDepth()?.textContent).toBe("1 more waiting");
@@ -872,8 +785,7 @@ describe("a workflow step's question", () => {
     });
 
     it("labels a question-less ask with the shared fallback", () => {
-      // The card's heading and the run card's alert have to read the same
-      // sentence, so the fallback is one exported constant rather than two.
+      // The card heading and the run card's alert share one exported fallback constant.
       pushAsk("run:wf_1", { question: "" });
       expect(runPendingAsks("wf_1").label).toBe(RUN_INPUT_FALLBACK);
     });
@@ -893,11 +805,8 @@ describe("a workflow step's question", () => {
 
   describe("dropRunDecisions", () => {
     it("clears a run-keyed ask, which the per-chat sweep cannot reach", () => {
-      // A transport gap drops every claim the client can no longer support and lets
-      // the connect replay re-offer what is still open. That sweep walks the chat
-      // store, and `run:<workflowId>` is no chat — so an ask ANSWERED during the
-      // outage kept its card (the settle is not replayed), the click answered 409,
-      // and the dock spliced a question that had already closed.
+      // A transport gap's sweep walks the chat store, and `run:<workflowId>` is no chat, so an ask answered during the outage
+      // kept its card and its click answered 409.
       const submit = pushAsk("run:wf_1");
       dropRunDecisions();
       settleMotion();
@@ -906,9 +815,8 @@ describe("a workflow step's question", () => {
     });
 
     it("leaves an ask keyed to a launching CHAT alone", () => {
-      // That queue is the chat's, so `dropDecisions` already owns it in the same
-      // handler; dropping it here would take it down twice and, keyed on runID
-      // instead of the prefix, would reach every chat-keyed run ask as well.
+      // The chat's queue is `dropDecisions`'; dropping it here too would drop it twice and, keyed on runID, reach every
+      // chat-keyed run ask.
       pushAsk("c1");
       dropRunDecisions();
       expect(runPendingAsks("wf_1").count).toBe(1);
@@ -923,10 +831,9 @@ describe("a workflow step's question", () => {
       settleMotion();
 
       expect(host().classList.contains("hidden")).toBe(true);
-      // Never answered: the step's session already took someone else's words.
       expect(submit).not.toHaveBeenCalled();
       expect(mockToastInfo).toHaveBeenCalledWith(
-        "The workflow step's question was answered in another window.",
+        "c1: The workflow step's question was answered in another window.",
       );
     });
 
@@ -934,25 +841,22 @@ describe("a workflow step's question", () => {
       pushAsk("c1");
       collapseSettledRunInput("wf_1", "notify:7", "unattended");
       expect(mockToastInfo).toHaveBeenCalledWith(
-        "The workflow step's question was answered automatically because nobody was watching.",
+        "c1: The workflow step's question was answered automatically because nobody was watching.",
       );
     });
 
     it("claims NO answer when the question merely stopped being answerable", () => {
-      // The reason a run ask needs a third settler the other three kinds do not: the
-      // step's node can move on and the run can end while it is still parked, and
-      // both retire the card without anybody replying. Saying "answered in another
-      // window" there is a sentence the reader can disprove.
+      // A run ask needs a third settler: the step can move on or the run end while it is parked, with nobody replying, so
+      // "answered in another window" would be false.
       pushAsk("c1");
       collapseSettledRunInput("wf_1", "notify:7", "moot");
       expect(mockToastInfo).toHaveBeenCalledWith(
-        "The workflow step's question is no longer waiting for an answer.",
+        "c1: The workflow step's question is no longer waiting for an answer.",
       );
     });
 
     it("finds a PARENTLESS run's ask, which no chat id names", () => {
-      // The settle event carries only the run, and a parentless ask is keyed to
-      // `run:<id>`, so the lookup has to scan every queue rather than one.
+      // The settle event carries only the run and a parentless ask is keyed `run:<id>`, so every queue is scanned.
       const runHost = mountRunHost(() => "wf_1");
       pushAsk("run:wf_1");
       collapseSettledRunInput("wf_1", "notify:7", "user");
@@ -983,9 +887,7 @@ describe("a workflow step's question", () => {
 });
 
 describe("a decision another surface answered", () => {
-  // Every surface is offered the same ask and only the first answer is
-  // accepted, so on every other surface the card outlived the question: it sat
-  // there looking live, and clicking it achieved nothing.
+  // Only the first answer across surfaces is accepted, so every other surface's card must retire.
 
   function mountRunHost(run: () => string): HTMLElement {
     const el = document.createElement("div");
@@ -1005,16 +907,14 @@ describe("a decision another surface answered", () => {
 
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
-    // Never answered: a second answer on one request id is what this prevents.
     expect(submit).not.toHaveBeenCalled();
     expect(mockToastInfo).toHaveBeenCalledWith(
-      "The permission request was answered in another window.",
+      "c1: The permission request was answered in another window.",
     );
   });
 
   it("says a machine answered when the unattended floor did", () => {
-    // An operator reading a card that collapses under them has to learn that a
-    // deadline decided it, not a colleague.
+    // The reader of a collapsing card must learn a deadline decided it, not a colleague.
     pushDecision({
       kind: "user_input",
       chatID: "c1",
@@ -1025,7 +925,7 @@ describe("a decision another surface answered", () => {
     collapseSettledDecision("c1", "user_input", 3, "unattended");
 
     expect(mockToastInfo).toHaveBeenCalledWith(
-      "The agent's question was answered automatically because nobody was watching.",
+      "c1: The agent's question was answered automatically because nobody was watching.",
     );
   });
 
@@ -1035,8 +935,6 @@ describe("a decision another surface answered", () => {
 
     collapseSettledDecision("c1", "permission", 2, "user");
 
-    // The queued one leaves without a word; the head is untouched and its depth
-    // line drops back to nothing.
     expect(mockToastInfo).not.toHaveBeenCalled();
     expect(liveCards().length).toBe(1);
     expect(liveDepth()?.classList.contains("hidden")).toBe(true);
@@ -1045,9 +943,7 @@ describe("a decision another surface answered", () => {
   });
 
   it("ignores a request it is not holding", () => {
-    // The surface that DID answer arrives here with nothing to remove, because
-    // answering splices the entry before the answer goes out. It must not
-    // announce at itself, and must not disturb an unrelated ask.
+    // The answering surface finds nothing to remove (answering splices first); it must not announce or disturb another ask.
     pushPerm("c1", 1);
     collapseSettledDecision("c1", "permission", 999, "user");
     collapseSettledDecision("c-unknown", "permission", 1, "user");
@@ -1057,9 +953,7 @@ describe("a decision another surface answered", () => {
   });
 
   it("answers the settled ask's run attribution, and nothing for an ask it never held", () => {
-    // The settle frame names the chat the ask travelled on and not the run it was
-    // about, while the banner it raised was tagged by the run; the dock is the one
-    // place on the client that still knows which.
+    // The settle frame names the chat the ask travelled on, the banner was tagged by the run; only the dock knows both.
     pushDecision({
       kind: "permission",
       chatID: "c1",
@@ -1076,9 +970,7 @@ describe("a decision another surface answered", () => {
   });
 
   it("matches on kind as well as request id", () => {
-    // Request ids are per-bridge JSON-RPC ids, so one id can name a permission
-    // and an elicitation. Retiring the wrong card would drop an ask nobody
-    // answered.
+    // Request ids are per-bridge JSON-RPC ids, so one id can name a permission and an elicitation.
     const submit = pushPerm("c1", 1);
     collapseSettledDecision("c1", "elicitation", 1, "user");
 
@@ -1089,8 +981,6 @@ describe("a decision another surface answered", () => {
   });
 
   it("retires the ask on the run tab too, from one event", () => {
-    // One decision, two renderings: the chat's dock and the run tab watching the
-    // same step. One answer has to clear both.
     setSessions([session("c1")]);
     setActive("c1");
     const runHost = mountRunHost(() => "wf_9");
@@ -1113,10 +1003,7 @@ describe("a decision another surface answered", () => {
 });
 
 describe("an answered agent question on the bus", () => {
-  // The dock is the only surface that sees an answer to `_kiro/userInput`, and a
-  // spec page has to carry out the two Run answers of KAS's phase checkpoint. It
-  // announces rather than calling anything: `spec-view.ts` already imports this
-  // module for its own dock host, so the reverse edge would close a cycle.
+  // Announces rather than calls: `spec-view.ts` imports this module, so the reverse edge would close a cycle.
 
   function pushAsk(chatID = "c1", submit = vi.fn()): typeof submit {
     pushDecision({
@@ -1152,8 +1039,7 @@ describe("an answered agent question on the bus", () => {
       order.push("bus");
       seen.push(p);
     });
-    // The composer's dock shows the ACTIVE chat's queue, so a card for a chat
-    // other than c1 needs the active chat moved or nothing renders to click.
+    // The composer's dock shows the active chat's queue.
     setActive("c2");
     const submit = pushAsk(
       "c2",
@@ -1163,8 +1049,7 @@ describe("an answered agent question on the bus", () => {
     clickOption("Run required and optional tasks");
     off();
 
-    // Verbatim: the page matches the option's own title, so a reworded copy here
-    // would silently stop matching.
+    // Verbatim: the spec page matches the option's own title.
     expect(seen).toEqual([{ chatID: "c2", answer: "Run required and optional tasks" }]);
     expect(submit).toHaveBeenCalledWith("answered", "Run required and optional tasks");
     // The agent has the answer before any consumer acts on it.
@@ -1179,16 +1064,13 @@ describe("an answered agent question on the bus", () => {
     clickButton("Skip");
     off();
 
-    // Skip means the agent advances by itself; there is no answer to carry.
     expect(submit).toHaveBeenCalledWith("dismissed", undefined);
     expect(seen).toEqual([]);
   });
 
   it("announces once however many times the answered card is clicked", () => {
-    // The answered card stays on screen for the length of the leaving phase with
-    // its listeners intact, so a second click reaches the callback and `settle`
-    // is what refuses it. The emit sits INSIDE that callback for exactly this:
-    // hoisted out, a second click would carry a second Run all to the agent.
+    // The emit sits inside the callback `settle` guards: an answered card keeps its listeners for the leaving phase, so a
+    // hoisted emit would send a second Run all.
     const seen: unknown[] = [];
     const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
     const submit = pushAsk();
@@ -1209,15 +1091,8 @@ describe("an answered agent question on the bus", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Motion. The three phases, the dispatch order, and the one thing requirement 3
-// is: an advance must never take the tray through zero.
-//
-// Nothing here asserts wall-clock timing. The phase window is a number the dock
-// and `26-dock.css` agree on (pinned at the bottom of this file); what these
-// cases pin is the STATE MACHINE — which phase is entered, what coexists during
-// it, and what is left behind after it.
-// ---------------------------------------------------------------------------
+// Motion: the phases, dispatch order, and that an advance never takes the tray through zero. These pin the state
+// machine, not wall-clock timing; the phase window is pinned at the bottom of this file.
 
 describe("the enter phase", () => {
   it("grows from collapsed with the content in place, then cleans up after itself", () => {
@@ -1227,7 +1102,6 @@ describe("the enter phase", () => {
     // Un-hidden for the whole phase: the box has to be laid out to animate.
     expect(host().classList.contains("hidden")).toBe(false);
     expect(liveCard()).not.toBeNull();
-    // Nothing was on screen, so there is nothing to fade out alongside it.
     expect(outgoings().length).toBe(0);
 
     settleMotion();
@@ -1245,13 +1119,10 @@ describe("the exit phase", () => {
     clickButton("Allow");
 
     expect(host().dataset["dockPhase"]).toBe("leaving");
-    // The card is what fades out, so it has to still be there — and the host
-    // must NOT be `.hidden` yet, or `display: none` would end the animation on
-    // the frame it started.
+    // The host must not be `.hidden` yet, or `display: none` ends the animation on its first frame.
     expect(host().classList.contains("hidden")).toBe(false);
     expect(outgoings().length).toBe(1);
     expect(outgoings()[0]?.querySelector(".dock-card")).not.toBeNull();
-    // No live card: this is the last decision.
     expect(liveCard()).toBeNull();
 
     settleMotion();
@@ -1270,9 +1141,7 @@ describe("the advance phase", () => {
     clickButton("Allow");
 
     expect(host().dataset["dockPhase"]).toBe("advancing");
-    // Exactly one of each, coexisting: the outgoing card is what cross-fades
-    // out while the incoming one fades in, so a frame with neither is
-    // unreachable.
+    // One of each, coexisting, so a frame with neither is unreachable.
     expect(outgoings().length).toBe(1);
     expect(liveCards().length).toBe(1);
     expect(host().classList.contains("hidden")).toBe(false);
@@ -1287,11 +1156,8 @@ describe("the advance phase", () => {
     pushPerm("c1", 2);
     settleMotion();
 
-    // Records are collected raw and analysed at the end rather than judged in
-    // the callback. `oldValue` is the only trustworthy reading: `r.target`'s
-    // className at CALLBACK time is the current one, so an add-and-remove inside
-    // a single synchronous block would look like nothing happened. The sequence
-    // of oldValues plus the final value IS every value the attribute held.
+    // Collected raw: `oldValue` is the only trustworthy reading, since `r.target`'s className is the current one by
+    // callback time.
     const records: MutationRecord[] = [];
     const obs = new MutationObserver((batch) => {
       records.push(...batch);
@@ -1325,11 +1191,8 @@ describe("the advance phase", () => {
     clickButton("Allow");
     expect(liveDepth()?.textContent).toBe("1 more waiting");
 
-    // A queue-depth change for the SAME head takes the update-in-place branch,
-    // which must not rebuild the card (that would discard the user's typing).
-    // The answered card is prepended, so it and its stale depth row come FIRST
-    // in document order: an unscoped lookup writes into the card on its way out
-    // and the live row keeps a number that is no longer true.
+    // A depth change for the same head updates in place (a rebuild discards typing). The answered card is prepended, so an
+    // unscoped lookup would write into the outgoing card.
     collapseSettledDecision("c1", "permission", 3, "user");
 
     expect(liveDepth()?.textContent).toBe("");
@@ -1344,10 +1207,8 @@ describe("the advance phase", () => {
 
     clickButton("Allow");
     expect(first).toHaveBeenCalledTimes(1);
-    // Mid-advance, with the answered card still on screen: the incoming card is
-    // live, not a placeholder.
     clickButton("Reject");
-    expect(second).toHaveBeenCalledWith("reject_once", undefined);
+    expect(second).toHaveBeenCalledWith({ optionID: "reject_once" });
   });
 });
 
@@ -1357,12 +1218,9 @@ describe("the dispatch is never gated on the animation", () => {
     settleMotion();
 
     clickButton("Allow");
-    // No timer advanced, no frame waited: `settle` splices, dispatches and
-    // bumps synchronously inside the click handler, and the render effect that
-    // starts the animation runs after the dispatch has returned.
+    // `settle` splices, dispatches and bumps synchronously in the click handler; the animation's effect runs after.
     expect(submit).toHaveBeenCalledTimes(1);
-    expect(submit).toHaveBeenCalledWith("allow_once", undefined);
-    // And the phase is live at that same moment, so the two genuinely overlap.
+    expect(submit).toHaveBeenCalledWith({ optionID: "allow_once" });
     expect(host().dataset["dockPhase"]).toBe("leaving");
   });
 });
@@ -1372,7 +1230,6 @@ describe("interruption and cleanup", () => {
     const subs = [pushPerm("c1", 1), pushPerm("c1", 2), pushPerm("c1", 3)];
     settleMotion();
 
-    // No timer advance between clicks: every phase interrupts the previous one.
     clickButton("Allow");
     expect(outgoings().length).toBe(1);
     expect(liveCards().length).toBe(1);
@@ -1390,8 +1247,6 @@ describe("interruption and cleanup", () => {
     }
 
     settleMotion();
-    // The final state, with nothing orphaned anywhere in the document and no
-    // inline geometry left pinned on the box.
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
     expect(document.querySelectorAll(".dock-outgoing").length).toBe(0);
@@ -1407,8 +1262,7 @@ describe("interruption and cleanup", () => {
     clickButton("Allow");
     expect(host().dataset["dockPhase"]).toBe("leaving");
 
-    // The exit's own timer must not survive to hide a dock that has something
-    // in it again.
+    // The exit's timer must not hide a dock that has content again.
     pushPerm("c1", 2);
     expect(host().dataset["dockPhase"]).toBe("entering");
     expect(liveCard()).not.toBeNull();
@@ -1440,11 +1294,8 @@ describe("interruption and cleanup", () => {
 
     const allow = liveCard()?.querySelector<HTMLButtonElement>("button");
     allow?.click();
-    // The card is inside `.dock-outgoing` now. A scripted click still dispatches
-    // through `inert`, so the authoritative guard is `settle`'s membership check
-    // — and the incoming decision must not be answered by the outgoing card's
-    // button either, which is why `user-input.ts` stopped keeping its reporter
-    // in module state.
+    // A scripted click dispatches through `inert`, so `settle`'s membership check is the guard; `user-input.ts` keeps no
+    // reporter in module state so the outgoing card cannot answer the incoming decision.
     allow?.click();
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).not.toHaveBeenCalled();
@@ -1458,9 +1309,7 @@ describe("interruption and cleanup", () => {
     expect(dock.dataset["dockPhase"]).toBe("leaving");
 
     _resetForTest();
-    // endPhase ran: the outgoing card is gone and the phase attribute with it,
-    // but the host was deliberately NOT hidden, so a surviving timer would be
-    // visible as a `.hidden` appearing out of nowhere.
+    // The host is deliberately not hidden, so a surviving timer would show as a stray `.hidden`.
     expect(dock.querySelectorAll(".dock-outgoing").length).toBe(0);
     expect(dock.dataset["dockPhase"]).toBeUndefined();
 
@@ -1485,7 +1334,6 @@ describe("motion off: reduced motion and a background tab", () => {
 
     clickButton("Allow");
 
-    // Same tick, no phase, nothing to clean up.
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
     expect(host().dataset["dockPhase"]).toBeUndefined();
@@ -1504,7 +1352,7 @@ describe("motion off: reduced motion and a background tab", () => {
     expect(outgoings().length).toBe(0);
     expect(liveCards().length).toBe(1);
     clickButton("Reject");
-    expect(second).toHaveBeenCalledWith("reject_once", undefined);
+    expect(second).toHaveBeenCalledWith({ optionID: "reject_once" });
   });
 
   it("takes no phase in a background tab, where setTimeout runs but animations do not", () => {
@@ -1521,19 +1369,9 @@ describe("motion off: reduced motion and a background tab", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A LONG QUESTION, which is what put a reader in a card they could not answer:
-// the ask rendered verbatim, the bar grew past the bottom of the view, and the
-// message box, Send and Skip were all clipped there with nothing to scroll.
-//
-// Two halves, and the split matters. The clamp is the refinement — it stops the
-// common case needing a scroll at all — and the CARD'S CEILING is the guarantee,
-// so the geometry block below asserts the ceiling with the question OPEN, which
-// is the state the clamp is not covering.
-// ---------------------------------------------------------------------------
+// A long question once pushed the answer row past the view with nothing to scroll. The clamp is the refinement; the
+// card's ceiling is the guarantee, so geometry is asserted with the question open.
 
-/** One paragraph of the reported ask, repeated to its reported length. Built
- *  rather than pasted so a reader can see what makes it long. */
 const PARAGRAPH =
   "The review found three call sites that disagree about whether a bridgeless chat is an " +
   "error or an ordinary idle state, and each one reports it to the reader differently. " +
@@ -1541,8 +1379,6 @@ const PARAGRAPH =
   "which of the two error surfaces the losing pair stop writing to. ";
 const LONG_QUESTION = `${PARAGRAPH}\n\n`.repeat(7);
 
-/** Enough choices that the options list cannot fit beside a long question, which
- *  is what makes both regions have to give up height rather than one. */
 const OPTIONS = Array.from({ length: 10 }, (_, i) => ({
   title: `Adopt the ${String(i + 1)}th call site's reading`,
   description: "Keeps that surface's wording and rewrites the other two to match it.",
@@ -1612,23 +1448,14 @@ describe("a question longer than the card", () => {
     expect(opener()?.hidden).toBe(true);
   });
 
-  // The observer holds every target strongly and its own zero-size callback may
-  // never arrive, so a card that leaves without a release keeps measuring a
-  // detached element for the life of the page. Nothing here waits: a
-  // ResizeObserver callback cannot run inside a synchronous test body, so the drop
-  // can only come from the explicit release, which is the point of it.
-  //
-  // A DELTA rather than a count, because the count is not this file's alone: every
-  // `mountDecisionDock` leaves its effect live (`_resetForTest` clears the host
-  // list, not the effects), so a bump renders one card per host this file has ever
-  // mounted and each of them clamps.
+  // The observer holds targets strongly and its zero-size callback may never arrive, so only the explicit release drops a
+  // leaving card. A delta, not a count: every mounted dock's effect stays live and clamps.
   it("releases the clamp when the card leaves", () => {
     const before = clampObservationCount();
     longAsk("c1");
     expect(clampObservationCount()).toBeGreaterThan(before);
 
-    // Answered rather than merely clicked: an empty box focuses itself and sends
-    // nothing, so a bare click would settle no decision and release nothing.
+    // An empty box focuses itself and sends nothing, so the answer is typed.
     const box = liveCard()?.querySelector<HTMLTextAreaElement>(".dock-ask-text");
     if (box === null || box === undefined) {
       throw new Error("no answer box");
@@ -1640,11 +1467,7 @@ describe("a question longer than the card", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The bound, measured against the real assembled cascade. A source read cannot
-// answer this: the ceiling is one declaration, the regions that give up their
-// height are another, and whether the answer row survives both is a layout fact.
-// ---------------------------------------------------------------------------
+// Measured against the assembled cascade: whether the answer row survives both bounds is a layout fact.
 
 describe("the card's ceiling keeps the answer row on screen", () => {
   let style: HTMLStyleElement;
@@ -1652,12 +1475,8 @@ describe("the card's ceiling keeps the answer row on screen", () => {
 
   beforeAll(() => {
     style = mountAppCSS();
-    // The tray's height TRANSITION and the card's entry animation are the phase
-    // machine's, asserted by the phase tests above; here they are noise, because a
-    // rect read on the frame the card mounts reads the transition's first frame
-    // (measured: a 26px card inside a 0px tray) rather than the settled box these
-    // cases are about. Later than `mountAppCSS`, so it wins the equal-specificity
-    // tie the way the bundle's own order decides one.
+    // Disarms the phase transition and entry animation, which otherwise make the first rect read a transition frame.
+    // Mounted after `mountAppCSS` so it wins the equal-specificity tie.
     disarm = document.createElement("style");
     disarm.textContent =
       ".decision-dock { transition: none } .decision-dock > .dock-card { animation: none }";
@@ -1669,9 +1488,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     disarm.remove();
   });
 
-  /** A host carrying the real classes at the reported PHONE width, because that
-   *  is what makes the fixture wrap the way it wrapped for the reader — at the
-   *  runner's own 1280px the same question is four lines and overflows nothing. */
+  /** The reported phone width: at 1280px the same question is four lines and overflows nothing. */
   function boundedHost(): HTMLElement {
     const frame = document.createElement("div");
     frame.style.width = "390px";
@@ -1689,8 +1506,6 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     readonly actions: HTMLElement;
   }
 
-  /** The card with its question OPEN, which is the state the clamp is not
-   *  covering and therefore the one the ceiling has to hold on its own. */
   function openCard(): Parts {
     const h = boundedHost();
     longAsk("c1");
@@ -1711,9 +1526,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     return { card, body, actions };
   }
 
-  // The premise, twice over: a fixture shorter than the reported ask, or one the
-  // region's own bound could contain, would let every case below pass with the
-  // bound deleted.
+  // Premise: a shorter fixture, or one the region could contain, would pass with the bound deleted.
   it("the fixture is the reported length and overflows the region", () => {
     expect(LONG_QUESTION.length).toBeGreaterThan(2000);
     const { body } = openCard();
@@ -1725,8 +1538,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     const max = Number.parseFloat(getComputedStyle(card).maxBlockSize);
     expect(Number.isFinite(max)).toBe(true);
     expect(card.getBoundingClientRect().height).toBeLessThanOrEqual(max + 1);
-    // The load-bearing half: the box is SHORTER than the prose it holds, so the
-    // bar cannot grow past the bottom of the view the way it did.
+    // The box is shorter than its prose, so the bar cannot grow past the view.
     expect(card.getBoundingClientRect().height).toBeLessThan(body.scrollHeight);
   });
 
@@ -1737,10 +1549,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     );
   });
 
-  // The AGENT's question card, which is the shape that makes the regions give up
-  // height rather than merely cap it: a long question and a list of options are two
-  // capped regions whose caps together exceed the card's ceiling, so both have to
-  // shrink for the Skip row to stay in the box.
+  // Two capped regions whose caps exceed the card's ceiling, so both must shrink for Skip to stay in the box.
   it("shrinks both regions rather than pushing Skip out", () => {
     const h = boundedHost();
     pushDecision({
@@ -1773,19 +1582,8 @@ describe("the card's ceiling keeps the answer row on screen", () => {
       card.getBoundingClientRect().bottom + 1,
     );
 
-    // The typed answer survives the squeeze. A textarea is a scroll container, so
-    // its own automatic minimum size is 0 and shrinking it to nothing is exactly
-    // what the pressure would do; a hit test is the honest reading of "the reader
-    // can still type here".
-    //
-    // SCROLLED INTO VIEW FIRST, because `elementFromPoint` answers `null` for a
-    // point outside the VIEWPORT and that is not the container this case is about.
-    // The outer `beforeEach` mounts the dock once into `#decision-dock` and
-    // `boundedHost` mounts it again, so two 396px cards stack and this one starts
-    // at y=402 in a 720px viewport — leaving whether the box's centre is on screen
-    // a function of the card's internal rhythm rather than of the clipping the
-    // ceiling does. It passed by 32px until the user-input card's regions stopped
-    // carrying margins and the freed height went to the option list.
+    // A textarea is a scroll container with an automatic minimum size of 0, so a hit test reads "can still type". Scrolled
+    // into view first: `elementFromPoint` answers null outside the viewport, and two cards stack here.
     const box = card.querySelector<HTMLTextAreaElement>(".dock-ask-text");
     if (box === null) {
       throw new Error("no answer box");
@@ -1802,11 +1600,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The stylesheet, read as SOURCE. The test page links no app stylesheet, so
-// there is no cascade for `getComputedStyle` to report on; these assert what is
-// authored. See __test-helpers__/css-rules.ts.
-// ---------------------------------------------------------------------------
+// The stylesheet as source (the page links none). See __test-helpers__/css-rules.ts.
 
 describe("26-dock.css carries the phases the module names", () => {
   const dock = loadCSS("26-dock.css");
@@ -1833,17 +1627,14 @@ describe("26-dock.css carries the phases the module names", () => {
   });
 
   it("does not make the exit a display toggle", () => {
-    // The whole point of the phase attribute: `.hidden` is `display: none
-    // !important` from an unlayered utility rule and beats any component rule
-    // that tries to animate it, which is why the old `.decision-dock.hidden`
-    // collapse never rendered. The class lands after the collapse instead.
+    // `.hidden` is an unlayered `display: none !important` that beats any animated rule, so the phase attribute carries
+    // the motion and the class lands after.
     const leaving = ruleContaining(dock, '.decision-dock[data-dock-phase="leaving"]');
     expect(/display:/.test(leaving.body)).toBe(false);
   });
 
   it("takes the outgoing card out of flow only for the advance", () => {
-    // In flow for the exit, so a shrinking box CLIPS it; out of flow for the
-    // advance, so the box's height is the incoming card's and the two overlap.
+    // In flow for the exit, so a shrinking box clips it; out of flow for the advance, so the two cards overlap.
     expect(/position:/.test(ruleContaining(dock, ".dock-outgoing").body)).toBe(false);
     expect(
       /position: absolute/.test(
@@ -1858,8 +1649,7 @@ describe("26-dock.css carries the phases the module names", () => {
   });
 
   it("is disarmed under reduced motion, which the global duration sweep cannot do", () => {
-    // A zeroed animation RUNS to completion rather than being suppressed, and the
-    // sweep says nothing about the inline pixel height the module pins.
+    // A zeroed animation runs to completion, and the sweep does not reach the module's inline pixel height.
     const a11y = loadCSS("40-a11y.css");
     expect(
       /transition: none/.test(
@@ -1871,14 +1661,8 @@ describe("26-dock.css carries the phases the module names", () => {
     ).toBe(true);
   });
 
-  // The two guards below are why the rule above is spelled with an attribute
-  // selector. Asserting its BODY says `transition: none` proves the declaration
-  // was authored, not that it ever applies — and the first spelling of this rule
-  // was a bare `.decision-dock`, which scores (0,1,0) and loses to every
-  // `.decision-dock[data-dock-phase="…"]` (0,2,0) phase rule in 26-dock.css. It
-  // passed a body assertion while being dead in the only case it exists for: a
-  // live phase. A body-only test cannot see that, so the cascade facts it
-  // depends on are pinned directly.
+  // The disarm must beat a live phase: a bare `.decision-dock` (0,1,0) loses to every phase rule (0,2,0), and a body
+  // assertion cannot see that, so the cascade facts are pinned.
   it("spells the reduced-motion disarm specifically enough to beat a live phase", () => {
     const a11y = loadCSS("40-a11y.css");
     const disarm = ruleContaining(
@@ -1886,26 +1670,19 @@ describe("26-dock.css carries the phases the module names", () => {
       ".decision-dock[data-dock-phase]",
       "prefers-reduced-motion",
     ).selector;
-    // Every phase rule qualifies `.decision-dock` with one attribute, so the
-    // disarm needs one too. A bare class can never win, whatever the file order.
     expect(disarm).toMatch(/\.decision-dock\[data-dock-phase/u);
   });
 
   it("keeps 40-a11y.css after 26-dock.css, which is what breaks the specificity tie", () => {
-    // Both files are unlayered and the disarm ties the phase rules at (0,2,0),
-    // so it wins on source order alone. That makes the MANIFEST's order a
-    // load-bearing part of the reduced-motion behaviour rather than a listing
-    // convention: swapping these two lines silently re-arms the animation.
+    // Both files are unlayered and the disarm ties at (0,2,0), so the MANIFEST order decides; swapping them re-arms motion.
     const order = cssManifest.split("\n").map((l) => l.trim());
     expect(order.indexOf("40-a11y.css")).toBeGreaterThan(order.indexOf("26-dock.css"));
   });
 });
 
 describe("the cleanup timer and the stylesheet agree on every duration", () => {
-  // There is no transitionend or animationend listener in the module: one timer
-  // per host is the sole cleanup authority. The cost of that is a duplicated
-  // number, so a retune of one side without the other must fail here rather than
-  // leave an outgoing card on screen or remove it mid-animation.
+  // One timer per host is the only cleanup (no transitionend listener), so this number is duplicated with the CSS and a
+  // one-sided retune must fail here.
   const dock = loadCSS("26-dock.css");
 
   function tokenMs(name: string): number {
@@ -1946,8 +1723,7 @@ describe("the cleanup timer and the stylesheet agree on every duration", () => {
     expect(DOCK_PHASE_MS.entering).toBeLessThanOrEqual(220);
     expect(DOCK_PHASE_MS.leaving).toBeGreaterThanOrEqual(110);
     expect(DOCK_PHASE_MS.leaving).toBeLessThanOrEqual(140);
-    // The exit is the fast one: the tray has to be gone before the reader
-    // reaches for the box underneath it.
+    // The exit is faster: the tray must be gone before the reader reaches the box beneath it.
     expect(DOCK_PHASE_MS.leaving).toBeLessThan(DOCK_PHASE_MS.entering);
   });
 });

@@ -13,12 +13,10 @@ import (
 	"github.com/cplieger/marotte/internal/procout"
 )
 
-// countingReader is an identity read that records how often it ran and answers
-// whatever the test set. A function seam rather than a subprocess: these tests
-// are about the cache's staleness and coalescing rules, not about kiro-cli.
+// countingReader is an identity read that counts its runs and answers what the test set, for the cache's rules
+// without a subprocess.
 type countingReader struct {
-	// block, when non-nil, holds a read open so a test can observe the cache
-	// mid-refresh.
+	// block, when non-nil, holds a read open so a test can observe the cache mid-refresh.
 	block chan struct{}
 	resp  WhoamiResponse
 	mu    sync.Mutex
@@ -54,9 +52,7 @@ func signedIn(email string) WhoamiResponse {
 	return WhoamiResponse{State: WhoamiSignedIn, Email: email}
 }
 
-// waitForCalls polls until the reader has run at least n times, failing with a
-// diagnostic at the deadline. A poll rather than a sleep: the refresh runs in a
-// goroutine the cache owns, so there is no handle to join.
+// waitForCalls polls until the reader has run n times, failing at the deadline; the refresh goroutine has no handle.
 func waitForCalls(t *testing.T, r *countingReader, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -74,8 +70,7 @@ func TestIdentityCache_ColdSnapshotIsUnavailable(t *testing.T) {
 
 	got := c.snapshot()
 
-	// The seed, not a sign-out: nobody has asked kiro-cli yet, and saying
-	// signed_out here is the defect the third arm exists to remove.
+	// The seed, not a sign-out: nobody has asked kiro-cli yet.
 	if got.State != WhoamiUnavailable {
 		t.Errorf("State = %q, want %q before the first read lands", got.State, WhoamiUnavailable)
 	}
@@ -119,8 +114,7 @@ func TestIdentityCache_StaleSnapshotRefreshesBehindTheAnswer(t *testing.T) {
 	r.setResp(signedIn("second@example.com"))
 	c.invalidate()
 
-	// The stale answer comes back immediately: the reader must never wait on a
-	// kiro-cli fork.
+	// The stale answer returns immediately; a reader never waits on a fork.
 	if got := c.snapshot(); got.Email != "first@example.com" {
 		t.Errorf("Email = %q, want the held first@example.com while the refresh runs", got.Email)
 	}
@@ -131,17 +125,14 @@ func TestIdentityCache_StaleSnapshotRefreshesBehindTheAnswer(t *testing.T) {
 }
 
 func TestIdentityCache_InvalidateKeepsTheHeldIdentity(t *testing.T) {
-	// The login window's rule: every poll must revalidate, and every poll must
-	// still get the last known answer rather than an `unavailable` the UI would
-	// render as a banner over a working app.
+	// The login window: every poll revalidates and still gets the last answer, not an unavailable banner.
 	r := &countingReader{resp: signedIn("u@example.com")}
 	c := newIdentityCache(r.read, time.Hour)
 	c.refresh()
 
 	c.invalidate()
 
-	// snapshot returns the held value under the same lock that launches the
-	// refresh, so this answer is the pre-refresh one by construction.
+	// Held value and refresh launch share a lock, so this is the pre-refresh answer.
 	if got := c.snapshot(); got.State != WhoamiSignedIn || got.Email != "u@example.com" {
 		t.Errorf("snapshot after invalidate = %+v, want the held signed_in identity", got)
 	}
@@ -151,10 +142,7 @@ func TestIdentityCache_PublishOverwritesWithoutReading(t *testing.T) {
 	r := &countingReader{resp: signedIn("u@example.com")}
 	c := newIdentityCache(r.read, time.Hour)
 	c.refresh()
-	// Stale first, so the freshness half of the assertion below can only be
-	// satisfied by the publish. The reader would answer signed_in again, which
-	// is what makes a revalidation visible in the state rather than only in a
-	// call count.
+	// Stale first, so only the publish can satisfy freshness below; the reader would answer signed_in again.
 	c.invalidate()
 
 	signedOut := signedOutIdentity()
@@ -163,10 +151,8 @@ func TestIdentityCache_PublishOverwritesWithoutReading(t *testing.T) {
 	if got := c.snapshot(); got.State != WhoamiSignedOut {
 		t.Fatalf("State = %q, want %q", got.State, WhoamiSignedOut)
 	}
-	// The publish must leave the entry FRESH, or the logout answer is
-	// immediately revalidated back to signed_in by a fork that has nothing new
-	// to learn. Polled rather than read once: a stale entry's refresh runs in a
-	// goroutine, so the wrong answer arrives shortly AFTER the read above.
+	// The publish must leave the entry fresh, or a refresh reverts the logout. Polled: the wrong answer would arrive
+	// shortly after.
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if got := c.snapshot(); got.State != WhoamiSignedOut {
@@ -181,8 +167,7 @@ func TestIdentityCache_PublishOverwritesWithoutReading(t *testing.T) {
 }
 
 func TestIdentityCache_ConcurrentSnapshotsRunOneRead(t *testing.T) {
-	// The endpoint fires on every page load and every SSE reconnect, so a burst
-	// of cold readers must not fork a kiro-cli each.
+	// A burst of cold readers (page loads, SSE reconnects) must not fork a kiro-cli each.
 	r := &countingReader{resp: signedIn("u@example.com"), block: make(chan struct{})}
 	c := newIdentityCache(r.read, time.Hour)
 
@@ -224,9 +209,7 @@ func TestRun_PrimesThenStops(t *testing.T) {
 }
 
 func TestUnavailableIdentity_SanitizesTheReason(t *testing.T) {
-	// Every reason is a constant today. The sanitize sits in the constructor so
-	// a future reason built from upstream bytes cannot skip it, and this is what
-	// pins that.
+	// The sanitize sits in the constructor so a future reason from upstream bytes cannot skip it.
 	got := unavailableIdentity("bad\u202ereason\nwith\rcontrols")
 
 	for _, bad := range []string{"\u202e", "\n", "\r"} {
@@ -239,33 +222,25 @@ func TestUnavailableIdentity_SanitizesTheReason(t *testing.T) {
 	}
 }
 
-// TestIdentityCache_PublishWinsAgainstAnInFlightRead is the ordering that made
-// a logout look like it never happened.
-//
-// The TTL is 60 s and a stale read kicks a refresh, so a page load one second
-// before a logout is enough to have a kiro-cli fork running. Without the
-// generation fence that fork's pre-logout `signed_in` is written on top of the
-// published `signed_out`, and the sidebar keeps the old identity until the next
-// tick — up to a minute of showing a signed-out user as signed in.
+// TestIdentityCache_PublishWinsAgainstAnInFlightRead pins that a page load one second before a logout can leave a fork
+// running; without the generation fence its signed_in overwrites signed_out for up to a minute.
 func TestIdentityCache_PublishWinsAgainstAnInFlightRead(t *testing.T) {
 	block := make(chan struct{})
 	r := &countingReader{resp: signedIn("u@example.com"), block: block}
 	c := newIdentityCache(r.read, time.Hour)
 
-	// A page load kicks a refresh; the reader is held open inside it, which is
-	// the window the logout lands in.
+	// The page load's refresh is held open: the window the logout lands in.
 	c.snapshot()
 	waitForCalls(t, r, 1)
 
-	// The logout: marotte knows the outcome, so it publishes rather than forking.
+	// marotte knows the logout outcome, so it publishes.
 	signedOut := signedOutIdentity()
 	c.publish(&signedOut)
 	if got := c.snapshot(); got.State != WhoamiSignedOut {
 		t.Fatalf("State right after publish = %q, want %q", got.State, WhoamiSignedOut)
 	}
 
-	// Now let the pre-logout read finish. It describes the world BEFORE the
-	// publish, so it must be discarded.
+	// The pre-logout read finishes and must be discarded.
 	close(block)
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -277,10 +252,8 @@ func TestIdentityCache_PublishWinsAgainstAnInFlightRead(t *testing.T) {
 	}
 }
 
-// TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded: the fence
-// must drop the VALUE, not the claim. A rebuild that returned early without
-// releasing busy would leave the cache unable to refresh for the rest of the
-// process's life.
+// TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded pins that the fence drops the value, not the claim, or
+// the cache never refreshes again.
 func TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded(t *testing.T) {
 	block := make(chan struct{})
 	r := &countingReader{resp: signedIn("first@example.com"), block: block}
@@ -293,8 +266,6 @@ func TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded(t *testing
 	close(block)
 	waitForIdle(t, c)
 
-	// The discarded rebuild has to release the claim, or this second read never
-	// forks again.
 	r.mu.Lock()
 	r.block = nil
 	r.resp = signedIn("second@example.com")
@@ -314,10 +285,7 @@ func TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded(t *testing
 	}
 }
 
-// waitForIdle polls until no read is in flight, failing with a diagnostic at the
-// deadline. A poll rather than a join: the refresh goroutine is the cache's own
-// and there is no handle to wait on — which is the same reason the busy flag
-// exists.
+// waitForIdle polls until no read is in flight, failing at the deadline; the refresh goroutine has no handle.
 func waitForIdle(t *testing.T, c *identityCache) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -335,15 +303,9 @@ func waitForIdle(t *testing.T, c *identityCache) {
 	}
 }
 
-// TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload pins which of the
-// two inputs decides the arm. kiro-cli reports "nobody is signed in" as a
-// null-account payload on stdout AND a non-zero exit, so a read that classifies by
-// the exit status first answers `unavailable` for the state every fresh container
-// is in, and the signed_out arm is unreachable for the one case it exists for.
-//
-// The other direction — an exit status with nothing readable behind it — is
-// TestReadIdentity_CLIFailureIsUnavailable's, which is also what fails if the
-// error stops classifying at all.
+// TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload pins that kiro-cli signals signed out with a null-account
+// payload and a non-zero exit, so the payload must decide. The reverse is
+// TestReadIdentity_CLIFailureIsUnavailable's.
 func TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload(t *testing.T) {
 	skipIfNotUnix(t)
 	h := NewHandler(fixedPath(writeFakeCLI(t, `{"account":null}`, 1)))
@@ -359,11 +321,8 @@ func TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload(t *testing.T) 
 	}
 }
 
-// The fs.ErrNotExist arm answers for the CLI ITSELF, so an ENOENT naming any
-// other file falls through to the generic failure. os/exec opens os.DevNull for a
-// nil Cmd.Stdin, so a container whose /dev/null is gone fails Start with an
-// ENOENT naming /dev/null while the binary is present and executing — and the
-// wide arm reported "kiro-cli is not installed" for exactly that.
+// Only an ENOENT naming the CLI is the missing-CLI arm; a missing /dev/null (opened for a nil Stdin) once reported
+// kiro-cli as not installed.
 func TestIdentityReadFailure_ENOENTNamingAnotherFileIsNotAMissingCLI(t *testing.T) {
 	h := NewHandler(fixedPath("/versions/2.21.4/kiro-cli"))
 	err := &fs.PathError{Op: "open", Path: os.DevNull, Err: fs.ErrNotExist}

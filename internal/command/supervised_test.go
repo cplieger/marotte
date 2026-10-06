@@ -1,11 +1,7 @@
 package command
 
-// KAS's `autopilot` config option is a SELECT over the strings "on" and "off".
-// This command sent a JSON boolean, which satisfies neither arm of the request
-// union without a `type:"boolean"` discriminator, so every live toggle was
-// refused with -32602 and the session stayed in autopilot — in BOTH directions.
-// The only signal was one log line, and nothing asserted the value's shape, so
-// what is pinned here is the byte that goes on the wire.
+// KAS's `autopilot` option is a select over "on" and "off"; a JSON boolean is refused, so these
+// tests pin the string.
 
 import (
 	"encoding/json"
@@ -35,8 +31,6 @@ func TestCmdSetSupervisedMode_SendsAutopilotAsAString(t *testing.T) {
 		enabled   bool
 		wantValue string
 	}{
-		// Supervised on means autopilot off: the option names the behaviour
-		// being turned off, not the switch the user flipped.
 		{name: "enabling supervised turns autopilot off", enabled: true, wantValue: marotte.ConfigValueAutopilotOff},
 		{name: "disabling supervised turns autopilot on", enabled: false, wantValue: marotte.ConfigValueAutopilotOn},
 	}

@@ -8,15 +8,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestACPArgsReachChatBridges pins the delivery path: WithACPArgs → the
-// coordinator → StartOpts.ExtraArgs on a chat spawn.
+// TestACPArgsReachChatBridges pins WithACPArgs → coordinator → StartOpts.ExtraArgs on a chat spawn.
 func TestACPArgsReachChatBridges(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	want := []string{"-v"}
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -31,20 +29,13 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	}
 }
 
-// TestACPArgsNeverReachTheUtilityBridge is the load-bearing half.
-//
-// The utility bridge generates chat titles and fetches the mode/model catalog.
-// An operator `--effort max` there would spend real credits on a two-word
-// summary, and it shares the SAME factory as chat bridges — so the exclusion
-// cannot come from the factory and has to be a per-spawn decision. That makes it
-// exactly the kind of thing a later refactor would "simplify" by threading the
-// args through once.
+// TestACPArgsNeverReachTheUtilityBridge pins the per-spawn exclusion: the utility bridge
+// shares the chat factory, and an operator `--effort max` there spends credits on titles.
 func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 
 	u := h.utility.get()
 	if _, err := u.session.acquire(t.Context()); err != nil {
@@ -61,14 +52,12 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	}
 }
 
-// TestACPArgsUnsetIsEmpty covers the default: no env var, no args, and nothing
-// appended to any spawn.
+// TestACPArgsUnsetIsEmpty covers the default: no env var, nothing appended to any spawn.
 func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {

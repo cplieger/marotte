@@ -1,10 +1,8 @@
 package translate
 
-// v3 (KAS) focus updates: the agent's self-declared title, description and status,
-// carried as a session_info_update with _meta.kiro.kind == "focus_update". THREE
-// writers feed the channel and no field says which one spoke — the agent's tool, KAS's
-// first-prompt derivation, and KAS's LLM title — so the filters below go on shape, and
-// they run BEFORE the write because adoption is a one-way latch.
+// v3 focus updates (session_info_update, kind "focus_update"). THREE writers share the
+// channel with no field naming the speaker (the agent's tool, KAS's first-prompt derivation,
+// KAS's LLM title), so the filters go on shape, BEFORE the write: adoption is a one-way latch.
 
 import (
 	"context"
@@ -26,23 +24,16 @@ type focusUpdate struct {
 	Status      string `json:"status"`
 }
 
-// handleFocusUpdate applies one focus_update: adopt the title onto the chat record
-// unless a rule refuses it, and broadcast status/description as an ephemeral
-// chat_status event. Parent-only by construction — HandleSessionInfoUpdate drops
-// subagent frames before dispatching here.
-//
-// Two filters at two depths, because they take different inputs: the door rule is
-// about the string alone and runs here, while the derivation filter needs the chat's
-// own prompts and so runs in applyFocusTitle against the log.
+// handleFocusUpdate adopts the title onto the chat record unless a rule refuses it, and
+// broadcasts status/description as an ephemeral chat_status. Parent-only. The door rule runs
+// here; the derivation filter needs the chat's prompts and runs in applyFocusTitle.
 func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate) {
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)
 	}
 	status := strings.TrimSpace(f.Status)
-	// displayText alone, without the title's sanitize.Output wrapper: display_text.go
-	// owns why a single-line surface replaces a hidden rune rather than deleting it.
-	// It runs BEFORE the both-empty return because a control-only description empties
-	// here, and chatStatusCache.Merge reads a both-empty payload as a clear.
+	// displayText alone (see display_text.go), and BEFORE the both-empty return: a control-only
+	// description empties here, and chatStatusCache.Merge reads both-empty as a clear.
 	desc := strings.TrimSpace(displayText(f.Description))
 	if status == "" && desc == "" {
 		return
@@ -53,17 +44,14 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatI
 	}))
 }
 
-// adoptOrRefuseTitle writes a sanitized focus title to the chat, or says why not.
-// Refusing leaves whatever name the chat has, which is always the better answer: the
-// local first-prompt label is a real name, and the default placeholder at least still
-// accepts the real title when it arrives.
+// adoptOrRefuseTitle writes a sanitized focus title to the chat, or says why not; refusing
+// leaves the existing name, always the better answer.
 func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID marotte.ChatID, title string) {
 	reason := TitleRefusal(title)
 	switch reason {
 	case "":
 		t.applyFocusTitle(ctx, chatID, title)
-	// A truncated title is KAS's own derivation, expected traffic at 164 of 494
-	// adoptions in 30 days, so it must not bury the shapes that mean a rule misfired.
+	// A truncated title is KAS's own derivation (expected traffic), so it logs quieter.
 	case refusalTruncated:
 		slog.Debug("focus title refused", "chat_id", chatID, "title", title, "reason", reason)
 	default:
@@ -88,7 +76,8 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID,
 	}
 	renamed := false
 	_, err = t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists || c.Name == title {
+		// A user-named chat takes no lower rung (this also swallows KAS's echo of the rename).
+		if !exists || c.NameSetByUser || c.Name == title {
 			return false
 		}
 		c.Name = title
@@ -107,14 +96,9 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID,
 	}
 }
 
-// titleIsPromptDerived reports whether title is KAS's first-prompt derivation rather
-// than an agent-authored name, which is what implements rung 1 beating rung 2.
-//
-// The comparison is against kasDerivedTitle rather than the raw message because SV
-// normalizes five ways before truncating: measured on the live volume, two of two
-// adopted "agent focus titles" were derivations a byte-exact filter passed, both
-// differing only by the prompt's lowercase first letter. A title SV had to truncate
-// never reaches here, since the door refuses every "..."-suffixed title.
+// titleIsPromptDerived reports whether title is KAS's first-prompt derivation rather than an
+// agent-authored name (rung 1 beating rung 2). It compares against kasDerivedTitle because SV
+// normalizes five ways before truncating; a byte-exact filter missed real derivations.
 func titleIsPromptDerived(title string, prompts []string) bool {
 	for _, text := range prompts {
 		if kasDerivedTitle(text) == title {
@@ -141,14 +125,10 @@ var kasFillerPhrases = []string{
 // kasMaxFillerStrips is KAS's ltc: dtc strips at most six leading fillers.
 const kasMaxFillerStrips = 6
 
-// kasDerivedTitle returns the title KAS's SV would derive from text, read off the
-// pinned bundle (2.21.2-f6262ea4…, `function SV(e)`) — where to re-read it after a
-// kiro-cli bump. Its five steps are the five named helpers below.
-//
-// It stops short of SV's own 80-rune truncation: the door refuses every truncated
-// title, so no truncated derivation reaches the comparison this feeds. Every other
-// case-mapping or length divergence from SV is a MISS rather than an over-filter — it
-// can only adopt KAS's derivation where marotte's own label would have gone.
+// kasDerivedTitle returns the title KAS's SV would derive from text, read off the pinned
+// bundle (2.21.2-f6262ea4…, `function SV(e)`); re-read it after a kiro-cli bump. It skips SV's
+// 80-rune truncation (the door refuses truncated titles); any divergence is a MISS, never an
+// over-filter.
 func kasDerivedTitle(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -157,8 +137,7 @@ func kasDerivedTitle(text string) string {
 	line := firstNonBlankLine(trimmed)
 	stripped := trimLeadingMarkup(line)
 	out := stripFillerPhrases(stripped)
-	// SV's own fallbacks: a prompt that is nothing BUT fillers keeps the
-	// pre-strip text rather than deriving an empty title.
+	// SV's fallback: a prompt of nothing but fillers keeps the pre-strip text.
 	if out == "" {
 		if stripped != "" {
 			out = stripped

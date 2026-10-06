@@ -1,7 +1,6 @@
-// Tests for actions/settings.ts: saveSteering, logout, setKiroSetting, patchAppSettings.
-
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import type * as SettingsActions from "./settings.js";
 
 vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
@@ -14,9 +13,7 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
-  // read in the projection. Nothing here lists tabs; the name has to exist for
-  // real-ESM linking.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
 import * as toast from "../toast.js";
@@ -42,9 +39,7 @@ describe("saveSteering", () => {
     expect(new Headers(opts.headers as HeadersInit).get("If-Match")).toBe('W/"12-34"');
   });
 
-  // A server that answers no ETag gets no If-Match, because on a server that
-  // REQUIRES one an invented value is a permanent 428 against a save that would
-  // otherwise work.
+  // On a server that REQUIRES If-Match, an invented value is a permanent 428.
   it("sends no If-Match when the read answered no validator", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const { saveSteering } = await import("./settings.js");
@@ -66,9 +61,7 @@ describe("saveSteering", () => {
     );
   });
 
-  // The status is what `settings-steering.ts` branches on: 409 means the file moved
-  // under the box, 428 means this client sent no validator. Both have to survive the
-  // action's normalization to reach it.
+  // `settings-steering.ts` branches on the status: 409 the file moved, 428 no validator sent.
   it("carries the refusal's HTTP status on the normalized error", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ error: "custom.md changed" }), { status: 409 }),
@@ -79,8 +72,7 @@ describe("saveSteering", () => {
     expect(out.status === "error" ? out.error.status : 0).toBe(409);
   });
 
-  // The validator the write produced rides the BODY, because `decode` cannot reach
-  // a response header — a header-only answer forced a GET between keystrokes.
+  // The validator rides the BODY: `decode` cannot reach a response header.
   it("answers the validator the 200 body carried", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ ok: true, etag: 'W/"9-9"' }), { status: 200 }),
@@ -89,9 +81,7 @@ describe("saveSteering", () => {
     expect(await saveSteering.dispatch({ content: "x", etag: 'W/"1-1"' })).toBe('W/"9-9"');
   });
 
-  // "" is the server saying it could not stat the file it just wrote, and an
-  // absent or non-string field is a server older than that contract. Both answer
-  // "no token", which `settings-steering.ts` reads as "keep the one you had".
+  // "" (the server could not stat its write) and an absent field both answer "no token".
   it("answers no token when the body carries none", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const { saveSteering } = await import("./settings.js");
@@ -99,18 +89,9 @@ describe("saveSteering", () => {
   });
 });
 
-// The action's argument became `{ render, prev }` — an INJECTED render callback plus
-// the whole VERDICT it replaces — where it used to be two DOM elements it wrote
-// directly. Two reasons, and both are asserted below. `renderIdentity` is the one
-// writer of the auth row AND its separator now (two elements, one fact), so an
-// action writing `stAuth.textContent` itself would put "not signed in" into a row
-// that stays hidden; and carrying the VERDICT rather than the address is what makes
-// all THREE arms restorable, since the address cannot tell `signed_out` from
-// `unavailable` — both render empty.
-//
-// Asserted through a `vi.fn()` render callback rather than two elements: the
-// callback IS the contract, and reading the DOM would be testing `settings.ts`'s
-// writer from inside this module's tests.
+// The argument is `{ render, prev }`: `renderIdentity` is the one writer of the auth row and its
+// separator, and carrying the whole VERDICT (not the address) makes all three arms restorable.
+// Asserted through a `vi.fn()` render callback, which IS the contract.
 describe("logout", () => {
   it("POSTs to /api/logout and renders the signed-out verdict optimistically", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
@@ -139,12 +120,8 @@ describe("logout", () => {
   });
 
   it("restores an UNAVAILABLE verdict rather than signed_out", async () => {
-    // THE ARM THE ADDRESS-CARRYING OP COULD NOT EXPRESS, and the reason the whole
-    // verdict travels. `unavailable` and `signed_out` both render an EMPTY address,
-    // so an op holding `emailEl.textContent` restored `""` for either and the old
-    // rollback then guessed `"not signed in"` from it — writing that where "unknown"
-    // had been. A refused logout from an unavailable verdict must restore the
-    // unavailable verdict.
+    // `unavailable` and `signed_out` both render an EMPTY address, so only the carried verdict can
+    // restore `unavailable` after a refused logout.
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
     const render = vi.fn();
     const prev = { state: "unavailable", reason: "whoami unreachable" } as const;
@@ -167,7 +144,6 @@ describe("setKiroSetting", () => {
     const { setKiroSetting } = await import("./settings.js");
     await setKiroSetting.dispatch({ key: "debug", value: "true", input });
 
-    // Rollback should restore previous state (opposite of current)
     expect(input.checked).toBe(false);
   });
 
@@ -200,7 +176,128 @@ describe("patchAppSettings", () => {
     const { patchAppSettings } = await import("./settings.js");
     await patchAppSettings.dispatch({ body: { debug_logs: true }, inputs: [input] });
 
-    // Rollback: prevChecked is !current at optimistic time = false
     expect(input.checked).toBe(false);
+  });
+});
+
+// Every switch the lock map can pin, saved through the action that saves it in
+// production, with a real governance module painting the locks.
+describe("a lockable switch crossing a lock", () => {
+  type Actions = typeof SettingsActions;
+  const save = {
+    kiro: (a: Actions, key: string, input: HTMLInputElement) =>
+      a.setKiroSetting.dispatch({ key, value: String(input.checked), input }),
+    marotte: (a: Actions, key: string, input: HTMLInputElement) =>
+      a.patchAppSettings.dispatch({ body: { [key]: input.checked }, inputs: [input] }),
+  };
+  const lockable = [
+    ["flag-telemetry", "telemetry.enabled", save.kiro],
+    ["flag-content-collection", "content_collection_enabled", save.marotte],
+    ["flag-workflows", "workflows_enabled", save.marotte],
+    ["flag-inline-agents", "inline_agents_enabled", save.marotte],
+  ] as const;
+
+  const govState = (lockKey?: string) => ({
+    known: true,
+    is_enterprise: true,
+    features: {
+      mcp_enabled: true,
+      web_tools_enabled: true,
+      usage_analytics: false,
+      content_collection: false,
+      prompt_logging: false,
+      code_reference_tracker: false,
+      autonomous_agents: true,
+    },
+    ...(lockKey === undefined
+      ? {}
+      : { locks: { [lockKey]: { source: "organization", reason: "Set by org", value: true } } }),
+  });
+
+  let initialized = false;
+  async function setup(inputID: string) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div class="section-option" id="lock-row"><label class="toggle">` +
+        `<input type="checkbox" id="${inputID}"></label>` +
+        `<div><span class="section-option-label">Switch</span></div></div>`,
+    );
+    const gov = await import("../governance.js");
+    const bus = await import("../bus.js");
+    if (!initialized) {
+      const api = await import("../api-client.js");
+      vi.mocked(api.apiGetTyped).mockResolvedValueOnce(null);
+      gov.initGovernance();
+      initialized = true;
+    }
+    const frame = (lockKey?: string) => {
+      bus.dispatch({ type: "governance_state", chat_id: "", payload: govState(lockKey) });
+    };
+    const input = document.getElementById(inputID) as HTMLInputElement;
+    return { input, frame, actions: await import("./settings.js") };
+  }
+
+  afterEach(() => {
+    document.getElementById("lock-row")?.remove();
+  });
+
+  function heldResponse(): (r: Response) => void {
+    let answer: (r: Response) => void = () => undefined;
+    mockFetch.mockReturnValueOnce(
+      new Promise<Response>((r) => {
+        answer = r;
+      }),
+    );
+    return (r) => {
+      answer(r);
+    };
+  }
+
+  describe.each(lockable)("%s", (inputID, key, saveSwitch) => {
+    it("shows the lock while a refused save crosses it, then the stored value", async () => {
+      const { input, frame, actions } = await setup(inputID);
+      const answer = heldResponse();
+      input.checked = true;
+      const done = saveSwitch(actions, key, input);
+      await vi.waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+      frame(key);
+      answer(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+      await done;
+      expect(input.checked).toBe(true);
+      expect(input.disabled).toBe(true);
+      frame();
+      expect(input.checked).toBe(false);
+      expect(input.disabled).toBe(false);
+    });
+
+    it("keeps a write made after the unlock across the next lock and unlock", async () => {
+      const { input, frame, actions } = await setup(inputID);
+      frame(key);
+      frame();
+      expect(input.checked).toBe(false);
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      input.checked = true;
+      await saveSwitch(actions, key, input);
+      expect(input.checked).toBe(true);
+      frame(key);
+      frame();
+      expect(input.checked).toBe(true);
+    });
+
+    it("restores the value a load wrote under the lock when it lifts", async () => {
+      const { input, frame } = await setup(inputID);
+      const gov = await import("../governance.js");
+      input.checked = true;
+      frame(key);
+      gov.writeSwitch(input, false);
+      gov.paintSettingLocks();
+      expect(input.checked).toBe(true);
+      frame();
+      expect(input.checked).toBe(false);
+      gov.writeSwitch(input, true);
+      expect(input.checked).toBe(true);
+    });
   });
 });

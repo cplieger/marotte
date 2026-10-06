@@ -1,11 +1,9 @@
-// Command bundle builds marotte's browser client: it bundles the TypeScript
-// entrypoints with esbuild (a Go library — no Node, no npm) and assembles the CSS
-// bundle from the manifest files. tsc remains the TYPE gate; esbuild does not
-// typecheck. Compression is the server's job; the bundler emits plain artifacts.
+// Command bundle builds marotte's browser client: esbuild (a Go library, no Node)
+// bundles the TypeScript entrypoints and the CSS manifests are concatenated. tsc stays
+// the type gate; esbuild does not typecheck.
 //
-// Usage: go run ./cmd/bundle (from the repo root; also run by the Dockerfile builder
-// stage). Inputs are static-src/ plus static-src/node_modules/; outputs land in
-// static/, which go:embed ships.
+// Usage: go run ./cmd/bundle from the repo root. Reads static-src/ and
+// static-src/node_modules/, writes static/, which go:embed ships.
 package main
 
 import (
@@ -67,22 +65,19 @@ func run() error {
 	return writePrecacheManifest()
 }
 
-// precacheManifest is what static/precache.json holds: the cacheable asset list and a
-// stamp over their names. Field names are the wire contract with static-src/sw.ts.
-// FETCHED rather than inlined into the worker: an inlined list would reach a client
-// only through a worker update, and this worker never calls skipWaiting.
+// precacheManifest is static/precache.json. Field names are the wire contract with
+// static-src/sw.ts. Fetched rather than inlined: this worker never calls skipWaiting, so
+// an inlined list would reach a client only through a worker update.
 type precacheManifest struct {
 	Stamp  string   `json:"stamp"`
 	Assets []string `json:"assets"`
 }
 
-// precacheName is the manifest's own path, relative to outDir. Three things must agree
-// on it: this writer, cleanOutputs (via bundleOwns), and the worker's fetch.
+// precacheName is relative to outDir. This writer, bundleOwns and the worker's fetch must agree on it.
 const precacheName = "precache.json"
 
-// writePrecacheManifest enumerates the shell's cacheable assets and stamps them. The
-// stamp is over the NAMES, which is honest because every entry carries esbuild's
-// content hash, so bytes that move move a name. Sourcemaps are excluded.
+// writePrecacheManifest stamps the cacheable asset NAMES: every entry carries esbuild's
+// content hash, so changed bytes always change a name.
 func writePrecacheManifest() error {
 	assets, err := precacheAssets()
 	if err != nil {
@@ -103,18 +98,15 @@ func writePrecacheManifest() error {
 	return os.WriteFile(filepath.Join(outDir, precacheName), doc, 0o600)
 }
 
-// precacheAssets lists the content-hashed chunks, sorted, as URL paths relative to the
-// site root. Eligibility is by NAME: cacheable without revalidation exactly when the
-// bytes cannot change under the name, which excludes app.js and style.css. sw.js is
-// out because a worker that caches itself makes a broken worker permanent.
+// precacheAssets lists the content-hashed chunks, sorted, as site-root URL paths. app.js
+// and style.css change bytes under a stable name, so they are excluded; sw.js too, because
+// a worker that caches itself makes a broken worker permanent.
 func precacheAssets() ([]string, error) {
-	// Non-nil even when empty: a nil slice marshals to JSON `null`, and
-	// parseManifest reads that as an unusable document rather than as no assets.
+	// Non-nil: a nil slice marshals to `null`, which parseManifest rejects.
 	assets := []string{}
 	entries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			// No chunks at all is a valid document, and the worker treats it as one.
 			return assets, nil
 		}
 		return nil, fmt.Errorf("precache chunks: %w", err)
@@ -129,14 +121,10 @@ func precacheAssets() ([]string, error) {
 	return assets, nil
 }
 
-// cleanOutputs removes previous build artifacts from static/ so stale modules never
-// linger into the embed; committed assets (index.html, manifest.json, icons) are
-// untouched. Ownership is by EXTENSION AT ANY DEPTH, matching .gitignore's
-// `static/**/*.js`: an enumerated directory list let `static/exec-view/` survive every
-// rebuild and reach the embedded tree. `chunks` is removed whole, because it may hold
-// entries no extension rule owns. `vendor` is NOT: the bundler writes nothing there,
-// and the Dockerfile fetches the terminal's web fonts into it BEFORE running the
-// bundle, so sweeping it shipped every image without its fonts.
+// cleanOutputs removes build artifacts from static/; committed assets are untouched.
+// Ownership is by extension at any depth, matching .gitignore's `static/**/*.js`.
+// `chunks` is removed whole. `vendor` is kept: the Dockerfile fetches the web fonts
+// into it BEFORE the bundle runs.
 func cleanOutputs() error {
 	if err := os.RemoveAll(filepath.Join(outDir, "chunks")); err != nil {
 		return err
@@ -144,12 +132,11 @@ func cleanOutputs() error {
 	if err := removeBundleFiles(outDir); err != nil {
 		return err
 	}
-	// A directory left holding only bundle output is an empty shell that still embeds.
+	// A directory left holding only bundle output still embeds.
 	return pruneEmptyDirs(outDir)
 }
 
-// bundleOwns reports whether the bundler owns this file name, so removing it can never
-// take a hand-authored asset. Kept in step with .gitignore's static/ block.
+// bundleOwns reports whether the bundler owns this file name. Keep in step with .gitignore's static/ block.
 func bundleOwns(name string) bool {
 	switch filepath.Ext(name) {
 	case jsExt, ".map", ".gz":
@@ -182,8 +169,7 @@ func removeBundleFiles(dir string) error {
 	return nil
 }
 
-// pruneEmptyDirs removes every directory under dir left empty, deepest first.
-// dir itself is kept: it is the embed root and holds the committed assets.
+// pruneEmptyDirs removes every empty directory under dir, deepest first; dir itself is kept.
 func pruneEmptyDirs(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -210,9 +196,7 @@ func pruneEmptyDirs(dir string) error {
 	return nil
 }
 
-// bundleScripts builds the page's two scripts in dependency order: the SSE worker
-// first, because the page constructs it by the content-hashed URL that build emits,
-// and that URL is injected into the app build as a compile-time constant.
+// bundleScripts builds the SSE worker first: its content-hashed URL is injected into the app build.
 func bundleScripts() error {
 	workerURL, err := bundleSSEWorker()
 	if err != nil {
@@ -221,16 +205,11 @@ func bundleScripts() error {
 	return bundleApp(workerURL)
 }
 
-// workerURLDefine is the identifier the page reads the worker's URL through
-// (static-src/globals.d.ts declares it; static-src/sse-adapter.ts constructs the
-// worker from it).
+// workerURLDefine is the identifier static-src/globals.d.ts declares for the worker's URL.
 const workerURLDefine = "__SSE_WORKER_URL__"
 
-// bundleApp bundles the main client entry as ESM with code splitting: the dynamic
-// import() sites and the code they share with the entry become hashed chunks under
-// /chunks/. The entry keeps its stable /app.js name, so the HTML never needs rewriting
-// and cache correctness comes from the server's ETag revalidation. workerURL is the
-// site-root path of the SSE worker script, spliced in as a string literal.
+// bundleApp bundles the main client entry as ESM with code splitting into hashed
+// /chunks/. The entry keeps its stable /app.js name, so the HTML is never rewritten.
 func bundleApp(workerURL string) error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "app.ts")},
@@ -252,11 +231,9 @@ func bundleApp(workerURL string) error {
 	return buildErr("app", &result)
 }
 
-// bundleSSEWorker bundles sse-worker.ts as a single classic script (IIFE) at a
-// content-hashed name under /chunks/: the URL IS the worker's identity, so a tab of an
-// old bundle can never attach to a new bundle's worker, and the server's immutable
-// caching of /chunks/ applies. It returns the emitted site-root path, read back from
-// esbuild's metafile rather than predicted.
+// bundleSSEWorker bundles sse-worker.ts as one IIFE at a content-hashed name under
+// /chunks/, so an old tab can never attach to a new bundle's worker. It returns the
+// emitted site-root path, read from esbuild's metafile.
 func bundleSSEWorker() (string, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "sse-worker.ts")},
@@ -279,8 +256,7 @@ func bundleSSEWorker() (string, error) {
 	return emittedEntry(result.Metafile)
 }
 
-// emittedEntry reads the one JavaScript output that esbuild's metafile marks as the
-// entry and returns it as a site-root URL path.
+// emittedEntry returns the metafile's one entry JavaScript output as a site-root URL path.
 func emittedEntry(metafile string) (string, error) {
 	var meta struct {
 		Outputs map[string]struct {
@@ -307,9 +283,8 @@ func emittedEntry(metafile string) (string, error) {
 	return entries[0], nil
 }
 
-// bundleServiceWorker bundles sw.ts as a single classic script (IIFE): app.ts registers
-// it without {type:"module"}, and a worker must stay a single file at a stable URL,
-// because a byte-diff at /sw.js is the browser's update signal.
+// bundleServiceWorker bundles sw.ts as one IIFE at a stable URL: app.ts registers it
+// without {type:"module"}, and a byte-diff at /sw.js is the browser's update signal.
 func bundleServiceWorker() error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "sw.ts")},
@@ -328,10 +303,8 @@ func bundleServiceWorker() error {
 	return buildErr("sw", &result)
 }
 
-// bundlePrepaint bundles prepaint.ts as one classic script (IIFE) at the fixed
-// /prepaint.js: index.html loads it as a blocking <script src> in <head>, which a
-// module cannot be, and a fixed name keeps the HTML free of a build-time rewrite.
-// The name carries no hash, so the server revalidates it rather than caching it.
+// bundlePrepaint bundles prepaint.ts as one IIFE at the fixed /prepaint.js: index.html
+// loads it as a blocking <script src> in <head>, which a module cannot be.
 func bundlePrepaint() error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "prepaint.ts")},
@@ -363,25 +336,17 @@ const (
 	fontURLPrefix = "/vendor/fonts/"
 )
 
-// fontRef captures a /vendor/fonts name out of a url(), whatever its quoting and
-// whitespace — the bundle concatenates the published UI's CSS beside marotte's own, so
-// neither is one author's to choose. Anchored on url( because a PROSE mention of the
-// path in a comment is not a face: 00-fonts.css carries one, and an unanchored scan read
-// a face out of it and failed the build on an asset nothing fetched. Matched everywhere
-// it occurs: a reference this misses keeps naming a file the rename already moved, which
-// is the one failure mode that is silent.
+// fontRef captures a /vendor/fonts name out of a url(), whatever its quoting. Anchored
+// on url( because 00-fonts.css mentions the path in prose; a reference this misses keeps
+// naming a file the rename already moved.
 var fontRef = regexp.MustCompile(`url\(\s*["']?/vendor/fonts/([^"')\s]+)`)
 
-// stampedFontName matches the name stampFont produces, which is also the name
-// internal/server.assetCachePolicy reads its cache verdict off.
+// stampedFontName matches stampFont's output, which internal/server.assetCachePolicy also reads.
 var stampedFontName = regexp.MustCompile(`^(.+)\.[0-9a-f]{8}(\.[^.]+)$`)
 
 // fingerprintFonts renames each face the bundle names to <stem>.<8 hex><ext> and
-// rewrites the bundle's url()s.
-//
-// An unfetched font tree is SKIPPED, matching the server's own boot report, because
-// scripts/dev-fonts.sh is a separate step from this command. A tree that exists and
-// lacks a named face is a half-finished fetch, so that is an error.
+// rewrites the bundle's url()s. An unfetched font tree is skipped; a tree lacking a
+// named face is an error.
 func fingerprintFonts() error {
 	cssPath := filepath.Join(outDir, "style.css")
 	css, err := os.ReadFile(cssPath)
@@ -424,8 +389,7 @@ func fingerprintFonts() error {
 	return nil
 }
 
-// cssFontNames lists the /vendor/fonts names the bundle references, deduplicated: the
-// overlay is named once per weight/style pair and must be renamed once.
+// cssFontNames lists the /vendor/fonts names the bundle references, deduplicated.
 func cssFontNames(css string) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -464,10 +428,8 @@ func stampFont(dir, name string) (string, error) {
 	return hashed, nil
 }
 
-// fontSource resolves the file holding the named face: the upstream name when present,
-// else the one stamped sibling a previous run left. Both spellings are accepted because
-// the bundle is regenerated from css/00-fonts.css and so always names the upstream face
-// while the tree holds the stamped one, which is what makes a repeat run a no-op.
+// fontSource resolves the file holding the named face: the upstream name, else the one
+// stamped sibling a previous run left, which makes a repeat run a no-op.
 func fontSource(dir, name string) (string, error) {
 	upstream := filepath.Join(dir, name)
 	if info, err := os.Lstat(upstream); err == nil {
@@ -500,8 +462,7 @@ func fontSource(dir, name string) (string, error) {
 	}
 }
 
-// hashFile returns the first 8 hex digits of the file's SHA-256, streamed so a 9 MB face
-// is not held in memory beside the bundle.
+// hashFile returns the first 8 hex digits of the file's SHA-256, streamed.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -515,16 +476,14 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(sum.Sum(nil))[:8], nil
 }
 
-// cssManifest is one ordered concat source: a manifest file listing CSS paths relative
-// to baseDir; blank lines and #-comments are skipped.
+// cssManifest is one ordered concat source; paths are relative to baseDir.
 type cssManifest struct {
 	manifestPath string
 	baseDir      string
 }
 
-// buildCSS assembles static/style.css: the @cplieger/web-terminal-ui component bundle
-// FIRST (root-scoped, zero-specificity :where(.wt-root) selectors), then marotte's own
-// splits — library-before-consumer source order is the override mechanism.
+// buildCSS assembles static/style.css: the @cplieger/web-terminal-ui bundle FIRST, then
+// marotte's splits; library-before-consumer source order is the override mechanism.
 func buildCSS() error {
 	wtui := filepath.Join(srcDir, "node_modules", "@cplieger", "web-terminal-ui", "css")
 	appCSS := filepath.Join(srcDir, "css")
@@ -552,16 +511,13 @@ func buildCSS() error {
 			parts++
 		}
 	}
-	// A manifest that EXISTS and lists nothing is the shape neither the
-	// missing-manifest nor the missing-part error covers, and nothing downstream
-	// catches it: a zero-byte stylesheet would ship as a build success.
+	// An existing manifest listing nothing would otherwise ship a zero-byte stylesheet.
 	if out.Len() == 0 {
 		return fmt.Errorf("css: the manifests listed no parts (%d manifests read)", len(sources))
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "style.css"), []byte(out.String()), 0o600); err != nil {
 		return err
 	}
-	// So a shrink is visible in the build log rather than only in the browser.
 	fmt.Printf("bundle: css %d parts, %d bytes\n", parts, out.Len())
 	return nil
 }

@@ -1,9 +1,7 @@
 package translate
 
-// A step's frames pass through this package and their attribution is what identifies
-// them; the run's idle window is the host's, so these tests assert what the host is
-// TOLD rather than what it does about it. There is deliberately no per-step tool-call
-// cap: a count measures work, not runaway.
+// These tests assert what the host is TOLD; the run's idle window is the host's. There is
+// deliberately no per-step tool-call cap: a count measures work, not runaway.
 
 import (
 	"slices"
@@ -12,11 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestReportStepProgress_EveryStepFrameNamesTheRun pins that a step has no tool-call
-// cap: a productive step is bounded by the run's idle window and the
-// backstop alone, so three hundred consecutive frames tell the host three hundred times
-// that the run is working, each naming the run. RunBoundsAccess carries no stop verb, so
-// a cancel is unrepresentable here; what a count could still do is stop REPORTING.
+// TestReportStepProgress_EveryStepFrameNamesTheRun pins that every step frame reports the
+// run as working; RunBoundsAccess has no stop verb, so a cancel is unrepresentable here.
 func TestReportStepProgress_EveryStepFrameNamesTheRun(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -34,11 +29,8 @@ func TestReportStepProgress_EveryStepFrameNamesTheRun(t *testing.T) {
 	}
 }
 
-// TestReportStepProgress_OnlyAStepFrameIsProgress: the chat's own frames and a SUBAGENT's
-// name no run whose window could be refilled. A subagent's frames are the dangerous half:
-// they arrive on a chat that may well have a live run, and crediting them would keep a
-// genuinely wedged run alive on a different agent's work. A step the registry could not
-// place has no run to credit either.
+// TestReportStepProgress_OnlyAStepFrameIsProgress pins that chat and SUBAGENT frames credit
+// no run: a subagent's work would keep a wedged run alive. An unplaced step credits none.
 func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
 	tests := []struct {
 		name string
@@ -60,9 +52,8 @@ func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
 	}
 }
 
-// A step's ask is attributed by registry lookup: the run id is what lets a run tab render
-// an ask that arrived elsewhere, the node id is what makes the card say who is asking. A
-// frame with no session id is not a step and stamps empty strings, so a miss is not an error.
+// A step's ask is attributed by registry lookup: the run id lets a run tab render it, the
+// node id says who asks. A frame with no session id stamps empty strings.
 func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
 	tests := []struct {
 		name       string

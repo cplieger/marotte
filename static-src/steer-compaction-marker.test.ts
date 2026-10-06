@@ -1,31 +1,11 @@
-// ---------------------------------------------------------------------------
-// The dock's COMPACTION MARKER: a row queued before a mid-turn compaction says so,
-// and a row queued after it does not.
-//
-// The one moment the fact is actionable is while the message is still unread: the
-// reader can take it back and rephrase it, because the agent will read it against a
-// summarized context rather than the one the words were written about.
-//
-// ARRIVAL ORDER IS THE WHOLE RULE and no timestamp is compared. The `compaction`
-// entry landing is what says the rows the dock holds at that instant were queued
-// before it. So the store's own operation carries the scoping (it marks the rows of
-// the chat it is given) and the marker is a LATCH the renderer writes and never
-// clears.
-//
-// A SEPARATE FILE rather than cases in `pending-steers.test.ts`, which is wave B's
-// and approved: an approved wave is not reopened. The routing half is wave A's too —
-// `handlers/entries.test.ts` pins that an `entry_appended{compaction}` calls
-// `markSteersCompacted` with the frame's chat id and that no other kind does — so
-// what this file owns is the fold from that store operation to what a reader sees.
-// ---------------------------------------------------------------------------
+// The dock's COMPACTION MARKER: a row queued before a mid-turn compaction says so, and a row queued
+// after it does not.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import type * as ChatActions from "./actions/chat.js";
 
-// The row's controls dispatch an action and open a confirm. The marker is what is
-// under test and the real modules would pull the action framework, the transport and
-// a native <dialog> in behind it.
-//
-// vi.hoisted because pending-steers.js is a STATIC import below: the factories run
-// while that import resolves, before a plain top-level const is initialized.
+// The row's controls dispatch an action and open a confirm. The marker is what is under test and
+// the real modules would pull the action framework, the transport and a native <dialog> in behind
+// it.
 const mocks = vi.hoisted(() => ({
   clearDispatch: vi.fn(() => Promise.resolve(true)),
   cancelDispatch: vi.fn(() => ({
@@ -35,16 +15,46 @@ const mocks = vi.hoisted(() => ({
   setComposerValueMock: vi.fn(),
 }));
 
-vi.mock("./actions/chat.js", () => ({
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatActions>()),
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
   removeSteer: { dispatch: vi.fn() },
 }));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirmMock }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValueMock }));
+// Every export is present so real-ESM linking succeeds; no case here restores a draft.
 vi.mock("./composer-state.js", () => ({
+  initComposerState: vi.fn(),
+  noteComposerText: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  retargetComposer: vi.fn(),
+  seedComposerState: vi.fn(),
+  restoreFailedSend: vi.fn(),
   composerDraft: vi.fn(() => ""),
   restoreRefusedEdit: vi.fn(),
+  adoptRemoteComposerState: vi.fn(),
+  dropComposerState: vi.fn(),
+  _resetComposerStateForTest: vi.fn(),
+}));
+// The real module reaches actions/chat.js, mocked above; every export is present so real-ESM
+// linking succeeds.
+vi.mock("./attachments.js", () => ({
+  addAttachmentTo: vi.fn(),
+  removeAttachmentFrom: vi.fn(),
+  attachmentGeneration: vi.fn(() => 0),
+  addAttachment: vi.fn(),
+  takeAttachments: vi.fn(() => []),
+  hasAttachments: vi.fn(() => false),
+  stashAttachments: vi.fn(),
+  flushAttachments: vi.fn(),
+  restoreAttachments: vi.fn(),
+  dropAttachments: vi.fn(),
+  seedAttachments: vi.fn(),
+  adoptRemoteAttachments: vi.fn(),
+  _resetAttachmentsForTest: vi.fn(),
 }));
 
 import {
@@ -85,8 +95,8 @@ function makeSession(chatID: string): Session {
   };
 }
 
-/** The seq the next entry of the fixture turn takes. Reset per case, because
- *  `appendEntry` refuses any seq that is not the turn's next one. */
+/** The seq the next entry of the fixture turn takes. Reset per case, because `appendEntry`
+ *  refuses any seq that is not the turn's next one. */
 let seq = 0;
 
 function openFixtureTurn(chatID: string): void {
@@ -102,9 +112,8 @@ function openFixtureTurn(chatID: string): void {
   seq = 1;
 }
 
-/** The `steer` entry KAS's own frame produces for a steer the agent READ. That entry
- *  is the row's LEAVE, and `appendEntry` removes the row in the same store update
- *  that seats it. */
+/** The `steer` entry KAS's own frame produces for a steer the agent READ. That entry is the
+ *  row's LEAVE, and `appendEntry` removes the row in the same store update that seats it. */
 function landSteerEntry(chatID: string, steerID: string, text: string): void {
   const entry: Entry = {
     id: steerID,
@@ -139,9 +148,8 @@ function nameOf(row: HTMLElement): string {
 }
 
 describe("the dock's compaction marker", () => {
-  // The stack element is captured once, by the module's own idempotent init, so it
-  // has to outlive every case: replacing it per test would leave the effect painting
-  // into a detached node.
+  // The stack element is captured once, by the module's own idempotent init, so it has to outlive
+  // every case: replacing it per test would leave the effect painting into a detached node.
   beforeAll(() => {
     document.body.innerHTML = `
       <ul id="steer-stack" class="steer-stack hidden"></ul>
@@ -156,9 +164,9 @@ describe("the dock's compaction marker", () => {
     expect(rows()).toHaveLength(0);
   });
 
-  // BOTH rows, and the two channels a reader has: the attribute CSS keys on, and the
-  // extended word, which the visible label and the accessible name both read from one
-  // spelling so they cannot disagree.
+  // BOTH rows, and the two channels a reader has: the attribute CSS keys on, and the extended word,
+  // which the visible label and the accessible name both read from one spelling so they cannot
+  // disagree.
   it("marks every row the dock holds when the compaction lands", () => {
     recordSteerQueued(CHAT, { id: "steer-1", text: "use tabs", origin: "user" });
     recordSteerQueued(CHAT, { id: "steer-2", text: "and rename it", origin: "user" });
@@ -177,10 +185,9 @@ describe("the dock's compaction marker", () => {
     );
   });
 
-  // A row that arrives AFTERWARDS was queued against the summarized context, so the
-  // compaction is in its past on both sides and there is nothing to warn about. This
-  // is the case arrival order buys, and the control that stops the marker being read
-  // as "this chat compacted at some point".
+  // A row that arrives AFTERWARDS was queued against the summarized context, so the compaction is
+  // in its past on both sides and there is nothing to warn about. This is the case arrival order
+  // buys, and the control that stops the marker being read as "this chat compacted at some point".
   it("leaves a row that arrives after the compaction unmarked", () => {
     recordSteerQueued(CHAT, { id: "steer-1", text: "before", origin: "user" });
     markSteersCompacted(CHAT);
@@ -191,9 +198,8 @@ describe("the dock's compaction marker", () => {
     expect(rows().map(labelOf)).toEqual(["Sent, context compacted since", "Sent"]);
   });
 
-  // The store operation is what carries the scoping — the handler hands it the chat
-  // id off the frame's envelope — so another chat's compaction reaches these rows
-  // through nothing.
+  // The store operation is what carries the scoping — the handler hands it the chat id off the
+  // frame's envelope — so another chat's compaction reaches these rows through nothing.
   it("marks nothing for a compaction that landed on another chat", () => {
     recordSteerQueued(CHAT, { id: "steer-1", text: "mine", origin: "user" });
 
@@ -203,10 +209,9 @@ describe("the dock's compaction marker", () => {
     expect(labelOf(rows()[0] as HTMLElement)).toBe("Sent");
   });
 
-  // A LATCH: the store only ever sets it, so a second compaction over the same rows
-  // changes nothing and no path clears the attribute. Without this the marker could
-  // be written as a per-compaction flag and a later frame would silently unmark rows
-  // the first one was right about.
+  // A LATCH: the store only ever sets it, so a second compaction over the same rows changes nothing
+  // and no path clears the attribute. Without this the marker could be written as a per-compaction
+  // flag and a later frame would silently unmark rows the first one was right about.
   it("keeps the mark across a second compaction", () => {
     recordSteerQueued(CHAT, { id: "steer-1", text: "one", origin: "user" });
     markSteersCompacted(CHAT);
@@ -216,10 +221,9 @@ describe("the dock's compaction marker", () => {
     expect(labelOf(rows()[0] as HTMLElement)).toBe("Sent, context compacted since");
   });
 
-  // A chat switch REBUILDS the stack from the store rather than updating rows in
-  // place, so the mark has to be written on the row's first paint as well as on an
-  // update. Two write sites, and only this case reaches the first one — every case
-  // above marks a row that is already on screen.
+  // A chat switch REBUILDS the stack from the store rather than updating rows in place, so the mark
+  // has to be written on the row's first paint as well as on an update. Two write sites, and only
+  // this case reaches the first one — every case above marks a row that is already on screen.
   it("rebuilds a marked row still marked after a chat switch", () => {
     recordSteerQueued(CHAT, { id: "steer-1", text: "before the switch", origin: "user" });
     markSteersCompacted(CHAT);
@@ -233,10 +237,9 @@ describe("the dock's compaction marker", () => {
     expect(labelOf(rows()[0] as HTMLElement)).toBe("Sent, context compacted since");
   });
 
-  // The marker changes what a row SAYS, never how long it lives: a marked row still
-  // leaves on its own `steer` entry, which is the dock's whole invariant. Without
-  // this every case above passes just as well for a marker that pinned its row in
-  // place.
+  // The marker changes what a row SAYS, never how long it lives: a marked row still leaves on its
+  // own `steer` entry, which is the dock's whole invariant. Without this every case above passes
+  // just as well for a marker that pinned its row in place.
   it("does not keep a marked row past its own steer entry", () => {
     openFixtureTurn(CHAT);
     recordSteerQueued(CHAT, { id: "steer-1", text: "read me", origin: "user" });

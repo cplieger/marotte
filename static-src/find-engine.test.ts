@@ -1,8 +1,5 @@
-// The shared DOM walker's own suite. find-in-chat.test.ts keeps the transcript
-// overlay's cases and builds its DOM by hand; this file pins the engine on the
-// shapes its two consumers really render — a diff pane with highlighter token
-// spans and gutter chrome, prose with inline elements, a tool card's chrome —
-// which a flat text node cannot express.
+// The shared DOM walker on the shapes its consumers render: a diff pane with highlighter spans and gutter chrome,
+// and streamed adjacent text nodes.
 import { describe, it, expect, afterEach } from "vitest";
 import { FindEngine } from "./find-engine.js";
 import { lineDiff } from "./diff.js";
@@ -27,10 +24,7 @@ function hitOf(mark: HTMLElement): string | null {
   return mark.getAttribute("data-hit");
 }
 
-/** The editor's diff pane over a one-line change, with the option set
- *  editor-diff.ts passes (two columns, line numbers, a Go language hint), so the
- *  rows carry highlighter token spans and gutter chrome. `alpha` sits on a
- *  CONTEXT line, `old` on the deleted one, `new` on the added one. */
+/** The editor's diff pane with editor-diff.ts's options, so rows carry token spans and gutter chrome. */
 function goPane(): HTMLElement {
   const oldText = ["func alpha() {", '\treturn "old"', "}", ""].join("\n");
   const newText = ["func alpha() {", '\treturn "new"', "}", ""].join("\n");
@@ -51,8 +45,7 @@ function goPane(): HTMLElement {
 describe("a match is found in a run, not in a text node", () => {
   it("matches a phrase whose words sit in different highlighter token spans", () => {
     const host = goPane();
-    // The highlighter splits `func alpha() {` into a keyword span, a text node
-    // and three punctuation spans; the line reads as one line.
+    // The highlighter splits the line into several spans; it reads as one line.
     expect(new FindEngine(host).search("func alpha")).toBe(2);
     expect(new FindEngine(host).search("() {")).toBe(2);
     expect(new FindEngine(host).search('return "new"')).toBe(1);
@@ -75,8 +68,7 @@ describe("a match is found in a run, not in a text node", () => {
     expect(eng.total).toBe(2);
     const pieces = marks(host);
     expect(pieces.map(hitOf)).toEqual(["0", "0", "1"]);
-    // The current hit is the first one, on every one of its pieces, and the
-    // scroll target is the piece the hit starts in.
+    // The current hit is the first, on every piece; the scroll target is the piece it starts in.
     expect(pieces.map((m) => m.classList.contains("find-hit-current"))).toEqual([
       true,
       true,
@@ -93,9 +85,7 @@ describe("a match is found in a run, not in a text node", () => {
   });
 
   it("drops the current hit without dropping the highlight, and takes it back on setCurrent", () => {
-    // The editor's conflict mode steps one cursor through this engine's marks and
-    // then the buffer's hits; while the cursor is in the buffer, a hit still styled
-    // current here would be a second "you are here".
+    // Conflict mode steps one cursor through these marks then the buffer's, so only one may be current.
     const host = mount(`<p>ab<b>c</b> abc</p>`);
     const eng = new FindEngine(host);
     eng.search("abc");
@@ -123,7 +113,7 @@ describe("a match is found in a run, not in a text node", () => {
     expect(
       new FindEngine(mount(`<ul><li>func </li><li>alpha</li></ul>`)).search("func alpha"),
     ).toBe(0);
-    // The control: the same words in inline siblings are one line.
+    // Control: the same words in inline siblings are one line.
     expect(new FindEngine(mount(`<span>func </span><span>alpha</span>`)).search("func alpha")).toBe(
       1,
     );
@@ -131,9 +121,7 @@ describe("a match is found in a run, not in a text node", () => {
 
   it("restores the original text and answers the same count on a second run", () => {
     const p = document.createElement("p");
-    // Adjacent text nodes, the shape the streaming renderer leaves behind: the
-    // per-node walker missed the split word and found it only on the run after
-    // `clear()` had merged the nodes.
+    // Adjacent text nodes, as the streaming renderer leaves them: a per-node walker missed the split word.
     p.append(document.createTextNode("al"), document.createTextNode("pha alpha"));
     const host = document.createElement("div");
     host.appendChild(p);
@@ -157,8 +145,7 @@ describe("a match is found in a run, not in a text node", () => {
 
 describe("both diff columns", () => {
   it("counts a context line rendered in both columns as two hits", () => {
-    // Two hits, one per column: we find text hits, we do not filter; it must be
-    // predictable.
+    // One hit per column: text hits, unfiltered.
     const host = goPane();
     expect(new FindEngine(host).search("alpha")).toBe(2);
     expect(marks(host).map((m) => m.closest(".diff-col")?.className)).toEqual([

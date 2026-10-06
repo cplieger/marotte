@@ -52,8 +52,6 @@ func makeSessionIn(t *testing.T, root, hash, id string, age time.Duration, recor
 		t.Fatal(err)
 	}
 	when := time.Now().Add(-age)
-	// Chtimes the dir AFTER writing its contents (writing the inner file
-	// bumps the dir mtime back to now).
 	for _, p := range []string{dir, hist} {
 		if err := os.Chtimes(p, when, when); err != nil {
 			t.Fatal(err)
@@ -92,8 +90,6 @@ func TestReapRejectsMalformedID(t *testing.T) {
 	root := t.TempDir()
 	makeSession(t, root, "hash1", "sess_keep", 0)
 	r := New(root, testWorkspace)
-	// None of these should touch the filesystem (no sess_ prefix, empty
-	// remainder, or glob/path metacharacters).
 	for _, bad := range []string{"", "sess_", "no-prefix", "sess_../keep", "sess_*"} {
 		r.Reap(bad)
 	}
@@ -104,12 +100,11 @@ func TestReapRejectsMalformedID(t *testing.T) {
 
 func TestSweep(t *testing.T) {
 	root := t.TempDir()
-	old := 30 * time.Minute                       // older than defaultGuard (10m)
-	makeSession(t, root, "h", "sess_ref", old)    // referenced → keep
-	makeSession(t, root, "h", "sess_orphan", old) // unreferenced + old → reap
-	makeSession(t, root, "h", "sess_young", 0)    // unreferenced + young → keep (guard)
+	old := 30 * time.Minute
+	makeSession(t, root, "h", "sess_ref", old)
+	makeSession(t, root, "h", "sess_orphan", old)
+	makeSession(t, root, "h", "sess_young", 0)
 
-	// A dead v2-engine file (bare uuid, no sess_ prefix), aged.
 	cliDir := filepath.Join(root, "cli")
 	v2 := filepath.Join(cliDir, "0c2257a1-7898-869e-0000-000000000000.json")
 	if err := os.WriteFile(v2, []byte("{}"), 0o644); err != nil {
@@ -143,7 +138,6 @@ func TestSweep(t *testing.T) {
 }
 
 func TestSweepEmptyDirIsNoop(t *testing.T) {
-	// Missing sessions dir must not panic or error.
 	if n := New(filepath.Join(t.TempDir(), "nonexistent"), testWorkspace).Sweep(nil); n != 0 {
 		t.Errorf("sweep of missing dir reaped %d, want 0", n)
 	}
@@ -151,18 +145,14 @@ func TestSweepEmptyDirIsNoop(t *testing.T) {
 
 func TestNilReaperSafe(t *testing.T) {
 	var r *Reaper
-	r.Reap("sess_x") // must not panic
+	r.Reap("sess_x")
 	if n := r.Sweep(nil); n != 0 {
 		t.Errorf("nil reaper Sweep = %d, want 0", n)
 	}
 }
 
-// An EMPTY keep-list against a populated tree is refused, not obeyed.
-//
-// A config dir pointed elsewhere while KIRO_HOME still resolves to a shared
-// `$HOME/.kiro` yields zero refs, and the caller's completeness flag cannot
-// catch it — an empty store IS complete. Every session here is past the guard,
-// so without the refusal this reaps all four.
+// TestSweepRefusesEmptyKeepListAgainstPopulatedTree: an empty keep-list against a populated tree is
+// refused, not obeyed, since a misdirected config dir would otherwise delete every session.
 func TestSweepRefusesEmptyKeepListAgainstPopulatedTree(t *testing.T) {
 	root := t.TempDir()
 	old := 30 * time.Minute
@@ -212,11 +202,9 @@ func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
 	makeSession(t, root, "h1", "sess_1", 0)
 	makeSession(t, root, "h1", "sess_2", 0)
 	makeSession(t, root, "h2", "sess_3", 0)
-	// A bare-uuid v2 file is not a session and must not inflate the count.
 	if err := os.WriteFile(filepath.Join(root, "cli", "1111-2222.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Nor does a second sidecar for a session already counted once.
 	if err := os.WriteFile(filepath.Join(root, "cli", "sess_1.state"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -226,18 +214,12 @@ func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
 	}
 }
 
-// TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge pins the two things
-// a reaped session dir owes: it counts, and its sidecars go with it.
-//
-// The guard spares a young ORPHAN because it may not be referenced yet; a young
-// SIDECAR of an already-reapable session is not spared, since nothing will ever
-// reference it again.
+// TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge asserts that a reaped session dir counts, and its
+// sidecars go with it.
 func TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge(t *testing.T) {
 	root := t.TempDir()
 	makeSession(t, root, "h", "sess_orphan", 30*time.Minute)
 
-	// Freshen only the sidecar, so the dir is past the guard and the sidecar is
-	// not. sweepCLI would spare it; the dir's own reap must not.
 	sidecar := filepath.Join(root, "cli", "sess_orphan.history")
 	now := time.Now()
 	if err := os.Chtimes(sidecar, now, now); err != nil {
@@ -257,13 +239,8 @@ func TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge(t *testing.T) {
 	}
 }
 
-// TestSweep_CountsAStrandedSidecarAsAReapedSession pins the other half of the
-// count: a v3 sidecar whose session dir is already gone.
-//
-// This is the shape a crash between the two removals leaves behind, and it is a
-// SESSION being reclaimed rather than incidental cleanup — unlike a dead v2 file,
-// which is deliberately not counted. The count is what the caller logs, so
-// reclaiming one and reporting nothing makes the sweep look idle while it works.
+// TestSweep_CountsAStrandedSidecarAsAReapedSession asserts that a v3 sidecar whose session dir is already gone
+// counts too.
 func TestSweep_CountsAStrandedSidecarAsAReapedSession(t *testing.T) {
 	root := t.TempDir()
 	cliDir := filepath.Join(root, "cli")
@@ -373,14 +350,8 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 	})
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the
-// duration of the test and restores it on cleanup. The handler is global, so this
-// package's tests never run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler for the test and restores it
+// on cleanup; tests using it must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -414,12 +385,8 @@ func TestReap_SkipsASessionInAnotherWorkspacesBucket(t *testing.T) {
 	}
 }
 
-// TestSweep_SkipsSessionsThatDoNotNameThisWorkspace protects every session
-// another client in this Kiro home created: unreferenced by construction, since
-// the keep-list is built from marotte's own chats.
-//
-// The trailing case is what keeps this from being a hash comparison in disguise:
-// the record decides, not the path.
+// TestSweep_SkipsSessionsThatDoNotNameThisWorkspace protects every session another client in this
+// Kiro home created: unreferenced by construction.
 func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
 	root := t.TempDir()
 	old := 30 * time.Minute
@@ -442,9 +409,8 @@ func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
 	if !exists(t, filepath.Join(root, "h", "sess_theirs")) {
 		t.Error("an orphan naming another workspace was deleted: that is another workspace's history")
 	}
-	// The sidecar is the narrower route to the same loss: it carries no
-	// workspacePaths of its own, so a guard on the dirs alone spares the session
-	// and deletes its history file anyway.
+	// The sidecar carries no workspacePaths, so a guard on dirs alone would spare the session and
+	// delete its sidecar.
 	if !exists(t, filepath.Join(root, "cli", "sess_theirs.history")) {
 		t.Error("another workspace's cli sidecar was deleted while its session dir was spared")
 	}
@@ -480,12 +446,8 @@ func TestSweep_DoubtRetains(t *testing.T) {
 	}
 }
 
-// TestReap_NonCanonicalWorkspaceRootsStillMatch pins the one normalization the
-// guard does, and its limit. A trailing slash or an interior "." on either side
-// is the same root and must still match, because a caller's KIRO_WORK_DIR and
-// KAS's own record are written by different programs. A path that only resolves
-// to the same directory through a symlink does NOT match, and that is the doubt
-// direction again: nothing here calls EvalSymlinks.
+// TestReap_NonCanonicalWorkspaceRootsStillMatch pins the one normalization the guard does (trailing
+// slash, interior "."), and its limit.
 func TestReap_NonCanonicalWorkspaceRootsStillMatch(t *testing.T) {
 	root := t.TempDir()
 	makeSessionIn(t, root, "h", "sess_slash", 0, `{"workspacePaths":["/ws/"]}`)
@@ -520,20 +482,15 @@ func makeRunDir(t *testing.T, root, hash, workflowID string) {
 	}
 }
 
-// TestSweep_SparesAStepSessionWhoseRunStillExists is the prerequisite for reading
-// a step's transcript back at all.
-//
-// A step session is referenced by no chat and is no bridge's own, so it is an
-// orphan from creation and the sweep was reaping steps MID-RUN. The rule: spared
-// while its run is on disk, reaped once the run is gone, unchanged for a
-// non-step.
+// TestSweep_SparesAStepSessionWhoseRunStillExists asserts that a step session is referenced by no chat, and
+// reaping it mid-run loses the step's transcript.
 func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
 	old := 30 * time.Minute
 	for _, tc := range []struct {
 		desc    string
 		record  string
 		makeRun bool
-		want    bool // want reaped
+		want    bool
 	}{
 		{
 			desc:    "a step session whose run directory exists is SPARED",
@@ -552,10 +509,6 @@ func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
 			want:   true,
 		},
 		{
-			// The `_meta` block is present but the workflow id is empty, which is
-			// what a non-step session carrying other kiro metadata looks like. An
-			// unconditional run-dir stat would spare it, because
-			// `<bucket>/workflows/` itself exists as soon as any run has ever run.
 			desc:    "an empty workflowId is not a step, so the run tree does not spare it",
 			record:  `{"workspacePaths":["` + testWorkspace + `"],"_meta":{"kiro":{"workflow":{"workflowId":""}}}}`,
 			makeRun: true,
@@ -575,8 +528,6 @@ func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
 			if gone != tc.want {
 				t.Errorf("reaped = %v, want %v (Sweep reported %d)", gone, tc.want, n)
 			}
-			// The sidecar goes with the dir and stays with it, or a spared step
-			// session loses the history half of its state anyway.
 			hist := exists(t, filepath.Join(root, "cli", "sess_step.history"))
 			if hist == tc.want {
 				t.Errorf("sidecar present = %v, want %v", hist, !tc.want)
@@ -662,9 +613,8 @@ func TestReadSessionRecord(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			// Decodable and present, with no paths at all: ok is true and the
-			// CALLER decides, which is what keeps doubt-retains a policy rather
-			// than a decode outcome.
+			// Present with no paths: ok is true and the caller decides, which keeps doubt-retains a
+			// policy rather than a decode outcome.
 			desc:   "readable but empty",
 			record: `{}`,
 			wantOK: true,
@@ -688,5 +638,57 @@ func TestReadSessionRecord(t *testing.T) {
 				t.Errorf("workflowID = %q, want %q", wfID, tc.wantWfID)
 			}
 		})
+	}
+}
+
+// selfLoop plants a symlink pointing at itself, so a stat answers ELOOP whatever
+// the euid.
+func selfLoop(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("Setup: mkdir: %v", err)
+	}
+	if err := os.Symlink(filepath.Base(path), path); err != nil {
+		t.Fatalf("Setup: symlink: %v", err)
+	}
+}
+
+// Only a clean ENOENT says a step's run is gone: a run dir that exists but
+// cannot be judged keeps the step session and its sidecar.
+func TestSweep_SparesAStepSessionWhoseRunDirCannotBeStatted(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "h", "sess_step", 30*time.Minute, stepRecord("wf_x"))
+	selfLoop(t, filepath.Join(root, "h", workflowsDirName, "wf_x"))
+
+	n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+
+	if !exists(t, filepath.Join(root, "h", "sess_step")) {
+		t.Errorf("Sweep() reaped %d; a step session whose run dir stat fails with ELOOP was deleted", n)
+	}
+	if !exists(t, filepath.Join(root, "cli", "sess_step.history")) {
+		t.Error("Sweep() removed the sidecar of a step session whose run dir could not be judged")
+	}
+}
+
+func TestSweep_KeepsASidecarWhoseSessionDirCannotBeStatted(t *testing.T) {
+	root := t.TempDir()
+	selfLoop(t, filepath.Join(root, "h", "sess_x"))
+	cliDir := filepath.Join(root, "cli")
+	if err := os.MkdirAll(cliDir, 0o755); err != nil {
+		t.Fatalf("Setup: mkdir cli: %v", err)
+	}
+	hist := filepath.Join(cliDir, "sess_x.history")
+	if err := os.WriteFile(hist, []byte("x"), 0o644); err != nil {
+		t.Fatalf("Setup: write sidecar: %v", err)
+	}
+	when := time.Now().Add(-30 * time.Minute)
+	if err := os.Chtimes(hist, when, when); err != nil {
+		t.Fatalf("Setup: chtimes: %v", err)
+	}
+
+	New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+
+	if !exists(t, hist) {
+		t.Error("Sweep() removed a sidecar whose session dir exists but could not be stat'ed")
 	}
 }

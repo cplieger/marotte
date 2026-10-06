@@ -1,8 +1,7 @@
 package agent
 
-// The read-loop sequence, and the position the FOLDER has reached: a response goes
-// straight to the waiting Call while notifications queue for Forward, so a turn
-// settled on its response alone is settled while turn_end sits unread (EWD687a).
+// The position the folder has reached in the read-loop sequence: a response goes straight to the waiting Call while
+// notifications queue for Forward, so a turn settled on its response alone can leave turn_end unread (EWD687a).
 
 import (
 	"context"
@@ -10,10 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// attachForward resets the chat's observed position for a newly attached forward
-// goroutine and returns the generation it runs under. A new bridge restarts its
-// sequence at zero, so the previous position bounds nothing and the generation is
-// what lets a straggling forward from the OLD bridge be ignored.
+// attachForward resets the observed position for a new forward goroutine and returns its generation. A new bridge
+// restarts its sequence at zero; the generation lets a straggling forward from the old bridge be ignored.
 func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -29,9 +26,8 @@ func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
 	return lc.fwdGen
 }
 
-// exitFor answers the func generation gen's own goroutine calls to close its exit
-// channel. Taken when the goroutine starts: by its exit a teardown may have
-// forgotten the lifecycle, and a fresh one would hold no channel to close.
+// exitFor answers the func generation gen's goroutine calls to close its exit channel. Taken at start: by exit a
+// teardown may have forgotten the lifecycle.
 func (r *turnRegistry) exitFor(chatID marotte.ChatID, gen uint64) (done func()) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
@@ -51,9 +47,7 @@ func (r *turnRegistry) exitFor(chatID marotte.ChatID, gen uint64) (done func()) 
 	}
 }
 
-// forwardExit answers a channel the CURRENT forward goroutine closes when it
-// exits, nil when none is attached. Per generation, so a newer bridge's attach
-// does not release a wait on the old one's frames.
+// forwardExit answers a channel the current forward goroutine closes on exit, nil when none is attached.
 func (r *turnRegistry) forwardExit(chatID marotte.ChatID) <-chan struct{} {
 	lc, ok := r.lookup(chatID)
 	if !ok {
@@ -64,10 +58,8 @@ func (r *turnRegistry) forwardExit(chatID marotte.ChatID) <-chan struct{} {
 	return lc.fwdExits[lc.fwdGen]
 }
 
-// observe advances the position the folder has reached to seq, waking anything
-// parked on it. Called for every frame Forward CONSUMES, not for every fold: many
-// paths through the session-update cascade consume a frame without touching a turn,
-// so a fold-bounded position can park a settle forever.
+// observe advances the folder's position to seq, waking waiters. Called for every frame Forward consumes, not every
+// fold: many frames touch no turn, and a fold-bounded position could park a settle forever.
 func (r *turnRegistry) observe(chatID marotte.ChatID, gen, seq uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -79,10 +71,8 @@ func (r *turnRegistry) observe(chatID marotte.ChatID, gen, seq uint64) {
 	lc.wakeLocked()
 }
 
-// sealPosition records that the chat's forward goroutine has exited, so no further
-// frame can advance the position. The waiters DEFER rather than close: the
-// bridge-death closer names the process that went away, and every teardown marotte
-// performs itself has its own closer, so nothing is stranded.
+// sealPosition records that the forward goroutine has exited. Waiters defer rather than close: the bridge-death
+// closer and every teardown's own closer own the turn.
 func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -94,13 +84,10 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 	lc.wakeLocked()
 }
 
-// awaitPosition parks until the folder has consumed everything that preceded this
-// turn's response, reporting whether it REACHED that position. It waits WITHOUT
-// the lifecycle mutex and WITHOUT claiming: claiming moves the chat into
-// turnFinalizing, where a fold waits, so the settle would block the folder it
-// waits for. It does NOT stop early once the awaited turn has finalized — the wait
-// also orders whether a LATER turn opened, the empty-turn gate's structural clause,
-// and returning early let a re-prompt duplicate execution and spend.
+// awaitPosition parks until the folder has consumed everything before this turn's response, reporting whether it
+// got there. It holds no lifecycle mutex and claims nothing: claiming enters turnFinalizing, where a fold waits. It
+// does not stop when the awaited turn finalizes, because the wait also orders the empty-turn gate's later-turn
+// check; returning early let a re-prompt duplicate work and spend.
 func (r *turnRegistry) awaitPosition(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()

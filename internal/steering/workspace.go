@@ -36,11 +36,7 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 			writeRepoEntry(b, workDir, r)
 		}
 		b.WriteString("\n")
-		// Add a top-level instruction so the agent has unambiguous
-		// guidance about how to consume the per-repo steering it just
-		// saw above. Without this, kiro-cli would only auto-load
-		// steering for the cwd it boots in (the workspace root); the
-		// per-repo `.kiro/steering/` dirs would otherwise sit unused.
+		// kiro-cli auto-loads steering only for its boot cwd, so per-repo steering needs this nudge.
 		writeRepoSteeringInstructions(b, repos, workDir)
 	}
 	if len(foundFiles) > 0 {
@@ -57,26 +53,15 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 		}
 		b.WriteString("\n")
 	}
-	// Only when repos sit UNDER the workspace root. If the root is itself a
-	// repo there is no sibling path to suggest — everything under workDir
-	// would be inside that repo — and with no repos there is nothing to stay
-	// out of. Same guard shape as Directories above.
+	// Only when repos sit UNDER the workspace root (same guard as Directories above).
 	if len(repos) > 0 && !isRoot {
 		writeScratchGuidance(b, workDir)
 	}
 }
 
-// writeScratchGuidance suggests a scratch location outside every repo.
-//
-// The agent already holds bundled workflow-orchestration guidance naming
-// in-repo artifact paths for plans and review output; measured 2026-08-26, 42
-// scratch files were written into working trees this way across two repos in
-// one afternoon. A canary probe the same day confirmed a workflow STEP session
-// receives only the always-on set (this file plus always-loaded workspace
-// steering), so this generated doc is the only place a rule reaches one.
-//
-// Deliberately a preference, not a prohibition — the enforcement lever is a
-// permissions.yaml fs_write deny rule, not prose.
+// writeScratchGuidance suggests a scratch location outside every repo. A workflow step
+// session receives only the always-on steering, so this is the one place the rule reaches
+// it. A preference, not a prohibition (a permissions.yaml deny rule is the enforcement).
 func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("### Scratch files\n\n")
 	b.WriteString("Prefer a directory OUTSIDE every repo for files that are not headed for a ")
@@ -94,11 +79,8 @@ func writeScratchGuidance(b *strings.Builder, workDir string) {
 
 func writeRepoEntry(b *strings.Builder, workDir, r string) {
 	repoDir := filepath.Join(workDir, r)
-	// One defusal per repo, threaded into every writer below, rather than one
-	// per interpolation: a directory name is arbitrary bytes (the agent creates
-	// directories and clones into them), and defusing at each `%s` is the shape
-	// that already lost a channel. `r` itself stays raw because it is also a
-	// path component.
+	// One defusal per repo, threaded into every writer below (per-`%s` defusal already lost a
+	// channel). `r` stays raw because it is also a path component.
 	label := defuse(r)
 	origin := readGitOrigin(repoDir)
 	branch := readGitBranch(repoDir)
@@ -160,12 +142,8 @@ func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 	}
 }
 
-// readGitOrigin returns the origin URL of a git repo by reading its
-// `.git/config` directly. We avoid shelling out to `git remote get-url`
-// because steering generation runs synchronously on every event and
-// must not block on a wedged subprocess. The format is well-defined
-// (`[remote "origin"]` block with a `url = ...` line); a tiny line
-// scanner handles 99% of real-world configs without parsing INI fully.
+// readGitOrigin returns a repo's origin URL by reading `.git/config` directly: generation is
+// synchronous and must not block on a wedged subprocess.
 func readGitOrigin(repoDir string) string {
 	data, err := readCappedFile(filepath.Join(repoDir, ".git", "config"), 64*1024)
 	if err != nil {
@@ -190,14 +168,8 @@ func readGitOrigin(repoDir string) string {
 	return ""
 }
 
-// readGitBranch returns the current branch name of a git repo by reading
-// `.git/HEAD` directly (no subprocess — steering generation runs synchronously
-// and must not block on a wedged one). Detached-HEAD repos return "".
-//
-// Cut at the FIRST line and defused: `.git/HEAD` is workspace content, not a
-// name git validated, and a crafted second line ("## Capabilities") was once
-// rendered as a real steering section — measured. A branch is one line by
-// definition, so the cut costs nothing real.
+// readGitBranch returns the current branch from `.git/HEAD` (no subprocess); "" when
+// detached. Cut at the FIRST line and defused: the file is workspace content.
 func readGitBranch(repoDir string) string {
 	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
 	if err != nil {
@@ -230,12 +202,9 @@ func hostFromGitURL(url string) string {
 	return host
 }
 
-// isHostShaped reports whether s could be a DNS host or an IPv4 literal with an
-// optional port: ASCII letters, digits, dot, dash, underscore and colon only. A
-// `.git/config` url comes from a file the agent writes, so without this gate a
-// backtick or bracket could reach environment.md inside the host annotation,
-// and a homoglyph host (`g\u0130thub.com`) could read as a forge it is not.
-// Cost: an IPv6-literal remote loses its annotation (`[`/`]` are markdown).
+// isHostShaped reports whether s could be a DNS host or IPv4 literal with an optional port
+// (ASCII letters, digits, dot, dash, underscore, colon), refusing markup and homoglyph
+// hosts. Cost: an IPv6-literal remote loses its annotation.
 func isHostShaped(s string) bool {
 	if s == "" {
 		return false
@@ -257,8 +226,7 @@ func isHostShaped(s string) bool {
 // Returns "" when the resulting host still carries an "@" or "/".
 func hostFromHTTPURL(url string) string {
 	_, rest, _ := strings.Cut(url, "://")
-	// Strip credentials if present (https://user:pwd@host/...).
-	// Use the first @ only if it appears before the first /.
+	// Strip credentials only when the @ precedes the first /.
 	slash := strings.Index(rest, "/")
 	if at := strings.Index(rest, "@"); at >= 0 && (slash < 0 || at < slash) {
 		rest = rest[at+1:]
@@ -296,13 +264,8 @@ func hostFromSCPURL(url string) string {
 	return host
 }
 
-// classifyEntries splits workspace entries into git repos and plain
-// directories. Dot-NAMED git repos (".kiro", ".github") are legitimate
-// clone targets and must be listed — the Git panel's repo scanner
-// (internal/git/repos.go) learned this the hard way; skipping every
-// dot-dir made such clones invisible while their steering inventories
-// sat unused. Dot-named NON-repos (.cache, .venv) stay hidden: they are
-// tool state, not workspace content the agent should be pointed at.
+// classifyEntries splits workspace entries into git repos and plain directories. Dot-named
+// repos (".kiro", ".github") are listed; dot-named non-repos (.cache, .venv) stay hidden.
 func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string) (repos, dirs []string) {
 	for _, e := range entries {
 		name := e.Name()
@@ -426,17 +389,12 @@ func isMarkdownHeading(line string) bool {
 	return i == len(line) || line[i] == ' ' || line[i] == '\t'
 }
 
-// truncateUTF8 returns s truncated to at most n bytes without splitting
-// a multi-byte UTF-8 rune. The 100-byte cap in readFirstLine would
-// otherwise slice mid-rune, producing invalid UTF-8 in the steering
-// file.
+// truncateUTF8 returns s truncated to at most n bytes without splitting a multi-byte rune.
 func truncateUTF8(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	// Walk back from the n-byte boundary to the nearest rune start.
-	// A UTF-8 continuation byte has the bit pattern 10xxxxxx; back
-	// up past them to land on a leading byte.
+	// Back up past continuation bytes (10xxxxxx) to a leading byte.
 	for n > 0 && s[n]&0xC0 == 0x80 {
 		n--
 	}

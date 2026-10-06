@@ -1,9 +1,8 @@
 package workflow
 
-// The fixture below is trimmed from a real `_kiro/workflow/inspect` response
-// because its shape carries the three facts the package rests on: every step node
-// has its own `sessionId`, a repeat's iterations share one node id, and the wire
-// names the iteration container `iter-0` where the tree says `loop#0`.
+// The fixture is trimmed from a real `_kiro/workflow/inspect` response: every step node
+// has its own `sessionId`, iterations share a node id, and the wire says `iter-0` where
+// the tree says `loop#0`.
 
 import (
 	"encoding/json"
@@ -59,9 +58,8 @@ func TestStepSessions_WalksARealTree(t *testing.T) {
 	}
 	got := StepSessions(res.State)
 
-	// The PATHS are the load-bearing half: `iter-0`/`iter-1` where the tree says
-	// `loop#0`/`loop#1`, while the step named `iter` keeps its own NODE ID because
-	// the translation is gated on the PARENT being the repeat.
+	// The step named `iter` keeps its NODE ID: the translation is gated on the PARENT being
+	// the repeat.
 	want := []StepSession{
 		{NodeID: "pa", SessionID: "sess_pa", Path: []string{"wf_4bdc8cd5", "par", "pa"}},
 		{NodeID: "pb", SessionID: "sess_pb", Path: []string{"wf_4bdc8cd5", "par", "pb"}},
@@ -84,9 +82,7 @@ func TestStepSessions_WalksARealTree(t *testing.T) {
 	}
 }
 
-// TestStepSessions_EveryPathIsDistinct pins that a path names one EXECUTION. The
-// table above compares each row to its own expectation, so it would still pass if
-// two rows shared a path.
+// TestStepSessions_EveryPathIsDistinct pins that a path names one EXECUTION.
 func TestStepSessions_EveryPathIsDistinct(t *testing.T) {
 	t.Parallel()
 	var res InspectResult
@@ -159,8 +155,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{
-			// Measured: message is the literal "Internal error" and the classifier's
-			// text is in data, so message alone cannot tell this from a real failure.
+			// Measured: message is the literal "Internal error" and the classifier's text is in data.
 			"an unregistered verb",
 			rpcErr("Internal error", `{"details":"[PersistenceClassification] Ext method _kiro/workflow/nope has no persistence classification"}`),
 			true,
@@ -169,8 +164,7 @@ func TestClassify(t *testing.T) {
 		{"a param error with no data at all", rpcErr("workspacePaths is not iterable", ""), false},
 		{"a plain error", errors.New("boom"), false},
 		{
-			// An error that merely QUOTES the marker in its own text is a failure,
-			// not an unregistered verb.
+			// An error that merely QUOTES the marker in its own text is a failure.
 			"a failure quoting the marker in its message",
 			errors.New("workflow inspect call: _kiro/workflow/inspect has no persistence classification"),
 			false,
@@ -189,8 +183,7 @@ func TestClassify(t *testing.T) {
 				}
 				return
 			}
-			// The original stays reachable either way, so a caller can still report
-			// what KAS said.
+			// The original stays reachable so a caller can report what KAS said.
 			if !errors.Is(got, c.err) {
 				t.Errorf("Classify(%v) = %v, want the original error still unwrappable", c.err, got)
 			}
@@ -242,9 +235,8 @@ func TestClassify_OwnershipRefusals(t *testing.T) {
 	}
 }
 
-// TestSteps_IncludesAStepThatHasNotRun pins the one thing Steps adds over
-// StepSessions: a path naming a PENDING step must be answerable, because that is a
-// different answer from a path naming nothing at all.
+// TestSteps_IncludesAStepThatHasNotRun pins that a path naming a PENDING step answers
+// differently from a path naming nothing.
 func TestSteps_IncludesAStepThatHasNotRun(t *testing.T) {
 	t.Parallel()
 	var res InspectResult

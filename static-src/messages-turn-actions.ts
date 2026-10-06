@@ -1,23 +1,15 @@
-// ---------------------------------------------------------------------------
-// Turn actions: the copy / source / export buttons in the turn FOOTER.
-//
-// One row per turn, right-aligned beside the ledger summary, identical whether
-// the turn is open or folded — the footer is the one region that survives the
-// fold, so actions that operate on the whole turn live there rather than on an
-// assistant bubble inside the (foldable) body.
-// ---------------------------------------------------------------------------
+// Turn actions live in the footer, the one region that survives the fold, so they work on the whole turn.
 
-// Defensive null/undefined checks on DOM lookups that the type system
-// claims are guaranteed non-null but can race with reconcile passes.
+// DOM lookups the types call non-null can race with reconcile passes.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
 import { payloadOf } from "./turns.js";
 import { entryRenders, firstPlanSeq } from "./block-window.js";
-import { ICON_COPY, ICON_COPY_MD, ICON_SOURCE, ICON_LINK, ICON_EXPORT } from "./icons.js";
-import { getActive, getActiveId } from "./store.js";
+import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
+import { getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
-import { downloadChatExport } from "./chat-export.js";
+import { buildPath } from "./route-path.js";
 import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
@@ -27,8 +19,7 @@ import { el } from "@cplieger/reactive";
 /** Tracks active "copied" animation timers per button. */
 const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
-/** The turn each footer's actions operate on, refreshed every paint so click
- *  handlers read current data rather than a mount-time snapshot. */
+/** The turn each footer acts on, refreshed every paint so handlers read current data. */
 const footerTurns = new WeakMap<HTMLElement, Turn>();
 
 /** Whether the two document-level dismissal listeners are installed. */
@@ -38,17 +29,11 @@ let dismissalWired = false;
 // Dismissal
 // ---------------------------------------------------------------------------
 
-/** Close every open overflow menu the event did not happen inside. `inside` is
- *  the event target; `null` closes all of them.
- *
- *  THE EXEMPTION IS LOAD-BEARING, not defensive. `pointerdown` fires before
- *  `click`, so a listener closing on any pointerdown would take the `open`
- *  attribute off before an action button's handler runs, `fromMenu` would read
- *  false, and the "Copied" toast would be dropped — the only confirmation
- *  channel a menu click has, since the button carrying the `.copied` flash goes
- *  off screen with the menu. It is also what lets the trigger of an already-open
- *  menu still close it: that pointerdown is exempt, and the UA's own toggle
- *  follows. */
+/**
+ * Close every open overflow menu the event did not happen inside (`null` closes all). The exemption is
+ * load-bearing: `pointerdown` precedes `click`, so closing on it would make `fromMenu` read false and drop the toast,
+ * and it lets an open menu's trigger still close it.
+ */
 function closeOverflowMenus(inside: Node | null): void {
   for (const menu of document.querySelectorAll<HTMLDetailsElement>(".turn-actions-more[open]")) {
     if (inside !== null && menu.contains(inside)) {
@@ -58,19 +43,10 @@ function closeOverflowMenus(inside: Node | null): void {
   }
 }
 
-/** Install the outside-pointerdown and Escape dismissal, once per document.
- *
- *  Two document-level listeners rather than a controller per footer: a turn
- *  footer has no teardown seam at all (this module keeps its state in WeakMaps
- *  precisely to avoid one), so anything holding a per-turn object would leak
- *  every turn ever painted. Native `<details name>` already supplies the
- *  activation, the `aria-expanded` semantics and the document-wide exclusivity,
- *  and this is the one thing it does not: a disclosure does not close when the
- *  reader looks away from it.
- *
- *  Escape does NOT `stopPropagation`, matching `pill-expand.ts`'s
- *  `isolateEscape: false` contract, so the app's own Escape handling still sees
- *  the key. */
+/**
+ * Two document listeners rather than one per footer, since a footer has no teardown seam. Escape does not
+ * `stopPropagation`, so the app's own Escape handling still sees it.
+ */
 function wireOverflowDismissal(): void {
   if (dismissalWired) {
     return;
@@ -82,9 +58,7 @@ function wireOverflowDismissal(): void {
       const target = ev.target;
       closeOverflowMenus(target instanceof Node ? target : null);
     },
-    // Capture, so a handler that stops propagation on its way up cannot leave a
-    // menu open over a transcript the reader has moved on from. Passive: nothing
-    // here calls preventDefault, and a pointerdown listener is on the scroll path.
+    // Capture, so a handler that stops propagation cannot leave a menu open; passive, as it is on the scroll path.
     { capture: true, passive: true },
   );
   document.addEventListener("keydown", (ev) => {
@@ -106,37 +80,20 @@ export function initTurnActionCallbacks(cbs: {
   _svgTemplate = cbs.svgTemplate;
 }
 
-/** Whether `card`'s mounted body is a COMPLETE answer for "copy as text": the
- *  renderer owns which ordinals a body holds, injected because messages.ts imports
- *  this module. True until wired, which is what a tree that windows nothing answers. */
+/**
+ * Whether `card`'s mounted body is a complete answer for "copy as text"; injected since messages.ts imports this
+ * module. True until wired.
+ */
 let bodyHoldsWholeTurn: (card: HTMLElement, t: Turn) => boolean = () => true;
 
 export function initTurnActionsBodyProbe(holdsWholeTurn: typeof bodyHoldsWholeTurn): void {
   bodyHoldsWholeTurn = holdsWholeTurn;
 }
 
-/** Copy `text` and flash the button's confirmation.
- *
- *  Exported because the turn HEADER's Copy needs exactly this — the same action
- *  dispatch, the same `.copied` class, the same per-button timer bookkeeping —
- *  and `fundamentals/turn-header.ts` is a pure view that must not import
- *  `actions/`. messages.ts injects it there. */
-export function copyWithFeedback(btn: HTMLButtonElement, text: string): void {
-  if (text === "") {
-    return;
-  }
-  copyAndAnimate(btn, text);
-}
-
-/** Copy, and choose which confirmation channel says so.
- *
- *  `announce` is for a click that came from the COLLAPSED overflow menu: the
- *  gesture closes the menu, so the button carrying the 1.5s `.copied` flash is
- *  off screen before it could be read, and the action's own "Copied" toast is
- *  the only channel left. It stays suppressed everywhere else, where the flash
- *  is beside the reader's pointer and a toast would be a second rendering of one
- *  fact. The class is still added either way — one code path, and reopening the
- *  menu inside the window shows it. */
+/**
+ * Copy and confirm. `announce` is for a click from the collapsed overflow, whose `.copied` flash goes off screen
+ * with the menu; elsewhere the flash suffices.
+ */
 function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false): void {
   void copyClipboard.dispatch(text, {
     silent: !announce,
@@ -160,14 +117,12 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false):
 // Public
 // ---------------------------------------------------------------------------
 
-/** Mount the action buttons into the turn's footer, once per footer element,
- *  and refresh the turn snapshot the handlers read. Buttons appear only once
- *  the turn has settled with something to copy. EVERY action, Copy included,
- *  is inside the collapsible group, so a narrow row carries one `…` target
- *  beside the ledger, the time and Rewind's glyph. */
+/**
+ * Mount the action buttons into the footer once and refresh the turn the handlers read. Buttons appear only once
+ * the turn settles with something to copy; every action, Copy included, sits inside the collapsible group.
+ */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
-  // Ahead of every early return, and idempotent: the first mount of the document's
-  // life is what needs the listeners, and repeat mounts must not stack them.
+  // Before every early return, and idempotent.
   wireOverflowDismissal();
   footerTurns.set(footer, t);
   if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
@@ -197,13 +152,8 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
       el("span", { className: "turn-action-label" }, ariaLabel),
     ) as HTMLButtonElement;
     btn.addEventListener("click", () => {
-      // On phone every one of these sits inside this native disclosure. An
-      // action commits the choice, so close the menu in the same gesture — which
-      // also takes the button off screen, hence `fromMenu`.
-      //
-      // Read `open` BEFORE closing, and note this needs no copy of the layout
-      // breakpoint: on desktop the summary is `display: none`, so nothing can
-      // open the details and `open` is itself the test for the collapsed layout.
+      // On phone these sit inside the disclosure, and an action closes it. Read `open` first: on desktop the summary is
+      // `display: none`, so `open` is itself the collapsed-layout test.
       const menu = btn.closest<HTMLDetailsElement>(".turn-actions-more");
       const fromMenu = menu?.open === true;
       onClick(btn, fromMenu);
@@ -212,42 +162,23 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
     return btn;
   };
 
-  // All five stay inline on desktop and collapse behind one native <details>
-  // summary on phone. One set of real buttons serves both layouts, so resizing
-  // cannot leave a duplicate source toggle out of sync.
+  // Inline on desktop, behind one native <details> on phone; one set of buttons serves both.
   const group = el("span", { className: "turn-actions-group" });
   group.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnPlainText(card, current()), fromMenu);
+      copyAndAnimate(btn, turnCopyText(card, current()), fromMenu);
     }),
   );
   group.appendChild(
     makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnMarkdown(current()), fromMenu);
-    }),
-  );
-  const srcBtn = makeBtn(ICON_SOURCE, "View markdown source", (btn) => {
-    // Re-resolved at click time rather than captured at mount: a sealed entry
-    // carrying the server's sanitized text would otherwise leave a stale source
-    // behind an unchanging button.
-    toggleTurnSource(card, turnMarkdown(current()), btn);
-  });
-  srcBtn.classList.add("turn-action-src");
-  srcBtn.setAttribute("aria-pressed", "false");
-  group.appendChild(srcBtn);
-  group.appendChild(
-    makeBtn(ICON_LINK, "Copy chat ID", (btn, fromMenu) => {
-      const chatID = getActiveId();
-      if (chatID !== "") {
-        copyAndAnimate(btn, chatID, fromMenu);
-      }
+      copyAndAnimate(btn, turnCopyMarkdown(current()), fromMenu);
     }),
   );
   group.appendChild(
-    makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
+    makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
       const chatID = getActiveId();
       if (chatID !== "") {
-        downloadChatExport(chatID, getActive()?.name ?? "", "json");
+        copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
       }
     }),
   );
@@ -270,8 +201,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   more.appendChild(group);
   slot.appendChild(more);
 
-  // Before the Rewind button when one exists, so the destructive action keeps
-  // the far edge to itself; grid placement pins the columns either way.
+  // Before Rewind, so the destructive action keeps the far edge.
   const rewind = footer.querySelector<HTMLElement>(":scope > .turn-rewind");
   if (rewind !== null) {
     rewind.before(slot);
@@ -280,131 +210,36 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   }
 }
 
-/** Class of the raw-source view. One per turn surface. */
-const RAW_CLASS = "turn-raw";
-
-/** Drop any raw-source view and restore the rendered regions. Called when the
- *  fold state changes: the raw view belongs to the surface it was opened on
- *  (body or face), and the OTHER surface renders fresh — leaving the button
- *  latched against a surface that no longer shows raw would make it lie. */
-export function resetTurnSourceView(card: HTMLElement): void {
-  const raws = card.querySelectorAll(`.${RAW_CLASS}`);
-  if (raws.length === 0) {
-    return;
-  }
-  for (const raw of raws) {
-    raw.remove();
-  }
-  for (const region of renderedRegions(card)) {
-    region.classList.remove("hidden");
-  }
-  const btn = card.querySelector<HTMLButtonElement>(
-    ":scope > .turn-footer > .turn-actions-buttons .turn-action-src",
-  );
-  if (btn !== null) {
-    setSrcButtonState(btn, false);
-  }
+/** The full URL of one turn: the chat's route plus `#turn-<n>`. */
+export function turnLink(chatID: string, n: number): string {
+  return location.origin + buildPath({ kind: "chat", id: chatID, turn: n });
 }
 
-/** Hide the rows of a body that is showing raw source, after something mounted into
- *  it: `toggleTurnSource` hides the rows it FINDS, and a window move brings an
- *  unhidden one with it on any scroll. */
-export function syncSourceView(body: HTMLElement): void {
-  const raw = body.querySelector<HTMLElement>(`:scope > .${RAW_CLASS}`);
-  if (raw === null || raw.classList.contains("hidden")) {
-    return;
-  }
-  for (const row of bodyRenders(body)) {
-    row.classList.add("hidden");
-  }
+/** "Copy as text": the reader's prompt, then the reply (the reply alone for an agent-initiated turn). */
+function turnCopyText(card: HTMLElement, t: Turn): string {
+  const reply = turnPlainText(card, t);
+  const prompt = t.trigger?.text.trim() ?? "";
+  return prompt === "" ? reply : `${prompt}\n\n${reply}`;
 }
 
-/** The rows a body renders: every child but the raw view. The body holds one element
- *  per rendered entry, so there is no grouping element to hide in their place. */
-function bodyRenders(body: HTMLElement): HTMLElement[] {
-  return [...body.querySelectorAll<HTMLElement>(`:scope > :not(.${RAW_CLASS})`)];
+/** "Copy as markdown": the prompt as a blockquote, then the reply's markdown. */
+function turnCopyMarkdown(t: Turn): string {
+  const reply = turnMarkdown(t);
+  const prompt = t.trigger?.text.trim() ?? "";
+  if (prompt === "") {
+    return reply;
+  }
+  const quoted = prompt
+    .split("\n")
+    .map((line) => (line === "" ? ">" : `> ${line}`))
+    .join("\n");
+  return `${quoted}\n\n${reply}`;
 }
 
 /**
- * Show the turn's markdown SOURCE in place of its rendering, and back.
- *
- * The WHOLE rendered output swaps — on the OPEN body that is every row it holds
- * (tool cards, reasoning traces and subagent boxes included), on the folded FACE it is
- * the prose bubble. The source is one document, so every word the model wrote arrives
- * at the top of it; a half-swap would show the same turn in two different orders at once.
- *
- * Mechanics carried over from the per-message version:
- *
- *   - The raw view is a SIBLING that gets ADDED, never a replacement of the
- *     rendered children: `updateAssistantBody` runs on every repaint and would
- *     silently undo a replacement.
- *   - Exactly one of the two carries `.hidden` (`display: none !important`),
- *     because find-in-chat's walker prunes `.hidden` subtrees; `opacity` or
- *     `visibility` would leave both in the tree and double-count matches.
- *   - ROWS hide one at a time, because the body holds one element per entry and there is
- *     no grouping element left; `syncSourceView` re-hides a row a later mount brings in.
+ * The reply's markdown, one paragraph per prose run. A run's `text` entries concatenate since one parser renders
+ * them; `entryRenders` is the boundary test.
  */
-function toggleTurnSource(card: HTMLElement, source: string, btn: HTMLButtonElement): void {
-  const host = activeSurface(card);
-  if (host === null) {
-    return;
-  }
-  const rendered = renderedRegions(card);
-  let raw = host.querySelector<HTMLElement>(`:scope > .${RAW_CLASS}`);
-  if (raw === null) {
-    raw = el("pre", { className: `${RAW_CLASS} hidden` });
-    const first = rendered.find((r) => r.parentElement === host);
-    if (first !== undefined) {
-      first.insertAdjacentElement("beforebegin", raw);
-    } else {
-      host.prepend(raw);
-    }
-  }
-  const showRaw = raw.classList.contains("hidden");
-  if (showRaw) {
-    raw.textContent = source;
-  }
-  raw.classList.toggle("hidden", !showRaw);
-  for (const region of rendered) {
-    region.classList.toggle("hidden", showRaw);
-  }
-  setSrcButtonState(btn, showRaw);
-}
-
-function setSrcButtonState(btn: HTMLButtonElement, raw: boolean): void {
-  const label = raw ? "View rendered reply" : "View markdown source";
-  btn.setAttribute("aria-pressed", raw ? "true" : "false");
-  btn.setAttribute("aria-label", label);
-  btn.setAttribute("data-tooltip", label);
-}
-
-/** The surface the source stands in for right now: the face when folded, the
- *  body when open. A folded stub has no body, so the face answer covers it. */
-function activeSurface(card: HTMLElement): HTMLElement | null {
-  if (card.hasAttribute("data-folded")) {
-    return card.querySelector<HTMLElement>(":scope > .turn-face");
-  }
-  return card.querySelector<HTMLElement>(":scope > .turn-body");
-}
-
-/** The rendered surfaces the source hides: every row the open body holds plus the
- *  face's prose bubble. */
-function renderedRegions(card: HTMLElement): HTMLElement[] {
-  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-  return [
-    ...(body === null ? [] : bodyRenders(body)),
-    ...card.querySelectorAll<HTMLElement>(":scope > .turn-face > .turn-face-prose"),
-  ];
-}
-
-/** The turn's markdown, for "copy as markdown" and the source view: the agent's
- *  own prose, one paragraph per PROSE RUN.
- *
- *  A run's `text` entries are one stream — the renderer feeds them to a single
- *  markdown parser, so a construct may straddle two — which is why they
- *  concatenate and only a run boundary spends a blank line. `entryRenders` is
- *  the whole boundary test, the renderer's own answer rather than a second
- *  reading of it, so a `steer_ack` ends a run without contributing to it. */
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
   let run = "";
@@ -430,10 +265,10 @@ export function turnMarkdown(t: Turn): string {
   return parts.join("\n\n");
 }
 
-/** The turn's rendered plain text, for "copy as text": the assistant bubbles of whichever
- *  surface is mounted (body open, face folded), falling back to the markdown when neither holds
- *  one. The BODY answers only while it holds the whole turn MOUNTED — a windowed or
- *  still-building one would copy a hole. */
+/**
+ * The reply's rendered plain text: the mounted surface's bubbles, else the markdown. The body counts only while it
+ * holds the whole turn.
+ */
 function turnPlainText(card: HTMLElement, t: Turn): string {
   const bubbles = [
     ...card.querySelectorAll(

@@ -26,10 +26,8 @@ describe("resolvePaths", () => {
   });
 
   it("keeps a browser-listing target absolute, because the path becomes an attachment", () => {
-    // This case used to assert a BARE NAME for a `""` / `"."` target, which is
-    // what the file browser's rootless path space produced. An attachment path is
-    // resolved against the workspace root server-side, so a bare name — and a
-    // rootless directory — named a file that was never there.
+    // Attachment paths resolve against the workspace server-side, so a target always yields absolute
+    // paths, never a bare name.
     expect(resolvePaths("/workspace/marotte/static-src", ["a.png"])).toEqual([
       "/workspace/marotte/static-src/a.png",
     ]);

@@ -10,44 +10,31 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// cgroupMemMaxV2 and cgroupMemMaxV1 are the cgroup files the chat-file cap is
-// derived from, v2 first. Package vars so a test can point them at a fixture.
+// cgroupMemMaxV2 and cgroupMemMaxV1 are the cgroup files the chat-file cap derives from, v2 first; vars for fixtures.
 var (
 	cgroupMemMaxV2 = "/sys/fs/cgroup/memory.max"
 	cgroupMemMaxV1 = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 )
 
-// memLimitDivisor: one chat at the cap costs several times its own bytes to
-// serve. Measured on go1.27.0 against a 33,551,470-byte chat, opening it took
-// HeapSys to 2.73x the file and writeChat's MarshalIndent to 7.85x, so L/32
-// peaks at about a quarter of the limit and leaves room for the bridge and the
-// SSE fan-out. L = 1 GiB reproduces the 32 MiB constant this store shipped with.
-//
-// minChatFileCap: the floor a small container gets. 8 MiB is above the median
-// chat here (1.65 MB over 53 files) and peaks near 63 MB on a write.
+// memLimitDivisor: serving a capped chat costs several times its bytes. On go1.27.0 a 33,551,470-byte chat took
+// HeapSys to 2.73x and writeChat's MarshalIndent to 7.85x, so L/32 peaks near a quarter of the limit; 1 GiB gives
+// 32 MiB. minChatFileCap is the small-container floor: 8 MiB, peaking near 63 MB on a write.
 const (
 	memLimitDivisor  = 32
 	minChatFileCap   = 8 << 20
 	implausibleLimit = 1 << 62
 )
 
-// chatFileCap is the per-chat-file byte cap: the read bound, the write bound,
-// and 0 for UNLIMITED.
-//
-// UNLIMITED is the live path on this deployment, not a fallback: the container
-// declares memory.max = "max".
+// chatFileCap is the per-chat-file byte cap: the read bound, the write bound, and 0 for unlimited, the live path in a
+// container whose memory.max is "max".
 type chatFileCap int64
 
 // unlimited reports whether no cap applies.
 func (c chatFileCap) unlimited() bool { return c <= 0 }
 
-// readBound is the maxBytes to hand atomicfile.ReadBoundedFile for a file that
-// measured size bytes at open.
-//
-// ReadBoundedFile has NO unlimited mode — maxBytes <= 0 refuses everything, and
-// the write side's "n <= 0 means no cap" has no read-side twin — so an unlimited
-// cap bounds by the file's own measured size. That keeps the grow-during-read
-// refusal live where dropping the call would give up the TOCTOU guard too.
+// readBound is the maxBytes for atomicfile.ReadBoundedFile on a file measured at size. ReadBoundedFile has no
+// unlimited mode (maxBytes <= 0 refuses all), so an unlimited cap bounds by the measured size, keeping the
+// grow-during-read guard.
 func (c chatFileCap) readBound(size int64) int64 {
 	if c.unlimited() {
 		return size
@@ -55,13 +42,8 @@ func (c chatFileCap) readBound(size int64) int64 {
 	return int64(c)
 }
 
-// resolveChatFileCap derives the cap from the container's own memory limit and
-// logs the outcome with the signal it came from.
-//
-// HOST RAM IS NOT READ. It is shared with every other container and is not this
-// process's to claim, so the only honest signal is the limit the operator set
-// on this cgroup. No limit means no cap: marotte does not invent a bound the
-// operator declined to set, and a refused write loses a turn (writeChat).
+// resolveChatFileCap derives the cap from the container's memory limit and logs it with its signal. Host RAM is not
+// read: it is shared. No limit means no cap, since a refused write loses a turn (writeChat).
 func resolveChatFileCap() chatFileCap {
 	limit, signal := readMemLimit()
 	if limit <= 0 {
@@ -76,8 +58,7 @@ func resolveChatFileCap() chatFileCap {
 	return chatFileCap(capBytes)
 }
 
-// readMemLimit returns the cgroup memory limit in bytes, or 0 when the
-// container is unlimited, plus the signal that decided it (for the boot log).
+// readMemLimit returns the cgroup memory limit in bytes, or 0 when unlimited, plus the signal for the boot log.
 func readMemLimit() (limitBytes int64, signal string) {
 	if v, err := os.ReadFile(cgroupMemMaxV2); err == nil {
 		return parseMemLimit(strings.TrimSpace(string(v))), "cgroup v2 " + cgroupMemMaxV2
@@ -89,11 +70,8 @@ func readMemLimit() (limitBytes int64, signal string) {
 	return parseMemLimit(strings.TrimSpace(string(v))), "cgroup v1 " + cgroupMemMaxV1
 }
 
-// parseMemLimit turns a cgroup memory-limit value into bytes, or 0 for the
-// spellings of "no limit": v2's literal "max", v1's near-top-of-int64 sentinel
-// (9223372036854771712 here, whose L/32 would be a 288 PiB cap in name only),
-// a non-positive value, and anything unparseable — an unreadable signal is not
-// authority to bound anything.
+// parseMemLimit turns a cgroup memory-limit value into bytes, or 0 for every "no limit" spelling: v2's "max", v1's
+// near-int64 sentinel (9223372036854771712), a non-positive value, and anything unparseable.
 func parseMemLimit(raw string) int64 {
 	if raw == "" || raw == "max" {
 		return 0
@@ -105,17 +83,13 @@ func parseMemLimit(raw string) int64 {
 	return n
 }
 
-// WithChatFileCap overrides the derived per-chat-file cap. n <= 0 means
-// unlimited, matching the derivation's own encoding. Tests inject a small cap
-// so the refusal paths are reachable without allocating hundreds of MiB.
+// WithChatFileCap overrides the derived per-chat-file cap; n <= 0 is unlimited. Tests use a small cap.
 func WithChatFileCap(n int64) StoreOption {
 	return func(s *Store) { s.fileCap = chatFileCap(n) }
 }
 
-// errFileTooLarge reports a read refused on size. The streaming header paths
-// check the size themselves rather than through atomicfile.ReadBoundedFile, so
-// they wrap ITS sentinel: one errors.Is(err, atomicfile.ErrFileTooLarge) then
-// answers for every size refusal in this package, read and write alike.
+// errFileTooLarge reports a read refused on size. The streaming header paths wrap atomicfile.ErrFileTooLarge, so one
+// errors.Is answers every size refusal here.
 func errFileTooLarge(label string, size, capBytes int64) error {
 	return fmt.Errorf("%s: %w: %d bytes (max %d)", label, atomicfile.ErrFileTooLarge, size, capBytes)
 }

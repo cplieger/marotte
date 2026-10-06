@@ -24,7 +24,7 @@ import (
 )
 
 // maxCommandBody caps the whole POST /api/command envelope: the largest
-// payload is a prompt's text at maxPromptBytes (512 KiB) plus path-only
+// payload is a prompt's text at MaxPromptBytes (512 KiB) plus path-only
 // attachment metadata, so 1 MiB is ~2x headroom.
 const maxCommandBody = webhttp.MaxJSONBody
 
@@ -106,7 +106,10 @@ type Dispatcher struct {
 	// user answering. Assigned once at registration, before the dispatcher serves, so
 	// it is read without mu; commandDischarges is the classification.
 	status ChatStatus
-	mu     sync.RWMutex
+	// prompts is the prompt path's roles, bound at registration like status, for
+	// the close pipeline's resolve and drain.
+	prompts *promptRoles
+	mu      sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -120,6 +123,25 @@ func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
+}
+
+// ResolveAfterClose resolves the pending turn ends of the closed turn and older
+// under the chat's steer lock, then routes the rows it made unsent into a prompt
+// that already started. The zero EndFacts answers when nothing is registered.
+func (d *Dispatcher) ResolveAfterClose(ctx context.Context, chatID marotte.ChatID, fence TurnFence) EndFacts {
+	if d.prompts == nil || d.prompts.queue == nil {
+		return EndFacts{}
+	}
+	return resolveAfterClose(ctx, d.prompts, chatID, fence)
+}
+
+// DrainAfterClose sends at most one prompt for a close: the chat's unread steers,
+// else one queued user row after a clean close (see drainAfterClose).
+func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID, closed CloseFacts, ends EndFacts) {
+	if d.prompts == nil || d.prompts.queue == nil {
+		return
+	}
+	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
 }
 
 // errorResponse is the typed wire shape for JSON error responses.

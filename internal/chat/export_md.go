@@ -12,11 +12,9 @@ import (
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
-// renderChatMarkdown renders a chat's header and log as a self-contained Markdown
-// transcript: title and metadata, then one section per turn (prompt, entries in
-// file order, footer). Pure, so it is safe inline on the read path. Tool input and
-// output pass through sanitize.Output so a hostile tool result cannot smuggle
-// terminal escapes or prompt-injection codepoints into the exported file.
+// renderChatMarkdown renders a chat's header and log as a self-contained Markdown transcript: metadata, then one
+// section per turn. Pure, so safe on the read path. Tool input and output pass through sanitize.Output so a hostile
+// result cannot smuggle escapes or prompt-injection codepoints into the file.
 func renderChatMarkdown(c *marotte.Chat, entries []marotte.Entry) string {
 	var b strings.Builder
 	title := oneLine(c.Name)
@@ -53,8 +51,7 @@ func groupTurns(entries []marotte.Entry) [][]marotte.Entry {
 	return turns
 }
 
-// writeChatMetadata emits the header bullet list (id, model, mode, timestamps,
-// turn count). Empty fields are skipped.
+// writeChatMetadata emits the header bullet list (id, model, mode, timestamps, turn count), skipping empty fields.
 func writeChatMetadata(b *strings.Builder, c *marotte.Chat, turns int) {
 	if c.ID != "" {
 		fmt.Fprintf(b, "- **Chat ID:** `%s`\n", oneLine(c.ID))
@@ -74,8 +71,8 @@ func writeChatMetadata(b *strings.Builder, c *marotte.Chat, turns int) {
 	fmt.Fprintf(b, "- **Turns:** %d\n\n", turns)
 }
 
-// turnRender is one turn's rendering state: the results folded into their calls,
-// the call ids the turn holds, and the plan rendered once at its first entry.
+// turnRender is one turn's rendering state: results folded into calls, the turn's call ids, and the plan rendered
+// once.
 type turnRender struct {
 	results  map[string]*marotte.EntryToolResult
 	calls    map[string]struct{}
@@ -83,8 +80,7 @@ type turnRender struct {
 	planDone bool
 }
 
-// writeTurnMarkdown renders one turn: its heading and prompt from the turn_open,
-// every rendering entry in file order, then the turn_close footer and a rule.
+// writeTurnMarkdown renders one turn: heading and prompt, every rendering entry in file order, the footer and a rule.
 func writeTurnMarkdown(b *strings.Builder, turn []marotte.Entry) {
 	results, calls := indexResults(turn)
 	r := turnRender{results: results, calls: calls, plan: newestPlan(turn)}
@@ -99,8 +95,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindTurnOpen:
 		writeTurnOpenMarkdown(b, e)
 	case marotte.EntryKindText, marotte.EntryKindSteerAck:
-		// An ack's words are the agent's, lifted out of the reply they rode on, and its
-		// payload carries them under the same `text` key a text entry does.
+		// An ack's words are the agent's, under the same `text` key as a text entry.
 		writeTextMarkdown(b, e)
 	case marotte.EntryKindThinking:
 		writeThinkingMarkdown(b, e)
@@ -119,14 +114,11 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
 	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled:
-		// Neither renders, each for its own reason. turn_bind is bookkeeping: KAS's id for
-		// the prompt renders nowhere. A reconciled states that a merge had nothing to
-		// add, which is a fact about the RECORD rather than about the conversation.
+		// Neither renders: turn_bind is bookkeeping, and reconciled is a fact about the record, not the conversation.
 	}
 }
 
-// writeEventMarkdown renders the six kinds the client draws as a boundary row, the set
-// its EventEntryKind names.
+// writeEventMarkdown renders the six kinds the client draws as boundary rows (EventEntryKind).
 func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 	switch e.Kind {
 	case marotte.EntryKindCompaction:
@@ -144,11 +136,9 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeTurnRevertMarkdown renders the revert's boundary row: the rule, then the words the
-// client's REVERT_LABELS holds for the one cause. The payload is not read, because the
-// entry's presence IS the cut — a payload this export could not decode still states it —
-// and the wording is total over TurnRevertCause on the CLIENT, where a Record over the
-// type makes a second cause a compile error rather than a silent default here.
+// writeTurnRevertMarkdown renders the revert's boundary row: the rule, then the client's REVERT_LABELS words. The
+// payload is not read: the entry's presence is the cut, and the client's Record over TurnRevertCause keeps the wording
+// total.
 func writeTurnRevertMarkdown(b *strings.Builder) {
 	b.WriteString("---\n\n**Rewound to here**\n\n")
 }
@@ -161,8 +151,7 @@ func (r *turnRender) writeToolCall(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeUnpairedResult renders a result whose call a rewind cut away; a paired
-// result was folded into its call's block.
+// writeUnpairedResult renders a result whose call a rewind cut away; paired results fold into their call.
 func (r *turnRender) writeUnpairedResult(b *strings.Builder, e *marotte.Entry) {
 	if _, paired := r.calls[toolCallIDOfResult(e.ID)]; paired {
 		return
@@ -247,9 +236,14 @@ func writeSafetyBlockedMarkdown(b *strings.Builder, e *marotte.Entry) {
 
 func writeModelSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModelSwitched
-	if decodePayload(e, &p) {
-		fmt.Fprintf(b, "**Event: model_switched** %s\n\n", modelSwitchedDetail(&p))
+	if !decodePayload(e, &p) {
+		return
 	}
+	line := "**Event: model_switched** " + modelSwitchedDetail(&p)
+	if p.Reason != "" {
+		line += ", switched by KAS: " + oneLine(string(p.Reason))
+	}
+	fmt.Fprintf(b, "%s\n\n", line)
 }
 
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
@@ -257,8 +251,7 @@ func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	if !decodePayload(e, &p) {
 		return
 	}
-	// Mode IDS, not display names, for modelSwitchedDetail's reason: an export is a
-	// record, and the catalog that resolves a name is not in it.
+	// Mode ids, not names: the export does not carry the catalog.
 	line := fmt.Sprintf("**Event: mode_switched** %s → %s", oneLine(p.From), oneLine(p.To))
 	if p.Source == marotte.ModeSwitchSourceAgent {
 		line += ", switched by the agent"
@@ -266,12 +259,8 @@ func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	fmt.Fprintf(b, "%s\n\n", line)
 }
 
-// modelSwitchedDetail mirrors the transcript row's arms: ONE entry kind, TWO
-// triggers, discriminated by From == To (see marotte.EntryModelSwitched). An empty
-// To is the context reset and takes no tier.
-//
-// The tier is the WIRE VALUE, not a display label: an export is a record, and a
-// second copy of the client's label table could disagree with it.
+// modelSwitchedDetail mirrors the transcript row: one kind, two triggers told apart by From == To
+// (marotte.EntryModelSwitched). An empty To is the context reset. The tier is the wire value, not a label.
 func modelSwitchedDetail(p *marotte.EntryModelSwitched) string {
 	if p.To == "" {
 		return "context reset"
@@ -293,9 +282,8 @@ func writeTurnCloseEntry(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// indexResults decodes every tool_result of a turn, keyed by the call it settles,
-// beside the set of call ids the turn holds: a result whose call a rewind cut away
-// is not in the second and renders on its own.
+// indexResults decodes a turn's tool_results keyed by call, plus the turn's call ids; a result whose call was cut
+// away renders alone.
 func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolResult, calls map[string]struct{}) {
 	results = make(map[string]*marotte.EntryToolResult)
 	calls = make(map[string]struct{})
@@ -314,7 +302,7 @@ func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolRe
 	return results, calls
 }
 
-// newestPlan is the turn's last plan entry's entries, or nil.
+// newestPlan returns the turn's last plan entry's entries, or nil.
 func newestPlan(turn []marotte.Entry) []marotte.PlanEntry {
 	for _, e := range slices.Backward(turn) {
 		if e.Kind != marotte.EntryKindPlan {
@@ -328,14 +316,12 @@ func newestPlan(turn []marotte.Entry) []marotte.PlanEntry {
 	return nil
 }
 
-// decodePayload decodes an entry's payload into p, answering whether it decoded: an
-// entry that does not is skipped rather than failing the export.
+// decodePayload decodes an entry's payload into p, reporting success; an undecodable entry is skipped.
 func decodePayload(e *marotte.Entry, p any) bool {
 	return json.Unmarshal(e.Payload, p) == nil
 }
 
-// writeTurnOpenMarkdown emits the turn heading, its timestamp, and the prompt with
-// its attachment names when the reader opened the turn.
+// writeTurnOpenMarkdown emits the turn heading, its timestamp, and the prompt with attachment names for a reader turn.
 func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var open marotte.EntryTurnOpen
 	if !decodePayload(e, &open) {
@@ -363,8 +349,7 @@ func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeLaneNote marks an entry a delegate produced, so the export says whose words
-// they are; the chat's own agent has lane "" and gets no note.
+// writeLaneNote marks a delegate's entry with whose words they are; lane "" gets no note.
 func writeLaneNote(b *strings.Builder, lane string) {
 	if lane != "" {
 		fmt.Fprintf(b, "_Delegate `%s`_\n\n", oneLine(lane))
@@ -379,10 +364,8 @@ func writeParagraph(b *strings.Builder, text string) {
 	}
 }
 
-// steerHeading names a mid-turn message's origin and, for a user steer, whether the
-// agent ever read it: a correction the agent never saw must stay distinguishable
-// from the prompt above it, which is the one fact about a mid-turn message a reader
-// most wants back out of an export.
+// steerHeading names a mid-turn message's origin and, for a user steer, whether the agent read it, so an unseen
+// correction stays distinct from the prompt.
 func steerHeading(p *marotte.EntrySteer) string {
 	if p.Origin == marotte.SteerOriginAgent {
 		return "**Agent note**\n\n"
@@ -393,8 +376,7 @@ func steerHeading(p *marotte.EntrySteer) string {
 	return "**User (mid-turn)**\n\n"
 }
 
-// writePlanMarkdown renders the plan as a GitHub task-list checklist.
-// Completed → [x]; in-progress → [ ] with a suffix (GFM has no third box).
+// writePlanMarkdown renders the plan as a GFM task list: completed [x], in progress [ ] with a suffix.
 func writePlanMarkdown(b *strings.Builder, plan []marotte.PlanEntry) {
 	b.WriteString("**Plan**\n\n")
 	for i := range plan {
@@ -405,7 +387,6 @@ func writePlanMarkdown(b *strings.Builder, plan []marotte.PlanEntry) {
 		case marotte.PlanInProgress:
 			suffix = " _(in progress)_"
 		case marotte.PlanPending:
-			// leave the default unchecked box
 		}
 		fmt.Fprintf(b, "- %s %s%s\n", box, oneLine(plan[i].Content), suffix)
 	}
@@ -415,10 +396,8 @@ func writePlanMarkdown(b *strings.Builder, plan []marotte.PlanEntry) {
 // untitledTool heads a tool call or result whose frame carried no title.
 const untitledTool = "tool"
 
-// writeToolCallMarkdown renders one tool call as a collapsible block: summary,
-// duration, locations, then the sanitised input and output in fenced code blocks.
-// The result, when the turn holds one, supplies the settled status, output and
-// locations.
+// writeToolCallMarkdown renders one tool call as a collapsible block: summary, duration, locations, then sanitised
+// input and output in fences. A held result supplies the settled status, output and locations.
 func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res *marotte.EntryToolResult) {
 	title := oneLine(call.Title)
 	if title == "" {
@@ -470,10 +449,8 @@ func writeToolResultMarkdown(b *strings.Builder, res *marotte.EntryToolResult) {
 	b.WriteString("</details>\n\n")
 }
 
-// toolStatusWord is the status the summary line prints. A DECLINED call ran
-// correctly and refused, so the export says so rather than printing the bare
-// `completed` its status carries — the same reason the card paints a fifth outcome
-// instead of a green check.
+// toolStatusWord is the summary line's status. A declined call says declined rather than its bare `completed`, as
+// the card paints a fifth outcome.
 func toolStatusWord(status marotte.ToolStatus, declined bool) string {
 	if declined {
 		return "declined"
@@ -500,8 +477,7 @@ func writeToolLocations(b *strings.Builder, locs []marotte.ToolLocation) {
 	b.WriteString("\n")
 }
 
-// writeTurnCloseMarkdown emits the turn's footer: outcome, elapsed time, credits,
-// model and the failure reason when there is one.
+// writeTurnCloseMarkdown emits the turn footer: outcome, elapsed, credits, model and any failure reason.
 func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 	parts := []string{"Outcome: " + oneLine(string(p.Outcome))}
 	if p.ElapsedMs > 0 {
@@ -519,8 +495,7 @@ func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 	}
 }
 
-// formatToolInput pretty-prints a tool call's raw JSON input, or returns
-// the trimmed raw string when it is not valid JSON. Empty/null yields "".
+// formatToolInput pretty-prints a tool call's JSON input, or returns the trimmed raw string; empty or null yields "".
 func formatToolInput(raw json.RawMessage) string {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -533,8 +508,7 @@ func formatToolInput(raw json.RawMessage) string {
 	return s
 }
 
-// mdTimestamp formats a millisecond epoch as a UTC datetime, or "" for a
-// zero/negative timestamp.
+// mdTimestamp formats a millisecond epoch as a UTC datetime, or "" for zero or negative.
 func mdTimestamp(ms int64) string {
 	if ms <= 0 {
 		return ""
@@ -542,17 +516,14 @@ func mdTimestamp(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
-// oneLine collapses CR/LF to spaces and trims, so a value can't break a
-// heading, list item, or table cell it is interpolated into.
+// oneLine collapses CR/LF to spaces and trims, so a value cannot break its heading, list item or cell.
 func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.TrimSpace(s)
 }
 
-// fencedCode wraps content in a Markdown code fence whose backtick run is
-// always longer than the longest backtick run inside content, so embedded
-// triple-backticks can't prematurely close the block.
+// fencedCode wraps content in a fence longer than its longest backtick run, so embedded fences cannot close it.
 func fencedCode(content, lang string) string {
 	longest, run := 0, 0
 	for _, r := range content {

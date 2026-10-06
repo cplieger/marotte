@@ -1,46 +1,29 @@
-// Centralized defaults and the known-keys validation set for
-// marotte-managed `<configDir>/config.json`. The GET handler serves
-// EffectiveDefaults resolved underneath the stored document; the PATCH
-// handler calls WarnUnknownKeys to surface typos and CLI/UI drift
-// without rejecting forward-compatible keys, because full struct
-// validation is too rigid for a preference file that gains keys per
-// release.
+// Defaults and the known-keys set for marotte's `<configDir>/config.json`. Unknown keys are
+// warned about, never rejected, because a preference file gains keys per release.
 
 package settings
 
 import "log/slog"
 
-// Exported constants for settings key names. All consumers should
-// reference these instead of bare string literals to prevent drift.
+// Settings key names. Reference these instead of bare string literals.
 const (
 	KeyAgentIgnoreFiles = "agent_ignore_files"
 
-	// KeyChatRetentionDays encodes three states rather than a count: -1 keeps every
-	// chat, 0 deletes one at its close, N keeps it N days. So a key silently dropped
-	// from the document does not fall back to a smaller number, it falls back to the
-	// 7-day default — which is why /api/settings merges a PATCH against the file and
-	// has no full-document replace to omit a key from.
+	// KeyChatRetentionDays is three states: -1 keeps every chat, 0 deletes at close, N keeps N
+	// days. A dropped key falls back to the 7-day default, hence PATCH merges, never replaces.
 	KeyChatRetentionDays = "chat_retention_days"
 
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
 
-	// KeyLastEffortByModel is the reasoning-effort level the user picked last, PER
-	// MODEL: a map from model id to level, the twin of KeyLastModel — a NEW chat on a
-	// model this map names opens on that level instead of on the model's default tier.
-	// Keyed by model because a tier is a judgement about one model, so a new model opens
-	// on its own default while the same model keeps its pick. A seed, never a store: the
-	// chat record owns the level (Chat.Effort) and this is never written onto it. Both
-	// readers (BridgeCoordinator.effortSeedFor, the client's getLastEffortFor) reconcile it
-	// against the chat's model's tier list, so a level that model lacks is not sent.
+	// KeyLastEffortByModel maps model id to the effort level last picked under it: the level a
+	// NEW chat on that model opens on. A seed, never written onto the chat record (Chat.Effort
+	// owns the level); both readers (effortSeedFor, getLastEffortFor) look up the chat's model.
 	KeyLastEffortByModel = "last_effort_by_model"
 
-	// KeyLastMergeMethod is the PR merge method the user picked last, in the
-	// forge's own spelling, and the merge dialog's default on the next merge when
-	// that repository offers it. A seed like KeyLastEffortByModel: pure memory,
-	// never a per-repo policy. Empty means nothing picked yet; the dialog then
-	// defaults to the first method the repository lists.
+	// KeyLastMergeMethod is the PR merge method last picked (forge spelling), the merge dialog's
+	// next default when the repository offers it. Empty means none picked.
 	KeyLastMergeMethod = "last_merge_method"
 
 	KeyNotifyAgentFinished = "notify_agent_finished"
@@ -48,213 +31,124 @@ const (
 	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeySupervisedDefault   = "supervised_default"
 
-	// KeySecurityProfile is the named security posture every session marotte
-	// starts opens with: one of policyfile's profile ids, resolved into KAS policy
-	// preset ids and sent as _meta.kiro.policyPreset. GLOBAL, because KAS cannot
-	// change a live session's policy, so a per-chat level could only apply at the
-	// next session start.
-	//
-	// An unset or unrecognised value resolves to policyfile.DefaultProfile, not to
-	// Custom: Custom sends no presets, so a typo would remove the fs_read floor.
+	// KeySecurityProfile is the security posture every session opens with (a policyfile profile
+	// id sent as policy presets). Global: KAS cannot change a live session's policy. An unset or
+	// unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
 	KeySecurityProfile = "security_profile"
 
-	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved
-	// automatically instead of refused after the unattended budget.
-	//
-	// Off by default, and deliberately its OWN switch rather than a read of the
-	// interactive auto-approve posture: "I approve this while watching" and
-	// "approve this unattended at 03:00" are different consents, so the second
-	// has to be chosen explicitly. Turning it on is informed; inheriting it
-	// would not be.
+	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved instead of refused
+	// after the unattended budget. Off by default, and its own switch: unattended consent must be
+	// chosen, not inherited.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
-	// KeyToolSearchEnabled and KeyKnowledgeEnabled are the two settings whose
-	// value has to reach the AGENT rather than only kiro-cli, and they are the
-	// reason a marotte setting can now drive a kascap gate at all.
-	//
-	// Both used to be written through /api/kiro-settings as `toolSearch.enabled`
-	// and `chat.enableKnowledge`. Measured on the stock 2.19.2 KAS bundle, that
-	// endpoint cannot change a running chat: KAS's ACP path reads no kiro-cli
-	// setting anywhere (zero occurrences of cli.json, kiro-cli/settings,
-	// readSettingsFile and loadCliSettings; each chat.* literal appears exactly
-	// once, as a @see cross-reference in the settings schema). The keys that DO
-	// reach it are `toolSearch` and `knowledge` under _meta.kiro.settings, so the
-	// controls now write here and internal/agent resolves each at spawn time into
-	// StartOpts, kascap.Spawn and the wire.
-	//
-	// Resolved PER SPAWN rather than captured at construction, because a bridge
-	// factory runs per chat: reading the value once would pin every later chat to
-	// whatever was set when the server booted.
-	//
-	// KeyKnowledgeEnabled defaults TRUE and is therefore in Default(), unlike its
-	// sibling. An absent key must not read as off — the knowledge index, its REST
-	// surface and its UI all predate this switch, so a zero-value false would
-	// silently take the knowledge tool away from every existing install on the
-	// first boot after the upgrade.
+	// KeyToolSearchEnabled and KeyKnowledgeEnabled reach the agent per spawn (knowledge under
+	// _meta.kiro.settings, tool search as KIRO_FEATURE_TOOL_LOAD_ENABLED). Knowledge defaults TRUE.
 	KeyToolSearchEnabled = "tool_search_enabled"
 	KeyKnowledgeEnabled  = "knowledge_enabled"
+	KeyGuardPayloadLinks = "guard_payload_links"
 
-	// KeyMemoryEnabled opts INTO kiro-cli's memory subsystem, and it is the one
-	// setting here that has to move two levers at once, because neither alone can
-	// decide the question.
-	//
-	// The `userMemoryOptIn` row vetoes; the child environment's
-	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED is the only thing that can make memory
-	// ELIGIBLE. resolveMemoryEnabled reads AB_MEMORY_INTERNAL first and consults
-	// the external arm only when the internal one reads "disabled", and
-	// AB_MEMORY_INTERNAL is absent from ENV_FEATURE_VARIABLES — so an AWS-side ramp
-	// of the internal arm bypasses the variable entirely and only the veto closes
-	// it, while a ramp that never comes leaves the variable as the only way to open
-	// it. Off therefore still SENDS `{"enabled": false}` rather than going quiet.
-	//
-	// Defaults OFF, and deliberately not in Default(): the zero value is the safe
-	// state here, which is the opposite of KeyKnowledgeEnabled above. This is a
-	// feature nothing in marotte has ever had, so an absent key means nobody asked
-	// for it, and the standing verdict is that curation beats automatic capture —
-	// see the userMemoryOptIn row in internal/kascap/table.go for why the argument
-	// does not expire when upstream fixes a defect.
-	//
-	// Not live: KAS freezes the gate at session creation and the environment is
-	// fixed at spawn, so a flip reaches NEW chats only. The UI hint says so.
-	KeyMemoryEnabled = "memory_enabled"
+	// KeyContentCollectionEnabled lets model requests be used by AWS for service
+	// improvement. Default off. internal/agent asserts it on every kiro-cli process
+	// and pushes a change live, because KAS holds it per process and persists none
+	// of it; an organization's lock overrides it.
+	KeyContentCollectionEnabled = "content_collection_enabled"
 
-	// KeyTheme and KeyFBPath are the two fields that came here when
-	// internal/uistate was deleted: the whole-document arrangement it held is a
-	// modelled tab collection now (internal/tabs), and these two are the members
-	// that were never about tabs at all — a workspace preference and a workspace
-	// path, which is exactly what this file is.
-	//
-	// KeyTheme is "dark" | "light" | "system", and "system" is a real stored
-	// CHOICE rather than the absence of one: it means the user asked to follow the
-	// OS. An absent key is the absence, and it resolves to system at the client.
-	//
-	// The theme is ALSO cached in the browser's localStorage, and that is not a
-	// second source of truth: the pre-paint script (static/prepaint.js) has to
-	// pick a theme before any fetch can resolve, so the cache is a
-	// paint-time hint this value overwrites on every load. It is also the one
-	// value the uistate deletion carries across — see settings.ts.
-	//
-	// KeyFBPath is the file browser's last directory. Server-owned for the reason
-	// the arrangement is: it is where this WORKSPACE was being browsed, so a
-	// second device should open there too.
+	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per spawn by
+	// MemoryPreferenceFor. KAS freezes the mode per session; the reflection half is re-sent on
+	// session/load.
+	KeyMemoryMode = "memory_mode"
+
+	// KeyMCPWaitForReady makes KAS hold each prompt until every enabled MCP server
+	// has settled. It reaches the agent through the rendered KAS MCP file, not the
+	// spawn, so a flip is live at the next prompt of every open chat. Default off.
+	KeyMCPWaitForReady = "mcp_wait_for_ready" //nolint:gosec // G101: a settings key ("MCPWait" reads as "pw"), not a credential
+
+	// KeyAutoCompactionEnabled and KeyAutoCompactPct are the chat compaction
+	// policy internal/agent's autoCompactionPolicy reads. The door value they
+	// imply is frozen by KAS per session, so a flip reaches a chat at its next
+	// session/load; the pct itself acts at once because marotte drives it.
+	KeyAutoCompactionEnabled = "auto_compaction_enabled"
+	KeyAutoCompactPct        = "auto_compact_pct"
+
+	// The Agent capabilities that ride KAS's doors, resolved per spawn by
+	// internal/agent's agentFeatures (values in agent_features.go).
+	// KeyWorkValidation and KeyCloudFormationSafety are three-state: empty sends
+	// nothing, so kiro-cli's own experiment decides.
+	KeySpecPlanning         = "spec_planning"
+	KeySpecPlanningAskFirst = "spec_planning_ask_first"
+	KeyInlineAgents         = "inline_agents_enabled"
+	KeySteeringReminders    = "steering_reminders_enabled"
+	KeyWorkflowsEnabled     = "workflows_enabled"
+	KeyWorkValidation       = "work_validation"
+	KeyCloudFormationSafety = "cloudformation_safety_check"
+
+	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
+	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
+	// 120 s), sent at initialize and pushed live to every bridge.
+	KeyOutputStyle              = "output_style"
+	KeyTerminalCommandTimeoutMs = "terminal_command_timeout_ms"
+
+	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
+	// system at the client). The browser's localStorage copy is a pre-paint hint this value
+	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
 	KeyTheme  = "theme"
 	KeyFBPath = "fb_path"
 )
 
-// There is deliberately no notify_permission key. A permission ask BLOCKS the turn
-// and off-screen nothing else marks it, so silencing the notice would stall every
-// later turn with no signal (pinned by push.TestPermissionKindHasNoSettingsKey).
-// What is relaxable is the permission SYSTEM, through the security profile, and the
-// master notifications_enabled switch still turns everything off together.
+// There is no notify_permission key: a permission ask blocks the turn, so its notice cannot
+// be silenced (push.TestPermissionKindHasNoSettingsKey). The master switch still covers it.
 
-// DefaultChatRetentionDays is the seeded default for chat_retention_days.
-//
-// marotte owns chat retention end to end (kiro-cli's own cleanup.periodDays
-// is pinned to 0/never so the two systems never both purge). The value is a
-// day count with two sentinels:
-//
-//	-1 = forever  — closing a tab archives to History; never purged ("backups").
-//	 0 = off      — closing a tab deletes the chat (ephemeral); History hidden.
-//	 N = keep N days — archive on close; the purge scheduler removes after N days.
-//
-// The server purge scheduler treats <= 0 as "no purge" (off AND forever); the
-// client decides archive-vs-delete on close from the same value (enabled when
-// != 0). Seven days is a week, so a chat is still there when someone comes back
-// to it after a weekend.
-//
-// There is no TypeScript mirror of this value: GET /api/settings resolves the
-// default underneath the stored document, so the payload always carries a real
-// number and the client has nothing to fall back to.
+// DefaultChatRetentionDays is the default for chat_retention_days: -1 forever, 0 delete on
+// close (History hidden), N purge after N days. The purge treats <= 0 as no purge. GET
+// /api/settings resolves it, so the client carries no copy.
 const DefaultChatRetentionDays = 7
 
-// DefaultAgentIgnoreFiles is the seeded default for agent_ignore_files, and it
-// is EMPTY. kiro-cli's own TUI, the Kiro IDE and Kiro Crew all leave a workspace
-// ignore file unapplied, so a seeded list made marotte the one Kiro client whose
-// agent could not read the local work files. AgentIgnoreFloor is sent regardless.
-//
-// Empty and non-nil: the wire field carries no omitempty, so nil would marshal
-// as null and the client's string[] cannot hold one.
+// DefaultAgentIgnoreFiles is the default for agent_ignore_files: EMPTY (other Kiro clients
+// apply no workspace ignore file; AgentIgnoreFloor is sent regardless). Non-nil, so it marshals [].
 func DefaultAgentIgnoreFiles() []string {
 	return []string{}
 }
 
-// There is no Default() any more. It returned a map of five keys and had exactly
-// ONE caller, the GET /api/settings handler, which emitted it when config.json was
-// unreadable and echoed the file's bytes verbatim when it was not. That made the
-// response shape depend on the file's state, so every key nobody had explicitly
-// set was absent from the response and the client had to decide what absence
-// meant — which is how it came to carry its own copies of these defaults, and how
-// the agent-ignore list came to render empty while the read filter was applying
-// two patterns.
-//
-// EffectiveDefaults in effective.go replaces it: a TYPED struct covering every
-// key the client renders, so the response is complete by construction rather than
-// by whichever branch of a handler ran, and so wiregen can carry the same shape
-// into TypeScript with every field required. Its doc comment carries the
-// membership rule this one used to.
-//
-// The old comment's other half still holds and is worth keeping: a preference's
-// in-process default lives near its CONSUMER (logctl's false for debug_logs,
-// internal/agent's for the session-door keys) because the consumer owns what to do
-// with an UNREADABLE file, which differs per consumer. EffectiveDefaults answers
-// the narrower question of what is true when the document is merely SILENT, and
-// the two are orthogonal.
-
-// KnownKeys is the set of marotte-managed config.json keys. PATCH
-// handlers warn (but do not reject) keys outside this set so a typo
-// or stray field surfaces in operator logs without breaking forward
-// compatibility with newer frontend versions that introduce new keys
-// before this list is updated. Add new keys here when the frontend's
-// `AppSettings` interface grows.
-//
-// Note: kiro-cli's own settings (cleanup.periodDays, chat.enable*,
-// etc.) live in a separate file ($KIRO_HOME/settings/cli.json) and
-// are not part of this set.
-//
-// There is deliberately no model_effort key. Reasoning effort was one global
-// setting shaped `{last_model, effort}`, so it was keyed by the LAST model rather
-// than by the chat: two chats could not disagree about effort, and switching
-// models discarded the previous model's choice. It is a field on the chat record
-// now (marotte.Chat.Effort), written by CmdSetEffort and applied at session/new
-// through StartOpts.Effort, which is where the other three per-chat composer
-// settings already lived. Nothing reads or writes the old key; a config.json that
-// still carries it warns as an unknown key on the next write and is otherwise
-// inert.
-//
-// KeyLastEffortByModel is not that key coming back. Per-chat storage is what a
-// new chat had no memory to open with, so the level was per-chat and NOTHING
-// remembered the last pick — the model had getLastModel and effort had no
-// equivalent, so every new chat silently reopened on the model default.
-// KeyLastEffortByModel restores only the memory, as a level per model with a
-// fallback rung at each reader; see its own comment for why that avoids each of
-// the three defects above.
+// KnownKeys is the set of marotte-managed config.json keys; PATCH warns about others but
+// does not reject them. kiro-cli's own settings (cli.json) are not in it. There is no
+// model_effort key: effort is per chat (Chat.Effort), seeded by KeyLastEffortByModel.
 var KnownKeys = map[string]struct{}{
-	KeyAgentIgnoreFiles:     {},
-	KeyChatRetentionDays:    {},
-	KeyDebugLogs:            {},
-	KeyFBPath:               {},
-	KeyKnowledgeEnabled:     {},
-	KeyLastEffortByModel:    {},
-	KeyLastMergeMethod:      {},
-	KeyLastModel:            {},
-	KeyMemoryEnabled:        {},
-	KeyNotificationsEnabled: {},
-	KeyNotifyAgentFinished:  {},
-	KeyNotifyPRStatus:       {},
-	KeyNotifyRunOutcome:     {},
-	KeySupervisedDefault:    {},
-	KeyScheduledAutoApprove: {},
-	KeySecurityProfile:      {},
-	KeyTheme:                {},
-	KeyToolSearchEnabled:    {},
+	KeyAgentIgnoreFiles:         {},
+	KeyAutoCompactionEnabled:    {},
+	KeyAutoCompactPct:           {},
+	KeyChatRetentionDays:        {},
+	KeyCloudFormationSafety:     {},
+	KeyDebugLogs:                {},
+	KeyInlineAgents:             {},
+	KeyOutputStyle:              {},
+	KeySpecPlanning:             {},
+	KeySpecPlanningAskFirst:     {},
+	KeySteeringReminders:        {},
+	KeyTerminalCommandTimeoutMs: {},
+	KeyWorkValidation:           {},
+	KeyWorkflowsEnabled:         {},
+	KeyFBPath:                   {},
+	KeyGuardPayloadLinks:        {},
+	KeyKnowledgeEnabled:         {},
+	KeyContentCollectionEnabled: {},
+	KeyLastEffortByModel:        {},
+	KeyLastMergeMethod:          {},
+	KeyLastModel:                {},
+	KeyMCPWaitForReady:          {},
+	KeyMemoryMode:               {},
+	KeyNotificationsEnabled:     {},
+	KeyNotifyAgentFinished:      {},
+	KeyNotifyPRStatus:           {},
+	KeyNotifyRunOutcome:         {},
+	KeySupervisedDefault:        {},
+	KeyScheduledAutoApprove:     {},
+	KeySecurityProfile:          {},
+	KeyTheme:                    {},
+	KeyToolSearchEnabled:        {},
 }
 
-// WarnUnknownKeys logs a warning for each top-level key in keys that
-// isn't recognized by KnownKeys. Returns the slice of unknown keys
-// for callers that want to surface them in HTTP responses or
-// telemetry; the slice is sorted-stable nil when every key is known.
-// source identifies the call site for log correlation (e.g. "PATCH
-// /api/settings").
+// WarnUnknownKeys logs a warning for each key in keys outside KnownKeys and returns them
+// sorted (nil when all are known). source identifies the call site.
 func WarnUnknownKeys(keys []string, source string) []string {
 	var unknown []string
 	for _, k := range keys {

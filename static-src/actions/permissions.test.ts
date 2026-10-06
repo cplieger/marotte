@@ -1,8 +1,5 @@
-// Tests for the native policy actions (editNativeRule / explainPolicy):
-// request wire shape — including the guard_resource pre-flight field the
-// permission dialog's "Always allow" sends — and failure propagation (a
-// guard refusal must surface as a failed dispatch so the caller does NOT
-// approve the pending permission).
+// Native policy actions: the request wire shape, including "Always allow"'s guard_resource
+// pre-flight, and that a guard refusal fails the dispatch so the caller does NOT approve.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,9 +13,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));

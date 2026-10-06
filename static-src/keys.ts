@@ -1,11 +1,5 @@
-// ---------------------------------------------------------------------------
-// Keyboard shortcuts: single keydown handler on document.
-//
-// Two keys are handled BEFORE the Ctrl/Cmd gate, because they carry no modifier:
-// Escape (close the topmost modal) and `?` (open the shortcut reference sheet).
-// Everything in the `shortcuts` table below requires Ctrl or Cmd, so a bare key
-// can never be a table row — the gate returns before the loop is reached.
-// ---------------------------------------------------------------------------
+// One keydown handler on document. Escape and `?` carry no modifier, so they run before the Ctrl/Cmd gate; every
+// table row needs Ctrl or Cmd.
 
 import { emitBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { closeTopModal } from "./modals.js";
@@ -14,17 +8,13 @@ interface ShortcutDef {
   key: string;
   shift?: boolean;
   action: () => void;
-  /** What the binding does, in the reference sheet's words. */
+  /** In the reference sheet's words. */
   description: string;
-  /** Which heading the reference sheet files it under. Presentation, like
-   *  `description`, and it lives here for the same reason: the sheet is
-   *  generated from this table, so a binding declared here needs no second edit
-   *  anywhere to appear on it correctly. */
+  /** The sheet is generated from this table, so a binding declared here needs no second edit to appear on it. */
   group: string;
 }
 
-/** One registered chord, as the reference sheet reads it. The action is
- *  deliberately absent: the sheet describes bindings, it does not invoke them. */
+/** One registered chord, as the reference sheet reads it. No action: the sheet describes bindings. */
 export interface ShortcutBinding {
   readonly key: string;
   readonly shift: boolean;
@@ -39,12 +29,10 @@ function register(def: ShortcutDef): void {
   shortcuts.push(def);
 }
 
-/** The Ctrl/Cmd chords this module currently answers to.
- *
- *  Exported so the reference sheet is GENERATED from the registry rather than
- *  transcribed beside it: a binding added below then appears on the sheet with no
- *  second edit, which is the only way a hand-written list stays true. Empty until
- *  initKeyboardShortcuts has run. */
+/**
+ * The Ctrl/Cmd chords this module answers to, so the reference sheet is generated from the registry. Empty until
+ * initKeyboardShortcuts has run.
+ */
 export function registeredShortcuts(): readonly ShortcutBinding[] {
   return shortcuts.map((s) => ({
     key: s.key,
@@ -54,8 +42,6 @@ export function registeredShortcuts(): readonly ShortcutBinding[] {
   }));
 }
 
-/** True when the event's target is a text-entry surface, so an unmodified
- *  printable key belongs to it rather than to a global binding. */
 function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -113,32 +99,23 @@ export function initKeyboardShortcuts(actions: {
   });
 
   document.addEventListener("keydown", (e: KeyboardEvent) => {
-    // Don't intercept when typing in inputs (except for Escape and Ctrl combos)
     const isInput = isTextEntry(e.target);
 
     if (e.key === "Escape") {
-      // Close topmost modal/panel via the shared helper, which
-      // ensures confirm-dialog cleanup (clone-replaced buttons)
-      // runs correctly even on Escape dismissal.
+      // The shared helper runs confirm-dialog cleanup (clone-replaced buttons) on Escape dismissal too.
       if (closeTopModal()) {
         e.preventDefault();
         return;
       }
-      // Deselect in file browser
+      // Deselect in the file browser.
       emitBus(BUS_KEYS_ESCAPE);
       return;
     }
 
     const mod = e.ctrlKey || e.metaKey;
 
-    // `?` is Shift+/ with no Ctrl or Cmd, so it sits above the gate beside
-    // Escape. It must not fire while the user is typing — `?` is an ordinary
-    // character in a prompt — and it must not ALSO reach app.ts's
-    // focusComposerOnTyping, which redirects any bare printable key into the
-    // composer and would type the `?` there while the sheet opened.
-    // stopImmediatePropagation is what stops that sibling listener on the same
-    // node; preventDefault alone does not, because it inspects the target and the
-    // modifiers rather than defaultPrevented.
+    // `?` is Shift+/ with no Ctrl or Cmd, so it sits above the gate; never while typing. stopImmediatePropagation keeps it
+    // from app.ts's focusComposerOnTyping on the same node, which ignores defaultPrevented.
     if (!mod && !e.altKey && e.key === "?" && !isInput) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -161,16 +138,15 @@ export function initKeyboardShortcuts(actions: {
         continue;
       }
 
-      // Allow Ctrl+Enter in textareas for send
+      // Ctrl+Enter sends from a textarea.
       if (s.key === "Enter" && isInput) {
         e.preventDefault();
         s.action();
         return;
       }
 
-      // Skip other shortcuts when focused on input
       if (isInput && s.key !== "Enter") {
-        // Allow Ctrl+K/N to work even in inputs (new chat)
+        // Ctrl+K/N (new chat) work even in inputs.
         if (s.key === "k" || s.key === "n") {
           e.preventDefault();
           s.action();

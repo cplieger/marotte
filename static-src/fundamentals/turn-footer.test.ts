@@ -1,31 +1,41 @@
-// The turn card's outcome ledger and the INFO PANEL it discloses. The row says ONE
-// thing — how the turn ended — and the panel says everything else in labelled rows.
-// Every section WITHHOLDS on absence, which is most of what this file pins: a delegate
-// can fill three of the six and a mid-flight turn fewer, so a section that painted
-// itself on absence would grow empty headings on most cards in a transcript.
+// The turn card's outcome ledger and the INFO PANEL it discloses. Every section WITHHOLDS on
+// absence, or most cards would grow empty headings.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 
 import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
+import type * as MessageActions from "../actions/messages.js";
 import type { FooterExtras, TurnSummaryData } from "./turn-footer.js";
 import { projectTurns, turnLedger, type Turn } from "../turns.js";
 import type { Entry, TurnState } from "../types.js";
 
 const openFileGitDiff = vi.fn();
+const openFile = vi.fn();
 vi.mock("../editor-openers.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  openFile: undefined,
+  // Undefined: present only so real-ESM linking succeeds.
+  openFile: (path: string, line?: number) => {
+    openFile(path, line);
+  },
   openFileDiff: undefined,
   openFileGitDiff: (path: string) => {
     openFileGitDiff(path);
   },
 }));
 
+const copied = vi.fn();
+vi.mock("../actions/messages.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof MessageActions>()),
+  copyClipboard: {
+    dispatch: (text: string) => {
+      copied(text);
+      return Promise.resolve();
+    },
+  },
+}));
+
 const { buildTurnFooter, updateTurnFooter, earnsTurnFooter, turnFacts } =
   await import("./turn-footer.js");
+const { setWorkspaceRoot, _resetForTest: resetWorkspaceRoot } = await import("../workspace.js");
 
 function line(el: HTMLElement): string {
   return el.querySelector(".turn-ledger-text")?.textContent ?? "";
@@ -67,10 +77,8 @@ function sections(el: HTMLElement): string[] {
   return [...panel(el).querySelectorAll(".turn-info-title")].map((h) => h.textContent ?? "");
 }
 
-/** One section's rows as `[label, value]` pairs, in DOM order. Answers `[]` both for
- *  a section that is absent and for one carrying no labelled rows (Work, when the
- *  turn changed files and ran no other tool) — `sections()` above is what tells the
- *  two apart, so a withholding case asserts on that instead. */
+/** One section's rows as `[label, value]` pairs; `[]` for an absent section and for one with no
+ *  labelled rows, so withholding cases assert on `sections()`. */
 function sectionRows(el: HTMLElement, title: string): [string, string][] {
   for (const s of panel(el).querySelectorAll(".turn-info-section")) {
     if ((s.querySelector(".turn-info-title")?.textContent ?? "") !== title) {
@@ -88,14 +96,9 @@ function rows(el: HTMLElement): HTMLButtonElement[] {
   return [...el.querySelectorAll<HTMLButtonElement>(".turn-file-row")];
 }
 
-/** What the trigger's COMPUTED accessible name CARRIES, asked of the accessibility tree
- *  rather than of an attribute. SUBSTRINGS, because the fact in that name moves whenever
- *  the turn's numbers do; what has to hold is that the purpose and the readout are both
- *  in there.
- *
- *  `40-a11y.css` HAS TO BE MOUNTED: name-from-content concatenates an INLINE child's text
- *  with no separator, and `.sr-only`'s `position: absolute` is what makes Chromium insert
- *  the space — measured, both spellings probed. */
+/** What the trigger's COMPUTED accessible name carries, as substrings (the numbers move).
+ *  `40-a11y.css` must be mounted: `.sr-only`'s `position: absolute` is what makes Chromium insert
+ *  the separating space. */
 async function expectNameCarries(footer: HTMLElement, parts: string[]): Promise<void> {
   document.body.replaceChildren(footer);
   for (const part of parts) {
@@ -112,13 +115,8 @@ const TWO_FILES = {
 
 describe("the ledger row", () => {
   it("says EXACTLY the outcome's lead word, for all eight outcomes", () => {
-    // TOTAL over `TurnOutcome`, and the point of asserting it as an equality rather
-    // than a `toContain` is that nothing else may join it: the numbers a reader used
-    // to have to parse out of this row are rows in the panel now. `completed` and
-    // `running` say NOTHING — the absence of a mark IS the clean case, and the footer
-    // reports how a turn ENDED rather than one still going — and both are asserted
-    // against a turn that spent credits and ran commands, so a clause creeping back
-    // in fails here.
+    // TOTAL over `TurnOutcome` and asserted as equality: the numbers live in the panel. `completed`
+    // and `running` say NOTHING, asserted against a turn with credits and commands.
     for (const [outcome, word] of [
       ["running", ""],
       ["completed", ""],
@@ -155,13 +153,8 @@ describe("the ledger row", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The turn's facts: the ORDERED list, and the LEAD of it the row paints. Most important
-// first, from the same fields the panel renders, so the ranking is what decides which
-// fact the row shows — which is why the order is asserted exactly and not as a set. The
-// list is ALSO what `earnsTurnFooter` reads, so a change here moves the gate; that
-// block below and the paint invariant at the foot of this file are what say so.
-// ---------------------------------------------------------------------------
+// The turn's facts, most important first; the row paints the LEAD, so the order is asserted
+// exactly. `earnsTurnFooter` reads the same list.
 
 describe("the turn's facts", () => {
   it("ranks files, commands, delegates, the other kinds, the clock, the credits", () => {
@@ -277,10 +270,8 @@ describe("the turn's facts", () => {
   });
 
   it("sits INSIDE the trigger and JOINS its name", async () => {
-    // One control over the `i`, the outcome word and this label, so one press box covers
-    // all three (29-turns.css) — and the slot carries NO `aria-hidden`, so the name a
-    // screen reader hears is the readout a sighted reader sees, even though it then
-    // moves whenever the turn's numbers do.
+    // One control over the `i`, the outcome word and this label; NO `aria-hidden`, so a screen reader
+    // hears the readout a sighted reader sees.
     const el = buildTurnFooter({ elapsedMs: 1000, kindCounts: { execute: 2 } });
     expect(el.querySelector(":scope > .turn-fact")).toBeNull();
     const inside = el.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
@@ -310,10 +301,7 @@ describe("the trigger", () => {
   });
 
   it("is a disclosure on every footer, however little the turn did", () => {
-    // It used to be `disabled` unless the turn changed files, on the rule that an
-    // inert button is worse than a plain readout. Every footer has a panel now, so
-    // there is nothing left to be inert about — and `aria-expanded` is written
-    // unconditionally rather than removed on the readout branch.
+    // Every footer has a panel, so the trigger is never `disabled` and `aria-expanded` is always written.
     const el = buildTurnFooter({ credits: 1, elapsedMs: 1000 });
     expect(rows(el)).toHaveLength(0);
     expect(summary(el).disabled).toBe(false);
@@ -332,9 +320,8 @@ describe("the trigger", () => {
   });
 
   it("keeps an open panel open across a repaint that empties the ledger", () => {
-    // The reset that closed it is deleted: a repaint dropping the turn's last file
-    // used to disable the button and force the disclosure shut under whoever had
-    // opened it. The panel still has five other sections to state.
+    // A repaint dropping the turn's last file must not shut the disclosure under whoever
+    // opened it: the panel still has five other sections to state.
     const el = buildTurnFooter({ changedFiles: TWO_FILES, elapsedMs: 1000 });
     summary(el).click();
     updateTurnFooter(el, { elapsedMs: 1000 });
@@ -343,10 +330,8 @@ describe("the trigger", () => {
   });
 
   it("names the PURPOSE and the row's readout on a clean turn", async () => {
-    // D3's failure mode, and the reason this case exists beside the cancelled one
-    // below: with the `aria-label` removed and no `.sr-only` span, a clean turn's
-    // trigger has NO accessible name at all — the text is empty, the caret and the
-    // `i` are decorative, and the glyph carries no text.
+    // Without the `.sr-only` span a clean turn's trigger has NO accessible name: its text is empty
+    // and the caret, `i` and glyph are decorative.
     const el = buildTurnFooter({
       outcome: "completed",
       credits: 1,
@@ -381,10 +366,8 @@ describe("the trigger", () => {
 // ---------------------------------------------------------------------------
 
 describe("the info panel", () => {
-  // THE PANEL IS NEVER EMPTY ON THE PRODUCTION PATH, so the `i` is never a dead end.
-  // Sensitive to a producer that stamps NEITHER timing; one alone still fills it.
-  // Through `turnLedger` because a BARE `{outcome}` DOES open an empty panel — every
-  // field is optional, so that call compiles while being a shape nothing builds.
+  // The panel is never empty on the production path; through `turnLedger`, since a BARE
+  // `{outcome}` compiles yet is a shape nothing builds.
   it("is never empty for a turn built the way production builds one", () => {
     const entries: Entry[] = [
       {
@@ -450,10 +433,8 @@ describe("the info panel", () => {
   });
 
   it("withholds model time when the tool calls overran the wall clock", () => {
-    // Tool calls can overlap, so Σ `duration_ms` legitimately exceeds the turn's wall
-    // clock and the difference goes negative. The panel states what it can prove
-    // rather than clamping to a zero nobody measured — asserted at both the strictly
-    // greater and the exactly equal boundary.
+    // Tool calls overlap, so Σ `duration_ms` can exceed the wall clock: the panel withholds rather
+    // than clamping. Both the greater and the equal boundary.
     expect(sectionRows(buildTurnFooter({ elapsedMs: 30000, toolMs: 45000 }), "Timings")).toEqual([
       ["Wall clock", "30.0s"],
       ["Tool time", "45.0s"],
@@ -484,10 +465,7 @@ describe("the info panel", () => {
     expect(stamps).toHaveLength(2);
     expect(stamps[0]?.dateTime).toBe("2026-01-02T09:05:00.000Z");
     expect(stamps[1]?.dateTime).toBe("2026-01-02T09:06:32.000Z");
-    // The TEXT is the reader's own locale and 12h-or-24h preference, so it is pinned
-    // as a shape rather than as a string — hardcoding "09:05" would assert the
-    // runner's locale, and recomputing it here would be a copy of the production
-    // formatter asserting against itself.
+    // The reader's locale and 12h/24h preference decide the text, so it is pinned as a shape.
     expect(stamps[0]?.textContent).toMatch(/\d{1,2}:\d{2}/u);
   });
 
@@ -501,12 +479,8 @@ describe("the info panel", () => {
   });
 
   it("withholds Ended while the turn is still running", () => {
-    // The stamp a live turn CARRIES is not a claim about its end: `endedAt` is the last
-    // body message's `ts` (`turns.ts` `turnLedger`), so a turn whose reply has started
-    // streaming holds one already — and at the row's minute precision it reads identical
-    // to Started, which is a finished turn's shape on a turn that has not finished. The
-    // section states Started alone, and the row is ABSENT rather than blank, so the panel
-    // carries one stamp rather than two.
+    // A live turn's `endedAt` is the last body message's `ts` (`turnLedger`), which reads like Started
+    // at minute precision, so the section states Started alone and the Ended row is ABSENT.
     const started = Date.UTC(2026, 0, 2, 9, 5, 0);
     const el = buildTurnFooter({ outcome: "running", startedAt: started, endedAt: started + 40 });
     expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started"]);
@@ -518,10 +492,7 @@ describe("the info panel", () => {
   });
 
   it("puts the file rows and one row per tool kind under Work", () => {
-    // The kind rows are sorted by count and then by kind, so two repaints of one turn
-    // cannot reshuffle them: `kindCounts` is built in the ledger's walk order, which
-    // is arrival order, and arrival order is not a fact about the turn worth showing.
-    // `edit` before `execute` at the same count is that tie-break.
+    // Sorted by count then kind, so repaints cannot reshuffle the arrival-ordered `kindCounts`.
     const el = buildTurnFooter({
       changedFiles: TWO_FILES,
       kindCounts: { read: 12, execute: 3, edit: 3 },
@@ -654,13 +625,8 @@ describe("the per-file rows", () => {
     expect(r[1]?.querySelector(".turn-file-badge")).toBeNull();
   });
 
-  // THE FOUR CONDITIONAL-DISCLOSURE CASES THAT USED TO SIT HERE ARE DELETED with the
-  // mechanism they pinned: the summary was a disclosure only when the turn changed a
-  // file, so a credits-only turn got a `disabled` button and the tests asserted that
-  // plus the become/collapse transitions either side of it. Every turn that earns a
-  // footer now has a panel to open — the reasoning is at `updateTurnFooter`'s
-  // `aria-expanded` write — so `summary.disabled` is never set and an assertion on it
-  // would pass whatever the code did.
+  // Every footer-earning turn has a panel (see `updateTurnFooter`'s `aria-expanded` write), so
+  // `summary.disabled` is never set and asserting on it would prove nothing.
   it("keeps its rows across a repaint that leaves the files alone", () => {
     const el = buildTurnFooter({ changedFiles: TWO_FILES });
     summary(el).click();
@@ -727,10 +693,8 @@ describe("earnsTurnFooter", () => {
     expect(earnsTurnFooter({ outcome: "running" })).toBe(false);
   });
 
-  // DELIBERATELY not widened for the model. Every completed turn has one, so
-  // admitting it here would put a footer on every turn in the transcript —
-  // including the ones this rule exists to suppress. The model rides a footer
-  // that already earned its place; it never earns one.
+  // NOT widened for the model: every completed turn has one, so it would put a footer on every
+  // turn. The model rides a footer that already earned its place.
   it("is not made true by a model alone", () => {
     expect(earnsTurnFooter({ models: ["sonnet-4"] })).toBe(false);
     expect(earnsTurnFooter({ models: ["sonnet-4"], outcome: "completed" })).toBe(false);
@@ -765,10 +729,8 @@ describe("earnsTurnFooter", () => {
     ]);
   });
 
-  // THE EXTRAS, which used to be an inline expression in `messages.ts` beside this
-  // predicate: the footer also carries the turn ACTIONS and Rewind, so an unstamped
-  // ledger must not cost the reader the buttons. A delegate card passes neither,
-  // which is why they are parameters rather than fields on the summary.
+  // The footer also carries the turn ACTIONS and Rewind, so an unstamped ledger must not cost the
+  // buttons. Parameters, since a delegate card passes neither.
   it("is true for a rewind target with no ledger at all", () => {
     expect(earnsTurnFooter({}, { rewindable: true })).toBe(true);
   });
@@ -813,14 +775,7 @@ describe("Review changes", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The hover text: what the row does NOT already say.
-//
-// It used to be a native `title` carrying the summary line verbatim, so the one
-// hover affordance on the footer restated the text under the pointer and wore the
-// UA chrome instead of the app's styled tooltip. These pin both halves of the
-// replacement: the styled attribute, and that it says only what the click does.
-// ---------------------------------------------------------------------------
+// The hover text says only what the click does, through the app's styled tooltip attribute.
 
 describe("the trigger's hover text", () => {
   function tip(footer: HTMLElement): string | null {
@@ -844,20 +799,15 @@ describe("the trigger's hover text", () => {
   });
 
   it("advertises the disclosure on a turn that changed no files too", () => {
-    // The clause that withheld the tooltip is gone with the readout state it tested
-    // for: every footer discloses a panel, so a footer with no tooltip would be a
-    // door with nothing saying so.
+    // Every footer discloses a panel, so a footer with no tooltip would be a door with
+    // nothing saying so.
     expect(tip(buildTurnFooter({ outcome: "completed", kindCounts: { execute: 2 } }))).toBe(
       "Show turn details",
     );
   });
 
   it("carries NO outcome clause at all, because the row names every outcome now", () => {
-    // REWRITTEN twice, and this is the shape that ends it. The clause existed for the
-    // three outcomes the ledger line left unnamed, which made a hover the only
-    // explanation of a coloured circle — the same defect as `running`'s "Still
-    // running" tooltip that a previous pass removed for exactly this reason. With
-    // OUTCOME_LEAD total there is nothing left for the tooltip to add.
+    // With OUTCOME_LEAD total the row names every outcome, so the tooltip adds no explanation.
     for (const outcome of ["cancelled", "refused", "unknown", "failed", "interrupted"] as const) {
       const footer = buildTurnFooter({ outcome });
       expect(line(footer), `${outcome} names itself in the row`).not.toBe("");
@@ -878,23 +828,15 @@ describe("the trigger's hover text", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE PAINT INVARIANT: an earned footer paints something, per REASON it is earned. One
-// case per reason, through `buildTurnFooter` and `updateTurnFooter` rather than a
-// hand-built footer, which carries whatever the fixture put in it. Two mechanisms keep
-// it honest: the table is a `Record` over `keyof TurnSummaryData`, so a summary field
-// added later fails the type check until it has a probe, and each probe's `earns` is a
-// LITERAL — read off the gate, deleting a fact takes the reason out of both columns.
-// ---------------------------------------------------------------------------
+// THE PAINT INVARIANT: an earned footer paints something, one case per reason, through the real
+// builders. The table is a `Record` over `keyof TurnSummaryData` (a new field needs a probe) and
+// each `earns` is a LITERAL.
 
 describe("every reason a footer is earned paints something", () => {
   let bundle: HTMLStyleElement;
 
   beforeAll(() => {
-    // The whole assembled cascade, because two of the three channels are decided by
-    // CSS rather than by an attribute: `.turn-ledger-text:empty` is `display: none`,
-    // and the glyph is hidden for a running severity. A style read with no stylesheet
-    // would report both as painted.
+    // The assembled cascade: `.turn-ledger-text:empty` and the running glyph are hidden by CSS.
     bundle = mountAppCSS();
   });
 
@@ -902,13 +844,8 @@ describe("every reason a footer is earned paints something", () => {
     bundle.remove();
   });
 
-  /** Whether one channel is genuinely on screen: not `hidden`, not `display: none`
-   *  (its own or an ancestor's), and carrying text.
-   *
-   *  OPACITY IS DELIBERATELY NOT READ. `.turn-footer` has an `@starting-style`
-   *  entry transition from `opacity: 0`, so a footer appended in this frame can
-   *  legitimately compute 0 — an animation the row is arriving with rather than a
-   *  channel being withheld, and reading it would make every case here a race. */
+  /** Whether one channel is on screen: not `hidden`, not `display: none` (own or ancestor), and
+   *  carrying text. OPACITY is not read: the `@starting-style` entry transition starts at 0. */
   function shows(el: HTMLElement | null): boolean {
     if (el === null || el.hidden || !el.checkVisibility()) {
       return false;
@@ -916,10 +853,8 @@ describe("every reason a footer is earned paints something", () => {
     return (el.textContent ?? "") !== "";
   }
 
-  /** The two channels the FOOTER itself owns. The leading glyph is not a third one:
-   *  it carries no text and is drawn from `data-severity`, and every outcome that
-   *  gets a glyph also gets a word (`OUTCOME_LEAD` is total over the six), so the
-   *  word already stands for it. */
+  /** The two channels the FOOTER owns. The glyph carries no text and every glyphed outcome also gets
+   *  a word, so the word stands for it. */
   function paints(footer: HTMLElement): boolean {
     document.body.replaceChildren(footer);
     return (
@@ -928,11 +863,8 @@ describe("every reason a footer is earned paints something", () => {
     );
   }
 
-  /** One single-field summary per field of `TurnSummaryData`, with the verdict the
-   *  gate owes it. `outcome` probes the EARNING value — `completed` and `running`
-   *  are the two that earn nothing, and the `earnsTurnFooter` block above covers
-   *  them, so spending this row on one of those would leave the word channel
-   *  untested here. */
+  /** One single-field summary per `TurnSummaryData` field with the verdict the gate owes it.
+   *  `outcome` probes an EARNING value; `completed`/`running` are covered by `earnsTurnFooter`'s block. */
   const PROBES: Record<
     keyof TurnSummaryData,
     { readonly d: TurnSummaryData; readonly earns: boolean }
@@ -956,6 +888,15 @@ describe("every reason a footer is earned paints something", () => {
     stopReasonRaw: { d: { stopReasonRaw: "max_tokens" }, earns: false },
     truncated: { d: { truncated: true }, earns: false },
     models: { d: { models: ["sonnet-4"] }, earns: false },
+    asks: { d: { asks: { allowed: 1 } }, earns: false },
+    requestIds: { d: { requestIds: ["req-1"] }, earns: false },
+    throughput: {
+      d: { throughput: { estimated_tokens: 400, active_streaming_ms: 2000 } },
+      earns: false,
+    },
+    recoveries: { d: { recoveries: ["empty"] }, earns: false },
+    steering: { d: { steering: ["file:///workspace/.kiro/steering/a.md"] }, earns: false },
+    engineErrorClass: { d: { engineErrorClass: "ModelOverloaded" }, earns: false },
   };
 
   it("holds for a footer BUILT from that reason", () => {
@@ -968,10 +909,8 @@ describe("every reason a footer is earned paints something", () => {
   });
 
   it("holds for a footer REPAINTED into that reason", () => {
-    // The live path, and the one the defect was reachable through: a running turn's
-    // footer is built before its numbers exist and `updateTurnFooter` runs on every
-    // paint, so the row has to acquire its channel on a repaint rather than only at
-    // build.
+    // The live path: a running turn's footer is built before its numbers exist, so the row must
+    // acquire its channel on a repaint.
     for (const [field, { d, earns }] of Object.entries(PROBES)) {
       const el = buildTurnFooter({});
       expect(paints(el), `${field}: an empty footer paints nothing to start with`).toBe(false);
@@ -1001,10 +940,8 @@ describe("every reason a footer is earned paints something", () => {
 // chunk cadence, and the panel is full of real controls: each file row is a button with
 // a tooltip that opens a diff.
 describe("the info panel repaints only when its data moved", () => {
-  /** Element-by-element IDENTITY. `toEqual` over two arrays of DOM nodes compares
-   *  them STRUCTURALLY, so it passes for a rebuilt row holding the same markup —
-   *  which is precisely the thing these cases exist to detect. Measured: an unsorted
-   *  file signature repainted every row and a `toEqual` assertion stayed green. */
+  /** Element-by-element IDENTITY: `toEqual` compares DOM nodes structurally and passes for a
+   *  rebuilt row. */
   function sameElements(after: readonly Element[], before: readonly Element[]): void {
     expect(after).toHaveLength(before.length);
     for (const [i, el] of before.entries()) {
@@ -1086,10 +1023,8 @@ describe("the info panel repaints only when its data moved", () => {
     expect(rows(el)).toHaveLength(3);
   });
 
-  // THE TOTALITY CASE, on the recorded SIGNATURE rather than the rendered HTML: two
-  // fields (`commands`, `reads`) render in the row's fact slot instead, so a moved
-  // signature costs them one identical repaint, which is the safe direction. This is
-  // the case that has to fail when the record stops being total.
+  // On the recorded SIGNATURE: `commands` and `reads` render in the fact slot, so a moved signature
+  // costs them one identical repaint (the safe direction).
   it("moves its signature for every field of the summary, one at a time", () => {
     const probes: Record<keyof typeof FIELD_PROBES, Record<string, unknown>> = FIELD_PROBES;
     for (const [field, over] of Object.entries(probes)) {
@@ -1121,10 +1056,8 @@ describe("the info panel repaints only when its data moved", () => {
   });
 });
 
-/** One moved field each, over the WHOLE summary type. `satisfies` rather than a typed
- *  const so the keys stay literal for the two cases above while still being checked
- *  against the type — which is what makes a field added to `TurnSummaryData` and
- *  forgotten here a type error rather than a silent hole. */
+/** One moved field each over the WHOLE summary type; `satisfies` keeps keys literal while a
+ *  forgotten new field is a type error. */
 const FIELD_PROBES = {
   elapsedMs: { elapsedMs: 9999 },
   credits: { credits: 1.5 },
@@ -1139,12 +1072,16 @@ const FIELD_PROBES = {
   stopReasonRaw: { outcome: "failed" as const, stopReasonRaw: "max_tokens" },
   truncated: { outcome: "failed" as const, truncated: true },
   changedFiles: { changedFiles: { "z.go": { lines_added: 1, lines_removed: 0 } } },
+  asks: { asks: { rejected: 2 } },
+  requestIds: { requestIds: ["req-1", "req-2"] },
+  throughput: { throughput: { estimated_tokens: 900, active_streaming_ms: 3000 } },
+  recoveries: { recoveries: ["streamError"] },
+  steering: { steering: ["file:///workspace/.kiro/steering/b.md"] },
+  engineErrorClass: { engineErrorClass: "ModelOverloaded" },
 } satisfies Record<keyof TurnSummaryData, Partial<TurnSummaryData>>;
 
-/** The subset a SINGLE-field probe can observe in the panel's own sections. Written out
- *  rather than derived, because three fields are absent for three reasons: `commands`
- *  and `reads` render in the row's fact slot, and `outcome` is only the GATE on
- *  Diagnostics, so moving it alone from this baseline withholds nothing. */
+/** The fields a single-field probe can observe in the panel: `commands` and `reads` render in the
+ *  fact slot, and `outcome` alone only gates Diagnostics. */
 const RENDERED_FIELDS = [
   "elapsedMs",
   "credits",
@@ -1158,4 +1095,98 @@ const RENDERED_FIELDS = [
   "stopReasonRaw",
   "truncated",
   "changedFiles",
+  "asks",
+  "requestIds",
+  "throughput",
+  "recoveries",
+  "steering",
+  "engineErrorClass",
 ] as const satisfies readonly (keyof typeof FIELD_PROBES)[];
+
+describe("the panel states the turn's KAS facts", () => {
+  it("tallies the turn's asks in a fixed order, and withholds the section without one", () => {
+    const el = buildTurnFooter({ asks: { rejected: 1, allowed: 2, skipped: 1 } });
+    expect(sectionRows(el, "Approvals")).toEqual([
+      ["Allowed", "2"],
+      ["Rejected", "1"],
+      ["Skipped", "1"],
+    ]);
+    expect(sections(buildTurnFooter({ elapsedMs: 1000 }))).not.toContain("Approvals");
+  });
+
+  it("states the request count and the output estimate under Model", () => {
+    const el = buildTurnFooter({
+      requestIds: ["a", "b", "c"],
+      throughput: { estimated_tokens: 400, active_streaming_ms: 2000 },
+    });
+    expect(sectionRows(el, "Model")).toEqual([
+      ["Requests", "3"],
+      ["Output, estimated", "\u2248400 tokens \u00b7 \u2248200 tokens/s"],
+    ]);
+  });
+
+  it("withholds the rate when no streaming time was measured", () => {
+    const el = buildTurnFooter({ throughput: { estimated_tokens: 50, active_streaming_ms: 0 } });
+    expect(sectionRows(el, "Model")).toEqual([["Output, estimated", "\u224850 tokens"]]);
+  });
+
+  it("states recoveries, the engine class and the request ids on a CLEAN turn", () => {
+    const el = buildTurnFooter({
+      outcome: "completed",
+      recoveries: ["empty", "constructor", "newMechanism"],
+      engineErrorClass: "ModelOverloaded",
+      requestIds: ["req-1", "req-2"],
+    });
+    expect(sectionRows(el, "Diagnostics")).toEqual([
+      ["Recovered", "retried an empty response"],
+      ["Recovered", "constructor"],
+      ["Recovered", "newMechanism"],
+      ["Engine error", "ModelOverloaded"],
+      ["Request IDs", "req-1req-2Copy all"],
+    ]);
+  });
+
+  it("copies every request id with one control", () => {
+    copied.mockClear();
+    const el = buildTurnFooter({ requestIds: ["req-1", "req-2"] });
+    el.querySelector<HTMLButtonElement>(".turn-info-copy")?.click();
+    expect(copied).toHaveBeenCalledWith("req-1\nreq-2");
+  });
+
+  describe("steering added", () => {
+    afterAll(() => {
+      resetWorkspaceRoot();
+    });
+
+    it("links a workspace steering document into the editor and names any other id", () => {
+      setWorkspaceRoot("/workspace");
+      openFile.mockClear();
+      const el = buildTurnFooter({
+        steering: ["file:///workspace/.kiro/steering/my%20doc.md", "builtin-guide"],
+      });
+      expect(sectionRows(el, "Context")).toEqual([["Steering added", "my doc.mdbuiltin-guide"]]);
+      const link = el.querySelector<HTMLButtonElement>(".turn-info-link");
+      expect(link?.dataset["tooltip"]).toBe("/workspace/.kiro/steering/my doc.md");
+      link?.click();
+      expect(openFile).toHaveBeenCalledWith("/workspace/.kiro/steering/my doc.md", undefined);
+    });
+
+    it("names a global steering document as text, because the editor cannot open it", () => {
+      setWorkspaceRoot("/workspace");
+      const el = buildTurnFooter({
+        steering: ["file:///config/home/.kiro/steering/global.md"],
+      });
+      expect(sectionRows(el, "Context")).toEqual([["Steering added", "global.md"]]);
+      expect(el.querySelector(".turn-info-link")).toBeNull();
+    });
+
+    it("names every steering document as text before the workspace root is known", () => {
+      resetWorkspaceRoot();
+      const el = buildTurnFooter({
+        steering: ["file:///workspace/.kiro/steering/a.md"],
+      });
+      expect(sectionRows(el, "Context")).toEqual([["Steering added", "a.md"]]);
+      expect(el.querySelector(".turn-info-link")).toBeNull();
+    });
+  });
+});

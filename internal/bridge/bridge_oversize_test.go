@@ -1,8 +1,6 @@
 package bridge
 
-// readLoop's behaviour on an oversize stdout frame: the loss is SURFACED and the
-// session survives. Before D24b one frame past the cap ended the scan, readLoop
-// treated the bridge as exited, and the whole chat session died with it.
+// An oversize stdout frame is surfaced and the session survives; once it ended the scan and killed the session.
 
 import (
 	"errors"
@@ -14,9 +12,7 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// pendingCall registers one pending request id and returns its channel, the way
-// Call does. Lets a test observe what readLoop hands a waiter without standing up
-// a subprocess.
+// pendingCall registers one pending request id and returns its channel, as Call does.
 func pendingCall(b *Bridge, id int64) chan pendingReply {
 	ch := make(chan pendingReply, 1)
 	b.pendingMu.Lock()
@@ -25,10 +21,8 @@ func pendingCall(b *Bridge, id int64) chan pendingReply {
 	return ch
 }
 
-// The loss must not be silent. A dropped frame's bytes are gone, so the bridge
-// cannot tell a notification from the response to a pending request; it fails
-// every pending request rather than leave one waiting forever, which is how the
-// prompt path finalizes the turn and tells the user.
+// A dropped frame could be any response, so every pending request fails rather than waiting forever; the prompt
+// path then finalizes the turn and tells the user.
 func TestReadLoop_OversizeFrameFailsPendingCalls(t *testing.T) {
 	c := capture.Default(t)
 	huge := strings.Repeat("x", scannerLineCap+16)
@@ -50,8 +44,7 @@ func TestReadLoop_OversizeFrameFailsPendingCalls(t *testing.T) {
 	}
 }
 
-// The frame after an oversize one still reaches dispatch, which is the difference
-// between killing the TURN and killing the SESSION.
+// The frame after an oversize one still reaches dispatch: the turn dies, not the session.
 func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	_ = capture.Default(t)
 	huge := strings.Repeat("x", scannerLineCap+16)
@@ -75,10 +68,8 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	}
 }
 
-// Call translates the sentinel into a NON-retryable transport error carrying
-// marotte.ErrFrameTooLarge. Retryability is the load-bearing half: retrying would
-// re-run an expensive turn to produce the same oversize payload, and the wording
-// is what promptFailureReason puts in front of the user.
+// Call returns a non-retryable transport error carrying marotte.ErrFrameTooLarge: a retry would re-run an expensive
+// turn into the same payload. promptFailureReason shows the wording.
 func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.stdin.Store(&stdinPipe{w: &captureWriter{}})
@@ -111,9 +102,7 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 	}
 }
 
-// An unterminated blob still reaps the bridge, because there is no frame boundary
-// left to resynchronise on. The distinct log line is what tells an operator this
-// happened rather than the process going away.
+// An unterminated blob reaps the bridge, with its own log line.
 func TestReadLoop_ExhaustedDrainReapsWithItsOwnLogLine(t *testing.T) {
 	c := capture.Default(t)
 	b := readLoopBridge(&endlessReader{b: 'q'})

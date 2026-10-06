@@ -3,6 +3,8 @@ package chat
 import (
 	"cmp"
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -70,6 +72,21 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 	return refs, complete
 }
 
+// SessionClaimed reports whether any chat's session chain holds sessionID, and
+// whether every chat file that exists was read. It scans on its own rather than
+// joining the coalesced List scan: a caller deciding under a lock must see every
+// record written before it took that lock, and a joined scan may have started
+// earlier.
+func (s *Store) SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool) {
+	headers, complete := s.listOnce(ctx)
+	for i := range headers {
+		if slices.Contains(headers[i].SessionChain(), sessionID) {
+			return true, complete
+		}
+	}
+	return false, complete
+}
+
 // listWithCompleteness is List plus the read-completeness flag the sweep needs,
 // coalescing concurrent refreshes into one directory scan.
 //
@@ -96,14 +113,15 @@ func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 		// Nothing is known about what chats exist, so never report complete.
 		return []marotte.ChatHeader{}, false
 	}
-	valid := chatDirs(entries, s.dir)
+	valid, dirsComplete := chatDirs(entries, s.dir)
 	if len(valid) == 0 {
-		return []marotte.ChatHeader{}, true
+		return []marotte.ChatHeader{}, dirsComplete
 	}
 
 	// No per-chat lock: reads are read-only and writes land by temp+rename, so a
 	// reader always sees a complete file.
-	headers, complete := readHeadersParallel(ctx, valid)
+	headers, headersComplete := readHeadersParallel(ctx, valid)
+	complete := dirsComplete && headersComplete
 	slices.SortFunc(headers, func(a, b marotte.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
@@ -124,8 +142,11 @@ func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 // chatDirs filters a listing of the store's directory down to the chat directories:
 // a directory named by a valid chat id that holds a header. A directory with no
 // header is a chat mid-creation or mid-delete and is not listed.
-func chatDirs(entries []os.DirEntry, dir string) []chatEntry {
-	var valid []chatEntry
+//
+// complete is false when a header exists but could not be stat'ed: that chat is
+// left out, and a caller feeding a delete must not read the listing as whole.
+func chatDirs(entries []os.DirEntry, dir string) (valid []chatEntry, complete bool) {
+	complete = true
 	for _, e := range entries {
 		name := e.Name()
 		if !e.IsDir() {
@@ -138,9 +159,14 @@ func chatDirs(entries []os.DirEntry, dir string) []chatEntry {
 		}
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(filepath.Join(path, headerFileName)); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				slog.Warn("chat list: header could not be stat'ed; scan marked incomplete",
+					"chat_id", name, "error", err)
+				complete = false
+			}
 			continue
 		}
 		valid = append(valid, chatEntry{id: name, path: path})
 	}
-	return valid
+	return valid, complete
 }

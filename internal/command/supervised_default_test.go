@@ -1,22 +1,7 @@
 package command
 
-// The global Supervised default reached exactly ONE seed site: prompt.go's
-// `!exists` auto-create branch, which is only taken when a prompt arrives for a
-// chat that does not exist yet. Every explicit create mints the record first —
-// the "New chat" button goes through create_chat — so by the first prompt the
-// chat exists, `!exists` is false, and a user who ticked the setting still got
-// unsupervised chats with no signal anywhere.
-//
-// The rule spans three commands and reads as one contract, so it is one
-// behaviour-named file rather than three edits: create_chat and resume_session
-// take the global default (neither has a parent posture to inherit), fork_chat
-// inherits its parent's instead.
-//
-// Every case drives the REAL settings reader through the injected closure rather
-// than a bare stub, following the retention precedent in
-// membership_close_escalation_test.go: that pins the closure's shape AND
-// supervisedDefaultSetting's fail-closed behaviour at the same time, where a stub
-// returning a bool would only assert that the field is read.
+// The global Supervised default must reach every seed site, not only prompt.go's auto-create
+// branch: every explicit create mints the record first.
 
 import (
 	"context"
@@ -49,10 +34,7 @@ func supervisedConfigDir(t *testing.T, doc string) string {
 func newSupervisedMembership(t *testing.T, chats ChatStore, configDir string) *Membership {
 	t.Helper()
 	return NewMembership(&MembershipDeps{
-		Chats: chats,
-		// The closure takes the CALLER's context rather than capturing one, so the
-		// helper needs no context of its own — a test helper receives a context, it
-		// never calls t.Context() itself.
+		Chats:             chats,
 		SupervisedDefault: func(ctx context.Context) bool { return supervisedDefaultSetting(ctx, configDir) },
 	})
 }
@@ -66,8 +48,6 @@ var supervisedDefaultCases = []struct {
 }{
 	{name: "the default is on", doc: `{"supervised_default":true}`, want: true},
 	{name: "the default is off", doc: `{"supervised_default":false}`, want: false},
-	// Fail closed: an absent setting mints an unsupervised chat rather than
-	// silently turning a review gate on for a user who never asked for one.
 	{name: "no settings file", doc: "", want: false},
 }
 
@@ -120,11 +100,10 @@ func TestCmdResumeSession_SeedsTheSupervisedDefault(t *testing.T) {
 	}
 }
 
-// TestCmdForkChat_InheritsTheParentsSupervisedMode is the regression that
-// matters, and it is driven in BOTH directions on purpose: a supervised parent
-// under an OFF default proves the inheritance happens, and an unsupervised parent
-// under an ON default proves the first case is not passing because the global
-// default happened to agree.
+// TestCmdForkChat_InheritsTheParentsSupervisedMode is driven in BOTH directions:
+// a supervised parent under an OFF default proves the inheritance happens, and an
+// unsupervised parent under an ON default proves the first case is not passing
+// because the global default happened to agree.
 func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 	cases := []struct {
 		name             string

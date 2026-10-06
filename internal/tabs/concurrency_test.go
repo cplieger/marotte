@@ -10,24 +10,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk IS THE TEST THE LOCK ORDERING
-// EXISTS FOR, and it is the one to run before believing any change to mutate.
-//
-// The defect it detects: with the write lock taken AFTER the clone — "clone under
-// stateMu, release it, then mutate and persist under writeMu", which is what an
-// earlier revision of this design specified — two opens clone the same state S0,
-// the first persists S0+A, the second persists its stale S0+B, and A is gone from
-// memory AND from disk after having returned success. Both would also report the
-// same next version, so a client's gap check could not even detect it.
-//
-// Three assertions, and each catches the defect on its own: every returned subject
-// is still in the published set, every one is in the FILE, and the version equals
-// the number of opens (two mutations sharing a version is the signature).
-//
-// It is a probabilistic detector, so it is deliberately generous: eight opens race
-// across a real fsync, over four rounds on four fresh stores. RED-CHECKED by
-// reverting mutate to the broken order, where it fails on the first round every
-// time.
+// TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk pins the lock ordering: with writeMu taken
+// AFTER the clone, two opens clone one state and the second persists over the first. Every
+// returned subject must be in memory AND on disk, and the version must equal the opens.
+// Probabilistic, so generous; red-checked against the broken order.
 func TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk(t *testing.T) {
 	const opens = 8
 	for round := range 4 {
@@ -72,11 +58,8 @@ func TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk(t *testing.T) {
 	}
 }
 
-// TestOpen_AgainstReorderLosesNothing races the two mutations that disagree about
-// the whole slice: one inserts, the other replaces. A Reorder derived from a list
-// the opener has since grown is REFUSED (its set is short by one), and that is a
-// correct outcome rather than a flake — what must never happen is a tab
-// disappearing because a reorder was applied to a set that no longer existed.
+// TestOpen_AgainstReorderLosesNothing races an insert against a replace: a Reorder over a stale
+// list is REFUSED (correct), but a tab must never disappear.
 func TestOpen_AgainstReorderLosesNothing(t *testing.T) {
 	const opens = 12
 	s, dir := newTestStore(t)
@@ -133,14 +116,8 @@ func TestOpen_AgainstReorderLosesNothing(t *testing.T) {
 	}
 }
 
-// TestList_PairsTheSetWithItsOwnVersion is the property a second critical section
-// cannot hold. One mutator opens one tab per mutation from an empty store, so
-// version N means exactly N tabs, forever — and any List that read the set and the
-// version in two sections could return a stale set with a fresh version (the
-// snapshot-versus-watermark defect, in miniature) or the reverse.
-//
-// The readers use t.Errorf and return, never t.Fatal: FailNow off the test's own
-// goroutine ends the WRONG goroutine and can hang the test.
+// TestList_PairsTheSetWithItsOwnVersion pins that version N always means N tabs. Readers use
+// t.Errorf, never t.Fatal, off the test goroutine.
 func TestList_PairsTheSetWithItsOwnVersion(t *testing.T) {
 	const (
 		opens   = 40

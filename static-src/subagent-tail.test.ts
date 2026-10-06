@@ -1,14 +1,5 @@
-// ---------------------------------------------------------------------------
-// The delegate card's last few lines, derived from its LANE.
-//
-// The transcript renders none of a delegate's own entries, so the tail is the only
-// thing on a running card that says which delegate is progressing. What these cases
-// pin is which lines it would show, that the OPEN entry is the lane's real tail, and
-// that ONE delta repaints ONE card.
-//
-// The binding half runs against the real store rather than a fake source, because its
-// subject is the two dependencies it takes and a fake would let either one go.
-// ---------------------------------------------------------------------------
+// The delegate card's last lines, from its LANE: which lines show, that the OPEN entry is the real
+// tail, and that ONE delta repaints ONE card. The binding half uses the real store.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { subagentTail, bindSubagentTail, TAIL_LINES } from "./subagent-tail.js";
@@ -131,9 +122,8 @@ describe("subagentTail reads the lane", () => {
     expect(subagentTail(CHAT, SUB, 0)).toEqual([]);
   });
 
-  // The defect the DOM walk had twice: a body's `textContent` carries no separator
-  // between rendered blocks, so the last three lines collapsed into one line of glued
-  // words the card then clipped at its own width.
+  // A body's `textContent` carries no separator between rendered blocks, so a DOM walk
+  // would glue the last three lines into one, clipped at the card's width.
   it("keeps one line per ENTRY, so two entries never glue into one", () => {
     seed([text(1, "first", SUB), text(2, "second", SUB)]);
     expect(subagentTail(CHAT, SUB)).toEqual(["first", "second"]);
@@ -166,10 +156,8 @@ describe("subagentTail reads the lane", () => {
     expect(subagentTail("c-nobody", SUB)).toEqual([]);
   });
 
-  // A delegate running commands has no prose to show, and a frozen tail is the one thing
-  // this region must not be. Its own invocation is excluded because the card's header
-  // already names it — and that call sits in the ISSUER's lane, so it is only reachable
-  // here at all for a delegate that dispatched another.
+  // Tool titles keep a command-running delegate's tail moving; its own invocation is excluded (the
+  // header names it).
   it("takes a tool call's TITLE as its line, and never an invocation's", () => {
     seed([
       text(1, "looking", SUB),
@@ -184,6 +172,20 @@ describe("subagentTail reads the lane", () => {
   it("contributes no line for an internal title", () => {
     seed([text(1, "mine", SUB), toolCall(2, call("Fetching your cloud config"), SUB)]);
     expect(subagentTail(CHAT, SUB)).toEqual(["mine"]);
+  });
+
+  // KAS titles a shell call with no description "Run Command", so a delegate running
+  // three commands would tail three identical lines. The command is what it ran.
+  it("takes the command as a description-less shell call's line", () => {
+    const shell = makeToolCall({
+      id: "tc-shell",
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      input: { command: "make lint" },
+    });
+    seed([text(1, "checking", SUB), toolCall(2, shell, SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["checking", "make lint"]);
   });
 
   // The open entry IS the lane's tail: it carries no `seq` and no position, so it is read
@@ -253,10 +255,8 @@ describe("bindSubagentTail repaints one card", () => {
     stopTheirs();
   });
 
-  // The state at a card's CREATION: the card is built from the invocation, which sits in
-  // the issuer's lane, so this delegate's own lane does not exist yet and there is no lane
-  // signal to subscribe to. The chat's transcript version is what carries the first entry,
-  // and it is coalesced per microtask, which is why this case awaits.
+  // At creation the lane does not exist yet, so the chat's transcript version (coalesced per
+  // microtask) carries the first entry.
   it("picks up the lane's FIRST entry, which no lane signal can announce", async () => {
     seed([text(1, "parent prose")]);
     const paint = vi.fn();

@@ -57,7 +57,7 @@ func FuzzNormaliseRegistryResponse(f *testing.F) {
 // server object — the fixture below is the real shape a live
 // registry.modelcontextprotocol.io response uses. A deprecated entry is still
 // returned by search (only `deleted` is filtered upstream, behind
-// include_deleted), so before this reached the row a dead entry looked live.
+// include_deleted), so without the flag on the row a dead entry looks live.
 func TestNormaliseRegistryResponse_CarriesTheDeprecatedFlag(t *testing.T) {
 	body := []byte(`{
 		"servers": [

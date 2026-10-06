@@ -1,56 +1,18 @@
-// ---------------------------------------------------------------------------
-// LaTeX subset -> MathML, zero dependencies.
-//
-// MathML Core is native in Chrome, Firefox and Safari, so an equation needs no
-// katex/remark-math/rehype-katex tax: it needs a converter from the notation an
-// agent actually writes in a coding chat (fractions, super/subscripts, roots,
-// sums, greek letters, the relation and function vocabulary around them) to the
-// element tree the browser already renders.
-//
-// TWO RULES SHAPE EVERY DECISION HERE:
-//
-//   1. `createElementNS`, never `createElement`. An element named `math` in the
-//      XHTML namespace is an unknown inline element, not mathematics — it
-//      renders as its own text content with no layout. `el()` / `makeEl()` in
-//      smd-renderer.ts are `document.createElement`, so they cannot build this
-//      subtree; that is why this module exists as a leaf rather than as a branch
-//      in the renderer's tag map. Text still goes through `createTextNode`, so
-//      the renderer's no-`innerHTML` property is preserved.
-//
-//   2. An expression this converter does not understand degrades to its RAW
-//      STRING, visibly, and the whole expression degrades together. A partial
-//      render is worse than a raw one: `\begin{pmatrix}` half-converted is a
-//      formula that lies, while `\begin{pmatrix}...` as text is something the
-//      reader can still read and copy. So any unknown command, unbalanced
-//      brace, or missing argument fails the entire conversion, and the caller
-//      keeps the LaTeX it already had in the DOM.
-//
-// The font is a CSS concern, not this module's: Chromium ships no math font, so
-// 13-messages.css names a stack. Without it fractions and roots still lay out
-// correctly and only stretchy operators degrade (to a smaller glyph, not to
-// nothing).
-// ---------------------------------------------------------------------------
+// LaTeX subset -> MathML, zero dependencies (MathML Core is native in every engine). `createElementNS`, never
+// `createElement`: a `math` element in the XHTML namespace renders as text, and the renderer's `el()` cannot build
+// this subtree, hence a leaf module. An unsupported expression degrades whole to its raw string: a partial render lies.
+// The math font stack is 13-messages.css's.
 
-/** The MathML namespace. Exported so a test can assert the tree is actually IN
- *  it — the failure this module exists to prevent is invisible otherwise, since
- *  a wrong-namespace `<math>` still has the right tag name. */
+/** The MathML namespace, exported so a test can assert the tree is in it (a wrong-namespace `<math>` has the right tag). */
 export const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 
-/** Longest expression converted. A formula longer than this in a chat message
- *  is a paste rather than mathematics, and the raw degradation reads better
- *  than a wall of MathML. */
+/** Longer than this is a paste, not mathematics; raw reads better. */
 const MAX_SRC = 4096;
 
-/** Recursion ceiling for nested groups. Guards a pathological
- *  `{{{{{...}}}}}` without a stack overflow. */
+/** Guards a pathological `{{{{{...}}}}}` without a stack overflow. */
 const MAX_DEPTH = 32;
 
-// ---------------------------------------------------------------------------
-// Symbol tables
-// ---------------------------------------------------------------------------
-
-/** Greek letters and named symbols that are IDENTIFIERS (`<mi>`): a value, not
- *  an operation. */
+/** Identifiers (`<mi>`): a value, not an operation. */
 const IDENT_CMDS: Readonly<Record<string, string>> = {
   alpha: "\u03b1",
   beta: "\u03b2",
@@ -172,7 +134,7 @@ const OP_CMDS: Readonly<Record<string, string>> = {
   rangle: "\u27e9",
 };
 
-/** Function names, upright by MathML's own multi-character `<mi>` rule. */
+/** Upright by MathML's multi-character `<mi>` rule. */
 const FUNC_CMDS: ReadonlySet<string> = new Set([
   "sin",
   "cos",
@@ -197,8 +159,7 @@ const FUNC_CMDS: ReadonlySet<string> = new Set([
   "arg",
 ]);
 
-/** Operators whose scripts stack UNDER and OVER in display mode, the way TeX
- *  sets `\sum_{i=1}^{n}` on its own line and beside itself inline. */
+/** Scripts stack under and over in display mode, as TeX sets `\sum_{i=1}^{n}`. */
 const UNDEROVER_CMDS: Readonly<Record<string, string>> = {
   sum: "\u2211",
   prod: "\u220f",
@@ -214,8 +175,7 @@ const UNDEROVER_CMDS: Readonly<Record<string, string>> = {
   inf: "inf",
 };
 
-/** Integrals. Deliberately NOT in UNDEROVER_CMDS: TeX sets integral limits to
- *  the side even in display mode. */
+/** Not in UNDEROVER_CMDS: TeX sets integral limits to the side even in display mode. */
 const INTEGRAL_CMDS: Readonly<Record<string, string>> = {
   int: "\u222b",
   iint: "\u222c",
@@ -223,7 +183,7 @@ const INTEGRAL_CMDS: Readonly<Record<string, string>> = {
   oint: "\u222e",
 };
 
-/** Explicit spacing commands, in ems. */
+/** In ems. */
 const SPACE_CMDS: Readonly<Record<string, string>> = {
   ",": "0.167em",
   ":": "0.222em",
@@ -236,12 +196,10 @@ const SPACE_CMDS: Readonly<Record<string, string>> = {
   qquad: "2em",
 };
 
-/** Commands whose argument is literal TEXT rather than mathematics, so the
- *  tokenizer hands it over unparsed. */
+/** The argument is literal text, handed over unparsed. */
 const TEXT_CMDS: ReadonlySet<string> = new Set(["text", "textrm", "mathrm", "operatorname"]);
 
-/** Delimiters `\left` / `\right` accept, keyed by the token text that follows.
- *  A `.` is the null delimiter, so it maps to the empty string. */
+/** Keyed by the token after `\left` / `\right`; `.` is the null delimiter. */
 const DELIMS: Readonly<Record<string, string>> = {
   "(": "(",
   ")": ")",
@@ -261,14 +219,11 @@ const DELIMS: Readonly<Record<string, string>> = {
   Vert: "\u2016",
 };
 
-/** Characters that only mean something in constructs this converter does not
- *  support (alignment, macro parameters, comments), so seeing one degrades the
- *  expression rather than rendering it as an operator. */
+/**
+ * These only mean something in unsupported constructs (alignment, macro parameters, comments), so one degrades the
+ * expression.
+ */
 const REJECTED_CHARS: ReadonlySet<string> = new Set(["&", "#", "%", "$"]);
-
-// ---------------------------------------------------------------------------
-// Tokens
-// ---------------------------------------------------------------------------
 
 type TokKind =
   "cmd" | "raw" | "num" | "ident" | "op" | "open" | "close" | "obrack" | "cbrack" | "sup" | "sub";
@@ -286,8 +241,7 @@ function isDigit(ch: string): boolean {
   return ch >= "0" && ch <= "9";
 }
 
-/** Read a balanced `{...}` starting at `from`, returning its inner text and the
- *  index just past the closing brace. Null when there is no braced group. */
+/** Inner text and the index past the closing brace; null when there is no braced group. */
 function readBraced(src: string, from: number): { text: string; next: number } | null {
   let i = from;
   while (i < src.length && (src[i] === " " || src[i] === "\n" || src[i] === "\t")) {
@@ -314,8 +268,7 @@ function readBraced(src: string, from: number): { text: string; next: number } |
 function tokenize(src: string): Tok[] | null {
   const out: Tok[] = [];
   let i = 0;
-  // charAt rather than indexing: it is typed `string`, so a bounded walk needs
-  // neither a cast nor a non-null assertion.
+  // charAt is typed `string`, so the walk needs no cast or non-null assertion.
   while (i < src.length) {
     const ch = src.charAt(i);
     if (ch === " " || ch === "\n" || ch === "\t" || ch === "\r") {
@@ -357,8 +310,7 @@ function tokenize(src: string): Tok[] | null {
           j++;
           continue;
         }
-        // A decimal point only belongs to the number when a digit follows it,
-        // so `f(1).x` keeps its `.` as punctuation.
+        // A decimal point belongs to the number only before a digit, so `f(1).x` keeps its `.`.
         if (c === "." && j + 1 < src.length && isDigit(src.charAt(j + 1))) {
           j += 2;
           continue;
@@ -404,10 +356,6 @@ function tokenize(src: string): Tok[] | null {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Element helpers
-// ---------------------------------------------------------------------------
-
 function mel(tag: string, ...children: (Element | string)[]): Element {
   const node = document.createElementNS(MATHML_NS, tag);
   for (const c of children) {
@@ -416,36 +364,27 @@ function mel(tag: string, ...children: (Element | string)[]): Element {
   return node;
 }
 
-/** Wrap a run in an `<mrow>`, except a single element which is already one
- *  thing. An `<mrow>` around one child changes nothing and makes the tree
- *  harder to read in devtools. */
+/** A single element needs no `<mrow>`. */
 function row(items: Element[]): Element {
   const [only] = items;
   return items.length === 1 && only !== undefined ? only : mel("mrow", ...items);
 }
 
-/** A parsed atom plus whether its scripts stack (a large operator in display
- *  mode). Carried alongside the node rather than as an attribute so nothing has
- *  to be stripped from the output tree afterwards. */
+/** Carried beside the node, not as an attribute, so nothing is stripped from the output afterwards. */
 interface Atom {
   node: Element;
   underover: boolean;
 }
 
 interface Cursor {
-  /** Mutable: parseArg splits a multi-digit number in place. See there. */
+  /** Mutable: parseArg splits a multi-digit number in place. */
   toks: Tok[];
   readonly display: boolean;
   i: number;
   depth: number;
 }
 
-// ---------------------------------------------------------------------------
-// Parser
-// ---------------------------------------------------------------------------
-
-/** Parse items until `stop` (or the end of the tokens). Null propagates: one
- *  unsupported item degrades the whole expression, by design. */
+/** Null propagates: one unsupported item degrades the whole expression. */
 function parseSeq(c: Cursor, stop: TokKind | null): Element[] | null {
   const out: Element[] = [];
   while (c.i < c.toks.length) {
@@ -513,9 +452,7 @@ function applyScripts(c: Cursor, base: Atom): Element | null {
   return base.node;
 }
 
-/** One command/script argument: a braced group, or the single atom that follows
- *  (TeX's `x^2` and `\frac12`). Scripts are NOT consumed here — `x^2^3` is
- *  ill-formed in TeX too and falls out as a parse failure upstream. */
+/** A braced group or the single atom after it (`x^2`, `\frac12`). Scripts are not consumed: `x^2^3` fails upstream. */
 function parseArg(c: Cursor): Element | null {
   const t = c.toks[c.i];
   if (t === undefined) {
@@ -524,11 +461,8 @@ function parseArg(c: Cursor): Element | null {
   if (t.k === "open") {
     return parseGroup(c);
   }
-  // TeX takes exactly ONE token as an unbraced argument, so `\frac12` is
-  // `\frac{1}{2}` and `x^12` is x¹2. The tokenizer groups digit runs (`12` is
-  // one number everywhere else, which is what makes `3.14` work), so the split
-  // happens here: the first digit becomes the argument and the remainder is put
-  // back for the next read.
+  // TeX takes one token as an unbraced argument (`\frac12` is `\frac{1}{2}`), but the tokenizer groups digit runs, so
+  // the first digit is split off here and the rest put back.
   if (t.k === "num" && t.v.length > 1) {
     c.toks[c.i] = { k: "num", v: t.v.slice(1) };
     return mel("mn", t.v.slice(0, 1));
@@ -541,7 +475,7 @@ function parseGroup(c: Cursor): Element | null {
   if (c.depth >= MAX_DEPTH) {
     return null;
   }
-  c.i++; // consume `{`
+  c.i++;
   c.depth++;
   const items = parseSeq(c, "close");
   c.depth--;
@@ -549,9 +483,9 @@ function parseGroup(c: Cursor): Element | null {
     return null;
   }
   if (c.toks[c.i]?.k !== "close") {
-    return null; // unbalanced
+    return null; // Unbalanced.
   }
-  c.i++; // consume `}`
+  c.i++;
   return items.length === 0 ? mel("mrow") : row(items);
 }
 
@@ -580,8 +514,7 @@ function parseAtom(c: Cursor): Atom | null {
     }
     case "cmd":
       return parseCommand(c, t.v);
-    // A stray `}`, a script with no base, or a text argument with no command
-    // are all malformed rather than renderable.
+    // A stray `}`, a base-less script, or a commandless text argument is malformed.
     case "close":
     case "sup":
     case "sub":
@@ -591,7 +524,7 @@ function parseAtom(c: Cursor): Atom | null {
 }
 
 function parseCommand(c: Cursor, name: string): Atom | null {
-  c.i++; // consume the command
+  c.i++;
   switch (name) {
     case "frac":
     case "dfrac":
@@ -638,7 +571,7 @@ function parseCommand(c: Cursor, name: string): Atom | null {
       }
       c.i++;
       if (ch === "") {
-        return { node: mel("mrow"), underover: false }; // `\left.` is the null fence
+        return { node: mel("mrow"), underover: false }; // `\left.` is the null fence.
       }
       const mo = mel("mo", ch);
       mo.setAttribute("stretchy", "true");
@@ -657,8 +590,7 @@ function parseCommand(c: Cursor, name: string): Atom | null {
       return { node: mel("mtext", arg.v), underover: false };
     }
     const mi = mel("mi", arg.v);
-    // A single-character `<mi>` is italic by default; `\mathrm{d}` means the
-    // upright differential, so the variant is stated rather than inferred.
+    // A one-character `<mi>` is italic; `\mathrm{d}` is the upright differential, so the variant is stated.
     mi.setAttribute("mathvariant", "normal");
     return { node: mi, underover: false };
   }
@@ -690,20 +622,9 @@ function parseCommand(c: Cursor, name: string): Atom | null {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
 /**
- * Convert a LaTeX expression to a MathML `<math>` element, or null when the
- * expression uses anything outside the supported subset.
- *
- * Null is the DEGRADATION SIGNAL, not an error: the caller already holds the raw
- * LaTeX as a text node and simply leaves it there. Every rejection path below is
- * therefore silent — logging one per unconverted expression would fill the
- * console on any transcript that quotes a matrix.
- *
- * `display` selects `display="block"` and the stacked limits that go with it.
+ * Convert a LaTeX expression to a MathML `<math>` element, or null outside the supported subset. Null is the
+ * degradation signal, not an error, so rejections are silent. `display` selects `display="block"` and stacked limits.
  */
 export function latexToMathML(src: string, display: boolean): Element | null {
   if (src.length === 0 || src.length > MAX_SRC || src.trim() === "") {

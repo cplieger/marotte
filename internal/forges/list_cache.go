@@ -1,9 +1,6 @@
-// A read-through cache over the forge LISTING routes: a connection's repositories,
-// a repository's pull requests and its affordances. Only a first page is cached.
-// There is no background ticker; a fill happens only because a request asked for
-// the data, and the one goroutine that exists is the revalidation of an
-// already-served stale value, bounded by listFillBudget.
-// Mutations are never cached; a successful one evicts its repository's entries.
+// A read-through cache over the forge listing routes (repositories, pull requests, affordances),
+// first page only. No ticker: a fill happens only because a request asked, and the one goroutine is
+// the revalidation of a stale value already served, bounded by listFillBudget.
 
 package forges
 
@@ -174,12 +171,9 @@ func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	}
 }
 
-// revalidate refreshes an entry whose stale value has already been served.
-//
-// ctx belongs to the request that noticed the staleness and dies when its
-// response is written, so the fetch gets a detached one; the timeout is what
-// stops this goroutine. A failure is not reported anywhere: the caller already
-// has an answer, and the next request retries.
+// revalidate refreshes an entry whose stale value was already served, on a detached context bounded
+// by its timeout, since the noticing request's ctx dies with its response. A failure is not
+// reported; the next request retries.
 func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generation,
 	fill func(context.Context) (T, error),
 ) {

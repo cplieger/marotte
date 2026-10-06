@@ -9,15 +9,12 @@ import (
 	"testing"
 )
 
-// newTestFrameReader wraps s with a SMALL ReadSlice window so the
-// multi-chunk ErrBufferFull path is exercised without allocating megabytes.
-// The frame cap is separate from the window; see stdoutBufSize.
+// newTestFrameReader wraps s with a small ReadSlice window to exercise multi-chunk ErrBufferFull reads cheaply.
 func newTestFrameReader(s string, window int) *frameReader {
 	return newFrameReader(bufio.NewReaderSize(strings.NewReader(s), window))
 }
 
-// drainFrames reads until a terminal error and reports the frames it got, the
-// per-frame dropped byte counts, and the error that ended the loop.
+// drainFrames reads until a terminal error and returns the frames, per-frame drop counts and the ending error.
 func drainFrames(t *testing.T, fr *frameReader) (frames []string, drops []int, err error) {
 	t.Helper()
 	for range 100 {
@@ -49,15 +46,13 @@ func TestFrameReader_SplitsOnNewlines(t *testing.T) {
 			want:  []string{`{"a":1}`, `{"b":2}`, `{"c":3}`},
 		},
 		{
-			// bufio.Scanner returned a final unterminated token; the reader keeps
-			// that so a process that died mid-write reports the same way.
+			// An unterminated final frame is returned, as Scanner's final token was.
 			name:  "final frame with no terminator is still returned",
 			input: "{\"a\":1}\n{\"partial\"",
 			want:  []string{`{"a":1}`, `{"partial"`},
 		},
 		{
-			// A blank line reaches json.Unmarshal and fails there, which keeps it
-			// inside the parse-error circuit breaker rather than spinning silently.
+			// A blank line fails in json.Unmarshal, inside the parse-error breaker.
 			name:  "an empty frame is passed through, not skipped",
 			input: "\n{\"a\":1}\n",
 			want:  []string{"", `{"a":1}`},
@@ -71,7 +66,7 @@ func TestFrameReader_SplitsOnNewlines(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// window 8 forces multi-chunk assembly on every case above.
+			// Window 8 forces multi-chunk assembly on every case.
 			frames, drops, err := drainFrames(t, newTestFrameReader(tc.input, 8))
 			if !errors.Is(err, io.EOF) {
 				t.Errorf("terminal error = %v, want io.EOF", err)
@@ -91,10 +86,8 @@ func TestFrameReader_SplitsOnNewlines(t *testing.T) {
 	}
 }
 
-// The whole point of D24b: a frame past the cap is drained to its terminator and
-// the stream RESYNCHRONISES, so the frames after it still arrive. Under the
-// bufio.Scanner this replaced, ErrTooLong ended the scan and everything after the
-// oversize frame was lost with the bridge.
+// A frame past the cap is drained and the stream resynchronises, so later frames arrive; under Scanner ErrTooLong
+// lost them with the bridge.
 func TestFrameReader_SurvivesAnOversizeFrame(t *testing.T) {
 	huge := strings.Repeat("x", scannerLineCap+64)
 	input := "{\"first\":1}\n" + huge + "\n{\"after\":2}\n"
@@ -115,10 +108,7 @@ func TestFrameReader_SurvivesAnOversizeFrame(t *testing.T) {
 	}
 }
 
-// The budget is per FRAME and in BYTES, not a count of oversize frames: each
-// drain provably ends on a frame boundary, so a replay of several oversize but
-// TERMINATED frames stays survivable. A count would kill the bridge on exactly
-// that replay.
+// The budget is per frame and in bytes, so several terminated oversize frames survive.
 func TestFrameReader_ManyOversizeFramesEachGetTheirOwnBudget(t *testing.T) {
 	huge := strings.Repeat("y", scannerLineCap+1)
 	var sb strings.Builder
@@ -140,8 +130,7 @@ func TestFrameReader_ManyOversizeFramesEachGetTheirOwnBudget(t *testing.T) {
 	}
 }
 
-// Only a single blob that never terminates exhausts the budget, and that ends
-// the read loop: there is no frame boundary left to resynchronise on.
+// Only an unterminated blob exhausts the budget, ending the read loop.
 func TestFrameReader_UnterminatedBlobExhaustsTheBudget(t *testing.T) {
 	fr := newFrameReader(bufio.NewReaderSize(&endlessReader{b: 'z'}, 64*1024))
 	line, dropped, err := fr.readFrame()
@@ -156,8 +145,7 @@ func TestFrameReader_UnterminatedBlobExhaustsTheBudget(t *testing.T) {
 	}
 }
 
-// A read error mid-frame is terminal and reports no frame, so a truncated
-// payload is never handed to json.Unmarshal as though it were complete.
+// A mid-frame read error is terminal and returns no frame, so no truncated payload reaches json.Unmarshal.
 func TestFrameReader_ReadErrorIsTerminal(t *testing.T) {
 	sentinel := errors.New("pipe broke")
 	fr := newFrameReader(bufio.NewReaderSize(errReader{failErr: sentinel}, 64))
@@ -170,8 +158,7 @@ func TestFrameReader_ReadErrorIsTerminal(t *testing.T) {
 	}
 }
 
-// endlessReader never returns a delimiter, which is the one input that can
-// exhaust the drain budget.
+// endlessReader never returns a delimiter, the one input that exhausts the drain budget.
 type endlessReader struct{ b byte }
 
 func (e *endlessReader) Read(p []byte) (int, error) {
@@ -181,16 +168,8 @@ func (e *endlessReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// FuzzFrameReader pins the reader's real invariant rather than merely asserting
-// it does not panic: every frame it returns must be exactly the bytes between two
-// delimiters, and the reader must be left positioned immediately after the second
-// one. The oracle is strings.Split over the same input, which is the definition of
-// newline framing — so a mis-split, a swallowed frame or a duplicated one fails
-// here even though none of them crashes.
-//
-// Only inputs whose frames all fit the cap are compared against the oracle;
-// oversize framing has its own table tests above, and the seeds keep this target
-// standing alone (the weekly fuzz runs it with -run='^$').
+// FuzzFrameReader checks every frame against strings.Split over the same input, so a mis-split, swallowed or
+// duplicated frame fails without crashing. Only inputs whose frames fit the cap are compared.
 func FuzzFrameReader(f *testing.F) {
 	f.Add([]byte("{\"a\":1}\n{\"b\":2}\n"))
 	f.Add([]byte("\n\n\n"))
@@ -218,8 +197,7 @@ func FuzzFrameReader(f *testing.F) {
 			got = append(got, append([]byte(nil), line...))
 		}
 
-		// The oracle: bytes between newlines, plus a final unterminated
-		// remainder when the input does not end on a delimiter.
+		// The oracle: bytes between newlines plus any unterminated remainder.
 		var want [][]byte
 		for i, part := range bytes.Split(input, []byte("\n")) {
 			last := i == bytes.Count(input, []byte("\n"))

@@ -1,11 +1,7 @@
 package composition
 
-// The PR-status poller's gate, driven through the real presence table, the real push
-// service and the real poller. The defect these cover: the gate asked only whether a
-// push subscription existed, and a browser that once opted into notifications stays
-// subscribed with every tab closed, so the poller listed once a minute for the life of
-// the process while the pull-request notice it exists to send sat at its default OFF
-// and Send dropped every result.
+// The poller's gate, driven through the real presence table, push service and poller: a
+// subscription alone must not keep the sweep open.
 
 import (
 	"context"
@@ -103,8 +99,8 @@ func listingsInOneDiscoveryInterval(t *testing.T, f gateFixture) (listed, presen
 	return listed, present
 }
 
-// TestPollerGate_NoPollWithNobodyConnectedAndPreferenceOff is the defect itself: a
-// live subscription with the pull-request notice at its default OFF and no page open.
+// TestPollerGate_NoPollWithNobodyConnectedAndPreferenceOff — no poll for a live
+// subscription with the pull-request notice at its default OFF and no page open.
 func TestPollerGate_NoPollWithNobodyConnectedAndPreferenceOff(t *testing.T) {
 	if n, _ := listingsInOneDiscoveryInterval(t, gateFixture{subscribed: true}); n != 0 {
 		t.Errorf("listings with a subscription, notify_pr_status off and no client connected = %d, want 0", n)

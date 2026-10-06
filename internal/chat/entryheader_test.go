@@ -19,8 +19,7 @@ func newHeaderFixture(t *testing.T) (EntryHeader, string) {
 	return NewEntryHeader(root), root
 }
 
-// The header holds every marotte.Chat field; the transcript is the log's and no
-// `messages` key ever reaches the file.
+// The header holds every marotte.Chat field; no `messages` key reaches the file.
 func TestEntryHeader_RoundTripsEveryField(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	want := &marotte.Chat{
@@ -61,8 +60,7 @@ func TestEntryHeader_RoundTripsEveryField(t *testing.T) {
 	}
 }
 
-// A root holding no header reads as absent, which is what lets the reader treat a
-// run root and a chat that has not been created yet the same way.
+// A root with no header reads as absent, so a run root and an uncreated chat are treated alike.
 func TestEntryHeader_AnAbsentHeaderReadsAsNotExist(t *testing.T) {
 	h, _ := newHeaderFixture(t)
 	if _, err := h.Read(t.Context()); !errors.Is(err, os.ErrNotExist) {
@@ -70,9 +68,7 @@ func TestEntryHeader_AnAbsentHeaderReadsAsNotExist(t *testing.T) {
 	}
 }
 
-// Update is ONE write, which is what lets a caller move two fields at once: two writes
-// could crash between them and leave the record half moved, so a reader would see a
-// state neither caller asked for.
+// Update is one write, so two fields cannot be left half moved by a crash.
 func TestEntryHeader_UpdateAppliesEveryChangeInOneWrite(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	if err := h.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01"}); err != nil {
@@ -99,8 +95,7 @@ func TestEntryHeader_UpdateAppliesEveryChangeInOneWrite(t *testing.T) {
 	}
 }
 
-// Update on an ABSENT header writes the bare record it is handed, which is the shape
-// a turn open needs when a prompt names an id no record exists for.
+// Update on an absent header writes the bare record, as a turn open for an unknown id needs.
 func TestEntryHeader_UpdateCreatesAnAbsentHeader(t *testing.T) {
 	h, _ := newHeaderFixture(t)
 	applied, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
@@ -119,17 +114,12 @@ func TestEntryHeader_UpdateCreatesAnAbsentHeader(t *testing.T) {
 	}
 }
 
-// A header write carries none of the three fields R2 retired, and this is the double
-// property 11 mandates: it is the WRITE that is checked rather than the struct, because
-// a field re-added under any Go name reaches the file under its json tag and every
-// reader of that file — the client's decoder included — would start seeing it again.
-// `revision` is the counter a projection compared before the log's own turn_revert
-// records took the job; `needs_reconcile` and `degraded` were latches the log's own
-// records replaced.
+// A header write carries none of the retired fields. The write is checked, not the struct, because a re-added field
+// reaches the file under its json tag. `revision` gave way to turn_revert records; `needs_reconcile` and `degraded`
+// to the log's own records.
 func TestEntryHeader_AHeaderWriteCarriesNoRetiredField(t *testing.T) {
 	h, root := newHeaderFixture(t)
-	// Both header writers: the direct Write and the read-modify-write Update, since a
-	// re-added field would travel on either.
+	// Both writers, Write and Update.
 	if err := h.Write(t.Context(), &marotte.Chat{
 		ID: "c-abcdef01", Name: "a chat", TurnCount: 7,
 		LastTurnOutcome: marotte.TurnOutcomeFailed, SupervisedMode: true,
@@ -158,8 +148,7 @@ func TestEntryHeader_AHeaderWriteCarriesNoRetiredField(t *testing.T) {
 	}
 }
 
-// The counter cache is written only when the header disagrees with the log: a header
-// write that changes nothing is a rewrite of a file every device re-reads.
+// The counter cache is written only on disagreement; a no-op write is a file every device re-reads.
 func TestEntryHeader_CachesAndFlagsWriteOnlyOnAChange(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	stored := &marotte.Chat{
@@ -192,8 +181,7 @@ func TestEntryHeader_CachesAndFlagsWriteOnlyOnAChange(t *testing.T) {
 	}
 }
 
-// A header past the read bound is refused rather than loaded: the header holds no
-// transcript, so a file that size is not one this store wrote.
+// A header past the read bound is refused: it is not one this store wrote.
 func TestEntryHeader_AnOversizeHeaderIsRefused(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	if err := os.MkdirAll(root, dirMode); err != nil {
@@ -211,8 +199,8 @@ func TestEntryHeader_AnOversizeHeaderIsRefused(t *testing.T) {
 	}
 }
 
-// backdate stamps path in the past and answers the stamp, so a later modTime
-// comparison can tell a write from a no-op without a filesystem-clock race.
+// backdate stamps path in the past and returns the stamp, so a modTime comparison detects a write without racing the
+// clock.
 func backdate(t *testing.T, path string) time.Time {
 	t.Helper()
 	stamp := time.Now().Add(-time.Hour).Truncate(time.Second)

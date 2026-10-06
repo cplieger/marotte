@@ -1,12 +1,6 @@
-// Tests for steerChat: the POST-body chip confirmation and the reason lift.
-//
-// The steer POST's 200 carries the authoritative `steer_id`, and the custom
-// runner adopts it onto the optimistic dock row (`recordSteerQueued`) so the
-// chip confirms on the POST's own round trip — the SSE `steer_queued` used to
-// be the ONLY confirmation, so a dropped stream left every sent steer stuck at
-// "Sending". A refusal lifts the envelope's `reason` into the ActionError's
-// code (submit.ts converts `no_turn` back into a prompt), rolls the row back,
-// and raises no toast (`error: false` — submit.ts owns the failure surface).
+// steerChat: the POST's 200 carries the authoritative `steer_id`, adopted onto the optimistic dock
+// row (`recordSteerQueued`) so the chip confirms without SSE. A refusal lifts `reason` into the
+// ActionError code, rolls the row back and raises no toast (submit.ts owns the failure surface).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -20,15 +14,11 @@ vi.mock("../toast.js", () => ({
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Inert: present only so real-ESM linking succeeds.
   newOpID: vi.fn(() => "op-test"),
 }));
 
-// The TOTAL store mock. It already carries the steer projection this action
-// drives — steerIDFor (the real derived-id shape), recordSteerSent,
-// recordSteerQueued, forgetSteer — so no overrides are needed.
+// The TOTAL store mock already carries the steer projection this action drives.
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
 }));
@@ -37,7 +27,7 @@ vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  // Present-but-inert so real-ESM linking succeeds. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
@@ -67,9 +57,7 @@ describe("steerChat — the POST body confirms the chip", () => {
     expect(recordSteerQueued).toHaveBeenCalledWith("c1", {
       id: "kas-7",
       text: "also check the logs",
-      // `user` is a FACT on this path rather than a guess: this is the reply to
-      // this device's own POST, and the server has just recorded the same id in
-      // the ledger its own `steer_queued` frame is stamped from.
+      // A FACT here: this is the reply to this device's own POST.
       origin: "user",
       state: "queued",
     });
@@ -152,8 +140,7 @@ describe("steerChat — the command on the wire", () => {
       chat_id: "c1",
       payload: { text: "also check the logs", message_id: "m1" },
     });
-    // The key rides the command object under the framework's field name;
-    // transport.send lifts it into the Idempotency-Key header.
+    // transport.send lifts this field into the Idempotency-Key header.
     const key = (cmd as unknown as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD];
     expect(typeof key).toBe("string");
     expect(key).not.toBe("");

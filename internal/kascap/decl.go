@@ -1,39 +1,22 @@
-// Package kascap declares which capability keys marotte puts on the kiro-cli
-// (KAS) ACP wire, on which call, why, and how KAS resolves each one.
+// Package kascap declares which capability keys marotte puts on the kiro-cli (KAS) ACP wire, on
+// which call, why, and how KAS resolves each one. A map literal could state only the keys sent,
+// not:
 //
-// It exists because four things a reader needs had nowhere to live. The
-// initialize handshake used to build its _meta.kiro block as a hand-written map
-// literal in internal/bridge, and a literal can express only the keys marotte
-// DOES send:
+//   - which CALL carries a key (initialize, or session/new and session/load); a key on the wrong
 //
-//   - Which CALL carries a key. Both doors are live: most keys ride initialize,
-//     and the ones KAS resolves per session ride session/new and session/load.
-//     A key on the wrong door resolves to its absent default in silence.
-//   - How KAS RESOLVES it. A client capability compared against true is not a
-//     settings entry read through isSettingEnabled, and treating one as the
-//     other costs a whole subsystem with nothing in any log to say so.
-//   - Whether an ABSENT key resolves TRUE. semanticReview does, so marotte
-//     gets it by not sending it, and a literal has no way to write that down.
-//   - That a key is deliberately WITHHELD. A literal has no row for a key it
-//     omits, so a decision is indistinguishable from an oversight.
+// door silently resolves to its absent default;
+//   - how KAS RESOLVES it (a capability compared against true versus a setting read through
 //
-// The table in table.go is the record. Capabilities and SessionMeta are
-// projections of it, and they are the whole exported surface: the declaration
-// machinery stays unexported so no caller can mutate the table, and a consumer
-// that needs to read it should gain an accessor returning a copy.
+// isSettingEnabled);
+//   - whether an ABSENT key resolves TRUE (semanticReview);
+//   - that a key is deliberately WITHHELD.
+//
+// table.go is the record; Capabilities and SessionMeta are its projections and the whole exported
+// surface.
 package kascap
 
-import "github.com/cplieger/envx/v2"
-
-// door names the ACP call that carries a capability key.
-//
-// The two doors have different lifetimes (one handshake per subprocess against
-// one message per session), so a key's door is a real property of the key rather
-// than an accident of where the code that sends it happens to sit. KAS decides
-// it: a key its initialize handler stores on clientMeta rides the connection,
-// and a key its session builders resolve out of the session call's own _meta
-// rides the session. Getting it wrong costs the whole feature and says nothing
-// anywhere, which is what happened to workflows.
+// door names the ACP call that carries a capability key. KAS decides it: the connection door is
+// read once per subprocess, the session door once per session.
 type door string
 
 const (
@@ -51,14 +34,15 @@ const (
 	// created before a key existed never gains it on load unless the client
 	// sends it there too.
 	doorSession door = "session"
+	// doorEnvironment is the kiro-cli child process environment, fixed at
+	// spawn. It carries the KIRO_FEATURE_* overrides KAS's env provider reads
+	// ahead of the experiment service, and the KIRO_DISABLE_* switches. A row on
+	// it uses resolverEnv and its key is the variable's whole name.
+	doorEnvironment door = "environment"
 )
 
-// resolver is how KAS reads a key, and it decides where the key sits in the
-// payload as well as what its value has to look like.
-//
-// This is the distinction the old literal could not state. All three shapes
-// were written as adjacent lines of one map, so the fact that they are read by
-// three different mechanisms lived only in prose.
+// resolver is how KAS reads a key, which decides where the key sits in the payload and what its
+// value must look like.
 type resolver string
 
 const (
@@ -80,57 +64,73 @@ const (
 	// instance: KAS requires the value to be an object carrying a v2 member
 	// and then checks that member, so `hooks: true` would enable nothing.
 	resolverObject resolver = "object"
+	// resolverSettingObject is a key under _meta.kiro.settings that KAS reads
+	// field by field rather than through isSettingEnabled, so its value is not
+	// the {"enabled": …} object. memory ({mode, reflection}) is the instance.
+	resolverSettingObject resolver = "setting-object"
+	// resolverEnv is a child-environment variable. KAS's env provider accepts
+	// only the strings "true" and "false" (anything else warns and is ignored),
+	// so a sent row's value is one of those.
+	resolverEnv resolver = "env"
 )
+
+// inSettings reports whether a resolver's key lands under _meta.kiro.settings.
+func inSettings(r resolver) bool { return r == resolverSetting || r == resolverSettingObject }
 
 // Spawn carries the per-bridge facts the gated rows read. Every field is a
 // decision the caller has already made for THIS subprocess, never a preference
 // this package could look up for itself.
 type Spawn struct {
-	// Presets are the KAS policy-preset ids this session opens with, from the
-	// active security profile (policyfile.Profile). EMPTY is meaningful and is
-	// not a missing value: it means the Custom profile, where the permissions
-	// files are the whole policy, so the key is withheld rather than sent empty.
-	//
-	// A slice on Spawn rather than a compiled row value because the profile is a
-	// user setting that changes without a rebuild. It reaches the wire through the
-	// policyPreset row's gate, on session/new and session/load alike, because KAS
-	// re-reads the ids on each and persists neither. Both doors must therefore
-	// resolve from the SAME source rather than each computing its own answer — a
-	// resumed session picking up a profile the user has since changed is the
-	// intended way a change reaches an existing chat, but the two doors disagreeing
-	// for any other reason would be a posture nobody selected.
+	// MemoryMode and MemoryReflection are the session's `settings.memory`
+	// preference. An EMPTY mode is sent as "disabled", so a spawn that resolves
+	// no setting (the utility bridge) fails closed.
+	MemoryMode string
+	// SpecPlan is "" (off), "quick" or "full"; SpecAskClarification asks the
+	// spec's clarifying questions first. Value-gated, always sent: on load KAS
+	// falls back to the persisted value when the key is absent.
+	SpecPlan string
+	// WorkValidation and InfraSafetyMonitor are "", "on" or "off". Empty
+	// withholds the key so kiro-cli's own experiment decides.
+	WorkValidation     string
+	InfraSafetyMonitor string
+	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile).
+	// EMPTY means the Custom profile, so the key is withheld. KAS re-reads the ids on session/new
+	// and session/load and persists neither, so both doors must resolve from this one field.
 	Presets []string
+	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 withholds
+	// the key (KAS's 120 s).
+	TerminalCommandTimeoutMs int
 	// SecretStorage is whether the caller has a credential store standing
 	// behind the secretStorage capability. See that row's Because: declaring
 	// the capability without a store is worse than declining it.
 	SecretStorage bool
 	// Hooks is whether this bridge opts into KAS's v2 hook engine.
 	Hooks bool
-	// ToolSearch is whether this session ships KAS's tool_search tool instead of
-	// every MCP tool's full description. Presence-gated: absent already resolves
-	// false at isSettingEnabled, so an off state has nothing to say on the wire.
-	ToolSearch bool
-	// Knowledge is whether this session gets the knowledge feature, and it gates
-	// TWO rows — the `knowledge` capability and the `knowledge` setting — because
-	// they are two thirds of one gate and splitting them is what shipped a
-	// knowledge UI over a store the agent had no tool to query.
+	// Knowledge gates TWO rows, the `knowledge` capability and the `knowledge`
+	// setting: splitting them shipped a knowledge UI over a store the agent had
+	// no tool to query.
 	//
-	// Value-gated rather than presence-gated, unlike ToolSearch, and that
-	// asymmetry is deliberate: the capability's resolver compares `=== true`, so
-	// its key has to be present with a real boolean either way, and sending the
-	// pair together keeps one field from meaning two different things about
-	// presence.
-	Knowledge bool
-	// Memory is whether this session opts into kiro-cli's memory subsystem. It
-	// gates the `userMemoryOptIn` row, which is ALWAYS PRESENT either way — the
-	// row's value is the veto, so withholding it is the one state that must never
-	// happen (see that row's because for the tri-state read).
-	//
-	// Value-gated for that reason, like Knowledge and unlike ToolSearch. The
-	// second half of this switch is not on the wire at all: the child environment
-	// carries KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED, because the settings bridge
-	// cannot reach the gate's eligibility term.
-	Memory bool
+	// Value-gated rather than presence-gated: the capability's resolver compares
+	// `=== true`, so its key is present with a real boolean either way.
+	Knowledge        bool
+	MemoryReflection bool
+	// ToolLoad is "Load MCP tools on demand", written to the child environment
+	// as KIRO_FEATURE_TOOL_LOAD_ENABLED in both states.
+	ToolLoad bool
+	// DisableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true. Set on
+	// run bridges only.
+	DisableSessionTitles bool
+	// DisableAutoCompaction turns KAS's own 80%/95% compaction off for this
+	// session. The zero value keeps it on, which is what run and utility bridges
+	// send; the disableAutoCompaction row is value-gated so false is sent too.
+	DisableAutoCompaction bool
+	SpecAskClarification  bool
+	// InlineAgents and SteeringReminders are value-gated settings, always sent.
+	InlineAgents      bool
+	SteeringReminders bool
+	// Workflows gives the agent its workflow tools; value-gated, always sent on
+	// both session doors.
+	Workflows bool
 }
 
 // decl is one capability key marotte can put on the wire, with everything a
@@ -141,36 +141,10 @@ type decl struct {
 	// resolver already says which container it lands in.
 	key string
 
-	// because is why marotte sends this key, or why it withholds it. MANDATORY
-	// and non-empty, enforced by TestEveryDeclHasABecause.
-	//
-	// This is the most valuable column and the reason the package exists. Each
-	// entry is the rationale that used to sit as a comment beside the literal,
-	// carried over verbatim: what the key buys, what breaks without it, what it
-	// costs, and where the handler lives. A row whose because is a restatement
-	// of its key teaches nothing and should be treated as missing.
+	// because is why marotte sends or withholds this key: what it buys, what breaks without it,
+	// where the handler lives. Mandatory (TestEveryDeclHasABecause); one that restates the key
+	// counts as missing.
 	because string
-
-	// env optionally names an environment variable an operator can set to stop
-	// marotte sending this key, so a capability that misbehaves in a deployment
-	// can be switched off without waiting for a release.
-	//
-	// Read by buildDoor through envx.Bool, which means the fallback is this
-	// row's compiled send: unset or empty leaves the row alone, and a value
-	// envx cannot parse logs one Warn and leaves the row alone too. So a typo
-	// in a compose file cannot silently disable a capability.
-	//
-	// DISABLE-ONLY, and structurally rather than by convention: the column may
-	// sit only on a send:true row (TestEnvOverrideOnlyOnSentRows). A withheld
-	// row carries no wire value by design, so an operator who could turn one on
-	// would put a JSON null on the wire. It is also the honest shape for what
-	// this is: an off switch for a shipped capability, not a rollout gate for an
-	// unfinished one.
-	//
-	// Typed as an envx.Key because it IS a variable name: the type keeps a
-	// value from reaching a getter's key position, and envx validates the
-	// spelling on first read.
-	env envx.Key
 
 	// value is the wire value for an ungated row. Set explicitly on every such
 	// row rather than derived from the resolver, so the table never sends a
@@ -178,12 +152,10 @@ type decl struct {
 	// A gated row leaves this nil and its gate supplies the value.
 	value any
 
-	// gate, when non-nil, decides this row at spawn time. It returns the
-	// value to send and whether to send the key at all, because those are two
-	// different mechanisms and both are in use: secretStorage is always
-	// present with a runtime VALUE, while hooks is present only when enabled.
-	// Collapsing them into one boolean would lose the difference.
-	gate func(Spawn) (value any, present bool)
+	// gate, when non-nil, decides this row at spawn time, returning the value and whether to send
+	// the key at all: secretStorage is always present with a runtime value, hooks is present only
+	// when enabled.
+	gate func(*Spawn) (value any, present bool)
 
 	// door is the call that carries this key.
 	door door
@@ -193,8 +165,7 @@ type decl struct {
 
 	// absentTrue records that KAS resolves an ABSENT key to TRUE.
 	//
-	// The column exists because there was previously nowhere to write this
-	// down, and it inverts the reading of send: on such a row, NOT sending the
+	// It inverts the reading of send: on such a row, NOT sending the
 	// key is what enables the feature, and sending {"enabled": false} is what
 	// turns it off. semanticReview is the instance.
 	absentTrue bool

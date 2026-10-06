@@ -10,10 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/filebrowse"
 )
 
-// kiroDocsFixture is the envelope of testdata/kiro_docs.json: one real
-// GET /api/workspace/kiro-docs reply over a small `.kiro` tree, byte-pinned here
-// and decoded by static-src/docs.node.test.ts through the generated
-// decodeKiroDocsResponse.
+// kiroDocsFixture is the envelope of testdata/kiro_docs.json, byte-pinned here and decoded by
+// static-src/docs.node.test.ts through the generated decodeKiroDocsResponse.
 type kiroDocsFixture struct {
 	Comment []string         `json:"_comment"`
 	Result  KiroDocsResponse `json:"result"`
@@ -32,9 +30,8 @@ var kiroDocsFixtureComment = []string{
 	"then re-run the TS half: npx vitest --run docs.node.test.ts (from static-src/).",
 }
 
-// TestKiroDocsWireContract pins the marshaled shape of the docs reply. The tree
-// is written to a real directory rather than an fstest.MapFS so the scan runs
-// with its path guard, the way the handler runs it.
+// TestKiroDocsWireContract pins the marshaled docs reply. A real directory, not a MapFS, so
+// the scan runs with its path guard.
 func TestKiroDocsWireContract(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

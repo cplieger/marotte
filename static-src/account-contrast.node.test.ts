@@ -1,35 +1,9 @@
-// THE SIDEBAR FOOTER'S MEASURED FLOORS, and the one FAIL this change ships.
-//
-// TWO SURFACES with different backdrops, and naming which is the point:
-//
-//   THE TRIGGER (`.account-btn`) sits on `.sidebar-footer`, whose backdrop really is
-//   `--c-bg-secondary`. Its interaction states are a translucent wash COMPOSITED over
-//   that, and over `--c-bg-tertiary` when the pointer is also hovering.
-//
-//   THE CREDITS ROW (`.pill-account`) sits INSIDE the status card, and the card is NOT
-//   that token: `.pill-status-content` paints
-//   `color-mix(in srgb, var(--status-color, …) 8%, var(--c-bg-secondary))` and
-//   `status.ts` writes `--status-color` for all three connection states. So every card
-//   figure is taken over a status-TINTED surface, composed here the way the card
-//   composes it — with each hue substituted for the custom property — or this file
-//   measures the bare token and returns numbers no comment in the tree contains.
-//
-// THE INSTRUMENT. Every interaction backdrop is composed with the script's own
-// `over(<wash>, <surface>)` primitive — ALPHA COMPOSITING IN sRGB, which is what a
-// browser paints — never a `color-mix()` of the wash into the surface, which
-// interpolates in oklch and returns a colour nothing paints. `css-contrast.py` ships
-// that primitive for exactly this and documents it as "what a browser actually
-// paints".
-//
-// Shelling out rather than reimplementing the colour maths, for the reason the
-// sibling floors already record: a second implementation is a second thing to be
-// wrong, and every number in the CSS comments was measured with the first one.
-//
-// EVERY EXPRESSION IS READ OUT OF THE STYLESHEET. A floor asserted against colours
-// this file names itself keeps passing after someone changes the CSS to a mix that
-// violates it, which is the one failure a floor exists to prevent.
-//
-// Node environment: this runs a process.
+// The sidebar footer's measured floors over two backdrops: the trigger (`.account-btn`)
+// on `--c-bg-secondary`, and the credits row (`.pill-account`) inside the status card,
+// whose surface is tinted by `--status-color` (composed here per hue). Interaction
+// backdrops use css-contrast.py's `over()`, alpha compositing in sRGB as a browser
+// paints, never a `color-mix()`. The maths is shelled out, not reimplemented, and every
+// expression is read from the stylesheet so a CSS change cannot pass silently. Node env.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -42,10 +16,10 @@ import { ruleBody } from "./__test-helpers__/css-rules.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
 
-/** Read with `node:fs`, not the shared helper's `?raw` glob: in vitest's NODE project
- *  a `*.css?raw` import resolves to the EMPTY STRING (Vite's CSS pipeline claims the
- *  module for the server environment), which would make every sweep here pass over
- *  nothing. */
+/**
+ * Read with `node:fs`: in vitest's node project a `*.css?raw` import resolves to "", so
+ * every sweep would pass over nothing.
+ */
 const shell = readFileSync(join(here, "css", "10-shell-app.css"), "utf8");
 const input = readFileSync(join(here, "css", "15-input.css"), "utf8");
 
@@ -98,26 +72,20 @@ function nested(body: string, selector: string): string {
 /** The composite a browser paints when `wash` sits on `surface`. */
 const over = (wash: string, surface: string): string => `over(${wash}, ${surface})`;
 
-/** THE CARD'S OWN BACKDROP, read out of `.pill-status-content` rather than restated,
- *  with one connection hue substituted for `--status-color`. Composed the way the card
- *  composes it, or every card figure below describes a surface nothing paints. */
+/**
+ * The card's own backdrop, read from `.pill-status-content` with one connection hue
+ * substituted for `--status-color`.
+ */
 function cardBackdrop(hue: string): string {
-  // `ruleBody` rather than `ruleContaining`: the latter matches every rule whose
-  // selector LIST contains the string, and `.pill-status-content` is a substring of
-  // nothing here but `.pill-expand-content` is of `.pill-expand-content.is-open` —
-  // so keying on the exact selector line is the reading that stays right.
-  // Whitespace collapsed AND stripped after each opening paren: prettier wraps this
-  // declaration across five lines, so the raw value carries newlines inside
-  // `color-mix(` that the resolver would have to re-parse anyway.
+  // `ruleBody` keys on the exact selector line (`ruleContaining` matches substrings of
+  // selector lists). Whitespace is collapsed because prettier wraps this declaration.
   const bg = decl(ruleBody(input, ".pill-status-content"), "background")
     .replace(/\s+/gu, " ")
     .replace(/\(\s+/gu, "(")
     .replace(/\s+\)/gu, ")")
     .trim();
-  // The declaration reads
-  // `color-mix(in srgb, var(--status-color, var(--c-bg-secondary)) 8%, var(--c-bg-secondary))`,
-  // and the inner `var()` carries its own fallback — so the substitution has to take
-  // the WHOLE `var(--status-color, …)` call including its closing paren.
+  // The inner `var()` carries its own fallback, so the substitution takes the WHOLE
+  // `var(--status-color, …)` call.
   const substituted = bg.replace(/var\(--status-color,\s*var\([^)]*\)\s*\)/u, `var(--c-${hue})`);
   expect(substituted, `the ${hue} tint substitutes cleanly`).not.toContain("--status-color");
   expect(substituted, "and it is still the card's own mix").toContain("color-mix(in srgb");
@@ -169,9 +137,7 @@ describe.skipIf(!existsSync(script))("the trigger's floors", () => {
   });
 
   it("holds the address to 4.5:1 in every state, pressed included", () => {
-    // WCAG 1.4.3: `--fs-sm` regular-weight text, so the large-text exception does not
-    // reach it. Unlike the mark, the address clears every state — which is what makes
-    // the residual below an argument about the INK rather than about the press.
+    // WCAG 1.4.3: `--fs-sm` regular-weight text, so the large-text exception does not apply.
     const btn = ruleBody(shell, ".account-btn");
     const hoverFill = decl(nested(btn, "&:hover"), "background");
     const ink = decl(ruleBody(shell, ".sidebar-email"), "color");
@@ -184,15 +150,8 @@ describe.skipIf(!existsSync(script))("the trigger's floors", () => {
 });
 
 describe.skipIf(!existsSync(script))("the pressed mark, a residual the ink ramp closed", () => {
-  // This used to pin six KNOWN VALUES because the floor could not be written honestly:
-  // pressed over `over(--c-press, --c-bg-secondary)`, dark red read 2.847:1, light
-  // green 2.878 and light red 2.773, so the pressed mark was a recorded residual in
-  // BOTH themes. Authoring every status ink against the hovered box (01-tokens.css
-  // "SEEDS: ink") moved them to 3.22 / 3.65 / 3.65, so the 1.4.11 floor is the honest
-  // assertion now and the residual is history rather than a table.
-  //
-  // `over()` is the instrument: a `color-mix()` of the wash into the surface returns
-  // different numbers for a colour nothing paints.
+  // Every status ink is authored against the hovered box (01-tokens.css "SEEDS: ink"), so
+  // the pressed mark meets the 1.4.11 floor. `over()` is the instrument.
   it.each([
     ["green", "dark"],
     ["green", "light"],
@@ -208,11 +167,8 @@ describe.skipIf(!existsSync(script))("the pressed mark, a residual the ink ramp 
   });
 
   it("takes the app-wide press rather than a bespoke one, which is WHY it was a residual", () => {
-    // The residual is the price of the footer's two controls answering the pointer
-    // alike. Fixing it means exempting this one control from 03-base.css's universal
-    // press, which is the user instruction it would break — so the absence of a
-    // bespoke `:active` here IS the decision, and this is what fails if someone
-    // "fixes" it locally instead of reopening that decision.
+    // The absence of a bespoke `:active` IS the decision: the footer's two controls answer the
+    // pointer alike under 03-base.css's universal press. This fails on a local "fix".
     const btn = ruleBody(shell, ".account-btn").replace(/\/\*[\s\S]*?\*\//g, " ");
     expect(btn, "no bespoke press on the trigger").not.toMatch(/&:active/u);
   });
@@ -220,12 +176,8 @@ describe.skipIf(!existsSync(script))("the pressed mark, a residual the ink ramp 
 
 describe.skipIf(!existsSync(script))("the credits row's floors, over the TINTED card", () => {
   it("holds the plan ink to 4.5:1 hovered and pressed, on every tint", () => {
-    // 4.5:1 AND NOT 3:1: the plan line is a 13px `--fs-popup` regular-weight label, so
-    // the large-text exception does not reach it. Mis-filing it against 3:1 is what
-    // this assertion exists to prevent.
-    //
-    // The LIFTED ink is read out of the rule's own state blocks, so deleting the lift
-    // fails here rather than silently shipping the unlifted ink.
+    // 4.5:1, not 3:1: the plan line is a 13px regular-weight label. The LIFTED ink is read
+    // from the rule's state blocks, so deleting the lift fails here.
     const row = ruleBody(input, ".pill-account");
     const hoverInk = decl(nested(row, "&:hover"), "color");
     const pressInk = decl(nested(row, "&:active"), "color");
@@ -264,19 +216,16 @@ describe.skipIf(!existsSync(script))("the credits row's floors, over the TINTED 
         }
       }
     }
-    // Since the ink ramp was re-cut against the hovered box, the unlifted ink clears
-    // every HOVERED tint in both themes and every PRESSED tint in light (4.92-4.96),
-    // and fails only dark's three pressed tints (3.89-4.05). So the lift still ships,
-    // and it is the press in dark that decides it — the hover half no longer does.
+    // The unlifted ink fails only dark's three pressed tints, so the press in dark is what
+    // requires the lift.
     expect(failures.sort(), "the unlifted ink's failures").toEqual(
       ["dark green pressed", "dark red pressed", "dark yellow pressed"].sort(),
     );
   });
 
   it("holds the external mark to 3:1 WHILE INHERITING, in every state", () => {
-    // The mark declares no `color` at all, so it inherits the row's — which is the
-    // only value that clears 1.4.11's 3:1 in all four states. Measured while
-    // inheriting, which is the claim: substituting a named ink is what fails.
+    // The mark declares no `color` and inherits the row's, the only value clearing 3:1 in all
+    // four states.
     const row = ruleBody(input, ".pill-account");
     const resting = decl(ruleBody(input, ".pill-expand-content"), "color");
     const hoverInk = decl(nested(row, "&:hover"), "color");
@@ -299,11 +248,8 @@ describe.skipIf(!existsSync(script))("the credits row's floors, over the TINTED 
   });
 
   it("declares no colour for that mark, so the value above cannot drift", () => {
-    // An ABSENT declaration is what makes the floor above permanent. A named ink is
-    // what would break it: `--c-text-tertiary` reads 2.71:1 pressed over the tinted
-    // card in dark, under 1.4.11's 3:1. That is one state of four rather than the
-    // three it failed before the ink ramp was re-cut, and one is enough — the
-    // pressed state is the one a reader is looking at.
+    // A named ink would break the floor: `--c-text-tertiary` reads 2.71:1 pressed over the
+    // dark tinted card.
     const tertiary = "var(--c-text-tertiary)";
     const card = cardBackdrop("yellow");
     expect(
@@ -317,10 +263,8 @@ describe.skipIf(!existsSync(script))("the credits row's floors, over the TINTED 
   });
 
   it("keeps the wash VISIBLE over the tinted card, which is why the opaque rung lost", () => {
-    // The other half of the ladder decision, and the half a contrast floor cannot see:
-    // the opaque `.pill`-family rung clears every ink floor and its surface STEP over
-    // this card is ~1.07-1.16, an invisible hover, because the 8% tint has already
-    // travelled most of the way to it. The gated wash steps ~1.59 dark / ~1.35 light.
+    // The ladder half a contrast floor cannot see: the opaque `.pill` rung steps only
+    // ~1.07-1.16 over this card (an invisible hover); the gated wash steps ~1.59 / ~1.35.
     for (const hue of HUES) {
       const card = cardBackdrop(hue);
       const washStep = ratio("dark", over(HOVER_TOKEN, card), card);

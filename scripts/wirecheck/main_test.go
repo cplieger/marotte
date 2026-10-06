@@ -8,11 +8,8 @@ import (
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
-// TestRun_delegatesToTheEngineRule pins that the gate's verdict IS the
-// engine's verdict, in both directions and at the exclusive boundary. The rule
-// itself (and its agreement with the runtime close-4002 floor) is pinned in
-// the engine; what matters here is that run() routes that answer without
-// inverting or swallowing it.
+// TestRun_delegatesToTheEngineRule pins that the gate's verdict IS the engine's, in both
+// directions and at the exclusive boundary, without inversion.
 func TestRun_delegatesToTheEngineRule(t *testing.T) {
 	cases := map[string]struct {
 		clientRev, clientMinServer int
@@ -48,12 +45,8 @@ func TestRun_delegatesToTheEngineRule(t *testing.T) {
 	}
 }
 
-// TestRun_exitCodeContract pins the process exit codes and output streams the
-// Dockerfile wire-floor gate branches on: 0 compatible (ok line on stdout),
-// 1 floor violated (mismatch on stderr), 2 usage error. A wiring regression
-// (inverted check, swapped code, wrong stream) would silently neuter or break
-// the image build gate. Client values derive from the engine's constants, so
-// the cases track a future floor raise.
+// TestRun_exitCodeContract pins the exit codes and output streams the image build's
+// wire-floor gate branches on: 0 (ok on stdout), 1 (mismatch on stderr), 2 (usage).
 func TestRun_exitCodeContract(t *testing.T) {
 	cases := []struct {
 		name                       string

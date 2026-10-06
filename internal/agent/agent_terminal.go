@@ -1,7 +1,5 @@
-// Agent terminal handler for kiro-cli's terminal/* ACP requests.
-//
-// Each terminal is a headless subprocess (os/exec.Command), NOT a PTY: piped
-// stdout/stderr into a byte-limited, UTF-8-aware ring buffer, and no resize.
+// Agent terminals for kiro-cli's terminal/* ACP requests: headless subprocesses, not PTYs,
+// piped into a byte-limited UTF-8-aware ring; no resize.
 
 package agent
 
@@ -25,34 +23,21 @@ import (
 	"github.com/cplieger/marotte/internal/systembin"
 )
 
-// keySignal is the wire key for a terminating signal in an ACP terminal
-// exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
+// keySignal is the signal key of an ACP terminal exit status (KAS zTerminalExitStatus).
 const keySignal = "signal"
 
-// terminalDrainGrace bounds how long awaitExit waits for the output pipe to reach
-// EOF AFTER the process has exited. Only a grandchild still holding the write end
-// can reach it. Matches cmd.WaitDelay, which bounds the mirror case inside Wait.
+// terminalDrainGrace bounds awaitExit's wait for output EOF after the process exits (a
+// grandchild holding the pipe). Matches cmd.WaitDelay.
 const terminalDrainGrace = 2 * time.Second
 
-// terminalGroupGrace bounds how long a teardown waits for the command's process
-// GROUP to empty after the kill. Same 2 seconds as the drain, because it bounds
-// the same population: a grandchild the head left behind. A var only so a test
-// can shorten it; never reassigned in production.
+// terminalGroupGrace bounds a teardown's wait for the process group to empty. A var only for tests.
 var terminalGroupGrace = 2 * time.Second
 
-// killTerminalGroup signals term's whole process group and then waits, bounded,
-// for it to empty — so a caller that returns holds the FACT that the command is
-// gone. Without the wait a grandchild outlives the reaped head, reparents to PID 1,
-// and becomes exactly the orphan the group kill exists to prevent.
-//
-// Returns Kill's error for the caller's already-gone/failed split; the group not
-// emptying is logged here, because that line is the same at every site.
+// killTerminalGroup SIGKILLs term through signalGroup and, for a group, waits up to
+// terminalGroupGrace for it to empty. A return does not prove the tree is gone.
 func killTerminalGroup(term *agentTerminal, termID string) error {
-	pgid, owns := procgroup.GroupOf(term.cmd.Process)
-	err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL)
-	// Nothing to wait on when the command is not its own group leader: Kill fell back
-	// to the head alone.
-	if owns && !procgroup.WaitGone(pgid, terminalGroupGrace) {
+	pgid, err := term.signalGroup(syscall.SIGKILL)
+	if pgid > 0 && !procgroup.WaitGone(pgid, terminalGroupGrace) {
 		slog.Warn("agent terminal: process group still had a live member after the kill",
 			"term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
 	}
@@ -65,28 +50,43 @@ type agentTerminal struct {
 	cmd     *exec.Cmd
 	done    chan struct{}
 	output  *byteRing
-	// ansi carries SGR state and any incomplete escape across read boundaries, and
-	// owns the running UTF-16 offset the wire reports as a chunk's base. LIVE stream
-	// only. Owned by the pump goroutine alone, or two streams' styles bleed together.
+	// ansi carries SGR state and the running UTF-16 offset across reads. Pump goroutine only.
 	ansi   *ansitext.Parser
 	chatID marotte.ChatID
 	signal string
-	// turn is the id of the turn that spawned this terminal, so an interrupt can
-	// kill the turn's own processes without touching an earlier turn's background
-	// command.
+	// turn is the spawning turn's id, so an interrupt kills only that turn's processes.
 	turn string
-	// session is the ACP session the create named, so the run bounds can ask whether
-	// one of a run's OWN steps is waiting on a command rather than whether the
-	// carrier chat is. Empty when the request carried none, which answers false
-	// everywhere: no evidence of work, so the bound applies.
+	// session is the ACP session the create named, so run bounds can attribute a waiting
+	// command to a run's own step. Empty answers false everywhere.
 	session  string
 	exitCode int
-	mu       sync.Mutex
+	// pgid is the group the command leads, read right after Start; 0 when none. Guarded by procMu.
+	pgid int
+	mu   sync.Mutex
+	// procMu orders every signal against the reap; separate from mu, which the pump holds per chunk.
+	procMu sync.Mutex
+	reaped bool
 }
 
-// newAgentTerminal builds one terminal with every field a running terminal needs.
-// A constructor rather than a literal because two of them fail silently: without
-// `ansi` the pump nil-panics, and without `output` terminal/output returns nothing.
+// signalGroup signals the group captured at spawn and returns its id; failing that, the
+// head alone, returning 0. Once the head is reaped it returns (0, os.ErrProcessDone): the
+// group number may name a stranger's group.
+func (t *agentTerminal) signalGroup(sig syscall.Signal) (int, error) {
+	t.procMu.Lock()
+	defer t.procMu.Unlock()
+	if t.reaped {
+		return 0, os.ErrProcessDone
+	}
+	if t.pgid > 1 {
+		if err := syscall.Kill(-t.pgid, sig); err == nil {
+			return t.pgid, nil
+		}
+	}
+	return 0, t.cmd.Process.Signal(sig)
+}
+
+// newAgentTerminal builds a running terminal. A constructor because without `ansi` the
+// pump nil-panics and without `output` terminal/output returns nothing.
 func newAgentTerminal(cmd *exec.Cmd, chatID marotte.ChatID, limit int) *agentTerminal {
 	return &agentTerminal{
 		cmd:    cmd,
@@ -97,21 +97,14 @@ func newAgentTerminal(cmd *exec.Cmd, chatID marotte.ChatID, limit int) *agentTer
 	}
 }
 
-// rawOutput returns a snapshot of the terminal's raw ring under the same lock the
-// pump writes it with.
-//
-// The lock is the point: the ring is written by the pump goroutine and read by
-// three callers on other goroutines, two of them while the process is still
-// producing bytes — KAS releases a terminal milliseconds after creating it.
+// rawOutput snapshots the raw ring under the pump's lock; it is read while the process still writes.
 func (t *agentTerminal) rawOutput() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.output.String()
 }
 
-// wireSpans converts the parser's spans to the wire shape. The two structs are
-// deliberately separate: internal/ansitext stays a stdlib-only leaf that owns the
-// parse, and internal/marotte owns every shape codegen projects into TypeScript.
+// wireSpans converts parser spans to the wire shape; internal/ansitext stays a stdlib-only leaf.
 func wireSpans(in []ansitext.Span) []marotte.TextSpan {
 	if len(in) == 0 {
 		return nil
@@ -123,32 +116,23 @@ func wireSpans(in []ansitext.Span) []marotte.TextSpan {
 	return out
 }
 
-// termEnvVar is one entry of the ACP terminal/create `env` array (KAS
-// zEnvVariable: {name, value}). Decoded into cmd.Env.
+// termEnvVar is one ACP terminal/create `env` entry (KAS zEnvVariable).
 type termEnvVar struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-// termLocaleEnvVar is the locale variable an agent terminal's command inherits.
-// TWIN of internal/bridge's localeEnvVar: internal/agent declares the subprocess
-// contract at its consumer and never imports internal/bridge. Change one, change
-// the other.
+// termLocaleEnvVar is the locale variable a terminal command inherits. Twin of
+// internal/bridge's localeEnvVar: change both.
 const termLocaleEnvVar = "LANG"
 
-// termLocaleEnv pins the text encoding of an agent terminal's command. The runtime
-// image ships no `locales` package, so an unset LANG leaves glibc's C locale and
-// the command octal-escapes every non-ASCII path. C.UTF-8 needs no locale files.
+// termLocaleEnv pins C.UTF-8: the image ships no locales, so the C locale would octal-escape non-ASCII paths.
 func termLocaleEnv() []string {
 	return []string{termLocaleEnvVar + "=C.UTF-8"}
 }
 
-// termEnv layers the requested env vars on top of the current process environment,
-// then the locale pin. Returns nil when none are requested, so cmd.Env stays nil
-// and the child inherits os.Environ() with the image's own LANG already in it.
-//
-// The pin lands LAST because os/exec keeps the last value for a repeated key. It
-// covers LANG only: glibc gives LC_ALL and LC_CTYPE precedence whatever the order.
+// termEnv layers the requested vars over the process environment, then the locale pin
+// (last wins in os/exec). Nil when none are requested, so the child inherits os.Environ().
 func termEnv(vars []termEnvVar) []string {
 	if len(vars) == 0 {
 		return nil
@@ -160,10 +144,8 @@ func termEnv(vars []termEnvVar) []string {
 	return append(env, termLocaleEnv()...)
 }
 
-// exitStatusObject returns the ACP exit-status object for an exited terminal
-// (KAS's zTerminalExitStatus). A signal-killed process reports {signal} with
-// exitCode omitted, since KAS requires exitCode>=0. Takes term.mu; call only after
-// term.done is closed.
+// exitStatusObject returns the ACP exit-status object; a signal kill omits exitCode
+// (KAS requires exitCode>=0). Takes term.mu; call only after term.done is closed.
 func (t *agentTerminal) exitStatusObject() map[string]any {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -173,9 +155,8 @@ func (t *agentTerminal) exitStatusObject() map[string]any {
 	return map[string]any{keyExitCode: t.exitCode}
 }
 
-// exitStatusFromState maps a finished process's state to (exitCode, signal).
-// ProcessState.ExitCode() is -1 on signal death, which KAS rejects, so a signal
-// death returns (0, "<signal>") and callers omit exitCode in favour of the signal.
+// exitStatusFromState maps a finished process to (exitCode, signal). A signal death
+// returns (0, "<signal>"): ExitCode() is -1 there, which KAS rejects.
 func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 	if st == nil {
 		return 0, ""
@@ -189,38 +170,30 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 	return 0, "unknown"
 }
 
-// agentTerminals holds all active terminals keyed by terminal ID, plus the
-// output records of terminals that have since gone away.
+// agentTerminals holds the active terminals by ID plus the output of terminals since gone.
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
 	byChatID map[marotte.ChatID][]string // chatID → []terminalID
-	// retired holds the RAW output of terminals no longer in terms: a terminal's
-	// output outlives the terminal, since KAS releases it within milliseconds of
-	// creating it. Bounded by the turn, each record holding at most one 64 KiB ring.
+	// retired holds the raw output of released terminals (KAS releases within milliseconds
+	// of creating). Bounded by the turn; each record is at most one 64 KiB ring.
 	retired map[string]retiredOutput
-	// currentTurn reads which turn a chat's activity belongs to right now, so a
-	// terminal is stamped with the lifecycle's identity, not a parallel count.
+	// currentTurn reads which turn a chat's activity belongs to now.
 	currentTurn func(marotte.ChatID) (string, bool)
-	// broadcast publishes a terminal's lifecycle and output frames.
+	// broadcast publishes lifecycle and output frames.
 	broadcast func(context.Context, marotte.ServerEvent)
-	// bridges answers the ACP request a terminal operation arrived on.
+	// bridges answers the request a terminal operation arrived on.
 	bridges *bridgeManager
-	// lifecycle supplies the process lifetime, the in-flight counter a pump must
-	// register on, and the workspace dir a terminal's cwd is resolved inside.
+	// lifecycle supplies the process lifetime, the in-flight counter and the workspace dir.
 	lifecycle *lifetime
 	mu        sync.Mutex
 }
 
-// retiredOutput is what survives a terminal: its raw bytes and enough identity to
-// evict the record at the right moment. Raw rather than rendered, because the ring
-// already bounds it. Kept even when raw is EMPTY: existence answers "did this
-// terminal ever run", so dropping empty records would make a silent command
-// indistinguishable from a lost one.
+// retiredOutput is what survives a terminal: raw bytes plus the identity to evict it.
+// Kept even when empty, so a silent command stays distinguishable from a lost one.
 type retiredOutput struct {
 	raw    string
 	chatID marotte.ChatID
-	// turn is the id of the turn that spawned the terminal, or empty when the chat
-	// had no turn open at the time. An empty one is evicted by any turn close.
+	// turn is the spawning turn's id; empty is evicted by any turn close.
 	turn string
 }
 
@@ -239,9 +212,8 @@ func newAgentTerminals(bridges *bridgeManager, lc *lifetime,
 	}
 }
 
-// retire records a departing terminal's output so a later tool-call completion can
-// still adopt it. Callers hold at.mu. Every path that removes a terminal goes
-// through here, because forgetting is silent: adoption simply finds nothing.
+// retire records a departing terminal's output for later adoption. Callers hold at.mu.
+// Every removal path goes through here: a forgotten retire is silent.
 func (at *agentTerminals) retire(id string, term *agentTerminal) {
 	if term == nil || term.output == nil {
 		return
@@ -249,12 +221,8 @@ func (at *agentTerminals) retire(id string, term *agentTerminal) {
 	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, turn: term.turn}
 }
 
-// peekRetired returns a retired terminal's raw output WITHOUT consuming the record.
-//
-// Non-destructive on purpose: KAS can send more than one terminal status frame for
-// the same tool call and adoption runs on each, so a consuming read would make the
-// second log "terminal output missing" about output adopted a moment earlier. The
-// turn boundary evicts it either way.
+// peekRetired returns a retired terminal's raw output without consuming it: KAS can send
+// several status frames per tool call and adoption runs on each.
 func (at *agentTerminals) peekRetired(id string) (string, bool) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
@@ -265,13 +233,8 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 	return rec.raw, true
 }
 
-// CloseTurn evicts the output records of the turn that just closed.
-//
-// Called by the winning closer, so a turn the wire started is attributed too —
-// otherwise its terminals stay attached to a turn that already ended, letting a
-// later cancel kill them. A turn ends only after every tool call has settled, so a
-// record still here has had its chance. Eviction is by EQUALITY on the turn id;
-// a record with no turn belongs to whichever close comes next.
+// CloseTurn evicts the output records of the closed turn, by equality on the turn id;
+// a record with no turn belongs to the next close. Called by the winning closer.
 func (at *agentTerminals) CloseTurn(chatID marotte.ChatID, turnID string) {
 	at.mu.Lock()
 	for id, rec := range at.retired {
@@ -282,9 +245,7 @@ func (at *agentTerminals) CloseTurn(chatID marotte.ChatID, turnID string) {
 	at.mu.Unlock()
 }
 
-// turnOf reads which turn a chat's activity belongs to right now, or empty when
-// the chat is idle. Nil-safe: a registry built without the reader attributes
-// nothing, the honest answer for a runtime with no turn lifecycle either.
+// turnOf reads which turn a chat's activity belongs to now, or empty when idle. Nil-safe.
 func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
 	if at.currentTurn == nil {
 		return ""
@@ -293,18 +254,9 @@ func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
 	return turn
 }
 
-// LiveTerminalForSession reports whether the chat holds a terminal whose process is
-// still running and whose create named one of these sessions. A released terminal is
-// gone from terms and an exited one has closed done, so neither counts.
-//
-// The session narrowing is what the question is FOR: a run's own steps and the rest
-// of the carrier chat's work share a chat and not a session, so a chat-wide answer
-// reports a run as working because something else on that chat is.
-//
-// A terminal with no recorded session is never a member, so an empty set and a
-// session-less terminal both answer false — the direction an absent registry takes
-// too: false means no evidence of work, so the bound applies rather than being
-// silently lifted.
+// LiveTerminalForSession reports whether the chat holds a running terminal whose create
+// named one of these sessions. Narrowed by session because a run's steps share the carrier
+// chat; a session-less terminal answers false, so the bound applies.
 func (at *agentTerminals) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
 	if len(sessions) == 0 {
 		return false
@@ -328,10 +280,7 @@ func (at *agentTerminals) LiveTerminalForSession(chatID marotte.ChatID, sessions
 	return false
 }
 
-// KillForTurn kills the terminals the chat's CURRENT turn created and leaves every
-// other chat process alone, so it does not also kill a background command an
-// earlier turn started. An idle chat kills nothing, and a terminal with no turn is
-// never this turn's to kill.
+// KillForTurn kills only the terminals the chat's current turn created; an idle chat kills nothing.
 func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
 	cur := at.turnOf(chatID)
 	if cur == "" {
@@ -368,11 +317,7 @@ func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
 	}
 }
 
-// KillForChat kills all terminals belonging to chatID and removes them from both
-// maps. Called from cleanupChatState to prevent orphaned subprocesses.
-//
-// The one removal path that does NOT retire the output: the chat is being deleted,
-// so there is no transcript left to adopt into. It drops any record it already had.
+// KillForChat kills and removes every terminal of chatID without retiring output: the chat is being deleted.
 func (at *agentTerminals) KillForChat(chatID marotte.ChatID) {
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
@@ -391,8 +336,7 @@ func (at *agentTerminals) KillForChat(chatID marotte.ChatID) {
 		}
 	}
 	at.mu.Unlock()
-	// OUTSIDE the lock: the kill waits for the group to empty, and holding the
-	// registry mutex across N bounded waits would shut every other operation.
+	// Outside the lock: the kill waits for the group to empty.
 	for _, d := range doomed {
 		if d.term.cmd.Process != nil {
 			if err := killTerminalGroup(d.term, d.id); err != nil {
@@ -402,16 +346,14 @@ func (at *agentTerminals) KillForChat(chatID marotte.ChatID) {
 	}
 }
 
-// doomedTerminal is one terminal a teardown removed from the registry, carried out
-// of the locked section so the kill and its group wait run unlocked.
+// doomedTerminal carries a removed terminal out of the locked section for its kill.
 type doomedTerminal struct {
 	term *agentTerminal
 	id   string
 }
 
-// drainAll waits for all terminals to exit, then clears the maps. Each terminal's
-// context is derived from shutdownCtx; when that cancels, cmd.Cancel sends SIGTERM
-// and cmd.WaitDelay escalates to SIGKILL after 2s.
+// drainAll waits for every terminal to exit, then clears the maps. Contexts derive from
+// shutdownCtx: cancel sends SIGTERM and WaitDelay escalates to SIGKILL after 2s.
 func (at *agentTerminals) drainAll() {
 	at.mu.Lock()
 	terms := make(map[string]*agentTerminal, len(at.terms))
@@ -435,8 +377,7 @@ func (at *agentTerminals) drainAll() {
 	at.mu.Unlock()
 }
 
-// release removes terminalID from both maps and returns the removed terminal. It
-// does not kill the process — callers do that outside the lock.
+// release removes terminalID from both maps and returns it; callers kill outside the lock.
 func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
@@ -472,10 +413,8 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.Cha
 	case methodTermKill:
 		rt.agentTerms.respondKill(ctx, chatID, msg)
 	default:
-		// The caller routes here on a `terminal/` PREFIX match, so a verb KAS adds
-		// later reaches this switch and must still be answered: Bridge.Call has no
-		// client-side deadline, so falling off the end wedges the turn rather than
-		// failing it.
+		// Routed on a `terminal/` prefix, so an unknown verb must still be answered: Bridge.Call
+		// has no client deadline, and silence wedges the turn.
 		if msg.ID == nil {
 			return
 		}
@@ -492,19 +431,10 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.Cha
 	}
 }
 
-// agentShell resolves the shell that runs an agent command LINE, once per process.
-// bash first (KAS names the tool `execute_bash`, and agents write bash-isms: `[[ ]]`,
-// process substitution), POSIX sh as the fallback for an image without bash.
-//
-// Resolved through internal/systembin rather than exec.LookPath, so argv[0] is an
-// absolute path from a fixed system-directory set instead of whatever PATH[0]
-// holds — and PATH[0] here is the toolbelt engine's link directory on the
-// persistent volume, which an agent with an approved shell command can write.
-// The fallback is already absolute, so a miss confines rather than falls through.
-//
-// The answer is cached for the process lifetime, which is only acceptable BECAUSE
-// the candidate set is fixed and reads no environment: a PATH-derived cached
-// answer would freeze whatever PATH happened to say at the first call.
+// agentShell resolves the shell for an agent command line once per process: bash first,
+// POSIX sh as fallback. Through internal/systembin, not exec.LookPath: PATH[0] is the
+// toolbelt link dir, which an agent can write. Caching is safe only because the
+// candidate set reads no environment.
 var agentShell = sync.OnceValue(func() string {
 	if p, ok := systembin.Resolve("bash"); ok {
 		return p
@@ -512,14 +442,9 @@ var agentShell = sync.OnceValue(func() string {
 	return "/bin/sh"
 })
 
-// agentCommand builds the process for one terminal/create.
-//
-// ACP's CreateTerminalRequest is `{command, args?}`, and KAS leaves `args` UNSET,
-// putting the whole command line in `command` (measured against kiro-cli 2.18.0).
-// So an ABSENT `args` means `command` is a command line and runs through a shell; a
-// PRESENT `args`, empty included, means the sender already split the argv.
-// Presence, not length, decides: a length test would shell a bare program name
-// containing a space. The shell branch widens nothing — Cedar owns the LINE.
+// agentCommand builds the process for one terminal/create. KAS leaves `args` UNSET and
+// puts the whole line in `command` (kiro-cli 2.18.0), so an absent `args` runs through a
+// shell and a present one, empty included, is an argv. Presence, not length, decides.
 func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
 	if args != nil {
 		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
@@ -535,19 +460,14 @@ func derefArgs(args *[]string) []string {
 	return *args
 }
 
-// failCreate answers a terminal/create that could not start, and logs it. Every
-// failure path goes through this one door, because a command that failed to exec
-// otherwise leaves NO server-side trace: only the agent's tool result learns.
+// failCreate answers and logs a terminal/create that could not start; without it a failed exec leaves no server-side trace.
 func (at *agentTerminals) failCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, command, reason string) {
 	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
 	respondErr(ctx, at.bridges, chatID, msg, reason)
 }
 
-// failParse answers a terminal request whose params did not decode, and logs it.
-//
-// The id is already verified non-nil by the router and KAS awaits these with no
-// timeout, so a bare return strands the promise. The request's OWN chatID is
-// load-bearing: respondErr resolves the reply bridge by chat id.
+// failParse answers and logs a request whose params did not decode: KAS awaits these with
+// no timeout. The request's own chatID is what respondErr resolves the bridge by.
 func (at *agentTerminals) failParse(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, method string, err error) {
 	slog.Warn("agent terminal request had undecodable params",
 		"method", method, "chat_id", chatID, "error", err)
@@ -558,19 +478,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
-		// SessionID is ACP's own field on CreateTerminalRequest, and it is the only
-		// link on this frame that names which WORKFLOW STEP asked: a run's step
-		// session is what the run log records on the step's turn_open, while the turn
-		// this handler reads below is the CHAT registry's. An absent one decodes to
-		// the zero value rather than failing the parse, so a request from a build
-		// that omits it still creates its terminal — bounded rather than immortal.
+		// SessionID names which workflow step asked; absent decodes to "" so the terminal is
+		// still created, bounded rather than immortal.
 		SessionID string `json:"sessionId"`
-		// Args is a POINTER so an explicitly empty array stays distinguishable from an
-		// omitted field: `{"command":"prog","args":[]}` asks to exec `prog` with no
-		// arguments, which is not the same statement as omitting args.
+		// Args is a pointer so an explicit `[]` stays distinct from an omitted field.
 		Args *[]string `json:"args"`
-		// Env is the ACP terminal/create env array (KAS zEnvVariable {name,value}),
-		// populated into cmd.Env.
+		// Env is the ACP terminal/create env array (KAS zEnvVariable {name,value}).
 		Env             []termEnvVar `json:"env"`
 		OutputByteLimit int          `json:"outputByteLimit"`
 	}
@@ -582,9 +495,7 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		at.failCreate(ctx, chatID, msg, params.Command, "command is required")
 		return
 	}
-	// Screen the requested environment BEFORE anything is created, so the refusal
-	// needs no teardown. See agent_terminal_env.go: an agent-supplied variable wins
-	// over the process environment, and a few names redirect execution.
+	// Screened before anything is created, so a refusal needs no teardown (agent_terminal_env.go).
 	if blocked := screenAgentEnv(params.Env, operatorAllowedEnv()); len(blocked) > 0 {
 		slog.Warn("refused an agent terminal that redirects execution through the environment",
 			"chat_id", chatID, "command", params.Command, "variables", strings.Join(blocked, ","))
@@ -599,17 +510,13 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		limit = params.OutputByteLimit
 	}
 
-	// The command must outlive the per-event ctx: translateACPEvent cancels it the
-	// moment it returns, and a child of it would SIGTERM the just-spawned process.
-	// The AfterFunc re-attaches shutdown-scoped teardown.
+	// The command must outlive the per-event ctx, which translateACPEvent cancels on return;
+	// the AfterFunc re-attaches shutdown.
 	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
 	cmd := agentCommand(cmdCtx, params.Command, params.Args)
-	// Own process group, so every teardown path can signal the whole tree rather
-	// than just the head. See procgroup.Kill for why the head alone is not enough.
+	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Graceful shutdown: SIGTERM on context cancel, SIGKILL after 2s.
-	cmd.Cancel = func() error { return procgroup.Kill(cmd.Process, syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
 	if env := termEnv(params.Env); env != nil {
 		cmd.Env = env
@@ -628,11 +535,13 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	}
 
 	term := newAgentTerminal(cmd, chatID, limit)
+	cmd.Cancel = func() error {
+		_, err := term.signalGroup(syscall.SIGTERM)
+		return err
+	}
 
-	// One CALLER-OWNED pipe for both streams, not Cmd.StdoutPipe/StderrPipe: os/exec
-	// closes the pipes it hands out inside Wait, so owning the read end lets Wait
-	// observe exit while the drain is bounded from that moment. Merging both streams
-	// also preserves write order between them, which io.MultiReader does not.
+	// One caller-owned pipe for both streams: os/exec closes the pipes it hands out inside
+	// Wait, and one pipe preserves write order between stdout and stderr.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		stop()
@@ -643,7 +552,16 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
-	if err := cmd.Start(); err != nil {
+	// procMu spans Start so a cancel racing the spawn signals the group, not the head alone.
+	term.procMu.Lock()
+	err = cmd.Start()
+	if err == nil {
+		if g, ok := procgroup.GroupOf(cmd.Process); ok {
+			term.pgid = g
+		}
+	}
+	term.procMu.Unlock()
+	if err != nil {
 		_ = pw.Close()
 		_ = pr.Close()
 		stop()
@@ -651,25 +569,16 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		at.failCreate(ctx, chatID, msg, params.Command, err.Error())
 		return
 	}
-	// The child holds its own duplicate of the write end, so closing ours is what
-	// makes the reader see EOF when the last writer exits.
+	// The child holds its own write end; closing ours lets the reader see EOF.
 	_ = pw.Close()
 
 	termID := newMessageID() // reuse the ID generator for unique terminal IDs
 
-	// Which turn owns this terminal, read BEFORE at.mu is taken: the reader reaches
-	// the turn lifecycle's own mutex, and taking that under at.mu would give this
-	// type two lock orders.
+	// Read before at.mu: it takes the turn lifecycle's mutex, and under at.mu that is a second lock order.
 	turn := at.turnOf(chatID)
 
-	// Register the terminal in the maps and broadcast terminal_created
-	// BEFORE starting the pump/exit goroutines. emit() assigns monotonic
-	// event ids in call order, and those goroutines emit terminal_output /
-	// terminal_exited; if they ran first, a fast write-and-exit command
-	// could emit output/exited with a lower event id than terminal_created.
-	// The client would then drop those events (unknown terminal id) and
-	// leave the tab stuck "running". Registering + broadcasting first
-	// guarantees terminal_created is ordered ahead of any output/exit event.
+	// Register and broadcast terminal_created BEFORE starting the pump/exit goroutines: event
+	// ids follow call order, and a client drops output for an unknown terminal id.
 	at.mu.Lock()
 	term.turn = turn
 	term.session = params.SessionID
@@ -686,8 +595,6 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	}))
 	respondOK(ctx, at.bridges, chatID, msg, map[string]string{"terminalId": termID})
 
-	// Stream the merged output into the ring. Started only after the terminal is
-	// registered and terminal_created is broadcast. drained closes at EOF.
 	drained := make(chan struct{})
 	at.lifecycle.inflight.Go(func() {
 		defer close(drained)
@@ -700,20 +607,16 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	})
 }
 
-// pumpOutput streams a terminal's combined stdout/stderr into its ring buffer and
-// broadcasts each chunk to SSE clients until the reader hits EOF or an error.
+// pumpOutput streams the merged output into the ring and broadcasts each chunk until EOF or error.
 func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID marotte.ChatID, r io.Reader) {
-	// Runtime-scoped context: this goroutine outlives the per-event ctx that spawned
-	// it, so derive one that lives until EOF or shutdown.
+	// This goroutine outlives the per-event ctx, so it takes a runtime-scoped one.
 	ctx, cancel := at.lifecycle.derivedContext()
 	defer cancel()
 	buf := getPumpBuf()
 	defer pumpBufPool.Put(buf) //nolint:staticcheck // returned after loop exits
 
-	// pending carries a short (≤3-byte) trailing remainder from the previous read
-	// that formed a multi-byte rune split across the read boundary, prepended to the
-	// next chunk so the live SSE stream is always valid UTF-8. The ring still gets
-	// every raw byte exactly once, so only the broadcast needs the carry.
+	// pending carries an incomplete trailing rune (≤3 bytes) into the next chunk so the live
+	// stream stays valid UTF-8; the ring still gets every raw byte once.
 	var pending []byte
 	emit := at.emitter(ctx, term, termID, chatID)
 	for {
@@ -723,7 +626,6 @@ func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID 
 			term.output.Write(buf[:n]) // ring gets every raw byte, unchanged
 			term.mu.Unlock()
 
-			// Assemble the chunk from any carried remainder, then split off a fresh tail.
 			chunk := buf[:n]
 			if len(pending) > 0 {
 				chunk = append(pending, chunk...)
@@ -732,32 +634,27 @@ func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID 
 			if out := chunk[:len(chunk)-hold]; len(out) > 0 {
 				emit(string(out))
 			}
-			// Carry the incomplete tail (copied — buf is reused next Read).
+			// Copied: buf is reused next Read.
 			pending = append(pending[:0:0], chunk[len(chunk)-hold:]...)
 		}
 		if readErr != nil {
 			break
 		}
 	}
-	// Flush leftover incomplete bytes at EOF; they render as U+FFFD, like the ring.
+	// Leftover incomplete bytes at EOF render as U+FFFD, like the ring.
 	if len(pending) > 0 {
 		emit(string(pending))
 	}
-	// Release an escape sequence the stream ended mid-way through, rather than lose it.
+	// Release an escape sequence the stream ended mid-way through.
 	base := term.ansi.Offset()
 	if text, parsed := term.ansi.Flush(); text != "" {
 		at.publishText(ctx, termID, chatID, text, wireSpans(parsed), base)
 	}
 }
 
-// emitter returns the function that turns one raw chunk into what the TRANSCRIPT
-// renders: hidden Unicode stripped, escape sequences parsed off into style spans,
-// plain text out. Parsing server-side is what lets the client paint spans with
-// textContent instead of building HTML from bytes.
-//
-// SanitizeUnicode, NOT SanitizeOutput: SanitizeOutput strips ANSI BEFORE the parser
-// sees it, so spans come out empty and output renders unstyled (TestTerminalEmitter_*
-// pins it). Hidden Unicode goes first, so nothing can hide a sequence behind it.
+// emitter turns one raw chunk into transcript text: hidden Unicode stripped, escapes
+// parsed into style spans. SanitizeUnicode, not SanitizeOutput: the latter strips ANSI
+// before the parser sees it, so spans come out empty.
 func (at *agentTerminals) emitter(
 	ctx context.Context, term *agentTerminal, termID string, chatID marotte.ChatID,
 ) func(string) {
@@ -771,13 +668,8 @@ func (at *agentTerminals) emitter(
 	}
 }
 
-// publishText broadcasts one rendered chunk.
-//
-// base is where this chunk starts in the terminal's accumulated plain text, counted
-// in UTF-16 code units, read off the parser's own counter before the write that
-// produced the text. NOT a byte length and NOT a second tally: span offsets are
-// absolute in UTF-16 units, so the base must be the same quantity from the same
-// source, or every live span rebases onto the wrong character.
+// publishText broadcasts one rendered chunk. base is the chunk's start in UTF-16 code
+// units, read off the parser's own counter: spans are absolute in the same units.
 func (at *agentTerminals) publishText(
 	ctx context.Context, termID string, chatID marotte.ChatID,
 	text string, spans []marotte.TextSpan, base int,
@@ -790,17 +682,12 @@ func (at *agentTerminals) publishText(
 	}))
 }
 
-// incompleteTailLen returns the number of trailing bytes of b that form an
-// incomplete leading UTF-8 sequence. Zero when b ends on a complete rune, is empty,
-// or ends in a standalone invalid byte that will never complete. At most
-// utf8.UTFMax-1 (3) bytes are ever held.
+// incompleteTailLen returns how many trailing bytes of b form an incomplete UTF-8
+// sequence (0..3); a standalone invalid byte counts as complete.
 func incompleteTailLen(b []byte) int {
 	if r, size := utf8.DecodeLastRune(b); r != utf8.RuneError || size > 1 {
-		// A real rune, or a genuine U+FFFD (3 bytes → size > 1). Nothing to hold.
 		return 0
 	}
-	// Walk back to the lead byte of the trailing sequence (bounded to UTFMax) and
-	// hold it only if it is a valid-but-not-yet-complete rune prefix.
 	for i := 1; i <= utf8.UTFMax && i <= len(b); i++ {
 		if lead := b[len(b)-i]; utf8.RuneStart(lead) {
 			if utf8.FullRune(b[len(b)-i:]) {
@@ -812,41 +699,34 @@ func incompleteTailLen(b []byte) int {
 	return 0
 }
 
-// awaitExit blocks on cmd.Wait, records the exit status, releases the per-terminal
-// context resources, closes term.done, and broadcasts terminal_exited. A
-// signal-killed process records a signal string rather than exitCode -1, because
-// KAS's zTerminalExitStatus requires exitCode>=0.
+// awaitExit waits for the process, records its exit status, closes term.done and
+// broadcasts terminal_exited.
 func (at *agentTerminals) awaitExit(
 	term *agentTerminal, termID string, chatID marotte.ChatID, cmd *exec.Cmd,
 	stop func() bool, cmdCancel context.CancelFunc,
 	drained <-chan struct{}, pr *os.File,
 ) {
-	// Runtime-scoped context for the broadcast (outlives the per-event ctx).
 	ctx, cancel := at.lifecycle.derivedContext()
 	defer cancel()
 
-	// Read the process group BEFORE Wait reaps the head, which is the only moment
-	// getpgid can answer (procgroup.GroupOf says why).
-	pgid, owns := procgroup.GroupOf(cmd.Process)
+	term.procMu.Lock()
+	pgid := term.pgid
+	term.procMu.Unlock()
 
-	// Wait FIRST, then drain. Safe in that order only because the pipe is
-	// caller-owned: os/exec closes the pipes IT hands out inside Wait.
+	// Wait first, then drain: safe only because the pipe is caller-owned.
 	err := cmd.Wait()
+	term.procMu.Lock()
+	term.reaped = true
+	term.procMu.Unlock()
 
-	// The head is reaped; the GROUP may not be empty. The load-bearing wait of the
-	// four: everything below tells the agent the command finished, and the agent then
-	// reads a file the command's backgrounded grandchild is still writing. Not a kill
-	// — the point is to observe when the tree stopped, and to SAY SO when it has not.
-	// Started here and JOINED after the drain so the two overlap: sequenced, they
-	// would charge `some-daemon &` both graces before the agent hears anything.
+	// The head is reaped but the group may not be empty, and the agent will read files a
+	// backgrounded grandchild is still writing. Observe, not kill. Joined after the drain
+	// so the two graces overlap.
 	groupEmptied := make(chan bool, 1)
-	go func() { groupEmptied <- !owns || procgroup.WaitGone(pgid, terminalGroupGrace) }()
+	go func() { groupEmptied <- pgid == 0 || procgroup.WaitGone(pgid, terminalGroupGrace) }()
 
-	// Bound the drain from the moment the process exited: EOF is not guaranteed,
-	// since a command that leaves a grandchild holding the write end keeps the pipe
-	// open, and closing our read end is what releases the pump then. terminal_exited
-	// must not be observable before the output it describes — measured, a `whoami`
-	// sent its exit as event 365 and its own "root\n" as 368.
+	// Bound the drain from exit: a grandchild can hold the pipe open forever. terminal_exited
+	// must not be observable before its output (measured: exit as event 365, output as 368).
 	select {
 	case <-drained:
 	case <-time.After(terminalDrainGrace):
@@ -856,9 +736,7 @@ func (at *agentTerminals) awaitExit(
 		<-drained
 	}
 
-	// Debug, not Warn: a command that backgrounds a long-lived process ON PURPOSE
-	// reaches this on every exit and nobody can act on it. killTerminalGroup's line
-	// stays a Warn, because there a SIGKILL was sent and the group outlived it.
+	// Debug: a deliberate background process reaches this on every exit.
 	if !<-groupEmptied {
 		slog.Debug("agent terminal: the command exited but its process group did not empty",
 			"chat_id", chatID, "term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
@@ -896,8 +774,7 @@ func (at *agentTerminals) respondOutput(ctx context.Context, chatID marotte.Chat
 	term, ok := at.terms[params.TerminalID]
 	at.mu.Unlock()
 	if !ok {
-		// Thread the real chatID so the error resolves a bridge; an empty one makes
-		// respondErr's lookup miss and the error is dropped, hanging the agent.
+		// The real chatID, or respondErr's bridge lookup misses and the agent hangs.
 		respondErr(ctx, at.bridges, chatID, msg, "terminal not found")
 		return
 	}
@@ -907,7 +784,7 @@ func (at *agentTerminals) respondOutput(ctx context.Context, chatID marotte.Chat
 	term.mu.Unlock()
 
 	result := map[string]any{"output": output, "truncated": truncated}
-	// v3/KAS zTerminalOutputResponse requires exitStatus to be an object or null.
+	// KAS zTerminalOutputResponse requires exitStatus to be an object or null.
 	select {
 	case <-term.done:
 		result["exitStatus"] = term.exitStatusObject()
@@ -926,10 +803,7 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID marotte.Cha
 	}
 	term, ok := at.release(params.TerminalID)
 	if ok && term.cmd.Process != nil {
-		// An already-reaped process is the EXPECTED answer here: KAS drives
-		// terminal/release after wait_for_exit returned, and that responder unblocks on
-		// term.done, which awaitExit closes only after cmd.Wait reaped the process.
-		// Debug rather than silence still says whether the kill was a no-op.
+		// A finished command's group is left running, matching KAS's own terminal.
 		if err := killTerminalGroup(term, params.TerminalID); err != nil {
 			if procgroup.AlreadyGone(err) {
 				slog.Debug("terminal release: kill was a no-op, the process was already reaped",
@@ -940,8 +814,7 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID marotte.Cha
 		}
 	}
 	slog.Info("agent terminal released", "term_id", params.TerminalID)
-	// The request's chatID, not the possibly-nil term.chatID, so the ack resolves a
-	// bridge even for an unknown terminal id. KAS's response is an empty object.
+	// The request's chatID so the ack resolves a bridge for an unknown id. KAS expects an empty object.
 	respondOK(ctx, at.bridges, chatID, msg, map[string]any{})
 }
 
@@ -957,13 +830,12 @@ func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID marotte
 	term, ok := at.terms[params.TerminalID]
 	at.mu.Unlock()
 	if !ok {
-		// Real chatID so the not-found error resolves a bridge (see output).
+		// Real chatID so the not-found error resolves a bridge.
 		respondErr(ctx, at.bridges, chatID, msg, "terminal not found")
 		return
 	}
-	// Block until the process exits or the runtime shuts down. A fresh runtime-scoped
-	// context inside the goroutine: the per-event ctx is cancelled before this async
-	// responder runs, and Bridge.Respond drops a write on a cancelled ctx.
+	// A fresh runtime-scoped context: the per-event ctx is cancelled before this runs, and
+	// Bridge.Respond drops a write on a cancelled ctx.
 	at.lifecycle.inflight.Go(func() {
 		fctx, cancel := at.lifecycle.derivedContext()
 		defer cancel()
@@ -971,7 +843,6 @@ func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID marotte
 		case <-term.done:
 			respondOK(fctx, at.bridges, chatID, msg, term.exitStatusObject())
 		case <-at.lifecycle.done:
-			// Shutdown in progress; bridge is dead, response is moot.
 			return
 		}
 	})
@@ -989,14 +860,12 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID marotte.ChatID
 	term, ok := at.terms[params.TerminalID]
 	at.mu.Unlock()
 	if !ok {
-		// Real chatID so the not-found error resolves a bridge (see output).
+		// Real chatID so the not-found error resolves a bridge.
 		respondErr(ctx, at.bridges, chatID, msg, "terminal not found")
 		return
 	}
 	if term.cmd.Process != nil {
-		// Same split as release, for a rarer reason: KAS sends terminal/kill on the
-		// timeout and cancel paths, where the command is normally still running, but it
-		// races the command's own exit and losing that race is not a failure.
+		// KAS sends terminal/kill on timeout and cancel, racing the command's own exit; losing that race is not a failure.
 		if err := killTerminalGroup(term, params.TerminalID); err != nil {
 			if procgroup.AlreadyGone(err) {
 				slog.Debug("terminal kill was a no-op, the process was already reaped",
@@ -1010,14 +879,9 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID marotte.ChatID
 	respondOK(ctx, at.bridges, chatID, msg, map[string]any{})
 }
 
-// Output returns an agent terminal's output for the translate layer to persist onto
-// the owning tool call. See translate.TerminalReader.
-//
-// It reads the RAW ring and renders on demand: the rendering is derivable, so there
-// is no second buffer to keep in step; it works for an already-released terminal,
-// because `retire` kept those bytes under the same id; and the sanitize-then-parse
-// order matches the live pump, so persisted and streamed text cannot disagree. ok
-// reports whether the terminal is KNOWN, so a silent command answers ("", nil, true).
+// Output returns a terminal's rendered output for translate.TerminalReader, rendered on
+// demand from the raw ring (released terminals included, via retire). ok reports whether
+// the terminal is known, so a silent command answers ("", nil, true).
 func (at *agentTerminals) Output(terminalID string) (string, []marotte.TextSpan, bool) {
 	at.mu.Lock()
 	term, live := at.terms[terminalID]

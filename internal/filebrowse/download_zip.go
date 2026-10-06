@@ -3,13 +3,16 @@ package filebrowse
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 const (
@@ -71,9 +74,6 @@ func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (pat
 }
 
 // zipStream carries the mutable accounting for one streaming-zip response.
-// Hoisting the directory walk onto named methods keeps handleDownloadZip's
-// control-flow flat; the size/count caps and the os.Root confinement are
-// unchanged.
 type zipStream struct {
 	zw         *zip.Writer
 	flusher    http.Flusher
@@ -89,54 +89,109 @@ func (z *zipStream) capped() bool {
 	return z.ctx.Err() != nil || z.fileCount >= maxZipFiles || z.totalBytes >= maxZipBytes
 }
 
-// add writes one entry (file or directory, recursively) into the zip. It
-// returns false to stop the whole stream and true to continue with the
-// next sibling. An unreadable entry is skipped (logged, true). Recursion
-// stays inside l's mount by construction, so every open goes through that
-// mount's root.
+// add writes one requested root (file or directory, recursively) into the zip.
+// It returns false to stop the whole stream and true to continue with the next
+// root. The walk is the pinned descent search uses, so a symlink is never
+// followed and the deny list judges the real path of every entry.
 func (z *zipStream) add(l loc, zipName string) bool {
 	if z.capped() {
 		return false
 	}
-	// Sensitive paths are hidden from listings; keep them out of
-	// archives too when a directory walk reaches one.
 	if z.sensitive.Blocks(l.abs) {
 		return true
 	}
-	f, err := l.m.root.Open(l.rel())
+	f, err := openPinnedRoot(l)
 	if err != nil {
-		slog.Warn("filebrowse: zip open failed", "path", l.abs, "error", err)
-		return true // skip
+		slog.Warn("filebrowse: zip open failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+		return true
 	}
 	defer f.Close()
-
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filebrowse: zip stat failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: zip stat failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		return true
 	}
-	if info.IsDir() {
-		return z.addDir(f, l, zipName)
+	switch {
+	case info.IsDir():
+		return z.addDir(f, l.abs, zipName, 0)
+	case info.Mode().IsRegular():
+		return z.writeFile(f, zipName)
+	default:
+		return true
 	}
-	return z.writeFile(f, zipName)
 }
 
-// addDir recurses into every child of an open directory. A read
-// failure skips the directory (logged, true); a stop signal from any
-// child propagates as false.
-func (z *zipStream) addDir(f *os.File, l loc, zipName string) bool {
-	entries, err := f.ReadDir(-1)
-	if err != nil {
-		slog.Warn("filebrowse: zip readdir failed", "path", l.abs, "error", err)
-		return true
-	}
-	for _, e := range entries {
-		child := loc{m: l.m, abs: filepath.Join(l.abs, e.Name())}
-		if !z.add(child, filepath.Join(zipName, e.Name())) {
+// addDir archives every child of an open directory handle, in bounded ReadDir
+// batches. A read failure ends this directory (logged, true); a stop signal from
+// any child propagates as false.
+func (z *zipStream) addDir(dir *os.File, abs, zipName string, depth int) bool {
+	for {
+		if z.capped() {
 			return false
 		}
+		entries, err := dir.ReadDir(searchReadDirChunk)
+		for _, e := range entries {
+			if !z.addEntry(dir, e, abs, zipName, depth) {
+				return false
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				slog.Warn("filebrowse: zip readdir failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
+			}
+			return true
+		}
+		if len(entries) == 0 {
+			return true
+		}
 	}
-	return true
+}
+
+// addEntry archives one directory entry, opened against its parent's handle. A
+// symlink is skipped rather than followed, and so is a FIFO, device or socket.
+func (z *zipStream) addEntry(dir *os.File, e fs.DirEntry, parentAbs, parentZip string, depth int) bool {
+	name := e.Name()
+	abs := filepath.Join(parentAbs, name)
+	zipName := filepath.Join(parentZip, name)
+	if z.sensitive.Blocks(abs) {
+		return true
+	}
+	switch {
+	case e.IsDir():
+		if depth+1 > maxSearchDepth {
+			slog.Warn("filebrowse: zip depth cap reached", "path", logsafe.Field(abs))
+			return true
+		}
+		child, err := openChild(dir, name, abs, pinnedDirFlags)
+		if err != nil {
+			warnZipOpen(abs, err)
+			return true
+		}
+		defer child.Close()
+		return z.addDir(child, abs, zipName, depth+1)
+	case e.Type().IsRegular():
+		f, err := openChild(dir, name, abs, pinnedFileFlags)
+		if err != nil {
+			warnZipOpen(abs, err)
+			return true
+		}
+		defer f.Close()
+		if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+			return true
+		}
+		return z.writeFile(f, zipName)
+	default:
+		return true
+	}
+}
+
+// warnZipOpen logs an entry the walk could not open, except the two ordinary
+// shapes on a tree being written to: gone, or swapped since the listing.
+func warnZipOpen(abs string, err error) {
+	if errors.Is(err, fs.ErrNotExist) || isSwapRefusal(err) {
+		return
+	}
+	slog.Warn("filebrowse: zip open failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 }
 
 // writeFile copies one regular file into the archive, updates the

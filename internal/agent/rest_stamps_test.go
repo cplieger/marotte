@@ -1,8 +1,6 @@
 package agent
 
-// The REST envelopes this package serves carry the digest stamp with the hub epoch:
-// GET /api/runs/live (`runs`, the lease store's own collection version) and
-// GET /api/config-template (`catalog`).
+// GET /api/runs/live (`runs`) and GET /api/config-template (`catalog`) carry the digest stamp with the hub epoch.
 
 import (
 	"encoding/json"
@@ -67,8 +65,7 @@ func TestConfigTemplate_SubjectIsTheCatalogVersionWithTheEpoch(t *testing.T) {
 	}
 }
 
-// Nothing has reloaded the catalog: the envelope stamps Unminted, matching what
-// the resolver answers for the same counter.
+// An unreloaded catalog stamps Unminted, as the resolver answers.
 func TestConfigTemplate_UnmintedCatalogStampsZero(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()

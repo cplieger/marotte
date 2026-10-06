@@ -1,20 +1,17 @@
-// ---------------------------------------------------------------------------
-// The touch/mouse toggle in the sidebar header. This module owns the button,
-// `pointer-tier.ts` owns the tier, one-way. Two gates hide it — `coarseEverSeen()`
-// here and the viewport in `50-mobile.css` — so neither can reveal what the other
-// hid.
-// ---------------------------------------------------------------------------
+// The touch/mouse toggle in the sidebar header. This module owns the button, `pointer-tier.ts` owns
+// the tier, one-way. Two gates hide it — `coarseEverSeen()` here and the viewport in
+// `50-mobile.css` — so neither can reveal what the other hid.
 
 import { coarseEverSeen, type PointerTier } from "./device-view.js";
 import { $, forceReflow } from "./dom.js";
 import { currentTier, setPointerMode } from "./pointer-tier.js";
 
-/** The accessible NAME, stable in both states, because `aria-pressed` is the
- *  state channel and the two must not both carry it (ARIA APG). */
+/** The accessible NAME, stable in both states, because `aria-pressed` is the state channel and
+ *  the two must not both carry it (ARIA APG). */
 const NAME = "Touch mode";
 
-/** Keyed by the tier IN FORCE. The tooltip has no state channel beside it, so it
- *  carries state plus action. */
+/** Keyed by the tier IN FORCE. The tooltip has no state channel beside it, so it carries state
+ *  plus action. */
 const TOOLTIP: Record<PointerTier, string> = {
   fine: "Mouse mode. Switch to touch mode",
   coarse: "Touch mode. Switch to mouse mode",
@@ -23,9 +20,9 @@ const TOOLTIP: Record<PointerTier, string> = {
 /** What the reader can SEE; null before the first paint, which slides nothing out. */
 let shown: PointerTier | null = null;
 
-/** Bumped by every `paint`, so a settle deferred behind the slide can tell whether
- *  it is still the newest. Two clicks inside the 350ms window would otherwise let
- *  the first closure put the glyph the second click replaced back on screen. */
+/** Bumped by every `paint`, so a settle deferred behind the slide can tell whether it is still
+ *  the newest. Two clicks inside the 350ms window would otherwise let the first closure put the
+ *  glyph the second click replaced back on screen. */
 let generation = 0;
 
 /** The click binding, so a repeat init replaces its listener rather than stacking. */
@@ -37,12 +34,9 @@ function glyphFor(tier: PointerTier): Element | null {
   );
 }
 
-/** Show `tier`'s glyph, mark it on `aria-pressed`, and say in the tooltip what a
- *  click would do next.
- *
- *  `transitionend` carries a timeout because reduced motion zeroes the duration
- *  rather than suppressing the transition, and a never-fired event would leave both
- *  glyphs hidden. */
+/** Show `tier`'s glyph, mark it on `aria-pressed`, and say in the tooltip what a click would do
+ *  next. `transitionend` carries a timeout because reduced motion zeroes the duration rather
+ *  than suppressing the transition, and a never-fired event would leave both glyphs hidden. */
 function paint(tier: PointerTier): void {
   const btn = $.pointerModeBtn;
   const incoming = glyphFor(tier);
@@ -50,13 +44,13 @@ function paint(tier: PointerTier): void {
   if (incoming === null) {
     return;
   }
-  // An abandoned settle parks its outgoing glyph below its resting position, and
-  // that glyph is this paint's INCOMING one; nothing else clears those classes.
+  // An abandoned settle parks its outgoing glyph below its resting position, and that glyph is this
+  // paint's INCOMING one; nothing else clears those classes.
   incoming.classList.remove("icon-setting", "icon-rising");
   other?.classList.remove("icon-setting", "icon-rising");
-  // There is something to slide out only when the other glyph is on screen: the
-  // first paint of a load settles at once (nothing has been drawn yet), and so does
-  // a repeat of the tier already shown or a click that arrives mid-slide.
+  // There is something to slide out only when the other glyph is on screen: the first paint of a
+  // load settles at once (nothing has been drawn yet), and so does a repeat of the tier already
+  // shown or a click that arrives mid-slide.
   const outgoing =
     shown !== null && other !== null && !other.classList.contains("hidden") ? other : null;
   shown = tier;
@@ -92,15 +86,15 @@ function paint(tier: PointerTier): void {
   btn.setAttribute("data-tooltip", TOOLTIP[tier]);
 }
 
-/** Show the toggle. Called from the composition root the first time this device
- *  reports a coarse pointer; the button is authored HTML, so this is a class
- *  removal rather than an insertion and it is idempotent. */
+/** Show the toggle. Called from the composition root the first time this device reports a coarse
+ *  pointer; the button is authored HTML, so this is a class removal rather than an insertion and
+ *  it is idempotent. */
 export function revealPointerModeToggle(): void {
   $.pointerModeBtn.classList.remove("hidden");
 }
 
-/** Wire the toggle. The tier must already be applied (prepaint.js, then
- *  `initPointerTier`), since the button reports the tier that is in force. */
+/** Wire the toggle. The tier must already be applied (prepaint.js, then `initPointerTier`),
+ *  since the button reports the tier that is in force. */
 export function initPointerModeToggle(): void {
   const btn = $.pointerModeBtn;
   btn.classList.toggle("hidden", !coarseEverSeen());

@@ -1,7 +1,5 @@
-// SSE handlers for the entry log: one handler per entry-log event, each one call into a
-// store operation. The store owns POSITION and every hole rule, so nothing here re-checks an
-// index, pads or reorders. Nothing gates on `getActiveId()` either: a background chat's stream
-// lands in its own store row, and the per-chat version signal keeps it off the transcript.
+// SSE handlers for the entry log, each one call into a store operation. The store owns POSITION
+// and every hole rule; no `getActiveId()` gate, since a background chat lands in its own store row.
 
 import { onSSE } from "../bus.js";
 import {
@@ -80,12 +78,9 @@ onSSE("tool_progress", (chatID, p) => {
 });
 
 onSSE("code_references", (chatID, p) => {
-  // No `forRun` guard, and the absence is the contract: this payload carries no workflow
-  // id because the PRODUCER drops a step's or a subagent's copy (`foreignSession` in
-  // `internal/translate/code_references.go`), KAS broadcasting the identical list to every
-  // session in the bridge process. So the full deduped list each time, and it REPLACES.
-  // Live only: the durable value is `turn_close.code_references`, which the footer prefers
-  // once the turn closes.
+  // No `forRun` guard: the producer drops a step's or subagent's copy (`foreignSession`,
+  // `internal/translate/code_references.go`), so the full list REPLACES. Live only; the footer
+  // prefers `turn_close.code_references` once closed.
   setCodeReferences(chatID, p.turn, p.references);
 });
 
@@ -141,10 +136,8 @@ function afterAppend(chatID: string, entry: Entry): void {
   }
 }
 
-/** Stamp a turn's live refusal when the seal frame carried one. At most once per turn on the
- *  wire, and the store stamps once regardless; `turn_close.refusal` finds it already there.
- *  Two endings carry no seal frame and defer to that close: a lane holding only a steer carry
- *  (released as `entry_appended`) and an empty lane (no frame at all). */
+/** Stamp a turn's live refusal from the seal frame (the store stamps once). A steer-only lane and
+ *  an empty lane carry no seal frame and defer to `turn_close.refusal`. */
 function stampRefusal(chatID: string, turnID: string, refusal: RefusalInfo | undefined): void {
   if (refusal !== undefined) {
     setLiveRefusal(chatID, turnID, refusal);

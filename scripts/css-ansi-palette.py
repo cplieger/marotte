@@ -63,10 +63,8 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 
-# scripts/css-contrast.py owns the token graph (oklch, var(), color-mix) and the
-# WCAG maths this file's port is checked against. Imported rather than restated:
-# resolving 01-tokens.css a second time is how the surface these values are lifted
-# against would come to differ from the surface the report measures.
+# Imported, not restated: css-contrast.py owns the token graph and the WCAG maths, and a
+# second resolution of 01-tokens.css could drift from the surface the report measures.
 _spec = importlib.util.spec_from_file_location(
     "css_contrast", SCRIPTS / "css-contrast.py"
 )
@@ -75,11 +73,8 @@ cc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cc)
 
 
-# ------------------------------------------- layer 1: kitty's default palette
-#
-# kitty/options/definition.py color0-color15, the same table as the engine's
-# vt/wire.go basic16RGB. The engine moved off the classic VGA / Linux-console
-# values because 0x0000aa blue reads 1.58:1 against black.
+# kitty/options/definition.py color0-color15, the same table as the engine's vt/wire.go
+# basic16RGB (classic VGA blue reads 1.58:1 against black).
 KITTY = (
     0x000000, 0xCC0403, 0x19CB00, 0xCECB00,
     0x0D73CC, 0xCB1ED1, 0x0DCDCD, 0xDDDDDD,
@@ -93,32 +88,23 @@ NAMES = (
     "bright-blue", "bright-magenta", "bright-cyan", "bright-white",
 )  # fmt: skip
 
-# The surface ANSI actually renders on: `.tool-output pre` paints nothing, and its
-# nearest painting ancestor is `.tool-call` at --c-bg-secondary. Agent command
-# output moved into the card that spawned it, so there is no second surface; the
-# live shell panel is not a consumer of these codes at all, because
-# web-terminal-engine paints each run from server-resolved RGB inline.
+# The surface ANSI renders on: `.tool-output pre` paints nothing, so it is `.tool-call`'s
+# --c-bg-secondary. The live shell panel paints server-resolved RGB and is not a consumer.
 SURFACE = "--c-bg-secondary"
 
-# The ink a bare `ESC[41m` arrives with: no colour of its own, so the container's
-# ink lands on the fill. It joins the 16 in the set every fill must carry.
+# A bare `ESC[41m` brings no ink, so the container's ink lands on the fill.
 CONTAINER_INK = "--c-text-secondary"
 
-# WCAG AA for body text, which is what ANSI output in a tool card is. It is also
-# what web-terminal-server passes to WithMinimumContrast, what VS Code defaults
-# xterm.js's minimumContrastRatio to, and what iTerm2's Minimum Contrast targets.
+# WCAG AA for body text; also web-terminal-server's WithMinimumContrast and xterm.js's
+# minimumContrastRatio default in VS Code.
 FLOOR = 4.5
 
 
-# ------------------------------------ layer 2: web-terminal-engine/vt/contrast.go
-#
-# Transliterated, not reinterpreted. sRGB throughout — NOT a perceptual space —
-# because that is what the engine blends in, and because blending toward pure
-# white or pure black moves luminance monotonically there, which is what makes the
-# binary search below valid.
+# Transliterated from web-terminal-engine/vt/contrast.go. sRGB, not a perceptual space: the
+# engine blends there, and blending toward white or black moves luminance monotonically,
+# which makes the binary search valid.
 
-# The engine's contrastSearchSteps. Each step halves the interval, so 8 steps
-# resolve the blend factor finer than an 8-bit channel can express.
+# The engine's contrastSearchSteps: 8 halvings resolve finer than an 8-bit channel.
 SEARCH_STEPS = 8
 
 
@@ -156,10 +142,8 @@ def blend(frm: int, to: int, t: float) -> int:
     def mix(shift: int) -> int:
         a = float((frm >> shift) & 0xFF)
         b = float((to >> shift) & 0xFF)
-        # math.Round is half-away-from-zero; Python's round() is half-to-even,
-        # which would disagree on an exact .5 and put a 1-unit difference between
-        # this table and the engine's. Both operands are non-negative here, so
-        # floor(x + 0.5) is that rule.
+        # Go's math.Round is half-away-from-zero, Python's round() half-to-even; with non-negative
+        # operands floor(x + 0.5) matches the engine.
         return math.floor(a + t * (b - a) + 0.5)
 
     return mix(16) << 16 | mix(8) << 8 | mix(0)
@@ -200,9 +184,7 @@ def ensure_contrast(fg: int, away_from: int, score) -> int:
     """
     if score(fg) >= FLOOR:
         return fg
-    # Lighten when the text is already the lighter of the pair (every dark
-    # theme), darken otherwise. A tie lightens, because a tie means both sit at
-    # the same luminance and the direction is then arbitrary.
+    # Lighten when the text is already the lighter of the pair; a tie lightens arbitrarily.
     first, second = 0xFFFFFF, 0x000000
     if rel_luminance(away_from) > rel_luminance(fg):
         first, second = second, first
@@ -210,21 +192,15 @@ def ensure_contrast(fg: int, away_from: int, score) -> int:
         c, ok = blend_to_contrast(fg, score, target)
         if ok:
             return c
-    # Neither extreme reaches the floor (a mid-luminance background): whichever
-    # gets closest, as the engine does. Unreached for both ramps in both themes —
-    # verify_against_report() would fail on the under-floor result if it were.
+    # Neither extreme reaches the floor: take the closer, as the engine does.
     return max((first, second), key=score)
 
 
-# ------------------------------------------- the one authored set: light greys
-#
-# The four slots kitty defines by LIGHTNESS alone, ordered by the lightness each
-# one asks for: 0x000000, 0x767676, 0xdddddd, 0xffffff.
+# The four slots kitty defines by lightness alone: 0x000000, 0x767676, 0xdddddd, 0xffffff.
 ACHROMATIC = ("black", "bright-black", "white", "bright-white")
 
-# The theme whose achromatic four are authored rather than lifted. Named rather
-# than derived from the surface so that the override is one grep away, and light
-# rather than dark for the reason in light_achromatic_ramp.
+# The theme whose achromatic four are authored rather than lifted (see
+# light_achromatic_ramp).
 AUTHORED_THEME = "light"
 
 
@@ -291,9 +267,6 @@ def light_achromatic_ramp(surface: int) -> dict[str, int]:
     }
 
 
-# ------------------------------------------------------------------ derivation
-
-
 def derive(theme) -> tuple[list[int], list[int]]:
     """The 16 inks and the 16 fills for one theme."""
     surface = int(theme.flat(SURFACE).hex(), 16)
@@ -309,10 +282,8 @@ def derive(theme) -> tuple[list[int], list[int]]:
         ramp = light_achromatic_ramp(surface)
         inks = [ramp.get(n, ink) for n, ink in zip(NAMES, inks, strict=True)]
 
-    # Fills: same machinery, roles swapped. The fill moves until every ink that
-    # can land on it clears the floor. The binding member — the ink with the least
-    # contrast against kitty's own value — supplies the direction, exactly as the
-    # background does for an ink.
+    # Fills: the same machinery with roles swapped. The ink with the least contrast against
+    # kitty's value supplies the direction, as the background does for an ink.
     ink_set = [*inks, int(theme.colour(CONTAINER_INK).hex(), 16)]
 
     def carried_by_worst_ink(c: int) -> float:
@@ -371,9 +342,6 @@ def rows(theme) -> list[tuple[str, str, int, int, float, str]]:
 
 def token(role: str, name: str) -> str:
     return f"--c-term-{name}" if role == "ink" else f"--c-term-{name}-bg"
-
-
-# ------------------------------------------------------------------- self-check
 
 
 def verify_against_report(themes) -> None:
@@ -435,8 +403,6 @@ def verify_achromatic_ramp(
             + ", ".join(f"{n} {cc.fmt(r)}" for n, _v, r in ramp)
         )
 
-
-# ----------------------------------------------------------------------- output
 
 DARK_HEADER = """\
     /* ---- SEEDS: the 16-colour ANSI palette --------------------------------

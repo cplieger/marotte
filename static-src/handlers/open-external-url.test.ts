@@ -1,9 +1,4 @@
-// ---------------------------------------------------------------------------
-// Tests for handlers/open-external-url.ts: the open_external_url SSE handler
-// surfaces a clickable banner (never auto-opens) and only for safe URLs.
-// banner-stack is mocked so we assert the showBanner call shape; url-safety
-// is real (pure).
-// ---------------------------------------------------------------------------
+// open_external_url surfaces a clickable banner (never auto-opens), only for safe URLs.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";

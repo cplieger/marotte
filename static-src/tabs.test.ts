@@ -1,22 +1,7 @@
-// ---------------------------------------------------------------------------
-// The tab strip as a PROJECTION: the store, the DOM it paints, and the
-// interaction wired onto each row.
-//
-// NOTHING HERE OPENS A TAB BY CALLING A MUTATOR. The tab set is server-owned, so
-// every case dispatches a mutation against the fake collection in
-// `__test-helpers__/tabs-server.ts` and the `tabs_changed` frame that follows is
-// what paints. That is why every open and every close is awaited: the promise
-// resolves once the row is IN the projection, which is exactly the contract ~30
-// production call sites depend on.
-//
-// IDS ARE OPAQUE AND SERVER-MINTED, so no case composes one. A row is addressed
-// by `tabIdFor(kind, ref)` after it exists, which is also the only lookup
-// production has, so a test cannot reach a row by a route the app cannot.
-//
-// The interleaving is the harness's `mode`, and both are exercised: these cases
-// mostly run "event-first" because it is the cheapest seeding path, while
-// `tabs-projection.test.ts` is where the ORDERING itself is the subject.
-// ---------------------------------------------------------------------------
+// The tab strip as a PROJECTION. No case opens a tab by calling a mutator: each dispatches against
+// `__test-helpers__/tabs-server.ts`, and opens/closes are awaited (they resolve once the row is IN
+// the projection). Ids are opaque, addressed by `tabIdFor`. Mostly "event-first"; ordering is
+// `tabs-projection.test.ts`'s subject.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
@@ -72,11 +57,8 @@ vi.mock("./dom.js", () => ({
     {},
     {
       get: (_t, prop: string) => {
-        // tabList must be a stable, document-attached element so the real
-        // renderDOM appends focusable role=tab nodes we can drive in the
-        // keyboard-navigation tests. promptInput likewise: the last-tab close
-        // moves focus to the composer, and the empty-state rollback reads the
-        // typed text out of it. Every other getter stays a throwaway.
+        // tabList and promptInput are stable attached elements (keyboard navigation; last-tab close focuses
+        // the composer, and the rollback reads it).
         if (prop === "tabList") {
           let tl = document.getElementById("tab-list");
           if (tl === null) {
@@ -108,10 +90,7 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
-  // `byId` is reached through this graph by page-title.ts, which tabs.ts calls to
-  // paint the title bar's heading on every view switch. ESM links for real, so a
-  // name any module in the graph imports has to exist on the mock or the whole
-  // file fails at link time — which is what it did.
+  // `byId` (page-title.ts, every view switch) must exist for real ESM linking.
   byId: (id: string) => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -133,13 +112,8 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   setReorderCallback: vi.fn(),
   setTapCallback: vi.fn(),
 }));
-// The two leaf stores the factory reads for a DISPLAY NAME, plus the three
-// pointer writers the optimistic close moves (getActiveId / setActive /
-// getSessions) — and everything else actions/chat.js links against, which is in
-// the graph now that tabs.ts reaches composer-state for the rollback's draft
-// restore. The COMPLETE helper, for the reason its own drift guard states: a
-// partial factory fails the whole file at link time the day store.ts grows an
-// export.
+// The COMPLETE store helper (the factory's name stores, the close's active-pointer writers, and
+// what actions/chat.js links): a partial factory fails the file when store.ts grows an export.
 vi.mock("./store.js", () =>
   import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
 );
@@ -202,6 +176,7 @@ import {
   filesTabForRoute,
   refreshActiveView,
   subscribeTabCues,
+  registerTabNotice,
   _resetForTest,
 } from "./tabs.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
@@ -247,12 +222,8 @@ const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 // What a lifted hold released without travel asks the strip to do.
 const tapRow = vi.mocked(setTapCallback).mock.calls[0]?.[0];
 
-// --- The injected half of the factory ---
-//
-// `materializeTab` refuses to build a spec with no openers registered, so every
-// case gets these. They are also the only teardown channel left: a spec's
-// `onClose` is the FACTORY's now, not a caller's, so a test that wants to watch a
-// teardown watches the opener it delegates to.
+// `materializeTab` needs openers registered; a spec's `onClose` is the FACTORY's, so a teardown is
+// watched through the opener it delegates to.
 
 interface Openers {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
@@ -398,10 +369,8 @@ describe("openTab", () => {
     expect(getActiveTabId()).toBe(chatID("c"));
   });
 
-  // The server's `(kind, ref)` uniqueness is what makes a second open idempotent,
-  // and `created: false` is the only signal it gives: that mutation commits
-  // nothing, so NO frame follows it. A caller waiting only for the frame would
-  // wait forever, which is why openTab resolves from the response in that case.
+  // `(kind, ref)` uniqueness makes a second open idempotent; `created: false` emits no frame, so
+  // openTab resolves from the response.
   it("re-activates rather than opening a second tab for one subject", async () => {
     expect.assertions(3);
     await openChats("a", "b");
@@ -422,10 +391,7 @@ describe("openTab", () => {
   });
 });
 
-// Editor tabs are MULTI-INSTANCE, and the SUBJECT is what makes them so: the
-// server keys uniqueness on (kind, ref), and an editor tab's ref is its path. The
-// `editor:<path>` id convention is gone with it — ids are opaque, so nothing
-// composes or parses one.
+// Editor tabs are MULTI-INSTANCE: uniqueness is on (kind, ref) and the ref is the path.
 describe("openEditorView (multi-instance by path)", () => {
   it("opens one tab per distinct path", async () => {
     expect.assertions(5);
@@ -464,13 +430,8 @@ describe("openEditorView (multi-instance by path)", () => {
 });
 
 describe("closeTab", () => {
-  // The successor is the most recently visited tab still open, and the FIRST tab
-  // is only the fallback for an exhausted history — one rule, stated in one place,
-  // checked on the boot read and on every applied removal. Position is not the
-  // input: `openChats("a","b","c")` activates each in turn, so the history reads
-  // [c,b,a], and activating `b` makes it [b,c,a]. Closing `b` prunes it and leaves
-  // `c` at the head. In the second case activating `c` hits activateTab's
-  // already-active return and changes nothing, so closing `c` leaves `b`.
+  // The successor is the most recently visited open tab; the first tab is only the fallback. Checked
+  // on the boot read and every applied removal.
   it.each([
     {
       desc: "closing the active tab activates the most recently visited open tab",
@@ -533,12 +494,8 @@ describe("closeTab", () => {
     expect(hasTab("chat", "b")).toBe(true);
   });
 
-  // The projection REMOVES a tab before tearing it down, and these are the
-  // properties that depend on it. A teardown that closes its own tab must find it
-  // already gone; notifying first made every such callback an infinite loop. The
-  // editor's teardown did exactly that (closeEditorFile ended in closeTab), so an
-  // editor tab could not be closed by ×, middle-click or Delete — the click
-  // recursed until the stack died.
+  // The projection REMOVES a tab before tearing it down, so a teardown that closes its own tab (the
+  // editor's) finds it gone instead of recursing.
   it("a teardown that closes its own tab does not recurse", async () => {
     expect.assertions(3);
     let closes = 0;
@@ -591,13 +548,8 @@ describe("closeTab", () => {
   });
 });
 
-// Closing the LAST tab is the one close whose store state is indistinguishable
-// from the pre-boot state, and the DOM subscriber used to skip it on exactly that
-// test. So the closed row kept its slot in the strip, un-animated, until the NEXT
-// render — which is the one the empty-state respawn triggers 500ms later. Both
-// animations then played at once and the new row was inserted in front of a row
-// that still occupied the strip, so it appeared beside its predecessor and moved
-// when the predecessor finally collapsed.
+// The last-tab close looks like pre-boot state, so the DOM subscriber must not skip it, or the row
+// lingers until the empty-state respawn and both animate at once.
 describe("closing the last tab", () => {
   it("starts the closed row's exit on close, not on the respawn", async () => {
     expect.assertions(2);
@@ -609,10 +561,8 @@ describe("closing the last tab", () => {
     expect(rows()[0]?.classList.contains("exiting")).toBe(true);
   });
 
-  // The whole point of rendering the empty state: the respawn must find an empty
-  // strip. No app stylesheet is loaded, so no animation runs and the removal is
-  // driven by hand here — the browser's animationend does it, and the exit is
-  // 0.18s against the 500ms empty-state delay.
+  // The respawn must find an empty strip. No stylesheet, so the removal is driven by hand (the 0.18s
+  // exit beats the 500ms empty-state delay).
   it("leaves the strip empty before the empty-state callback fires", async () => {
     expect.assertions(3);
     const onEmpty = vi.fn();
@@ -629,11 +579,8 @@ describe("closing the last tab", () => {
     expect(onEmpty).not.toHaveBeenCalled();
   });
 
-  // A close driven by ANOTHER DEVICE must not mint a chat here. Nobody asked for
-  // one, and it would propagate back as an addition every other device has to
-  // absorb — which is the shape of the loop that minted a chat every 1.5s on the
-  // live instance. The provenance is `op_id` correlation: a frame carrying an op
-  // this device minted is local, and a frame carrying none is not.
+  // A REMOTE close must not mint a chat here, or devices loop minting chats. Provenance is `op_id`
+  // correlation: a frame carrying this device's op is local.
   it("does not respawn when the LAST tab was closed remotely", async () => {
     expect.assertions(2);
     const onEmpty = vi.fn();
@@ -651,11 +598,7 @@ describe("closing the last tab", () => {
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
-  // The empty-state respawn DEFERS while any remove is pending: the strip may be
-  // empty only because a close is still in flight, and a respawned chat would
-  // race whatever settles it. The settlement re-arms the timer — here the
-  // client-behind semantic confirmation (`closed: []`), the arm a close that
-  // another device won answers with.
+  // The respawn DEFERS while a remove is pending; the settlement (here `closed: []`) re-arms it.
   it("defers the respawn while a remove is pending, and re-arms when it settles", async () => {
     expect.assertions(3);
     const onEmpty = vi.fn();
@@ -691,10 +634,7 @@ describe("closing the last tab", () => {
     expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 
-  // Same deferral, VERIFYING arm: the close got no answer at all, so the op sits
-  // in `verifying` and the respawn must keep waiting — network unavailability
-  // must not mint a chat into a strip whose last close is unconfirmed. An
-  // authoritative list settles it (absent → confirm) and the respawn proceeds.
+  // VERIFYING arm: an unanswered close keeps the respawn waiting until an authoritative list settles it.
   it("defers the respawn while a remove is verifying, until an authoritative list settles it", async () => {
     expect.assertions(2);
     const onEmpty = vi.fn();
@@ -790,12 +730,7 @@ describe("activateTab", () => {
     expect(sidebar.classList.contains("open")).toBe(false);
   });
 
-  // A CLOSE IS NOT NAVIGATION. Both cases were regressions: the drawer's
-  // dismissal used to live in showView, which the view effect re-runs on every
-  // projection mutation, so closing a tab from the drawer on a phone dismissed the
-  // drawer under the reader's finger — the ACTIVE tab through the successor
-  // activation, and a BACKGROUND tab through showView running for the unchanged
-  // active row.
+  // A CLOSE IS NOT NAVIGATION: closing a tab from the phone drawer must not dismiss the drawer.
   it.each([
     { desc: "the active tab", close: "b" },
     { desc: "a background tab", close: "a" },
@@ -811,16 +746,10 @@ describe("activateTab", () => {
   });
 });
 
-// The history is in memory only and it is not observable directly, so every case
-// here reads it through the one decision that consumes it: which tab a close hands
-// the active view to. The four closeTab cases above pin the core rule; these pin
-// the properties that rule has to hold ACROSS the other tab mechanisms.
+// The in-memory history is read through the one decision it drives: which tab a close hands over to.
 describe("MRU activation history", () => {
-  // A close removes a parent AND its whole subtree as one mutation, so the walk
-  // has to skip every id that went rather than the one that was clicked. `first`
-  // is what makes the case discriminating: the child is the most recent entry and
-  // sits inside the removed set, and the tab it hands over to is neither the
-  // removed child nor position 0.
+  // A subtree close skips every removed id; the most recent entry is the removed child, and the
+  // target is neither it nor position 0.
   it("skips a whole closed subtree, not just the clicked tab", async () => {
     expect.assertions(2);
     await openChats("first", "a");
@@ -851,10 +780,7 @@ describe("MRU activation history", () => {
     expect(await rowRefs()).toEqual(["b", "c"]);
   });
 
-  // Two halves: a non-active close does not move the active tab, and the close
-  // that follows it still picks by recency rather than by position. Four tabs,
-  // because with three the second close leaves one survivor and both rules agree
-  // on it — so the case would pass whatever the successor rule was.
+  // Four tabs: with three, recency and position agree on the survivor.
   it("closing a non-active tab leaves active alone", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c", "d");
@@ -869,7 +795,7 @@ describe("MRU activation history", () => {
 
   // A reorder replaces `state.tabs` without changing set membership, so it must
   // not touch recency. The dropped order puts `b` first, so the assertion separates
-  // "most recent" from "position 0" — under the old rule both closes landed there.
+  // "most recent" from "position 0".
   it("is not affected by a reorder", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
@@ -882,14 +808,8 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("c"));
   });
 
-  // The `tabs_changed` door, which is a different production call site from the
-  // gesture's: a frame carrying `removed_ids` applies the removal and then picks a
-  // successor with `local: false`. The PRUNE itself is deliberately not asserted
-  // anywhere — `mostRecentOpenTab` also filters on `hasRow` and server-minted ids
-  // are never reused, so a stale entry is inert and no test could distinguish it.
-  // What is observable is the pick, so that is what these two pin.
-  // (The THIRD door, a re-list that simply no longer holds the row, is its own
-  // describe below: a device that was asleep receives no frame at all.)
+  // The `tabs_changed` door (`removed_ids`, `local: false`). The PRUNE is not asserted: stale entries
+  // are inert (`hasRow`, never-reused ids), so only the pick is observable.
   it("hands over to the most recent survivor when another device closes the active tab", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
@@ -919,11 +839,7 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // The ONE path on which a missing prune-and-restore is observable: a refused
-  // close puts the row back under its ORIGINAL id, so an entry dropped at gesture
-  // time has to come back with it. Without the restore the history reads [a, c]
-  // and the next close hands over to `c` — a tab visited longer ago than the one
-  // whose close was refused.
+  // A refused close restores the row under its ORIGINAL id, so its history place must return too.
   it("a refused close restores the closed tab's place in the history", async () => {
     expect.assertions(4);
     await openChats("a", "b", "c");
@@ -941,12 +857,8 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("b"));
   });
 
-  // The OTHER path rollbackClose serves, and the one a gate on the rows THIS call
-  // spliced cannot reach: a close whose dispatch got no answer is settled by an
-  // authoritative list that still names the tab, and readList adopts that snapshot
-  // BEFORE running the callback — so the row is already back and nothing is
-  // spliced. History [act, x, y, first], so the hand-over target is neither the
-  // entry behind it nor position 0.
+  // A verify-settled restore: readList adopts the snapshot BEFORE the callback, so nothing is spliced
+  // and only the restore can return the place.
   it("a verify-settled restore returns the closed tab's place in the history", async () => {
     expect.assertions(3);
     await openChats("first", "y", "x", "act"); // history [act, x, y, first]
@@ -978,13 +890,8 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("x"));
   });
 
-  // The captured slot is an ANCHOR, not an index, because the dispatch AWAIT sits
-  // between the capture and the restore and every entry an index was measured
-  // against can move across it. The reviewer's traced case verbatim: history
-  // [b,a,c], `c` closed, `d` opened before the refusal lands. The anchor answers
-  // [d,b,a,c]; an absolute index answered [d,b,c,a], ranking `c` ahead of a tab
-  // visited more recently. `first` is never visited, so the expected answer is
-  // neither the buggy one nor the position-0 fallback.
+  // The captured slot is an ANCHOR, not an index: the dispatch await can move every entry. History
+  // [b,a,c], close `c`, open `d` before the refusal: the anchor gives [d,b,a,c], an index [d,b,c,a].
   it("restores a rank the await window moved, not the index it was captured at", async () => {
     expect.assertions(5);
     await openChat("first", { activate: false });
@@ -999,11 +906,7 @@ describe("MRU activation history", () => {
     const opening = openChat("d");
     const closing = closeTab(chatID("c"));
 
-    // That interleaving is what the case DISCRIMINATES on, so it is asserted, off
-    // the projection's own reactive seam rather than after the awaits — by then
-    // both have run and neither order is observable. Released the other way round
-    // the rollback restores against [b, a] and the two designs agree, so the case
-    // would keep passing while catching nothing.
+    // The interleaving is what the case DISCRIMINATES on, so it is asserted off the reactive seam.
     const seen: { active: string; back: boolean }[] = [];
     const stop = effect(() => {
       tabSetVersion();
@@ -1027,13 +930,8 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // A parent-plus-subtree close removes entries that can be ADJACENT in the
-  // history, and their order among themselves has to survive the round trip. Each
-  // anchors on its immediate predecessor whether or not that one also went, so the
-  // capture is ordered by SLOT and the restore replays it, which is what has `c`
-  // back before `p` asks for it. The child is the more recent of the two here on
-  // purpose: that is the orientation where slot order and the subtree's own
-  // parent-first order disagree, so both halves of the rule are load-bearing.
+  // Adjacent removed entries each anchor on their predecessor, so the restore replays capture order
+  // by SLOT; the child is more recent, where slot and parent-first order disagree.
   it("returns adjacent removed siblings in their original relative order", async () => {
     expect.assertions(5);
     await openChat("first", { activate: false });
@@ -1062,10 +960,7 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("p"));
   });
 
-  // The anchor is a survivor, so another device can close it inside the same
-  // window. The entry ranked BEHIND it, so the tail is the defensible answer:
-  // understating recency drops a preference, where the head would invert a real
-  // one — and the head would make `c` the answer to the FIRST close below.
+  // The anchor itself was closed: fall back to the tail (understating recency beats inverting it).
   it("falls back to the tail when the anchor itself was closed in the window", async () => {
     expect.assertions(4);
     await openChat("first", { activate: false });
@@ -1091,11 +986,8 @@ describe("MRU activation history", () => {
   });
 });
 
-// The RESYNC door: a device that was ASLEEP when another one closed a tab never
-// receives the `tabs_changed` frame at all, so the removal reaches it as a
-// `GET /api/tabs` answer that simply does not hold the row. Characterization —
-// the projection has always been right here, and these cases exist so a future
-// edit cannot quietly make a re-list a union or leave the active row pinned.
+// The RESYNC door: an asleep device gets the removal as a `GET /api/tabs` lacking the row, never a
+// frame. Characterization: a re-list must not become a union or pin the active row.
 describe("a resync that drops the active tab", () => {
   /** The set the server holds minus `gone`, adopted through a real re-list. */
   async function resyncWithout(...gone: readonly string[]): Promise<void> {
@@ -1159,12 +1051,8 @@ describe("a resync that drops the active tab", () => {
   });
 });
 
-// getActiveTabKind is READ INSIDE AN EFFECT (the toolbar's find affordance in
-// app.ts), so it has to subscribe to the tab set or that effect never re-runs on
-// a switch. It used to be a plain array scan, which left the affordance leaning
-// entirely on the BUS_TAB_CHANGED fallback — and that event is deduped on the
-// active tab ID, so it is silent for a sub-tab switch inside one tab. The
-// measured symptom was the /git/sources filter button staying visible and inert.
+// Read INSIDE AN EFFECT (app.ts's find affordance), so it must track the tab set: BUS_TAB_CHANGED
+// is deduped on the active tab id and misses sub-tab switches.
 describe("getActiveTabKind is reactive", () => {
   it("re-runs an effect that reads it when the active tab changes", async () => {
     expect.assertions(3);
@@ -1201,10 +1089,8 @@ describe("getActiveTabKind is reactive", () => {
   });
 });
 
-// A name is the one field of a spec a caller can override, and it is recorded
-// against the SUBJECT rather than the row: it arrives at the DISPATCH site, before
-// the server has minted an id, so keying it on (kind, ref) is what lets the row be
-// BUILT with the right label instead of snapping to it a frame later.
+// A name override is keyed on the SUBJECT (it arrives before the server mints an id), so the row is
+// BUILT with the right label.
 describe("renameTab and the name a row renders", () => {
   it("renames an existing tab", async () => {
     expect.assertions(2);
@@ -1309,9 +1195,8 @@ describe("the tooltip a row carries", () => {
   });
 });
 
-// hasTab is keyed by `(kind, ref)` rather than by id, and that re-key is the
-// point: ids are opaque, so a consumer holding a chat id or a path can no longer
-// construct one.
+// hasTab is keyed by `(kind, ref)` rather than by id: ids are opaque, so a consumer
+// holding a chat id or a path cannot construct one.
 describe("hasTab", () => {
   it("returns false for an empty projection", () => {
     expect.assertions(1);
@@ -1337,12 +1222,8 @@ describe("hasTab", () => {
   });
 });
 
-// What a BACK or FORWARD press asks before it applies a route. A history entry
-// names a location this browser WAS at, which is not the same thing as a location
-// that still exists — so an entry answering "" is a closed tab, and app.ts
-// redirects instead of opening one. Before the question existed, applying such an
-// entry re-opened the tab: a reader pressing back watched a tab they had closed
-// come back, and the server-owned collection broadcast it to every other device.
+// What BACK/FORWARD asks first: an entry answering "" is a closed tab, so app.ts redirects instead
+// of re-opening it (which would broadcast to every device).
 describe("tabIdForRoute", () => {
   it("resolves the route a tab carries to that tab's id", async () => {
     expect.assertions(1);
@@ -1371,10 +1252,7 @@ describe("tabIdForRoute", () => {
     expect(tabIdForRoute({ kind: "file", path: "src/b.ts" })).toBe("");
   });
 
-  // A singleton's sub-position is not part of its identity, so a deep link into a
-  // sub-tab of an OPEN singleton resolves to it. Answering "" here would redirect
-  // every back press onto /settings/tools away from a Settings tab sitting right
-  // there.
+  // A singleton's sub-position is not identity, so a sub-tab deep link resolves to the open singleton.
   it("ignores a singleton's sub-position", async () => {
     expect.assertions(2);
     expect(tabIdForRoute({ kind: "settings", tab: "tools" })).toBe("");
@@ -1382,14 +1260,8 @@ describe("tabIdForRoute", () => {
     expect(tabIdForRoute({ kind: "settings", tab: "tools" })).toBe(tabIdFor("settings"));
   });
 
-  // A files route names a FOLDER rather than a tab, so its arm goes through
-  // `filesTabForRoute` instead of `subjectForRoute` + `tabIdFor`. That is the
-  // whole of the defect this unit fixes: through the generic path a folder no tab
-  // was opened at answers "" — no subject carries that ref — so a history entry
-  // onto it redirected away from a browser sitting right there, and a deep link
-  // minted a second browser rather than moving the open one. The resolver's own
-  // fallbacks are pinned in "the file browser is multi-instance" below; what this
-  // pins is that this lookup consults it at all.
+  // A files route names a FOLDER, so this consults `filesTabForRoute`: the generic path answered ""
+  // for an unopened folder and redirected away from an open browser.
   it("resolves a files route to the OPEN browser, not only to an exact ref match", async () => {
     expect.assertions(3);
     // Nothing open: there is no browser to move, so the redirect is correct.
@@ -1490,26 +1362,14 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
   });
 });
 
-// `#tab-list` is a scroll container, so a finger on a row is as often a scroll as a
-// tap — and activation is a `pointerup` handler, so a gesture that panned the strip
-// and lifted activated whatever sat under its FIRST contact point. A native pan
-// cancels the pointer and suppresses the release for free; a drag along an axis
-// with nothing left to scroll produces no cancel, which is the reported case, so
-// the guard is the travelled distance.
-//
-// Dispatched as POINTER events because that is the vocabulary these handlers listen
-// in: a touch reaches them as `pointerType: "touch"`, with implicit capture keeping
-// every move and the release on the element that took the `pointerdown`. `isPrimary`
-// has to be stated — the constructor defaults it to false, and every handler here
-// requires it.
+// `#tab-list` scrolls, so a drag must never activate the row under its first contact; a pan along an
+// exhausted axis produces no cancel, so the guard is travelled distance. POINTER events, with
+// `isPrimary` stated (it defaults false).
 describe("a drag on the strip scrolls it and never activates a row", () => {
   const ORIGIN_X = 40;
   const ORIGIN_Y = 100;
 
-  // `buttons` is stated because the guard reads it: a held contact is the one thing
-  // a reflow cannot fake. Touch reports 1 while the contact is present (Pointer
-  // Events, the `buttons` table), and 0 once it has lifted, which is what the
-  // release carries.
+  // `buttons` is stated: a held contact is what a reflow cannot fake (touch reports 1, then 0).
   function ptr(
     type: "pointerdown" | "pointermove" | "pointerup",
     x: number,
@@ -1598,10 +1458,8 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // A keyboard dismissal moves the visual viewport out from under a stationary
-  // pointer, so the same point on the glass reads hundreds of px away in client
-  // coordinates. Read as travel it refuses the activation the reader asked for,
-  // which is the half of the report that reads as the click doing nothing.
+  // A keyboard dismissal shifts client coordinates under a still pointer; read as travel it refuses
+  // the activation.
   it("activates the row a click held through a viewport shift released on", async () => {
     expect.assertions(1);
     const nodes = await renderTabs();
@@ -1623,10 +1481,8 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // The × is the strip's one destructive control and it shares the row's gesture:
-  // a scroll that happened to start on it used to close a tab nobody aimed at.
-  // Read through the PROJECTION rather than the strip, because an optimistic close
-  // leaves the departing row in the DOM until its exit animation ends.
+  // The × is the strip's one destructive control; read through the PROJECTION, since an optimistic
+  // close leaves the row animating out.
   it("keeps the tab a drag started on the × released over", async () => {
     expect.assertions(2);
     const nodes = await renderTabs();
@@ -1682,23 +1538,12 @@ describe("setTabDirty (editor unsaved indicator)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The dot's AGE, on its tooltip and its announced phrase.
-//
-// `setTabStatus` gained a third argument and `TabRow` a sibling `dotSince`, and
-// the whole surface arrived with no test of its own — items 21 and 22 own the
-// tests, so this is where the writer's four rules are pinned.
-//
-// The age is deliberately absent from the row's visible text: it reaches a reader
-// only through the tooltip and the screen-reader span, which is why every case
-// below reads those two rather than the strip.
-// ---------------------------------------------------------------------------
+// The dot's AGE reaches a reader only through the tooltip and the screen-reader span, so these read
+// those two.
 
 describe("the dot's age", () => {
-  /** Five minutes ago, so `relativeTime` answers a stable `5 minutes ago` rather
-   *  than the `just now` a sub-minute value would give — a case that would also
-   *  pass with the argument dropped, since "just now" is what a missing age looks
-   *  like to nobody. */
+  /** Five minutes ago, so `relativeTime` gives a stable phrase (a sub-minute "just now" would pass
+   *  with the argument dropped). */
   const FIVE_MIN_AGO = Date.now() - 5 * 60 * 1000;
 
   /** The tooltip and the announced word, which `paintDot` writes from ONE string.
@@ -1756,10 +1601,7 @@ describe("the dot's age", () => {
     setTabStatus(id, "done", FIVE_MIN_AGO);
     expect(dotText(id).tooltip, "before the rebuild").toBe("turn finished · 5 minutes ago");
 
-    // Drop the node and force a render: `renderDOM` finds nothing to reuse, so
-    // `createTabEl` builds a fresh row element and has to read the age back off
-    // the ROW. Without `row.dotSince` the rebuilt row would sit ageless until the
-    // chat next churned, which for a finished chat is never.
+    // A fresh row reads the age back off the ROW (`row.dotSince`), or a finished chat stays ageless.
     document.getElementById("tab-list")?.replaceChildren();
     await openChat("b");
     await paint();
@@ -1781,10 +1623,8 @@ describe("the dot's age", () => {
     });
     expect(runs, "the effect's own first run").toBe(1);
 
-    // Same STATE, newer age. The out-of-page fold reads the dot's state and knows
-    // nothing about its age, so waking it here would re-run the favicon and title
-    // derivation for every open chat on a value it does not read — which is what
-    // the guard in `recordDotStatus` compares `dotStatus` alone for.
+    // Same state, newer age: `recordDotStatus` compares `dotStatus` alone, so the favicon/title fold
+    // does not wake.
     setTabStatus(id, "done", Date.now() - 60 * 60 * 1000);
     stop();
     expect(runs, "after a since-only write").toBe(1);
@@ -1824,18 +1664,8 @@ describe("the dot's age", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// cueCandidates: what the out-of-page attention fold is handed.
-//
-// It had no test at all, and the gap was load-bearing rather than incidental:
-// this is the one place a chat's dot could be filtered on its way to the favicon
-// and the `(N)` title count, so a reviewer proposing to make the cue disagree
-// with the dot lands HERE. The user ratified that they must not disagree
-// (2026-09-04) — a turn that ENDED raises a cue whatever became of it, cancelled
-// and unreadable included, because the cue is the dot carried off-page for a
-// reader who cannot see the strip. So these cases pin the projection as verbatim,
-// and a per-outcome carve-out cannot be added without turning one of them red.
-// ---------------------------------------------------------------------------
+// cueCandidates feeds the favicon and `(N)` title count. The cue is the dot carried off-page, so a
+// turn that ENDED raises one whatever its outcome; these pin the projection verbatim.
 
 describe("cueCandidates", () => {
   it("reports every owned chat tab's dot VERBATIM, stopped verdicts included", async () => {
@@ -1876,12 +1706,8 @@ describe("cueCandidates", () => {
   it("reports a RUN tab's dot, which is the one non-chat kind that bears a cue", async () => {
     expect.assertions(1);
     const { setTabStatus, cueCandidates } = await import("./tabs.js");
-    // A run tab's dot speaks the same vocabulary (store.ts `runStatusFor`), and
-    // every value it can answer is a `CueStatus` member or one `isCueStatus`
-    // rejects — so the run kind inherits the fold's severity handling with no new
-    // member. A finished run wants the reader exactly as a finished turn does, and
-    // a run outlives the turn that launched it, so nothing else carries it
-    // off-page.
+    // A run tab's dot speaks the same vocabulary (`runStatusFor`), and a run outlives its launching
+    // turn, so it is counted.
     await openRunTab("wf_1", "A run");
     setTabStatus(tabIdFor("run", "wf_1"), "done");
 
@@ -1897,11 +1723,7 @@ describe("cueCandidates", () => {
     expect(cueCandidates()).toEqual([]);
   });
 
-  // The reasoning the `owns` conjunct is SCOPED on, asserted rather than only
-  // written in the comment: the double-counting rule is about CHATS. A run tab is
-  // a window onto a RUN, a different subject, so a chat and the run it launched
-  // are two things wanting the reader and both are counted — even though
-  // tab-materialize.ts gives that run tab `owns: false`.
+  // The `owns` conjunct is about CHATS: a run tab and its launching chat are two subjects, both counted.
   it("counts a run tab AND its launching chat, because they are two subjects", async () => {
     expect.assertions(1);
     const { setTabStatus, cueCandidates } = await import("./tabs.js");
@@ -1916,12 +1738,8 @@ describe("cueCandidates", () => {
     ]);
   });
 
-  // The value the SERVER writes, rather than the one `openTab` defaults to.
-  // Every case above reaches the strip through a local dispatch, and `openTab`
-  // coerces with its own `owns ?? true`, so none of them can tell a server that
-  // states `owns` from a server that omits it — which is exactly the difference
-  // `create_chat` / `fork_chat` / `resume_session` got wrong. These subjects
-  // arrive as frames with no dispatch behind them, carrying the value verbatim.
+  // The SERVER's `owns`, arriving as frames: `openTab`'s `owns ?? true` cannot tell a server that
+  // omits it from one that states it.
   it("counts a chat tab the server authored as owned, and excludes one it authored as a view", async () => {
     expect.assertions(2);
     const { setTabStatus, cueCandidates } = await import("./tabs.js");
@@ -1939,10 +1757,8 @@ describe("cueCandidates", () => {
     expect(cueCandidates().map((c) => c.id)).not.toContain(chatID("c-view-remote"));
   });
 
-  // `owns` is set at open and never reassigned (TabSubject.Owns), which is what
-  // lets a row's `spec` be a SNAPSHOT: `upsertSubject` replaces the subject and
-  // re-derives the name, deliberately not the spec. So a later frame cannot
-  // promote a view into the cue under a reader who is looking at it.
+  // `owns` never changes after open, so a row's `spec` is a SNAPSHOT and a later frame cannot promote
+  // a view into the cue.
   it("never lets a later frame change a tab's authority", async () => {
     expect.assertions(2);
     const { setTabStatus, cueCandidates } = await import("./tabs.js");
@@ -1962,13 +1778,8 @@ describe("cueCandidates", () => {
   });
 });
 
-// The seam `subagent-dots.ts` reads the tab set through. Its consumer is an
-// effect, so the TRACKED read is the whole contract: a delegate's page is opened
-// from a card's link or a deep link, which means its row routinely arrives after
-// the invocation it names is already resident and no transcript change follows to
-// paint it. That file mocks `tabs.js`, so the mock supplies its own subscription
-// and cannot see this property — which is why it is pinned here, against the real
-// projection.
+// `subagent-dots.ts`'s seam: the TRACKED read is the contract (a delegate tab often arrives after its
+// invocation). That suite mocks `tabs.js`, so it is pinned here.
 describe("openSubagentRefs", () => {
   it("re-runs an effect that reads it when a subagent tab lands or leaves", async () => {
     expect.assertions(3);
@@ -2003,11 +1814,7 @@ describe("openSubagentRefs", () => {
   });
 });
 
-// The seam `run-dots.ts` seeds run state through, and the TRACKED read is the
-// whole contract for the same reason as above: a run tab restored by a cold load
-// arrives with an empty run store and no frame coming, so the tab set landing is
-// the only signal that a fetch is owed. `run-dots.test.ts` mocks `tabs.js`, so its
-// fake supplies the subscription and cannot see this property.
+// `run-dots.ts`'s seam: a cold-restored run tab's arrival is the only signal a fetch is owed.
 describe("openRunRefs", () => {
   it("re-runs an effect that reads it when a run tab lands or leaves", async () => {
     expect.assertions(3);
@@ -2033,8 +1840,8 @@ describe("openRunRefs", () => {
     await openChat("c1");
     await openEditorView("/a.ts");
     await openRunTab("wf_top", "Top-level");
-    // Nested under its launching chat, which is the shape the reported defect was
-    // seen on; both rows are restored from the same kind of persisted subject.
+    // Nested under its launching chat; both rows are restored from the same kind of
+    // persisted subject.
     await openRunTab("wf_child", "Sub-tab", { parent: tabIdFor("chat", "c1") });
 
     // WORKFLOW ids, not tab ids: the run store is keyed by the ref. Sorted because
@@ -2044,14 +1851,7 @@ describe("openRunRefs", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Sub-tabs.
-//
-// A sub-tab is a SUBJECT fact (`TabSubject.Parent`), set at open and never
-// reassigned — which is what makes a parent cycle unrepresentable and why there
-// is no reparent command. The strip reads it to lay itself out, so nothing here
-// mentions a chat, a run or a tangent.
-// ---------------------------------------------------------------------------
+// A sub-tab is a SUBJECT fact (`TabSubject.Parent`); the strip only lays itself out from it.
 
 describe("sub-tabs", () => {
   /** Open a chat nested under the tab already open for `parentRef`. */
@@ -2133,15 +1933,10 @@ describe("sub-tabs", () => {
     expect(hasTab("chat", "c")).toBe(false);
   });
 
-  // The exit ANIMATION is chosen from what the departing row is, and the choice
-  // has to be made when the row is already out of the projection — which is why
-  // the parent id rides the element. The CSS behind the two classes lives in
-  // 10-shell-app.css; what is pinned here is which one each case gets.
+  // The exit animation is chosen after the row left the projection, so the parent id rides the
+  // element (CSS in 10-shell-app.css).
   describe("the exit animation", () => {
-    // A sub-tab folds back UP into the row it hangs off, because that is where
-    // its work came from and where the reader's attention should land. The
-    // sideways swipe it used to share with a top-level tab also reset the indent
-    // on its first frame, so the row jumped a full 1rem wider before it left.
+    // A sub-tab folds UP into the row it hangs off, where its work came from.
     it("merges a child up into a parent that stays", async () => {
       expect.assertions(2);
       await openChat("p");
@@ -2190,10 +1985,8 @@ describe("sub-tabs", () => {
     });
   });
 
-  // `owns: false` is the VIEW case: dismissing a view must not kill the work it was
-  // watching. Asserted on a CHAT, the kind that still has an ownership axis — a side
-  // conversation owns its bridge while a tab watching another chat's work does not; a
-  // run tab is always a view, so it has no owning case to compare against.
+  // `owns: false` is the VIEW case: dismissing it must not kill the watched work. Asserted on a CHAT,
+  // the kind that still has an ownership axis (a run tab is always a view).
   it("does not tear down a tab that owns nothing", async () => {
     expect.assertions(2);
     await openChat("watch", { owns: false });
@@ -2265,17 +2058,8 @@ describe("sub-tabs", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Pinned tabs.
-//
-// `TabSubject.Pinned` is stored server-side; the pinned-ahead-of-unpinned
-// PARTITION is the client's RENDERING rule over the order the collection was
-// given, which is what makes an unpin leave the tab exactly where it was.
-//
-// The partition lives in the ARRAY rather than in the render, because two
-// mechanisms read DOM order back as the truth: a drop reads the new order out of
-// the strip and the keyboard arrows walk the rendered children.
-// ---------------------------------------------------------------------------
+// `TabSubject.Pinned` is stored server-side; the pinned-first PARTITION is a client rendering rule
+// over the stored order, kept in the ARRAY because a drop and the keyboard arrows read DOM order back.
 
 describe("pinned tabs", () => {
   it("moves a pinned tab ahead of every unpinned one", async () => {
@@ -2314,10 +2098,8 @@ describe("pinned tabs", () => {
     expect(await rowRefs()).toEqual(["a", "b"]);
   });
 
-  // The partition is what enforces this: a drop is partitioned before it is shown
-  // or sent, so the illegal position snaps back at the drop rather than being
-  // refused mid-drag inside the drag subsystem's index arithmetic — and a drop the
-  // partition undoes entirely changes nothing, so it sends nothing.
+  // A drop is partitioned before it is shown or sent, so an illegal position snaps back; a fully
+  // undone drop sends nothing.
   it("cannot be dragged below an unpinned tab", async () => {
     expect.assertions(3);
     await openChats("a", "b", "c");
@@ -2382,10 +2164,7 @@ describe("pinned tabs", () => {
     expect(await rowRefs()).toEqual(["p", "kid", "other"]);
   });
 
-  // Nested side chats are reachable: a tangent parents a new conversation on the
-  // ACTIVE chat, which may itself be one. A grouping that only recognised a DIRECT
-  // child made the grandchild an orphan top-level group, so pinning any other tab
-  // could sort it away from the tab its own parent names.
+  // A tangent can parent on a side chat, so grouping must carry the whole descendant tree.
   it("carries a whole descendant tree, not just direct children", async () => {
     expect.assertions(2);
     await openChat("p");
@@ -2489,16 +2268,8 @@ describe("pinned tabs", () => {
 });
 
 describe("openFilesView vs toggleFilesView", () => {
-  // "Toggle" and "go to" are different verbs, and the files view only had the
-  // toggle. So a caller whose intent was "the browser must be visible for what I
-  // am about to render into it" CLOSED it whenever it already was — which is what
-  // find-in-files did from the browser's own search button. The search bar then
-  // opened over a departed view and the browser came back in search mode on its
-  // next open, read by the user as a search state leaking between tabs.
-  //
-  // Both now take the folder to open AT, because the kind is multi-instance: there
-  // is no single browser to look up by kind alone, so every assertion here names a
-  // ref. `hasTab("files")` with no ref answers false for every open browser.
+  // "Go to" is not "toggle": a toggle CLOSES a visible browser, breaking callers that need it shown.
+  // The kind is multi-instance, so each takes a folder; `hasTab("files")` with no ref is false.
   const HOME = "/workspace";
 
   it("shows the browser when it is not open", async () => {
@@ -2580,7 +2351,7 @@ describe("openFilesView vs toggleFilesView", () => {
 });
 
 describe("the file browser is multi-instance", () => {
-  // The whole point of item 7: a folder is content any browser can show, and a tab's
+  // A folder is content any browser can show, and a tab's
   // ref is where it was OPENED. So two browsers coexist, and a route resolves to ONE
   // of them rather than minting a third.
   it("keeps two browsers open at once", async () => {
@@ -2640,10 +2411,8 @@ describe("the file browser is multi-instance", () => {
     expect(filesTabForRoute("/a")).toEqual({ id: "", ref: "" });
   });
 
-  // What `admitLocation` spends: a history entry may only ACTIVATE something already
-  // open, so a files route resolves to a tab while ANY browser is open — including
-  // one opened at a different folder — and to "" when none is, which is what makes
-  // the router canonicalise instead of re-opening a browser nobody has.
+  // `admitLocation`: a files route resolves while ANY browser is open, "" when none is, so the router
+  // canonicalises instead of opening one.
   it("admits a files route while any browser is open, and refuses one when none is", async () => {
     expect.assertions(3);
     await openChat("c-1");
@@ -2655,17 +2424,8 @@ describe("the file browser is multi-instance", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A tab this device did not close.
-//
-// The provenance question has exactly one mechanism, and it is `op_id`: a frame
-// carrying an op this device minted is its own echo, and a frame carrying none is
-// another device's. What that decides is WHEN the client-local teardown runs — at
-// the machine's confirmation for this device's own close, at the applied removal
-// for another device's — never WHAT it does: the teardown is identical in both
-// cases, because nothing local dispatches anything any more (the process teardown
-// and the retention-off delete are both the server's close operation).
-// ---------------------------------------------------------------------------
+// Close provenance is `op_id` alone: it decides WHEN the client-local teardown runs (this device's
+// close at confirmation, a remote one at the applied removal), never WHAT it does.
 
 describe("close provenance", () => {
   it("runs the teardown exactly once for a close this device dispatched", async () => {
@@ -2706,15 +2466,8 @@ describe("close provenance", () => {
 // Which mutations are allowed to swap the visible view
 // ---------------------------------------------------------------------------
 
-// The view/route effect re-runs on EVERY projection mutation, so a swap on a
-// mutation that changes nothing about which view is visible is not merely
-// wasted work — swapViews cancels and replays the entry fade, so a redundant
-// swap re-animates the view the reader is already looking at.
-//
-// These cases count `class` mutations on the view elements, which is what the
-// swap actually does and the only thing that separates a skip from an idempotent
-// re-run. No view-swap mock is needed: swapViews applies the swap synchronously,
-// and with boot not marked done it skips the animation.
+// The view effect runs on every mutation, and a redundant swap replays the entry fade; counting
+// `class` mutations is what separates a skip from an idempotent re-run.
 describe("the visible view is only swapped when it actually changes", () => {
   let views: HTMLElement[];
   let mutations = 0;
@@ -2782,10 +2535,7 @@ describe("the visible view is only swapped when it actually changes", () => {
     await openChat("b");
     watch();
 
-    // Both rows resolve to the SAME view element, so the old swap captured two
-    // identical snapshots and animated nothing while still costing a serialized
-    // transition. Skipping it loses no animation: the content the reader sees
-    // change is re-rendered by the chat view afterwards, outside any transition.
+    // Both rows share one view element, so skipping the swap loses no animation.
     activateTab(chatID("a"));
 
     expect(await settle()).toBe(0);
@@ -2820,16 +2570,9 @@ describe("the visible view is only swapped when it actually changes", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The optimistic close: reversible gesture, deferred teardown (task 11).
-//
-// The gesture applies only what a rollback can undo — the subtree leaves the
-// projection, activation falls back — while every destructive step (the spec
-// onClose teardown, and server-side the record delete) waits for the machine's
-// confirmation. These cases drive the REAL closeTab end to end over the fake
-// collection: the machine's transition table is tabs-sync.test.ts's; what is
-// pinned here is what the GESTURE does with each ending.
-// ---------------------------------------------------------------------------
+// The optimistic close: the gesture applies only what a rollback can undo; every destructive step
+// waits for the machine's confirmation. The real closeTab end to end; the transition table is
+// tabs-sync.test.ts's.
 
 describe("optimistic close: the reversible gesture", () => {
   it("removes the subtree at the gesture and defers the teardown to the frame", async () => {
@@ -2898,6 +2641,20 @@ describe("optimistic close: the reversible gesture", () => {
     // …and none of the chat's client state was torn down in between.
     expect(openers.chatClose).not.toHaveBeenCalled();
     expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Could not close that tab");
+  });
+
+  it("a definitive refusal names the chat by the row's name at the gesture", async () => {
+    await openChats("a", "b");
+    renameTab(chatID("b"), "Fix the parser");
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    tabServer.failNext("close_tab");
+
+    await closeTab(chatID("b"));
+
+    expect(notices).toEqual([["b", "Fix the parser", "Could not close that tab", "error"]]);
   });
 
   it("a definitive refusal leaves a dirty editor's state untouched", async () => {
@@ -2971,12 +2728,8 @@ describe("optimistic close: the reversible gesture", () => {
 });
 
 describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
-  // The 5s deadline itself is definition-level (CLOSE_CONFIRM_MS on
-  // closeTabCommand) and cannot be advanced by fake timers — AbortSignal.timeout
-  // is not faked — so these cases end the dispatch the other no-answer way, a
-  // cancellation, which takes the identical opTimedOut branch. The machine's own
-  // transition table is pinned in tabs-sync.test.ts; this is the integration
-  // through the real closeTab.
+  // The 5s deadline (CLOSE_CONFIRM_MS) uses AbortSignal.timeout, which fake timers cannot advance, so
+  // a cancellation takes the identical opTimedOut branch.
 
   /** A close whose dispatch ends with NO answer: response held, then the
    *  in-flight dispatch canceled. The op lands in `verifying`. */
@@ -3107,12 +2860,8 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
   });
 });
 
-// --- The freshness dispatcher ---
-//
-// `refreshRow` is private, so every case here drives it through the two doors that
-// spend it: an activation, and `refreshActiveView`. The verdict comes from the REAL
-// leaf — `editor` is never event-covered so it is always stale, and a `chat` with a
-// ledger record at the current epoch is the only way to spell "fresh".
+// `refreshRow` is private, so its two doors drive it; `editor` is always stale, and a `chat` with a
+// current-epoch ledger record is "fresh".
 describe("the freshness dispatcher", () => {
   it("refreshes the row an activation activated, after its onShow", async () => {
     await openEditorView("/w/a.ts");
@@ -3193,13 +2942,7 @@ describe("the freshness dispatcher", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A drop shows its order at once.
-//
-// The drag's preview already moved the row, so the projection adopts the dropped
-// order the moment it is committed and a pending reorder in tabs-sync keeps it
-// through every render, frame and re-list until the server answers.
-// ---------------------------------------------------------------------------
+// A drop shows its order at once; a pending reorder in tabs-sync keeps it until the server answers.
 
 describe("a drop is shown before the server confirms it", () => {
   async function threeChatsHeld(): Promise<void> {
@@ -3273,13 +3016,7 @@ describe("a drop is shown before the server confirms it", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// "Move up" / "Move down" on a chat row's context menu.
-//
-// The unit is a GROUP (a parent and its whole subtree) within its pin partition,
-// and the commit is the drop's own, so it is shown at once and rolled back on a
-// refusal. There is no keyboard shortcut.
-// ---------------------------------------------------------------------------
+// Move up/down moves a GROUP within its pin partition, committed like a drop.
 
 describe("Move up / Move down in the chat menu", () => {
   /** Open the context menu on `ref`'s row and answer with the items it offered. */
@@ -3318,14 +3055,18 @@ describe("Move up / Move down in the chat menu", () => {
       "Pin",
       "Move up",
       "Move down",
+      "Rename\u2026",
       "Export as Markdown",
       "Export as JSON",
+      "Download Kiro session",
     ]);
     expect((await menuFor("kid")).map((i) => i.label)).toEqual([
       "Move up",
       "Move down",
+      "Rename\u2026",
       "Export as Markdown",
       "Export as JSON",
+      "Download Kiro session",
     ]);
   });
 
@@ -3396,5 +3137,97 @@ describe("Move up / Move down in the chat menu", () => {
     up.action();
     await settleTabs();
     expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In-place rename of a chat row: double-click, F2 or the menu's Rename…
+// opens a field over the name; Enter or blur sends `rename_chat`, Escape sends
+// nothing. The label itself repaints from the server's frame, not from here.
+// ---------------------------------------------------------------------------
+
+describe("in-place chat rename", () => {
+  async function rowFor(ref: string): Promise<HTMLElement> {
+    await paint();
+    const row = rows().find((r) => r.dataset["tabId"] === chatID(ref));
+    if (row === undefined) {
+      throw new Error(`no row for ${ref}`);
+    }
+    return row;
+  }
+
+  function field(row: HTMLElement): HTMLInputElement {
+    const input = row.querySelector<HTMLInputElement>(".tab-name-input");
+    if (input === null) {
+      throw new Error("no rename field");
+    }
+    return input;
+  }
+
+  function renames(): unknown[] {
+    return tabServer.sentOfType("rename_chat").map((c) => c.payload);
+  }
+
+  it("opens a bounded, labelled field on double-click", async () => {
+    expect.assertions(3);
+    await openChat("a");
+    const row = await rowFor("a");
+    row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = field(row);
+    expect(input.maxLength).toBe(128);
+    expect(input.getAttribute("aria-label")).toBe("Chat name");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("sends the trimmed name on Enter", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    const row = await rowFor("a");
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+    const input = field(row);
+    input.value = "  Release notes  ";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await settleTabs();
+    expect(renames()).toEqual([{ name: "Release notes" }]);
+    expect(row.querySelector(".tab-name-input")).toBeNull();
+  });
+
+  it("sends nothing on Escape and puts the name back", async () => {
+    expect.assertions(3);
+    await openChat("a");
+    const row = await rowFor("a");
+    row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = field(row);
+    input.value = "Something else";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settleTabs();
+    expect(renames()).toEqual([]);
+    expect(row.querySelector(".tab-name-input")).toBeNull();
+    expect(row.querySelector<HTMLElement>(".tab-name")?.hidden).toBe(false);
+  });
+
+  it("sends nothing for an empty or unchanged name", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    const row = await rowFor("a");
+    row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    field(row).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = field(row);
+    input.value = "   ";
+    input.blur();
+    await settleTabs();
+    expect(renames()).toEqual([]);
+  });
+
+  it("opens from the context menu", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    const row = await rowFor("a");
+    vi.mocked(showContextMenu).mockClear();
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const items = vi.mocked(showContextMenu).mock.lastCall?.[0] ?? [];
+    items.find((i) => i.label === "Rename\u2026")?.action();
+    expect(row.querySelector(".tab-name-input")).not.toBeNull();
   });
 });

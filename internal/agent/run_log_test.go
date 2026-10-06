@@ -12,11 +12,6 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// The run registry and appender, row by row: one turn per step instance keyed on the
-// node path, the openers, the three closers and their outcome mapping, metering into
-// the open turn, the per-path between-turns append, the death arm through host, and
-// the delete's tombstone.
-
 // runLogEntries reads a run's log back as decoded entries.
 func runLogEntries(t *testing.T, r *runLog, workflowID string) []marotte.Entry {
 	t.Helper()
@@ -152,9 +147,7 @@ func TestRunLog_NodeCompleteMapsKASStatusOntoTheOutcome(t *testing.T) {
 }
 
 func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
-	// The metadata a refused step's tagged chunk latched on the turn. The close is
-	// the only durable carrier: the live frame that marked the turn is gone by then,
-	// so a close that drops it leaves nothing on disk saying WHY the step declined.
+	// The close is the only durable carrier of a refusal's metadata.
 	refused := &marotte.RefusalInfo{
 		Category:         "policy",
 		Explanation:      "I will not continue with this request.",
@@ -167,15 +160,12 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 		refusal *marotte.RefusalInfo
 		outcome marotte.TurnOutcome
 	}{
-		// KAS reports a refused step as having run, so the recorded turn_end is the
-		// only thing that says the model declined.
+		// KAS reports a refused step as run; only the turn_end says it declined.
 		{"a refused step KAS reports as completed", "completed", marotte.StopReasonRefusal, refused, marotte.TurnOutcomeRefused},
 		{"a content filter is the same refusal", "completed", marotte.StopReasonContentFiltered, refused, marotte.TurnOutcomeRefused},
-		// Refused is failure-grade like failed, so this reads as no success either way;
-		// it names WHY rather than relabelling a failure.
+		// Refused names why rather than relabelling a failure.
 		{"a refusal on a failed step still reads refused", "failed", marotte.StopReasonRefusal, refused, marotte.TurnOutcomeRefused},
-		// A stop reason with no metadata beside it still reads refused: every field of
-		// the block is optional, so absence is not evidence the model did not decline.
+		// Every metadata field is optional.
 		{"a refusal with no metadata still reads refused", "completed", marotte.StopReasonRefusal, nil, marotte.TurnOutcomeRefused},
 		{"a completed step with no refusal is unchanged", "completed", marotte.StopReasonEndTurn, nil, marotte.TurnOutcomeCompleted},
 		{"a failed step with no refusal is unchanged", "failed", marotte.StopReasonError, nil, marotte.TurnOutcomeFailed},
@@ -252,7 +242,7 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 	if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
 		t.Fatal(err)
 	}
-	// Two KAS turns inside one step: credits and elapsed SUM, the last stop reason wins.
+	// Two KAS turns in one step: credits and elapsed sum, the last stop reason wins.
 	if !r.Meter("wf1", "s", 0.25, 100) || !r.Meter("wf1", "s", 0.5, 200) {
 		t.Fatal("metering refused on an open turn")
 	}
@@ -311,8 +301,7 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 	if _, _, err := r.CloseNode(ctx, "wf1", "a", "completed", ""); err != nil {
 		t.Fatal(err)
 	}
-	// Path b is the NEWEST turn in the log and is still open; the late frame for path a
-	// must land after a's close, not b's.
+	// The late frame for path a lands after a's close, not the open b's.
 	if ok, err := r.AppendAfterClosed(ctx, "wf1", "a", late); !ok || err != nil {
 		t.Fatalf("AppendAfterClosed after the close = %v, %v; want true", ok, err)
 	}
@@ -428,7 +417,7 @@ func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
 	if open := r.OpenSeqs("wf1"); open != nil {
 		t.Fatalf("Delete left the maps populated: %v", open)
 	}
-	// A frame KAS's cancel let through meets the tombstone and opens nothing.
+	// A frame after the cancel meets the tombstone.
 	if _, _, err := r.Open(ctx, "wf1", "s2", "", "c-1"); !errors.Is(err, errRunLogRemoved) {
 		t.Fatalf("Open after Delete = %v, want errRunLogRemoved", err)
 	}
@@ -464,7 +453,7 @@ func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
 	if _, _, err := r.CloseNode(ctx, "wf1", "s", "completed", ""); err != nil {
 		t.Fatal(err)
 	}
-	// A second registry over the same root, as the next process: the log is on disk.
+	// A second registry over the same root, as the next process.
 	fresh := newRunLog(r.root[:len(r.root)-len("/"+runLogDir)])
 	l, err := fresh.Log(ctx, "wf1")
 	if err != nil || l == nil {
@@ -494,7 +483,7 @@ func TestRunLog_OpenSeqsTracksTheNewestSealedSeq(t *testing.T) {
 	if _, err := turn.ToolCall(ctx, "", &marotte.EntryToolCall{ID: "call-1"}); err != nil {
 		t.Fatal(err)
 	}
-	// The text sealed at seq 1, the tool_call at seq 2.
+	// Text sealed at seq 1, the tool_call at 2.
 	if got := r.OpenSeqs("wf1"); got[turn.ID()] != 2 {
 		t.Fatalf("OpenSeqs after two seals = %v, want 2", got)
 	}
@@ -508,9 +497,7 @@ func sealedEntries(s []turnlog.Sealed) []marotte.Entry {
 	return out
 }
 
-// The seal path advances the record's counter outside the registry's lock, so a
-// stamp read off the counter can run one ahead of the entries the page serves,
-// and a reconnect digest that matches it would never fetch the missing seal.
+// The counter advances outside the lock, so a stamp read from it can run ahead of the served entries.
 func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
@@ -521,7 +508,7 @@ func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	if _, err := turn.ModelSwitched(ctx, marotte.EntryModelSwitched{From: "m-old", To: "m-new"}); err != nil {
 		t.Fatalf("ModelSwitched: %v", err)
 	}
-	// A seal landing after the entries were read: the counter moves, the page does not.
+	// A seal after the read: the counter moves, the page does not.
 	rec := r.runs["wf1"].open["root/step"]
 	served := rec.seq.Load()
 	rec.seq.Store(served + 1)
@@ -546,9 +533,7 @@ func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 	}
 }
 
-// A workflow id reaches the filesystem as a directory name and the REST route hands
-// it over unparsed, so one that is not a plain name is refused before any path is
-// built: a read, an open and a removal alike.
+// A non-plain workflow id is refused before any path is built.
 func TestRunLog_RefusesAWorkflowIDThatIsNotAPlainName(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	for _, id := range []string{"../chats", "wf/1", "wf 1", "."} {

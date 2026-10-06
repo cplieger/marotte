@@ -331,10 +331,8 @@ class TabDragController {
         }
       }, holdMs);
     }
-    // Capture phase on `window`, so a release or a move the row never sees still
-    // reaches the arm: a mouse that leaves the row in one event delivers its next
-    // moves elsewhere. No `isPrimary` condition on the release — a non-primary
-    // release must not clear a primary arm, and the pointerId is what says so.
+    // Capture phase on `window`, so moves and releases the row never sees still reach the arm. No
+    // `isPrimary` check: the pointerId decides, so a non-primary release cannot clear a primary arm.
     window.addEventListener("pointermove", this.boundPendingMove, true);
     window.addEventListener("pointerup", this.boundPendingRelease, true);
     window.addEventListener("pointercancel", this.boundPendingRelease, true);
@@ -393,10 +391,7 @@ class TabDragController {
     this.onDragMove(e);
   }
 
-  /** Fold sub-tabs into their parent for the duration of the drag, and unfold on
-   *  drop. Without this, dragging a parent past its own children reads as
-   *  chaos — the children do not move with it, because their position is derived
-   *  rather than dragged. */
+  /** Fold sub-tabs into their parent during the drag (their position is derived, not dragged). */
   private setChildrenCollapsed(list: HTMLElement | null, on: boolean): void {
     for (const c of list?.querySelectorAll<HTMLElement>(".tab-child") ?? []) {
       if (on) {
@@ -447,17 +442,13 @@ class TabDragController {
     window.addEventListener("keydown", this.boundKeydown);
     window.addEventListener("blur", this.boundAbandon);
     document.addEventListener("visibilitychange", this.boundVisibility);
-    // `abandoned` rather than `cancelled`: after a real release the window listeners
-    // have already ended the drag and this one is detached, so a live drag reaching
-    // here lost capture some OTHER way and there is no release for the 80ms
-    // suppression to swallow — it would take the reader's next click instead.
+    // `abandoned`: after a real release the window listeners already ended the drag, so this lost
+    // capture another way; there is no release for the 80ms click suppression to swallow.
     list?.addEventListener("lostpointercapture", this.boundLostCapture);
     this.releaseViewport = onViewportChange(this.boundViewportChange);
 
-    // On the LIST, which the preview never moves: re-inserting the captured row
-    // would release the capture. And LAST, after every field and listener: this
-    // throws `NotFoundError` for a pointer that is no longer active, and a throw
-    // must leave a drag the window listeners can still end.
+    // On the LIST, which the preview never moves (re-inserting the row would release capture). LAST:
+    // it can throw `NotFoundError`, which must leave an endable drag.
     list?.setPointerCapture(press.pointerId);
   }
 
@@ -730,11 +721,8 @@ class TabDragController {
     this.endDrag("commit");
   }
 
-  /** Take the strip back to a settled state. The preview moved the dragged row
-   *  itself, so every end re-projects: a commit from the order it reports, anything
-   *  else from the order the strip already held. Idempotent: several recovery paths
-   *  can fire in one turn (a blur then a visibilitychange). A revert's slide is left
-   *  to finish under its own settle timer. */
+  /** Take the strip back to a settled state: every end re-projects (a commit from its order, else
+   *  the held order). Idempotent, since several recovery paths can fire in one turn. */
   private endDrag(end: DragEnd): void {
     const tabEl = this.dragEl;
     if (tabEl === null) {

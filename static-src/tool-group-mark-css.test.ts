@@ -1,20 +1,7 @@
-// ---------------------------------------------------------------------------
-// A TOOL GROUP'S HEADER ALWAYS CARRIES A MARK, including while it runs.
-//
-// The header's verdict slot is a reserved `--icon-ui` square that `paintGroupOutcome`
-// fills with a shared silhouette on settle and writes NO node into while the group
-// is running. That left a chevron, an empty hole with a `--sp-2` gap either side, then
-// the count — reported as a blank space that looks strange beside a settled group's
-// dot. `14-tools.css` now draws a hollow ring there, and every assertion below is
-// numeric because none of it is visible in source: the mark is a pseudo-element, so
-// the DOM test beside this one (`tool-group.test.ts`) can only see that the slot
-// holds no SVG.
-//
-// EVERY FIXTURE IS BUILT BY THE PRODUCTION BUILDERS, for the reason
-// `tool-group-height.test.ts` records: the state classes come from each member's own
-// `data-outcome`, which `buildToolCard` writes through `applyOutcome`, so a
-// hand-rolled card would be asserting against a class this suite set itself.
-// ---------------------------------------------------------------------------
+// A TOOL GROUP'S HEADER ALWAYS CARRIES A MARK, including while it runs: `paintGroupOutcome` writes
+// no node into the verdict slot while running, so `14-tools.css` draws a hollow ring there. Numeric,
+// because the mark is a pseudo-element. Fixtures come from the production builders, which write the
+// `data-outcome` the state classes key on.
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 
@@ -111,10 +98,8 @@ describe("the running group header's slot", () => {
   });
 
   it("keeps the ring HOLLOW, so the shape carries the difference from a settled verdict", () => {
-    // All four settled marks are solid (a disc, a triangle, two knocked-out discs),
-    // so a solid dot here would leave the TINT as the only channel separating
-    // "running" from "succeeded" (WCAG 1.4.1). Two channels, asserted separately:
-    // the running slot draws no silhouette, and its own ring is unfilled.
+    // Every settled mark is solid, so a solid running dot would leave TINT the only channel (WCAG
+    // 1.4.1). Two channels: no silhouette, and an unfilled ring.
     const slot = running();
     const ring = getComputedStyle(slot, "::before");
     expect(slot.querySelector("svg"), "no silhouette while there is no verdict").toBeNull();
@@ -125,21 +110,16 @@ describe("the running group header's slot", () => {
   });
 
   it("does not spin: the running members below carry the motion", () => {
-    // A ring turning here would be a second claim of work for one run of calls,
-    // beside each running member's own `.tool-spinner` — the rule `.subagent-icon`
-    // records for a container. The exec tree spins its equivalent ring, which is
-    // exactly why this has to be pinned rather than left to the reader of that file.
+    // No spin: each running member has its own `.tool-spinner`, and a container claims no second work
+    // indicator (as `.subagent-icon`).
     expect(getComputedStyle(running(), "::before").animationName).toBe("none");
   });
 
   it.each(["fine", "coarse"] as const)(
     "renders at the settled mark's own diameter on a %s pointer, so the header's mark does not resize on settle",
     (tier) => {
-      // The two states share one slot, so a hand-picked length makes the mark change
-      // size the moment the group settles. The oracle is the RENDERED silhouette, not
-      // the ratio the stylesheet uses: the glyph's painted extent comes from its own
-      // path bbox scaled by its viewBox, so nothing here restates the CSS arithmetic
-      // and a wrong ratio on either side fails.
+      // One slot for both states, so the oracle is the RENDERED silhouette (path bbox scaled by viewBox),
+      // not the stylesheet's ratio.
       document.documentElement.dataset["pointer"] = tier;
       const slot = running();
       const ring = getComputedStyle(slot, "::before");
@@ -192,10 +172,8 @@ describe("the ring belongs to the running state alone", () => {
   );
 
   it("leaves the slot's own box identical in both states, which is what keeps the count still", () => {
-    // The reason the fix is a pseudo-element rather than sizing the slot to its
-    // content: the square is declared, so the summary text does not shift at the
-    // moment the group settles. Sizing the slot to the mark would pass every
-    // assertion above and reintroduce the shift.
+    // Why a pseudo-element in a declared square: sizing the slot to the mark passes everything above and
+    // shifts the summary on settle.
     const run = slotOf(group("completed", "in_progress")).getBoundingClientRect();
     host.replaceChildren();
     const done = slotOf(group("completed", "completed")).getBoundingClientRect();
@@ -206,15 +184,9 @@ describe("the ring belongs to the running state alone", () => {
 });
 
 describe("the mark sits on the header's own centre line", () => {
-  // The reported defect, and it needed a rect rather than a style read: the SLOT was
-  // centred correctly the whole time and the silhouette inside it was not. The slot
-  // was a fixed 0.875rem holding an `--icon-ui` glyph, and a grid slot smaller than
-  // its content does not centre that content in the BLOCK axis — the implicit row is
-  // `auto`, so it sizes to the item and starts at the slot's top, which puts the whole
-  // overflow at the bottom. Measured 1px low on a fine pointer and 3px low on a coarse
-  // one, where the token is 1.25rem. The inline axis WAS symmetric, because that
-  // track is constrained by the slot's definite inline size, which is why it read as
-  // a droop rather than a break.
+  // The reported droop needed a rect: a grid slot smaller than its content does not centre it on the
+  // BLOCK axis (the implicit `auto` row starts at the top), so the glyph sat 1px low fine and 3px low
+  // coarse.
   const centreY = (el: Element): number => {
     const r = el.getBoundingClientRect();
     return r.y + r.height / 2;

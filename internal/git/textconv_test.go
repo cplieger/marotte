@@ -17,19 +17,12 @@ const textconvMarker = "TEXTCONV_DRIVER_RAN"
 // `sh -c` the path lands in $0.
 const textconvDriver = "sh -c 'echo " + textconvMarker + "; cat \"$0\"'"
 
-// armTextconv turns dir into a repo that executes a command whenever git renders
-// changed.txt for a diff, using nothing but the repo's own .git/config and
-// .gitattributes — which is exactly the shape a checked-out untrusted repo has.
-//
-// The driver's output differs from the raw blob on both sides of the diff. A
-// driver whose output happened to match the blob would make every assertion
-// below pass for the wrong reason.
+// armTextconv turns dir into a repo that executes a command whenever git renders changed.txt for a
+// diff, through its own .git/config and .gitattributes.
 func armTextconv(t *testing.T, dir string) {
 	t.Helper()
 	initFixtureRepo(t, dir)
 	writeRepoFile(t, dir, ".gitattributes", "changed.txt diff=leak\n")
-	// Set on the REPO, not globally: a repo carrying config plus attributes is
-	// the threat, and a global setting would not model it.
 	runGit(t, dir, "config", "diff.leak.textconv", textconvDriver)
 	writeCommit(t, dir, "changed.txt", "committed line\n", "add changed.txt")
 	writeRepoFile(t, dir, "changed.txt", "working line\n")
@@ -54,12 +47,8 @@ func TestTextconv_FixtureIsArmed(t *testing.T) {
 	if !strings.Contains(out, textconvMarker) {
 		t.Fatalf("diff without --no-textconv did not run the driver; the fixture is not armed:\n%s", out)
 	}
-	// `git show <ref>:<path>` is a BLOB DUMP and does not apply textconv by
-	// default — measured against git 2.55.0, where the bare form prints the raw
-	// blob and only `--textconv` runs the driver. So the flag on that call site
-	// affirms the default rather than closing an open hole; what this asserts is
-	// that the driver is reachable there at all, which is what makes affirming
-	// the default worth the argument.
+	// `git show <ref>:<path>` does not apply textconv by default (git 2.55.0); only `--textconv`
+	// runs the driver. Both halves are asserted so the fixture is proven armed.
 	enabled, err := gitCmd(t.Context(), dir, "show", "--textconv", "HEAD:changed.txt")
 	if err != nil {
 		t.Fatalf("git show --textconv: %v\n%s", err, enabled)
@@ -76,12 +65,8 @@ func TestTextconv_FixtureIsArmed(t *testing.T) {
 	}
 }
 
-// gitShowCmd is the blob read behind the editor's diff-vs-HEAD pane, and since
-// the git panel's inline drawer was replaced by that same pane it is the ONLY
-// call site an untrusted repo reaches by being opened. It accepts the diff option
-// set (`--textconv` demonstrably enables the driver, see
-// TestTextconv_FixtureIsArmed), so pinning the safe value there keeps the raw
-// read a stated property of this call rather than a default it inherits.
+// TestGitShowCmd_ReturnsTheRawBlobNotTextconvOutput: gitShowCmd backs the editor's diff-vs-HEAD
+// pane, a read an untrusted repo reaches.
 func TestGitShowCmd_ReturnsTheRawBlobNotTextconvOutput(t *testing.T) {
 	dir := t.TempDir()
 	armTextconv(t, dir)

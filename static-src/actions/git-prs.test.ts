@@ -1,5 +1,3 @@
-// Tests for the PR actions: the merge body, the close, and the pins.
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -13,9 +11,7 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
 import {
@@ -141,8 +137,7 @@ function outcome(state: string): Response {
 }
 
 describe("mergePR leaves the rows to its outcome", () => {
-  // Whether the row goes depends on the answer: an accepted merge is still
-  // open and would reappear, so nothing is removed before the outcome is read.
+  // An accepted merge is still open, so nothing is removed before the outcome is read.
   it("removes no row before the answer, whatever the answer", async () => {
     for (const res of [
       outcome("merged"),
@@ -167,8 +162,7 @@ describe("mergePR leaves the rows to its outcome", () => {
 });
 
 describe("closePR", () => {
-  // The tab holds a close behind its undo window and owns the row's hide and its
-  // return, so the action only asks the forge.
+  // The tab owns the close's undo window and the row's hide, so the action only asks the forge.
   it("posts to the pull request's close route", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await closePR.dispatch(prArgs);
@@ -215,10 +209,8 @@ describe("sendCloseOnUnload", () => {
 });
 
 describe("merge request body", () => {
-  // Each family's merge takes the dialog's choice in its own terms: GitHub and
-  // the Gitea family name the strategy the repository listed (their default
-  // intent is a merge commit), GitLab takes squash as its intent and refuses any
-  // strategy, so its other choice is the project's own method without squash.
+  // GitHub and the Gitea family name the strategy the repository listed; GitLab takes squash as its
+  // intent and refuses any strategy, so its other choice is the project's method without squash.
   const cases = [
     { kind: "github", strategy: "merge", body: { intent: "default", strategy: "merge" } },
     { kind: "github", strategy: "squash", body: { intent: "default", strategy: "squash" } },
@@ -265,8 +257,7 @@ describe("armAutoMerge", () => {
     expect(requestBody()).toEqual({ intent: "squash", head_sha: HEAD, auto: true });
   });
 
-  // Arming does not merge, so the row must stay put: an optimistic remove
-  // here would show the PR gone while the forge is still holding it.
+  // Arming does not merge: an optimistic remove would show the PR gone while the forge holds it.
   it("does not optimistically remove the PR", async () => {
     mockFetch.mockResolvedValue(outcome("accepted"));
     await armAutoMerge.dispatch({ ...mergeArgs, forge_kind: "gitlab" });
@@ -290,9 +281,7 @@ describe("reopenPR", () => {
 });
 
 describe("rerunChecks", () => {
-  // The pin is the point of this action, not a decoration: the row's check
-  // chip is the folded state of one commit, and without the SHA the server
-  // resolved the run from the mutable branch and could re-run an older
+  // Without the SHA the server resolves the run from the mutable branch and could re-run an older
   // commit's CI, deployment side effects included.
   it("sends the head SHA the row was rendered from", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
@@ -313,17 +302,13 @@ describe("rerunChecks", () => {
     expect(requestURL()).not.toContain("auto=");
   });
 
-  // The chip flips only once the forge says so, so nothing is mutated
-  // locally on the way out.
   it("does not touch the groups", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await rerunChecks.dispatch(rerunArgs);
     expect(listed()).toEqual([10, 5, 3]);
   });
 
-  // The row renders a refusal, so no toast says it a second time; an instance
-  // that cannot re-run states why in the capability's evidence, which is the
-  // message the row quotes.
+  // The row renders the refusal (the capability's evidence), so no toast repeats it.
   it("leaves a refusal to the row, quoting the capability's evidence", async () => {
     mockFetch.mockResolvedValue(
       new Response(

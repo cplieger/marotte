@@ -73,9 +73,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := fn(r.Context(), w, body, l, h); err != nil {
-		// fn may have already written a response (for synchronous bad-
-		// input errors); sentinel errHandled signals that case so we
-		// don't double-write.
+		// fn may already have written a response; errHandled says so, so nothing is double-written.
 		if errors.Is(err, errHandled) {
 			return
 		}
@@ -98,8 +96,6 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 }
 
 func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
-	// Symmetric with the actionDelete/actionRename destination guards: a
-	// cold-boot mkdir on a sensitive dir must not pre-empt it.
 	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to mkdir protected directory")
@@ -118,8 +114,6 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 }
 
 func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
-	// Mirror of actionMkdir; also checks Sensitive.Blocks so creating an
-	// exact-match sensitive file is refused before it hits the filesystem.
 	if h.sensitive.Blocks(l.abs) || h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to touch protected path")
@@ -128,14 +122,9 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "touch", l)
 	}
-	// O_EXCL rather than syscall.O_NOFOLLOW, which is INERT here:
-	// os.Root.OpenFile ORs O_NOFOLLOW in itself and re-resolves the link on
-	// the resulting ELOOP (go1.27.0, src/os/root_unix.go:85-101), so a
-	// caller-supplied one is silently ignored. O_EXCL is a refusal the
-	// kernel does honour: anything already at the name — including a
-	// symlink planted after resolvePath accepted it — makes the create
-	// fail instead of opening whatever it points at. An existing entry is
-	// touch's no-op case, so EEXIST is success.
+	// O_EXCL, because O_NOFOLLOW is inert here: os.Root.OpenFile adds it itself and re-resolves on
+	// ELOOP (go1.27.0 src/os/root_unix.go:85-101). O_EXCL makes anything already at the name, a
+	// symlink planted after resolvePath included, fail the create; EEXIST is touch's no-op success.
 	f, err := l.m.root.OpenFile(l.rel(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
@@ -157,26 +146,17 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "delete", l)
 	}
-	// Layered guard: the mount-point check stops `/config` but would let
-	// `/config/chats` through, since Sensitive.Blocks only matches the files
-	// inside. protectedDir closes that gap.
+	// The mount-point check stops `/config` but not `/config/chats`, which protectedDir closes.
 	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
-	// The mount's os.Root confines this unlink but does not PIN it: it
-	// deliberately follows an in-root symlink, so a multi-component rel can
-	// resolve to a different file than the one protectedDir judged:
-	// reachable through the sensitive-path check because that check is
-	// exact-prefix over the resolved path. OpenParentInRoot descends
-	// component by component, Lstat-ing each one and refusing a symlink
-	// rather than following it, so naming only the final element through
-	// the pinned parent removes every ancestor from the unlink's path.
-	//
-	// The parent's own RemoveAll, never atomicfile.RemoveFileInRoot: that
-	// refuses anything non-regular with ErrNotRegular, which would make a
-	// symlinked entry undeletable from the browser.
+	// The mount's os.Root confines the unlink but follows an in-root symlink, so a multi-component
+	// rel could reach a different file than protectedDir judged. OpenParentInRoot descends refusing
+	// symlinks, so only the final element is named through the pinned parent.
+	// The parent's own RemoveAll, not atomicfile.RemoveFileInRoot, which refuses a non-regular
+	// entry and would make a symlink undeletable.
 	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		// os.Root.RemoveAll reports an already-absent path as success; a
@@ -208,9 +188,6 @@ func isSingleSegmentName(name string) bool {
 }
 
 func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
-	// Source-side guards. Renaming a granted root would shadow the mount;
-	// renaming a protected container could orphan the server's view of
-	// its state.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "rename", l)
 	}
@@ -224,9 +201,6 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		return errHandled
 	}
 	dest := filepath.Join(filepath.Dir(l.abs), body.Name)
-	// Route the destination through resolvePath so the allow-list +
-	// real-path checks fire against the rename target too, not just the
-	// source.
 	destLoc, err := h.resolvePath(dest)
 	if err != nil {
 		slog.Warn("filebrowse: rename dest rejected",
@@ -234,26 +208,22 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		httpreply.Forbidden(w, err.Error())
 		return errHandled
 	}
-	// Confirm the resolved destination is still a direct child of the
-	// original parent (defense in depth against separator surprises on
-	// non-Linux filesystems). Same parent implies same mount.
+	// Defense in depth: the resolved destination must still be a direct child of the original
+	// parent, which also implies the same mount.
 	if filepath.Dir(destLoc.abs) != filepath.Dir(l.abs) {
 		httpreply.Forbidden(w, "rename escapes parent directory")
 		return errHandled
 	}
-	// Sensitive-path check on the DESTINATION: without this a
-	// touch→write→rename sequence could overwrite sensitive files.
-	// protectedDir layers on top for a decoy directory landing at a
-	// bare-directory sensitive prefix name.
+	// Without the destination check a touch→write→rename could overwrite a sensitive file;
+	// protectedDir covers a decoy directory at a bare-directory sensitive name.
 	if h.sensitive.Blocks(destLoc.abs) || h.sensitive.protectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		httpreply.Forbidden(w, "rename target is protected")
 		return errHandled
 	}
-	// One pinned parent addresses both ends here, since the same-parent
-	// assertion above already established they share one directory. See
-	// actionDelete for why the mount's os.Root is not enough on its own.
+	// One pinned parent serves both ends, since they share one directory; see actionDelete for why
+	// os.Root alone is not enough.
 	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		return err
@@ -296,10 +266,8 @@ var availableBytes = func(mountRoot string) (int64, error) {
 // between this answer and the write, so the write's own ENOSPC/EDQUOT mapping
 // is authoritative.
 func refuseIfCannotFit(size int64, dest loc) error {
-	// Statfs the destination MOUNT ROOT, not the client-supplied destination
-	// path: the mount root is server-owned so nothing a client sends can steer
-	// it, and it is on the same filesystem as the destination. A nested mount
-	// INSIDE the root is an accepted edge case where the answer can be wrong.
+	// Statfs the server-owned mount root, on the destination's filesystem, so no client input
+	// steers it; a nested mount inside the root can answer wrong, accepted.
 	avail, err := availableBytes(dest.m.root.Name())
 	if err != nil {
 		// A Statfs this process cannot answer must not refuse a write that would

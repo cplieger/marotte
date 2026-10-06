@@ -4,13 +4,11 @@ import (
 	"testing"
 )
 
-// TestByteRing_BoundsAfterOverflow verifies that the ring never holds more than
-// capacity even after writing more data than the buffer can hold.
+// TestByteRing_BoundsAfterOverflow pins the ring at capacity after overflow.
 func TestByteRing_BoundsAfterOverflow(t *testing.T) {
 	const cap = 16
 	r := newByteRing(cap)
 
-	// Write more data than capacity.
 	bigData := make([]byte, cap*3)
 	for i := range bigData {
 		bigData[i] = byte(i % 256)
@@ -22,31 +20,16 @@ func TestByteRing_BoundsAfterOverflow(t *testing.T) {
 	}
 }
 
-// TestByteRing_ConcurrentWriteRead exercises concurrent Write and
-// String/Bytes calls. byteRing is NOT documented as thread-safe,
-// but if callers ever use it from multiple goroutines (e.g. pump +
-// reconnect replay), this test catches the race.
-//
-// NOTE: This test is expected to PASS only if byteRing is always used
-// from a single goroutine or protected by an external lock. If it
-// fails under -race, that signals a real concurrency bug at the call
-// site.
+// TestByteRing_ConcurrentWriteRead documents that byteRing is single-goroutine by design;
+// callers must synchronize.
 func TestByteRing_ConcurrentWriteRead(t *testing.T) {
-	// byteRing is intentionally unsynchronized — this test verifies
-	// that calling sites protect it. We skip it under -race to avoid
-	// a false-positive failure from the test itself racing.
+	// Skipped: the unsynchronized ring would race the test itself.
 	t.Skip("byteRing is single-goroutine by design; test documents the contract")
 }
 
-// TestByteRing_StringDropsPartialUTF8Leader verifies that String()
-// drops not just continuation bytes at the start but also a leading
-// byte of an incomplete multi-byte sequence when the ring boundary
-// splits a character.
+// TestByteRing_StringDropsPartialUTF8Leader pins dropping an incomplete leading sequence as well as continuation bytes.
 func TestByteRing_StringDropsPartialUTF8Leader(t *testing.T) {
-	// 4-byte UTF-8: F0 9F 98 80 = 😀
-	// Write ring of size 3 with the full 4-byte char — ring keeps
-	// last 3 bytes: [9F 98 80]. All are continuation bytes (10xxxxxx),
-	// so String() should skip all of them and return "".
+	// 😀 is F0 9F 98 80; a 3-byte ring keeps only continuation bytes, so String() is "".
 	r := newByteRing(3)
 	r.Write([]byte{0xF0, 0x9F, 0x98, 0x80})
 	s := r.String()
@@ -55,10 +38,7 @@ func TestByteRing_StringDropsPartialUTF8Leader(t *testing.T) {
 	}
 }
 
-// TestByteRing_ExactCapacityWrite verifies the edge case where a single
-// write is exactly equal to capacity: the buffer becomes full but nothing
-// was evicted, so Truncated() must stay false. Only a write that overflows
-// the buffer (total bytes > capacity) reports truncation.
+// TestByteRing_ExactCapacityWrite pins that an exactly-capacity write fills without evicting.
 func TestByteRing_ExactCapacityWrite(t *testing.T) {
 	const cap = 8
 	r := newByteRing(cap)
@@ -76,16 +56,14 @@ func TestByteRing_ExactCapacityWrite(t *testing.T) {
 		t.Fatal("Truncated() = true after an exact-capacity write; nothing was evicted")
 	}
 
-	// One more byte overflows the buffer and must report truncation.
+	// One more byte overflows.
 	r.Write([]byte("9"))
 	if !r.Truncated() {
 		t.Fatal("Truncated() = false after writing past capacity; data was evicted")
 	}
 }
 
-// TestByteRing_ExactCapacityAcrossWrites verifies that filling the buffer to
-// exactly capacity over several writes (the wrap-on-fill path) also evicts
-// nothing, so Truncated() stays false until a later write actually overflows.
+// TestByteRing_ExactCapacityAcrossWrites pins that filling exactly across writes also evicts nothing.
 func TestByteRing_ExactCapacityAcrossWrites(t *testing.T) {
 	const cap = 8
 	r := newByteRing(cap)

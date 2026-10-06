@@ -1,29 +1,5 @@
-// The composer has ONE textarea and three modules writing to it, and exactly one
-// of them owns what the draft IS.
-//
-// prompt-input owns the box's BEHAVIOUR, composer-state owns the per-chat DRAFT,
-// share-target hands the box a prompt from the PWA share sheet. They meet on the
-// element and never import each other (send-state imports prompt-input and
-// transport imports send-state, so a static import from there to the draft
-// action would close a cycle), so the contract is the `input` event: a write that
-// means "this is the draft now" announces itself, and the draft layer keeps the
-// value in its own map rather than reading the element back.
-//
-// Both halves of that contract lost text before this file existed:
-//
-//   - The draft layer read `$.promptInput.value` when it saved. ArrowUp displays
-//     a previously submitted prompt through a SILENT write (history is
-//     navigation, not editing), so a blur or a chat switch while one was on
-//     screen sent that old prompt to the server AND replaced the real draft with
-//     it — gone locally and remotely at once.
-//   - share-target assigned `.value` with no event, so the map never learned the
-//     shared text and nothing scheduled a save. A user who opened a shared prompt
-//     and reloaded before typing lost what they had just been handed.
-//
-// Whole-module wiring rather than mocks on either side: the bug was in the seam,
-// so a test that stubbed one half could not have seen it. Only the debounce
-// (whose timing is the library's) and the two leaves that own unrelated DOM are
-// faked.
+// The composer has ONE textarea and three modules writing to it, and exactly one of them owns what
+// the draft IS.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import type * as Store from "./store.js";
@@ -33,19 +9,7 @@ import type * as ShareTarget from "./share-target.js";
 import type { Session, TurnState } from "./types.js";
 import type { Entry, EntryTurnOpen } from "./wire/types.gen.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
- */
+/** Cache-buster for the re-imports below. */
 let bootSeq = 0;
 
 const { mockDispatch, mockFlush, mockPending, mockSubmit } = vi.hoisted(() => ({
@@ -55,36 +19,30 @@ const { mockDispatch, mockFlush, mockPending, mockSubmit } = vi.hoisted(() => ({
   mockSubmit: vi.fn(),
 }));
 
-// What reaches the draft action, and when a flush is forced. The 600ms itself is
-// the library's business.
+// What reaches the draft action, and when a flush is forced. The 600ms itself is the library's
+// business.
 vi.mock("./actions/index.js", () => ({
   debouncedDispatch: () =>
     Object.assign(mockDispatch, { isPending: mockPending, flush: mockFlush, cancel: vi.fn() }),
   registerCleanup: vi.fn(),
 }));
-// Both composer writers, because attachments.ts dispatches through the same
-// debounced-action layer as the draft: a mock naming only one of them fails the
-// module's IMPORT, not an assertion, so the whole file goes red with no clue why.
+// Both composer writers, because attachments.ts dispatches through the same debounced-action layer
+// as the draft: a mock naming only one of them fails the module's IMPORT, not an assertion, so the
+// whole file goes red with no clue why.
 vi.mock("./actions/chat.js", () => ({
   setDraft: { name: "chat.set_draft" },
   setAttachments: { name: "chat.set_attachments" },
 }));
-vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn() }));
+vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn(), isIOS: false }));
 vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
-// share-target's other job is the ?agent=planner shortcut, whose import graph is
-// the whole chat lifecycle.
+// share-target's other job is the ?agent=planner shortcut, whose import graph is the whole chat
+// lifecycle.
 vi.mock("./chat.js", () => ({ createPlannerSession: vi.fn() }));
 
 /** The one prompt the chat has already sent, so ArrowUp has somewhere to go. */
 const PRIOR_PROMPT = "the prompt I sent an hour ago";
 
-/** One sent prompt, as the store holds it: a turn whose `turn_open` CARRIES it.
- *
- *  The history the composer cycles through is the `turn_open.prompt.text` of each
- *  resident turn, newest first, so a prompt is a TURN here rather than a row in a
- *  message array — `userPrompts()` walks `turn_order` in reverse and reads that one
- *  field. `n` is the session-absolute ordinal the appender assigns, so it is the
- *  prompt's position in the whole session and not its index in this window. */
+/** One sent prompt, as the store holds it: a turn whose `turn_open` CARRIES it. */
 function promptTurn(id: string, n: number, text: string): [string, TurnState] {
   const turnID = `${id}-t${String(n)}`;
   const payload: EntryTurnOpen = {
@@ -141,9 +99,9 @@ interface Mounted {
   input: HTMLTextAreaElement;
 }
 
-/** Fresh module graph per case: prompt-input latches its own init and both
- *  modules wire listeners once, so a shared instance would carry the previous
- *  case's element and history position. */
+/** Fresh module graph per case: prompt-input latches its own init and both modules wire
+ *  listeners once, so a shared instance would carry the previous case's element and history
+ *  position. */
 async function mount(): Promise<Mounted> {
   vi.resetModules();
   bootSeq++;
@@ -159,10 +117,8 @@ async function mount(): Promise<Mounted> {
     </div>`;
   const store = await import("./store.js");
   const composerState = await import("./composer-state.js");
-  // composer-state is NOT busted: prompt-input imports it, and a busted copy here
-  // would be a SECOND instance holding a different drafts map from the one the
-  // module under test writes. It gets its per-test reset through its own test
-  // seam instead, which is what `vi.resetModules()` used to do for it.
+  // composer-state is NOT busted: prompt-input imports it, and a busted copy here would be a SECOND
+  // instance holding a different drafts map from the one the module under test writes.
   composerState._resetComposerStateForTest();
   const promptInput = (await import(
     /* @vite-ignore */ `./prompt-input.ts?boot=${bootSeq}`
@@ -228,8 +184,6 @@ describe("history cycling versus the per-chat draft", () => {
 
     mockPending.mockReturnValue(true);
     input.dispatchEvent(new FocusEvent("blur"));
-    // The old read of `.value` sent PRIOR_PROMPT here, which is the server-side
-    // half of the loss.
     expect(mockFlush).toHaveBeenCalledWith({
       chatID: "c1",
       text: "the draft I am still writing",
@@ -248,8 +202,8 @@ describe("history cycling versus the per-chat draft", () => {
     composerState.saveComposerState();
     composerState.restoreComposerState("c1");
 
-    // The local half: the map entry survived rather than being replaced by the
-    // prompt the box was showing.
+    // The local half: the map entry survived rather than being replaced by the prompt the box was
+    // showing.
     expect(input.value).toBe("the draft I am still writing");
     expect(mockFlush).toHaveBeenCalledWith({
       chatID: "c1",
@@ -258,8 +212,8 @@ describe("history cycling versus the per-chat draft", () => {
   });
 
   it("adopts a history item the user actually edits", async () => {
-    // The other direction: once a keystroke lands on the displayed prompt it IS
-    // the draft, because the edit announces itself like any other.
+    // The other direction: once a keystroke lands on the displayed prompt it IS the draft, because
+    // the edit announces itself like any other.
     const { input, composerState } = await mount();
     type(input, "scratch");
     pressKey(input, "ArrowUp");
@@ -287,8 +241,8 @@ describe("a prompt arriving from the share sheet", () => {
     shareTarget.applyShareTarget();
 
     expect(input.value).toBe("fix the flaky test");
-    // The silent assignment left this at zero, so nothing scheduled a save and a
-    // reload before the first keystroke lost the shared text.
+    // The silent assignment left this at zero, so nothing scheduled a save and a reload before the
+    // first keystroke lost the shared text.
     expect(mockDispatch).toHaveBeenCalledTimes(1);
     expect(mockDispatch).toHaveBeenCalledWith({ chatID: "c1", text: "fix the flaky test" });
   });

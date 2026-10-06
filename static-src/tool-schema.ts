@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolDenial, ToolDisclosed, ToolKind, ToolStatus } from "./types.js";
+import { humanName, truncate } from "./strings.js";
 export type { ToolKind };
 
 /** What a tool card reveals when you open it — its "depth 1".
@@ -30,10 +31,9 @@ export type { ToolKind };
  *  - `move`     `from -> to`, two facts the claim line cannot carry.
  *  - `fetch`    resolved URL, response status, the head of the body.
  *  - `mcp`      server badge, formatted input, output.
- *  - `todo`     the checklist, next item marked.
  *  - `generic`  the raw input/output block, for kinds with nothing better. */
 export type ToolDepth1 =
-  "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "todo" | "generic";
+  "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "generic";
 
 /** Depth-1 content per kind. Record<ToolKind, ToolDepth1> enforces
  *  exhaustiveness at the type level — a new ToolKind without an entry is a
@@ -76,32 +76,6 @@ export function toolDepth1(kind: ToolKind): ToolDepth1 {
  *  control. */
 export function hasDepth1(kind: ToolKind): boolean {
   return TOOL_DEPTH1[kind] !== "none";
-}
-
-/** What a `read` tool actually read, phrased from the tool FAMILY.
- *
- *  `kind: "read"` covers seven action types and four of them do not read files:
- *  `get_process_output` and `list_processes` read processes, `open_folders` reads
- *  folders, `get_diagnostics` reads diagnostics. "Read 3 files" is false for all
- *  four, and the card's own rule is that a claim must be specific and true. The
- *  mapping keys on the tool NAME (both the live snake_case set and the legacy
- *  camelCase aliases persisted sessions carry) and falls back to files, which is
- *  what the other three read. */
-const READ_SUBJECTS: Readonly<Record<string, string>> = {
-  list_processes: "processes",
-  listProcesses: "processes",
-  get_process_output: "processes",
-  getProcessOutput: "processes",
-  open_folders: "folders",
-  openFolders: "folders",
-  listDirectory: "folders",
-  get_diagnostics: "diagnostics",
-  getDiagnostics: "diagnostics",
-};
-
-/** The plural noun a `read` claim should use for this tool name. */
-export function readSubject(toolName: string): string {
-  return READ_SUBJECTS[toolName] ?? "files";
 }
 
 interface ToolProfile {
@@ -165,6 +139,13 @@ const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
   executePwsh: { kind: "execute", writesFile: false },
   webFetch: { kind: "fetch", writesFile: false },
   remote_web_search: { kind: "fetch", writesFile: false },
+
+  // Deferred MCP tool discovery. tool_search is the older mode and stays for
+  // transcripts that carry it.
+  tool_load: { kind: "search", writesFile: false },
+  "Tool Load": { kind: "search", writesFile: false },
+  tool_search: { kind: "search", writesFile: false },
+  "Tool Search": { kind: "search", writesFile: false },
 };
 
 /** Fallback profile keyed on the ACP-provided kind string. Covers tools
@@ -256,12 +237,80 @@ export function mcpToolInfo(title: string): { server: string; tool: string } | n
   return null;
 }
 
+// KAS runs every deferred MCP tool through one `tool_call` tool whose input is
+// {tool_id: "<server>::<tool>", arguments}, so the card names the server's
+// tool rather than the envelope. Its title is model-composed, so the input's
+// own `arguments` member also identifies the envelope.
+const DEFERRED_CALL_TITLES: ReadonlySet<string> = new Set(["tool_call", "Tool Call"]);
+const DEFERRED_ID_RE = /^([^:]+)::([^:]+)$/;
+
+/** The MCP server and tool a deferred `tool_call` runs, or null when this is
+ *  not that envelope. A builtin routed through the same envelope is not an
+ *  integration, so `builtin::` resolves to null. */
+function deferredMCPCall(
+  title: string,
+  input: Record<string, unknown> | undefined,
+): { server: string; tool: string } | null {
+  if (input === undefined) {
+    return null;
+  }
+  if (!DEFERRED_CALL_TITLES.has(title) && !Object.hasOwn(input, "arguments")) {
+    return null;
+  }
+  const id = input["tool_id"];
+  if (typeof id !== "string") {
+    return null;
+  }
+  const m = DEFERRED_ID_RE.exec(id);
+  if (m === null) {
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const server = m[1]!;
+  if (server === "builtin") {
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return { server, tool: m[2]! };
+}
+
 /** Format an MCP tool for display in a card/summary. Underscores become
  *  spaces so `create_issue` reads as `create issue`. The server name
  *  stays verbatim — users choose their own server names and we don't
  *  want to butcher them. */
 export function formatMCPToolName(tool: string): string {
   return tool.replace(/_/g, " ");
+}
+
+/** KAS's execute_bash title when the model sent no description. */
+const PLACEHOLDER_SHELL_TITLE = "Run Command";
+
+const TOOL_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+/** The displayed text for a tool title. A KAS shell title can be the model's
+ *  own sentence, so only a bare tool id is humanized; anything else is shown
+ *  as written. */
+export function toolTitleText(raw: string): string {
+  const t = raw.startsWith("Running: ") ? raw.slice(9) : raw;
+  return TOOL_ID_RE.test(t) ? humanName(t) : t;
+}
+
+/** The command a description-less shell call ran, as its title: collapsed to
+ *  one line and bounded, never humanized. Null when the call is not KAS's
+ *  placeholder shell title or carries no command. */
+export function commandTitle(title: string, kind: string, input: unknown): string | null {
+  if (kind !== "execute" || title !== PLACEHOLDER_SHELL_TITLE) {
+    return null;
+  }
+  if (typeof input !== "object" || input === null) {
+    return null;
+  }
+  const command = (input as Record<string, unknown>)["command"];
+  if (typeof command !== "string") {
+    return null;
+  }
+  const line = command.replace(/\s+/g, " ").trim();
+  return line === "" ? null : truncate(line, 120);
 }
 
 // --- Input-shape extraction ---
@@ -314,13 +363,20 @@ export function renderInfoFor(
   title: string,
   kind: string,
   input: Record<string, unknown> | undefined,
-  meta?: { disclosed?: ToolDisclosed | undefined; denial?: ToolDenial | undefined },
+  meta?: {
+    disclosed?: ToolDisclosed | undefined;
+    denial?: ToolDenial | undefined;
+    sourcePath?: string | undefined;
+  },
 ): ToolRenderInfo {
-  const profile = profileFor(title, kind);
-  const filePath = pickFilePath(input);
+  const deferred = deferredMCPCall(title, input);
+  const profile: ToolProfile =
+    deferred !== null ? { kind: "mcp", writesFile: false } : profileFor(title, kind);
+  // A hook card carries no input; its file is the hook definition KAS named.
+  const filePath = profile.kind === "hook" ? (meta?.sourcePath ?? "") : pickFilePath(input);
   const fileBasename = filePath !== "" ? (filePath.split("/").pop() ?? filePath) : "";
   const diffSources = profile.writesFile ? pickDiffSources(input) : null;
-  const mcp = profile.kind === "mcp" ? mcpToolInfo(title) : null;
+  const mcp = deferred ?? (profile.kind === "mcp" ? mcpToolInfo(title) : null);
   return {
     kind: profile.kind,
     writesFile: profile.writesFile,

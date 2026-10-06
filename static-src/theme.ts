@@ -1,28 +1,7 @@
-// ---------------------------------------------------------------------------
-// Theme toggle (light / dark / system). The controller is
-// @cplieger/ui-primitives' createTheme: it owns the resolve-and-apply lifecycle
-// and the OS-preference follow, and it applies the resolved choice to
-// <html data-theme="…"> so the CSS in 01-tokens.css can key off it.
-//
-// WHERE THE PREFERENCE LIVES IS NOT THIS MODULE'S BUSINESS, and that is the
-// point of taking the storage adapter as a parameter. The value is a
-// workspace preference in config.json, mirrored by a localStorage paint cache
-// prepaint.js reads; both halves and the policy joining them live in
-// settings.ts, which already imports this module — so reaching back for them
-// here would be an import cycle, and the parameter is what makes the direction
-// explicit rather than accidental.
-//
-// THREE states, and the third is not decoration: with a 2-state toggle the OS
-// preference became unreachable the moment the user clicked once, because
-// "follow the OS" was only ever the value of an UNSET field. The library models
-// this properly (set("system"), cycle() as light -> dark -> system, an unset
-// value resolving to "system"), so the fix is to use what it already has. The
-// storage type had to carry "system" too, or the choice round-tripped to null.
-//
-// The button shows the CHOICE, not the resolved theme. Showing the resolved one
-// would make Auto indistinguishable from whichever concrete theme it landed on,
-// which is the whole point of having the third state visible.
-// ---------------------------------------------------------------------------
+// Theme toggle (light / dark / system) over ui-primitives' createTheme, which applies the choice to
+// <html data-theme>. The storage adapter is a PARAMETER: the preference lives in config.json with a
+// paint cache, both owned by settings.ts, which imports this module. THREE states, or "follow the
+// OS" is unreachable after one click. The button shows the CHOICE, not the resolved theme.
 
 import { $, forceReflow } from "./dom.js";
 import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";
@@ -34,10 +13,8 @@ import type { ThemeChoice } from "./device-view.js";
 
 let controller: ThemeController | null = null;
 
-// The CHOICE currently reflected by the toggle icon. updateIcon() animates the
-// transition FROM the icon on screen TO the icon for `current`, so `shown`
-// tracks what the user can actually see; a 3-icon cycle cannot derive the
-// outgoing icon from the incoming one the way a 2-icon flip could.
+// The CHOICE the toggle icon shows; `shown` tracks the icon on screen, which a 3-icon cycle cannot
+// derive from the incoming one.
 let current: ThemeChoice = "dark";
 let shown: ThemeChoice | null = null;
 
@@ -137,13 +114,8 @@ function updateIcon(): void {
   btn.setAttribute("aria-label", label);
 }
 
-/** Create the theme controller (applies the persisted / OS theme immediately)
- *  and wire up the toggle button. Call once during UI init.
- *
- *  `storage` is where the choice is read and written; see the header for why it
- *  arrives as an argument. The library still needs `storageKey` for its
- *  cross-tab `storage` event filter, which is why the key is passed alongside
- *  an adapter that does not use it to address anything. */
+/** Create the theme controller (applies the persisted / OS theme now) and wire the toggle. Call once
+ *  during UI init. `storageKey` is still passed for the library's cross-tab `storage` filter. */
 export function initThemeToggle(storage: ThemeStorage): void {
   controller = createTheme({
     storageKey: LS_UI_STATE_KEY,
@@ -166,13 +138,8 @@ export function initThemeToggle(storage: ThemeStorage): void {
   });
 }
 
-/** Apply a choice the SERVER reported: repaint the page and move the toggle.
- *
- *  There is one write verb on the controller and it means "the user chose this",
- *  so the caller is the one that has to stop the value going back out as a write
- *  — see settings.ts's adopt guard. Kept here rather than reaching for the
- *  controller from settings.ts, because the controller is this module's and a
- *  second holder of it is a second thing that can apply a theme. */
+/** Apply a choice the SERVER reported: repaint and move the toggle. The controller's one write verb
+ *  means "the user chose this", so settings.ts's adopt guard stops the echo. */
 export function applyThemeChoice(choice: ThemeChoice): void {
   controller?.set(choice);
 }

@@ -1,41 +1,26 @@
-// ---------------------------------------------------------------------------
-// Per-setting save indicators: a spinner while a write is in flight, then a
-// tick or a cross, in a slot next to the setting's own label.
-//
-// A caller names the KEYS it wrote and never a slot — an AppSettings key for a
-// PATCH /api/settings, the dotted kiro-cli key for PUT /api/kiro-settings, and
-// STEERING_SAVE_KEY for the global-instructions textarea. The markup binds each
-// key to a slot with `data-save-status`, which takes a space-separated list so
-// one slot can serve a value that has two controls.
-//
-// A key with no slot is a silent no-op, which is what `theme`, `fb_path`,
-// `last_model` and `last_effort_by_model` are: each is written from outside
-// Settings, and the control the user just moved is the confirmation.
-//
-// Usage: `showSaving(keys)` before the async write, then `showSaved(keys)` or
-// `showError(keys)` when it answers.
-// ---------------------------------------------------------------------------
+// Per-setting save indicators: a spinner while a write is in flight, then a tick or a cross, in a
+// slot next to the setting's own label.
 
 import { el } from "@cplieger/reactive";
 import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 
-/** The slot token for the global-instructions textarea. Not an AppSettings key —
- *  that content is its own PUT /api/steering — so it is named here. */
+/** The slot token for the global-instructions textarea. Not an AppSettings key — that content is
+ *  its own PUT /api/steering — so it is named here. */
 export const STEERING_SAVE_KEY = "steering";
 
 /** One key, or the set a single write carried. */
 export type SaveKeys = string | readonly string[];
 
-/** How long a settled face stays before it fades. The error holds longer
- *  because it is the one a user has to notice. */
+/** How long a settled face stays before it fades. The error holds longer because it is the one a
+ *  user has to notice. */
 const SAVED_HOLD_MS = 1200;
 const ERROR_HOLD_MS = 2400;
-/** Matches `.settings-save-status`'s opacity transition in 17-settings.css; the
- *  element is hidden once the fade it starts has finished. */
+/** Matches `.settings-save-status`'s opacity transition in 17-settings.css; the element is
+ *  hidden once the fade it starts has finished. */
 const FADE_MS = 400;
-/** A success arriving on an error's heels waits this long, so a retry does not
- *  blink the ✗ away before it was read. */
+/** A success arriving on an error's heels waits this long, so a retry does not blink the ✗ away
+ *  before it was read. */
 const MIN_ERROR_DISPLAY_MS = 1500;
 
 interface SlotState {
@@ -46,9 +31,8 @@ interface SlotState {
   lastErrorAt: number;
 }
 
-/** Timer state per slot. A plain Map rather than a WeakMap because the slots are
- *  permanent page elements and enumerating them is what lets a test clear their
- *  timers. */
+/** Timer state per slot. A plain Map rather than a WeakMap because the slots are permanent page
+ *  elements and enumerating them is what lets a test clear their timers. */
 const slotStates = new Map<HTMLElement, SlotState>();
 
 function stateOf(target: HTMLElement): SlotState {
@@ -65,8 +49,8 @@ function stateOf(target: HTMLElement): SlotState {
   return s;
 }
 
-/** The slots any of these keys names, each at most once. Read out of the DOM
- *  rather than built into a selector so a key can never be a selector. */
+/** The slots any of these keys names, each at most once. Read out of the DOM rather than built
+ *  into a selector so a key can never be a selector. */
 function slotsFor(keys: SaveKeys): HTMLElement[] {
   const want = new Set(typeof keys === "string" ? [keys] : keys);
   if (want.size === 0) {
@@ -123,8 +107,8 @@ export function showSaving(keys: SaveKeys): void {
   for (const target of slotsFor(keys)) {
     const s = stateOf(target);
     clearTimers(s);
-    // A new write for this setting supersedes the last error, so it no longer
-    // holds the next success back: the spinner already says something changed.
+    // A new write for this setting supersedes the last error, so it no longer holds the next
+    // success back: the spinner already says something changed.
     s.lastErrorAt = 0;
     paint(target, spinnerNode());
   }

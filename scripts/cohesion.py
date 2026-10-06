@@ -72,13 +72,8 @@ def method_bodies(pkg_dir):
             while j < len(lines) and lines[j] != "}":
                 j += 1
             body = "\n".join(lines[i : j + 1])
-            # Everything reached through the receiver, fields AND sibling method
-            # calls. Linking by field alone under-links badly: a handler that
-            # calls st.knowledgeCall shares no FIELD with it, so both became
-            # singleton groups and a cohesive HTTP surface read as fragmented.
-            # That artifact is also why database/sql.DB first measured as 15
-            # groups — DB delegates to Conn and Tx without touching its own
-            # fields.
+            # Link by fields AND sibling method calls: by field alone, a handler that
+            # only calls a sibling shares no field with it and reads as a singleton.
             reached = set(re.findall(r"\b" + recv + r"\.(\w+)", body))
             yield typ, name, reached
             i = j + 1
@@ -113,7 +108,7 @@ def components(methods):
         find(name)
         for r in reached:
             if r in own:
-                union(name, r)  # a call to a sibling is an edge
+                union(name, r)
             else:
                 by_field[r].append(name)
     for names in by_field.values():
@@ -170,16 +165,12 @@ def field_seams(methods, own):
     readers = collections.defaultdict(set)
     for name, reached in methods:
         for r in reached:
-            if r not in own:  # a field, not a sibling call
+            if r not in own:
                 readers[r].add(name)
     return sorted(readers.items(), key=lambda kv: len(kv[1]))
 
 
 def main():
-    # Resolved against the repo root, so `cohesion.py internal/server` works from
-    # anywhere. Taking the argument literally made every relative path crash in
-    # relative_to below, which is a good part of why this only ever ran on its
-    # own default and the rest of the repo went unmeasured.
     if len(sys.argv) > 1:
         arg = pathlib.Path(sys.argv[1])
         target = arg if arg.is_absolute() else ROOT / arg
@@ -190,9 +181,7 @@ def main():
     for typ, name, fields in method_bodies(target):
         by_type[typ].append((name, fields))
 
-    # Not relative_to(ROOT): that raises for any target outside this repo, which
-    # made the script unable to measure a sibling repo at all — the other half of
-    # why it only ever ran on its own default.
+    # Not relative_to(ROOT): that raises for a target outside this repo.
     try:
         shown = target.relative_to(ROOT)
     except ValueError:

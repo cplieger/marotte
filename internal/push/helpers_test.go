@@ -35,35 +35,8 @@ func (errRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("forced transport error")
 }
 
-// newServiceOnTestServer builds a Service whose client is
-// httptest.NewTestServer's in-memory one (Go 1.27), so a Send in this package
-// reaches h instead of whatever the production ssrf.SafeTransport would dial.
-//
-// It exists because several tests here left s.client as that production
-// transport while subscribing real vendor endpoints. What they actually
-// exercised was NOT the network: their subscriptions carried no key material, so
-// encryptPayload failed at ecdh.NewPublicKey before any dial and deliver() walked
-// the whole pushMaxAttempts ladder at production backoff — measured on go1.27.0
-// at 1.11 s and 0.49 s of real sleeping for two tests whose subject is a
-// preference gate and a debounce window. The delivery those tests appeared to
-// assert never happened at all.
-//
-// The latent half is worse than the wasted seconds: the fixture was one
-// valid-keys change away from live outbound requests, because that transport
-// resolves and dials for real. _Measured_ with pushSubscriptionWithValidKeys and
-// the production client: "https://fcm.googleapis.com/fcm/send/pref-test" reached
-// Google's actual FCM endpoint and was answered 410 Gone in 48 ms, carrying a
-// VAPID-signed JWT off the box; "https://push.example.com/x" failed DNS in 22 ms.
-//
-// The in-memory client routes every request to h regardless of scheme, host or
-// address, which is why the subscriptions keep their realistic vendor spellings
-// (isAllowedPushEndpoint reads those hosts) while the request the code actually
-// built — Host, path and the RFC 8291/8292 headers — arrives intact and
-// assertable. A RoundTripper stub that rebased the request onto a listener could
-// not show any of that.
-//
-// srv.Client() is called BEFORE anything reads srv.URL: on the in-memory path
-// that field is "" until the first Client/Start/StartTLS call.
+// newServiceOnTestServer builds a Service whose client is httptest.NewTestServer's in-memory one
+// (Go 1.27), so a Send reaches h instead of dialing through ssrf.SafeTransport.
 func newServiceOnTestServer(t *testing.T, h http.Handler) (*Service, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewTestServer(t, h)

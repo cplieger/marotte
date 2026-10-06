@@ -6,13 +6,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestHandleToolCall_InternalToolSuppression pins the internal-tool drop: KAS
-// announces its session-boot cloud-config fetch as a tool_call tagged
-// _meta.kiro.toolId "fetch_cloud_config", its own TUI never renders it, and the
-// frame arriving before the prompt's turn used to open a wire turn the prompt
-// then displaced — the phantom "Agent-initiated turn". The frame must reach
-// neither a turn nor the wire, and its follow-up update must be dropped BEFORE
-// the fold target can open a turn for it.
+// TestHandleToolCall_InternalToolSuppression pins the internal-tool drop: the session-boot
+// fetch_cloud_config call must reach neither a turn nor the wire, and its update must be
+// dropped before the fold target can open a turn (the phantom "Agent-initiated turn").
 func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 	cloudConfig := map[string]any{
 		"toolCallId": "cc-1",
@@ -54,9 +50,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 		if len(*events) != 0 {
 			t.Errorf("suppressed internal tool's update broadcast %d events; want none", len(*events))
 		}
-		// The load-bearing half: the update must not have opened a turn. The fold
-		// target opens one per chat on first use, so a chat with no turn is the proof
-		// the update read the open turn rather than asking for a fold target.
+		// No turn for the chat proves the update read the open turn rather than a fold target.
 		if base.turns.chats[chatID] != nil {
 			t.Error("the suppressed update opened a turn; want dropped, its create was never sealed")
 		}

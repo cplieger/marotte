@@ -1,11 +1,5 @@
 package agent
 
-// What marotte owes the agent-ignore feature now that KAS enforces it: the LIST
-// reaches every bridge, and it reaches them at every door.
-//
-// The fail mode asserted below is that an unreadable document sends NOTHING,
-// leaving KAS enforcing what it was last told rather than a guess or a clear.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,9 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// notifyProbeBridge records the ignore-list notifications one bridge received, so
-// a fan-out can be asserted per bridge rather than in aggregate. It embeds the
-// shared fake, whose Notify records nothing.
+// notifyProbeBridge records the ignore-list notifications one bridge received.
 type notifyProbeBridge struct {
 	*fakeBridge
 
@@ -62,8 +54,7 @@ func (b *notifyProbeBridge) ignoreFrames() [][]string {
 	return slices.Clone(b.sent)
 }
 
-// twoLiveBridges stands a runtime up with two open chat bridges and returns the
-// probe for each, so a fan-out assertion can name the bridge that missed out.
+// twoLiveBridges stands up two open chat bridges and returns each one's probe.
 func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatID]*notifyProbeBridge) {
 	t.Helper()
 	var mu sync.Mutex
@@ -79,7 +70,6 @@ func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatI
 	cs := newTestChatStore()
 	h := New(context.Background(), t.TempDir(), factory, cs, WithConfigDir(configDir))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
 	ctx := t.Context()
@@ -105,13 +95,8 @@ func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatI
 	return h, probes
 }
 
-// TestPushAgentIgnoreFiles_ReachesEveryLiveBridge is the fan-out half of the PATCH
-// path: the value is CONNECTION-scope in KAS, so a saved edit has to be pushed per
-// bridge or it reaches only the chats opened after the save.
-//
-// Both probes are asserted individually. A test that counted frames in aggregate
-// would pass on a fan-out that sent one bridge two frames and the other none,
-// which is the shape a mistaken loop produces.
+// TestPushAgentIgnoreFiles_ReachesEveryLiveBridge asserts each probe individually: an
+// aggregate count passes a loop that sent one bridge two frames and the other none.
 func TestPushAgentIgnoreFiles_ReachesEveryLiveBridge(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
@@ -132,20 +117,15 @@ func TestPushAgentIgnoreFiles_ReachesEveryLiveBridge(t *testing.T) {
 	}
 }
 
-// TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable asserts the
-// ABSENCE of a frame rather than its contents, because both alternatives are worse
-// than silence: a list assembled from a document that could not be parsed is a
-// guess, and `{files: []}` CLEARS enforcement in KAS outright, so an unreadable
-// config.json would disable the floor for every open chat at once. Every live
-// bridge already holds a list KAS is enforcing, so leaving it alone is the only
-// answer that cannot lose ground.
+// TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable pins the absence of a
+// frame: `{files: []}` would clear enforcement in KAS for every open chat.
 func TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable(t *testing.T) {
 	logs := captureLogs(t)
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
 	h, probes := twoLiveBridges(t, dir)
 
-	// Corrupt AFTER the bridges are up, so each one is a bridge holding a list.
+	// Corrupt after the bridges are up, so each one already holds a list.
 	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
 	}
@@ -156,21 +136,14 @@ func TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable(t *testing
 			t.Errorf("chat %s was sent %v from an unparseable document; kiro-cli must keep enforcing the previous list", id, frames)
 		}
 	}
-	// The operator half: silence toward KAS must not be silence toward the log, or
-	// a broken document looks exactly like a document that changed nothing.
+	// Silence toward KAS must still be logged.
 	if !strings.Contains(logs.String(), "agent ignore files not pushed") {
 		t.Errorf("nothing recorded the refusal; the log is where an operator learns the document is broken: %s", logs.String())
 	}
 }
 
-// TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable is the other half
-// of the refusal: silence toward KAS must not be silence toward the READER either.
-// The log reaches an operator reading the container; the broadcast is what puts the
-// reason on the screen of whoever is about to wonder why their edit did nothing.
-//
-// The seam is the runtime's own broadcaster rather than a connected SSE client,
-// because the frame is what the runtime owes and the transport is the sse
-// library's to test.
+// TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable pins the broadcast that
+// shows the reader why their edit did nothing.
 func TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
@@ -205,13 +178,8 @@ func TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable(t *testing.T
 	}
 }
 
-// TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor pins the door's own
-// fail mode, which is the opposite of the fan-out's and deliberately so.
-//
-// A fresh connection has no prior value for KAS to keep, so sending nothing would
-// leave `.kiroignore` unenforced for that session's whole life. There is nothing
-// to lose ground against, so the floor is the safe answer here where silence is
-// the safe answer there.
+// TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor pins the spawn's fail mode,
+// deliberately the opposite of the fan-out's: a fresh connection has nothing to keep.
 func TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -239,13 +207,8 @@ func TestSpawnIgnoreFiles_AnEmptyDocumentStillCarriesTheFloor(t *testing.T) {
 	}
 }
 
-// TestStartOptsLiterals_AllCarryIgnoreFiles reads the SOURCE, because no
-// behavioural test can cover a door nobody has written yet. One resolver serves
-// five spawn sites (chat new, chat load, the utility session, both run bridges),
-// and a bridge that omits it enforces `.kiroignore` for nothing — silently, since
-// KAS answers a missing notification with no error and the chat works in every
-// other respect. A sixth site added later is exactly the regression this catches;
-// a fan-out or handshake test cannot.
+// TestStartOptsLiterals_AllCarryIgnoreFiles reads the SOURCE: a new spawn site omitting
+// IgnoreFiles fails silently, since KAS reports nothing for a missing notification.
 func TestStartOptsLiterals_AllCarryIgnoreFiles(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")
@@ -276,9 +239,7 @@ func TestStartOptsLiterals_AllCarryIgnoreFiles(t *testing.T) {
 			return true
 		})
 	}
-	// Five production spawn sites today. Asserted as a FLOOR rather than an exact
-	// count so adding a sixth is a green test plus a real assertion on it, while a
-	// scan that stopped finding them fails here instead of passing vacuously.
+	// A floor rather than an exact count, so a scan that stopped finding sites fails instead of passing vacuously.
 	if literals < 5 {
 		t.Fatalf("found %d marotte.StartOpts literals, want at least 5; the scan is not reaching the spawn sites", literals)
 	}

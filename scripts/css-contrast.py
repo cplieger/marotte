@@ -35,14 +35,10 @@ TOKENS = CSS_DIR / "01-tokens.css"
 ANSI_SHEET = CSS_DIR / "15-ansi.css"
 
 
-# ---------------------------------------------------------------- colour maths
-
-
 class Colour:
     """A colour in gamma-encoded sRGB (0..1 per channel) plus alpha."""
 
-    # Alphabetical because that is all `__slots__` is — a name set, with no
-    # ordering semantics. `__init__` below is where the channel order is stated.
+    # Alphabetical: `__slots__` is a name set; `__init__` states the channel order.
     __slots__ = ("a", "b", "clipped", "g", "r")
 
     def __init__(
@@ -129,7 +125,7 @@ def mix_oklch(c1: Colour, p1: float, c2: Colour) -> Colour:
     L1, C1, H1 = colour_to_oklch(c1)
     L2, C2, H2 = colour_to_oklch(c2)
     p2 = 1 - p1
-    # Powerless hue when chroma is zero (transparent black, greys).
+    # Powerless hue when chroma is zero (CSS Color 4).
     if C1 < 1e-6:
         H1 = H2
     if C2 < 1e-6:
@@ -162,8 +158,6 @@ def contrast(fg: Colour, bg: Colour) -> float:
     lo, hi = min(a, b), max(a, b)
     return (hi + 0.05) / (lo + 0.05)
 
-
-# ------------------------------------------------------------- token resolving
 
 NAMED = {
     "transparent": Colour(0, 0, 0, 0),
@@ -235,11 +229,8 @@ class Theme:
             )
 
         if low.startswith("over("):
-            # Not CSS. `over(A, B)` is alpha compositing — what a browser
-            # actually paints when a translucent A sits on an opaque B — which
-            # no CSS function expresses, and which color-mix() is NOT: a 50/50
-            # mix of a 15% wash and a surface is a different colour from that
-            # wash composited onto it.
+            # Not CSS: `over(A, B)` is alpha compositing, what a browser paints when translucent A
+            # sits on opaque B, which color-mix() is NOT.
             inner = func_body(e, "over")
             assert inner is not None
             fg, bg = (self.resolve(p, _depth + 1) for p in split_args(inner))
@@ -296,13 +287,9 @@ class Theme:
             nums = inner.replace("deg", " ").split()
             L = float(nums[0][:-1]) / 100 if nums[0].endswith("%") else float(nums[0])
             C = float(nums[1])
-            # `none` is a MISSING hue, and that is the only spelling that makes
-            # the hue powerless in a browser's color-mix() — an explicit `0deg`
-            # is a real hue and gets interpolated, which rotated every status
-            # colour mixed against the achromatic inks. Zero is the right value
-            # to carry here because `mix_oklch` re-derives a powerless hue from
-            # the other operand whenever chroma is zero, and a chroma-zero
-            # colour's hue cannot affect its own sRGB value either way.
+            # `none` is a MISSING hue, the only spelling that makes it powerless in color-mix(); an
+            # explicit `0deg` gets interpolated. Zero is safe because mix_oklch re-derives a
+            # powerless hue from the other operand whenever chroma is zero.
             H = 0.0
             if len(nums) > 2 and nums[2] != "none":
                 H = float(nums[2])
@@ -460,9 +447,6 @@ def parse_themes() -> tuple[Theme, Theme]:
     return Theme(dark, "dark"), Theme(light, "light")
 
 
-# ------------------------------------------------------------------- reporting
-
-
 def fmt(v: float) -> str:
     return f"{v:.3f}"
 
@@ -485,13 +469,11 @@ def show_ramp(themes: list[Theme], rungs: list[str]) -> None:
         print()
 
 
-# Where a well sits: the turn body (prose `pre`, `.turn-raw`) and a box (a tool
-# card's details, a run step). The page and the band never host one.
+# Where a well sits: the turn body and a box. The page and the band never host one.
 WELL_HOSTS = ("--c-turn-body", "--c-bg-secondary")
 
-# The ramp's page->card half-step in dark is 4.0 oklch-L points; a well must drop at
-# least that from its host. WCAG cannot floor it: below the L19 body no shadow
-# reaches 1.15:1, so the ratio is reported, not gated.
+# The dark ramp's page-to-card half-step is 4.0 oklch-L; a well must drop at least that.
+# No shadow reaches 1.15:1 below the body, so the ratio is reported, not gated.
 WELL_MIN_DROP = 4.0
 
 
@@ -514,13 +496,9 @@ def show_well(themes: list[Theme]) -> None:
         print()
 
 
-# THE INK RAMP: every text ink is authored against the hovered box, the strongest
-# surface text sits on, so one table over every (ink, surface) pair is the whole
-# contract (01-tokens.css "SEEDS: ink"). Three surfaces are OUTSIDE the set and
-# host only primary and secondary: the elevated press fill, the HOVERED band and
-# the selected fill. They are printed too, floored for the two inks they host and
-# reported bare for the rest, so a hint or a status ink landing on one reads as a
-# number rather than as a gap in the table.
+# Every text ink is authored against the hovered box, so one (ink, surface) table is the
+# contract. The press fill, HOVERED band and selected fill host only primary and
+# secondary: floored for those two, reported bare for the rest.
 INK_TEXT: list[str] = [
     "--c-text-secondary",
     "--c-text-tertiary",
@@ -633,12 +611,9 @@ def show_pairs(
         print()
 
 
-# The inks that sit ON a selected fill. `--c-selected-fg` reaches only the
-# descendants that INHERIT it, and a row's metadata and status glyphs declare
-# their own colour, so each needs an on-selected variant. Two constructions:
-# muted metadata mixes toward the FILL (no hue to protect, stays on the row's
-# own axis), a status hue mixes toward the row's INK (lightens on dark, darkens
-# on light, and `color-mix(in oklch)` leaves H alone so the hue survives).
+# Inks ON a selected fill: metadata and status glyphs declare their own colour, so each
+# needs an on-selected variant. Muted metadata mixes toward the FILL; a status hue mixes
+# toward the row's INK, which `color-mix(in oklch)` does without moving H.
 SELECTED_INKS: list[tuple[str, str, str]] = [
     # (token, the colour it is mixed with, the direction label)
     ("--c-selected-muted-fg", "var(--c-selected-bg)", "toward fill"),
@@ -648,8 +623,7 @@ SELECTED_INKS: list[tuple[str, str, str]] = [
     ("--c-selected-blue-fg", "var(--c-blue)", "toward ink"),
 ]
 
-# The fill a selected row can be in. The floor is resting AND hover: hover is
-# the state a pointer RESTS in. Press is transient and reported, not held.
+# The floor is resting AND hover (where a pointer rests); press is reported, not held.
 SELECTED_FILLS = ["--c-selected-bg", "--c-selected-bg-hover", "--c-selected-bg-press"]
 HELD_FILLS = SELECTED_FILLS[:2]
 
@@ -750,11 +724,8 @@ def show_selected(themes: list[Theme]) -> None:
         print()
 
 
-# Elevation. A floating surface separates from the one below it by a shadow, and
-# a BLACK shadow can only darken — against a near-black base there is nothing
-# left to darken, so the layer measures ~1.0:1 and the surface reads flat. An
-# ambient layer derived off the INK inverts per theme (a rim on dark, a hairline
-# on light) and is what carries the separation there.
+# Elevation: a black shadow cannot darken a near-black base (~1.0:1), so an ambient layer
+# derived off the INK carries the separation (a rim on dark, a hairline on light).
 SHADOW_SITES: list[tuple[str, str]] = [
     # (label, the shadow colour as authored)
     ("uip-toast", "color-mix(in srgb, #000 25%, transparent)"),
@@ -772,8 +743,7 @@ SHADOW_SITES: list[tuple[str, str]] = [
     ("chat-find (outer)", "rgb(0 0 0 / 28%)"),
 ]
 
-# Candidates for the ambient layer, so the choice is made on numbers. The border
-# wash is the incumbent: it already inverts per theme and needs no new palette.
+# Candidates for the ambient layer; the border wash already inverts per theme.
 AMBIENT_CANDIDATES = [
     "--c-border",
     "--c-hover",
@@ -781,23 +751,15 @@ AMBIENT_CANDIDATES = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# The tab activity dot (12-tabs.css / 70-selection.css): a graphical object, so
-# its floor is WCAG 1.4.11's 3:1. One ink paints it on all five tab-row fills,
-# because selection belongs to the ROW and never to the status ink. So the FLOOR
-# is the two unselected fills and the three selected rungs are REPORTED: holding
-# them would fail every light-theme state, the price of one hue per status.
-# ---------------------------------------------------------------------------
+# The tab activity dot (12-tabs.css / 70-selection.css). A status dot is a graphic, so
+# its floor is WCAG 1.4.11's 3:1. One ink paints it on all five row fills, because
+# selection belongs to the ROW, never to the status ink. So the floor is the two
+# unselected fills and the selected rungs are REPORTED.
 
-# The fills a tab row can present. Held = the two UNSELECTED fills; every
-# selected rung is reported rather than gated, for the reason stated at the
-# section header above.
+# The fills a tab row can present; only the two UNSELECTED ones are held.
 DOT_FILLS: list[tuple[str, str]] = [
     ("resting", "--c-bg-secondary"),
-    # The TAB STRIP's own hover, which is `--c-hover-select` rather than the
-    # ladder's `--c-hover`: a tab-shaped control takes the tinted rung
-    # (01-tokens.css), so modelling the achromatic wash here would gate the dot
-    # against a fill no tab row ever paints.
+    # The tab strip's hover is `--c-hover-select`, the tinted rung a tab-shaped control takes.
     ("hover", "over(var(--c-hover-select), var(--c-bg-secondary))"),
 ]
 DOT_SELECTED_FILLS: list[tuple[str, str]] = [
@@ -807,38 +769,11 @@ DOT_SELECTED_FILLS: list[tuple[str, str]] = [
 ]
 DOT_HELD = ["resting", "hover"]
 
-# (state, ink, channels). ONE ink per state, on every fill: there is no
-# on-selected column any more, because 70-selection.css declares no rule that
-# re-points --dot-color on a selected row (see the section header above).
-# `channels` is the state's NON-COLOUR identity, transcribed from the CSS:
-#
-#   fill     hollow | solid | donut   (donut only under prefers-reduced-motion)
-#   surround none | ring               (a static hard 2px ring)
-#   motion   still | animated          (the glow beat + travelling wave)
-#   shape    circle | diamond | square
-#   band     the ring's width in px, or "" for a state with no ring to measure
-#
-# `shape: circle` below is true of a CHAT row's dot and false of a RUN row's: a run
-# sub-tab's own activity dot takes the workflow mark's rounded square, because the
-# silhouette names the subject rather than one element (12-tabs.css). It is the same
-# state vocabulary either way, so every state's shape moves together and no
-# separation WITHIN this table changes — and it adds no pairwise population, for the
-# two reasons at the workflow mark's own section below.
-#
-# Transcribed rather than parsed, so it is a claim this script CHECKS rather
-# than derives: the pairwise test below fails if any two states that can appear
-# in the same strip are distinguishable by hue alone (WCAG 1.4.1), and it runs
-# twice — once with motion available and once with it removed, because
-# 40-a11y.css zeroes every animation under prefers-reduced-motion and the
-# vocabulary has to survive that.
-#
-# `band` is the axis the workflow mark below made necessary, and it is not
-# cosmetic: that mark is a ring in EVERY state, so the four axes above cannot say
-# what separates two of its states at all — transcribed without it, its `waiting`
-# resolved to the activity dot's `waiting` tuple exactly and this script reported
-# PASS over a strip where the two were byte-identical. A band is also the one axis
-# whose difference can be too small to see, so the pairwise check below gates its
-# RATIO rather than its inequality; see BAND_RATIO_FLOOR.
+# (state, ink, channels). `channels` is the state's NON-COLOUR identity transcribed from
+# the CSS (fill, surround, motion, shape, band), so it is CHECKED, not derived: the
+# pairwise test fails if two co-present states differ by hue alone (WCAG 1.4.1), run
+# with and without motion. `band` is needed because the workflow mark is a ring in every
+# state; its pairs gate on BAND_RATIO_FLOOR, not inequality.
 DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
     (
         "idle",
@@ -906,8 +841,7 @@ DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
             "band": "",
         },
     ),
-    # Editor tabs only. It can never share a strip position with a chat state,
-    # so the pairwise check excludes it rather than demanding a channel for it.
+    # Editor tabs only: never in a chat strip position, so the pairwise check excludes it.
     (
         "dirty",
         "--c-accent",
@@ -921,32 +855,10 @@ DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
     ),
 ]
 
-# ---------------------------------------------------------------------------
-# The WORKFLOW MARK (12-tabs.css `.tab-run-dot`): the SECOND mark in a chat row's
-# leading cluster, 8px right of the dot above.
-#
-# It is in this section rather than a new one because it is the same vocabulary:
-# the same four --c-dot-* inks through the same --dot-color indirection, so the
-# ratio table above already measures its ink — contrast is per pixel, and a band
-# has less AREA than a disc rather than a different ratio. What it does NOT
-# inherit is the channel budget, and that is what has to be checked here: the two
-# marks are ADJACENT and permanently co-present, so a pair drawn from one element
-# each is exactly as confusable as a pair drawn from one element's own states.
-# Both populations therefore go through one pairwise pass.
-#
-# A run's OWN tab row carries this mark on its activity dot instead, and it is its
-# own cluster rather than a member of this one (RUN_ROW_MEMBERS below). Such a row
-# has no `.tab-run-dot` at all (tabs.ts appends one for the chat kind only), so the
-# mark and that dot are never co-present in a row and a pair drawn from both would
-# be a pair no reader can see. Merging the two into ONE population was the shape
-# that could not work: the row reuses several `dot:` rows verbatim, so the same-name
-# pairs would collide trivially against themselves.
-#
-# A ring in every state, so `fill` is spent before it starts and `band` is the
-# axis it separates its own states on. Its SILHOUETTE is a rounded square, which
-# is the one channel that answers every cross-mark pair at once — including the
-# reduced-motion pair, where a circular mark provably could not (the arithmetic is
-# at the mark's block header in 12-tabs.css).
+# The WORKFLOW MARK (12-tabs.css `.tab-run-dot`), adjacent to and always co-present with
+# the dot above, so both go through one pairwise pass. It shares the dot's inks; what it
+# must not share is a channel signature. A ring in every state, it separates on `band`,
+# and its rounded-square silhouette answers every cross-mark pair, reduced motion included.
 RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [
     (
         "working",
@@ -983,35 +895,14 @@ RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [
     ),
 ]
 
-# A RUN's OWN ROW, the second cluster, and it is a MIX of the two tables above rather
-# than a table of its own: the three states the mark HAS are the mark's, because that
-# mark and this dot report ONE run and the strip may not answer with two looks, and
-# the two OUTCOMES are the dot's, because the mark withdraws when a run ends and has
-# no vocabulary for one. Naming the MEMBERS rather than copying their channels is
-# what keeps this from becoming a third transcription to keep in step.
-#
-# So the channels are re-spent rather than reduced, and the pairwise pass is where
-# that is checked: FILL says finished-or-not here (three rings against two discs)
-# where on a chat row it separates the wants-you pair, and BAND does the wants-you
-# work instead, at the mark's own 1px/2px. Both readings are internally consistent,
-# which is the whole reason the two rows are two populations.
-#
-# `idle` is absent because no producer can supply it here (run-dots.ts answers
-# "" | working | waiting | input | done | failed), and `dirty` because an editor tab
-# is not a run. Every non-`failed` member is drawn as the mark's SQUARE by the
-# kind-scoped silhouette rule, so the shapes are substituted below rather than read
-# from the dot's rows — uniformly, which is why it changes no pair's verdict and is
-# still worth doing: a matrix that prints `circle` for a row full of squares is the
-# drift the transcription checks exist to catch.
+# A RUN's OWN ROW, its own population (never co-present with `.tab-run-dot`), named by
+# MEMBER rather than re-transcribed: the mark's three live states plus the dot's two
+# outcomes. FILL says finished-or-not here and BAND does the wants-you work. Every
+# non-`failed` member renders square, so the shapes are substituted.
 RUN_ROW_MEMBERS = ["run:working", "run:waiting", "run:input", "dot:done", "dot:failed"]
 
-# NO ALIASES, and the empty list is the finding. `waiting` and `input` share ONE
-# ink on purpose — both mean "action required", which is the single thing
-# web-terminal-kiro's --status-input says — and they separate on FILL: hollow disc
-# in a ring against solid disc in a ring. That is exactly what the pairwise check
-# below demands, so the pair needs no exemption, and an entry here is a state the
-# check has been told not to look at. It was declared here once, when the pair
-# shared one hue AND one visual; the fill split is what closed it.
+# No aliases: `waiting` and `input` share one ink ("action required") and separate on
+# FILL, which the pairwise check verifies. An entry here is a state the check ignores.
 DOT_ALIASES: list[tuple[str, str]] = []
 
 # `dirty` is an editor-tab state; every other member is a chat state.
@@ -1019,33 +910,21 @@ DOT_CHAT_ONLY = "dirty"
 
 DOT_FLOOR = 3.0
 
-# Under prefers-reduced-motion an animated state loses its motion and gains a
-# hole, so its channels are rewritten before the second pairwise pass. It does
-# NOT gain a ring: the ring is the wants-you marker, and `working` borrowing it
-# would put a false signal on the one state that needs nothing from the reader.
+# Under reduced motion an animated state loses motion and gains a hole, NOT a ring: the
+# ring is the wants-you marker.
 REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "motion": "still", "band": "2.2"}
 
-# The workflow mark's substitution is a DIFFERENT one, because its `working` is
-# already hollow: it has no fill left to spend, so what replaces the motion is the
-# channel it already reads, at the heaviest band in the cluster.
+# The mark's `working` is already hollow, so its motion is replaced by the heaviest band.
 RUN_REDUCED_MOTION_SUBSTITUTION = {"motion": "still", "band": "3"}
 
-# Two states separated ONLY by band width have to clear this ratio. The exec view's
-# state column is the precedent and the source of the number: it separates an
-# in-flight ring from a hollow `pending` one at 2px against a declared 0.0938rem
-# that Chromium snaps to 1px. Inequality alone is not enough on this axis — a
-# 1.5px/2px pair is a third of a pixel of ink at 8px, which this script can measure
-# and a reader cannot, and it is the shape that shipped once.
+# Band-only separations must clear this ratio (the exec view's 2px vs Chromium's 1px snap
+# is the precedent): a 1.5px/2px pair is measurable here and invisible to a reader.
 BAND_RATIO_FLOOR = 2.0
 
-# The sibling app's own declaration for each state, and the marotte token that
-# answers to it. web-terminal-kiro themes @cplieger/web-terminal-ui's --status-*
-# family in its static-src/app.ts, so THESE are the reference — not the library
-# defaults, which it overrides on every member and which an earlier pass aligned to
-# by mistake. Its values are carried as it writes them, hex and oklch both, so the
-# hue and the value are compared against the source rather than against a rounding
-# of it. The claim is the VALUE where the value is in reach and the HUE where it is
-# not; `show_dot_sizing` below prints which is which and why.
+# The sibling app's own --status-* declaration per state (web-terminal-kiro's
+# static-src/app.ts, not the library defaults it overrides) and the marotte token
+# answering it, carried as written. The claim is the VALUE where in reach and the HUE
+# where not; `show_dot_sizing` prints which.
 DOT_SOURCE_HUES = [
     ("working", "--c-dot-working", "--status-working", "#c6a0ff"),
     ("input", "--c-dot-input", "--status-input", "oklch(78% 0.15 95deg)"),
@@ -1053,21 +932,15 @@ DOT_SOURCE_HUES = [
     ("done", "--c-dot-done", "--status-done", "oklch(78% 0.15 150deg)"),
 ]
 
-# The sweep's search space when a source value misses this app's floor: every
-# in-gamut L and C at the source's own hue. Deliberately WIDER than the theme's own
-# status-seed band, which is what the retired orange sweep searched — that band
-# answered "is this hue at home in this palette", and the question here is the
-# opposite one, "how close to the sibling app's value can this get and still be
-# visible". Ranking is nearest-L first, so a value stays as near the source as the
+# The sweep's space when a source value misses the floor: every in-gamut L and C at the
+# source's hue, ranked nearest-L first, so a value stays as close to the source as
 # contrast allows.
 DOT_SWEEP_LIGHTNESS = range(30, 93)
 DOT_SWEEP_CHROMA = (0.05, 0.28, 0.005)
 
-# The base favicon's own artwork under the attention badge. static/favicon.svg is
-# an opaque 48-unit rounded rect filled FLAT, so the badge is never seen against a
-# theme surface, which is what decides that ONE icon serves both themes. The
-# backdrop is READ OUT OF THE SHIPPED ASSET because no theme token holds the
-# icon's violet, so a literal here would be a second source of truth.
+# The favicon is an opaque flat-filled rect, so the badge is never seen against a theme
+# surface and one icon serves both themes. The backdrop is read from the shipped asset:
+# no token holds its brand violet.
 FAVICON_SVG = Path(__file__).resolve().parent.parent / "static" / "favicon.svg"
 FAVICON_CUES = [
     ("input", "--c-dot-input"),
@@ -1205,8 +1078,7 @@ def show_dot(themes: list[Theme]) -> None:
                 if ca == cb:
                     collisions.append((a, b))
                     continue
-                # A band-ONLY difference is the one this axis can report as a
-                # separation and a reader cannot see, so it is gated on the ratio.
+                # A band-ONLY difference is a separation a reader may not see, so it is gated on the ratio.
                 differing = [k for k in ca if ca[k] != cb[k]]
                 if differing != ["band"] or "" in (ca["band"], cb["band"]):
                     continue
@@ -1224,16 +1096,12 @@ def show_dot(themes: list[Theme]) -> None:
             )
         return "PASS  every pair differs on a non-colour channel"
 
-    # A CHAT row is ONE population labelled by the element each state is painted on,
-    # because the two marks share a ROW rather than a position: a reader comparing
-    # them is looking at both at once, so a cross-element pair is exactly as
+    # A CHAT row is ONE population: the two marks share a row, so a cross-element pair is as
     # confusable as two states of one element.
     chat = [(f"dot:{s}", ch, False) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
     chat += [(f"run:{s}", ch, True) for s, _ink, ch in RUN_MARK_STATES]
 
-    # A RUN row is its own, assembled by NAME from the two tables. The silhouette is
-    # substituted rather than transcribed: the kind-scoped rule squares every state
-    # but `failed`, which keeps its own rotated one.
+    # A RUN row is assembled by NAME; the kind-scoped rule squares every state but `failed`.
     channels = {f"dot:{s}": ch for s, _ink, ch in DOT_STATES}
     channels.update({f"run:{s}": ch for s, _ink, ch in RUN_MARK_STATES})
     run_row = []
@@ -1446,10 +1314,8 @@ def show_favicon_badge(themes: list[Theme]) -> None:
             cells.append(f"{c.hex()} {fmt(contrast(c, backdrop))}:1")
             if c.clipped:
                 clipped.append(th.name)
-        # An out-of-gamut ink is a real defect HERE and nowhere else in this
-        # script: a browser reduces chroma to reach sRGB while the generator
-        # clamps per channel, so the tab dot and the tab icon would carry two
-        # different colours from one declaration.
+        # An out-of-gamut ink is a real defect here: a browser reduces chroma while the generator
+        # clamps per channel, so the tab dot and icon would differ.
         verdict = "in sRGB" if not clipped else f"FAIL clipped in {', '.join(clipped)}"
         print(
             f"  {cue:<8} {token:<12} "
@@ -1513,43 +1379,20 @@ def show_shadow(themes: list[Theme]) -> None:
         print()
 
 
-# ------------------------------------------------------------- the ANSI palette
-#
-# ONE surface, established by tracing the call sites rather than assumed:
-# tool-card.ts and messages-tools.ts both write into `.tool-output pre`, which
-# paints nothing; the nearest painting ancestor is `.tool-call` (14-tools.css) at
-# --c-bg-secondary. It is OPAQUE, so it needs no compositing.
-#
-# There is no second surface. `.agent-term-pane` at --c-term-bg was one until
-# agent command output moved into the card that spawned it and agent-terminal.ts
-# was deleted; the live shell panel is not a replacement, because
-# web-terminal-engine paints each ANSI run inline from server-resolved RGB and
-# reads none of these tokens. Measuring --c-term-bg anyway was a stricter check
-# than the app needs, which is a different thing from a correct one: it asserts a
-# floor against a surface no ANSI class can land on, so a future palette could be
-# blocked by a constraint nothing enforces. --c-bg-primary and --c-well were
-# measured here even earlier and were wrong in the other direction — the page base
-# is two ramp rungs below where ANSI renders, and --c-well is scoped inside the
-# assistant prose bubble, which a tool card is a SIBLING of.
+# The ANSI palette's ONE surface: tool-card.ts and messages-tools.ts write into
+# `.tool-output pre`, which paints nothing, so it is `.tool-call`'s opaque
+# --c-bg-secondary. The live shell panel paints server-resolved RGB and reads none of
+# these tokens.
 ANSI_SURFACES = ("--c-bg-secondary",)
 
-# The ink that container sets. A bare `ESC[41m` arrives with a fill and no colour
-# of its own, so the container's ink is what lands on it. --c-term-fg sat here as
-# the live terminal's default ink and left with --c-term-bg for the same reason;
-# it was never binding either way (it is lighter than every legal dark fill and
-# darker than every legal light one), so the derived fills are unchanged.
+# A bare `ESC[41m` brings a fill and no colour, so the container's ink lands on it.
 ANSI_INKS = {"--c-text-secondary": "--c-bg-secondary"}
 
 ANSI_FG_FLOOR = 4.5
 ANSI_PAIR_FLOOR = 4.5
 
-# The 16 ANSI codes, spelled out rather than matched by shape. A `.ansi-*-fg` /
-# `-bg` pattern already admitted a 17th entry once: `.ansi-inverse-fg` / `-bg` are
-# fallbacks for the DEFAULT colour, not a code a program can select, and they
-# arrived here as a palette entry measuring --c-bg-secondary against itself at
-# 1.000:1. Renaming them to -ink/-fill fixed that instance; an alternation is what
-# makes the next one impossible. The count assertions in ansi-palette.node.test.ts keep
-# this list honest in the other direction.
+# The 16 ANSI codes, spelled out: a `.ansi-*-fg` pattern would admit default-colour
+# fallbacks as a 17th code. ansi-palette.node.test.ts asserts the count the other way.
 ANSI_CODES = (
     "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
     "bright-black", "bright-red", "bright-green", "bright-yellow",
@@ -1639,14 +1482,9 @@ def ansi_rows(
                         ANSI_PAIR_FLOOR,
                     )
                 )
-        # A fill against the surface it marks. RECORDED, NOT GATED, and the
-        # reason is arithmetic: carrying the darkest ink at 4.5:1 pins a fill
-        # PAST --c-bg-secondary's own luminance, so the fills land between
-        # 1.00:1 and 1.41:1 against the surface. 3:1 here and 4.5:1 above cannot
-        # both hold unless the inks flatten toward the surface's own extreme,
-        # and the conflict survives even at a 3:1 pairing floor. Gating it would
-        # put 32 permanent failures in this report for a floor no palette that
-        # keeps its hues can reach.
+        # Fill vs surface is RECORDED, NOT GATED: carrying the darkest ink at 4.5:1 pins a fill
+        # past the surface's own luminance (1.00:1 to 1.41:1), so a 3:1 gate is unreachable for
+        # any palette that keeps its hues.
         for bname, bexpr in bgs.items():
             for s in ANSI_SURFACES:
                 b, surf = th.resolve(bexpr), th.flat(s)
@@ -1797,10 +1635,8 @@ def main() -> int:
                 "--c-bg-secondary",
                 1.25,
             ),
-            # No `selected-border vs selected-bg` row: the selected treatment has
-            # no edge channel (70-selection.css). What replaced it for the six
-            # surfaces that carry a border of their own is the resting edge, which
-            # the `border wash on the selected fill` row below reports.
+            # No `selected-border vs selected-bg` row: the selected treatment has no edge channel
+            # (70-selection.css); the resting-edge row below reports what replaced it.
             (
                 "border wash on the selected fill",
                 "color-mix(in oklch, var(--c-text-primary) 16%, var(--c-selected-bg))",
@@ -1870,10 +1706,8 @@ def main() -> int:
                 if base not in th.decls:
                     continue
                 bg = th.flat(base)
-                # Two rungs per line: the achromatic ladder, then the TINTED one a
-                # tab-shaped control takes. Both are reported over every rung
-                # because the step is what 01-tokens.css sizes the tinted alphas
-                # against, so a retune shows up here as a moved pair.
+                # Both the achromatic and the TINTED ladder, over every rung: 01-tokens.css sizes the
+                # tinted alphas against the step.
                 for pair in (
                     ("--c-hover", "--c-press"),
                     ("--c-hover-select", "--c-press-select"),
@@ -1899,20 +1733,9 @@ def main() -> int:
             "--c-text-aside",
         ):
             for s in surfaces:
-                # --c-bg-elevated is a press/hover fill that hosts primary and
-                # secondary only (the INK RAMP section names the three two-level
-                # surfaces), so the hint ink on it is a rule violation rather than
-                # a contrast result, and a FAIL here would be a permanent failure
-                # for a combination the app does not contain. The rule is asserted
-                # where it can be checked, over the stylesheets:
-                # css-tokens.node.test.ts, "keeps the hint ink off the elevated
-                # fill". Every other rung, the band included, is a real floor now
-                # that the ramp is authored against the hovered box.
-                #
-                # NEITHER gate sees an `opacity`, which multiplies whatever is
-                # measured here. That hole is covered by a third check in the same
-                # file, "never dims a text ink with opacity"; a rendered sweep is
-                # the only thing that catches an ancestor-supplied surface.
+                # --c-bg-elevated hosts primary and secondary only, so the hint ink there is a rule
+                # violation, asserted over the stylesheets in css-tokens.node.test.ts. Neither gate sees
+                # an `opacity`; the same file's "never dims a text ink with opacity" covers that.
                 floor = (
                     None if t == "--c-text-tertiary" and s == "--c-bg-elevated" else 4.5
                 )
@@ -1924,8 +1747,7 @@ def main() -> int:
                         floor,
                     )
                 )
-        # A control's label sits on its own HOVER wash more often than on the top
-        # ramp rung, now that hover is a wash rather than a jump to that rung.
+        # A control's label sits on its own HOVER wash more often than on the top rung.
         for t in ("--c-text-control", "--c-text-primary"):
             for s in ("--c-bg-primary", "--c-bg-secondary"):
                 expr = f"over(var(--c-hover), var({s}))"
@@ -1937,9 +1759,7 @@ def main() -> int:
                         4.5,
                     )
                 )
-        # And on the TINTED rung, because a tab row's own label sits there: `.tab`
-        # declares --c-text-primary and the two segmented bars raise their label to
-        # it on hover, so this is the label of every tab-shaped control in the app.
+        # And on the TINTED rung, where every tab-shaped control's label sits.
         for t in ("--c-text-control", "--c-text-primary"):
             text_pairs.append(
                 (
@@ -1957,21 +1777,12 @@ def main() -> int:
             ("red on bg-primary", "--c-red", "--c-bg-primary", 4.5),
             ("yellow on bg-primary", "--c-yellow", "--c-bg-primary", 4.5),
             ("danger on bg-primary", "--c-danger", "--c-bg-primary", 4.5),
-            # The one status ink that LEAVES the tab strip: the turn header dot
-            # and the timeline rail marker both paint `running` with it
-            # (29-turns.css), and the header's own band is --c-bg-tertiary, which
-            # no tab row ever presents — so `dot` cannot measure it and this is
-            # its home. 3.0 because it is an 8px graphic. The rail's own surface,
-            # --c-bg-primary, is 11px text at 4.5:1 and is not measured anywhere
-            # yet.
+            # The one status ink that LEAVES the tab strip: 29-turns.css paints `running` with it on
+            # --c-bg-tertiary, which no tab row presents. 3.0 because it is an 8px graphic.
             ("dot-working on bg-tertiary", "--c-dot-working", "--c-bg-tertiary", 3.0),
         ]
-        # A status hue is INK as often as it is a fill — a red row label, an
-        # accent link inside a card, a yellow badge — and until this block
-        # existed each one was only ever measured against the PAGE, which is the
-        # one surface they all pass on. 3:1 rather than 4.5:1 because most of
-        # these land on a glyph or a badge; a hue used for small body text needs
-        # the stricter floor and its own row above.
+        # Status hues are ink as often as fill, so each is measured off the page too. 3:1 because
+        # most land on a glyph or badge; small body text needs its own 4.5:1 row above.
         for hue in (
             "--c-green",
             "--c-red",
@@ -1981,10 +1792,7 @@ def main() -> int:
             "--c-warning",
         ):
             for s in ("--c-bg-secondary", "--c-bg-tertiary", "--c-bg-elevated"):
-                # Same reasoning as the hint ink above for the elevated fill: it
-                # is a two-level surface (INK RAMP), and the only element in the
-                # app with an --c-bg-elevated fill is .pill:active, which carries
-                # the primary ink. A floor here would be standing failures.
+                # --c-bg-elevated is two-level (only .pill:active, primary ink), as for the hint ink above.
                 floor = None if s == "--c-bg-elevated" else 3.0
                 text_pairs.append(
                     (
@@ -1994,10 +1802,7 @@ def main() -> int:
                         floor,
                     )
                 )
-        # The focus ring, against every surface it can be drawn over. 35 outlines
-        # in the app and every one is the accent, so one token answers for all of
-        # them — but it is a GRAPHIC under 1.4.11, so it has a floor and nothing
-        # was checking it.
+        # The focus ring (always the accent) is a 1.4.11 graphic over every surface it can cross.
         for s in surfaces:
             text_pairs.append(
                 (f"focus ring on {s.replace('--c-bg-', '')}", "--c-accent", s, 3.0)

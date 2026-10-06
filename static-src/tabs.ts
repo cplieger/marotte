@@ -1,65 +1,17 @@
-// ---------------------------------------------------------------------------
-// tabs.ts — the tab strip as a PROJECTION of the server-owned tab set.
-//
-// The tab set is one server-owned collection (internal/tabs), and this module
-// renders it. It computes no membership, derives no order, and persists nothing:
-// a gesture DISPATCHES a mutation and the `tabs_changed` frame that follows is
-// what paints. That is the whole of the design, and everything below is a
-// consequence of it.
-//
-// THREE OWNERS, and the split is what stops any of them drifting:
-//
-//   - `TabSubject` is the SHARED half (internal/marotte/domain_tabs.go): id,
-//     kind, ref, parent, pinned, owns. Persisted, transmitted, identical on every
-//     connected device.
-//   - `TabViewSpec` is the LOCAL half (tab-view.ts), produced from a subject by
-//     the total factory in tab-materialize.ts: the view selector, the typed
-//     route, the activation and teardown hooks, the icon. Never persisted.
-//   - `tabs-sync.ts` decides WHICH frames reach here, in what order, and when a
-//     frame means "you have fallen behind, ask again". Its `TabsTarget` is the
-//     seam this file implements, and the three version rules, the serialized
-//     queue, the pending-op machine and `permute` all live there rather than
-//     here.
-//
-// WHAT WENT, and why none of it can come back:
-//
-//   - `reconcileRemoteTabs` and the persistence subscriber. Membership arrived as
-//     a whole-list document, so the client had to read "absent from the incoming
-//     list" as "closed elsewhere" — which closed tabs nobody closed, on the live
-//     instance, on 2026-08-25. Removal is now STATED per id in `removed_ids`, and
-//     `order` is a permutation that never implies closure.
-//   - `editorTabID` / `isEditorTabID` and the `__…__` singleton ids. Ids are
-//     opaque and server-minted, so nothing branches on a prefix; `(kind, ref)`
-//     names a subject and `tabIdFor` is the one lookup from one to the other.
-//   - `inArrangement`, `getSavedTabState`, `restorableSingletonIDs`. There is no
-//     local arrangement to publish, no snapshot to protect from a boot-time
-//     overwrite, and no availability filter — a tab the server holds is open, and
-//     a feature that has gone away is the server's problem to stop opening.
-//   - `promoteTab`. `TabSubject.Parent` is set at open and never reassigned,
-//     which is what makes a parent cycle unrepresentable; there is deliberately
-//     no reparent command to spend that property on.
-//
-// WHAT IS STILL LOCAL, and legitimately so: the ACTIVE tab (a phone must not
-// move the desktop's cursor — device-view.ts), the activity DOT (live state; a
-// dot restored from a previous process would be a claim about a turn that ended
-// before the page loaded), the NAME override (six run sites and two chat sites
-// know a better label than a subject can carry), the pinned-ahead-of-unpinned
-// PARTITION (a rendering rule over a stored order), and the DOM.
-// ---------------------------------------------------------------------------
+// The tab strip as a PROJECTION of the server-owned tab set (internal/tabs): no membership, no
+// derived order, no persistence; a gesture DISPATCHES and the `tabs_changed` frame paints.
+// `TabSubject` is the shared half, `TabViewSpec` (tab-view.ts, via tab-materialize.ts) the local
+// half, and `tabs-sync.ts` decides which frames arrive (this file implements its `TabsTarget`).
+// Removal is STATED per id in `removed_ids`; `order` never implies closure. Ids are opaque.
+// Local by design: the ACTIVE tab (device-view.ts), the live DOT, the NAME override, the
+// pinned-first PARTITION, and the DOM.
 
 import { pushRoute } from "./router.js";
 import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-path.js";
-// The nine tab kinds have ONE definition and it is the Go const block in
-// internal/marotte/domain_tabs.go, emitted here by wire-codegen as a registered
-// enum. It was a hand-written union derived from TAB_VIEWS' keys, which is two
-// enumerations of one vocabulary in two languages with nothing holding them
-// together — and the client's per-kind handling has to be TOTAL, so an unknown
-// kind reaching it is exactly the failure the type exists to prevent.
+// The kinds' one definition is the Go const block (internal/marotte/domain_tabs.go), emitted as a
+// registered enum, so per-kind handling is TOTAL.
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
-// The per-kind LOCAL tables and the view contract live in tab-view.ts, which is
-// DOM-free so the factory that produces a spec from a TabSubject can reach them
-// without reaching this module's document. This file owns the STORE and the DOM
-// that paints from them.
+// The DOM-free per-kind tables live in tab-view.ts; this file owns the STORE and the DOM.
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
 import { viewStale } from "./view-freshness.js";
@@ -117,6 +69,7 @@ import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
+import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
 import { getActiveId, getSessions, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
@@ -134,36 +87,17 @@ export type { TabKind };
  *  rest of the view contract. */
 export type { TabDotStatus };
 
-/** One row of the strip: the shared half, the local half, and the two things
- *  this device is allowed to say about a tab on its own.
- *
- *  `subject` is the truth and is replaced wholesale by every frame that carries
- *  it, so nothing here can disagree with the collection. `spec` is a SNAPSHOT
- *  taken at materialization — safe because `owns` is immutable after open and
- *  `parentId` is read by nothing here (every reader takes the parent from the
- *  subject, which `reparent_tab` may reassign), which is exactly why `pinned` is
- *  not among them and is read from the subject instead.
- *
- *  `name`, `dotStatus` and `runDot` are the three mutable local fields, and
- *  each has a reason. A name because six run sites and two chat sites
- *  legitimately know a better label than a subject can carry (see
- *  tab-materialize.ts's header). A dot because it is LIVE state derived from a
- *  chat's or a run's current condition, which no persisted record may claim —
- *  parked on the row so a rebuild repaints it (the per-row store effect
- *  rewrites only on its own inputs, and a DOM rebuild is not one of them).
- *
- *  The hover tooltip carries no field of its own: it IS `name`, so a row that
- *  can render its title can also state it in full (`paintTooltip`). */
+/** One row: the shared half, the local half, and the device-local facts. `subject` is replaced
+ *  wholesale by each frame. `spec` is a SNAPSHOT (`owns` is immutable; the parent and `pinned` are
+ *  read from the subject). `name`, `dotStatus` and `runDot` are the mutable local fields; the dot is
+ *  parked here so a rebuild repaints it. The tooltip IS `name`. */
 interface TabRow {
   subject: TabSubject;
   spec: TabViewSpec;
   name: string;
   dotStatus?: TabDotStatus | undefined;
-  /** When the dot's OUTCOME became true, epoch millis (`ChatHeader.updated_at`).
-   *  A SIBLING field rather than a widening of `dotStatus` into an object:
-   *  `recordDotStatus` decides whether the attention surfaces move by comparing
-   *  the state before against the state after, and an object comparison would
-   *  differ on every write. */
+  /** When the dot's OUTCOME became true (`ChatHeader.updated_at`). A sibling field, because
+   *  `recordDotStatus` compares states by value. */
   dotSince?: number | undefined;
   /** The WORKFLOW mark's state and the breakdown its phrase needs, parked as ONE
    *  field so a rebuilt row cannot repaint the state without the count that
@@ -171,27 +105,13 @@ interface TabRow {
   runDot?: { status: TabRunDotStatus; tally: TabRunTally } | undefined;
 }
 
-/** The four states the workflow mark can be in, NARROWED from the dot's own
- *  vocabulary rather than declared beside it: `Extract` is what makes a rename in
- *  tab-view.ts a type error here instead of a second table that drifts.
- *
- *  No `done` and no `failed`, and that is a statement about the INPUT rather than
- *  a simplification. `run-store.ts`'s live inventory deletes a run's row the
- *  moment it reaches a terminal status, so an OUTCOME is not available to paint —
- *  the mark WITHDRAWS when a run ends, which is the same answer `run-bar.ts`
- *  gives over the same inventory. No `idle` either: the hollow ring already means
- *  "has not initiated" one element to the left, and a chat with no live run has
- *  nothing to report rather than a state to report. */
+/** The workflow mark's states, NARROWED from the dot's with `Extract`. No `done`/`failed`: the live
+ *  inventory deletes a terminal run, so the mark WITHDRAWS (as `run-bar.ts` does). No `idle`: no
+ *  live run means nothing to report. */
 export type TabRunDotStatus = Extract<TabDotStatus, "working" | "waiting" | "input">;
 
-/** How many live runs the ONE mark is standing for, and how they split.
- *
- *  The FOLD is the producer's (`chat-run-dots.ts` owns the precedence); this is
- *  the breakdown a single folded state cannot carry, and it exists because "three
- *  runs, one wanting a decision" would otherwise read exactly like "one run". The
- *  strip has no count-badge idiom — `run-bar.ts` renders "step 3 of 7" as TEXT —
- *  so the count goes where it costs no second visual channel: the tooltip and the
- *  announced phrase. */
+/** How many live runs the ONE mark stands for and their split (the fold is `chat-run-dots.ts`'s),
+ *  shown in the tooltip and the announced phrase. */
 export interface TabRunTally {
   readonly total: number;
   readonly working: number;
@@ -210,17 +130,11 @@ export interface OpenTabArgs {
   /** A chat id, an absolute path, a run id. Empty (or absent) for a singleton,
    *  the one kind whose identity is its kind. */
   ref?: string;
-  /** An already-open tab to nest under, making this one a SUB-TAB. Absent for
-   *  top level. A parent that is not open promotes the tab to top level rather
-   *  than refusing it — the server's rule and `insertRow`'s, for the same
-   *  reason: a tab nobody can see is worse than a tab in the wrong place. */
+  /** An open tab to nest under (a SUB-TAB). A parent that is not open promotes the tab to top level,
+   *  as the server's rule does. */
   parent?: string;
-  /** Whether closing this tab tears down what it shows. Default true.
-   *
-   *  `owns: false` makes it a VIEW, which is what lets a sub-tab watching work
-   *  another chat owns be closed without killing that work. Not derivable from
-   *  the kind: a launcher-owned run and a run REVIEW share `(kind, ref)` and
-   *  differ only here. */
+  /** Whether closing this tab tears down what it shows (default true); `owns: false` makes a VIEW.
+   *  Not derivable from the kind. */
   owns?: boolean;
   /** A label this caller knows and a subject cannot carry. */
   name?: string;
@@ -266,27 +180,13 @@ const internal: Internal = {
   everOpened: false,
 };
 
-/** Names a caller supplied for a subject, keyed by `(kind, ref)` rather than by
- *  tab id — which is the whole point of the map rather than a field.
- *
- *  A name arrives at the DISPATCH site, before the server has minted an id and
- *  before the frame that paints the row. Keying on the subject's identity is what
- *  lets `materializeTab`'s derived default be overridden at the moment the row is
- *  BUILT, instead of the row rendering "New conversation" for a frame and then
- *  snapping to the real title. It also survives a re-list, which rebuilds every
- *  row from scratch.
- *
- *  Bounded by `forgetRow`: an entry goes when its tab leaves the projection. */
+/** Caller-supplied names keyed by `(kind, ref)`: a name arrives before the server mints an id, so
+ *  the row is BUILT with it, and it survives a re-list. Bounded by `forgetRow`. */
 const nameOverrides = new Map<string, string>();
 
-/** Tab ids in ACTIVATION order, most recent first: what a close hands the active
- *  view over to. IN MEMORY ONLY — boot restores tabs with no history, so a cold
- *  strip's first close falls back to position 0.
- *
- *  A plain array rather than a signal, for `nameOverrides`' reason: nothing
- *  renders it, so making it reactive would wake the render and view effects for a
- *  value no subscriber reads. Two invariants — head is `state.active`, and no
- *  closed id is held, bounded by `forgetRow`, which every removal calls. */
+/** Tab ids in ACTIVATION order, most recent first, for a close's hand-over. In memory only (a cold
+ *  strip falls back to position 0) and non-reactive. Head is `state.active`; no closed id is held
+ *  (`forgetRow`). */
 const activationHistory: string[] = [];
 
 function noteActivation(id: string): void {
@@ -304,10 +204,8 @@ function forgetActivation(id: string): void {
   }
 }
 
-/** Put a captured entry back behind its ANCHOR — the id that preceded it when it
- *  was captured — or at the head when it had none. An anchor closed since falls to
- *  the TAIL: the entry ranked behind it, so understating its recency drops a
- *  preference, where the head would invert one. */
+/** Put a captured entry back behind its ANCHOR (or at the head). A closed anchor falls to the TAIL:
+ *  understating recency beats inverting it. */
 function restoreActivation(id: string, anchor: string): void {
   if (anchor === "") {
     activationHistory.unshift(id);
@@ -329,12 +227,7 @@ function mostRecentOpenTab(): string {
  *  mutations trip. */
 const stateVersion = signal(0);
 
-/** Reactive counter for DOT writes, which deliberately do not `emit()`.
- *
- *  A second signal rather than a second emit: `emit()` queues a re-render, and a
- *  dot is not a structural change (see setTabStatus). Only `subscribeTabCues`
- *  reads this one, so a dot write reaches the out-of-page attention surfaces
- *  without waking anything else. */
+/** Reactive counter for DOT writes, which do not `emit()`; only `subscribeTabCues` reads it. */
 const dotVersion = signal(0);
 
 /** All registered module-level effects. Tracked so _resetForTest can dispose
@@ -356,12 +249,9 @@ function tabsEffect(fn: (s: State) => void): () => void {
   return cleanup;
 }
 
-/** Reactive read of the tab-set version: an effect calling this re-runs on
- *  every committed tab mutation (open, close, reorder, pin, snapshot reset).
- *  For a writer that paints onto tab rows from OUTSIDE the strip (run-dots.ts),
- *  whose target row can arrive a server round trip AFTER the event that made it
- *  paintworthy — the automatic run-tab offer's open_tab is in flight when the
- *  run's first frame lands. */
+/** Reactive read of the tab-set version: an effect calling this re-runs on every committed tab
+ *  mutation. For writers painting rows from outside the strip (run-dots.ts), whose target row can
+ *  arrive a round trip after the event that made it paintworthy. */
 export function tabSetVersion(): number {
   return stateVersion.value;
 }
@@ -428,12 +318,9 @@ function childrenOf(id: string): TabRow[] {
   return state.tabs.filter((t) => t.subject.parent === id);
 }
 
-/** Insert a row at its canonical position: a sub-tab immediately after its
- *  parent's existing children, a top-level tab at the end.
- *
- *  Keeping `state.tabs` parent-anchored means the render walk and the keyboard
- *  order need no grouping logic of their own — the array already reads the way
- *  the strip looks. */
+/** Insert a row at its canonical position: a sub-tab right after its parent's existing children,
+ *  a top-level tab at the end. Keeping `state.tabs` parent-anchored means render and keyboard order
+ *  need no grouping logic of their own. */
 function insertRow(row: TabRow): void {
   // The one place a tab enters the projection, so the one place this is recorded.
   internal.everOpened = true;
@@ -458,14 +345,9 @@ function insertRow(row: TabRow): void {
   state.tabs.splice(at, 0, row);
 }
 
-/** Group `rows` into [parent, ...its whole descendant tree] runs, in array order.
- *  Shared by the pin partition and the menu's Move up / Move down, which must move
- *  a parent and everything under it as one unit — splitting them would put a child
- *  under a stranger.
- *
- *  Membership is tested against every row already IN a group, not just each
- *  group's first element: a sub-tab can itself have one, and matching only the
- *  head made such a grandchild an orphan top-level group. */
+/** Group `rows` into [parent, ...its whole descendant tree] runs, in array order, so the pin
+ *  partition and Move up/down move a parent and its subtree as one unit. Membership is tested
+ *  against every row already in a group, or a grandchild becomes an orphan top-level group. */
 function groupsOf(rows: readonly TabRow[]): TabRow[][] {
   const groups: TabRow[][] = [];
   for (const t of rows) {
@@ -505,14 +387,9 @@ function applyPinOrder(): void {
   state.tabs = [...pinPartition(state.tabs)];
 }
 
-/** Expand a top-level order into the EXACT SET the server's `reorder_tabs`
- *  demands: every open tab exactly once, each parent immediately followed by its
- *  descendant tree.
- *
- *  The drag reads back top-level ids only (children are folded into their parent
- *  for the duration of a drag), and the exact-set check refuses anything else. So
- *  the expansion is not a convenience: without it every drop on a strip holding a
- *  sub-tab would be a 409. */
+/** Expand a top-level order into the exact set `reorder_tabs` demands: every open tab once, each
+ *  parent followed by its descendant tree. A drag reads back top-level ids only, so without this
+ *  every drop on a strip holding a sub-tab would be a 409. */
 function expandOrder(order: readonly string[]): string[] {
   const remaining = new Map(state.tabs.map((t) => [t.subject.id, t]));
   const out: string[] = [];
@@ -541,17 +418,10 @@ function expandOrder(order: readonly string[]): string[] {
 
 /** Adopt a whole snapshot: the boot read, and the answer to a gap or a 409.
  *
- *  A snapshot is the COMPLETE set at a version tabs-sync has already checked
- *  against the local one (`readList` discards anything below it, which is what
- *  stops a stale GET closing a tab a committed mutation has just given us). So a
- *  tab absent from an adopted snapshot really is closed, and that is a different
- *  statement from the one this refactor deletes: `order` in a DELTA never implies
- *  closure, because a delta describes one mutation rather than the whole set.
- *
- *  Rows for subjects that survive are REUSED rather than rebuilt, so a name
- *  override, a dot and the spec's identity all ride through a re-list untouched —
- *  and re-running `materializeTab` on every listed tab would re-enter the lazy
- *  singleton imports for no reason. */
+ *  A snapshot is the COMPLETE set at a version tabs-sync already checked (`readList` discards
+ *  anything older), so a tab absent from it really is closed; a DELTA's `order` never implies
+ *  closure. Surviving rows are REUSED, so a name override, a dot and the spec ride through a
+ *  re-list and the lazy singleton imports are not re-entered. */
 function reset(subjects: readonly TabSubject[]): void {
   const before = new Map(state.tabs.map((t) => [t.subject.id, t]));
   const next: TabRow[] = [];
@@ -569,37 +439,24 @@ function reset(subjects: readonly TabSubject[]): void {
   if (next.length > 0) {
     internal.everOpened = true;
   }
-  // Everything the snapshot does not hold is gone: an authoritative list is a
-  // complete set, so the local teardown runs here for a row it dropped. A row
-  // THIS device optimistically removed is not in the projection any more, so a
-  // pending close's teardown cannot double-run from here — its machine op owns
-  // it (confirmClose).
+  // An authoritative list is a complete set, so a dropped row's local teardown runs here. A row this
+  // device optimistically removed is no longer in the projection, so its machine op owns the teardown.
   for (const row of before.values()) {
     forgetRow(row);
     tearDown(row);
   }
   applyPinOrder();
 
-  // The active tab, in the two shapes a snapshot arrives in.
-  //
-  // BOOT (nothing active yet): point at the tab this SCREEN was last on, or at
-  // the first one, WITHOUT running its `onShow`. The saved id resolves because
-  // ids are server-minted and persisted with the collection, so nothing has to be
-  // translated. app.ts performs the one boot activation afterwards, which is what
-  // keeps a re-list from re-fetching a view's content.
-  //
-  // A LATER re-list that dropped the active tab: hand over to the successor and
-  // activate it properly, because the reader is looking at a view whose tab is
-  // gone. `local: false` — a set this device did not author must not respawn a
-  // chat here.
+  // BOOT (nothing active): point at this screen's last tab, or the first, WITHOUT running `onShow`;
+  // app.ts performs the one boot activation, so a re-list never re-fetches a view's content. A LATER
+  // re-list that dropped the active tab hands over properly; `local: false`, so a set this device did
+  // not author never respawns a chat here.
   if (state.active === "") {
     const saved = activeView();
     state.active = saved !== "" && hasRow(saved) ? saved : (state.tabs[0]?.subject.id ?? "");
     if (state.active !== "") {
-      // The one place a real id reaches `state.active` without passing through
-      // activateTab, so the one place the MRU invariant is restored by hand. No
-      // behaviour rests on it: boot follows with activateRestoredTab, and a later
-      // re-list can only land on `tabs[0]`, the successor fallback anyway.
+      // The one place a real id reaches `state.active` without activateTab, so the MRU invariant is
+      // restored by hand.
       noteActivation(state.active);
     }
     emit();
@@ -615,20 +472,10 @@ function reset(subjects: readonly TabSubject[]): void {
 
 /** Apply ONE committed mutation, already version-checked by tabs-sync.
  *
- *  `local` is true when this frame echoes a mutation THIS device dispatched, and
- *  it gates one thing: the empty-strip respawn. A strip emptied by ANOTHER
- *  device's close must not create a chat here.
- *
- *  A LOCALLY closed tab is not in the projection any more — the gesture removed
- *  it — so this loop finds nothing to do for the echo frame, and the teardown
- *  runs from the machine's confirmation instead (confirmClose). What lands here
- *  is a REMOTE close's removal, whose client-local teardown runs as the row
- *  leaves; nothing dispatches from a teardown any more, so the two paths run
- *  the identical cleanup.
- *
- *  The three parts are applied in the order the server states them, and each is
- *  independent: `changed` is an upsert by id, `removed_ids` is the ONLY statement
- *  of closure, and `order` is a permutation. */
+ *  `local` (this frame echoes our own dispatch) gates only the empty-strip respawn. A locally closed
+ *  tab already left the projection, so its teardown runs from confirmClose; what lands here is a
+ *  remote close, torn down as the row leaves. `changed` is an upsert by id, `removed_ids` the ONLY
+ *  statement of closure, `order` a permutation. */
 function apply(delta: TabsChangedPayload, local: boolean): void {
   const changed = delta.changed;
   if (changed !== undefined) {
@@ -644,10 +491,8 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
     const row = state.tabs[at]!;
-    // REMOVE, then tear down. The order is this module's re-entrancy guarantee
-    // rather than a detail: a teardown must observe a state the tab has already
-    // left, or a hook that closes its own tab recurses until the stack dies —
-    // which the editor's teardown did, making every editor tab unclosable.
+    // REMOVE, then tear down: a teardown must observe a state the tab already left, or a hook that
+    // closes its own tab recurses until the stack dies.
     state.tabs.splice(at, 1);
     if (state.active === id) {
       lostActive = true;
@@ -658,10 +503,7 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
 
   const order = delta.order;
   if (order !== undefined) {
-    // A PERMUTATION, through the sync layer's own rule: an id the order does not
-    // name keeps its relative position and sorts LAST, and is never closed. That
-    // is the property the whole refactor exists for, so it lives in one place and
-    // is tested against a Set rather than against a row.
+    // A PERMUTATION: an id the order does not name sorts LAST and is never closed.
     state.tabs = permute(state.tabs, (t) => t.subject.id, order);
     applyPinOrder();
   }
@@ -674,17 +516,12 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
   emit();
 }
 
-/** Upsert one subject: the frame-apply path for `changed`, and the adoption
- *  path's paint (adoptSubject) — ONE code path, so a frame that echoes an
- *  adopted open finds the row already right and changes nothing, which is what
- *  makes the adoption idempotent against its own echo.
+/** Upsert one subject: the frame-apply path for `changed` and adoptSubject's paint. One code path,
+ *  so the echo of an adopted open changes nothing.
  *
- *  An existing row's SUBJECT is replaced wholesale — a pin, a reparent, or any
- *  later field the server grows — while the spec, the name override and the dot
- *  stay. Nothing here may re-materialize: `owns` is immutable after open and
- *  every reader of the parent takes it from the subject, so the spec cannot have
- *  gone stale, and rebuilding it would re-run onShow wiring for a tab that only
- *  changed its pin. */
+ *  An existing row's SUBJECT is replaced wholesale while the spec, name override and dot stay.
+ *  Nothing here may re-materialize: `owns` is immutable after open and every reader of the parent
+ *  takes it from the subject, so the spec cannot go stale. */
 function upsertSubject(subject: TabSubject): void {
   const existing = rowOfID(subject.id);
   if (existing === undefined) {
@@ -696,12 +533,9 @@ function upsertSubject(subject: TabSubject): void {
   applyPinOrder();
 }
 
-/** Run a departed row's local teardown, if it has one and owns what it shows.
- *
- *  `owns: false` tears down nothing: the tab was a VIEW, and dismissing a view
- *  must not kill the work it was watching. The teardown is CLIENT-LOCAL and
- *  identical whoever closed the tab — everything beyond this device is the
- *  server's close operation — so there is no provenance flag to thread. */
+/** Run a departed row's local teardown, if it has one and owns what it shows. `owns: false` tears
+ *  down nothing: dismissing a view must not kill the work it watched. The teardown is client-local
+ *  and identical whoever closed the tab. */
 function tearDown(row: TabRow): void {
   if (!row.spec.owns) {
     return;
@@ -719,15 +553,9 @@ registerTabsTarget(target);
 
 // --- Activation (this device's alone) ---
 
-/** Dismiss the phone drawer, because the reader asked for a DESTINATION.
- *
- *  This is the one thing that closes it, and it belongs to a navigation gesture
- *  rather than to a view change. `showView` used to do it, and `showView` runs
- *  from the view effect on EVERY projection mutation — so closing any tab from
- *  the drawer, background tabs included, dismissed the drawer under the reader's
- *  finger. A close is not navigation: the reader is still working in the strip
- *  and expects it to stay put. On desktop the class is absent, so every call
- *  here is a state no-op. */
+/** Dismiss the phone drawer, because the reader asked for a DESTINATION. Belongs to a navigation
+ *  gesture, not a view change: the view effect re-runs on every projection mutation, and a close
+ *  must leave the drawer put. A state no-op on desktop. */
 function revealActiveView(): void {
   $.sidebar.classList.remove("open");
 }
@@ -782,14 +610,11 @@ function activateTabQuietly(id: string): void {
   callbacks.onActivate?.(id);
 }
 
-/** Hand the active view over to a departed tab's successor: the most recently
- *  visited tab still open, else the first, else nothing on an empty strip.
- *  Recency, not position — a pin or a sub-tab routinely puts a stranger first.
+/** Hand the active view to a departed tab's successor: the most recently visited open tab, else the
+ *  first. Recency, not position: a pin or a sub-tab routinely puts a stranger first.
  *
- *  `local` gates the empty-strip respawn: a strip emptied by ANOTHER device's
- *  close must not create a chat here. Nobody asked for one, and it would then
- *  propagate back as an addition every other device has to absorb — which is the
- *  shape of the loop that minted a chat every 1.5s on the live instance. */
+ *  `local` gates the empty-strip respawn: a chat minted for ANOTHER device's close propagates back
+ *  to every device, the loop that minted a chat every 1.5s. */
 function activateSuccessor(local: boolean): void {
   const recent = mostRecentOpenTab();
   const next = recent !== "" ? recent : (state.tabs[0]?.subject.id ?? "");
@@ -805,13 +630,9 @@ function activateSuccessor(local: boolean): void {
   }
 }
 
-/** Point the strip at the tab this SCREEN was last on, and run its `onShow`.
- *
- *  Boot's one activation, called by app.ts after `listTabs()` resolves. `reset`
- *  has already chosen WHICH tab (the saved active view, or the first); this is
- *  what makes it load. The two are separate because `reset` also runs on every
- *  later re-list, where re-fetching the active view's content would be a round
- *  trip for nothing. */
+/** Point the strip at the tab this SCREEN was last on, and run its `onShow`: boot's one activation,
+ *  after `listTabs()`. Separate from `reset`, which also runs on every re-list where a re-fetch
+ *  would be a round trip for nothing. */
 export function activateRestoredTab(): void {
   const id = state.active;
   if (id === "") {
@@ -825,20 +646,10 @@ export function activateRestoredTab(): void {
 
 // --- Mutations: every one is a dispatch ---
 
-/** Paint one subject NOW, from a command response, through the same upsert the
- *  frame-apply path runs — so the echo frame that follows finds the row already
- *  right and re-animates nothing.
- *
- *  This is the adoption half of the response/frame split: the response carries
- *  what the server COMMITTED, so the row it names exists whether or not this
- *  device ever receives the frame, and painting it here is what makes an open
- *  resolve with its row present instead of awaiting a delivery the network may
- *  owe. The pending-op machine (tabs-sync.ts) carries the same subject for
- *  snapshot merge-back, so a re-list that raced the open cannot unpaint it.
- *
- *  `name` is the caller's label for a subject it just learned the identity of —
- *  the create/fork path, where no dispatch-time override could exist because the
- *  ref was server-minted. */
+/** Paint one subject NOW from a command response, through the frame path's upsert, so the echo
+ *  frame re-animates nothing. The response carries what the server COMMITTED, so an open resolves
+ *  with its row present whether or not the frame arrives; tabs-sync holds the same subject so a
+ *  racing re-list cannot unpaint it. `name` labels a subject whose ref was server-minted. */
 export function adoptSubject(subject: TabSubject, name?: string): void {
   if (name !== undefined && name !== "") {
     nameOverrides.set(subjectKey(subject.kind, subject.ref), name);
@@ -847,27 +658,15 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
   emit();
 }
 
-/** What an open resolved to. `not-found` is the one failure a caller may act
- *  on beyond the framework's toast: the subject is GONE — a retention-off
- *  close deleted the chat — which is a different fact from a network that
- *  failed to answer, and folding the two made a dead History row look like a
- *  transient error. */
+/** What an open resolved to. `not-found` means the subject is GONE (a retention-off close deleted
+ *  the chat), a different fact from a network that failed to answer. */
 export type OpenTabOutcome = "opened" | "not-found" | "failed";
 
-/** Open a tab for something that already exists, and activate it.
+/** Open a tab for something that already exists, and activate it. Resolves with the row in the
+ *  projection, adopted from the RESPONSE, so no frame round trip sits in the gesture's path.
  *
- *  Resolves with the row IN the projection, adopted from the RESPONSE: the
- *  reply carries the committed subject, so the row is painted and activated the
- *  moment the server answers, with no frame round trip in the gesture's path.
- *  The echo frame settles the pending adopt (or version absorption does, when
- *  correlation was lost) and upserts idempotently.
- *
- *  Never rejects, and never throws at ~30 call sites. A refused open leaves the
- *  strip exactly as it was and the action framework has already raised its
- *  toast — including the one refusal with a remedy, which says "close a tab
- *  first" rather than reporting an error. The OUTCOME is for the caller that
- *  must branch: a 404 answers `not-found`, everything else that did not open
- *  answers `failed`. */
+ *  Never rejects: a refused open leaves the strip as it was and the action framework has raised its
+ *  toast. A 404 answers `not-found`, any other failure `failed`. */
 export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
@@ -930,9 +729,46 @@ interface CapturedClose {
   refused: boolean;
 }
 
-/** A row's whole subtree — itself plus every descendant, transitively — in
- *  projection order. The same walk expandOrder's take() runs; a cycle is
- *  unrepresentable because Parent is set at open and never reassigned. */
+/** Raises a notice about a tab's subject: a chat id, `run:<id>`, or "" for none.
+ *  `name` is the row's name at the gesture. The composition root wires the
+ *  subject-aware door; that module reads this one, so it cannot be imported. */
+type TabNotice = (subject: string, name: string, message: string, level: "info" | "error") => void;
+
+const bareTabNotice: TabNotice = (_subject, _name, message, level) => {
+  if (level === "error") {
+    toastError(message);
+  } else {
+    info(message);
+  }
+};
+
+let tabNotice = bareTabNotice;
+
+export function registerTabNotice(fn: TabNotice): void {
+  tabNotice = fn;
+}
+
+function noticeSubjectOf(row: TabRow): string {
+  switch (row.subject.kind) {
+    case "chat":
+      return row.subject.ref;
+    case "run":
+      return `run:${row.subject.ref}`;
+    default:
+      return "";
+  }
+}
+
+function notifyAboutRow(row: TabRow | undefined, message: string, level: "info" | "error"): void {
+  if (row === undefined) {
+    tabNotice("", "", message, level);
+    return;
+  }
+  tabNotice(noticeSubjectOf(row), row.name, message, level);
+}
+
+/** A row's whole subtree in projection order, the walk expandOrder's take() runs. The server
+ *  refuses a parent cycle (ErrCycle). */
 function subtreeRows(row: TabRow): TabRow[] {
   const out: TabRow[] = [];
   const take = (r: TabRow): void => {
@@ -975,15 +811,9 @@ function captureClose(row: TabRow): CapturedClose {
   };
 }
 
-/** The REVERSIBLE half of a close, applied at gesture time: the subtree leaves
- *  the projection and the strip (renderDOM plays the exit), the row-scoped
- *  forgets run, activation falls back, and the STORE's active pointer moves
- *  with the gesture so store and projection agree throughout the window.
- *
- *  Nothing here destroys state a rollback cannot bring back: no tearDown, no
- *  removeChat, no editor-state deletion, no run forgets. All of that is
- *  onConfirm's (confirmClose), and the retention-off record delete is the
- *  server's close transaction. */
+/** The REVERSIBLE half of a close, applied at gesture time: the subtree leaves the projection,
+ *  row-scoped forgets run, activation falls back, and the store's active pointer moves with it.
+ *  Nothing here destroys state a rollback cannot restore; that is confirmClose's and the server's. */
 function applyGestureRemoval(c: CapturedClose): void {
   const ids = new Set(c.rows.map((r) => r.subject.id));
   state.tabs = state.tabs.filter((t) => !ids.has(t.subject.id));
@@ -1000,11 +830,9 @@ function applyGestureRemoval(c: CapturedClose): void {
   emit();
 }
 
-/** Move the store's active chat off a chat this close made tabless, mirroring
- *  the rule removeChat applies at teardown time — run EARLY because the store
- *  row now survives to onConfirm, and every reader keyed on getActiveId()
- *  (create-vs-send, the composer) must see the projection's truth in the
- *  window, never a retained row of a closed chat. */
+/** Move the store's active chat off a chat this close made tabless, as removeChat would at
+ *  teardown. Run EARLY because the store row survives to onConfirm, and getActiveId() readers must
+ *  never see a closed chat in the window. */
 function syncStoreActive(c: CapturedClose): void {
   const closedRefs = new Set(
     c.rows
@@ -1024,20 +852,12 @@ function syncStoreActive(c: CapturedClose): void {
   retargetComposer(next);
 }
 
-/** The deferred CLIENT-LOCAL teardown, run exactly once per closed row when the
- *  close is CONFIRMED — by its echo frame, its response, version absorption, or
- *  an authoritative list (tabs-sync's machine owns which).
- *
- *  The reopen re-check: an open row with the same (kind, ref) at confirm time
- *  means the user reopened the subject inside the window — the reopen
- *  re-established the client state, and the server serialized the close before
- *  the open — so the subject-scoped teardown is SKIPPED; the row-scoped forget
- *  already ran at gesture time. */
+/** The deferred client-local teardown, run once per closed row when the close is CONFIRMED
+ *  (tabs-sync's machine owns by what). An open row with the same (kind, ref) means the subject was
+ *  reopened inside the window, so the subject-scoped teardown is SKIPPED. */
 function confirmClose(c: CapturedClose): void {
-  // Children BEFORE parents: c.rows is the subtree in projection order (a
-  // pre-order walk, parents first), so the reverse guarantees no child's
-  // teardown runs against a parent that has already gone — the same order the
-  // remote-close path gets from the server's deepest-first removal list.
+  // Children BEFORE parents: c.rows is a pre-order walk, so the reverse never tears a child down
+  // against a gone parent, matching the server's deepest-first removal list.
   for (const r of [...c.rows].reverse()) {
     if (tabIdFor(r.subject.kind, r.subject.ref) !== "") {
       continue;
@@ -1046,11 +866,8 @@ function confirmClose(c: CapturedClose): void {
   }
 }
 
-/** Restore a captured subtree: the definitive-failure rollback (the server
- *  refused, nothing committed) and the verify-settled restore (the row is
- *  authoritatively still open). Rows reopened under a NEW id inside the window
- *  keep the reopened row; a restored row's `pinned` may lag one frame, absorbed
- *  by the next frame or snapshot. */
+/** Restore a captured subtree: the definitive-failure rollback and the verify-settled restore. A
+ *  row reopened under a NEW id keeps the reopened row; a restored `pinned` may lag one frame. */
 function rollbackClose(c: CapturedClose): void {
   for (const [key, name] of c.overrides) {
     nameOverrides.set(key, name);
@@ -1071,11 +888,8 @@ function rollbackClose(c: CapturedClose): void {
     }
     restoreActivation(id, after);
   }
-  // Text typed into the EMPTY-STATE composer was parked nowhere (no live
-  // chat), so it survives only through the box. Filed as the restored chat's
-  // draft BEFORE re-activation repaints the box from the draft map — via
-  // restoreFailedSend, deliberately: restoreComposerState CLEARS a draftless
-  // chat's box, the exact opposite move.
+  // Empty-state composer text lives only in the box, so it is filed as the restored chat's draft
+  // BEFORE re-activation repaints the box: restoreComposerState would CLEAR a draftless chat's box.
   const restoredChat =
     c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
     c.storeActive;
@@ -1093,33 +907,24 @@ function rollbackClose(c: CapturedClose): void {
     retargetComposer(c.storeActive);
   }
   if (!c.refused) {
-    info("Close not confirmed, so the tab was restored.");
+    notifyAboutRow(c.rows[0], "Close not confirmed, so the tab was restored.", "info");
   }
 }
 
-/** Close a tab and its descendants, as ONE server-side mutation, applied
- *  optimistically: the strip changes AT the gesture — reversible effects only —
- *  and the teardown waits for the machine's confirmation.
- *
- *  The dispatch's three endings map onto the pending-op machine's transitions:
- *  a committed response feeds it (semantic no-op included), a DEFINITIVE error
- *  rolls the capture back (the server refused; nothing committed), and a
- *  TIMEOUT — no answer, the close may or may not have committed — moves it to
- *  `verifying`, where the removal stays applied until authoritative evidence
- *  arrives. Closing an id that is not open is not an error: two devices can
- *  close one tab. */
+/** Close a tab and its descendants as ONE server-side mutation, applied optimistically: reversible
+ *  effects at the gesture, teardown on confirmation. A committed response feeds the pending-op
+ *  machine, a DEFINITIVE error rolls back, a TIMEOUT moves to `verifying` with the removal applied.
+ *  Closing an id that is not open is not an error: two devices can close one tab. */
 export async function closeTab(id: string): Promise<void> {
   const row = rowOfID(id);
   const opID = newOpID();
   markLocalOp(opID);
   if (row === undefined) {
-    // Not in this projection: nothing visual to remove, so no pending op — the
-    // dispatch alone, and the server's answer is the whole story. (An unknown
-    // id is SUCCESS with an empty closed list server-side, so a definitive
-    // error here is a real refusal worth a word.)
+    // Not in this projection: no pending op, just the dispatch. An unknown id is SUCCESS server-side,
+    // so a definitive error here is a real refusal.
     const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
     if (lone.status === "error" && lone.error.code !== "timeout") {
-      toastError("Could not close that tab");
+      notifyAboutRow(undefined, "Could not close that tab", "error");
     }
     return;
   }
@@ -1145,7 +950,7 @@ export async function closeTab(id: string): Promise<void> {
     // honest — and the toast is this branch's, because the action itself stays
     // quiet (its other failure shape is inconclusive and must not claim one).
     captured.refused = true;
-    toastError("Could not close that tab");
+    notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
     opFailed(opID);
     return;
   }
@@ -1172,12 +977,9 @@ export async function setTabPinned(id: string, pinned: boolean): Promise<void> {
   await pinTabCommand.dispatch({ id, pinned, opID });
 }
 
-/** Hang an open tab under an open chat tab: the one mutation that reassigns
- *  `parent`. Resolves true when the tab now sits under `parent`.
- *
- *  The returned subject is adopted the way an open's is, so the indent lands
- *  with the response; the frame's `order` then places the row, and on an
- *  unchanged parent no frame comes because nothing committed. */
+/** Hang an open tab under an open chat tab: the one mutation that reassigns `parent`. Resolves true
+ *  when the tab now sits under `parent`. The returned subject is adopted as an open's is; on an
+ *  unchanged parent no frame comes. */
 export async function setTabParent(id: string, parent: string): Promise<boolean> {
   const row = rowOfID(id);
   if (row === undefined || parent === "") {
@@ -1199,13 +1001,10 @@ export async function setTabParent(id: string, parent: string): Promise<boolean>
 
 const idOfRow = (t: TabRow): string => t.subject.id;
 
-/** Publish a top-level order a drop or the menu committed, showing it at once.
- *  Expanded and pin-partitioned BEFORE it is shown or sent, so the server gets the
- *  order every device will render and a drop the partition undoes sends nothing.
- *  A pending reorder (tabs-sync) holds the shown order until the server answers; a
- *  409 rolls back and re-lists, never re-sends, because the set moved under the
- *  gesture. On commit only: an order is a whole-collection write. Answers the
- *  top-level order it applied, or null when the partition undid the move. */
+/** Publish a top-level order a drop or the menu committed. Expanded and pin-partitioned BEFORE
+ *  shown or sent, so the server gets what every device will render. A 409 rolls back and re-lists,
+ *  never re-sends: the set moved under the gesture. Answers the applied order, or null when the
+ *  partition undid the move. */
 function publishReorder(order: readonly string[]): readonly string[] | null {
   const prior = state.tabs.map(idOfRow);
   const next = pinPartition(permute(state.tabs, idOfRow, expandOrder(order))).map(idOfRow);
@@ -1290,12 +1089,8 @@ function moveTab(id: string, delta: -1 | 1): void {
 
 // --- Local writers ---
 
-/** Override a tab's label.
- *
- *  Recorded against the SUBJECT as well as the row, so a re-list keeps it: a
- *  snapshot rebuilds rows from the factory, whose derived default is the chat
- *  store's name — which is the same value in the normal case and a placeholder
- *  for a chat this client holds no row for. */
+/** Override a tab's label. Recorded against the SUBJECT as well as the row, so a re-list (which
+ *  rebuilds rows from the factory's derived default) keeps it. */
 export function renameTab(id: string, name: string): void {
   const row = rowOfID(id);
   if (row === undefined || row.name === name) {
@@ -1306,14 +1101,9 @@ export function renameTab(id: string, name: string): void {
   emit();
 }
 
-/** What a kind's OUTCOME states are about. The dot is `aria-hidden`, so the phrase
- *  is a screen-reader user's only channel — and three producers write these states
- *  about three subjects (`tabStatusFor` a turn, `runStatusFor` a run,
- *  `subagentStatusFor` a delegate), so one state-keyed phrase named the wrong thing
- *  on two of them. Each noun is the one the app already shows a reader.
- *
- *  The last six kinds have no producer. Their nouns read oddly on purpose: that is
- *  the signal to whoever adds one, and it beats falling through to a turn. */
+/** What a kind's OUTCOME states are about. The dot is `aria-hidden`, so the phrase is a
+ *  screen-reader user's only channel, and three producers write outcomes about three subjects.
+ *  The last six kinds have no producer; their odd nouns are a signal to whoever adds one. */
 const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
   chat: "turn",
   run: "workflow run",
@@ -1340,15 +1130,9 @@ const NEUTRAL_PHRASE: Readonly<Record<Exclude<TabDotStatus, "done" | "failed">, 
   dirty: "unsaved changes",
 };
 
-/** The ONE resolver, so the tooltip and the announced word are one string and
- *  cannot drift per kind.
- *
- *  A phrase claims exactly what its producer supports (`store.ts` `outcomeLatch`
- *  records what each latch's producers are): `failed` must not widen back toward
- *  "last operation failed", and neither outcome may drop its subject.
- *
- *  `since` reaches only the two OUTCOMES. The other five states describe NOW, so
- *  an age there would date a state that is still true. */
+/** The ONE resolver, so the tooltip and the announced word cannot drift per kind. A phrase claims
+ *  only what its producer supports (`store.ts` `outcomeLatch`). `since` reaches only the two
+ *  OUTCOMES: the other states describe NOW. */
 function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string {
   if (status === "done") {
     return withAge(`${DOT_SUBJECT[kind]} finished`, since);
@@ -1359,11 +1143,8 @@ function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string 
   return NEUTRAL_PHRASE[status];
 }
 
-/** How long ago a finished thing finished, appended to its own phrase.
- *
- *  It does NOT tick: a 1s interval over a sidebar of finished chats is a wakeup
- *  cost for nothing, because both surfaces this feeds are read on demand —
- *  the tooltip on hover, the word when a screen reader reaches the row. */
+/** How long ago a finished thing finished. It does NOT tick: a 1s interval over a sidebar of
+ *  finished chats is a wakeup cost, and both surfaces this feeds are read on demand. */
 function withAge(phrase: string, since?: number): string {
   return since === undefined ? phrase : `${phrase} · ${relativeTime(since)}`;
 }
@@ -1390,18 +1171,10 @@ function paintTooltip(node: HTMLElement, name: string): void {
   }
 }
 
-/** Paint one tab's dot: the attribute CSS keys off, the tooltip a pointer
- *  reveals, and the word a screen reader hears.
- *
- *  The announced word is a SEPARATE element after `.tab-name`, not a child of
- *  the dot, and the position is the reason. A tab's accessible name is computed
- *  from its contents, and the dot is the leading element on a chat row — so a
- *  word inside it would announce "working Fix the parser" rather than "Fix the
- *  parser, working".
- *
- *  An empty status removes the attribute rather than setting it empty, so
- *  `[data-status]` alone is the CSS reveal condition and there is no second flag
- *  to keep in sync. */
+/** Paint one tab's dot: the CSS attribute, the tooltip and the screen-reader word. The word is a
+ *  SEPARATE element after `.tab-name`: the accessible name follows DOM order, so inside the leading
+ *  dot it would announce before the title. An empty status removes the attribute, so
+ *  `[data-status]` alone is the reveal condition. */
 function paintDot(
   node: HTMLElement,
   kind: TabKind,
@@ -1425,20 +1198,12 @@ function paintDot(
   sr.textContent = `, ${phrase}`;
 }
 
-/** Set a chat tab's activity dot, and optionally when its state became true. The
- *  state is derived by `tabStatusFor` (store.ts), which owns the precedence; this
- *  is the writer.
- *
- *  Records the value on the ROW before painting, so a row rebuilt later starts
- *  from the real state instead of the factory's seed. Deliberately does NOT
- *  `emit()`: a dot is not a structural change, so it must not queue a re-render,
- *  and the paint below is the whole visible effect. */
+/** Set a chat tab's activity dot, and optionally when its state became true; `tabStatusFor`
+ *  (store.ts) owns the precedence. Recorded on the ROW first, so a rebuilt row starts from the real
+ *  state. Deliberately no `emit()`: a dot is not structural and must not queue a re-render. */
 export function setTabStatus(id: string, status: TabDotStatus | "", since?: number): void {
-  // The ROW is what knows the kind, and the phrase is per kind, so the row is
-  // resolved once here rather than by each of the two writes below. A row that has
-  // left the projection returns early even when its element is still in the DOM
-  // playing its exit animation: painting a departing row's dot is worth nothing,
-  // and inventing a kind for it is the one place this could not be honest.
+  // A row that left the projection returns early even while its element plays its exit: there is no
+  // honest kind to phrase it with.
   const row = rowOfID(id);
   if (row === undefined) {
     return;
@@ -1453,14 +1218,9 @@ export function setTabStatus(id: string, status: TabDotStatus | "", since?: numb
   paintDot(node, row.subject.kind, status, row.dotSince);
 }
 
-/** The workflow mark's announced phrase and tooltip, ONE string for both exactly
- *  as `dotPhrase` is for the dot beside it.
- *
- *  The noun comes from `DOT_SUBJECT` so the app spells a run one way, and the
- *  state word from `NEUTRAL_PHRASE` so two marks on one row say "working" the same
- *  way. The COUNT is the whole reason this is not just `dotPhrase(kind, status)`:
- *  N runs fold onto one mark, so "3 workflow runs, 1 needs a decision" is the only
- *  place the fold's arithmetic survives. */
+/** The workflow mark's phrase and tooltip, one string as `dotPhrase` is for the dot. Nouns from
+ *  `DOT_SUBJECT`, state words from `NEUTRAL_PHRASE`; the COUNT is why it is not `dotPhrase`: N runs
+ *  fold onto one mark. */
 function runDotPhrase(status: TabRunDotStatus, tally: TabRunTally): string {
   const noun = tally.total === 1 ? DOT_SUBJECT.run : `${DOT_SUBJECT.run}s`;
   const word = NEUTRAL_PHRASE[status];
@@ -1471,18 +1231,9 @@ function runDotPhrase(status: TabRunDotStatus, tally: TabRunTally): string {
     : `${tally.total} ${noun}, ${tally[status]} ${word}`;
 }
 
-/** Paint one chat row's workflow mark: the attribute CSS keys off, the tooltip a
- *  pointer reveals, and the phrase a screen reader hears.
- *
- *  The same three writes `paintDot` makes, and the phrase span sits AFTER the
- *  dot's own for the reason that one sits after `.tab-name`: a tab's accessible
- *  name is computed from its contents in DOM order, so both marks read out behind
- *  the title rather than ahead of it.
- *
- *  An empty status REMOVES the attribute, which is the CSS reveal condition — and
- *  the mark takes no space without one (12-tabs.css), so this write is what moves
- *  the title beside it. A no-op on a row that carries no mark, which is every
- *  non-chat kind. */
+/** Paint one chat row's workflow mark: the CSS attribute, tooltip and phrase, as `paintDot` does.
+ *  The phrase span sits after the dot's own so both read out behind the title. An empty status
+ *  REMOVES the attribute, and the mark then takes no space. A no-op on non-chat rows. */
 function paintRunDot(node: HTMLElement, status: TabRunDotStatus | "", tally: TabRunTally): void {
   const mark = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT}`);
   const sr = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT_SR}`);
@@ -1501,24 +1252,12 @@ function paintRunDot(node: HTMLElement, status: TabRunDotStatus | "", tally: Tab
   sr.textContent = `, ${phrase}`;
 }
 
-/** Set a chat tab's WORKFLOW mark: whether a run this chat launched is still
- *  going, and what it wants. `chat-run-dots.ts` derives the fold; this is the
- *  writer.
+/** Set a chat tab's WORKFLOW mark; `chat-run-dots.ts` derives the fold. `tally` rides beside
+ *  `status` because the status is what the mark PAINTS and the tally what its phrase SAYS.
  *
- *  `tally` rides alongside `status` rather than being derived from it because the
- *  two answer different questions and only one of them is a fold: the status is
- *  what the mark PAINTS, the tally is what its phrase SAYS. The producer owns the
- *  precedence; this module owns the words.
- *
- *  Records on the ROW before painting, for `setTabStatus`'s reason: a row rebuilt
- *  later starts from the real state instead of a blank slot. Deliberately does NOT
- *  `emit()` — a mark is not a structural change — and deliberately does not bump
- *  `dotVersion`: that signal feeds attention.ts's out-of-page fold, and the fold
- *  reads `setTabStatus`'s dot rather than this mark. Which of the two writers it
- *  reads is now DECIDED for run TABS — `cueCandidates` reports a run tab's own dot
- *  — and still undecided for this chat-row mark, which folds N runs onto one row
- *  the launching chat's own cue already speaks for. So the product decision is
- *  outstanding for this writer alone, not for run state generally. */
+ *  Recorded on the ROW first, as `setTabStatus` does. No `emit()`, and no `dotVersion` bump: the
+ *  attention fold reads `setTabStatus`'s dot, and whether it should read this chat-row mark is an
+ *  open product decision. */
 export function setTabRunStatus(
   id: string,
   status: TabRunDotStatus | "",
@@ -1540,10 +1279,8 @@ export function setTabRunStatus(
   paintRunDot(node, status, tally);
 }
 
-/** Mark an editor tab as having unsaved changes (a steady accent disc).
- *  Reuses the shared .tab-status-dot on the ONE attribute setTabStatus writes,
- *  which is what makes the two halves mutually exclusive by construction rather
- *  than by convention. */
+/** Mark an editor tab as having unsaved changes. Reuses .tab-status-dot on the ONE attribute
+ *  setTabStatus writes, so the two are mutually exclusive by construction. */
 export function setTabDirty(id: string, dirty: boolean): void {
   setTabStatus(id, dirty ? "dirty" : "");
 }
@@ -1567,11 +1304,8 @@ function recordDotStatus(row: TabRow, status: TabDotStatus | "", since?: number)
   if (since !== undefined) {
     row.dotSince = since;
   }
-  // Only a CHANGED dot moves the attention surfaces, and the guard is what keeps
-  // the store effect's sweep over every open chat (chat.ts) from waking the fold
-  // once per tab on a change that touched one of them. The PAINT is deliberately
-  // unguarded: an unchanged state still has to be re-applied to a row that was
-  // rebuilt since the last write.
+  // Only a CHANGED dot moves the attention surfaces, so the store effect's sweep over every open chat
+  // wakes the fold once. The PAINT is unguarded: a rebuilt row still needs the unchanged state.
   if (before !== row.dotStatus) {
     dotVersion.value = dotVersion.peek() + 1;
   }
@@ -1579,29 +1313,20 @@ function recordDotStatus(row: TabRow, status: TabDotStatus | "", since?: number)
 
 // --- Lookups ---
 
-/** Whether a tab is open for this subject.
- *
- *  Keyed by `(kind, ref)` rather than by id, and that re-key is the point: ids
- *  are opaque and server-minted, so a consumer holding a chat id or a path can no
- *  longer construct one. A singleton's ref is empty. */
+/** Whether a tab is open for this subject. Keyed by `(kind, ref)`: ids are opaque and
+ *  server-minted. A singleton's ref is empty. */
 export function hasTab(kind: TabKind, ref = ""): boolean {
   return tabIdFor(kind, ref) !== "";
 }
 
-/** The open tab's id for this subject, or "" when none is open.
- *
- *  ONE lookup for every consumer that holds a chat id, a path or a run id and
- *  needs to reach an id-keyed writer (`activateTab`, `setTabStatus`,
- *  `renameTab`). Without it each of them would re-implement the scan, which is
- *  exactly how `editorTabID` came to be composed by hand in three modules. */
+/** The open tab's id for this subject, or "" when none is open: the one lookup from a chat id,
+ *  path or run id to an id-keyed writer. */
 export function tabIdFor(kind: TabKind, ref = ""): string {
   return state.tabs.find((t) => t.subject.kind === kind && t.subject.ref === ref)?.subject.id ?? "";
 }
 
-/** The open tab's id for the subject a URL route names, or "" when none is open —
- *  which is what makes a BACK press REDIRECT rather than re-open a tab the entry
- *  names and the reader has since closed. A files route resolves through
- *  `filesTabForRoute`, naming a folder rather than a subject. */
+/** The open tab's id for the subject a route names, or "": what makes BACK redirect rather than
+ *  re-open a tab the reader closed. Files routes resolve through `filesTabForRoute`. */
 export function tabIdForRoute(route: Route): string {
   if (route.kind === "files") {
     return filesTabForRoute(route.path).id;
@@ -1620,41 +1345,26 @@ export function getActiveTabRoute(): Route | null {
   return rowOfID(state.active)?.spec.route ?? null;
 }
 
-/** Kind of the currently active tab, or null when no tab is active.
- *
- *  This is what a key binding scoped BY VIEW reads. It is the SUBJECT's kind
- *  rather than the route's, because an editor tab's kind is "editor" while its
- *  route's is "file", and a binding keyed on the route would be speaking a second
- *  vocabulary for the same question. */
+/** Kind of the active tab, or null. A key binding scoped BY VIEW reads this; the SUBJECT's kind,
+ *  not the route's (an editor tab's route kind is "file"). */
 export function getActiveTabKind(): TabKind | null {
-  // Subscribe: the toolbar's find affordance is derived from this inside an
-  // effect, and the tab SET is what decides the answer. Outside an effect this
-  // read is free.
+  // Subscribe: the toolbar's find affordance derives from the tab SET inside an effect.
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
   return rowOfID(state.active)?.subject.kind ?? null;
 }
 
-/** The ACTIVE tab's chat ref, or "" when no tab is active or the active tab is
- *  not a chat. The projection's answer to create-vs-send: with closes optimistic,
- *  the chat store retains a closed chat's row until confirmation, so a decision
- *  keyed on a retained store row would send into a chat whose tab is gone —
- *  this reads what the strip actually shows. */
+/** The ACTIVE tab's chat ref, or "". The projection's answer to create-vs-send: the store keeps a
+ *  closed chat's row until confirmation, so this reads what the strip shows. */
 export function activeChatRef(): string {
   const row = rowOfID(state.active);
   return row?.subject.kind === "chat" ? row.subject.ref : "";
 }
 
-/** The chat ref of the tab `tabID` hangs under, or "" when it has no parent or
- *  its parent is not a chat.
- *
- *  It exists because it is the only client-side answer for the common
- *  post-reload case: a restored run tab whose run has FINISHED has no lease, so
- *  `run-store.ts` `runChatID` answers "" (that map is fed by SSE frames and by
- *  `GET /api/runs/live`, both live-only), while `TabSubject.Parent` is persisted
- *  in the collection and was filled server-side from the run's lease at open time
- *  (`Membership.fillRunParent`). `Parent` is immutable after open, so the answer
- *  cannot go stale. */
+/** The chat ref of the tab `tabID` hangs under, or "". The only client answer after a reload: a
+ *  FINISHED run has no lease, so `runChatID` answers "", while `TabSubject.Parent` is persisted and
+ *  was filled from the run's lease at open (`Membership.fillRunParent`). It changes only through
+ *  `setTabParent`, which adopts the new subject, so the answer tracks it. */
 export function parentChatRef(tabID: string): string {
   const parentID = rowOfID(tabID)?.subject.parent ?? "";
   if (parentID === "") {
@@ -1664,15 +1374,9 @@ export function parentChatRef(tabID: string): string {
   return parent?.subject.kind === "chat" ? parent.subject.ref : "";
 }
 
-/** The chat refs with an open tab, deduplicated (an owning tab and a view tab
- *  can project one chat), as a TRACKED read: an effect calling this re-runs on
- *  every projection mutation and never on a dot write.
- *
- *  TWO consumers, and the dedupe serves both: the strip's per-row store effects
- *  (chat.ts) sync their registry on it, and `chat-run-dots.ts` enumerates the rows
- *  that can carry a workflow mark. Both resolve the row with `tabIdFor("chat",
- *  ref)`, so the pair of tabs a duplicated ref would produce paints the first —
- *  which is the residual the activity dot already has, not a new one. */
+/** The chat refs with an open tab, deduplicated (an owning and a view tab can project one chat),
+ *  as a TRACKED read: re-runs on projection mutations, never on dot writes. Consumers resolve with
+ *  `tabIdFor`, so a duplicated ref paints its first tab. */
 export function openChatRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
@@ -1685,18 +1389,9 @@ export function openChatRefs(): string[] {
   return refs;
 }
 
-/** The subagent tabs' refs, as a TRACKED read: an effect calling this re-runs
- *  when a subagent tab lands or leaves, which is the dependency `subagent-dots.ts`
- *  needs — a delegate's page is opened from a card's link or a deep link, so its
- *  row can arrive long after the invocation it names is resident.
- *
- *  REFS rather than ids, because the ref is what carries the two halves the dot
- *  needs (`<chatID>/<subtaskID>` — see tab-materialize.ts) while an id is opaque
- *  and says nothing; the id is recovered from the ref with `tabIdFor`.
- *
- *  No dedupe, unlike `openChatRefs`: that one exists because an owning tab and a
- *  view tab can project one chat, and a subagent tab is always a view of exactly
- *  one `(kind, ref)`. */
+/** The subagent tabs' refs, as a TRACKED read for `subagent-dots.ts`: a delegate's row can arrive
+ *  long after its invocation is resident. Refs carry `<chatID>/<subtaskID>`; an id says nothing.
+ *  No dedupe: a subagent tab is always a view of exactly one `(kind, ref)`. */
 export function openSubagentRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
@@ -1721,87 +1416,38 @@ export function openSpecRefs(): string[] {
   return state.tabs.filter((t) => t.subject.kind === "spec").map((t) => t.subject.ref);
 }
 
-/** The open tab set, in projection order, for `boot-snapshot.ts` to persist.
- *
- *  The SUBJECTS, which is all a snapshot may hold: they are server-minted, so a
- *  restored one resolves against the collection the server still owns, while a
- *  row's spec and dot are this device's own derivations and are rebuilt from it. */
+/** The open SUBJECTS in projection order, for `boot-snapshot.ts`. Server-minted, so a restored one
+ *  resolves against the server's collection; spec and dot are rebuilt from it. */
 export function openTabSubjects(): TabSubject[] {
   return state.tabs.map((t) => t.subject);
 }
 
-/** Paint a PROVISIONAL tab set: `boot-snapshot.ts`'s paint-time hint, not an
- *  authoritative list.
- *
- *  It runs the same reset an authoritative snapshot runs — so the active tab is
- *  chosen the same way and a later reset reconciles by id — and deliberately
- *  advances NO version: `tabs-sync.ts` stays where it was, so the boot's own
- *  `listTabs()` answer is adopted over this and every row it does not name is torn
- *  down. */
+/** Paint a PROVISIONAL tab set, `boot-snapshot.ts`'s paint-time hint. Runs the same reset an
+ *  authoritative snapshot does but advances NO version, so the boot's `listTabs()` answer is
+ *  adopted over it and every row it does not name is torn down. */
 export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
   reset(subjects);
 }
 
-/** The cue-bearing tabs and their current dot states, for the out-of-page
- *  attention fold (attention.ts). A pure projection read: the dot state is parked
- *  on the row, so nothing here reads the DOM and a row whose element has not been
- *  built yet still counts.
+/** The cue-bearing tabs and their dot states, for attention.ts's out-of-page fold. A pure
+ *  projection read: unbuilt rows still count.
  *
- *  The list is heterogeneous, so the filter is the whole correctness argument:
- *
- *   - TWO kinds bear a cue, `chat` and `run`. A run tab is not dotless: store.ts
- *     `runStatusFor` writes one through `setTabStatus`, and every value it can
- *     answer is either a `CueStatus` member (`input`, `waiting`, `failed`, `done`)
- *     or one `isCueStatus` rejects (`""`, `working`). So the run kind inherits the
- *     fold's severity handling BY CONSTRUCTION — `CUE_SEVERITY` needs no new
- *     member and `CUE_ICON` no new entry, which is why the ratified design's "run
- *     arm" is this sentence rather than a branch that would do nothing.
- *   - EDITOR tabs and the five singletons stay excluded. An editor's `dirty` mark
- *     rides the same element and is not an agent state at all; `isCueStatus`
- *     rejects `dirty` as well, so it cannot reach the fold by either route.
- *   - `owns` is scoped to the CHAT kind, deliberately, because the rule it encodes
- *     is a statement about chats. A chat VIEW tab is a window onto a chat, so
- *     counting it would count one chat twice whenever that chat's own tab is also
- *     open. That does not transfer to a run: a run tab is a window onto a RUN, a
- *     different subject, so one chat plus one run genuinely is two things wanting
- *     the reader. Hence the conjunct stays on the kind it was written for rather
- *     than being loosened globally — tab-materialize.ts hard-codes `owns: false`
- *     for run AND subagent, so loosening it would sweep both in. A chat SUB-TAB is
- *     NOT excluded: a tangent carries a parent and the default `owns`, because it
- *     is its own chat with its own bridge and its own cue. The `subagent` kind is
- *     left out: its asks are filed under its launching chat, whose row already
- *     carries them.
- *
- *  The dot this reads is `setTabStatus`'s single `TabDotState` slot, NOT
- *  `setTabRunStatus`'s workflow mark on a chat row — that writer deliberately does
- *  not bump `dotVersion`, and folding it in is still an open product decision (see
- *  its own comment). A chat whose runs are still going is handled instead by the
- *  settle probe below, which BLANKS that chat's settled cue rather than promoting a
- *  second mark into the fold.
- *
- *  The id is the TAB id, which is what every other key in that module is (the
- *  rows-in-view scan reads `data-tab-id`, the switch acknowledgement reads the
- *  bus event's `to`, and the forget hook reads a closed tab's id). One key
- *  vocabulary, so no two of those can disagree. */
+ *  Only `chat` and `run` bear a cue; every `runStatusFor` value is a `CueStatus` member or one
+ *  `isCueStatus` rejects. `owns` excludes chat VIEW tabs (one chat counted twice) and is scoped to
+ *  chats because tab-materialize.ts hard-codes `owns: false` for run and subagent. Subagent asks are
+ *  filed under the launching chat. The id is the TAB id, that module's one key vocabulary. */
 export function cueCandidates(): { id: string; status: string }[] {
   return state.tabs
     .filter((t) => (t.subject.kind === "chat" && t.spec.owns) || t.subject.kind === "run")
     .map((t) => ({ id: t.subject.id, status: foldedDotStatus(t) }));
 }
 
-/** The dot states that mean a chat's own work is OVER, and therefore the only ones
- *  the settle probe may blank.
- *
- *  Narrow on purpose. A chat reading `input` (an unanswered decision) or `waiting`
- *  (the agent asked and is standing by) must keep its cue whatever its runs are
- *  doing — those states ARE the reader's business, and they are what the reader is
- *  being pointed at. `working` and `idle` raise no cue in the first place. */
+/** The dot states meaning a chat's own work is OVER: the only ones the settle probe may blank.
+ *  `input` and `waiting` are the reader's business and keep their cue. */
 const SETTLED_CUES: ReadonlySet<string> = new Set<TabDotStatus>(["done", "failed"]);
 
-/** Answers whether a CHAT still holds outstanding work, or null when nothing has
- *  registered one. INJECTED rather than imported: the answer lives in
- *  `chat-settled.ts`, which reads the chat store, the live-run inventory and the
- *  decision dock — and every one of those graphs reaches back here. */
+/** Whether a CHAT still holds outstanding work, or null when unregistered. INJECTED: the answer
+ *  lives in `chat-settled.ts`, whose dependencies all reach back here. */
 let chatSettledProbe: ((chatRef: string) => boolean) | null = null;
 
 /** Register the settle probe. Unregistered, nothing is ever suppressed, which is
@@ -1810,19 +1456,10 @@ export function setChatSettledProbe(fn: (chatRef: string) => boolean): void {
   chatSettledProbe = fn;
 }
 
-/** What the out-of-page fold sees for one row: its own dot, unless this is a CHAT
- *  whose turn has settled while the work it launched is still going.
- *
- *  `""` and NOT `idle`, and the difference is load-bearing: `attention.ts`'s refresh
- *  reads `""` as "no information" and leaves the acknowledgement map alone, where
- *  `idle` is a real non-cue state that FORGETS the entry. Blanking with `idle` would
- *  drop the reader's acknowledgement and re-raise the cue from scratch the moment the
- *  run ended, even for a chat they had already visited.
- *
- *  The row's own `dotStatus` is untouched, so the strip renders exactly as it does
- *  today — only the fold's view of it changes. The probe is consulted LAST, so a row
- *  that could never be suppressed never reaches it and never subscribes a calling
- *  effect to that chat's state. */
+/** What the out-of-page fold sees for one row: its own dot, unless a CHAT whose turn settled while
+ *  work it launched still runs. `""`, not `idle`: attention.ts reads `""` as no information, while
+ *  `idle` FORGETS the reader's acknowledgement. The probe is consulted LAST, so a row that can never
+ *  be suppressed subscribes to nothing extra. */
 function foldedDotStatus(row: TabRow): string {
   const status = row.dotStatus ?? "";
   if (row.subject.kind !== "chat" || !SETTLED_CUES.has(status)) {
@@ -1831,26 +1468,10 @@ function foldedDotStatus(row: TabRow): string {
   return chatSettledProbe !== null && !chatSettledProbe(row.subject.ref) ? "" : status;
 }
 
-/** Subscribe to everything that can change the attention fold's input, and
- *  return the disposer.
- *
- *  TWO signals, because there are two disjoint write paths and covering one is
- *  not covering the input: `stateVersion` for the tab SET (every projection
- *  mutation ends in `emit()`) and `dotVersion` for every dot write
- *  (`recordDotStatus`, which deliberately does not emit). A funnel on `emit()`
- *  alone would leave the count stale on every status change; one on the dot alone
- *  would leave it stale after a chat closed.
- *
- *  A THIRD input arrives for free and is not named here: `fn` calls
- *  `cueCandidates`, which calls the settle probe, whose own reads are tracked. An
- *  effect subscribes to whatever it reads during its run, nested calls included, so
- *  a run starting or ending under a settled chat re-runs this effect without a
- *  signal of its own. Only a row that CAN be suppressed reaches the probe, so an
- *  ordinary strip subscribes to nothing extra.
- *
- *  Deliberately NOT registered in `moduleEffects`: the caller owns this
- *  subscription's lifetime, so `_resetForTest` must not silently unsubscribe it
- *  while the caller still believes it is live. */
+/** Subscribe to every input of the attention fold; returns the disposer. TWO signals for two write
+ *  paths: `stateVersion` for the tab SET and `dotVersion` for dot writes, which do not emit. The
+ *  settle probe's reads are tracked through `cueCandidates`. NOT in `moduleEffects`: the caller
+ *  owns the lifetime, so `_resetForTest` must not unsubscribe it. */
 export function subscribeTabCues(fn: () => void): () => void {
   return effect(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -1877,22 +1498,15 @@ function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
-  // DEFERRED while any remove is pending or verifying: the strip may be empty
-  // only because a close is optimistic, and a respawned chat would race the
-  // rollback that could bring the closed one back — or, mid-outage, respawn
-  // against a server that still holds the tab. The removes-settled notification
-  // re-arms this; a settlement that restored rows drops the deferral instead.
+  // DEFERRED while any remove is pending or verifying: a respawned chat would race the rollback that
+  // could bring the closed one back. The removes-settled notification re-arms this.
   if (removesPending()) {
     internal.emptyDeferred = true;
     return;
   }
   internal.emptyDeferred = false;
-  // Longer than the closed row's exit animation on purpose: the respawned tab's
-  // row must be built into an EMPTY strip, or its entry animation plays against
-  // the departing row and it lands beside it until that row collapses. 500ms
-  // clears the longer of the two exits in 10-shell-app.css (`.tab.exiting` at
-  // 0.18s, `.exiting-merge` at --dur-standard) — and the merge one cannot be the
-  // last row's anyway, since it requires a parent that is still open.
+  // Longer than the closed row's exit animation (10-shell-app.css), so the respawned row is built
+  // into an EMPTY strip instead of animating in beside the departing one.
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
@@ -1936,11 +1550,8 @@ function registerModuleSubscribers(): void {
   // View / route sync.
   tabsEffect((s) => {
     if (s.tabs.length === 0 && s.active === "") {
-      // The EMPTY-STATE surface, but only once a tab has EVER opened: at boot
-      // this state is ordinary (the HTML already shows the chat view), while
-      // after a last-tab close the strip may sit here for as long as a pending
-      // remove verifies, and whatever view the closed tab showed must not
-      // linger over it.
+      // The empty-state surface, only once a tab has EVER opened: at boot the HTML already shows the chat
+      // view, while after a last-tab close the closed tab's view must not linger.
       if (internal.everOpened) {
         showEmptySurface();
       }
@@ -1952,28 +1563,17 @@ function registerModuleSubscribers(): void {
     } else {
       syncSidebarButtons(null);
     }
-    // Announce a REAL switch. This effect re-runs on every projection mutation,
-    // so the guard is what separates "the active tab changed" from "something
-    // else about the tabs did" — a subscriber that tears a feature down cannot be
-    // handed the second one. Emitted here rather than inside showView because
-    // showView's DOM swap runs inside a view transition, so its timing is not the
-    // state change's.
+    // Announce a REAL switch only: this effect re-runs on every projection mutation. Emitted here, not
+    // in showView, whose DOM swap runs inside a view transition.
     if (s.active !== lastAnnouncedTab) {
       lastAnnouncedTab = s.active;
       emitBus(BUS_TAB_CHANGED, { to: s.active, kind: active?.subject.kind ?? null });
     }
   });
 
-  // DOM rendering.
-  //
-  // Guarded on "no tab has ever opened" rather than on "the store is empty",
-  // which is what the subscriber above still tests. The two guards differ on
-  // exactly one transition, and it is a transition only this subscriber has work
-  // for: closing the LAST tab leaves both state fields at their initial values,
-  // so an empty-store guard skipped the render that had to remove the closed row.
-  // The row therefore kept its slot in the strip, un-animated, until the NEXT
-  // render — which is the one the 500ms empty-state respawn triggers, so the
-  // closed row's exit and its replacement's entry played together.
+  // DOM rendering, guarded on "no tab has ever opened" rather than "the store is empty": closing the
+  // LAST tab restores both initial values, and an empty-store guard skipped the render that removes
+  // the closed row.
   tabsEffect(() => {
     if (!internal.everOpened) {
       return;
@@ -2009,19 +1609,9 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 }
 
 function showView(row: TabRow): void {
-  // Swap the visible view ONLY when it is not already the right one.
-  //
-  // The effect that calls this re-runs on EVERY projection mutation, not just
-  // on an activation, so without this guard closing a background tab would
-  // re-run the swap for a view that never changed — cancelling and replaying
-  // the entry fade on the view the reader is already looking at. Same for a
-  // chat-to-chat switch: both rows resolve to the SAME view element, and
-  // re-animating it would fade content that never left the screen.
-  //
-  // Read the current state from the DOM rather than remembering the last
-  // selector. Nothing else writes these classes today, so a cached answer would
-  // be correct — and silently wrong the first time something did, leaving a view
-  // hidden with no way back. The scan is a handful of nodes.
+  // Swap the view ONLY when it is not already the right one: this re-runs on every projection
+  // mutation, and a re-swap replays the entry fade. Read from the DOM, not a cached selector, so a
+  // second writer of these classes can never leave a view hidden.
   const target = document.querySelector(row.spec.view);
   const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
     (n) => !(n as HTMLElement).classList.contains("hidden"),
@@ -2036,35 +1626,20 @@ function showView(row: TabRow): void {
     });
   }
 
-  // The title bar's heading, for every view and every width. The tab's name IS
-  // the page's title, and the kind is what lets the heading recover a subtitle
-  // the view's own module recorded earlier (page-title.ts).
-  //
-  // A chat used to be excluded here and set to "", so the one view people spend
-  // their time in had no title on a phone at all — the exclusion made sense only
-  // while this span was a mobile-only afterthought beside a floating menu.
+  // The tab's name IS the page title; the kind lets the heading recover a subtitle (page-title.ts).
   setPageTitle(row.name, row.subject.kind);
 
-  // The phone drawer is NOT dismissed here. This function runs from the view
-  // effect, which re-runs on every projection mutation, so a dismissal here fired
-  // for a rename, a dot change and — the reported defect — a tab CLOSE, including
-  // a background tab's. `revealActiveView` belongs to the navigation gesture; see
-  // activateTab.
+  // The phone drawer is NOT dismissed here: this runs on every projection mutation, a close included.
+  // `revealActiveView` belongs to the navigation gesture.
 
   syncSidebarButtons(row.subject.kind);
 
   pushRoute(row.spec.route);
 }
 
-/** Show the EMPTY-STATE surface: the chat view with no active chat — an empty
- *  transcript over the composer, whose Send creates a fresh chat. Rendered when
- *  the strip empties (a last-tab close, possibly still pending), and it HIDES
- *  the other views without disposing anything: every dispose belongs to
- *  confirmed teardown, so a rollback finds the closed tab's state intact.
- *
- *  Deliberately no pushRoute: the strip is mid-settlement, and the settlement's
- *  own activation — the respawned chat's or the restored tab's — is what
- *  corrects the URL. */
+/** Show the EMPTY-STATE surface: the chat view with no active chat, whose Send creates a fresh one.
+ *  HIDES the other views without disposing anything, so a rollback finds state intact. No
+ *  pushRoute: the settlement's own activation corrects the URL. */
 function showEmptySurface(): void {
   const target = document.querySelector(TAB_VIEWS.chat);
   const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
@@ -2102,17 +1677,9 @@ function renderDOM(): void {
 
   const activeIDs = new Set(state.tabs.map((t) => t.subject.id));
 
-  // Remove orphans with an exit animation, and CHOOSE that animation from what
-  // the row is. A sub-tab whose parent survives merges UP into it
-  // (`.exiting-merge`); everything else swipes out sideways (`.exiting` alone),
-  // which is what makes a parent and its whole subtree read as one block leaving
-  // rather than as N children folding into a row that is departing too.
-  //
-  // The parent is read off the DOM rather than the store because the row has
-  // already left the projection by the time this runs — removal is what put it in
-  // this loop. `activeIDs` is the survivor set, so an orphan (a sub-tab whose
-  // parent is not open here) answers false and takes the sideways exit, correctly:
-  // there is no row on screen for it to merge into.
+  // Orphans exit animated: a sub-tab whose parent survives merges UP (`.exiting-merge`), everything
+  // else swipes out (`.exiting`), so a parent and its subtree leave as one block. The parent is read
+  // off the DOM because the row already left the projection.
   for (const [id, node] of existing) {
     if (!activeIDs.has(id)) {
       const parent = node.dataset["parentId"];
@@ -2131,10 +1698,8 @@ function renderDOM(): void {
     }
   }
 
-  // Insert + position. Skip over exiting elements when checking whether a tab is
-  // already in the right spot — they're still in the DOM (animating out) but
-  // shouldn't affect sibling ordering. While a drag holds the strip the pointer owns
-  // the order of every row already in it, so none is re-seated.
+  // Exiting elements are skipped for ordering. While a drag holds the strip the pointer owns the
+  // order, so nothing is re-seated.
   const reseat = !dragOwnsStrip();
   let prev: HTMLElement | null = null;
   for (const row of state.tabs) {
@@ -2183,10 +1748,8 @@ function renderDOM(): void {
     // two cannot disagree.
     node.style.setProperty("--tab-depth", String(depthOf(row)));
     node.classList.toggle("tab-pinned", row.subject.pinned);
-    // The parent id rides the row for ONE reader: the exit above, which has to
-    // know whether this row's parent is still open at a moment when the row is no
-    // longer in the projection to ask. Written beside the indent it belongs to, so
-    // the class and the attribute cannot come to disagree.
+    // The parent id rides the row for the exit above, which must know whether the parent is still open
+    // once the row has left the projection.
     if (row.subject.parent === "") {
       delete node.dataset["parentId"];
     } else {
@@ -2208,13 +1771,8 @@ function createTabEl(row: TabRow): HTMLElement {
 
   const name = el("span", { className: "tab-name" }, row.name);
 
-  // A SPAN, not a button, and that is forced by the row's own role: `role="tab"`
-  // is Children Presentational in WAI-ARIA, so every descendant of this row is
-  // pruned from the accessibility tree. A <button> in here was therefore a
-  // control assistive tech could not name or reach while still holding a place in
-  // the page tab sequence — one dead tab stop per open tab, and axe's
-  // `nested-interactive` (serious) on every row. Closing from the keyboard is the
-  // APG's own contract for a deletable tab: Delete on the focused row.
+  // A SPAN, not a button: `role="tab"` is Children Presentational in WAI-ARIA, so a button here is an
+  // unnamed dead tab stop (axe `nested-interactive`). Keyboard close is the APG's Delete on the row.
   const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();
@@ -2233,25 +1791,14 @@ function createTabEl(row: TabRow): HTMLElement {
   const statusDot = el("span", { className: CLS_DOT, "aria-hidden": "true" });
   const statusSR = el("span", { className: `${CLS_DOT_SR} sr-only` });
 
-  // The WORKFLOW mark, and its own announced phrase. A CHAT row only, because a
-  // run is launched from a chat and nothing else in the strip has one to report.
-  //
-  // A second element rather than a second state on the dot beside it: the two
-  // facts are genuinely independent, since `run_workflow` returns as soon as the
-  // run is created, so the launching turn ends and that dot goes green while the
-  // run carries on for another forty minutes. Compounding them either keeps the
-  // green (no signal, which is the reported defect) or overwrites it (a lie about
-  // the turn).
-  //
-  // NOT a `.tab-icon`, for the nesting arrow's reason: that class also means "grab
-  // me to reorder".
+  // The WORKFLOW mark and its phrase, chat rows only. A second element, not a second dot state: a
+  // launching turn ends (green dot) while its run carries on, so compounding them either hides the
+  // run or lies about the turn. NOT a `.tab-icon`: that class means "grab me to reorder".
   const runDot = el("span", { className: CLS_RUN_DOT, "aria-hidden": "true" });
   const runSR = el("span", { className: `${CLS_RUN_DOT_SR} sr-only` });
 
-  // The pin marker rides every row and CSS reveals it under `.tab-pinned`, so
-  // renderDOM toggles one class instead of adding and removing a node. The glyph
-  // is decorative; the .sr-only word beside it is what a screen reader hears,
-  // because colour and shape alone are one channel.
+  // The pin marker rides every row and CSS reveals it under `.tab-pinned`. The glyph is decorative;
+  // the .sr-only word is what a screen reader hears.
   const pin = el(
     "span",
     { className: "tab-pin" },
@@ -2259,10 +1806,8 @@ function createTabEl(row: TabRow): HTMLElement {
     el("span", { className: "sr-only" }, "Pinned"),
   );
 
-  // The nesting marker a sub-tab carries INSTEAD of its kind glyph. It is not a
-  // `.tab-icon`: that class means "grab me to reorder this row", and a sub-tab's
-  // position is its parent's, so a run sub-tab used to show a grab cursor on a
-  // row no drag can move.
+  // The nesting marker a sub-tab carries INSTEAD of its kind glyph. Not a `.tab-icon` ("grab me to
+  // reorder"): a sub-tab's position is its parent's.
   const nest = el(
     "span",
     { className: "tab-nest", "aria-hidden": "true" },
@@ -2270,61 +1815,37 @@ function createTabEl(row: TabRow): HTMLElement {
   );
 
   if (row.subject.parent !== "") {
-    // A SUB-TAB is the parent chat row's layout with the nesting arrow in front:
-    // arrow, dot, name. Both halves of that come from the same reading — a row
-    // that says what is happening in it beats a row that says what KIND it is,
-    // and a sub-tab already says its kind by sitting under its parent. So the
-    // kind glyph is spent on the marker and the dot takes the position it holds
-    // on every parent chat row rather than the trailing slot, where it sat far
-    // from the name it describes with the × between them.
-    //
-    // Keyed on the SUBJECT's parent, the same predicate `renderDOM` toggles
-    // `tab-child` with, so the indent and the marker cannot disagree. Safe to
-    // decide once at creation: `Parent` is set at open and never reassigned.
-    //
-    // A chat sub-tab (a tangent) carries the workflow mark too: it is its own chat
-    // with its own bridge, so it can launch its own runs. The two kinds that cannot
-    // get one here are `run` and `subagent`.
+    // A SUB-TAB is the parent chat row's layout with the nesting arrow in front: it says its kind by
+    // sitting under its parent, so the glyph slot goes to the marker and the dot sits by the name.
+    // Keyed on the SUBJECT's parent, as `renderDOM`'s `tab-child` is, but decided at creation only: a
+    // later `setTabParent` does not rebuild the node. Chat sub-tabs carry the workflow mark too.
     if (kind === "chat") {
       node.append(nest, statusDot, runDot, name, statusSR, runSR, pin, close);
     } else {
       node.append(nest, statusDot, name, statusSR, pin, close);
     }
-    // The `idle` floor is the CHAT rule below and it generalizes to neither other
-    // kind that can sit here, for the same reason in both: the hollow ring means
-    // the row has not initiated (store.ts `outcomeLatch`), and a run with no frame
-    // yet and a delegate whose invocation is not resident are both cases of "no
-    // state to show" rather than "nothing has happened". So both start blank and
-    // 12-tabs.css reserves the slot for them, which is what keeps the name from
-    // moving when the real state lands — a run's from `run-dots.ts`, a subagent's
-    // from `subagent-dots.ts`.
+    // The `idle` floor is the CHAT rule only: a run with no frame yet and a non-resident delegate have
+    // no state to show, so both start blank and 12-tabs.css reserves the slot so the name does not
+    // move when `run-dots.ts` / `subagent-dots.ts` paint.
     paintDot(node, kind, row.dotStatus ?? (kind === "chat" ? "idle" : ""), row.dotSince);
   } else if (kind === "chat") {
-    // A chat tab LEADS with its activity dot, in the slot the per-mode role glyph
-    // used to hold. That is the replacement, not a supplement: the strip exists
-    // to say what is happening in the chats you are not looking at, and a chat's
-    // role does not change between glances while its activity does.
+    // A chat tab LEADS with its activity dot: the strip says what is happening in chats you are not
+    // looking at.
     node.append(statusDot, runDot, name, statusSR, runSR, pin, close);
-    // Painted from the ROW, falling back to `idle`. The fallback is why the dot
-    // is seeded at all rather than left blank for the store effect to fill: the
-    // effect paints on a later tick, so an unseeded dot would leave the row one
-    // frame narrower and shift its name.
+    // Seeded from the row, falling back to `idle`: the store effect paints a tick later, and an
+    // unseeded dot would shift the name.
     paintDot(node, kind, row.dotStatus ?? "idle", row.dotSince);
   } else {
-    // Every other kind keeps its glyph — none of them has an activity concept —
-    // and uses the same element in the trailing slot for the editor's unsaved
-    // mark. No `idle` floor here: an editor tab with nothing unsaved has no state
-    // to show.
+    // Other kinds keep their glyph and use the trailing slot for the editor's unsaved mark; no `idle`
+    // floor.
     const icon = el("span", { className: "tab-icon" }, iconEl(TAB_ICONS[kind]));
     node.append(icon, name, statusSR, pin, statusDot, close);
     // No producer supplies an age here, and the argument is passed anyway so this is
     // not the one paint site a reader has to reason about.
     paintDot(node, kind, row.dotStatus ?? "", row.dotSince);
   }
-  // The workflow mark, repainted from the row for the dot's reason: the producer
-  // effect rewrites only when its own inputs churn, and a DOM rebuild is not one of
-  // them. One call site rather than one per branch — it is a no-op on a row that
-  // carries no mark.
+  // Repainted from the row for the dot's reason: a DOM rebuild is not one of the producer's inputs.
+  // A no-op on a row with no mark.
   paintRunDot(node, row.runDot?.status ?? "", row.runDot?.tally ?? NO_RUNS);
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
@@ -2332,12 +1853,17 @@ function createTabEl(row: TabRow): HTMLElement {
 
   paintTooltip(node, row.name);
 
-  // Right-click context menu for chat tabs: pin/unpin, move up/down, then export.
+  if (kind === "chat") {
+    node.addEventListener("dblclick", (e) => {
+      if ((e.target as HTMLElement).closest(".tab-close, .tab-name-input") !== null) {
+        return;
+      }
+      beginTabRename(node, id);
+    });
+  }
+
+  // Right-click context menu for chat tabs: pin/unpin, move up/down, rename, then the exports.
   // Non-chat tabs keep the native browser menu.
-  //
-  // There is no "Promote to its own tab" any more. `TabSubject.Parent` is set at
-  // open and never reassigned, which is what makes a parent cycle
-  // unrepresentable and why no reparent command exists to spend that property on.
   node.addEventListener("contextmenu", (e) => {
     if (kind !== "chat") {
       return;
@@ -2378,6 +1904,12 @@ function createTabEl(row: TabRow): HTMLElement {
         },
       },
     );
+    items.push({
+      label: "Rename\u2026",
+      action: () => {
+        beginTabRename(node, id);
+      },
+    });
     items.push(
       {
         label: "Export as Markdown",
@@ -2391,6 +1923,12 @@ function createTabEl(row: TabRow): HTMLElement {
           downloadChatExport(current.subject.ref, current.name, "json");
         },
       },
+      {
+        label: "Download Kiro session",
+        action: () => {
+          void downloadKiroSession.dispatch({ chatID: current.subject.ref, name: current.name });
+        },
+      },
     );
     showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
@@ -2398,35 +1936,76 @@ function createTabEl(row: TabRow): HTMLElement {
   return node;
 }
 
+// --- In-place rename ---
+
+/** Swap a chat row's name for a field. The name span stays in the row, hidden,
+ *  so a `chat_updated` landing mid-edit still repaints it; the field is removed
+ *  on Enter, blur or Escape. Pointer and key events stop at the field, or the
+ *  row's own handlers would activate, drag or close the tab under the caret. */
+function beginTabRename(node: HTMLElement, id: string): void {
+  const row = rowOfID(id);
+  const nameEl = node.querySelector<HTMLElement>(".tab-name");
+  if (row?.subject.kind !== "chat" || nameEl === null) {
+    return;
+  }
+  if (node.querySelector(".tab-name-input") !== null) {
+    return;
+  }
+  const chatID = row.subject.ref;
+  const before = nameEl.textContent;
+  const input = el("input", {
+    type: "text",
+    className: "tab-name-input",
+    maxLength: MAX_CHAT_NAME_UNITS,
+    value: before,
+    "aria-label": "Chat name",
+  }) as HTMLInputElement;
+  let done = false;
+  const finish = (commit: boolean): void => {
+    if (done) {
+      return;
+    }
+    done = true;
+    const name = input.value.trim();
+    input.remove();
+    nameEl.hidden = false;
+    if (commit && name !== "" && name !== before) {
+      void renameChat.dispatch({ chatID, name });
+    }
+  };
+  for (const type of ["pointerdown", "pointerup", "click", "dblclick", "auxclick"] as const) {
+    input.addEventListener(type, (e) => {
+      e.stopPropagation();
+    });
+  }
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(true);
+      node.focus();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+      node.focus();
+    }
+  });
+  input.addEventListener("blur", () => {
+    finish(true);
+  });
+  nameEl.hidden = true;
+  nameEl.after(input);
+  input.focus();
+  input.select();
+}
+
 // --- Tap vs drag ---
 //
-// `#tab-list` is a scroll container (`overflow-y: auto` computes the inline axis to
-// `auto` too), so a finger on a row is as often a scroll as a tap — and this
-// strip's activation is a `pointerup` handler, so a gesture that panned the list
-// and lifted still activated whatever sat under its FIRST contact point.
-//
-// A native pan cancels the pointer, which suppresses the release for free. What it
-// does not cover, and what the report describes, is a drag along an axis with
-// nothing left to scroll: no pan starts, so no cancel arrives, `pointermove` keeps
-// being delivered under touch's implicit capture, and the release lands on the row.
-// So the discrimination is the travelled DISTANCE rather than any cancel.
-//
-// ONE module-scope gesture rather than per-row state: `isPrimary` bounds the strip
-// to a single gesture at a time, and the two `pointerup` readers on a row —
-// activation and the × — have to answer for the same one. There is no reset on
-// `pointercancel` deliberately: a cancelled gesture delivers no release to
-// suppress, and the next `pointerdown` is what clears the verdict.
-//
-// The origin is RE-BASELINED when the visual viewport has moved under the press
-// rather than read as travel; `viewport-frame.ts` owns why that happens. Dropping
-// the verdict instead is not available here: the failure is a REFUSED activation,
-// so declaring a drag would deny the click the reader made. No held-button gate,
-// unlike `tabs-drag.ts`, whose failure is the opposite: a wrong verdict there drops
-// a real drag's arm. A stale verdict IS readable here — the move handler reads no
-// button, and a release can arrive on a row whose own pointerdown never fired (press
-// the strip's background, travel over a row, release) — but every real tap begins
-// with that row's pointerdown, which resets it, and refusing a gesture that began
-// off-row is the answer either way.
+// `#tab-list` scrolls, and activation is a `pointerup`; a drag along an axis with nothing to scroll
+// starts no pan and so no cancel, and the release lands on the row. So the verdict is travelled
+// DISTANCE. ONE module-scope gesture (`isPrimary`), read by both activation and the ×; no
+// `pointercancel` reset, the next `pointerdown` clears it. The origin is RE-BASELINED when the
+// visual viewport moves (`viewport-frame.ts`): declaring a drag would refuse a real click.
 let gestureOriginX = 0;
 let gestureOriginY = 0;
 let gesturePointerType = "";
@@ -2515,20 +2094,18 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
         e.preventDefault();
         activateTab(id);
         break;
+      case "F2":
+        if (rowOfID(id)?.subject.kind === "chat") {
+          e.preventDefault();
+          beginTabRename(node, id);
+        }
+        break;
       case "Delete":
       case "Backspace": {
         e.preventDefault();
-        // Focus has to be moved by hand, or Delete drops the keyboard user out of
-        // the strip and onto <body>: the row they were standing on is the element
-        // being removed. The APG's Delete contract is that focus lands on the tab
-        // that took the closed one's place, so the successor list is "everything
-        // after me, then everything before me in reverse".
-        //
-        // Moved BEFORE the dispatch, and that is the one thing this gesture had to
-        // change: a close is a round trip now, so waiting for the removal to land
-        // would leave focus on <body> for the whole flight. The first surviving
-        // sibling is where focus belongs either way, and a close that is refused
-        // leaves the strip intact with focus on a neighbour, which is harmless.
+        // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
+        // tab that took the closed one's place: everything after me, then everything before in reverse.
+        // Moved BEFORE the dispatch, because a close is a round trip.
         const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
         const self = siblings.indexOf(node);
         const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
@@ -2576,13 +2153,9 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
 
 // --- Singleton tab helpers ---
 
-/** Open or toggle a singleton (always-one-instance) tab. If it's already the
- *  active tab, close it; otherwise open/activate.
- *
- *  Both halves are round trips now, and the CLOSE half is why this cannot be
- *  await-free at its call sites without care: a toggle that resolves before the
- *  frame lands would let a second click race the first. The four public toggles
- *  return the promise so a caller that has a reason to sequence can. */
+/** Open or toggle a singleton tab: close it when active, else open/activate. Both halves are round
+ *  trips, so the toggles return the promise; a toggle resolving before the frame lands would let a
+ *  second click race the first. */
 async function toggleSingleton(kind: TabKind): Promise<void> {
   const open = tabIdFor(kind);
   if (open !== "" && state.active === open) {
@@ -2592,12 +2165,8 @@ async function toggleSingleton(kind: TabKind): Promise<void> {
   await openTab({ kind });
 }
 
-/** Toggle the Settings tab, landing on the given sub-tab (default: General).
- *
- *  The sub-tab is applied AFTER the tab exists, through the same setter the
- *  router uses. A singleton's ref is empty, so a subject cannot carry a sub-tab
- *  and the factory has to build the canonical route — which makes the correction
- *  channel below load-bearing rather than a convenience. */
+/** Toggle the Settings tab, landing on the given sub-tab (default: General). A singleton's ref is
+ *  empty, so the sub-tab is applied AFTER the tab exists, through the router's setter. */
 export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<void> {
   await toggleSingleton("settings");
   setSettingsTab(tab);
@@ -2612,13 +2181,8 @@ export async function openSettingsView(tab: SettingsTab = "general"): Promise<vo
   setSettingsTab(tab);
 }
 
-/** Switch the Settings panel to a specific sub-tab. No-op when Settings is not
- *  open.
- *
- *  SYNCHRONOUS, deliberately, and it is not a mutation of the collection: a
- *  singleton's sub-tab is not in the subject, so this is the client's own
- *  correction channel over the route the factory built. Router-driven navigation
- *  reads it that way too — it must change the inner tab without toggling. */
+/** Switch the Settings panel to a sub-tab; a no-op when Settings is not open. SYNCHRONOUS and not a
+ *  collection mutation: the client's own correction channel over the factory's route. */
 export function setSettingsTab(tab: SettingsTab): void {
   setTabRoute(tabIdFor("settings"), { kind: "settings", tab });
 }
@@ -2641,11 +2205,8 @@ export function setGitTab(tab: GitTab): void {
   setTabRoute(tabIdFor("git"), { kind: "git", tab });
 }
 
-/** Toggle the file browser, opening at `openAt` when none is open.
- *
- *  NOT `toggleSingleton`: the files kind is multi-instance, so there is no single
- *  tab to look up by kind alone. Three-way — close the ACTIVE browser, else bring
- *  the most recent one forward, else open one at the folder the caller resolved. */
+/** Toggle the file browser, opening at `openAt` when none is open. Not `toggleSingleton`: files is
+ *  multi-instance. Close the ACTIVE browser, else bring the most recent forward, else open one. */
 export async function toggleFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {
@@ -2693,12 +2254,8 @@ export async function toggleDocsView(tab: DocsTab = "steering"): Promise<void> {
   setDocsTab(tab);
 }
 
-/** Point ONE row's LOCAL route somewhere, by id.
- *
- *  The spec is replaced rather than mutated, because a `TabViewSpec` is a
- *  readonly snapshot: every other field of it is immutable by contract, and the
- *  route is the one the client corrects. Emits only when the tab is active, since
- *  the route subscriber is what pushes the URL. */
+/** Point ONE row's LOCAL route somewhere, by id. The readonly spec is replaced, not mutated; emits
+ *  only when the tab is active, since the route subscriber pushes the URL. */
 function setTabRoute(id: string, route: Route): void {
   const row = rowOfID(id);
   if (row === undefined) {
@@ -2710,23 +2267,16 @@ function setTabRoute(id: string, route: Route): void {
   }
 }
 
-/** Point ONE file browser's local route at the folder it is showing, by ref.
- *
- *  `showView` pushes the active row's route on EVERY projection mutation, so a row
- *  whose route does not track its content is overwritten by the next unrelated emit.
- *  By REF rather than by the active row, because `applyRoute` points a tab it is
- *  about to activate, where an active-row lookup would silently no-op. */
+/** Point ONE file browser's route at the folder it shows, by ref. `showView` pushes the active
+ *  route on every projection mutation, so an untracked route is overwritten; by REF because
+ *  `applyRoute` points a tab it is about to activate. */
 export function setFilesRoute(ref: string, path: string): void {
   setTabRoute(filesTabIdFor(ref), { kind: "files", path });
 }
 
-/** The files kind's own `tabIdFor`: the tab whose ref names this FOLDER, or "".
- *
- *  Both sides are normalised, because a `subject.ref` arrives from the persisted set
- *  bounded only by MaxRefBytes while every value downstream of the factory is
- *  `normalizeDirPath` output. A verbatim compare therefore has two key spaces, and a
- *  non-canonical ref would resolve to "" here while the state, the route and the
- *  label all resolved to the folder. */
+/** The files kind's `tabIdFor`: the tab whose ref names this FOLDER, or "". Both sides are
+ *  normalised: a persisted `subject.ref` is bounded only by MaxRefBytes while everything downstream
+ *  is `normalizeDirPath` output. */
 export function filesTabIdFor(ref: string): string {
   return filesRowForRef(ref)?.subject.id ?? "";
 }
@@ -2739,11 +2289,8 @@ function filesRowForRef(ref: string): TabRow | undefined {
   );
 }
 
-/** The active files row, else the most recently activated one, else the first in
- *  strip order, else "".
- *
- *  ALSO `filesTabForRoute`'s rungs 2 and 3, so a route, the sidebar button and
- *  Ctrl-F cannot disagree about which browser is "the" browser. */
+/** The active files row, else the most recently activated, else the first, else "". Also
+ *  `filesTabForRoute`'s rungs 2 and 3, so a route, the sidebar button and Ctrl-F agree. */
 function activeOrRecentFilesTab(): TabRow | undefined {
   const active = rowOfID(state.active);
   if (active?.subject.kind === "files") {
@@ -2758,13 +2305,9 @@ function activeOrRecentFilesTab(): TabRow | undefined {
   return state.tabs.find((t) => t.subject.kind === "files");
 }
 
-/** The files tab a `/files/<path>` route resolves to, and its NORMALISED ref.
- *
- *  Three rungs: the tab opened at that folder, else the ACTIVE files tab, else the
- *  most recently activated one; `{id:"", ref:""}` when none is open, which is what
- *  refuses a history entry for a browser nobody has. A folder is content any browser
- *  can show, so this is not `subjectForRoute`, which stays the factory's inverse for
- *  the OPEN direction. */
+/** The files tab a `/files/<path>` route resolves to, and its NORMALISED ref: the tab opened at that
+ *  folder, else the active one, else the most recent; `{id:"", ref:""}` refuses a history entry for
+ *  a browser nobody has. Not `subjectForRoute`, the factory's inverse for OPEN. */
 export function filesTabForRoute(path: string): { id: string; ref: string } {
   const row = filesRowForRef(path) ?? activeOrRecentFilesTab();
   return row === undefined
@@ -2793,11 +2336,9 @@ export async function openRunTab(
   });
 }
 
-/** Open (or focus) a SUBAGENT execution's own page. Not a singleton, and only ever a
- *  reader's own gesture; no SSE handler may call it. `owns: false` always, so the ×
- *  dismisses a view. `parent` nests it under the launching chat, promoting to top
- *  level when that chat has no tab. No NAME override: the factory derives the label,
- *  so a boot-restored tab and one opened from a card's link read the same. */
+/** Open (or focus) a SUBAGENT execution's page, only ever from a reader's gesture; no SSE handler
+ *  may call it. `owns: false` always. `parent` nests it under the launching chat. No name override,
+ *  so a restored tab and a card-opened one read the same. */
 export async function openSubagentTab(chatID: string, subtaskID: string): Promise<void> {
   if (chatID === "" || subtaskID === "") {
     return;
@@ -2811,13 +2352,8 @@ export async function openSubagentTab(chatID: string, subtaskID: string): Promis
   });
 }
 
-/** Open (or focus) an editor tab for a path.
- *
- *  Only the TAB half of the editor's own `open()` is here. That function writes
- *  the file's mode, repo and pending line before the tab exists, and those are
- *  the opener's arguments rather than facts about what is open — the mode lives in
- *  `fileStates`, the line in the pushRoute the opener issues afterwards — so the
- *  editor keeps them and this opens the tab. */
+/** Open (or focus) an editor tab for a path: only the TAB half of the editor's `open()`, which
+ *  keeps the opener's mode, repo and line. */
 export async function openEditorView(
   filePath: string,
   opts?: { activate?: boolean },
@@ -2833,6 +2369,7 @@ export async function openEditorView(
 
 /** Reset all projection state. Exported for test isolation only. */
 export function _resetForTest(): void {
+  tabNotice = bareTabNotice;
   state.tabs = [];
   state.active = "";
   callbacks.onActivate = null;

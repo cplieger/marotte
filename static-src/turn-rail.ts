@@ -37,13 +37,9 @@ import type { CardTop, TurnOffsets } from "./rail-activation.js";
  *  consumers already read it from. */
 export type { TurnSummary };
 
-/** How far the transcript must be able to scroll before the rail appears. A
- *  navigator has nothing to offer a conversation the reader can already see whole,
- *  and a threshold rather than `> 0` because a transcript overflowing by a few
- *  pixels would flip the rail on and off as its own content settles.
- *
- *  The number matching `BOTTOM_TOLERANCE_PX` is a coincidence of scale, not a
- *  shared decision — do not collapse the two. */
+/** How far the transcript must scroll before the rail appears: a threshold, not `> 0`, so a few
+ *  pixels of settling overflow do not flicker it. Equal to `BOTTOM_TOLERANCE_PX` by coincidence;
+ *  do not collapse the two. */
 const MIN_SCROLL_PX = 100;
 
 /** Wall-clock bound on one jump's paging loop, so a store that keeps reporting more
@@ -115,11 +111,10 @@ interface RailRecord {
  *  `invalidateTurnRails` drops them all. */
 const records = new Map<string, RailRecord>();
 
-/** Whether `id`'s record can stand in for a fetch: present and from the chat's current turn
- *  count. That count witnesses a turn STARTED and never one that ended — ingest opens turns
- *  while the rail is elsewhere — so a close is covered instead by `mergeTurnSets` letting a
- *  resident row overwrite the indexed one, until it leaves the window. The GET carries no
- *  digest stamp, so a whole-projection reconcile drops the records via `invalidateTurnRails`. */
+/** Whether `id`'s record can stand in for a fetch: present and at the chat's current turn count,
+ *  which witnesses a turn STARTED, never ended; `mergeTurnSets` covers a close by letting a resident
+ *  row win. The GET has no digest stamp, so a whole-projection reconcile goes through
+ *  `invalidateTurnRails`. */
 function recordCurrent(id: string): boolean {
   const r = records.get(id);
   if (r === undefined) {
@@ -145,21 +140,10 @@ function navigable(): boolean {
  *  re-render and the overwhelming majority that do not cost one comparison. */
 let renderedNavigable = false;
 
-/** Everything the rendered markers were built FROM, so a render that would redraw the
- *  same rail redraws nothing.
- *
- *  `render()` runs on every transcript paint (`setResidentTurns`), which on a streaming
- *  turn is several times a second, and it ends in `root.replaceChildren(...)` over freshly
- *  built nodes. Each marker is a `<button>` and a pending one carries `vk-dot-beat`, so an
- *  unguarded rebuild took focus off a keyboard reader's marker and restarted the beat that
- *  often — the same reader-state loss `exec-view/place.ts` records for a re-seat, reached
- *  by rebuilding instead of moving. A signature is the cheaper half of the two available
- *  fixes: the other is a keyed reconcile of a heterogeneous list whose every node's
- *  geometry moves whenever the window does, which is a redesign of this function rather
- *  than a guard on it.
- *
- *  It must name EVERY input the nodes read, or the rail goes stale, which is worse than
- *  the rebuild. `renderSignature` is that list and is the only place it lives. */
+/** Everything the markers were built FROM, so a render that would redraw the same rail redraws
+ *  nothing. `render()` runs on every transcript paint and replaces <button>s carrying `vk-dot-beat`,
+ *  so an unguarded rebuild stole a keyboard reader's focus and restarted the beat. It must name EVERY
+ *  input the nodes read (`renderSignature`, the one list), or the rail goes stale. */
 let renderedSig = "";
 
 /** The one writer of the marker set: the resident window merged into the fetched
@@ -191,11 +175,8 @@ export function mountTurnRail(host: HTMLElement): void {
   // reader states a position — a scroll, and a request for the live edge, which
   // scrolls through the controller and so fires no reader scroll event.
   onReaderGesture(clearSelection);
-  // Mount, unmount and the pagination prepend move every top below them, and
-  // `content-visibility: auto` on `.msg-row` makes a card swapping its estimated
-  // height for its real one do the same with no DOM change behind it. An unpark
-  // restores a scroll position against cards that were re-measured while the view
-  // was parked, which is neither of those.
+  // Mount, unmount, the pagination prepend and `content-visibility` re-estimates all move tops with no
+  // scroll; an unpark restores against re-measured cards.
   onTranscriptMutate(repick);
   onContentResize(repick);
   onAttach(repick);
@@ -204,11 +185,8 @@ export function mountTurnRail(host: HTMLElement): void {
   }
 }
 
-/** Hand the rail to a chat, dropping the previous session's view state.
- *
- *  Separate from the fetch because an EMPTY chat has to re-point too and has nothing
- *  to fetch. The index itself is NOT view state: the chat's record paints
- *  immediately, which is what makes a switch back to a loaded chat cost no fetch. */
+/** Hand the rail to a chat, dropping the previous session's view state. Separate from the fetch: an
+ *  EMPTY chat re-points too. The chat's record paints at once, so a switch back costs no fetch. */
 export function pointTurnRail(id: string): void {
   if (id === chatID) {
     return;
@@ -332,23 +310,16 @@ function invalidateOffsets(): void {
   offsets = undefined;
 }
 
-/** Clear the cached geometry AND re-answer activation. The second half is not
- *  optional: nothing else re-derives the active turn when the table is invalidated
- *  by something that is not a scroll, so without it the mark freezes until the
- *  reader happens to scroll. */
+/** Clear the cached geometry AND re-answer activation: nothing else re-derives the active turn on a
+ *  non-scroll invalidation, so the mark would freeze. */
 function repick(): void {
   invalidateOffsets();
   schedulePick();
 }
 
-/** Defer the resize-driven render one frame, behind a single slot.
- *
- *  IT MAY NOT RUN INSIDE THE RAIL'S OWN RESIZE DELIVERY: it writes `aria-label` and
- *  `replaceChildren` on the OBSERVED element, and `.turn-rail:empty` hides the
- *  element, so the empty/non-empty boundary is a change to the rail's own box — an
- *  observation re-activated at the depth being delivered, which the engine reports as
- *  "ResizeObserver loop completed with undelivered notifications". Every other
- *  `render()` call is a paint or activation path, and stays synchronous. */
+/** Defer the resize-driven render one frame, behind a single slot. NEVER inside the rail's own
+ *  resize delivery: it rewrites the OBSERVED element and `.turn-rail:empty` hides it, so the engine
+ *  reports "ResizeObserver loop completed with undelivered notifications". Other renders stay sync. */
 function scheduleRailRender(): void {
   if (renderFrame !== 0) {
     return;
@@ -405,10 +376,8 @@ function cardTops(): CardTop[] {
   return out;
 }
 
-/** A card's top in the SCROLLER's frame, or null for a card the engine reports no
- *  box for. Rects rather than `offsetTop`: `content-visibility: auto` on `.msg-row`
- *  makes the row a containing block, so an offsetParent-relative read returned 0 for
- *  a block whose true position was 2203. */
+/** A card's top in the SCROLLER's frame, or null when it has no box. Rects, not `offsetTop`:
+ *  `content-visibility: auto` makes `.msg-row` a containing block, so `offsetTop` read 0. */
 function scrollFrameTop(card: HTMLElement): number | null {
   if (card.getClientRects().length === 0) {
     return null;
@@ -468,14 +437,9 @@ function render(): void {
   root.replaceChildren(...nodes);
 }
 
-/** Every value the rendered nodes read, in one string. See `renderedSig`.
- *
- *  `markerNode` is the whole of it: `s.id`, `s.n`, `s.outcome`, `s.agent_initiated`, the
- *  search-hit and pending flags, its elapsed value, and the three marks (`selectedID`,
- *  `activeID`, the resolved `markedN`) that decide which single marker is filled;
- *  `railAt` folds the slot count and `span`, and the id order covers the slots. Joined
- *  through `keyenc`, not a separator: a turn id is server-minted text and a collision
- *  here is a rail that stops updating. */
+/** Every value the rendered nodes read, in one string (see `renderedSig`): all of `markerNode`'s
+ *  inputs, the three marks deciding the filled marker, and `railAt`'s slot count and `span`. Joined
+ *  with `keyenc`: a turn id is server text, and a collision freezes the rail. */
 function renderSignature(
   shown: readonly TurnSummary[],
   elapsed: ReadonlyMap<string, number>,
@@ -581,6 +545,28 @@ function markerNode(
   return btn;
 }
 
+/** Land on turn `n` of `id`, the way a marker click does: a `#turn-<n>` link's
+ *  door. Points the rail at the chat and fetches its index when it lacks `n`, so
+ *  a cold link pages history in. Answers whether the turn was found. */
+export async function jumpToTurn(id: string, n: number): Promise<boolean> {
+  if (id !== chatID) {
+    await loadTurnRail(id);
+  }
+  let s = summaries.find((x) => x.n === n);
+  if (s === undefined) {
+    await refreshTurnRail(id);
+    s = summaries.find((x) => x.n === n);
+  }
+  if (s === undefined || id !== chatID) {
+    return false;
+  }
+  selectedID = s.id;
+  holdIntent();
+  render();
+  await navigateToTurn(s);
+  return true;
+}
+
 /** The NUMBER of the turn the rail claims the reader is at: their own pick while they
  *  hold one, the scroll-derived turn otherwise, resolved through the resident
  *  projection first and the index second, and latched. */
@@ -642,10 +628,8 @@ export function initTurnRailCallbacks(cbs: {
   }
 }
 
-/** The jump that owns the scroller. Two markers clicked inside `PAGE_BUDGET_MS` are
- *  two operations in flight, and the SUPERSEDED one may not act: closing the epoch
- *  from its `finally` hands the reader to the live edge mid-flight, and its own
- *  corrections would write the scroller against a landing nobody asked for. */
+/** The jump that owns the scroller. A SUPERSEDED jump may not act: closing the epoch from its
+ *  `finally` hands the reader to the live edge mid-flight. */
 let jumpGeneration = 0;
 
 function ownsJump(gen: number): boolean {
@@ -679,12 +663,9 @@ function releaseIntent(): void {
   intentOpen = false;
 }
 
-/** Jump to a turn: page it in when it is not resident, build its body, scroll once,
- *  then correct the landing until the turn's top sits on the reading line.
- *
- *  ONE branch point, at the paging step. Everything after it runs on both paths —
- *  the body build included, because its completion applies a scroller write inside
- *  `preserveReadingPosition`, which mid-animation would redirect the scroll. */
+/** Jump to a turn: page it in if needed, build its body, scroll once, then correct until its top
+ *  sits on the reading line. ONE branch point (paging); the body build runs on both paths, since its
+ *  `preserveReadingPosition` write mid-animation would redirect the scroll. */
 async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promise<void> {
   // A second click on a turn that is already paging IS that jump, not another one:
   // claiming a generation here would supersede the operation this click is waiting
@@ -861,11 +842,8 @@ const RAIL_TARGET_MS = 1000;
 let railTarget: HTMLElement | undefined;
 let railTargetTimer = 0;
 
-/** Flash the ring on the card a jump landed on. A click on a turn already on screen
- *  moves only the marker, and a reader watching the TRANSCRIPT would see nothing.
- *
- *  `outline` only in the stylesheet, never `border` or `padding`: this fires on a
- *  card mid-transcript and must shift no layout. */
+/** Flash the ring on the landed card, so a jump to a card already on screen is visible. `outline`
+ *  only: it must shift no layout. */
 function markRailTarget(card: HTMLElement): void {
   clearRailTarget();
   railTarget = card;

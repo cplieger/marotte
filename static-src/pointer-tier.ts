@@ -1,9 +1,6 @@
-// ---------------------------------------------------------------------------
-// Which pointer this document is laid out for, written to `data-pointer` on
-// <html>. The tier is decided ONCE per load by `resolveTier` and nothing
-// afterwards moves the attribute: the observer that remains is a DETECTOR that
-// writes storage for the next load and never touches the tier.
-// ---------------------------------------------------------------------------
+// Which pointer this document is laid out for, written to `data-pointer` on <html>. The tier is
+// decided ONCE per load by `resolveTier` and nothing afterwards moves the attribute: the observer
+// that remains is a DETECTOR that writes storage for the next load and never touches the tier.
 
 import {
   cachePointerTier,
@@ -17,29 +14,23 @@ import {
 
 const ATTR = "data-pointer";
 
-/** The THIRD tier state, a second attribute beside `data-pointer` on <html>. It
- *  means "this screen has been touched at least once and the reader has not
- *  pinned a tier", and 01-tokens.css spends it on `--hit-floor` ALONE — targets
- *  grow through the floor's zero-specificity `min-*` rules, so no painted box or
- *  glyph moves. It exists because the tier is a single choice made once per load
- *  and a hybrid device is genuinely both: a Windows touchscreen laptop driven by
- *  its mouse wants the dense layout AND a finger-sized target. */
+/** The THIRD tier state, a second attribute beside `data-pointer` on <html>. It means "this
+ *  screen has been touched at least once and the reader has not pinned a tier", and
+ *  01-tokens.css spends it on `--hit-floor` ALONE — targets grow through the floor's
+ *  zero-specificity `min-*` rules, so no painted box or glyph moves. */
 const ATTR_TOUCHED = "data-touched";
 
-/** A pen is COARSE: a stylus on a touchscreen has no hover and its target wants
- *  finger-sized affordances, whatever its pixel precision. */
+/** A pen is COARSE: a stylus on a touchscreen has no hover and its target wants finger-sized
+ *  affordances, whatever its pixel precision. */
 function tierFor(pointerType: string): PointerTier {
   return pointerType === "mouse" ? "fine" : "coarse";
 }
 
-/** The tier this load is laid out for: a stated choice, else this device's last
- *  observed tier, else the capability guess.
- *
- *  The guess is the LOWEST rung because these queries report the PRIMARY input and
- *  are wrong on the hybrid hardware the middle rung exists for: Chromium on a
- *  Windows 11 touchscreen laptop with a Bluetooth mouse answers `any-pointer: fine`
- *  FALSE (crbug 398065927; 394519480 for `any-pointer` generally). `maxTouchPoints`
- *  is checked beside `any-pointer: coarse` because the two disagree there too. */
+/** The tier this load is laid out for: a stated choice, else this device's last observed tier,
+ *  else the capability guess. The guess is the LOWEST rung because these queries report the
+ *  PRIMARY input and are wrong on the hybrid hardware the middle rung exists for: Chromium on a
+ *  Windows 11 touchscreen laptop with a Bluetooth mouse answers `any-pointer: fine` FALSE (crbug
+ *  398065927; 394519480 for `any-pointer` generally). */
 export function resolveTier(): PointerTier {
   const chosen = pointerModeChoice();
   if (chosen !== null) {
@@ -74,8 +65,8 @@ function applyTier(tier: PointerTier): void {
   document.documentElement.setAttribute(ATTR, tier);
 }
 
-/** Write or clear the third-tier flag. Guarded for `applyTier`'s reason: an
- *  attribute write on <html> forces a style recalc, a compare does not. */
+/** Write or clear the third-tier flag. Guarded for `applyTier`'s reason: an attribute write on
+ *  <html> forces a style recalc, a compare does not. */
 function applyTouched(on: boolean): void {
   const has = document.documentElement.hasAttribute(ATTR_TOUCHED);
   if (has === on) {
@@ -88,15 +79,12 @@ function applyTouched(on: boolean): void {
   }
 }
 
-/** Lay the document out for the stored tier and the third-tier flag, from storage
- *  alone: reads, never writes, so prepaint.js can run it before any module. */
+/** Lay the document out for the stored tier and the third-tier flag, from storage alone: reads,
+ *  never writes, so prepaint.js can run it before any module. */
 export function applyStoredTier(): void {
   applyTier(resolveTier());
-  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which preserves the freeze: its
-  // inputs are facts from a PREVIOUS load, so nothing re-lays-out mid-session.
-  // A STATED CHOICE OUTRANKS EVERY OBSERVATION: a reader who PINNED a tier gets no
-  // floor, since raising it to 44px would overturn the dense layout they asked for
-  // (a `coarse` choice already declares the same floor).
+  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which preserves the freeze: its inputs are facts
+  // from a PREVIOUS load, so nothing re-lays-out mid-session.
   applyTouched(
     pointerModeChoice() === null && (coarseEverSeen() || cachedPointerTier() === "coarse"),
   );
@@ -110,18 +98,15 @@ let recorded: PointerTier | null = null;
 let coarseAnnounced = false;
 
 interface InitOptions {
-  /** Called the first time a coarse pointer is observed on a device that had never
-   *  reported one; a parameter rather than a registry so a repeat init resets it. */
+  /** Called the first time a coarse pointer is observed on a device that had never reported one;
+   *  a parameter rather than a registry so a repeat init resets it. */
   readonly onCoarseSeen?: () => void;
 }
 
-/** Decide the tier for this load, then watch what the device is actually driven by
- *  so the next load has an observation rather than a guess.
- *
- *  Both events are needed: `pointerdown` catches a tap on a screen the mouse has
- *  never touched, `pointermove` the person picking the mouse back up. Capture phase
- *  so a handler calling `stopPropagation` cannot hide the input; passive because
- *  neither listener cancels. */
+/** Decide the tier for this load, then watch what the device is actually driven by so the next
+ *  load has an observation rather than a guess. Both events are needed: `pointerdown` catches a
+ *  tap on a screen the mouse has never touched, `pointermove` the person picking the mouse back
+ *  up. */
 export function initPointerTier(opts: InitOptions = {}): void {
   if (observer !== null) {
     const previous = observer;
@@ -132,9 +117,9 @@ export function initPointerTier(opts: InitOptions = {}): void {
 
   applyStoredTier();
 
-  // Backfill the sticky flag from either stored FACT, never from the guess: a guess
-  // says a coarse pointer is AVAILABLE, the flag says one has been used here.
-  // Written only when unset, because `writeBlob` does not dedupe.
+  // Backfill the sticky flag from either stored FACT, never from the guess: a guess says a coarse
+  // pointer is AVAILABLE, the flag says one has been used here. Written only when unset, because
+  // `writeBlob` does not dedupe.
   let seen = coarseEverSeen();
   if (!seen && (pointerModeChoice() === "coarse" || cachedPointerTier() === "coarse")) {
     markCoarseSeen();
@@ -161,8 +146,8 @@ export function initPointerTier(opts: InitOptions = {}): void {
   globalThis.addEventListener("pointermove", observe, listenerOpts);
 }
 
-/** Record the tier the user asked for and lay the document out for it now. The
- *  choice is the top rung of `resolveTier`, so no later load or event overturns it. */
+/** Record the tier the user asked for and lay the document out for it now. The choice is the top
+ *  rung of `resolveTier`, so no later load or event overturns it. */
 export function setPointerMode(tier: PointerTier): void {
   setPointerModeChoice(tier);
   applyTier(tier);

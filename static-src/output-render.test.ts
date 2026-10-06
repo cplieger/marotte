@@ -1,8 +1,4 @@
 // Tests for output-render.ts — the transcript's command-output painter.
-//
-// The load-bearing property is that NOTHING here parses HTML: every one of
-// these assertions would also pass against an innerHTML implementation except
-// the injection ones, which are the reason the module exists.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { splitBySpans, outputFragment, renderOutput, appendOutput } from "./output-render.js";
@@ -51,17 +47,9 @@ describe("splitBySpans", () => {
     ]);
   });
 
-  // The server's fuzz target guarantees sorted, non-overlapping, in-range
-  // spans. This clamps anyway: a bad offset would otherwise slice garbage into
-  // the transcript, and the cost of not trusting is two Math calls.
-  //
-  // The clamp that MATTERS is the one against NEGATIVE offsets, and this is the
-  // reachable route to them: appendOutput rebases absolute offsets by subtracting
-  // the chunk's `base`, so a span addressing text before the chunk goes negative
-  // — and `String.prototype.slice` reads a negative index from the END, which
-  // would duplicate tail text into the middle of the output. An offset merely
-  // past the end needs no clamp at all (slice saturates on its own), which is why
-  // asserting on that case alone proves nothing.
+  // The server's fuzz target guarantees sorted, non-overlapping, in-range spans. This clamps
+  // anyway: a bad offset would otherwise slice garbage into the transcript, and the cost of not
+  // trusting is two Math calls.
   it("clamps a negative offset instead of slicing from the end", () => {
     const pieces = splitBySpans("abcdef", [span(-4, -1, { fg: 1 })]);
     expect(pieces.map((p) => p.text).join("")).toBe("abcdef");
@@ -69,8 +57,8 @@ describe("splitBySpans", () => {
   });
 
   it("clamps a negative offset reached through appendOutput's rebase", () => {
-    // Same defect at the call site that can produce it: base 4 with a span
-    // addressing [0,3) of the accumulated stream.
+    // Same defect at the call site that can produce it: base 4 with a span addressing [0,3) of the
+    // accumulated stream.
     appendOutput(host, "abcdef", [span(0, 3, { fg: 1 })], 4);
     expect(host.textContent).toBe("abcdef");
     expect(host.querySelectorAll("span")).toHaveLength(0);
@@ -106,8 +94,7 @@ describe("outputFragment", () => {
     expect(spans[0]!.className).toBe("ansi-red-fg");
   });
 
-  // HTML in the output must arrive as TEXT. This is the whole reason the module
-  // replaced an ansi-to-HTML converter: correctness no longer depends on an
+  // HTML in the output must arrive as TEXT: building DOM means correctness does not depend on an
   // escaper being right about every character.
   it("does not interpret markup in the output", () => {
     host.appendChild(outputFragment('<img src=x onerror="alert(1)">', []));
@@ -159,14 +146,8 @@ describe("outputFragment", () => {
     expect(host.querySelector("span")!.classList.contains("ansi-bright-red-fg")).toBe(true);
   });
 
-  // The 256-colour palette is computed rather than tabulated, so these pin the
-  // formula: index 16 is the cube origin, 231 its far corner, and 232-255 the
-  // grey ramp from 8 in steps of 10.
-  //
-  // The expectations carry Chromium's SERIALIZATION of an inline colour, which
-  // is the comma form `rgb(0, 0, 0)` whatever the space-separated `rgb(0 0 0)`
-  // the renderer authored. Same colour, read back through the real CSSOM; the
-  // emulator this replaced echoed the authored string instead.
+  // The 256-colour palette is computed rather than tabulated, so these pin the formula: index 16 is
+  // the cube origin, 231 its far corner, and 232-255 the grey ramp from 8 in steps of 10.
   it("computes the 256-colour cube", () => {
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 16 })]));
     expect(host.querySelector("span")!.style.color).toBe("rgb(0, 0, 0)");
@@ -174,8 +155,6 @@ describe("outputFragment", () => {
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 231 })]));
     expect(host.querySelector("span")!.style.color).toBe("rgb(255, 255, 255)");
 
-    // 208 is the familiar orange: n=192, so 192/36=5 → 255 red, (192/6)%6=2 →
-    // 135 green, 192%6=0 → 0 blue.
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 208 })]));
     expect(host.querySelector("span")!.style.color).toBe("rgb(255, 135, 0)");
   });
@@ -194,12 +173,8 @@ describe("outputFragment", () => {
     expect(host.querySelector("span")!.style.color).toBe("rgb(10, 20, 30)");
   });
 
-  // Conceal has to beat whatever the foreground resolved to, and a CLASS cannot:
-  // the extended palette arrives as an inline style, which outranks every class,
-  // so a span that was both concealed and 256-colour used to render its text in
-  // full. No foreground is emitted at all when hidden, so `.ansi-hidden` is the
-  // only ink in play. A BACKGROUND still applies — concealing text on a coloured
-  // bar is a real thing a program does.
+  // No foreground is emitted at all when hidden, so `.ansi-hidden` is the only ink in play. A
+  // BACKGROUND still applies — concealing text on a coloured bar is a real thing a program does.
   it("emits no foreground at all for a concealed span", () => {
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 196, attrs: 64 })]));
     let node = host.querySelector("span")!;
@@ -216,16 +191,15 @@ describe("outputFragment", () => {
     expect(node.classList.contains("ansi-blue-bg")).toBe(true);
   });
 
-  // Inverse swaps the colour VALUES rather than relying on a filter, because
-  // only this code knows what the two colours resolve to once defaults are in
-  // play.
+  // Inverse swaps the colour VALUES rather than relying on a filter, because only this code knows
+  // what the two colours resolve to once defaults are in play.
   it("swaps foreground and background for inverse", () => {
     host.appendChild(outputFragment("x", [span(0, 1, { fg: 1, bg: 4, attrs: 8 })]));
     const cls = host.querySelector("span")!.classList;
     expect(cls.contains("ansi-blue-fg")).toBe(true);
     expect(cls.contains("ansi-red-bg")).toBe(true);
-    // Neither fallback appears: both sides had a colour of their own, and a
-    // fallback here would override the swapped class on that side.
+    // Neither fallback appears: both sides had a colour of their own, and a fallback here would
+    // override the swapped class on that side.
     expect(cls.contains("ansi-inverse-ink")).toBe(false);
     expect(cls.contains("ansi-inverse-fill")).toBe(false);
   });
@@ -233,8 +207,6 @@ describe("outputFragment", () => {
   it("resolves the default side when inverse has only one explicit colour", () => {
     host.appendChild(outputFragment("x", [span(0, 1, { fg: 2, attrs: 8 })]));
     const cls = host.querySelector("span")!.classList;
-    // fg green, bg default → swapped: bg becomes green, fg takes the default
-    // background. Only the default SIDE gets a fallback class.
     expect(cls.contains("ansi-green-bg")).toBe(true);
     expect(cls.contains("ansi-inverse-ink")).toBe(true);
     expect(cls.contains("ansi-inverse-fill")).toBe(false);
@@ -248,8 +220,8 @@ describe("outputFragment", () => {
   });
 
   it("indexes by UTF-16 units, so a span after an emoji lands correctly", () => {
-    // The emoji is one code point but TWO UTF-16 units, which is why the
-    // server counts in the browser's unit rather than bytes.
+    // The emoji is one code point but TWO UTF-16 units, which is why the server counts in the
+    // browser's unit rather than bytes.
     const text = "\u{1F600}red";
     host.appendChild(outputFragment(text, [span(2, 5, { fg: 1 })]));
     expect(host.querySelector("span")!.textContent).toBe("red");
@@ -273,8 +245,8 @@ describe("appendOutput", () => {
 
   it("rebases absolute span offsets onto the chunk", () => {
     renderOutput(host, "abc", []);
-    // The chunk's text starts at offset 3 of the accumulated output, and its
-    // span addresses [4,6) absolutely, so it must paint "ef" not "de".
+    // The chunk's text starts at offset 3 of the accumulated output, and its span addresses [4,6)
+    // absolutely, so it must paint "ef" not "de".
     appendOutput(host, "def", [span(4, 6, { fg: 1 })], 3);
     expect(host.textContent).toBe("abcdef");
     expect(host.querySelector("span")!.textContent).toBe("ef");

@@ -2,6 +2,7 @@ package translate
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -10,9 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// configModelUpdate mirrors the shape KAS sends: each model choice gets
-// `_meta: { kiro: { hasEffort } }` when the model has effort levels or a rate
-// multiplier.
+// configModelUpdate mirrors KAS's shape: a choice gets `_meta: { kiro: { hasEffort } }`
+// when the model has effort levels or a rate multiplier.
 func configModelUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -28,8 +28,8 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 	})
 }
 
-// The per-model _meta.kiro.hasEffort must land on SessionModel.HasEffort so the
-// client picker can hide the effort row. A choice with no _meta decodes as false.
+// The per-model hasEffort lands on SessionModel.HasEffort so the picker can hide the
+// effort row; a choice with no _meta decodes as false.
 func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -49,8 +49,7 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	if c.Model != "model-a" {
 		t.Errorf("current model = %q, want model-a", c.Model)
 	}
-	// The model LIST is the workspace catalog's, not the chat's — the same frame
-	// carries both, with different owners.
+	// The model LIST is the workspace catalog's, not the chat's.
 	want := map[string]bool{"model-a": true, "model-b": false, "model-c": false}
 	if len(deps.catalogModels) != len(want) {
 		t.Fatalf("catalog models len = %d, want %d: %+v", len(deps.catalogModels), len(want), deps.catalogModels)
@@ -67,8 +66,8 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	}
 }
 
-// configEffortUpdate carries the `effortLevel` option kiro-cli's own TUI builds its
-// picker from. There is no per-model tier list on the wire.
+// configEffortUpdate carries the `effortLevel` option kiro-cli's TUI builds its picker
+// from; there is no per-model tier list on the wire.
 func configEffortUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -83,8 +82,8 @@ func configEffortUpdate(t *testing.T, current string, choices []map[string]any) 
 	})
 }
 
-// The effortLevel option's own choices are the tier list, and its currentValue is the
-// level the session is RUNNING at — what the UI marks for a chat with no choice.
+// The effortLevel choices are the tier list, and currentValue is the level the session is
+// RUNNING at.
 func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -114,15 +113,14 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	if len(c.EffortLevels) > 0 && c.EffortLevels[0].Name != "Low" {
 		t.Errorf("level name = %q, want Low", c.EffortLevels[0].Name)
 	}
-	// The chat's own CHOICE is untouched: adopting what the session is doing would pin
-	// a service default into every later session through StartOpts.Effort.
+	// The chat's CHOICE is untouched, or a service default would pin into later sessions
+	// through StartOpts.Effort.
 	if c.Effort != "" {
 		t.Errorf("Effort = %q, want empty (the option is not a choice)", c.Effort)
 	}
 }
 
-// An empty list is an answer, not a missing one: kiro-cli reports it for a model with
-// no tiers, so it has to land or that model keeps showing the previous model's.
+// An empty list is an answer (a model with no tiers), so it must land.
 func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -140,10 +138,7 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	}
 }
 
-// Three fields, and the rate multiplier is the one a model choice's meta used to
-// drop. The TIER LIST is deliberately absent from the block — it belongs to the
-// `effortLevel` option. Absent and malformed meta both decode to the zero value,
-// which the client reads as "not plumbed".
+// Absent and malformed meta both decode to the zero value, read as "not plumbed".
 func TestChoiceMeta(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -191,11 +186,8 @@ func TestChoiceMeta(t *testing.T) {
 	}
 }
 
-// --- session_info_update: the unconsumed-sub-kind fallback ---
-
-// infoKindFrame builds a session_info_update whose _meta.kiro carries only a
-// kind — no focus, summarization, promptTurnSummaries or contextUsage block —
-// which is the shape every sub-kind marotte does not consume arrives in.
+// infoKindFrame builds a session_info_update whose _meta.kiro carries only a kind, the
+// shape every unconsumed sub-kind arrives in.
 func infoKindFrame(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{
@@ -207,14 +199,8 @@ func infoKindFrame(t *testing.T, kind string) json.RawMessage {
 	return b
 }
 
-// TestSessionInfoUpdate_UnknownKindWarns pins the observability contract on
-// session_info_update, a CARRIER multiplexing 22+ sub-kinds under one wire type.
-//
-// The cascade keys on which sub-BLOCK is present, so a sub-kind KAS adds later
-// falls through and vanishes leaving no trace. An unrecognised kind must reach
-// the log at Warn; a known-but-ignored one must not, or `turn_start` alone is
-// noise once per prompt. A log line IS the behaviour here, and slog's default is
-// process-global, so this is serial.
+// TestSessionInfoUpdate_UnknownKindWarns pins that an unrecognised sub-kind logs at Warn
+// and a known-but-ignored one does not. Serial: slog's default is process-global.
 func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -222,11 +208,10 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 		wantWarn bool
 	}{
 		{name: "a kind KAS added since this was written", kind: "quantum_entanglement_update", wantWarn: true},
-		// display_error, not turn_start: the brackets are consumed, so a bracket
-		// kind with no sub-block to dispatch on is a decode miss, not a drop.
-		{name: "known and deliberately ignored", kind: "display_error", wantWarn: false},
+		// recap, not turn_start: a bracket kind reaching here is a decode miss.
+		{name: "known and deliberately ignored", kind: "recap", wantWarn: false},
 		{name: "known compaction marker", kind: "summarization_separator", wantWarn: false},
-		{name: "known, carries the persisted permission history", kind: "pending_interaction", wantWarn: false},
+		{name: "consumed, but its sub-block did not decode", kind: "pending_interaction", wantWarn: true},
 		{name: "reaches the wire via SessionInfoEmitter, not a build call site", kind: "repositories_update", wantWarn: false},
 	}
 	for _, tt := range tests {
@@ -251,10 +236,8 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	}
 }
 
-// TestSessionInfoUpdate_NoKindIsSilent pins that a frame carrying no kind at
-// all logs nothing. Without this guard the fallback would fire on every
-// well-formed frame whose sub-block the cascade already consumed and
-// returned early from — and on any frame KAS sends with an absent kind.
+// TestSessionInfoUpdate_NoKindIsSilent pins that a frame with no kind logs nothing, which
+// covers every frame the cascade already consumed.
 func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	var buf bytes.Buffer
 	restore := captureSlog(&buf)
@@ -269,9 +252,8 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	}
 }
 
-// turnBracketInfo builds a session_info_update carrying one half of the wire's
-// own turn bracket. KAS spells the two differently — turn_start a flat `true`,
-// turn_end a nested object — and the cascade dispatches on that shape.
+// turnBracketInfo builds one half of the wire's turn bracket: turn_start a flat `true`,
+// turn_end a nested object.
 func turnBracketInfo(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
 	kiro := map[string]any{"kind": kind}
@@ -283,10 +265,8 @@ func turnBracketInfo(t *testing.T, kind string) json.RawMessage {
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
 }
 
-// A workflow STEP's own turn bracket is dropped by the attribution gate, which is the
-// premise a step's fold rests on: it opens a turn marked TurnSourceWorkflowStep
-// precisely because no bracket will ever close it, so widening this gate would take
-// the premise away silently. The chat's own rows are the control.
+// A workflow STEP's own turn bracket is dropped: a step's fold opens a
+// TurnSourceWorkflowStep turn precisely because no bracket will close it.
 func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	tests := []struct {
 		name string
@@ -324,13 +304,8 @@ func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	}
 }
 
-// TestMaterialPctDelta pins the gate deciding whether a context-percentage move
-// is worth a full transcript rewrite — an exact-inequality gate rewrote a chat
-// file up to 21 MB roughly 40 times per 20-tool-call turn.
-//
-// Two properties hold together, which is why the tier cases sit beside the
-// epsilon ones: a sub-point move is dropped because the ring cannot render it,
-// and a tier crossing is kept because the tier is what the UI colours on.
+// TestMaterialPctDelta pins the gate on a context-percentage rewrite: a sub-point move is
+// dropped (the ring cannot render it), a tier crossing is kept.
 func TestMaterialPctDelta(t *testing.T) {
 	cases := map[string]struct {
 		old, new float64
@@ -342,9 +317,7 @@ func TestMaterialPctDelta(t *testing.T) {
 		"exactly one point up":           {50, 51, true},
 		"exactly one point down":         {51, 50, true},
 		"large jump":                     {10, 90, true},
-		// The tiers are marotte's OWN client thresholds, not KAS's: 70 and 90
-		// recolour the context ring, 95 is where the composer stops accepting
-		// input. KAS's 80/95 TUI boundaries are not rendered by this client.
+		// marotte's own client thresholds (70, 90 recolour the ring; 95 stops input), not KAS's 80/95.
 		"tiny move crossing 70":              {69.9, 70.0, true},
 		"tiny move crossing 70 downward":     {70.0, 69.9, true},
 		"tiny move crossing 90":              {89.9, 90.0, true},
@@ -367,10 +340,8 @@ func TestMaterialPctDelta(t *testing.T) {
 	}
 }
 
-// turnSummaryInfo builds a session_info_update carrying the turn-end metering
-// block: the promptTurnSummaries list plus elapsedTime in milliseconds. A
-// summary entry with an empty unit is spelled by omitting the key, which is
-// what KAS does when it reports the default dimension.
+// turnSummaryInfo builds the turn-end metering block: promptTurnSummaries plus elapsedTime
+// in ms. An empty unit omits the key, as KAS does for the default dimension.
 func turnSummaryInfo(t *testing.T, elapsedMs float64, summaries []map[string]any) json.RawMessage {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -381,9 +352,8 @@ func turnSummaryInfo(t *testing.T, elapsedMs float64, summaries []map[string]any
 	})
 }
 
-// contextUsageInfo builds a session_info_update carrying a context percentage
-// on one of the two channels KAS mirrors it across: the contextUsage
-// sub-block, or the bare _meta.kiro.usagePercentage.
+// contextUsageInfo builds a context percentage on one of KAS's two mirrored channels:
+// the contextUsage sub-block, or the bare _meta.kiro.usagePercentage.
 func contextUsageInfo(t *testing.T, key string, pct float64) json.RawMessage {
 	t.Helper()
 	kiro := map[string]any{}
@@ -396,10 +366,7 @@ func contextUsageInfo(t *testing.T, key string, pct float64) json.RawMessage {
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
 }
 
-// KAS mirrors the context percentage across two channels — the contextUsage
-// sub-block and a bare usagePercentage — and whichever arrives has to keep the
-// ring fresh. Reading only one of them leaves the context popup at zero for
-// every frame KAS happened to send the other way.
+// Whichever channel carries the context percentage must keep the ring fresh.
 func TestHandleSessionInfoUpdate_ContextPctArrivesOnEitherChannel(t *testing.T) {
 	for _, key := range []string{"contextUsage", "usagePercentage"} {
 		t.Run(key, func(t *testing.T) {
@@ -422,10 +389,7 @@ func TestHandleSessionInfoUpdate_ContextPctArrivesOnEitherChannel(t *testing.T) 
 	}
 }
 
-// The metering summary counts the default dimension as spend: KAS reports
-// credits either as unit "credit" or with the unit key absent, and both are the
-// same money. Counting only the spelled-out form makes a chat's credit readout
-// silently stop at whatever the last labelled frame said.
+// KAS reports credits as unit "credit" or with the unit key absent; both are spend.
 func TestPersistTurnSummary_AnEmptyUnitCountsAsCredits(t *testing.T) {
 	for _, unit := range []string{"", "credit"} {
 		t.Run("unit_"+unit, func(t *testing.T) {
@@ -452,9 +416,7 @@ func TestPersistTurnSummary_AnEmptyUnitCountsAsCredits(t *testing.T) {
 	}
 }
 
-// A turn that reported no elapsed time leaves the previous duration alone.
-// "Last turn took 0 ms" is not an answer the popup can render, and overwriting
-// a real measurement with it loses the only duration the chat had.
+// A turn that reported no elapsed time keeps the previous duration.
 func TestPersistTurnSummary_ZeroElapsedKeepsThePreviousDuration(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -472,9 +434,7 @@ func TestPersistTurnSummary_ZeroElapsedKeepsThePreviousDuration(t *testing.T) {
 	}
 }
 
-// A turn that spent nothing is not evidence of real spend. HasRealData is what
-// switches the context popup from "unknown" to a figure, so flipping it on a
-// zero-credit summary reports a measured 0.00 the account never confirmed.
+// A zero-credit summary must not flip HasRealData, which would report an unconfirmed 0.00.
 func TestPersistTurnSummary_ZeroCreditsIsNotRealSpend(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -494,10 +454,8 @@ func TestPersistTurnSummary_ZeroCreditsIsNotRealSpend(t *testing.T) {
 	}
 }
 
-// An effort-only config frame must leave the model catalog standing. KAS sends
-// the two selects independently, so treating a frame with no model option as
-// "the model list is now empty" empties the picker the moment the user changes
-// effort.
+// An effort-only frame leaves the model catalog standing: KAS sends the two selects
+// independently.
 func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -526,79 +484,85 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	}
 }
 
-// TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails pins the ONE channel that
-// can explain an abnormal wire close: without it a `stopReason: "error"` turn
-// arrives with no cause and a transient toast is the reader's only account.
-//
-// The field is optional and its shape unmeasured, so the decode is tolerant and a
-// shape it does not read answers "" rather than leaking a JSON fragment into a
-// transcript row.
-func TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails(t *testing.T) {
-	tests := []struct {
+// turnEndWithDetails builds a turn_end frame carrying stopDetails verbatim.
+func turnEndWithDetails(t *testing.T, stop string, details any) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind":    "turn_end",
+		"turnEnd": map[string]any{"stopReason": stop, "stopDetails": details},
+	}}})
+}
+
+// TestHandleSessionInfoUpdate_TurnEndLatchesStopDetailsRefusal pins that a turn_end whose
+// refusal reached no chunk carries it in stopDetails.
+func TestHandleSessionInfoUpdate_TurnEndLatchesStopDetailsRefusal(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	startedTurn(deps, "c1")
+	details := map[string]any{"refusal": map[string]any{
+		"category": "cyber", "explanation": "x", "recommendedModel": "m",
+	}}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnEndWithDetails(t, "refusal", details), FrameAttribution{})
+
+	got := closedRefusal(t, deps, "c1")
+	want := marotte.RefusalInfo{Category: "cyber", Explanation: "x", RecommendedModel: "m"}
+	if got == nil || *got != want {
+		t.Errorf("turn_close.refusal = %+v, want %+v", got, want)
+	}
+	wantBrackets := []turnBracket{{chat: "c1", kind: "end", stop: marotte.StopReasonRefusal}}
+	if !slices.Equal(deps.brackets, wantBrackets) {
+		t.Errorf("brackets = %+v, want %+v", deps.brackets, wantBrackets)
+	}
+}
+
+// TestHandleSessionInfoUpdate_TurnEndRefusalIsFirstWins pins that a turn_end cannot
+// relabel a refusal a chunk latched first.
+func TestHandleSessionInfoUpdate_TurnEndRefusalIsFirstWins(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	startedTurn(deps, "c1").SetRefusal(&marotte.RefusalInfo{Category: "a"})
+	details := map[string]any{"refusal": map[string]any{"category": "b"}}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnEndWithDetails(t, "refusal", details), FrameAttribution{})
+
+	if got := closedRefusal(t, deps, "c1"); got == nil || got.Category != "a" {
+		t.Errorf("turn_close.refusal = %+v, want category a", got)
+	}
+}
+
+// TestHandleSessionInfoUpdate_TurnEndNonObjectStopDetailsStillCloses pins that a shape
+// change costs the refusal read, never the bracket.
+func TestHandleSessionInfoUpdate_TurnEndNonObjectStopDetailsStillCloses(t *testing.T) {
+	for _, tt := range []struct {
 		name    string
 		details any
-		want    string
 	}{
-		{
-			name:    "a bare string, the simplest thing a TypeScript producer sends",
-			details: "  The upstream model dropped the stream.  ",
-			want:    "The upstream model dropped the stream.",
-		},
-		{
-			name:    "an object naming its prose `message`",
-			details: map[string]any{"message": "Rate limit exceeded."},
-			want:    "Rate limit exceeded.",
-		},
-		{
-			name:    "an object naming it `details`, which is what -32603 frames use",
-			details: map[string]any{"details": "ClientThrottleError"},
-			want:    "ClientThrottleError",
-		},
-		{
-			name:    "an object naming it `reason`",
-			details: map[string]any{"reason": "capacity"},
-			want:    "capacity",
-		},
-		{
-			// A shape the decode does not read. It must answer "" so the closer falls
-			// through to the outcome's own sentence: showing a reader `[1,2,3]` as the
-			// reason for a failed turn is worse than showing them a generic one.
-			name:    "a shape with no prose in it at all",
-			details: []any{1, 2, 3},
-			want:    "",
-		},
-		{
-			name:    "an object carrying only fields we do not read",
-			details: map[string]any{"code": 42, "retryable": true},
-			want:    "",
-		},
-	}
-	for _, tt := range tests {
+		{name: "a bare string", details: "The upstream model dropped the stream."},
+		{name: "an array", details: []any{1, 2, 3}},
+		{name: "an object with no refusal", details: map[string]any{"message": "x"}},
+		{name: "a refusal that is not an object", details: map[string]any{"refusal": "no"}},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
-			raw := mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
-				"kind":    "turn_end",
-				"turnEnd": map[string]any{"stopReason": "error", "stopDetails": tt.details},
-			}}})
+			startedTurn(deps, "c1")
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, FrameAttribution{})
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnEndWithDetails(t, "error", tt.details), FrameAttribution{})
 
-			want := []turnBracket{
-				{chat: "c1", kind: "end", stop: marotte.StopReasonError, details: tt.want},
-			}
+			want := []turnBracket{{chat: "c1", kind: "end", stop: marotte.StopReasonError}}
 			if !slices.Equal(deps.brackets, want) {
 				t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
+			}
+			if got := closedRefusal(t, deps, "c1"); got != nil {
+				t.Errorf("turn_close.refusal = %+v, want none", got)
 			}
 		})
 	}
 }
 
-// TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing is the control,
-// and it is the case every measured build actually sends. The closer supplies the
-// outcome's default sentence for it, so "" here is the correct answer rather than a
-// gap: inventing wording in the translator would put two sources of that prose in
-// the tree.
+// TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing is the control, the
+// case every measured build sends.
 func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -632,8 +596,7 @@ func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 	}
 }
 
-// An end-of-life id stays in the entitlement set: the picker's own filtering is the
-// bridge's, and dropping the id here would refuse a model the account can still run.
+// An end-of-life id stays in the entitlement set; the picker's filtering is the bridge's.
 func TestHandleConfigOptionUpdate_KeepsEndOfLifeIDsInTheServedSet(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -671,10 +634,8 @@ func configModelAndEffortUpdate(t *testing.T, model, effort string) []byte {
 	})
 }
 
-// A workflow step's config frame arrives under the LAUNCHING chat's id carrying the
-// step's own model and effort. The catalog half is a workspace fact any session may
-// report; the current values are the step session's and must not become the chat's,
-// or a chat switched to Opus reverts to the step's model every time a run posts.
+// A step's config frame arrives under the LAUNCHING chat's id with the step's own model
+// and effort: the catalog refreshes, but the current values must not become the chat's.
 func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessionState(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -720,5 +681,190 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 	}
 	if len(c.EffortLevels) != 2 {
 		t.Errorf("own frame: EffortLevels = %v, want the two the session reported", c.EffortLevels)
+	}
+}
+
+func modelSwitchesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryModelSwitched {
+	t.Helper()
+	var out []marotte.EntryModelSwitched
+	for _, e := range entriesOfKind(entries, marotte.EntryKindModelSwitched) {
+		var p marotte.EntryModelSwitched
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatalf("decode model_switched %q: %v", e.ID, err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func configModelOffering(t *testing.T, current string, offered ...string) []byte {
+	t.Helper()
+	opts := make([]map[string]any, 0, len(offered))
+	for _, id := range offered {
+		opts = append(opts, map[string]any{"value": id, "name": id})
+	}
+	return mustJSON(t, map[string]any{"configOptions": []map[string]any{
+		{"id": "model", "type": "select", "currentValue": current, "options": opts},
+	}})
+}
+
+func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "opus"
+		c.Effort = "max"
+		return true
+	})
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+
+	c, _ := store.Get(t.Context(), "c1")
+	if c.Model != "fable" {
+		t.Errorf("Model = %q, want fable", c.Model)
+	}
+	if c.Effort != "" {
+		t.Errorf("Effort = %q, want empty (the tier was chosen for opus)", c.Effort)
+	}
+	got := modelSwitchesOf(t, deps.between["c1"])
+	want := []marotte.EntryModelSwitched{{From: "opus", To: "fable", Reason: marotte.ModelSwitchReasonUnavailable}}
+	if !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+}
+
+func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "opus"
+		c.Effort = "max"
+		return true
+	})
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "opus", "fable"), FrameAttribution{})
+
+	got := modelSwitchesOf(t, deps.between["c1"])
+	want := []marotte.EntryModelSwitched{{From: "opus", To: "fable", Reason: marotte.ModelSwitchReasonUnavailable}}
+	if !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+	if c, _ := store.Get(t.Context(), "c1"); c.Effort != "" {
+		t.Errorf("Effort = %q, want empty (the tier was chosen for opus)", c.Effort)
+	}
+}
+
+type writeFailingStore struct{ nopChatRecords }
+
+func (writeFailingStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
+	fn(&marotte.Chat{Model: "opus"}, true)
+	return "", errBoom
+}
+
+func TestHandleConfigOptionUpdate_AFailedWriteRecordsNoRepin(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	deps.store = writeFailingStore{}
+	tr := New(rolesOf(deps))
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable"), FrameAttribution{})
+
+	if got := modelSwitchesOf(t, deps.between["c1"]); len(got) != 0 {
+		t.Errorf("model_switched entries = %+v, want none", got)
+	}
+}
+
+func TestHandleConfigOptionUpdate_RecordsNoRepinWhenTheMoveIsNotKASs(t *testing.T) {
+	cases := []struct {
+		attr       FrameAttribution
+		name       string
+		model      string
+		pending    string
+		effortOnly bool
+	}{
+		{name: "from_empty", model: ""},
+		{name: "from_auto", model: marotte.ModelAuto},
+		{name: "same_model", model: "fable"},
+		{name: "pending_pick", model: "opus", pending: "fable"},
+		{name: "step_frame", model: "opus", attr: FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"}},
+		{name: "no_model_option", model: "opus", effortOnly: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Model = tc.model
+				c.PendingModel = tc.pending
+				c.Effort = "max"
+				return true
+			})
+
+			frame := configModelAndEffortUpdate(t, "fable", "high")
+			if tc.effortOnly {
+				frame = configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}})
+			}
+			tr.HandleConfigOptionUpdate(t.Context(), "c1", frame, tc.attr)
+
+			if got := modelSwitchesOf(t, deps.between["c1"]); len(got) != 0 {
+				t.Errorf("model_switched entries = %+v, want none", got)
+			}
+			c, _ := store.Get(t.Context(), "c1")
+			if c.Effort != "max" {
+				t.Errorf("Effort = %q, want max (no repin, so the tier stands)", c.Effort)
+			}
+		})
+	}
+}
+
+// displayErrorFrame builds a display_error frame the way the live wire spreads it:
+// the nested block plus its fields flat beside it.
+func displayErrorFrame(t *testing.T, message, errorType string) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "display_error", "message": message, "errorType": errorType,
+		"displayError": map[string]any{"message": message, "errorType": errorType},
+	}}})
+}
+
+// A display_error latches on the chat's own open turn, last write winning, so the
+// close of a broken turn has the engine's sentence to say.
+func TestHandleSessionInfoUpdate_DisplayErrorLatchesOnTheOwnTurn(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	turn := startedTurn(deps, "c1")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "An earlier attempt failed.", "ge"), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Your connection was interrupted.", "ye"), FrameAttribution{})
+
+	got := turn.EngineError()
+	if got == nil || got.Message != "Your connection was interrupted." || got.ErrorType != "ye" {
+		t.Errorf("EngineError() = %+v, want the last frame's account", got)
+	}
+}
+
+// An MCP connect failure is broadcast to every session with no turn; the MCP
+// status channel already reports it, so it must not become a turn's reason.
+func TestHandleSessionInfoUpdate_DisplayErrorDropsAnMCPConnectFailure(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	turn := startedTurn(deps, "c1")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Failed to connect to MCP server x.", "mcp_connection_error"), FrameAttribution{})
+
+	if got := turn.EngineError(); got != nil {
+		t.Errorf("EngineError() = %+v, want nil for an MCP connect failure", got)
+	}
+}
+
+// A step's or a subagent's display_error is not the chat's own account.
+func TestHandleSessionInfoUpdate_DisplayErrorIgnoresAForeignFrame(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	turn := startedTurn(deps, "c1")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", displayErrorFrame(t, "Sub-agent stalled.", "ge"), FrameAttribution{SubSessionID: "sess-sub"})
+
+	if got := turn.EngineError(); got != nil {
+		t.Errorf("EngineError() = %+v, want nil for a subagent's frame", got)
 	}
 }

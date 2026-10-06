@@ -9,10 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The lower bound is INCLUSIVE, which is what lets one function answer both reads the
-// two roots used to take through a bool: from == 0 is the whole turn, and a tail is the
-// wire's own exclusive `after` plus one. A bound read as EXCLUSIVE serves the entry the
-// caller already holds back to it, which the client's store answers as a hole.
+// The lower bound is inclusive: from == 0 is the whole turn, a tail is the wire's exclusive `after` plus one. An
+// exclusive reading re-serves an entry the client holds, which its store treats as a hole.
 func TestEntryLog_TurnRangeTakesAnInclusiveLowerBound(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -48,11 +46,8 @@ func TestEntryLog_TurnRangeTakesAnInclusiveLowerBound(t *testing.T) {
 	}
 }
 
-// TurnPage answers the seq the PAGE speaks for, never the seq the LOG holds, and the two
-// part exactly where it matters: an EMPTY page answers `from - 1`, the exclusive cursor
-// the caller already held. Reading the log's own newest instead lets a seal landing
-// between the two reads stamp a version one ahead of the page, which a reconnect never
-// fetches, so the client holds a stamp it can never satisfy.
+// TurnPage returns the seq the page speaks for: an empty page answers `from - 1`. The log's newest could be a seal
+// ahead of the page, a stamp the client could never satisfy.
 func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
@@ -72,8 +67,7 @@ func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 			shapes(entries), served)
 	}
 
-	// The ordinary empty tail: the caller is level with the log, so from - 1 and the
-	// log's own newest agree and this arm alone cannot tell them apart.
+	// Level with the log, the two rules agree.
 	if entries, served, err = f.log.TurnPage(turn, newest+1); err != nil {
 		t.Fatalf("TurnPage(%q, %d): %v", turn, newest+1, err)
 	}
@@ -82,8 +76,7 @@ func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 			newest+1, shapes(entries), served, newest)
 	}
 
-	// A caller AHEAD of the log is what separates the two rules: the page speaks for the
-	// cursor it was asked from, and the log's newest is a different number.
+	// A caller ahead of the log separates them.
 	if entries, served, err = f.log.TurnPage(turn, newest+4); err != nil {
 		t.Fatalf("TurnPage(%q, %d): %v", turn, newest+4, err)
 	}
@@ -93,7 +86,7 @@ func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 	}
 }
 
-// turnRangePage is the range route's body, the three keys a client reads.
+// turnRangePage is the range route's body: the three keys a client reads.
 type turnRangePage struct {
 	Entries     []marotte.Entry        `json:"entries"`
 	OpenEntries []marotte.OpenEntry    `json:"open_entries"`
@@ -112,8 +105,7 @@ func decodeTurnRange(t *testing.T, rec *httptest.ResponseRecorder) turnRangePage
 	return page
 }
 
-// getTurnRangeQuery drives the route with a query string, so the test reads the ?after=
-// translation the way a client writes it.
+// getTurnRangeQuery drives the route with a query string, as a client writes ?after=.
 func getTurnRangeQuery(t *testing.T, s *Store, id marotte.ChatID, turn, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	url := "/api/chats/" + string(id) + "/turns/" + turn
@@ -126,11 +118,8 @@ func getTurnRangeQuery(t *testing.T, s *Store, id marotte.ChatID, turn, query st
 	return rec
 }
 
-// The WIRE spelling does not move with the log's signature: ?after= stays EXCLUSIVE and
-// absent stays the whole turn, and the door is where the translation happens. A door
-// that passes `after` straight through as the inclusive bound serves the entry the
-// client already holds, and one that translates an absent cursor to 1 drops the
-// turn_open, which is the entry the client needs to place the card at all.
+// ?after= stays exclusive and absent stays the whole turn; the door translates. Passing it through re-serves a held
+// entry, and mapping absent to 1 drops the turn_open the card needs.
 func TestTurnRangeRoute_TranslatesTheExclusiveWireCursor(t *testing.T) {
 	tail := []OpenTurnTail{{ID: "", Entries: nil}}
 	s := pageStore(t, true, tail)

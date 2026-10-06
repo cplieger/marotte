@@ -1,10 +1,6 @@
-// The Instructions panel's two writers on one textarea, and the ordering between
-// them. A save carries the box as the WHOLE document and an empty one DELETES the
-// file, so the box must not be typeable before the read lands; the read is what
-// unlocks it.
-//
-// The cases below pin what each `If-Match` refusal means, and the one state a
-// re-seed may not overwrite: text the reader has typed and the server has not got.
+// The Instructions panel's two writers on one textarea, and the ordering between them. A save
+// carries the box as the WHOLE document and an empty one DELETES the file, so the box must not be
+// typeable before the read lands; the read is what unlocks it.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ActionInstance } from "./actions/index.js";
@@ -73,9 +69,9 @@ function openRead(): (d: { content: string } | null) => void {
   return land;
 }
 
-/** Report the outcome of one dispatch. `args` defaults to the last one the module
- *  made; a case that needs an EARLIER dispatch's outcome states it. `result` is
- *  what the action decoded off the 200 — the validator the write produced. */
+/** Report the outcome of one dispatch. `args` defaults to the last one the module made; a case
+ *  that needs an EARLIER dispatch's outcome states it. `result` is what the action decoded off
+ *  the 200 — the validator the write produced. */
 function settleSave(
   status: "success" | "error",
   opts: { httpStatus?: number; args?: unknown; result?: unknown } = {},
@@ -128,9 +124,8 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("takes no keystroke while the read is in flight", async () => {
-    // A real keystroke through the browser, because `readOnly` is a claim about
-    // what the ENGINE does with one: assigning `.value` in a test would sail past
-    // the very thing being pinned.
+    // A real keystroke through the browser, because `readOnly` is a claim about what the ENGINE
+    // does with one: assigning `.value` in a test would sail past the very thing being pinned.
     const land = openRead();
     loadSteeringDoc();
 
@@ -161,9 +156,9 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("sends no validator when the server answered none", async () => {
-    // The honest answer for a server with no ETag, and the reason the action omits
-    // the header rather than inventing one: `If-Match` on such a server is a
-    // permanent 428 against a save that would otherwise work.
+    // The honest answer for a server with no ETag, and the reason the action omits the header
+    // rather than inventing one: `If-Match` on such a server is a permanent 428 against a save that
+    // would otherwise work.
     H.get.mockResolvedValue({ data: { content: "x" }, headers: new Headers() });
     loadSteeringDoc();
     await vi.waitFor(() => {
@@ -177,8 +172,8 @@ describe("the steering document's read, and the box it unlocks", () => {
   });
 
   it("keeps the box locked when the read fails, and retries on focus", async () => {
-    // The read collapses every failure to a null body. An empty box is not an empty
-    // document, so opening it here would let the first keystroke delete the file.
+    // The read collapses every failure to a null body. An empty box is not an empty document, so
+    // opening it here would let the first keystroke delete the file.
     H.get.mockResolvedValueOnce({ data: null, headers: null });
     loadSteeringDoc();
     await settle();
@@ -202,9 +197,6 @@ describe("the steering document's read, and the box it unlocks", () => {
     expect(H.get).toHaveBeenCalledTimes(1);
   });
 
-  // The terminal `loaded` state is gone: this box has no other invalidation
-  // channel, so an activation re-reading it is how an edit made anywhere else
-  // reaches the reader at all.
   it("re-seeds a clean box on the next activation", async () => {
     answers("# first");
     loadSteeringDoc();
@@ -228,9 +220,8 @@ describe("the steering document's read, and the box it unlocks", () => {
     ta.focus();
     await userEvent.keyboard("!");
 
-    // The file moved while the reader was typing. Adopting either half would
-    // decide the conflict silently; the stale validator is what makes the save
-    // take the 409 instead.
+    // The file moved while the reader was typing. Adopting either half would decide the conflict
+    // silently; the stale validator is what makes the save take the 409 instead.
     answers("# somebody else", 'W/"2-2"');
     loadSteeringDoc();
     await settle();
@@ -253,8 +244,8 @@ describe("the steering document's read, and the box it unlocks", () => {
     settleSave("success", { result: 'W/"2-2"' });
     await settle();
 
-    // The write's own 200 carried the replacement, so a debounced run of saves
-    // needs no read between keystrokes.
+    // The write's own 200 carried the replacement, so a debounced run of saves needs no read
+    // between keystrokes.
     expect(H.get).not.toHaveBeenCalled();
     await userEvent.keyboard("?");
     expect(H.save).toHaveBeenLastCalledWith({ content: "# first!?", etag: 'W/"2-2"' });
@@ -269,9 +260,9 @@ describe("the steering document's read, and the box it unlocks", () => {
     ta.focus();
     await userEvent.keyboard("!");
 
-    // "" is the server saying it could not stat the file it just wrote. Adopting
-    // it would send no If-Match at all and take a 428, which reports this module
-    // as broken; keeping the stale one takes the 409 that re-seeds the box.
+    // "" is the server saying it could not stat the file it just wrote. Adopting it would send no
+    // If-Match at all and take a 428, which reports this module as broken; keeping the stale one
+    // takes the 409 that re-seeds the box.
     settleSave("success", { result: "" });
     await settle();
 
@@ -287,9 +278,9 @@ describe("the steering document's read, and the box it unlocks", () => {
     });
     ta.focus();
     await userEvent.keyboard("!");
-    // A keystroke lands between the dispatch and its answer. Reading the BOX here
-    // would record "# first!?" as agreed, and the next activation's re-seed would
-    // then treat the box as clean and put the server's older text over it.
+    // A keystroke lands between the dispatch and its answer. Reading the BOX here would record "#
+    // first!?" as agreed, and the next activation's re-seed would then treat the box as clean and
+    // put the server's older text over it.
     await userEvent.keyboard("?");
 
     // The server answers the text the FIRST keystroke's save landed.
@@ -335,8 +326,8 @@ describe("the steering document's read, and the box it unlocks", () => {
 
     settleSave("error", { httpStatus: 428 });
 
-    // No toast: 428 means the PUT carried no If-Match, which is a bug in this
-    // module rather than anything the reader did or can fix.
+    // No toast: 428 means the PUT carried no If-Match, which is a bug in this module rather than
+    // anything the reader did or can fix.
     expect(H.toast).not.toHaveBeenCalled();
     expect(spy.mock.calls[0]?.[0]).toContain("If-Match");
     spy.mockRestore();

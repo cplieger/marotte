@@ -18,7 +18,6 @@ func FuzzParseSteeringFrontmatter(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		doc := parseSteeringFrontmatter(data)
 
-		// Inclusion must always be one of the valid values.
 		switch doc.Inclusion {
 		case "always", "fileMatch", "manual":
 			// ok
@@ -26,7 +25,6 @@ func FuzzParseSteeringFrontmatter(f *testing.F) {
 			t.Errorf("parseSteeringFrontmatter: unexpected inclusion %q", doc.Inclusion)
 		}
 
-		// Empty/nil input returns default.
 		if len(data) == 0 && doc.Inclusion != "always" {
 			t.Errorf("parseSteeringFrontmatter(nil): got inclusion %q, want always", doc.Inclusion)
 		}
@@ -47,9 +45,6 @@ func FuzzHostFromGitURL(f *testing.F) {
 	f.Fuzz(func(t *testing.T, url string) {
 		result := hostFromGitURL(url)
 
-		// Never panics (implicit).
-
-		// Output never contains @ or ://.
 		if strings.Contains(result, "@") {
 			t.Errorf("hostFromGitURL(%q) = %q; contains @", url, result)
 		}
@@ -57,9 +52,7 @@ func FuzzHostFromGitURL(f *testing.F) {
 			t.Errorf("hostFromGitURL(%q) = %q; contains ://", url, result)
 		}
 
-		// If output is non-empty, it doesn't contain /.
-		// Known bug: scp-style URLs with '/' before ':' (e.g. "0@/:0")
-		// produce a host containing '/'. TODO: fix hostFromGitURL.
+		// Known bug: an scp-style URL with '/' before ':' (e.g. "0@/:0") yields a host containing '/'.
 		if result != "" && strings.Contains(result, "/") {
 			t.Logf("BUG: hostFromGitURL(%q) = %q; contains /", url, result)
 		}

@@ -1,6 +1,3 @@
-// MCP actions: user-initiated mutations for the MCP integrations UI.
-// ---------------------------------------------------------------------------
-
 import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { ApiErrorInfo, ApiErrorDecision } from "./index.js";
 
@@ -13,13 +10,11 @@ import {
 import { decodeRegistrySearchFailure, decodeRegistrySearchResult } from "../wire/decoders.gen.js";
 import type { RegistrySearchFailure, RegistrySearchResult } from "../wire/types.gen.js";
 
-/** Base path for MCP API endpoints — single source of truth. */
+/** Base path for MCP API endpoints. */
 export const MCP_API = "/api/mcp";
 
-/** One validation failure attributed to the wire field it came from
- *  (`internal/mcp.FieldError`). The server accumulates across independent
- *  checks, so a pasted block with three bad fields answers with three of these
- *  in one response instead of over three submit-fix-submit round trips. */
+/** One validation failure attributed to its wire field (`internal/mcp.FieldError`). The server
+ *  accumulates across checks, so one response carries every bad field. */
 export interface ValidationField {
   field: string;
   message: string;
@@ -31,7 +26,6 @@ function readValidationFields(body: unknown): ValidationField[] {
   if (typeof body !== "object" || body === null || !("fields" in body)) {
     return [];
   }
-  // `"fields" in body` already narrows, so no assertion is needed here.
   const raw: unknown = body.fields;
   if (!Array.isArray(raw)) {
     return [];
@@ -49,9 +43,8 @@ function readValidationFields(body: unknown): ValidationField[] {
   return out;
 }
 
-/** Recovers the per-field breakdown a 400 carries, onto the error's `cause`.
- *  The dispatch still fails — the modal stays open with the form as left —
- *  but `cause` lets the form mark specific inputs instead of one sentence. */
+/** Recovers a 400's per-field breakdown onto the error's `cause`, so the form can mark inputs;
+ *  the dispatch still fails. */
 function decodeValidationError<T>(info: ApiErrorInfo): ApiErrorDecision<T> | undefined {
   if (info.status !== 400) {
     return undefined;
@@ -82,8 +75,6 @@ export function validationFieldsOf(err: { cause?: unknown } | undefined): Valida
   });
 }
 
-// --- mcp.toggle_server ---
-
 interface ToggleArgs {
   id: string;
   enabled: boolean;
@@ -111,14 +102,11 @@ export const toggleServer = apiAction<ToggleArgs, void, Server>({
   error: "Could not toggle integration",
 });
 
-// --- mcp.delete_server ---
-
 interface DeleteArgs {
   id: string;
 }
 
-// No auto-retry: a timed-out DELETE may have succeeded server-side; a retry
-// would hit 404 and trigger a misleading rollback.
+// No auto-retry: a timed-out DELETE may have succeeded; a retry would 404 and roll back wrongly.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
@@ -140,8 +128,6 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   error: "Could not remove integration",
 });
 
-// --- mcp.open_edit ---
-
 export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
   retryable: retryNetwork,
@@ -153,8 +139,6 @@ export const openEdit = apiAction<string, Server>({
   }),
   error: "Could not load integration details",
 });
-
-// --- mcp.save_server ---
 
 interface SaveArgs {
   /** Empty string for create, non-empty for update. */
@@ -177,11 +161,8 @@ export const saveServer = apiAction<SaveArgs, Server>({
   error: false,
 });
 
-// --- mcp.import_servers ---
-//
-// Connects every server of a pasted README block. The server owns the
-// translation from the publisher's shape (internal/mcp/paste.go); this
-// posts the parsed JSON unchanged.
+// The server owns the translation from the publisher's shape (internal/mcp/paste.go); this posts
+// the parsed JSON unchanged.
 
 /** What one entry of a pasted block did. No "updated": an entry naming a
  *  configured server either matches its spec or fails the paste. */
@@ -209,7 +190,7 @@ export const importServers = apiAction<Record<string, unknown>, ImportServersRes
   }),
   decodeError: decodeValidationError,
   success: (_args, res) => summariseImport(res),
-  // Rendered inline beside the textarea being fixed, not as a toast.
+  // Rendered inline beside the textarea, not as a toast.
   error: false,
 });
 
@@ -238,15 +219,12 @@ export function summariseImport(res: ImportServersResult | null): string {
   return parts.join(". ") + ".";
 }
 
-// --- mcp.search_registry ---
-
 interface SearchRegistryArgs {
   q: string;
 }
 
-/** Narrow a 502 body through the generated decoder. A body that is not a
- *  classified failure (an off-shape 502, a proxy's own error page) reads as no
- *  classification at all rather than failing the dispatch's error branch. */
+/** Narrow a 502 body through the generated decoder. An unclassified body (an off-shape 502, a
+ *  proxy's error page) reads as no classification rather than failing the error branch. */
 function readRegistryFailure(body: unknown): RegistrySearchFailure | undefined {
   try {
     return decodeRegistrySearchFailure(body);
@@ -255,9 +233,8 @@ function readRegistryFailure(body: unknown): RegistrySearchFailure | undefined {
   }
 }
 
-/** Carries the 502's classification onto the error's `cause`, the way the
- *  validation errors above carry their field list, so the panel can say
- *  whether to wait and for how long. The dispatch still fails. */
+/** Carries the 502's classification onto the error's `cause`, so the panel can say whether to
+ *  wait and for how long. The dispatch still fails. */
 function decodeRegistryFailure<T>(info: ApiErrorInfo): ApiErrorDecision<T> | undefined {
   const failure = readRegistryFailure(info.body);
   if (failure === undefined) {
@@ -277,9 +254,8 @@ export function registryFailureOf(
   return readRegistryFailure(err?.cause);
 }
 
-// No automatic retry, alone among the MCP actions: the registry refuses
-// connections after a burst, so a retry would wait out every upstream
-// timeout in series. The panel's own Retry button covers it.
+// No retry, alone among the MCP actions: the registry refuses connections after a burst, so a
+// retry waits out every upstream timeout in series. The panel's Retry button covers it.
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
   dedupe: (args) => args.q,
@@ -292,11 +268,8 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   error: false,
 });
 
-// --- mcp.reconnect_server ---
-//
-// Reconnect a wedged / expired-OAuth server on every live chat bridge
-// (server-side fan-out). The refreshed runtime status arrives via SSE +
-// a /api/mcp/status refetch, so there's no optimistic state to flip.
+// Reconnect on every live chat bridge (server-side fan-out); the refreshed status arrives via SSE
+// and a /api/mcp/status refetch, so no optimistic state.
 
 /** Result of POST /api/mcp/reconnect: how many live bridges were targeted. */
 export interface ReconnectResult {
@@ -316,11 +289,7 @@ export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
   error: "Could not reconnect integration",
 });
 
-// --- mcp.get_prompt / mcp.get_resource ---
-//
-// Resolve an MCP prompt / read an MCP resource from a live bridge's pool.
-// The response is the raw MCP result; the UI extracts its text and inserts
-// it into the prompt bar.
+// The response is the raw MCP result; the UI inserts its text into the prompt bar.
 
 /** One content block of an MCP message (text is the only kind we surface). */
 export interface MCPContentBlock {
@@ -369,14 +338,9 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
   error: "Could not load resource",
 });
 
-// --- mcp.relay_oauth_callback ---
-//
-// Rescue a sign-in whose redirect landed on the wrong machine. KAS binds its
-// OAuth redirect listener on the CONTAINER's localhost, so a browser reaching
-// marotte from a phone or another laptop is sent to its own localhost, where
-// nothing is listening. The user pastes that dead address here and the server
-// replays it inward. Server contract and its validation:
-// `internal/hub/mcp_oauth_relay.go`.
+// Rescues a sign-in whose redirect landed on the wrong machine: KAS binds its OAuth listener on
+// the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
+// address and the server replays it inward (`internal/hub/mcp_oauth_relay.go`).
 
 /** Result of POST /api/mcp/oauth-relay: the loopback listener's HTTP status. */
 export interface OAuthRelayResult {
@@ -388,18 +352,13 @@ export const relayOAuthCallback = apiAction<
   OAuthRelayResult
 >({
   name: "mcp.relay_oauth_callback",
-  // Deliberately NO retry, matching deleteServer's reasoning: an authorization
-  // code is single-use, so a replay of a request that may already have been
-  // delivered spends it against a listener that will refuse the second copy.
-  // The server latches the attempt for the same reason.
+  // NO retry: an authorization code is single-use, and a replay would spend it twice.
   scope: (args) => "mcp-oauth-relay:" + args.server,
   request: ({ server, redirect_url }) => ({
     method: "POST",
     path: `${MCP_API}/oauth-relay`,
     body: { server, redirect_url },
   }),
-  // The panel shows the refusal inline, beside the box the address was pasted
-  // into: every rejection names which part of the address was wrong, and that
-  // belongs next to the field rather than in a toast that outlives it.
+  // Shown inline beside the pasted box: every rejection names the wrong part of the address.
   error: false,
 });

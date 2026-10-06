@@ -1,11 +1,4 @@
-// THE MERGED TRIGGER'S ACCESSIBILITY, asserted as the STRUCTURE the accessible
-// name is computed from, because no rule engine or name computation is a
-// dependency of `static-src`. Three claims: no nested interactive content (the
-// card's real `<a>` is the trigger's sibling; `html-validate` is the mechanical
-// half); the name comes from contents and is stable across states, with
-// `aria-expanded` the only state channel; and the connection state is in the
-// DESCRIPTION (`data-tooltip`, republished by `tooltip.ts` as `aria-describedby`),
-// never a flipping `aria-label`.
+// THE MERGED TRIGGER'S ACCESSIBILITY, as far as a committed test can reach.
 import { describe, it, expect, beforeEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
@@ -13,10 +6,9 @@ import statusSource from "./status.ts?raw";
 import { setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 
-/** The three phrases `STATUS_STYLES` publishes as the trigger's description. That
- *  table is module-private in `status.ts`, so they are spelled here AND asserted
- *  against the source below — a spelled value with no source check would drift the
- *  moment the table did. */
+/** The three phrases `STATUS_STYLES` publishes as the trigger's description. That table is
+ *  module-private in `status.ts`, so they are spelled here AND asserted against the source below
+ *  — a spelled value with no source check would drift the moment the table did. */
 const TIPS: Readonly<Record<ConnectionStatus, string>> = {
   connected: "Connected",
   disconnected: "Disconnected",
@@ -25,18 +17,16 @@ const TIPS: Readonly<Record<ConnectionStatus, string>> = {
 
 const SUBJECT = "Account and connection status";
 
-/** Write the address the way `renderIdentity` does — `textContent`, empty for the two
- *  arms that name nobody. Deliberately NOT an import of `renderIdentity`: `settings.ts`
- *  reaches `shell.ts`, `files.ts` and `tools.ts`, one of which resolves `#messages` at
- *  module scope, so importing it here fails collection on a fixture that has no chat
- *  view. That writer's own behaviour is `auth-line.test.ts`'s subject; what this file
- *  needs is an address in the DOM. */
+/** Write the address the way `renderIdentity` does — `textContent`, empty for the two arms that
+ *  name nobody. Deliberately NOT an import of `renderIdentity`: `settings.ts` reaches
+ *  `shell.ts`, `files.ts` and `tools.ts`, one of which resolves `#messages` at module scope, so
+ *  importing it here fails collection on a fixture that has no chat view. */
 function setAddress(text: string): void {
   (document.getElementById("user-email") as HTMLElement).textContent = text;
 }
 
-/** The footer as `static/index.html` authors it, seeded so every writer this file
- *  drives can resolve its element. */
+/** The footer as `static/index.html` authors it, seeded so every writer this file drives can
+ *  resolve its element. */
 function mountFooter(): { btn: HTMLButtonElement; dot: HTMLElement; addr: HTMLElement } {
   document.body.innerHTML = `
     <div class="sidebar-footer">
@@ -93,14 +83,14 @@ describe("no nested interactive content", () => {
     const link = document.getElementById("st-account");
     expect(link, "the card carries the account link").not.toBeNull();
     expect(btn.contains(link), "the link must not nest inside the button").toBe(false);
-    // And the card itself is the trigger's next sibling, which is the pattern's own
-    // contract (`pill-expand.test.ts` asserts that adjacency both ways).
+    // And the card itself is the trigger's next sibling, which is the pattern's own contract
+    // (`pill-expand.test.ts` asserts that adjacency both ways).
     expect(btn.nextElementSibling?.id).toBe("status-card");
   });
 
   it("authors the same structure in static/index.html", () => {
-    // The fixture above could agree with itself while the shipped page did not, so the
-    // page is read too. Scoped to the button's own markup.
+    // The fixture above could agree with itself while the shipped page did not, so the page is read
+    // too. Scoped to the button's own markup.
     const at = indexHtml.indexOf('id="account-btn"');
     expect(at, "the page has the merged trigger").toBeGreaterThan(-1);
     const end = indexHtml.indexOf("</button>", at);
@@ -113,16 +103,16 @@ describe("no nested interactive content", () => {
 
 describe("the name comes from contents and is stable", () => {
   it("carries no aria-label of its own", () => {
-    // An `aria-label` would WIN over the button's own text, so the address would never
-    // reach a screen reader. The dot's old `aria-label` is what this change removed.
+    // An `aria-label` would WIN over the button's own text, so the address would never reach a
+    // screen reader.
     const { btn } = mountFooter();
     expect(btn.hasAttribute("aria-label")).toBe(false);
     expect(btn.hasAttribute("aria-labelledby")).toBe(false);
   });
 
   it("contains both the address and the subject phrase", () => {
-    // CONTAINS rather than an exact phrase: the join is whitespace, and asserting the
-    // exact string would pin the markup's own indentation.
+    // CONTAINS rather than an exact phrase: the join is whitespace, and asserting the exact string
+    // would pin the markup's own indentation.
     const { btn } = mountFooter();
     setAddress("someone@example.invalid");
     const text = btn.textContent ?? "";
@@ -131,17 +121,17 @@ describe("the name comes from contents and is stable", () => {
   });
 
   it("names the SUBJECT even before whoami answers", () => {
-    // The two arms that name nobody leave the address empty, so the subject is the
-    // whole name — which is why it exists rather than being left to the address.
+    // The two arms that name nobody leave the address empty, so the subject is the whole name —
+    // which is why it exists rather than being left to the address.
     const { btn } = mountFooter();
     setAddress(""); // what `renderIdentity` writes for `unavailable` and `signed_out`
     expect((btn.textContent ?? "").trim()).toBe(SUBJECT);
   });
 
   it("is byte-identical before and after aria-expanded flips", () => {
-    // `aria-expanded` is the ONLY state channel. A name that changed with the state
-    // would be the forbidden case; the name changing when the ADDRESS lands is not,
-    // because that is the control's subject changing, like a tab's title.
+    // `aria-expanded` is the ONLY state channel. A name that changed with the state would be the
+    // forbidden case; the name changing when the ADDRESS lands is not, because that is the
+    // control's subject changing, like a tab's title.
     const { btn } = mountFooter();
     setAddress("someone@example.invalid");
     const before = btn.textContent;
@@ -152,11 +142,9 @@ describe("the name comes from contents and is stable", () => {
   });
 
   it("never leaks a connection STATE into the name", () => {
-    // Asserted against the three state VALUES rather than against the word "connect":
-    // the subject phrase is "Account and CONNECTION status", so a substring test for
-    // "connect" fails on the intended markup. None of "connected" / "disconnected" /
-    // "connecting…" is a substring of the subject, so this passes on what ships and
-    // still fails if `setStatus`'s string ever reaches the name.
+    // Asserted against the three state VALUES rather than against the word "connect": the subject
+    // phrase is "Account and CONNECTION status", so a substring test for "connect" fails on the
+    // intended markup.
     const { btn } = mountFooter();
     setAddress("someone@example.invalid");
     for (const status of Object.keys(TIPS) as ConnectionStatus[]) {
@@ -183,9 +171,9 @@ describe("the state is in the description", () => {
   });
 
   it("leaves the mark decorative and unnamed", () => {
-    // The mark is `aria-hidden` decoration whose meaning is carried by the tooltip,
-    // by `#st-ws` one row inside the card, and by the live region on every settled
-    // change. Its old flipping `aria-label` is what moved.
+    // The mark is `aria-hidden` decoration whose meaning is carried by the tooltip, by `#st-ws` one
+    // row inside the card, and by the live region on every settled change. Its old flipping
+    // `aria-label` is what moved.
     const { dot } = mountFooter();
     for (const status of Object.keys(TIPS) as ConnectionStatus[]) {
       setStatus(status);
@@ -195,12 +183,11 @@ describe("the state is in the description", () => {
   });
 
   it("spells those three phrases in status.ts, so the table above cannot drift", () => {
-    // `STATUS_STYLES` is module-private, so the values are spelled in this file — and
-    // a spelled value with no source check is a copy that goes stale silently.
+    // `STATUS_STYLES` is module-private, so the values are spelled in this file — and a spelled
+    // value with no source check is a copy that goes stale silently.
     for (const tip of Object.values(TIPS)) {
       expect(statusSource, `status.ts declares "${tip}"`).toContain(`"${tip}"`);
     }
-    // And the retired channel is gone rather than merely unused.
     expect(statusSource, "the dot's aria-label write is deleted").not.toMatch(
       /dot\.setAttribute\(\s*"aria-label"/u,
     );

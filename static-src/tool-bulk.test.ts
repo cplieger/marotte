@@ -1,9 +1,5 @@
-// The bulk cache's contract: collapse duplicate requests, hold nothing a reveal
-// does not read, and stay under a stated byte ceiling.
-//
-// `api-client` is the unmanaged dependency and is the only thing faked; the
-// generated decoder is exercised by its own suite, and this file's subject is
-// what the module does with an answer once it has one.
+// The bulk cache collapses duplicate requests, holds nothing a reveal does not read, and stays under
+// a byte ceiling. Only `api-client` is faked.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

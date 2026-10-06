@@ -14,9 +14,7 @@ vi.mock("./actions/chat.js", () => ({
 vi.mock("./transport.js", () => ({
   send: vi.fn(),
   newMessageID: vi.fn(() => "m-test-123"),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   newOpID: vi.fn(() => "op-test"),
 }));
 
@@ -29,10 +27,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// sendPromptTo is a pure "send once" primitive: it dispatches the prompt
-// command and maps the action result to sent/queued/starting/failed. What each
-// value MEANS (steer vs busy face vs restore) is submit.ts's job — so there is
-// no enqueue/attachment side effect to assert here.
+// sendPromptTo dispatches once and maps the result to sent/queued/starting/failed; what
+// each MEANS is submit.ts's job.
 describe("sendPromptTo", () => {
   it("returns 'sent' on 2xx and forwards chat/text/model to the action", async () => {
     mockSendPromptDispatch.mockResolvedValue("sent");

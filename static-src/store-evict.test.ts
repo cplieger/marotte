@@ -1,14 +1,6 @@
-// ---------------------------------------------------------------------------
-// Eviction and residency: the idle sweep that reclaims a background chat's turn
-// window, the exemptions that each alone prevent it, the residency tri-state the
-// next activation keys its refetch on, and what leaves with the window: the
-// per-turn signals and the freshness record.
-//
-// The sweep is driven with fake timers (Date is faked with them, so the idle clock
-// and the interval agree). The external exemptions go through the registration
-// seam exactly as the composition root wires them: store.ts is a leaf, so the seam
-// IS the production shape.
-// ---------------------------------------------------------------------------
+// Eviction and residency: the idle sweep that reclaims a background chat's turn window, the
+// exemptions that each alone prevent it, the residency tri-state the next activation keys its
+// refetch on, and what leaves with the window: the per-turn signals and the freshness record.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
@@ -128,8 +120,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Seed two chats, make `active` the active one, open one turn on each (which stamps
- *  their activity), then age everything past the idle bound. */
+/** Seed two chats, make `active` the active one, open one turn on each (which stamps their
+ *  activity), then age everything past the idle bound. */
 function seedIdlePair(active: string, background: string): void {
   setSessions([session(active), session(background)]);
   setActive(active);
@@ -206,8 +198,8 @@ describe("the exemptions, each alone", () => {
   it("never evicts a BUSY chat, however idle its clock reads", () => {
     seedIdlePair("c-act", "c-busy");
     setThinking("c-busy", true);
-    // setThinking stamps activity, so age it past the bound again: the exemption itself
-    // must hold, not the recency it implies.
+    // setThinking stamps activity, so age it past the bound again: the exemption itself must hold,
+    // not the recency it implies.
     vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
     startEvictionSweep();
     tick();
@@ -321,9 +313,9 @@ describe("the signals the window minted", () => {
   });
 });
 
-// A ledger record describes the window, so the window's death drops it; that is what makes
-// the dispatcher's `viewStale`-only gate equivalent to `transcriptStale`. Without the drop an
-// evicted chat whose record still matched would be skipped on its next activation.
+// A ledger record describes the window, so the window's death drops it; that is what makes the
+// dispatcher's `viewStale`-only gate equivalent to `transcriptStale`. Without the drop an evicted
+// chat whose record still matched would be skipped on its next activation.
 describe("the ledger record eviction drops", () => {
   beforeEach(() => {
     resetFreshness();

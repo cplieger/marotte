@@ -251,7 +251,13 @@
    same guarantee without also freezing the box at three rows for a nine-line answer.
    The button row keeps `flex: none`, because it is what may never move. */
 .dock-card
-  > :where(.approval-actions, .elicitation-actions, .elicitation-fields, .dock-ask-actions) {
+  > :where(
+    .approval-actions,
+    .approval-reason,
+    .elicitation-actions,
+    .elicitation-fields,
+    .dock-ask-actions
+  ) {
   flex: none;
 }
 
@@ -437,6 +443,29 @@
   outline-offset: var(--focus-offset-field);
 }
 
+/* The permission card's optional deny note: one line at rest, growing to three, then
+   scrolling. `inline-size` pins the width, which `field-sizing` would otherwise size
+   to the typed text too. */
+.approval-reason {
+  field-sizing: content;
+  inline-size: 100%;
+  min-block-size: calc(1lh + 2 * var(--sp-2) + 2px);
+  max-block-size: calc(3lh + 2 * var(--sp-2) + 2px);
+  resize: none;
+  padding: var(--sp-2);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font: inherit;
+  font-size: var(--fs-sm);
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-field);
+  }
+}
+
 /* ONE right-aligned row per card, holding every button it has. Wraps rather than
    overflowing: "Continue without answering" is a long label, the user-input card's
    sub-option stage carries three buttons (Confirm, Back, Skip), and the dock is as
@@ -518,6 +547,12 @@
   inline-size: 1rem;
   block-size: 1rem;
   accent-color: var(--c-yellow);
+}
+
+/* A tool ask's touched paths have no checkbox and no diff button, so the path
+   takes the whole row. */
+.approval-locations > .dock-file-row {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dock-file-paths {

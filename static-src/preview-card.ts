@@ -18,14 +18,14 @@ export function isWorkspacePage(path: string): boolean {
   return relBeneath(root, path) !== null && /\.html?$/i.test(path);
 }
 
-/** A link target the card replaces. A query or fragment means the author
- *  linked something other than the page itself, so it stays a link. */
+/** A link target the card replaces. A query or fragment means the author linked something other
+ *  than the page itself, so it stays a link. */
 export function isPreviewHref(href: string): boolean {
   return !/[?#]/.test(href) && isWorkspacePage(href);
 }
 
-/** `label` is moved in, not copied: the renderer hands over the link's own
- *  children. An empty label shows the file name. */
+/** `label` is moved in, not copied: the renderer hands over the link's own children. An empty
+ *  label shows the file name. */
 export function buildPreviewCard(path: string, label: readonly Node[]): HTMLButtonElement {
   const card = document.createElement("button");
   card.type = "button";

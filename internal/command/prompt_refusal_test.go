@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
@@ -30,7 +31,7 @@ type promptSpy struct {
 
 // OpenTurn relays the store's tombstone the way the registry does: the turn_open
 // is the first write a prompt makes, and a tombstoned chat refuses it.
-func (s *promptSpy) OpenTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, *marotte.EntryPrompt, func(*marotte.Chat)) (string, error) {
+func (s *promptSpy) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
 	return "", chat.ErrTombstoned
 }
 
@@ -52,19 +53,9 @@ func promptReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.Client
 	return &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload}
 }
 
-// A prompt on a tombstoned chat is refused with 409, BEFORE the bridge is
-// spawned.
-//
-// Every later step depends on the record the store just declined to create, and
-// each of them failed silently: the bridge came up for a chat with no file, its
-// own metadata persist was refused by the same tombstone, the prompt was SENT,
-// the credits were spent, the agent wrote to the workspace for real, and the
-// finished turn was discarded by a third refused write. Nothing reported any of
-// it, because a refusal answered nil.
-//
-// The bridge counter is the load-bearing assertion. A test that only checked the
-// status would pass for an implementation that refuses after the spawn, which is
-// most of the cost.
+// TestCmdPrompt_RefusesATombstonedChatBeforeSpawning: a prompt on a tombstoned chat is a 409 before
+// the bridge is spawned, because every later step depends on the record the store declined to
+// create.
 func TestCmdPrompt_RefusesATombstonedChatBeforeSpawningABridge(t *testing.T) {
 	spy := &promptSpy{hostDouble: newTestHost(t, tombstonedChats{testsupport.NewInMemoryChatStore()})}
 	roles := promptRolesOf(spy)
@@ -100,14 +91,8 @@ func (s *promptBridgeSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) 
 	s.events = append(s.events, evt)
 }
 
-// A prompt that failed because the backend rejected the TOKEN travels as
-// auth_token_unavailable, not as the generic prompt_failed.
-//
-// That code is the only one in the client's routing table carrying a Sign in CTA,
-// so it is what turns a dismissible toast with nothing to click into a
-// non-dismissible banner with the one action that works. Sending the existing
-// code is deliberately the whole client-side change: no new wire enum, no
-// decoder regeneration.
+// TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode: a rejected token travels as
+// auth_token_unavailable, the only code the client routes to a Sign in CTA.
 func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	cases := map[string]struct {
 		callErr  error
@@ -117,11 +102,8 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			callErr:  rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
 			wantCode: marotte.ErrCodeAuthTokenUnavailable,
 		},
-		// The control. Every other failure keeps the generic code, or the banner
-		// stops meaning "sign in" and starts meaning "something went wrong". A
-		// terminal class on purpose: a retried one would hold this case for the
-		// retry loop's two 2s waits to assert a code the first attempt already
-		// decided.
+		// The control: every other failure keeps the generic code, or the banner stops meaning
+		// "sign in".
 		"a refused payload": {
 			callErr: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
@@ -129,7 +111,7 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			wantCode: marotte.ErrCodePromptFailed,
 		},
 		"an entitlement refusal is not a sign-in problem": {
-			callErr: rpcErr(t, marotte.RPCCodeBridgeExited, "this account does not have access to them.", mappedErrorData{
+			callErr: rpcErr(t, marotte.RPCCodeBridgeExited, "this account does not have access to them.", rpcerr.Mapped{
 				ErrorType:      "ModelRegistryAccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -149,8 +131,6 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			join := &promptJoin{}
 			roles.lifecycle = join
 
-			// The POST answers at the ack; the failure happens after it and is
-			// SSE-only, so the handler reports no error and the frame is joined on.
 			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 				t.Fatalf("CmdPrompt = %v, want the early ack", err)
 			}

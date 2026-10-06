@@ -61,9 +61,7 @@ type Entry struct {
 	Enabled    bool      `json:"enabled"`
 }
 
-// storedEntry reads an Entry plus last_result, the single prefix-coded string
-// that held the outcome in files written before LastStatus existed. Writes
-// never emit it, so a store converts on its first mutation.
+// storedEntry reads an Entry plus the legacy prefix-coded last_result; writes never emit it.
 type storedEntry struct {
 	LegacyResult string `json:"last_result,omitempty"`
 	Entry
@@ -87,18 +85,15 @@ func legacyOutcome(result string) Outcome {
 	return Outcome{Status: StatusFailed, Reason: result}
 }
 
-// Store persists schedules in one 0600 JSON file, rewritten atomically. Same
-// shape as internal/mcp's store: the whole set is small, so a full rewrite per
-// mutation is simpler and safer than incremental edits.
+// Store persists schedules in one 0600 JSON file, rewritten atomically per mutation.
 type Store struct {
 	entries map[string]Entry
 	path    string
 	mu      sync.Mutex
 }
 
-// NewStore opens (or starts) the store at <dir>/schedules.json. A malformed
-// file is a hard error rather than a silent reset: dropping the user's
-// schedules without telling them is worse than refusing to start the runner.
+// NewStore opens (or starts) the store at <dir>/schedules.json. A malformed file is a hard
+// error rather than a silent reset of the user's schedules.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, FileName), entries: map[string]Entry{}}
 	data, err := os.ReadFile(s.path)
@@ -132,10 +127,6 @@ func (s *Store) List() []Entry {
 }
 
 // sortedLocked returns every entry ordered by id.
-//
-// slices.SortedFunc over maps.Values collects and sorts in one call, replacing a
-// hand-written insertion sort — which is not merely un-idiomatic but quadratic,
-// and sat beside a loop that looked each key up again after ranging it.
 func (s *Store) sortedLocked() []Entry {
 	return slices.SortedFunc(maps.Values(s.entries), func(a, b Entry) int {
 		return strings.Compare(a.ID, b.ID)
@@ -181,9 +172,8 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return s.persistLocked(ctx)
 }
 
-// recordFire advances a schedule's anchor after a fire or a skip. The anchor is
-// set to the DUE time rather than now, so a schedule cannot drift later by the
-// tick's own latency.
+// recordFire advances a schedule's anchor after a fire or a skip, to the DUE time rather
+// than now, so the schedule cannot drift by the tick's latency.
 func (s *Store) recordFire(ctx context.Context, id string, due time.Time, o Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,11 +202,9 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	return s.persistLocked(ctx)
 }
 
-// RecordOutcome overwrites a schedule's last outcome AFTER its run has started.
-// The interesting outcomes arrive late: an unattended run denied a permission
-// fails minutes after launch, and without this the row would still read
-// "started". It does not touch the anchor, because the slot already fired and
-// moving it would shift the next run by however long the failure took.
+// RecordOutcome overwrites a schedule's last outcome after its run has started (a late
+// failure, such as an unattended permission denial). It leaves the anchor: moving it would
+// shift the next run by however long the failure took.
 func (s *Store) RecordOutcome(ctx context.Context, id string, o Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

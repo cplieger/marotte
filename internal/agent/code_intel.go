@@ -1,19 +1,7 @@
-// Code-intelligence activation: one idempotent hook that initializes
-// kiro-cli's (KAS's) native code intelligence for THE workspace.
-//
-// Every bridge already opts its sessions into the code tool via the
-// initialize handshake, which gives the agent tree-sitter operations
-// unconditionally. The LSP half needs a one-time per-workspace
-// activation: .kiro/settings/lsp.json under the work dir, written by KAS's
-// `init` subcommand; this is what chat sessions read to spawn language
-// servers on demand — marotte never manages server processes itself.
-//
-// EnsureCodeIntelligence runs init exactly when useful: the config file
-// does not exist yet AND at least one lsp-marked tool is enabled and
-// installed. Callers fire it at boot and on lsp-tool install success, so
-// enabling a language server lights up code intelligence with no restart.
-// KAS's init never rewrites an existing config, so a stale language set is
-// refreshed by deleting the file — the next trigger re-initializes.
+// Code-intelligence activation. The LSP half needs .kiro/settings/lsp.json under the work dir,
+// written once by KAS's `init`; sessions then spawn language servers themselves. Init runs
+// when the file is absent and an lsp-marked tool is installed, at boot and after an lsp
+// tool install. KAS never rewrites the file, so deleting it is how a stale set refreshes.
 
 package agent
 
@@ -24,25 +12,18 @@ import (
 	"time"
 )
 
-// codeIntelInitBudget bounds one init call, including a lazy utility-session
-// start and session creation.
+// codeIntelInitBudget bounds one init call, including a lazy utility-session start.
 const codeIntelInitBudget = 2 * time.Minute
 
-// SetCodeIntelligence wires the activation inputs: lspConfigPath is the
-// workspace's .kiro/settings/lsp.json, gate reports whether any
-// lsp-marked tool is enabled and installed. Called once at composition;
-// both empty/nil in tests that don't exercise activation.
+// SetCodeIntelligence wires the activation inputs: the workspace lsp.json path and a gate
+// reporting an installed lsp-marked tool. Both empty in tests.
 func (rt *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
 	rt.ciPath = lspConfigPath
 	rt.ciGate = gate
 }
 
-// EnsureCodeIntelligence initializes workspace code intelligence when
-// needed (see the file comment). Safe to call from any goroutine, any
-// number of times; concurrent callers coalesce on an in-flight guard
-// that re-arms on failure so a transient error retries on the next
-// trigger. Never blocks the caller beyond the stat + gate check when
-// nothing is to do.
+// EnsureCodeIntelligence initializes code intelligence when needed. Safe from any goroutine;
+// concurrent callers coalesce, and the guard re-arms on failure.
 func (rt *Runtime) EnsureCodeIntelligence(ctx context.Context) {
 	if rt.ciPath == "" || rt.ciGate == nil {
 		return // not wired (tests, or activation disabled)

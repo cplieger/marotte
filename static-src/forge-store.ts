@@ -1,28 +1,7 @@
-// ---------------------------------------------------------------------------
-// One shared owner of the /api/forges poll.
-//
-// Before this, THREE modules fetched that endpoint and each kept its answer
-// private: git-badge.ts polled it every 15s and reduced the response to a badge
-// colour, git-prs-tab.ts fetched it again at the head of every PR list read, and
-// forge-auth.ts fetched it twice more on its own gestures. The same answer was
-// on the wire up to three times, and nothing a consumer learned was readable by
-// another — the shape git-status-store.ts exists to end.
-//
-// This store owns the timer and the payload; consumers subscribe or read
-// through. It adds NO new server call and NO second timer: the badge's poll
-// MOVED here.
-//
-// Two accessors rather than one, because two questions get asked. A consumer
-// PAINTING wants whatever is known now and a repaint when that changes
-// (onForgeChange + currentForges). A consumer about to ACT on the list has to
-// have one, so it reads through (ensureForges), which returns the cached payload
-// or awaits the first fetch.
-//
-// Nothing here takes an AbortSignal, and that is a property of sharing rather
-// than an omission: one consumer navigating away must not abort a fetch two
-// others are waiting on. Callers guard staleness after the await instead, which
-// is what they already did with their own generation counters.
-// ---------------------------------------------------------------------------
+// The one owner of the /api/forges poll and payload; consumers subscribe or read through, so one answer serves the
+// badge, the PRs tab and Sources. A painter uses onForgeChange + currentForges; a consumer about to act reads
+// through ensureForges. Nothing takes an AbortSignal: one consumer navigating away must not abort a fetch others
+// await, so callers guard staleness after the await.
 
 import { pollAction } from "./actions/index.js";
 import { listForges, type ForgesListResponse } from "./actions/forge-list.js";
@@ -30,36 +9,31 @@ import { onSSE } from "./bus.js";
 import { signal, subscribe } from "@cplieger/reactive";
 import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
 
-/** Re-exported so a consumer imports the payload shape from the store that owns
- *  it rather than from the action file underneath. */
+/** Re-exported so consumers import the payload shape from the store that owns it. */
 export type { ForgesListResponse };
 
-/** Poll cadence, unchanged from the badge's own. pollAction pauses while the
- *  document is hidden and refreshes on focus, so this is a ceiling not a floor. */
+/** pollAction pauses while the document is hidden and refreshes on focus, so this is a ceiling, not a floor. */
 const POLL_INTERVAL_MS = 15_000;
 
-/** The last successful payload, or null before the first one lands. A signal so
- *  consumers repaint on every poll without each holding a copy. */
+/** The last successful payload, or null before the first lands. */
 const state = signal<ForgesListResponse | null>(null);
 
-/** True when the most recent fetch failed. Distinct from a null payload, which
- *  only means nothing has arrived yet: the Sources tab offers a Retry for a
- *  failure and the badge paints a failure red, while neither should react to a
- *  load still in flight. */
+/**
+ * True when the most recent fetch failed. Distinct from a null payload (nothing yet): a failure gets Retry and a red
+ * badge, a load in flight gets neither.
+ */
 const failed = signal(false);
 
 let started = false;
 
-/** Start the poll and the invalidation listener. Idempotent — several init
- *  paths reach it. */
+/** Start the poll and the invalidation listener. Idempotent: several init paths reach it. */
 export function initForgeStore(): void {
   if (started) {
     return;
   }
   started = true;
-  // A connection change (PAT login, OAuth completion, disconnect, probe) is the
-  // only thing that moves this data other than time, and the server broadcasts
-  // it. Without this the badge waited up to 15s to notice a sign-out.
+  // A connection change is the only thing besides time that moves this data, and the server broadcasts it; without
+  // this the badge took up to 15s to notice a sign-out.
   onSSE("forges_changed", () => {
     void refreshForges();
   });
@@ -78,24 +52,20 @@ function apply(d: ForgesListResponse | null): void {
   state.value = d;
 }
 
-/** Fetch now and publish the result. Deduped with any in-flight poll tick, so
- *  calling it from several consumers at once costs one request.
- *
- *  This is what a consumer with a REASON to distrust the cache calls: the
- *  Sources tab after a login or a sign-out, and the SSE listener above. */
+/**
+ * Fetch now and publish the result, deduped with any in-flight poll tick. For a consumer with a reason to distrust
+ * the cache (Sources after a sign-in or sign-out, the SSE listener).
+ */
 export async function refreshForges(): Promise<ForgesListResponse | null> {
   const d = await listForges.dispatch(undefined);
   apply(d);
   return d;
 }
 
-/** The forge list, fetching once if nothing has landed yet.
- *
- *  For a consumer that cannot proceed without a list: the PR tab names each
- *  inventory entry's connection from it, and an empty answer would render as "no
- *  connected forges" rather than as "not loaded yet". A payload already in hand
- *  is returned as-is, so a read that pairs it with the inventory adds no round
- *  trip of its own. */
+/**
+ * The forge list, fetching once if nothing has landed yet, for a consumer that cannot proceed without one (an
+ * empty answer would read as "no connected forges"). A payload in hand is returned as-is, with no round trip.
+ */
 export async function ensureForges(): Promise<ForgesListResponse | null> {
   const current = state.peek();
   if (current !== null) {

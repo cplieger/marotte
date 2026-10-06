@@ -1,8 +1,7 @@
 package agent
 
-// utilitySystemPrompt is prepended to every utility bridge prompt.
-// It establishes the agent's role and prevents cross-contamination
-// between sequential tasks on the same long-lived session.
+// utilitySystemPrompt is prepended to every utility prompt; it sets the role and keeps sequential tasks on the
+// long-lived session from bleeding into each other.
 const utilitySystemPrompt = `[SYSTEM] You are a stateless utility agent. Each message is a standalone
 task. Ignore all prior conversation history; it is from unrelated tasks
 that happened to share this session.

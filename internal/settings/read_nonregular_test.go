@@ -11,15 +11,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// fieldWithin runs Field on its own goroutine and fails if it has not returned
-// inside budget.
-//
-// A deadline rather than a plain call, because the defect this pins HANGS rather
-// than fails: os.Open over a FIFO blocks in open(2) until a writer appears, no
-// context deadline rescues it, and the load runs inside a singleflight slot — so
-// one mkfifo at <configDir>/config.json wedged every concurrent settings reader
-// behind it, the agent-ignore filter and the prompt path included. Reverting the
-// OpenRegular adoption makes this run to the go-test timeout.
+// fieldWithin runs Field on its own goroutine and fails if it has not returned inside budget:
+// on a FIFO the defect HANGS inside the singleflight slot, wedging every settings reader.
 func fieldWithin(t *testing.T, budget time.Duration, dir string) (bool, bool) {
 	t.Helper()
 	type res struct {
@@ -70,8 +63,7 @@ func TestReadBytes_RefusesANonRegularFile(t *testing.T) {
 	}
 }
 
-// TestReadBytes_RefusesASymlink: a link at config.json made another file's bytes
-// the app's settings, which decide the agent read filter and the retention window.
+// TestReadBytes_RefusesASymlink pins that a link at config.json is not read as the settings.
 func TestReadBytes_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "elsewhere.json")

@@ -1,11 +1,6 @@
-// ---------------------------------------------------------------------------
-// The PR tab's canonical state: each connection's inventory entry as the
-// poller's cycles wrote it (GET /api/forges/inventory and the forge_inventory
-// frame), and the rows an optimistic close or merge hides. The repository
-// groups and the contributions elsewhere the tab paints are derived from them
-// on every read, so the entries stay the one copy. Its own module to break the
-// cycle between git-prs-tab.ts and actions/git-prs.ts.
-// ---------------------------------------------------------------------------
+// The PR tab's canonical state: each connection's inventory entry as the poller wrote it, and the rows an optimistic
+// close or merge hides. Groups are derived on every read, so the entries stay the one copy. Its own module to break
+// the git-prs-tab.ts / actions/git-prs.ts cycle.
 
 import { join } from "@cplieger/keyenc";
 
@@ -31,9 +26,10 @@ export interface ElsewherePR {
   pr: PR;
 }
 
-/** A hidden row's connection, and the cycle its mutation named once it
- *  answered. An entry from that cycle or a later one is the forge's answer
- *  about the row; an earlier one may have read the row before the mutation. */
+/**
+ * A hidden row's connection and the cycle its mutation named. An entry from that cycle or later is the forge's answer
+ * about the row; an earlier one may predate the mutation.
+ */
 interface Mark {
   forgeId: string;
   floor: string | undefined;
@@ -77,12 +73,11 @@ export function lapsedForges(): ConfiguredForge[] {
     .sort((a, b) => cmp(a.id, b.id));
 }
 
-/** Adopt a read of the whole inventory. The list names every connected
- *  connection, so an entry it omits is dropped; an entry is replaced when the
- *  list's is from a later cycle, or always when `reset` says the held ones
- *  cannot be trusted (a reconcile, which also covers a server whose cycle count
- *  restarted). Answers the indexes of the list's entries it adopted, whose
- *  stamps the caller records. */
+/**
+ * Adopt a read of the whole inventory. An omitted entry is dropped; an entry is replaced when the list's is from a
+ * later cycle, or always on `reset` (a reconcile, which also covers a restarted cycle count). Answers the indexes of
+ * the adopted entries.
+ */
 export function applyInventoryList(list: InventoryList, opts: { reset?: boolean } = {}): number[] {
   const named = new Set(list.entries.map((e) => e.forge_id));
   for (const id of [...entries.keys()]) {
@@ -147,11 +142,10 @@ export function cloneDirOf(forgeId: string, repoId: string): string | undefined 
   return entries.get(forgeId)?.clones.find((c) => c.repo_id === repoId)?.dir;
 }
 
-/** The repository groups the tab paints: every row of each listed connection's
- *  owner and added scopes, and every authored row under one of its owners,
- *  grouped by `repo_id` under the row's display path, sorted by path. A
- *  connection that is loading or failed has no groups; the tab paints its state
- *  instead. */
+/**
+ * The repository groups the tab paints: every row of each connection's owner and added scopes, and every authored row
+ * under one of its owners, grouped by `repo_id` and sorted by path. A loading or failed connection has no groups.
+ */
 export function getPRGroups(): RepoGroup[] {
   return listed()
     .flatMap((d) => d.groups)
@@ -184,9 +178,7 @@ function listed(): Derived[] {
   return out;
 }
 
-/** One entry's groups and contributions elsewhere. A row two scopes carry is
- *  listed once, and the owner and added scopes are read first, so a row they
- *  carry is never elsewhere. */
+/** A row two scopes carry is listed once, and the scopes are read first, so a row they carry is never elsewhere. */
 function derive(e: InventoryEntry, f: ConfiguredForge): Derived {
   const owners = listedOwners(e, f);
   const byRepo = new Map<string, RepoGroup>();
@@ -231,10 +223,10 @@ function derive(e: InventoryEntry, f: ConfiguredForge): Derived {
   return { groups: [...byRepo.values()], elsewhere };
 }
 
-/** The owners whose repositories the connection lists, lowercased, since the
- *  forges compare owner names without case: each owner and added scope's, and
- *  the login, whose repositories the owner scope lists or, on GitLab, which
- *  refuses that scope, the authored rows under it stand in for. */
+/**
+ * The listed owners, lowercased (forges compare without case): each scope's owner and the login. On GitLab, which
+ * refuses the login's owner scope, the authored rows under it stand in.
+ */
 function listedOwners(e: InventoryEntry, f: ConfiguredForge): string[] {
   const out: string[] = [];
   for (const s of e.scopes) {
@@ -248,8 +240,7 @@ function listedOwners(e: InventoryEntry, f: ConfiguredForge): string[] {
   return out;
 }
 
-/** Whether `path` names a repository of one of `owners`; a GitLab group's
- *  subgroups are its own, as its list reads them. */
+/** A GitLab group's subgroups are its own, as its list reads them. */
 function underOwner(owners: readonly string[], path: string): boolean {
   const p = path.toLowerCase();
   return owners.some((o) => p.startsWith(`${o}/`));

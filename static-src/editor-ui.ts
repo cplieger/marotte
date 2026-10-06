@@ -258,7 +258,7 @@ export function renderEditModeUI(state: FileState): void {
     $.editorSaveBtn.classList.remove("hidden");
   } else {
     renderReadSurface(state);
-    $.editorEditBtn.classList.remove("hidden");
+    $.editorEditBtn.classList.toggle("hidden", state.readOnly);
     $.editorCancelBtn.classList.add("hidden");
     $.editorSaveBtn.classList.add("hidden");
   }

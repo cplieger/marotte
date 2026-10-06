@@ -1,15 +1,10 @@
-// The run card's head and step rows under width pressure: no slot paints over
-// another, no slot is clipped away, and the head keeps the shared box-header height.
-//
-// Geometry over the real builder and the real stylesheet, because the shape of a
-// flex row under pressure is not readable from its declarations. Widths are driven
-// by the HOST rather than by the viewport, so these cases answer for a narrow card
-// beside a wide sidebar as well as for a phone.
+// The run card's head and step rows under width pressure: no slot paints over another, no slot is
+// clipped away, and the head keeps the shared box-header height.
 import { beforeAll, afterAll, afterEach, describe, it, expect, vi } from "vitest";
 import type * as ScrollModule from "./scroll.js";
 
-// scroll.ts is a self-initialising singleton over a real `#messages`, and the spread
-// below evaluates it, so its ids exist before any import of this file is linked.
+// scroll.ts is a self-initialising singleton over a real `#messages`, and the spread below
+// evaluates it, so its ids exist before any import of this file is linked.
 vi.hoisted(() => {
   for (const [tag, id] of [
     ["div", "messages"],
@@ -35,9 +30,9 @@ import type { RunNode, RunState } from "./run-store.js";
 /** A run label long enough to squeeze the head at any phone width. */
 const LONG_LABEL = "investigate-greenfield-forge-research";
 
-/** CARD widths, so the head's own content box lands where a real viewport puts it:
- *  the card's border and the head's inline padding come off, leaving the widths a
- *  320px and a 390px viewport give it. WIDE stays inside the runner's viewport. */
+/** CARD widths, so the head's own content box lands where a real viewport puts it: the card's
+ *  border and the head's inline padding come off, leaving the widths a 320px and a 390px
+ *  viewport give it. WIDE stays inside the runner's viewport. */
 const NARROW_PX = 252;
 const PHONE_PX = 332;
 const WIDE_PX = 1200;
@@ -180,8 +175,8 @@ describe("the head against the foot", () => {
 
   it("keeps the run's word in the head's accessible name", () => {
     const root = mount(PHONE_PX, liveRun(), ASKING);
-    // The head's only statement of the state, and the one an ask reaches: the foot
-    // says the run's own status, which stays `running` while a step's ask blocks it.
+    // The head's only statement of the state, and the one an ask reaches: the foot says the run's
+    // own status, which stays `running` while a step's ask blocks it.
     expect(el(root, ".run-head").getAttribute("aria-label")).toContain("needs input");
   });
 });
@@ -193,7 +188,6 @@ describe("a step row under the same pressure", () => {
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       const head = el(row, ".run-step-head");
-      // `.run-step`'s own clip, so a duration past this edge is gone rather than tight.
       const pad = parseFloat(getComputedStyle(head).paddingRight);
       const contentRight = head.getBoundingClientRect().right - pad;
       expect(el(row, ".run-step-dur").getBoundingClientRect().right).toBeLessThanOrEqual(

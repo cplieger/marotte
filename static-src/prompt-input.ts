@@ -1,39 +1,38 @@
-// ---------------------------------------------------------------------------
-// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS
-// viewport fix. send-state.ts drives three button faces: idle sends, streaming
-// cancels, error retries; the error face means there is nothing to send TO, so
-// every other failure reports through a toast and the turn's own divider.
-//
-// Nothing here disables the composer: a failed prompt leaves the server idle.
-// ---------------------------------------------------------------------------
+// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS viewport fix.
+// send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
+// face means there is nothing to send TO, so every other failure reports through a toast and the
+// turn's own divider.
 
 import { $ } from "./dom.js";
-import { getActive, getActiveId } from "./store.js";
+import { activeSession, getActive, getActiveId } from "./store.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { setComposerValue } from "./composer-value.js";
-import { signal, effect, touch } from "@cplieger/reactive";
+import { touchComposer, wireTouchComposer } from "./composer-touch.js";
+import { continueList } from "./list-continue.js";
+import { applyEdit } from "./text-edit.js";
+import { computed, effect, touch } from "@cplieger/reactive";
 
-/** The "context (nearly) full" state of the ACTIVE chat, written by
- *  context-ui.ts and rendered here as a placeholder and a tooltip. ADVISORY: it
- *  never refuses a send. Declared here rather than imported from context-ui so
- *  the send-state chain does not pull that module in. */
-export const contextFull = signal(false);
+/** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint
+ *  the button. */
+const busyMode = computed(() => activeSession.value?.interrupt_mode ?? "steer");
 
-/** Placeholder / tooltip shown while `contextFull` is true. Module-local:
- *  only prompt-input.ts renders it. */
-const CONTEXT_FULL_REASON =
-  "Context nearly full. kiro-cli will compact automatically on the next turn.";
+/** While a turn runs the placeholder names what Send will do with the text. */
+const BUSY_PLACEHOLDER = {
+  steer: "Steer the agent mid-turn...",
+  queue: "Queue a follow-up for after this turn...",
+} as const;
 
-/** Appended to every error tooltip. A fixed suffix rather than a test against
- *  the reason's wording, which is upstream prose. */
+/** Appended to every error tooltip. A fixed suffix rather than a test against the reason's
+ *  wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
+type HasStaged = () => boolean;
 
 export type SendState =
   { kind: "idle" } | { kind: "streaming" } | { kind: "error"; reason: string };
@@ -53,17 +52,17 @@ const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   error: RETRY_HINT,
 };
 
-/** The reason a state carries, "" for the states that carry none. Doubles as
- *  the dedupe key: two errors differing only in reason are different states. */
+/** The reason a state carries, "" for the states that carry none. Doubles as the dedupe key: two
+ *  errors differing only in reason are different states. */
 function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
 
 let initialized = false;
 
-/** How long after `compositionend` an Enter is still the IME's commit key rather
- *  than a send. Several IMEs deliver that Enter just AFTER composition ended,
- *  with `isComposing` false and no keyCode 229, so no other leg covers it. */
+/** How long after `compositionend` an Enter is still the IME's commit key rather than a send.
+ *  Several IMEs deliver that Enter just AFTER composition ended, with `isComposing` false and no
+ *  keyCode 229, so no other leg covers it. */
 const IME_TAIL_MS = 50;
 
 class PromptInputController {
@@ -80,18 +79,15 @@ class PromptInputController {
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
   private onSubmit: Submit = () => undefined;
+  private hasStaged: HasStaged = () => false;
 
-  /** Send whatever is in the composer. THE send path: the form's submit handler,
-   *  Enter and the keyboard shortcut all call this, and submit.ts decides what a
-   *  send means. Neither of the two ways of going through the form works. A
-   *  dispatched `new Event("submit")` is not cancelable, so preventDefault() is a
-   *  no-op and the browser performs the form's native submission. And
-   *  `requestSubmit()` runs constraint validation first, which the decision dock
-   *  is inside: a half-typed elicitation field is `:invalid` under the MCP
-   *  server's own schema, so the chat message would silently not be sent. */
+  /** Send whatever is in the composer. THE send path: the form's submit handler, Enter and the
+   *  keyboard shortcut all call this, and submit.ts decides what a send means. Neither of the
+   *  two ways of going through the form works. */
   sendComposer(): void {
     const text = $.promptInput.value.trim();
-    if (text === "") {
+    // Staged attachments are a prompt on their own: the user need not type text.
+    if (text === "" && !this.hasStaged()) {
       return;
     }
     this.exitCycling();
@@ -104,41 +100,35 @@ class PromptInputController {
     this.draft = "";
   }
 
-  /** Leave cycling and put the saved draft back in the box. ONE method for both
-   *  keys that end cycling (Escape, ArrowDown off the newest prompt), because
-   *  exitCycling() zeroes `draft`: read after the exit it is "". */
+  /** Leave cycling and put the saved draft back in the box. ONE method for both keys that end
+   *  cycling (Escape, ArrowDown off the newest prompt), because exitCycling() zeroes `draft`:
+   *  read after the exit it is "". */
   private restoreDraft(el: HTMLTextAreaElement): void {
     const saved = this.draft;
     this.exitCycling();
     this.setInputValue(el, saved);
   }
 
-  /** Whether this keystroke belongs to an IME composition, so Enter must reach
-   *  the browser and commit the candidate instead of sending. Three legs, each
-   *  covering a case the others miss:
-   *    - `composing`, the only one that survives an Enter delivered after
-   *      composition ended;
-   *    - `e.isComposing`, authoritative where the browser sets it, and sometimes
-   *      false on exactly the committing Enter;
-   *    - keyCode 229, what several Android and Windows IMEs report instead. */
+  /** Whether this keystroke belongs to an IME composition, so Enter must reach the browser and
+   *  commit the candidate instead of sending. Three legs, each covering a case the others miss: */
   private isComposing(e: KeyboardEvent): boolean {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- keyCode 229 is the whole reason to port this guard: the IME's commit Enter reports it when isComposing is already false.
     return this.composing || e.isComposing || e.keyCode === 229;
   }
 
-  /** Drop composition state, on blur and on Escape. Some Android IMEs never
-   *  deliver compositionend when the field loses focus mid-candidate, which
-   *  would leave Enter dead for the rest of the page's life. */
+  /** Drop composition state, on blur and on Escape. Some Android IMEs never deliver
+   *  compositionend when the field loses focus mid-candidate, which would leave Enter dead for
+   *  the rest of the page's life. */
   private resetIME(): void {
     clearTimeout(this.imeTimer);
     this.imeTimer = undefined;
     this.composing = false;
   }
 
-  /** What the reader typed into THIS composer, newest first: each turn's prompt
-   *  plus their own steers into it, so a steer whose `origin` is `agent` is a
-   *  workflow's report rather than typed text. A turn's steers come after its
-   *  prompt, so walking backwards keeps the list in position order. */
+  /** What the reader typed into THIS composer, newest first: each turn's prompt plus their own
+   *  steers into it, so a steer whose `origin` is `agent` is a workflow's report rather than
+   *  typed text. A turn's steers come after its prompt, so walking backwards keeps the list in
+   *  position order. */
   private userPrompts(): string[] {
     const s = getActive();
     if (s === undefined) {
@@ -182,39 +172,32 @@ class PromptInputController {
     return !el.value.slice(pos).includes("\n");
   }
 
-  /** Show a value in the box WITHOUT announcing it: cycling is navigation, so a
-   *  displayed prompt is a preview and `draft` still holds the typed text. An
-   *  `input` event would leave the cycle and be recorded as the new draft. */
+  /** Show a value in the box WITHOUT announcing it: cycling is navigation, so a displayed prompt
+   *  is a preview and `draft` still holds the typed text. An `input` event would leave the cycle
+   *  and be recorded as the new draft. Written as one edit, so Ctrl+Z takes a recalled prompt
+   *  back. */
   private setInputValue(el: HTMLTextAreaElement, v: string): void {
-    el.value = v;
-    el.setSelectionRange(v.length, v.length);
+    applyEdit(el, { start: 0, end: el.value.length, text: v, caret: v.length }, { silent: true });
   }
 
   private applyButtonState(): void {
     const k = this.state.kind;
-    // Only while idle: text typed mid-turn is a steer and does not size the next
-    // prompt, and after a failure the error is the more useful thing to report.
-    const ctxFull = k === "idle" && contextFull.value;
     const reason = reasonOf(this.state);
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
-    const tooltip =
-      reason !== ""
-        ? `${reason} ${RETRY_HINT}`
-        : ctxFull
-          ? CONTEXT_FULL_REASON
-          : DEFAULT_TOOLTIP[k];
+    const tooltip = reason !== "" ? `${reason} ${RETRY_HINT}` : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
 
-    // type=button while streaming keeps a click out of the form: a click always
-    // cancels during a turn, while Enter still sends.
+    // type=button while streaming keeps a click out of the form: a click always cancels during a
+    // turn, while Enter still sends.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
     // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
-    $.promptInput.placeholder = ctxFull ? CONTEXT_FULL_REASON : "Message Kiro...";
+    $.promptInput.placeholder =
+      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()] : "Message Kiro...";
   }
 
   setSendState(next: SendState): void {
@@ -225,7 +208,7 @@ class PromptInputController {
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel): void {
+  init(onSubmit: Submit, onCancel: Cancel, hasStaged: HasStaged): void {
     if (initialized) {
       return;
     }
@@ -236,6 +219,7 @@ class PromptInputController {
 
     this.onCancel = onCancel;
     this.onSubmit = onSubmit;
+    this.hasStaged = hasStaged;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       if (this.state.kind === "streaming") {
         e.preventDefault();
@@ -244,10 +228,10 @@ class PromptInputController {
       }
     });
 
-    // Follows the context-full signal; setSendState() paints the other input
-    // directly, because `state` is not a signal.
+    // Follows the active chat's mode; setSendState() paints the other input directly, because
+    // `state` is not a signal.
     effect(() => {
-      touch(contextFull);
+      touch(busyMode);
       this.applyButtonState();
     });
 
@@ -256,8 +240,8 @@ class PromptInputController {
       this.sendComposer();
     });
 
-    // compositionstart clears any pending tail, so back-to-back compositions
-    // cannot have a stale timer flip the flag false mid-candidate.
+    // compositionstart clears any pending tail, so back-to-back compositions cannot have a stale
+    // timer flip the flag false mid-candidate.
     input.addEventListener("compositionstart", () => {
       clearTimeout(this.imeTimer);
       this.imeTimer = undefined;
@@ -278,17 +262,38 @@ class PromptInputController {
         this.exitCycling();
       }
 
-      // Ahead of the cycling branch, which is guarded on `idx !== -1`. No
-      // stopPropagation: a plain Escape still has to reach the global handler
-      // that collapses pills and closes the dock.
+      // Ahead of the cycling branch, which is guarded on `idx !== -1`. No stopPropagation: a plain
+      // Escape still has to reach the global handler that collapses pills and closes the dock.
       if (e.key === "Escape") {
         this.resetIME();
       }
 
+      if (
+        e.key === "Enter" &&
+        e.shiftKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !this.isComposing(e) &&
+        !menuOpen(input) &&
+        input.selectionStart === input.selectionEnd
+      ) {
+        const edit = continueList(input.value, input.selectionStart);
+        if (edit !== null) {
+          e.preventDefault();
+          applyEdit(input, edit);
+        }
+        return;
+      }
+
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
-        // Inside this branch rather than an early return at the top, which would
-        // also break history navigation during composition.
+        // Inside this branch rather than an early return at the top, which would also break history
+        // navigation during composition.
         if (this.isComposing(e)) {
+          return;
+        }
+        // Under a finger Return is a new line; Cmd+Enter still sends through keys.ts.
+        if (!e.metaKey && touchComposer()) {
           return;
         }
         e.preventDefault();
@@ -341,8 +346,11 @@ class PromptInputController {
       }
     });
     input.addEventListener("focus", () => {
+      syncEnterHint(input);
       collapseAll();
     });
+    syncEnterHint(input);
+    wireTouchComposer(input, () => menuOpen(input));
     // The draft layer keeps its own blur listener for its own concern.
     input.addEventListener("blur", () => {
       this.resetIME();
@@ -352,6 +360,20 @@ class PromptInputController {
   }
 }
 
+/** Whether the popup this box names in `aria-controls` (the `/` and `#` menu) is open; that menu
+ *  owns Enter while it is. Read off the element, because importing slash-menu.ts here would
+ *  close an import cycle. */
+function menuOpen(el: HTMLTextAreaElement): boolean {
+  const id = el.getAttribute("aria-controls");
+  const menu = id === null ? null : document.getElementById(id);
+  return menu !== null && !menu.hidden;
+}
+
+/** The touch keyboard's Return label follows what Return does. */
+function syncEnterHint(el: HTMLTextAreaElement): void {
+  el.enterKeyHint = touchComposer() ? "enter" : "send";
+}
+
 const instance = new PromptInputController();
 
 /** Called by send-state.ts whenever inputs change. */
@@ -359,12 +381,18 @@ export function setSendState(next: SendState): void {
   instance.setSendState(next);
 }
 
-export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {
-  instance.init(onSubmit, onCancel);
+/** `hasStaged` reports staged attachments, which make an empty box sendable. It is injected
+ *  because importing attachments.ts here would close an import cycle. */
+export function initPromptInput(
+  onSubmit: Submit,
+  onCancel: Cancel,
+  hasStaged: HasStaged = () => false,
+): void {
+  instance.init(onSubmit, onCancel, hasStaged);
 }
 
-/** Send the composer's contents: the keyboard shortcut's entry point, and the
- *  same path Enter and the send button take. */
+/** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter
+ *  and the send button take. */
 export function sendComposer(): void {
   instance.sendComposer();
 }

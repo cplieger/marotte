@@ -1,15 +1,11 @@
-// Unit tests for render.ts — property-based XSS invariants + table-driven edge cases.
-// Unit tests for markdown.ts — property-based XSS invariants + table-driven
-// edge cases. markdown.ts renders via the smd-parser streaming state machine
-// into real DOM nodes, so a document is required.
+// Property-based XSS invariants and table-driven edge cases. markdown.ts renders into real DOM nodes.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { renderMarkdown, createMarkdownStream } from "./markdown.js";
-
-// ---------------------------------------------------------------------------
-// Property-based tests: XSS invariants (testarch-b15-p1)
-// ---------------------------------------------------------------------------
+import { adoptLinkGuard } from "./link-guard.js";
+import { exfilShaped } from "./utils-url.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 describe("renderMarkdown XSS invariants (property-based)", () => {
   it("never produces <script in output", () => {
@@ -22,10 +18,8 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     );
   });
 
-  // Every spelling of a blocked scheme this parser can now be handed. The
-  // entity-encoded ones exist because a reference is decoded on the way to the
-  // scheme gate, and the angle-bracket ones because an autolink is a second
-  // producer of hrefs. Both must arrive at the same gate as a plain destination.
+  // Every spelling of a blocked scheme: entity-encoded (decoded on the way to the gate) and angle-bracket (autolinks),
+  // all reaching the same gate as a plain destination.
   const jsUrl = fc.constantFrom(
     "javascript:alert(1)",
     "JAVASCRIPT:alert(1)",
@@ -45,26 +39,23 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     "&#32;&#1;&#32;javascript:alert(1)",
   );
 
-  /** An attribute value as the browser's URL parser will read it: the parser's own
-   *  first two steps are to remove every leading and trailing C0 control or space
-   *  and then every tab and newline. Normalizing the way `isSafeUrl` does instead
-   *  makes any gap between the gate and the browser invisible by construction,
-   *  which is what let a decoded `&#1;` lead ship once already. */
+  /**
+   * As the browser's URL parser reads it (strip leading/trailing C0 controls and spaces, then tabs and newlines).
+   * Normalizing as `isSafeUrl` does would hide any gap between the gate and the browser.
+   */
   const asBrowserReads = (attrValue: string): string =>
     attrValue
       .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "") // eslint-disable-line no-control-regex
       .replace(/[\t\n\r]/g, "")
       .toLowerCase();
 
-  /** Every `href`/`src` the render emitted, unwrapped. */
   const attrValues = (html: string): string[] =>
     (html.match(/(?:href|src)="([^"]*)"/g) ?? []).map((attr) =>
       attr.replace(/^(?:href|src)="/, "").replace(/"$/, ""),
     );
 
   it("never produces javascript: URIs in href/src attributes", () => {
-    // Generate markdown with links that attempt javascript: injection.
-    // Use alphanumeric text to avoid breaking markdown link syntax.
+    // Alphanumeric text, so the link syntax stays intact.
     const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
     const mdWithLink = fc.tuple(safeText, jsUrl).map(([text, url]) => `[${text}](${url})`);
 
@@ -73,7 +64,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
         const html = renderMarkdown(input);
         const values = attrValues(html);
         for (const val of values) {
-          // The renderer replaces blocked schemes with "#"
+          // Blocked schemes become "#".
           expect(asBrowserReads(val)).not.toMatch(/^javascript:/);
         }
         expect(values.length).toBeGreaterThan(0);
@@ -95,8 +86,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
       "VBSCRIPT:MsgBox",
       "file:///etc/passwd",
     );
-    // The lead must not be all spaces: four of them would make the line indented
-    // code, and the property would then hold because nothing was parsed.
+    // Four spaces of lead would make indented code, and the property would hold vacuously.
     const mdWithAutolink = fc
       .tuple(fc.stringMatching(/^[a-zA-Z0-9][a-zA-Z0-9 ]{0,19}$/), blocked)
       .map(([lead, url]) => `${lead}<${url}>`);
@@ -108,9 +98,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
         for (const val of values) {
           expect(asBrowserReads(val)).not.toMatch(/^(?:javascript|data|vbscript|file):/);
         }
-        // Every one of these IS a well-formed autolink, so an href must have been
-        // emitted — without this the property would also hold if autolinks were
-        // recognised nowhere at all.
+        // Every input is a well-formed autolink, so an href must exist, or the property holds if autolinks never parse.
         expect(values.length).toBeGreaterThan(0);
         expect(html.toLowerCase()).not.toContain("<script");
         expect(html).not.toMatch(/<[^>]+\son\w+\s*=/i);
@@ -123,11 +111,10 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     fc.assert(
       fc.property(fc.string({ minLength: 0, maxLength: 500 }), (input) => {
         const html = renderMarkdown(input);
-        // Strip code blocks before checking
         const withoutCode = html
           .replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "")
           .replace(/<code>[\s\S]*?<\/code>/g, "");
-        // No on* attributes in tags (onerror, onload, onclick, etc.)
+        // No on* attributes in tags.
         expect(withoutCode).not.toMatch(/<[^>]+\son\w+\s*=/i);
       }),
       { numRuns: 500 },
@@ -135,9 +122,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
   });
 
   it("never produces data: URIs in href/src attributes", () => {
-    // The label is restricted to text that cannot break the image syntax, so the
-    // emitted-src guard below is available here too: a random byte generating a
-    // stray `]` would satisfy the invariant by parsing no image at all.
+    // A label that cannot break the image syntax, so the emitted-src guard applies.
     const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
     const mdWithDataUri = fc
       .tuple(
@@ -185,7 +170,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
         const html = renderMarkdown(input);
         const values = attrValues(html);
         for (const val of values) {
-          // The renderer replaces blocked schemes with "#"
+          // Blocked schemes become "#".
           expect(asBrowserReads(val)).not.toMatch(/^vbscript:/);
         }
         expect(values.length).toBeGreaterThan(0);
@@ -206,13 +191,8 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Table-driven edge cases (testarch-b15-p2)
-// ---------------------------------------------------------------------------
-
 describe("renderMarkdown edge cases (table-driven)", () => {
   const cases: { name: string; input: string; expected: string | RegExp }[] = [
-    // --- Basic inline formatting ---
     { name: "bold with **", input: "**bold**", expected: "<p><strong>bold</strong></p>" },
     { name: "bold with __", input: "__bold__", expected: "<p><strong>bold</strong></p>" },
     { name: "italic with *", input: "*italic*", expected: "<p><em>italic</em></p>" },
@@ -230,8 +210,7 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       expected: /<em>.*<strong>world<\/strong>.*<\/em>/,
     },
 
-    // --- Headings (ATX only — smd-parser does not implement setext headings,
-    //     which are rare in kiro-cli output) ---
+    // ATX only: smd-parser has no setext headings.
     { name: "h1 ATX", input: "# Heading", expected: /^<h1>.*Heading.*<\/h1>$/ },
     { name: "h2 ATX", input: "## Heading", expected: /^<h2>.*Heading.*<\/h2>$/ },
     { name: "h3 ATX", input: "### Heading", expected: /^<h3>.*Heading.*<\/h3>$/ },
@@ -239,7 +218,6 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "h5 ATX", input: "##### Heading", expected: /^<h5>.*Heading.*<\/h5>$/ },
     { name: "h6 ATX", input: "###### Heading", expected: /^<h6>.*Heading.*<\/h6>$/ },
 
-    // --- Links ---
     {
       name: "basic link",
       input: "[text](https://example.com)",
@@ -271,15 +249,12 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "vbscript: link blocked", input: "[click](vbscript:msgbox)", expected: /href="#"/ },
     { name: "file: link blocked", input: "[click](file:///etc/passwd)", expected: /href="#"/ },
 
-    // --- Images ---
     { name: "basic image", input: "![alt](https://img.png)", expected: /src="https:\/\/img\.png"/ },
     { name: "image alt text", input: "![my alt](https://img.png)", expected: /alt="my alt"/ },
     { name: "javascript: image blocked", input: "![x](javascript:alert(1))", expected: /src="#"/ },
     { name: "data: image blocked", input: "![x](data:image/svg+xml,<svg>)", expected: /src="#"/ },
 
-    // --- Code blocks ---
-    // (pre gets class="code"; code gets class="language-X" when a lang is set;
-    //  plain fenced blocks omit the code-class attribute.)
+    // pre gets class="code"; code gets class="language-X" when a lang is set.
     {
       name: "fenced code block",
       input: "```\ncode\n```",
@@ -297,7 +272,6 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       expected: /<pre.*<code>```\ninner\n```<\/code><\/pre>/,
     },
 
-    // --- Lists ---
     {
       name: "unordered list",
       input: "- item1\n- item2",
@@ -311,7 +285,6 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "bullet with +", input: "+ item", expected: /<ul>.*<li>.*item.*<\/li>.*<\/ul>/s },
     { name: "bullet with *", input: "* item", expected: /<ul>.*<li>.*item.*<\/li>.*<\/ul>/s },
 
-    // --- Blockquotes ---
     { name: "blockquote", input: "> quoted", expected: /<blockquote>.*quoted.*<\/blockquote>/s },
     {
       name: "nested blockquote",
@@ -319,11 +292,11 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       expected: /<blockquote>.*<blockquote>.*nested.*<\/blockquote>.*<\/blockquote>/s,
     },
 
-    // --- Horizontal rules (HTML5 void form: <hr>) ---
+    // HTML5 void form: <hr>.
     { name: "hr with ---", input: "text\n\n---\n\nmore", expected: /<hr>/ },
     { name: "hr with * * *", input: "a\n\n* * *\n\nb", expected: /<hr>/ },
 
-    // --- Tables (GFM) — smd-parser preserves cell padding whitespace ---
+    // GFM tables; smd-parser preserves cell padding whitespace.
     {
       name: "basic table",
       input: "\n| A | B |\n|---|---|\n| 1 | 2 |\n",
@@ -335,7 +308,7 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       expected: /&lt;b&gt;/,
     },
 
-    // --- Task lists (smd-parser emits HTML5 boolean attrs as attr="") ---
+    // Task lists; HTML5 boolean attrs emit as attr="".
     {
       name: "checked task",
       input: "- [x] done",
@@ -352,20 +325,16 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       expected: /&lt;img onerror=alert\(1\)&gt;/,
     },
 
-    // --- Paragraphs (no inter-paragraph newline in smd-parser output) ---
+    // No inter-paragraph newline in smd-parser output.
     { name: "single paragraph", input: "hello", expected: "<p>hello</p>" },
     { name: "two paragraphs", input: "one\n\ntwo", expected: /<p>one<\/p>\s*<p>two<\/p>/ },
-    // Line breaks: HTML5 void form <br>.
+    // HTML5 void form <br>.
     { name: "line break with two spaces", input: "a  \nb", expected: /a ?<br>/ },
 
-    // --- Edge cases ---
     { name: "empty string", input: "", expected: "" },
-    // Whitespace-only input emits nothing (CommonMark-correct; snarkdown
-    // used to emit <p>   </p>, smd-parser treats it as empty document).
+    // Whitespace-only input emits nothing (CommonMark-correct).
     { name: "only whitespace", input: "   ", expected: "" },
-    // HTML in plain text is ESCAPED, not passed through. This is the
-    // correct XSS-safe behaviour; the old snarkdown port passed it through
-    // literally, which was a latent risk.
+    // HTML in plain text is escaped, never passed through.
     {
       name: "HTML in text is escaped",
       input: "<div>test</div>",
@@ -395,17 +364,11 @@ describe("renderMarkdown edge cases (table-driven)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Intraword underscores (CommonMark 6.2 delimiter runs)
-//
-// A `_` run preceded by a word character is both left- and right-flanking, so
-// it can neither open nor close emphasis: `snake_case` is literal text. `*` has
-// no such exclusion, which is why `foo*bar*baz` still emphasises.
-// ---------------------------------------------------------------------------
+// Intraword underscores (CommonMark 6.2): a `_` run after a word character cannot open or close emphasis; `*` has
+// no such exclusion.
 
 describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
   const cases: { name: string; input: string; expected: string | RegExp }[] = [
-    // --- The reported defect ---
     {
       name: "the reported string renders literally",
       input: "run_progress shape, tool_call_update as a delta",
@@ -420,7 +383,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p>MAX_RETRIES and MIN_WAIT</p>",
     },
 
-    // --- What counts as a word character ---
     {
       name: "digits are word characters",
       input: "5_000_000 rows",
@@ -437,31 +399,24 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p>日本_語 test</p>",
     },
     {
-      // A symbol is punctuation for flanking purposes (`\p{S}`), so the run is
-      // left-flanking only and opens. The BMP case is the control for the two
-      // astral cases below: same rule, one code unit instead of two.
+      // A symbol is punctuation for flanking (`\p{S}`), so the run opens; the BMP control for the two astral cases.
       name: "a symbol before the underscore still opens",
       input: "\u2705_yay_",
       expected: "<p>\u2705<em>yay</em></p>",
     },
     {
-      // The lookbehind must read the last CODE POINT. A lone low surrogate is
-      // category Cs, which matches neither `\p{P}` nor `\p{S}` nor `\s`, so a
-      // single-unit read calls this emoji a word character and blocks the open.
+      // The lookbehind reads the last code point: a lone low surrogate (Cs) would read as a word character.
       name: "an astral symbol before the underscore still opens",
       input: "\u{1F389}_yay_",
       expected: "<p>\u{1F389}<em>yay</em></p>",
     },
     {
-      // The other half of the same read: an astral LETTER is a word character,
-      // so it must still block. Both cases pass under a single-unit read only by
-      // coincidence, which is why the pair is needed rather than either alone.
+      // An astral letter is a word character and still blocks; the pair is needed since either alone can pass by coincidence.
       name: "an astral letter before the underscore blocks the open",
       input: "\u{1D400}_yay_",
       expected: "<p>\u{1D400}_yay_</p>",
     },
 
-    // --- Emphasis at a word boundary is untouched ---
     {
       name: "_emphasis_ at line start still emphasises",
       input: "_emphasis_",
@@ -488,7 +443,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p><strong><em>tri</em></strong></p>",
     },
 
-    // --- The asymmetry: `*` carries no both-flanking exclusion ---
     {
       name: "* is still allowed intraword",
       input: "foo*bar*baz",
@@ -500,7 +454,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p><em>intraword</em></p>",
     },
 
-    // --- Contexts where `_` was already inert ---
     {
       name: "_ inside an inline code span stays literal",
       input: "`snake_case`",
@@ -512,8 +465,7 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: '<pre class="code"><code>snake_case</code></pre>',
     },
     {
-      // A PRE-EXISTING divergence from CommonMark, caused by handleCommon's
-      // STRONG_AST guard rather than by the delimiter rule. Characterization.
+      // A pre-existing divergence from CommonMark, from handleCommon's STRONG_AST guard. Characterization.
       name: "_ inside ** is literal today (characterization)",
       input: "**_both_**",
       expected: "<p><strong>_both_</strong></p>",
@@ -524,7 +476,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p><strong><em>both</em></strong></p>",
     },
 
-    // --- Underscores with no closer ---
     {
       name: "a lone trailing underscore stays literal",
       input: "trailing_",
@@ -541,7 +492,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p>escaped _not em_ here</p>",
     },
 
-    // --- The lookbehind is punctuation- and boundary-aware ---
     {
       name: "punctuation before the underscore still opens",
       input: "(_em_)",
@@ -563,7 +513,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p><code>c</code><em>x</em></p>",
     },
 
-    // --- Every block context reached the same defect ---
     {
       name: "snake_case in a link label keeps the href",
       input: "[snake_case](https://e.com)",
@@ -590,8 +539,7 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<blockquote><p>quote_with_underscore</p></blockquote>",
     },
     {
-      // The `_` used to swallow the closing `|`, so the whole table collapsed
-      // into headings and a paragraph. Structure is part of the fix.
+      // The `_` must not swallow the closing `|`, so structure is asserted too.
       name: "snake_case in a table cell renders literally",
       input: "\n| a_b | c |\n|---|---|\n| d_e | f |\n",
       expected:
@@ -606,7 +554,6 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
         "task_name <em>em</em></li></ul>",
     },
 
-    // --- The lookbehind resets at every boundary the parser produces ---
     {
       name: "a soft line break resets the lookbehind",
       input: "a_b\n_real_",
@@ -634,10 +581,8 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p>a_b <code>c_d</code> e_f</p>",
     },
 
-    // --- Inside an already-open `_` token. The rule is applied at all three
-    //     places a `_` run can open emphasis, so an intraword run is literal
-    //     here too; only the CLOSE is left ungated, because refusing a close
-    //     would leave the token open to the end of the line.
+    // Inside an open `_` token the rule applies at all three opening sites; only the close is ungated, or the token stays
+    // open to the end of the line.
     {
       name: "the reported string inside __ renders literally",
       input: "__run_progress__",
@@ -673,11 +618,8 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       input: "__a _b_ c__",
       expected: "<p><strong>a <em>b</em> c</strong></p>",
     },
-    // The next two leave the OUTER run unclosed. It is unwrapped at block close,
-    // so the whole run is literal. CommonMark pairs the runs differently
-    // (`<em>x__y</em>_` and `_<em>x_y</em>`), which needs the delimiter stack
-    // the close half does; what these pin is that no character is lost and
-    // nothing is emphasised that the author did not close.
+    // The outer run stays unclosed and is unwrapped at block close. CommonMark pairs these differently (needs a delimiter
+    // stack); pinned: no character lost, nothing emphasised that the author did not close.
     {
       name: "a trailing __ inside _ stays literal",
       input: "_x__y__",
@@ -699,9 +641,7 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
     }
   });
 
-  // The close half of the rule: a `_` run with a word character on both sides
-  // cannot close either, so the run that opened stays open and is restored as
-  // literal text when the block ends.
+  // A `_` run with word characters on both sides cannot close either; the opener is restored as text at block end.
   const closeCases: { name: string; input: string; expected: string }[] = [
     { name: "_foo_bar stays literal", input: "_foo_bar", expected: "<p>_foo_bar</p>" },
     { name: "_foo bar_baz stays literal", input: "_foo bar_baz", expected: "<p>_foo bar_baz</p>" },
@@ -733,9 +673,7 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p><em>foo</em>bar</p>",
     },
     {
-      // The `__` close decides on the second `_` of the run, before the character
-      // after it exists, so gating it needs a character of right-context this
-      // does not have. Characterization.
+      // The `__` close decides before its right context exists, so gating it is out of scope. Characterization.
       name: "__x_y_ stays literal (the __ close is out of scope)",
       input: "__x_y_",
       expected: "<p>__x_y_</p>",
@@ -746,20 +684,15 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // A run of three or more opens for its tail, because the rule is evaluated per
-  // delimiter and the blocked pair lands in the text buffer, so the remainder of
-  // the run reads a `_` — punctuation — as what precedes it. The token it opens
-  // never closes, so the unwrap restores the whole run: CommonMark-correct.
+  // The rule is per delimiter, so a run of three opens for its tail; that token never closes and the unwrap restores
+  // the whole run (CommonMark-correct).
   it("a run of three or more underscores stays literal", () => {
     expect(renderMarkdown("a___b")).toBe("<p>a___b</p>");
     expect(renderMarkdown("a____b")).toBe("<p>a____b</p>");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Property-based streaming invariant: MarkdownRenderer append-only contract
-// (tarch-b14-c4-p2)
-// ---------------------------------------------------------------------------
+// Streaming and one-shot rendering agree (the append-only contract).
 
 describe("createMarkdownStream streaming/one-shot equivalence", () => {
   it("streaming writeDelta at random split points produces same output as one-shot", () => {
@@ -768,12 +701,11 @@ describe("createMarkdownStream streaming/one-shot equivalence", () => {
         fc.string({ minLength: 1, maxLength: 300 }),
         fc.array(fc.double({ min: 0, max: 1, noNaN: true }), { minLength: 1, maxLength: 8 }),
         (markdown, splitPoints) => {
-          // Generate non-decreasing delta lengths by splitting at random fractions.
+          // Non-decreasing delta lengths from random split fractions.
           const sorted = [...splitPoints].sort((a, b) => a - b);
           const indices = sorted.map((f) => Math.floor(f * markdown.length));
           const cuts = [...new Set([...indices, markdown.length])].sort((a, b) => a - b);
 
-          // Streaming path: feed deltas computed from cumulative cuts.
           const streamEl = document.createElement("div");
           const renderer = createMarkdownStream(streamEl);
           let lastCut = 0;
@@ -785,10 +717,8 @@ describe("createMarkdownStream streaming/one-shot equivalence", () => {
           }
           renderer.end();
 
-          // One-shot path.
           const oneShotHtml = renderMarkdown(markdown);
 
-          // Compare text content.
           expect(streamEl.textContent).toBe(
             (() => {
               const tmp = document.createElement("div");
@@ -808,7 +738,7 @@ describe("createMarkdownStream streaming/one-shot equivalence", () => {
     renderer.writeDelta("hello world");
     renderer.end();
     const after = el.innerHTML;
-    renderer.end(); // should not change anything
+    renderer.end(); // Changes nothing.
     expect(el.innerHTML).toBe(after);
   });
 
@@ -818,23 +748,19 @@ describe("createMarkdownStream streaming/one-shot equivalence", () => {
     renderer.writeDelta("hello");
     renderer.end();
     const after = el.innerHTML;
-    renderer.writeDelta(" more"); // should not change anything
+    renderer.writeDelta(" more"); // Changes nothing.
     expect(el.innerHTML).toBe(after);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Surface contracts: renderMarkdown is pure structure; renderMarkdownInto
-// decorates; createMarkdownStream decorates + animates.
-// ---------------------------------------------------------------------------
+// renderMarkdown is pure structure; renderMarkdownInto decorates; createMarkdownStream decorates and animates.
 
 import { renderMarkdownInto } from "./markdown.js";
 
 describe("markdown surface contracts", () => {
   it("renderMarkdown returns pure structure (no decoration, no animation marker)", () => {
     const html = renderMarkdown("```js\nconsole.log(1)\n```");
-    // Pure parser output — no .code-wrap, no .code-actions, no
-    // data-vk-block-enter.
+    // Pure parser output: no .code-wrap, .code-actions or data-vk-block-enter.
     expect(html).not.toContain("code-wrap");
     expect(html).not.toContain("code-actions");
     expect(html).not.toContain("data-vk-block-enter");
@@ -844,7 +770,7 @@ describe("markdown surface contracts", () => {
 
   it("renderMarkdown returns pure structure for paragraphs (no path linkify)", () => {
     const html = renderMarkdown("see foo/bar.ts for details");
-    // Pure parser — bare text, no <a> linkification.
+    // Pure parser: no linkification.
     expect(html).not.toContain('href="');
     expect(html).toContain("foo/bar.ts");
   });
@@ -852,8 +778,7 @@ describe("markdown surface contracts", () => {
   it("renderMarkdownInto decorates code blocks (replay path)", () => {
     const el = document.createElement("div");
     renderMarkdownInto(el, "```js\nconsole.log(1)\n```");
-    // Replay path runs decorateCodeBlocks: should wrap pre in
-    // .code-wrap and add .code-actions buttons.
+    // The replay path wraps pre in .code-wrap with .code-actions.
     expect(el.querySelector(".code-wrap")).not.toBeNull();
     // No animation marker on replay.
     expect(el.querySelector("[data-vk-block-enter]")).toBeNull();
@@ -864,7 +789,7 @@ describe("markdown surface contracts", () => {
     const r = createMarkdownStream(el);
     r.writeDelta("```js\ncode\n```");
     r.end();
-    // Streaming path: decoration AND entry animation marker present.
+    // Streaming: decoration and the entry marker.
     expect(el.querySelector(".code-wrap")).not.toBeNull();
     expect(el.querySelector("[data-vk-block-enter]")).not.toBeNull();
   });
@@ -872,23 +797,16 @@ describe("markdown surface contracts", () => {
   it("createMarkdownStream end() is a synchronous drain", () => {
     const el = document.createElement("div");
     const r = createMarkdownStream(el);
-    // Write a chunk larger than PARSE_SLICE_BYTES (4096) to force
-    // the async drain path. end() must complete the parse synchronously.
+    // Larger than PARSE_SLICE_BYTES (4096) to force the async drain; end() completes synchronously.
     const big = "a".repeat(10_000);
     r.writeDelta(big);
     r.end();
-    // After end(), all text is parsed and rendered.
     expect(el.textContent?.length).toBe(10_000);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The streaming tail: a fence the model has not closed.
-//
-// The renderer's per-block callback fires only on CLOSE, and `parser_end` does
-// not close an open token — so before the sweeps below, an unterminated fence
-// carried no highlight, no language and no Copy button, permanently.
-// ---------------------------------------------------------------------------
+// A fence the model has not closed: the per-block callback fires only on close and `parser_end` closes nothing, so
+// the tail needs its own sweep for highlight, language and Copy.
 
 describe("markdown code-block decoration while streaming", () => {
   afterEach(() => {
@@ -936,9 +854,7 @@ describe("markdown code-block decoration while streaming", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Math: the whole path, parser through converter.
-// ---------------------------------------------------------------------------
+// Math, parser through converter.
 
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 
@@ -962,9 +878,7 @@ describe("markdown math rendering", () => {
   }
 
   it("survives a delimiter split across write chunks", () => {
-    // The stream slices at a fixed byte budget regardless of content, so any
-    // delimiter can arrive in two pieces. The parser's `pending` field is what
-    // makes that work; this pins it end to end.
+    // The stream slices at a byte budget, so a delimiter can split; the parser's `pending` handles it.
     const el = document.createElement("div");
     const r = createMarkdownStream(el);
     r.writeDelta("area $");
@@ -986,9 +900,7 @@ describe("markdown math rendering", () => {
   });
 
   it("restores the delimiter of an expression that never closes", () => {
-    // An unclosed `$` is not an equation, it is a dollar sign. The host is
-    // unwrapped at block close and the delimiter comes back as text, where it
-    // used to be deleted and the rest of the paragraph styled as source.
+    // An unclosed `$` is a dollar sign: the host is unwrapped at block close and the delimiter returns as text.
     const el = document.createElement("div");
     renderMarkdownInto(el, "unfinished $x^2 + y");
     expect(el.querySelector("math")).toBeNull();
@@ -997,10 +909,7 @@ describe("markdown math rendering", () => {
   });
 
   it("needs a newline after the block opener, and says so by rendering the source", () => {
-    // A KNOWN LIMITATION of the parser this port carries: `\[` only opens a
-    // block when a newline follows, because `\[` is also a legitimate escaped
-    // bracket. Pinned so the degradation is a decision rather than a surprise —
-    // the reader sees the literal text, which is honest.
+    // Known limitation: `\[` opens a block only before a newline, since it is also an escaped bracket.
     const el = document.createElement("div");
     renderMarkdownInto(el, "\\[x^2\\]\n");
     expect(el.querySelector("[data-math]")).toBeNull();
@@ -1015,13 +924,8 @@ describe("markdown math rendering", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Nesting past the token-stack cap.
-//
-// TOKEN_ARRAY_CAP is the intended depth limit. What is not intended is the
-// saturating path failing to consume the character it was handed, which used to
-// re-enter the same handler with byte-identical state until the JS stack blew.
-// ---------------------------------------------------------------------------
+// TOKEN_ARRAY_CAP is the depth limit; the saturating path must still consume its character, or it re-enters with the
+// same state until the stack blows.
 
 describe("renderMarkdown deep nesting", () => {
   it("renders 22 nested blockquotes, the last working depth", () => {
@@ -1060,9 +964,8 @@ describe("renderMarkdown deep nesting", () => {
     expect(html).toContain("<tbody><tr><td> 1 </td><td> 2 </td></tr></tbody>");
   });
 
-  // A table needs three tokens. Where only some of them fit, the cells used to
-  // land as text nodes directly inside the `<table>` — invalid HTML — and one
-  // depth lower the row handler re-fed its character forever.
+  // Where only some of a table's three tokens fit, cells must not land as text inside `<table>`, and the row handler
+  // must not re-feed forever.
   it.each([21, 22])(
     "keeps every character as text when depth %i leaves no room for a table's row and cell",
     (depth) => {
@@ -1074,14 +977,8 @@ describe("renderMarkdown deep nesting", () => {
     },
   );
 
-  // Past the cap no delimiter can become markup, so every one of them has to
-  // read as the literal text that was typed. The opener used to be dropped: the
-  // push was refused and the handler then overwrote `pending` with the next
-  // character regardless.
-  // The promotion fallthrough consumes the whole line INCLUDING its newline, so
-  // the newline arm never ran for it and the line-scoped state still named the
-  // previous line's innermost blockquote. The next line's `>` run then searched
-  // above the stack, was refused, and fell through as literal text.
+  // Past the cap every delimiter reads as literal text. The promotion fallthrough consumes the newline too, so the
+  // line-scoped state must still reset for the next line's `>` run.
   it("reads a continuation line's block prefix as markers at the cap", () => {
     const el = document.createElement("div");
     el.innerHTML = renderMarkdown(">".repeat(23) + " a\n" + ">".repeat(23) + " b");
@@ -1137,9 +1034,8 @@ describe("renderMarkdown deep nesting", () => {
     expect(html).not.toContain("<img");
   });
 
-  // An attribute set after a refused push reaches whatever element is current,
-  // which past the cap is the enclosing blockquote: a fence's info string
-  // arrived as its `class` and an ordered list's number as its `start`.
+  // After a refused push, an attribute must not reach the enclosing blockquote (a fence info as `class`, a list
+  // number as `start`).
   it.each([
     ["```js\ncode\n```", "class", "```js"],
     ["3. item", "start", "3. item"],
@@ -1151,12 +1047,8 @@ describe("renderMarkdown deep nesting", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A held character at the end of the input, or at the end of a line, is
-// literal text. It used to be deleted: `parser_end` writes a synthetic newline
-// to flush `pending`, and the arms that received it consumed the held
-// character as the opener of a construct the input never completes.
-// ---------------------------------------------------------------------------
+// A held character at the end of input or a line is literal text: `parser_end` flushes `pending` with a synthetic
+// newline, which must not consume it as an opener.
 
 describe("renderMarkdown end-of-input characters", () => {
   const cases: { name: string; input: string; expected: string | RegExp }[] = [
@@ -1197,16 +1089,8 @@ describe("renderMarkdown end-of-input characters", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Angle autolinks (CommonMark 6.5).
-//
-// This is a CARVE-OUT in the wholesale escaping of `<`, and the only one. An
-// absolute-URI autolink and an email autolink become links; every other
-// angle-bracket run — a tag, a comment, a generic type parameter — still renders
-// as the escaped text that was typed, which is what the XSS properties pin.
-// Both autolink forms go through the same scheme gate as every other href, so
-// `<javascript:alert(1)>` is as dead as `[a](javascript:alert(1))`.
-// ---------------------------------------------------------------------------
+// Angle autolinks (CommonMark 6.5), the only carve-out in the escaping of `<`. Every other angle run stays escaped
+// text. Both forms go through the same scheme gate as every href.
 
 describe("renderMarkdown angle autolinks", () => {
   const A = '<a target="_blank" rel="noopener"';
@@ -1238,8 +1122,7 @@ describe("renderMarkdown angle autolinks", () => {
       expected: `<p>${A} href="mailto:a@b.com">mailto:a@b.com</a></p>`,
     },
     {
-      // The parser recognises the autolink; the scheme gate refuses the URL, so
-      // the anchor renders with the text typed and a dead href.
+      // The parser recognises the autolink; the gate refuses the URL, so the text stays and the href is dead.
       name: "an off-allowlist scheme keeps its text and loses its href",
       input: "<ftp://e.com/x>",
       expected: `<p>${A} href="#">ftp://e.com/x</a></p>`,
@@ -1267,8 +1150,7 @@ describe("renderMarkdown angle autolinks", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // The carve-out's boundary. Everything here is NOT a CommonMark 6.5 autolink,
-  // so it keeps the escaped-text reading the raw-HTML invariant guarantees.
+  // Not 6.5 autolinks, so they keep the escaped-text reading.
   const escaped: { name: string; input: string; expected: string }[] = [
     {
       name: "a Rust generic",
@@ -1305,8 +1187,7 @@ describe("renderMarkdown angle autolinks", () => {
       expected: "<p>&lt;http://e.com<br>x&gt;</p>",
     },
     {
-      // Nesting an anchor inside an anchor is invalid HTML, so the reference's
-      // own answer here is not available.
+      // An anchor inside an anchor is invalid HTML.
       name: "an autolink inside a link label",
       input: "[a <https://e.com> b](http://x.com)",
       expected: `<p>${A} href="http://x.com">a &lt;https://e.com&gt; b</a></p>`,
@@ -1342,8 +1223,7 @@ describe("renderMarkdown angle autolinks", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // The scheme gate is the SAME one an inline link goes through, so an autolink
-  // cannot introduce a scheme a link destination could not.
+  // The same gate as an inline link, so an autolink adds no scheme a destination could not.
   const blocked: { name: string; input: string }[] = [
     { name: "javascript", input: "<javascript:alert(1)>" },
     { name: "javascript in mixed case", input: "<JavaScript:alert(1)>" },
@@ -1356,30 +1236,19 @@ describe("renderMarkdown angle autolinks", () => {
 
   it.each(blocked)("blocks a $name autolink", ({ input }) => {
     const html = renderMarkdown(input);
-    // The anchor assertion is what keeps this honest: without it the case passes
-    // just as well when autolinks are recognised nowhere at all.
+    // The anchor assertion keeps this honest: without it the case passes if autolinks never parse.
     expect(html).toContain(`${A} href="#">`);
     expect(html.toLowerCase()).not.toMatch(/href="(?:javascript|data|vbscript|file):/);
   });
 
   it("blocks a scheme split by a tab", () => {
-    // isSafeUrl strips internal whitespace before comparing, and a tab
-    // disqualifies the autolink candidate outright, so this is text either way.
+    // isSafeUrl strips internal whitespace and a tab disqualifies the autolink, so this is text either way.
     expect(renderMarkdown("<java\tscript:alert(1)>")).toBe("<p>&lt;java\tscript:alert(1)&gt;</p>");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Entity and numeric character references (CommonMark 6.2).
-//
-// Two rules here are security rules rather than conveniences. A decoded
-// character is written straight to the text buffer and never re-parsed, so no
-// reference can synthesise markup: `&#42;` is a literal asterisk, not an
-// emphasis delimiter. And a link destination is decoded BEFORE it reaches the
-// scheme gate, never after — `javascript&#58;` does not start with
-// `javascript:`, so decoding second would hand the gate a string it passes and
-// the browser a live scheme.
-// ---------------------------------------------------------------------------
+// Character references (CommonMark 6.2). A decoded character goes to the text buffer, never re-parsed, so `&#42;` is
+// a literal asterisk. A destination is decoded before the scheme gate, or `javascript&#58;` would pass the gate.
 
 describe("renderMarkdown character references", () => {
   const A = '<a target="_blank" rel="noopener"';
@@ -1418,7 +1287,6 @@ describe("renderMarkdown character references", () => {
     },
     { name: "an ampersand ahead of a reference", input: "&&amp;", expected: "<p>&amp;&amp;</p>" },
 
-    // --- a decoded character is never re-parsed ---
     {
       name: "an encoded asterisk does not emphasise",
       input: "&#42;not bold&#42;",
@@ -1435,16 +1303,12 @@ describe("renderMarkdown character references", () => {
       expected: "<p>`not code`</p>",
     },
 
-    // --- an invalid reference stays literal ---
     {
       name: "an unknown name",
       input: "&nosuchentity; text",
       expected: "<p>&amp;nosuchentity; text</p>",
     },
-    // A name WHATWG defines and HTML 4.01 does not is invalid here, and
-    // CommonMark's own rule for an invalid reference is that it stays literal.
-    // These two are the membership boundary: both resolve in the 2,125-name
-    // table this parser deliberately does not ship.
+    // A name WHATWG defines and HTML 4.01 does not is invalid here and stays literal (CommonMark).
     {
       name: "a WHATWG-only name",
       input: "&NotNestedGreaterGreater; text",
@@ -1466,12 +1330,10 @@ describe("renderMarkdown character references", () => {
     { name: "an empty numeric reference", input: "&#;", expected: "<p>&amp;#;</p>" },
     { name: "an ampersand before a newline", input: "a &\nb", expected: "<p>a &amp;<br>b</p>" },
 
-    // --- an out-of-range code point is the replacement character ---
     { name: "code point zero", input: "&#0;", expected: "<p>\ufffd</p>" },
     { name: "a code point past the last plane", input: "&#x110000;", expected: "<p>\ufffd</p>" },
     { name: "a surrogate code point", input: "&#xD800;", expected: "<p>\ufffd</p>" },
 
-    // --- destinations are decoded before the scheme gate sees them ---
     {
       name: "a reference in a destination",
       input: "[a](http://e.com/?a=1&amp;b=2)",
@@ -1497,9 +1359,8 @@ describe("renderMarkdown character references", () => {
       input: "![a](data&#58;text/html,x)",
       expected: '<p><img alt="a" src="#"></p>',
     },
-    // The URL parser removes every leading C0 control or space before it reads a
-    // scheme, so a decoded control in front of one is `javascript:` to the browser.
-    // Decoding is what makes that lead spellable in printable ASCII.
+    // The URL parser drops leading C0 controls and spaces before the scheme, so a decoded control in front is still
+    // `javascript:`.
     {
       name: "a decoded control does not smuggle a javascript scheme",
       input: "[a](&#1;javascript:alert(1))",
@@ -1536,10 +1397,7 @@ describe("renderMarkdown character references", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // Every named reference measured in use across this workspace's markdown:
-  // 839 files scanned, these nine names and nothing else. They are what the
-  // HTML 4.01 membership rule has to cover, so each one is pinned by name here
-  // rather than left to the table's own size.
+  // The named references measured in this workspace's markdown, pinned by name.
   const measured: { name: string; input: string; expected: string }[] = [
     { name: "&mdash;", input: "a &mdash; b", expected: "<p>a — b</p>" },
     { name: "&gt;", input: "7 &gt; 6", expected: "<p>7 &gt; 6</p>" },
@@ -1556,16 +1414,12 @@ describe("renderMarkdown character references", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // `&apos;` is the one name the table cannot carry: HTML 4.01 does not define
-  // it, so it is inline with the other four XML predefined names.
+  // HTML 4.01 does not define `&apos;`, so it sits inline with the other XML predefined names.
   it("decodes &apos;, which HTML 4.01 does not define", () => {
     expect(renderMarkdown("it&apos;s")).toBe("<p>it's</p>");
   });
 
-  // Both maps are object literals, so a bare index would answer these with an
-  // inherited member and render this parser's own `Object` source. Every name
-  // here is alphanumeric, so the streaming hold and the destination path both
-  // accept it as a candidate.
+  // Both maps are object literals, so a bare index would answer these with an inherited member.
   const inherited = [
     "constructor",
     "toString",
@@ -1584,9 +1438,7 @@ describe("renderMarkdown character references", () => {
     expect(renderMarkdown("[a](&constructor;)")).toBe(`<p>${A} href="&amp;constructor;">a</a></p>`);
   });
 
-  // Code is code: no reference is recognised inside a code span, a fence or an
-  // indented block. Those tokens never reach the inline checks at all, which is
-  // what this pins rather than assumes.
+  // No reference is recognised inside code; those tokens never reach the inline checks.
   const code: { name: string; input: string; expected: string }[] = [
     { name: "a code span", input: "`&amp;`", expected: "<p><code>&amp;amp;</code></p>" },
     {
@@ -1611,11 +1463,7 @@ describe("renderMarkdown character references", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// An ordered list may be marked `1)` as well as `1.` (CommonMark 5.2), and
-// changing the delimiter mid-list starts a new list rather than continuing the
-// old one. A marker of more than nine digits is not a list marker at all.
-// ---------------------------------------------------------------------------
+// `1)` marks an ordered list too (CommonMark 5.2); changing delimiter starts a new list; over nine digits is no marker.
 
 describe("renderMarkdown ordered list delimiters", () => {
   const cases: { name: string; input: string; expected: string }[] = [
@@ -1673,12 +1521,7 @@ describe("renderMarkdown ordered list delimiters", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// An ATX heading's optional closing sequence (CommonMark 4.2): a run of `#`
-// preceded by a space or tab and followed by nothing but spaces and tabs is
-// syntax, not content. A `#` run with no such whitespace, or with text after
-// it, is content. A bare `#` run opens an empty heading.
-// ---------------------------------------------------------------------------
+// An ATX closing sequence (CommonMark 4.2): a `#` run after whitespace, followed only by whitespace, is syntax.
 
 describe("renderMarkdown ATX closing sequence", () => {
   const cases: { name: string; input: string; expected: string }[] = [
@@ -1726,7 +1569,6 @@ describe("renderMarkdown ATX closing sequence", () => {
       expected: "<h2>h</h2><p>text</p>",
     },
 
-    // --- a bare run opens an empty heading ---
     { name: "two hashes alone", input: "##", expected: "<h2></h2>" },
     { name: "one hash alone", input: "#", expected: "<h1></h1>" },
     { name: "six hashes alone", input: "######", expected: "<h6></h6>" },
@@ -1740,7 +1582,7 @@ describe("renderMarkdown ATX closing sequence", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // A `#` run that is not a closing sequence stays exactly where it was typed.
+  // A `#` run that is not a closing sequence stays where it was typed.
   const unchanged: { name: string; input: string; expected: string }[] = [
     { name: "a run followed by text", input: "## heading #foo", expected: "<h2>heading #foo</h2>" },
     {
@@ -1756,8 +1598,7 @@ describe("renderMarkdown ATX closing sequence", () => {
     { name: "a trailing space with no run", input: "## heading ", expected: "<h2>heading</h2>" },
     { name: "a plain heading", input: "## heading", expected: "<h2>heading</h2>" },
     { name: "a hash-space-only heading", input: "## ", expected: "<h2></h2>" },
-    // A heading inside a list item is the nested-block family, which this
-    // parser does not open; the marker run stays literal text.
+    // A heading in a list item is a nested block this parser does not open; the run stays literal.
     {
       name: "a heading inside a list item",
       input: "- ## h ##",
@@ -1770,11 +1611,7 @@ describe("renderMarkdown ATX closing sequence", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A closing code fence must be alone on its line (CommonMark 4.5): at most
-// three spaces of indent, a run of at least as many backticks as the opener,
-// then nothing but spaces and tabs.
-// ---------------------------------------------------------------------------
+// A closing fence is alone on its line (CommonMark 4.5): at most three spaces, at least as many backticks, then whitespace.
 
 describe("renderMarkdown code fence close rule", () => {
   const cases: { name: string; input: string; expected: string }[] = [
@@ -1846,9 +1683,7 @@ describe("renderMarkdown code fence close rule", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Balanced brackets in a link or image label (CommonMark 6.3).
-// ---------------------------------------------------------------------------
 
 describe("renderMarkdown brackets inside a link label", () => {
   const A = '<a target="_blank" rel="noopener"';
@@ -1876,9 +1711,7 @@ describe("renderMarkdown brackets inside a link label", () => {
   });
 
   it("renders a label with no destination as the text that was typed", () => {
-    // Not a link: it had no href, was not focusable, and the transcript's own
-    // CSS styled it as link text, so `[TODO]` in prose came out blue and
-    // underlined and did nothing.
+    // Not a link: an href-less anchor styled as link text did nothing.
     expect(renderMarkdown("[a]b")).toBe("<p>[a]b</p>");
   });
 
@@ -1904,9 +1737,7 @@ describe("renderMarkdown brackets inside a link label", () => {
       expected: "<p>[a] (not a destination)</p>",
     },
     {
-      // What CommonMark renders for an UNDEFINED reference, which is strictly
-      // better than two anchors with no href. Resolving a definition needs a
-      // document-scoped map, so the definition line still renders.
+      // What CommonMark renders for an undefined reference; definitions need a document-scoped map.
       name: "an unresolved reference link",
       input: "[a][ref]\n\n[ref]: http://e.com",
       expected: "<p>[a][ref]</p><p>[ref]: " + `${A} href="http://e.com">http://e.com</a></p>`,
@@ -1936,8 +1767,7 @@ describe("renderMarkdown brackets inside a link label", () => {
   });
 
   it("leaves a partially arrived label alone while it streams", () => {
-    // The block has not closed, so nothing decides yet: the label renders inside
-    // an href-less anchor until either `(` or another character arrives.
+    // The block has not closed: the label sits in an href-less anchor until `(` or another character arrives.
     const el = document.createElement("div");
     const r = createMarkdownStream(el, { flushIntervalMs: 0 });
     r.writeDelta("see [the label");
@@ -1948,12 +1778,8 @@ describe("renderMarkdown brackets inside a link label", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A link or image destination and its optional title (CommonMark 6.3): the
-// title may be delimited by quotes or parentheses, the destination may be
-// wrapped in angle brackets, and a destination's parentheses may be balanced.
-// A run that has none of those shapes keeps the whole run as the href.
-// ---------------------------------------------------------------------------
+// Destinations and titles (CommonMark 6.3): quote or paren titles, angle-bracketed destinations, balanced parens.
+// Any other shape keeps the whole run as the href.
 
 describe("renderMarkdown link destinations and titles", () => {
   const A = '<a target="_blank" rel="noopener"';
@@ -1995,8 +1821,7 @@ describe("renderMarkdown link destinations and titles", () => {
       expected: `<p>${A} href="http://e.com">a</a></p>`,
     },
     {
-      // A space inside the brackets is a legal destination character. The
-      // reference percent-encodes it; this parser never rewrites a URL.
+      // A space inside the brackets is legal; this parser never rewrites a URL.
       name: "a space inside an angle-bracketed destination",
       input: "[a](<http://e.com/a b>)",
       expected: `<p>${A} href="http://e.com/a b">a</a></p>`,
@@ -2017,8 +1842,7 @@ describe("renderMarkdown link destinations and titles", () => {
       expected: `<p>${A} href="http://e.com/x(y(z))">a</a></p>`,
     },
     {
-      // A DIVERGENCE, recorded: both references render this literally. Keeping
-      // the title is the reading that loses nothing.
+      // A recorded divergence: both references render this literally; keeping the title loses nothing.
       name: "a title with no destination",
       input: '[a]( "the title")',
       expected: `<p>${A} href="" title="the title">a</a></p>`,
@@ -2034,8 +1858,7 @@ describe("renderMarkdown link destinations and titles", () => {
     expect(renderMarkdown(input)).toBe(expected);
   });
 
-  // A run that does not parse as `destination [whitespace title]` keeps the
-  // whole run as the href, which is what it did before titles were read.
+  // A run that is not `destination [whitespace title]` keeps the whole run as the href.
   const characterization: { name: string; input: string; expected: string }[] = [
     {
       name: "an unterminated title",
@@ -2069,15 +1892,8 @@ describe("renderMarkdown link destinations and titles", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A bare URL followed by CJK punctuation.
-//
-// A CJK punctuation character is not on its own evidence that a URL ended —
-// real URLs carry it raw. The one decidable case is a separator immediately
-// followed by a backtick: RFC 3986 excludes the backtick, so it cannot be in
-// the URL, and swallowing it eats the opening delimiter of the code span that
-// follows and shifts every later backtick pairing in the paragraph.
-// ---------------------------------------------------------------------------
+// CJK punctuation alone does not end a URL (real URLs carry it). The decidable case: a separator then a backtick,
+// which RFC 3986 excludes, or the code span's opener is eaten.
 
 describe("renderMarkdown bare URL with CJK punctuation", () => {
   it("cuts the URL at a separator followed by a backtick", () => {
@@ -2088,8 +1904,7 @@ describe("renderMarkdown bare URL with CJK punctuation", () => {
   });
 
   it("leaves a separator followed by text in the URL (characterization)", () => {
-    // Declined on Crew's evidence rule: …/wiki/苹果（公司）, …/wiki/我，机器人 and
-    // …/wiki/モーニング娘。 are real URLs, so the character alone proves nothing.
+    // Real URLs carry these characters raw, so the character alone proves nothing.
     expect(renderMarkdown("https://e.com/a，b")).toBe(
       '<p><a target="_blank" rel="noopener" href="https://e.com/a，b">https://e.com/a，b</a></p>',
     );
@@ -2110,23 +1925,15 @@ describe("renderMarkdown bare URL with CJK punctuation", () => {
   });
 
   it("leaves a URL abutting its opening ** unlinked (characterization)", () => {
-    // The `h` is consumed by handleCommon's emphasis arm, which leaves `**` in
-    // `pending`, so parser_write's raw-URL entry (pending must be "" or " ")
-    // is never reached. A word before the URL is what makes it a link.
+    // handleCommon's emphasis arm leaves `**` in `pending`, so the raw-URL entry is never reached.
     expect(renderMarkdown("**https://example.com**")).toBe(
       "<p><strong>https://example.com</strong></p>",
     );
   });
 });
 
-// ---------------------------------------------------------------------------
-// An inline opener with no closer.
-//
-// Every inline opener commits its token on sight, so one that never closed used
-// to format the rest of the block AND delete its own delimiter. The parser
-// cannot un-open a token, but the renderer still holds the element when the
-// block ends, so it unwraps it and restores the literal.
-// ---------------------------------------------------------------------------
+// An unclosed inline opener: the parser cannot un-open a token, so the renderer unwraps the element at block end and
+// restores the literal.
 
 describe("renderMarkdown unclosed inline openers", () => {
   const cases: { name: string; input: string; expected: string }[] = [
@@ -2140,8 +1947,7 @@ describe("renderMarkdown unclosed inline openers", () => {
     { name: "unclosed [", input: "random[0,500)", expected: "<p>random[0,500)</p>" },
     { name: "unclosed ![", input: "an ![img", expected: "<p>an ![img</p>" },
     { name: "unclosed $", input: "a $x^2", expected: "<p>a $x^2</p>" },
-    // The delimiter restored is the one the parser consumed. marotte reads
-    // `\\(` as a math opener rather than an escaped paren, so `\\(` comes back.
+    // The restored delimiter is the one consumed; marotte reads `\\(` as a math opener.
     { name: "unclosed \\(", input: "a \\(x^2", expected: "<p>a \\(x^2</p>" },
     {
       name: "the next paragraph is unaffected",
@@ -2166,8 +1972,7 @@ describe("renderMarkdown unclosed inline openers", () => {
       expected: "<p>a ` b<br>c</p>",
     },
     {
-      // CommonMark resolves the link before emphasis, so the `*` is literal
-      // INSIDE the label and the link keeps its href.
+      // CommonMark resolves the link before emphasis, so the `*` is literal inside the label.
       name: "an unclosed run inside a link label leaves the link intact",
       input: "[a *b](https://e.com)",
       expected: '<p><a target="_blank" rel="noopener" href="https://e.com">a *b</a></p>',
@@ -2206,8 +2011,7 @@ describe("renderMarkdown unclosed inline openers", () => {
   });
 
   it("keeps a mid-arrival link streaming as it does today", () => {
-    // The block has not closed, so nothing about a partially arrived construct
-    // changes: the label renders inside an href-less anchor until `)` lands.
+    // The block has not closed: the label sits in an href-less anchor until `)` lands.
     const el = document.createElement("div");
     const r = createMarkdownStream(el, { flushIntervalMs: 0 });
     r.writeDelta("see [the label");
@@ -2231,10 +2035,7 @@ describe("renderMarkdown unclosed inline openers", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// GFM tables: the delimiter row is required, column alignment is emitted, and
-// trailing whitespace on a row is not a cell.
-// ---------------------------------------------------------------------------
+// GFM tables: a delimiter row is required, alignment is emitted, trailing whitespace is not a cell.
 
 describe("renderMarkdown GFM tables", () => {
   const HEAD = "<table><thead><tr><th> a </th><th> b </th></tr></thead>";
@@ -2272,12 +2073,8 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
     },
 
-    // --- an escaped pipe is content, not a cell boundary ---
     {
-      // GFM's own way to put a pipe in a cell, and the parser already honours
-      // the escape when it splits a row. Counting the header's cells any other
-      // way measures the delimiter row against a count it cannot match, which
-      // loses the whole table rather than one cell.
+      // GFM's escape for a pipe in a cell; counting header cells otherwise loses the whole table.
       name: "an escaped pipe in the header",
       input: "| a \\| b |\n| - |\n| 1 |",
       expected:
@@ -2297,8 +2094,7 @@ describe("renderMarkdown GFM tables", () => {
       expected: HEAD + "<tbody><tr><td> 1 | x </td><td> 2 </td></tr></tbody></table>",
     },
     {
-      // One header cell over a two-cell delimiter row, which the GFM reference
-      // reads as a paragraph too.
+      // One header cell over two delimiter cells, which GFM reads as a paragraph too.
       name: "an escaped pipe does not add a header cell",
       input: "| a \\| b |\n| - | - |\n| 1 | 2 |",
       expected: "<p>| a | b |<br>| - | - |<br>| 1 | 2 |</p>",
@@ -2311,14 +2107,13 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> 1 </td><td> 2 </td></tr></tbody></table>",
     },
     {
-      // The row handlers open a cell for it, so the count has to as well.
+      // The row handlers open a cell for it, so the count does too.
       name: "an empty header cell is still a cell",
       input: "||\n| - |\n| 1 |",
       expected:
         "<table><thead><tr><th></th></tr></thead>" + "<tbody><tr><td> 1 </td></tr></tbody></table>",
     },
 
-    // --- the delimiter row is required ---
     {
       name: "a leading pipe in prose is not a table",
       input: "| leading pipe in prose",
@@ -2341,8 +2136,7 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<p>| a | b |</p><hr><p>| 1 | 2 |</p>",
     },
     {
-      // A pipe is not required of a delimiter row, so this is a table — which is
-      // what the GFM reference renders for it too.
+      // A delimiter row needs no pipe; GFM renders this as a table too.
       name: "a single-column delimiter row needs no pipe",
       input: "| a |\n---\n| 1 |",
       expected:
@@ -2364,10 +2158,7 @@ describe("renderMarkdown GFM tables", () => {
         '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
     },
     {
-      // A tab is whitespace inside a delimiter cell, so each of these is a table
-      // for the GFM reference too. The character gate that keeps a candidate
-      // alive has to admit every character the validity test accepts, or the
-      // whole table is lost rather than merely mis-aligned.
+      // A tab is whitespace in a delimiter cell; the character gate must admit what the validity test accepts.
       name: "tabs around a delimiter cell",
       input: "| a |\n|\t-\t|\n| 1 |",
       expected:
@@ -2415,7 +2206,6 @@ describe("renderMarkdown GFM tables", () => {
       expected: HEAD + BODY,
     },
 
-    // --- alignment ---
     {
       name: "all three alignments",
       input: "| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |",
@@ -2446,7 +2236,6 @@ describe("renderMarkdown GFM tables", () => {
         '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
     },
 
-    // --- cells are split before their content is parsed ---
     {
       name: "an unclosed run does not swallow the cell delimiters",
       input: "| a **b | c |\n| - | - |\n| 1 | 2 |",
@@ -2460,17 +2249,13 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> d_e </td><td> f </td></tr></tbody></table>",
     },
     {
-      // Not GFM (which nests the table in the blockquote) and not what this used
-      // to be either, which was three nested blockquotes each holding a
-      // header-only table. Routing a block prefix through a held row is upstream
-      // #42 and is not attempted here; every character survives.
+      // Not GFM (which nests the table); routing a block prefix through a held row is not attempted. Characterization.
       name: "a pipe line inside a blockquote is text (characterization)",
       input: "> | a | b |\n> | - | - |\n> | 1 | 2 |",
       expected: "<blockquote><p>| a | b |<br>| - | - |<br>| 1 | 2 |</p></blockquote>",
     },
     {
-      // GFM reads a `-` followed by a space at line start as a bullet, which
-      // outranks the delimiter row. `-|-` has no space, so it stays a candidate.
+      // GFM reads `- ` at line start as a bullet, which outranks the delimiter row; `-|-` stays a candidate.
       name: "a bullet-marker delimiter row is not a delimiter row",
       input: "| a | b |\n- | -",
       expected: "<p>| a | b |</p><ul><li>| -</li></ul>",
@@ -2486,9 +2271,7 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<p>| a |</p><ul><li>| *</li></ul>",
     },
     {
-      // Both references read this as a SETEXT heading, which this parser does not
-      // have, so the divergence moves rather than resolving: an empty list item
-      // instead of a table. No text is lost either way.
+      // Both references read this as setext, which this parser lacks. No text is lost. Characterization.
       name: "a single-cell header over a bare bullet (characterization)",
       input: "| a |\n- ",
       expected: "<p>| a |</p><ul><li></li></ul>",
@@ -2499,8 +2282,7 @@ describe("renderMarkdown GFM tables", () => {
       expected: HEAD + BODY,
     },
     {
-      // GFM pads a short row and truncates a long one. Truncating deletes text,
-      // which nothing else in this parser does, so rows keep their own cells.
+      // GFM truncates long rows; truncating deletes text, so rows keep their own cells. Characterization.
       name: "a body row is not normalised to the header's cell count (characterization)",
       input: "| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |",
       expected:
@@ -2509,11 +2291,8 @@ describe("renderMarkdown GFM tables", () => {
         "<tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
     },
 
-    // --- a row may end without a closing pipe ---
     {
-      // GFM makes the closing pipe optional. Without a newline arm on the cell
-      // handler the last cell stayed open, the newline became a line break, and
-      // the delimiter row underneath was read as more header cells.
+      // GFM makes the closing pipe optional; the cell handler's newline arm closes the last cell.
       name: "a header row with no closing pipe",
       input: "| a\n| - |\n| 1 |",
       expected:
@@ -2547,12 +2326,8 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> 1</td></tr></tbody></table>",
     },
 
-    // --- a pipe inside a code span is not a cell boundary ---
     {
-      // The cell walker keeps a code span intact, so the cell count the
-      // delimiter row is measured against has to keep it intact too. Splitting
-      // it there answered the delimiter-row test with a count the renderer would
-      // never produce: one `<th>` over two `<td>`.
+      // The cell walker keeps a code span intact, so the delimiter-row count must too.
       name: "a code span holding a pipe is one header cell",
       input: "| `a | b` |\n| - |\n| 1 |",
       expected:
@@ -2609,5 +2384,138 @@ describe("renderMarkdown GFM tables", () => {
     expect(el.querySelector("table")).toBeNull();
     expect(el.querySelectorAll("p")).toHaveLength(1);
     expect(el.textContent).toBe("| a | b |");
+  });
+});
+
+describe("markdown link guard", () => {
+  const PAYLOAD = `https://e.example/collect?d=${"%41".repeat(25)}`;
+
+  afterEach(() => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+  });
+
+  function rendered(md: string): HTMLElement {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, md);
+    return el;
+  }
+
+  it("withholds a payload-shaped inline link behind a copy button when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered(`see [file an issue](${PAYLOAD}) now`);
+    const button = el.querySelector("button.link-withheld");
+    expect(button?.textContent).toBe("file an issue");
+    expect(button?.getAttribute("data-payload-url")).toBe(PAYLOAD);
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it("withholds a payload-shaped raw URL when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered(`go to ${PAYLOAD} now`);
+    expect(el.querySelector("button.link-withheld")?.textContent).toBe(PAYLOAD);
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it("withholds navigation for an issue-prefill link when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const prefill = `https://github.com/o/r/issues/new?title=x&body=${"word%20".repeat(30)}`;
+    const el = rendered(`please [file an issue](${prefill}) for this`);
+    const button = el.querySelector("button.link-withheld");
+    expect(button?.textContent).toBe("file an issue");
+    expect(button?.getAttribute("data-payload-url")).toBe(prefill);
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it("withholds a payload-shaped angle autolink when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered(`see <${PAYLOAD}> now`);
+    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(
+      PAYLOAD,
+    );
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it("leaves no navigable payload behind a reference-style link when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered(`see [file an issue][r] now\n\n[r]: ${PAYLOAD}\n`);
+    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(
+      PAYLOAD,
+    );
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it.each([
+    ["a classic GitHub token", `https://e.example/collect?t=ghp_${"a1B2c3".repeat(6)}`],
+    ["a fine-grained GitHub token", `https://e.example/collect?t=github_pat_${"a1_B2".repeat(5)}`],
+    ["a payload in a fragment with no query", `https://e.example/collect#${"%41".repeat(25)}`],
+  ])("withholds a link carrying %s when ON", (_name, url) => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered(`see [x](${url}) now`);
+    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(url);
+    expect(el.querySelector("a[href]")).toBeNull();
+  });
+
+  it("leaves an ordinary link alone when ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = rendered("[docs](https://e.example/docs?page=2)");
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("https://e.example/docs?page=2");
+    expect(el.querySelector("button")).toBeNull();
+  });
+
+  it.each([true, false])("still blocks a long-query javascript: link with the guard %s", (on) => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: on }));
+    const el = rendered(`[x](javascript:alert(1)?${"q".repeat(250)})`);
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("#");
+    expect(el.querySelector("button.link-withheld")).toBeNull();
+  });
+
+  it("renders a payload-shaped link as an ordinary link when OFF", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
+    const el = rendered(`[file an issue](${PAYLOAD})`);
+    const a = el.querySelector("a");
+    expect(a?.getAttribute("href")).toBe(PAYLOAD);
+    expect(a?.getAttribute("data-payload-url")).toBe(PAYLOAD);
+    expect(el.querySelector("button")).toBeNull();
+  });
+
+  it("withholds a link streamed one character at a time", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    for (const ch of `see [file an issue](${PAYLOAD}) now`) {
+      r.writeDelta(ch);
+    }
+    r.end();
+    expect(el.querySelector("button.link-withheld")?.textContent).toBe("file an issue");
+    expect(el.querySelector("a[href]")).toBeNull();
+    expect(el.textContent).toBe("see file an issue now");
+  });
+
+  it("never leaves a payload-shaped address on a rendered anchor while ON", () => {
+    adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    const query = fc.oneof(
+      fc.string({ minLength: 0, maxLength: 260 }).map((s) => encodeURIComponent(s)),
+      fc.constantFrom(
+        `k=${"%2F".repeat(22)}`,
+        `t=${"AKIA"}ABCDEFGHIJKLMNOP`,
+        `b=${"Q".repeat(44)}`,
+      ),
+    );
+    const producers: readonly ((url: string) => string)[] = [
+      (url) => `x ${url} y`,
+      (url) => `[t](${url})`,
+      (url) => `x <${url}> y`,
+      (url) => `x [t][r] y\n\n[r]: ${url}\n`,
+    ];
+    fc.assert(
+      fc.property(query, fc.constantFrom(...producers), (q, produce) => {
+        const url = `https://e.example/p?${q}`;
+        const el = rendered(produce(url));
+        for (const a of el.querySelectorAll("a[href]")) {
+          expect(exfilShaped(a.getAttribute("href") ?? "")).toBe(false);
+        }
+      }),
+      { numRuns: 200 },
+    );
   });
 });

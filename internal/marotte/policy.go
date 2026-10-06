@@ -1,29 +1,11 @@
 package marotte
 
-// Native Cedar policy domain types (v3 / KAS).
-//
-// marotte adopts kiro-cli's native permission policy as the source of
-// truth for what is ENFORCED. The policy is read via the _kiro/permissions/
-// list + explain extension requests on a live bridge, and edited by writing
-// the user/workspace permissions.yaml files (which KAS hot-reloads). These
-// types are the marotte-facing shapes; the on-disk file shape lives in
-// internal/policyfile.
-//
-// Wire facts verified live against the KAS 2.12 acp-server bundle:
-//   - list  → {rules:[{capability, match?, exclude?, effect, scope, source}]}
-//   - explain → {capability, resource, effect, isExplicitAsk, matchedRule?, scope, source}
-//     (a PURE simulation — no consent prompt; safe for pre-flight)
-//   - policy/check is NOT used: it calls acpToolApproval and raises a real
-//     session/request_permission, so it is unsafe as a UI pre-flight query.
-//
-// Enum values on the wire (the Go string constants for both live in
-// internal/policyfile, the package that writes the editable scopes):
-//   - effect is 3-valued: allow | deny | ask (deny > ask > allow at
-//     evaluation time)
-//   - scope is kiro | administration | user | workspace | agent | session.
-//     Only user + workspace are file-editable by marotte;
-//     kiro/administration are read-only baselines, agent comes from the
-//     agent profile, and session is runtime state.
+// Native Cedar policy domain types: KAS's policy is what is ENFORCED, read via
+// _kiro/permissions/list (→ {rules:[{capability, match?, exclude?, effect, scope, source}]}) and
+// explain (a pure simulation) on a live bridge, and edited through the permissions.yaml files KAS
+// hot-reloads (internal/policyfile). policy/check is NOT used: it raises a real permission request.
+// effect is allow | deny | ask (deny > ask > allow); scope is kiro | administration | user |
+// workspace | agent | session, of which only user and workspace are file-editable.
 
 // PolicyRule is one native policy rule as reported by _kiro/permissions/list.
 // Capability + effect are always present; match/exclude are optional glob

@@ -17,9 +17,8 @@ vi.mock("./icons.js", () => ({
 
 import { showSaving, showSaved, showError, _resetForTest } from "./save-indicator.js";
 
-/** Mount one slot per key; the returned lookup throws on a key it did not mount,
- *  so a renamed key in a test fails there rather than silently asserting on
- *  nothing. */
+/** Mount one slot per key; the returned lookup throws on a key it did not mount, so a renamed
+ *  key in a test fails there rather than silently asserting on nothing. */
 function mountSlots(...keys: string[]): (key: string) => HTMLElement {
   const byKey = new Map<string, HTMLElement>();
   for (const key of keys) {
@@ -54,12 +53,12 @@ describe("save-indicator", () => {
   });
 
   it("spins only the slot whose key was written", () => {
-    const slot = mountSlots("debug_logs", "memory_enabled");
+    const slot = mountSlots("debug_logs", "memory_mode");
 
     showSaving("debug_logs");
 
     expect(spinner(slot("debug_logs"))).not.toBeNull();
-    expect(slot("memory_enabled").children.length).toBe(0);
+    expect(slot("memory_mode").children.length).toBe(0);
   });
 
   it("spins every slot a multi-key write carried", () => {
@@ -93,13 +92,13 @@ describe("save-indicator", () => {
   });
 
   it("settles the written slot and leaves its neighbour untouched", () => {
-    const slot = mountSlots("debug_logs", "memory_enabled");
+    const slot = mountSlots("debug_logs", "memory_mode");
 
     showSaving("debug_logs");
     showSaved("debug_logs");
 
     expect(ok(slot("debug_logs"))).not.toBeNull();
-    expect(slot("memory_enabled").children.length).toBe(0);
+    expect(slot("memory_mode").children.length).toBe(0);
   });
 
   it("shows the failure face on the slot that failed", () => {

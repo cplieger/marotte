@@ -26,15 +26,10 @@ type EntryOpenedPayload struct {
 	Open       OpenEntry `json:"open"`
 }
 
-// EntryDeltaPayload is the payload for type="entry_delta": one more piece of an
-// open entry's text. N is the running delta count AFTER this delta is applied, so
-// the first delta after an entry_opened with n: 1 carries n: 2 and the client
-// requires n == held + 1; a hole is the signal to re-read the turn's range. Lane
-// is carried so a lane-scoped subscriber routes on the frame without an entry-id
-// lookup, and it is REQUIRED on the wire: "" is the lane of the agent that owns
-// the turn, so an omitted field and a main-lane frame would be one value at a
-// reader that keys its open entries by lane. It carries NO refusal, for
-// EntryOpenedPayload's reason: the live carrier is EntrySealedPayload.Refusal.
+// EntryDeltaPayload is the payload for type="entry_delta": one more piece of an open entry's text.
+// N is the running count AFTER this delta, so the client requires n == held + 1 and a hole means
+// re-read the range. Lane is REQUIRED: "" is the owning agent's real lane. No refusal
+// (EntrySealedPayload carries it).
 type EntryDeltaPayload struct {
 	Turn       string `json:"turn"`
 	EntryID    string `json:"entry_id"`
@@ -44,19 +39,10 @@ type EntryDeltaPayload struct {
 	N          uint64 `json:"n"`
 }
 
-// EntrySealedPayload is the payload for type="entry_sealed": an open entry froze
-// and took its place in the log. Seq and Ts are the log's; N is the total delta
-// count the sealed text holds, which the client compares to the n it holds for the
-// open entry (a count, so no byte-versus-UTF-16 length question arises). Lane is
-// REQUIRED for EntryDeltaPayload's reason: "" is a real lane.
-//
-// Refusal is the LIVE carrier of a turn's refusal note, and this frame is where it
-// belongs because a refusal-tagged chunk opens no entry: it SEALS the lane's open
-// one, so the seal is the frame the refusal branch already publishes. Present at
-// most once per turn; the durable copy is turn_close.refusal, which the client
-// prefers. Two endings carry no seal frame and so defer to turn_close: a lane
-// holding only a steer carry (released as entry_appended) and an empty lane (no
-// frame at all).
+// EntrySealedPayload is the payload for type="entry_sealed": an open entry froze into the log at
+// Seq and Ts, with N its total delta count. Lane is required (EntryDeltaPayload). Refusal is the
+// LIVE carrier of a turn's refusal note, since a refusal chunk seals the lane's open entry; at most
+// once per turn, durable on turn_close.refusal.
 type EntrySealedPayload struct {
 	Refusal    *RefusalInfo `json:"refusal,omitempty"`
 	Turn       string       `json:"turn"`
@@ -83,10 +69,11 @@ type EntryAppendedPayload struct {
 // OutputDelta's meaning depends on OutputReplace. Live only: the durable value is
 // the tool_result entry, whose payload is the settled value of the same fields.
 type ToolProgressPayload struct {
-	// The three metadata blocks, each sent whole when it changed; none accumulates.
+	// The metadata blocks, each sent whole when it changed; none accumulates.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
 	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
 	Denial     *ToolDenial     `json:"denial,omitempty"`
+	Offload    *ToolOffload    `json:"offload,omitempty"`
 	Turn       string          `json:"turn"`
 	ToolCallID string          `json:"tool_call_id"`
 	// Title and Kind: KAS sends them nullish on most updates, so absent is "keep".

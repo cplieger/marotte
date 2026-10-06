@@ -1,14 +1,3 @@
-//
-// Tests for the native (Cedar) policy view + conservative editor added to
-// permissions-ui.ts (initNativePolicyUI). Guards: the scope-grouped render
-// with per-scope remove affordances only on writable scopes, the
-// conservative Ask default flowing through an add, the deny-removal confirm
-// gate, and the permissions_changed SSE refetch.
-//
-// B2: initNativePolicyUI() no longer fires the initial GET /api/permissions
-// (it used to fetch eagerly at boot, pre-auth, for an invisible panel); the
-// first load is lazy via loadNativePolicy(), wired to the Permissions tab's
-// first activation. Tests call both where they need rendered data.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PolicyView } from "./types.js";
 
@@ -31,9 +20,7 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./actions/index.js", () => ({
@@ -49,8 +36,7 @@ vi.mock("./actions/permissions.js", () => ({
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
 
-/** init + lazy first load, as wired in production (settings-tabs loader map
- *  fires loadNativePolicy on the Permissions tab's first activation). */
+/** init + lazy first load, as settings-tabs wires it in production. */
 function initAndLoad(): void {
   initNativePolicyUI();
   loadNativePolicy();
@@ -86,11 +72,7 @@ const sampleView: PolicyView = {
   available: true,
   writable_scopes: ["user", "workspace"],
   capabilities: ["fs_read", "fs_write", "shell", "web_fetch"],
-  // Empty here on purpose: this fixture has no relaxation checkbox in its DOM,
-  // so the switch is out of scope for these tests. permissions-relax.test.ts
-  // owns it.
-  // The picker is out of scope here (no profile DOM in this fixture);
-  // permissions-profile.test.ts owns it. Guarded so the table renders unlocked.
+  // Empty: this fixture has no relaxation checkbox (permissions-relax.test.ts owns it).
   profiles: [{ id: "guarded", presets: ["read-workspace"] }],
   profile: "guarded",
   rules: [
@@ -131,7 +113,7 @@ beforeEach(() => {
   document.body.appendChild(el("div", "native-policy-list"));
   document.body.appendChild(el("p", "native-policy-empty-hint"));
   document.body.appendChild(selectWith("native-rule-scope", ["workspace", "user"], "workspace"));
-  document.body.appendChild(selectWith("native-rule-capability", [])); // filled by controller
+  document.body.appendChild(selectWith("native-rule-capability", []));
   document.body.appendChild(selectWith("native-rule-effect", ["ask", "allow", "deny"], "ask"));
   document.body.appendChild(el<HTMLInputElement>("input", "native-rule-match"));
   document.body.appendChild(el<HTMLInputElement>("input", "native-rule-exclude"));
@@ -159,15 +141,12 @@ describe("native policy view", () => {
 
     const rows = policyRows();
     expect(rows).toHaveLength(3);
-    // kiro rule: read-only, no remove button.
     const kiroRow = rows.find(
       (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_write",
     );
     expect(kiroRow?.querySelector(".native-rule-remove")).toBeNull();
-    // user/workspace rules: writable, have a remove button.
     const userRow = rows.find((r) => r.querySelector(".native-rule-cap")?.textContent === "shell");
     expect(userRow?.querySelector(".native-rule-remove")).not.toBeNull();
-    // capability picker got populated from the view.
     expect(byId<HTMLSelectElement>("native-rule-capability").options.length).toBe(4);
   });
 
@@ -177,8 +156,6 @@ describe("native policy view", () => {
   });
 
   it("refetches when a permissions_changed SSE arrives", async () => {
-    // The SSE listener is registered at init (boot); only the initial fetch
-    // moved to the lazy loader (B2).
     initAndLoad();
     await flush();
     expect(mocks.apiGet).toHaveBeenCalledTimes(1);
@@ -205,11 +182,10 @@ describe("native policy editor", () => {
       op: "add",
       scope: "workspace",
       capability: "fs_write",
-      effect: "ask", // conservative default carried from the select
+      effect: "ask",
       match: ["src/**", "dist/**"],
       exclude: ["**/secrets/**", "**/.git/**"],
     });
-    // both glob inputs cleared, match refocused (repeat entry), refetched.
     expect(byId<HTMLInputElement>("native-rule-match").value).toBe("");
     expect(byId<HTMLInputElement>("native-rule-exclude").value).toBe("");
     expect(document.activeElement).toBe(byId<HTMLInputElement>("native-rule-match"));
@@ -237,7 +213,6 @@ describe("native policy editor", () => {
     initAndLoad();
     await flush();
 
-    // workspace fs_read rule: ask → deny narrows; no confirm dialog.
     const row = policyRows().find(
       (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_read",
     );
@@ -258,7 +233,6 @@ describe("native policy editor", () => {
       match: ["src/**"],
       confirm: false,
     });
-    // Success → refetch.
     expect(mocks.apiGet).toHaveBeenCalledTimes(2);
   });
 
@@ -267,7 +241,6 @@ describe("native policy editor", () => {
     initAndLoad();
     await flush();
 
-    // workspace fs_read rule: ask → allow widens.
     const row = policyRows().find(
       (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_read",
     );
@@ -278,9 +251,8 @@ describe("native policy editor", () => {
 
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
     expect(mocks.editDispatch).not.toHaveBeenCalled();
-    expect(sel!.value).toBe("ask"); // reverted
+    expect(sel!.value).toBe("ask");
 
-    // Confirmed → dispatches with confirm=true.
     mocks.confirm.mockResolvedValue(true);
     sel!.value = "allow";
     sel!.dispatchEvent(new Event("change"));
@@ -332,7 +304,6 @@ describe("native policy editor", () => {
   });
 
   it("requires confirmation to remove a deny rule and sends confirm=true", async () => {
-    // Add a writable deny rule to the sample so it has a remove button.
     mocks.apiGet.mockResolvedValue({
       ...sampleView,
       rules: [

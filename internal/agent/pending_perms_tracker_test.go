@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"maps"
 	"slices"
 	"strconv"
 	"testing"
@@ -8,8 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// listIDs reads the ids off a List snapshot, the only way to assert the order the
-// replay writes the cards in.
+// listIDs reads the ids off a List snapshot, in replay order.
 func listIDs(t *testing.T, evts []marotte.ServerEvent) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, len(evts))
@@ -23,10 +23,8 @@ func listIDs(t *testing.T, evts []marotte.ServerEvent) []int64 {
 	return ids
 }
 
-// TestPendingPermsTracker_List_OrdersByRequestID pins the connect-time replay's
-// ordering contract: ascending request id, which is ask order because the JSON-RPC
-// boundary assigns ids monotonically. Added out of order on purpose, and asserted as
-// the full sequence because a map-ordered List can satisfy a spot check by luck.
+// TestPendingPermsTracker_List_OrdersByRequestID pins ascending request id (ask order), added out
+// of order and asserted as the full sequence.
 func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -46,8 +44,7 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	}
 }
 
-// TestPendingPermsTracker_List_OrdersAcrossKinds pins that ordering is the QUEUE's,
-// not each kind's: an elicitation asked between two permissions replays between them.
+// TestPendingPermsTracker_List_OrdersAcrossKinds pins the queue's order across kinds.
 func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -62,8 +59,7 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 
 	got := tracker.List("chat-1")
 	wantIDs := []int64{12, 20, 31}
-	// Fatal because the per-kind subtests below index got: a short replay would panic
-	// the binary instead of reporting a failure.
+	// Fatal: the subtests below index got.
 	if len(got) != len(wantIDs) {
 		t.Fatalf("List returned %d events, want %d: %v", len(got), len(wantIDs), listIDs(t, got))
 	}
@@ -79,8 +75,7 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	}
 }
 
-// TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered: a filtered replay is the
-// same sequence with the other chats' cards removed, never a re-sort.
+// TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered pins that filtering never re-sorts.
 func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -102,9 +97,7 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	}
 }
 
-// Both halves fail in opposite directions: keeping the closing chat's entries leaves
-// a card nobody can answer, and dropping another chat's makes TakeIfPresent refuse an
-// answer that chat is still waiting to give.
+// Keeping the closing chat's entries strands a card; dropping another chat's refuses its answer.
 func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -129,8 +122,7 @@ func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	}
 }
 
-// An empty chat id is not a wildcard: the one caller that could pass it is a close
-// path with no chat, so "every chat" would drop every open dialog in the process.
+// An empty chat id is not a wildcard.
 func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -147,11 +139,8 @@ func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T)
 	}
 }
 
-// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID is the case an id-only map
-// cannot represent: ids are minted per BRIDGE (`nextID atomic.Int64`, one bridge per
-// chat, each starting at zero), so two live chats holding request 7 is ordinary. Keyed
-// on the id alone, the second Add overwrites the first chat's card and whichever
-// request loses has no answer path while the engine still holds it open.
+// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID pins that ids are per bridge, so an id-only key
+// would overwrite one chat's card.
 func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -161,7 +150,7 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 	tracker.Add(shared, marotte.NewEvent(marotte.EventUserInputNeeded, "chat-2",
 		marotte.UserInputNeededPayload{RequestID: shared, Question: "chat-2 asked"}))
 
-	// Each chat's replay carries its OWN card, not the other's.
+	// Each chat replays its own card.
 	for _, tc := range []struct {
 		chat marotte.ChatID
 		want marotte.EventType
@@ -179,7 +168,7 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 		}
 	}
 
-	// chat-2's request must survive chat-1 answering: nothing else can answer it.
+	// chat-2's request survives chat-1 answering.
 	evt, ok := tracker.TakeIfPresent("chat-1", shared)
 	if !ok {
 		t.Fatal(`TakeIfPresent("chat-1", 7) refused a pending request`)
@@ -191,7 +180,7 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 		t.Error(`TakeIfPresent("chat-2", 7) = false after chat-1 answered: chat-2's ` +
 			"turn now waits forever for a response nothing can send")
 	}
-	// And a claim naming the wrong chat resolves nothing at all.
+	// A claim naming the wrong chat resolves nothing.
 	tracker.Add(shared, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
 		marotte.PermissionNeededPayload{RequestID: shared}))
 	if _, ok := tracker.TakeIfPresent("chat-4", shared); ok {
@@ -199,8 +188,7 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 	}
 }
 
-// requestIDOf reads one card's request id whichever kind it is. `listIDs` cannot
-// serve: it fails on a non-permission payload, and this table mixes all three.
+// requestIDOf reads a card's request id whatever its kind.
 func requestIDOf(t *testing.T, evt marotte.ServerEvent) int64 {
 	t.Helper()
 	switch p := evt.Payload.(type) {
@@ -216,10 +204,7 @@ func requestIDOf(t *testing.T, evt marotte.ServerEvent) int64 {
 	}
 }
 
-// TestClearForRun_DropsOnlyTheNamedRunsDecisions pins that the run comes off the
-// PAYLOAD, because the key carries none. The permission and elicitation rows are the
-// load-bearing ones: every kind a step can raise carries a `RunID`, so a clear naming
-// only the question kind leaves two thirds of the population behind.
+// TestClearForRun_DropsOnlyTheNamedRunsDecisions pins the run read off the payload, across all three kinds a step raises.
 func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 	t.Parallel()
 	const launching marotte.ChatID = "c-parent"
@@ -227,16 +212,15 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 		id      int64
 		name    string
 		payload any
-		// survives says the entry must still be replayable after ClearForRun("wf_1").
+		// survives says the entry must still replay after ClearForRun("wf_1").
 		survives bool
 	}{
 		{1, "a step's question", marotte.UserInputNeededPayload{RequestID: 1, RunID: "wf_1"}, false},
 		{2, "a step's permission", marotte.PermissionNeededPayload{RequestID: 2, RunID: "wf_1"}, false},
 		{3, "a step's elicitation", marotte.ElicitationNeededPayload{RequestID: 3, RunID: "wf_1"}, false},
-		// A SIBLING run shares the launching chat's entries, so the clear has to
-		// separate them by run rather than by chat.
+		// A sibling run shares the chat's entries, so the clear separates by run.
 		{4, "a sibling run's question", marotte.UserInputNeededPayload{RequestID: 4, RunID: "wf_2"}, true},
-		// An ordinary chat ask carries no run and still blocks a live turn.
+		// An ordinary chat ask carries no run.
 		{5, "the chat's own permission", marotte.PermissionNeededPayload{RequestID: 5}, true},
 	}
 	kindOf := map[int64]marotte.EventType{
@@ -268,8 +252,7 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 	}
 }
 
-// TestClearForRun_RefusesAnEmptyRunID: `RunID` is empty on every ordinary chat ask, so
-// an empty argument would match the whole tracker, and the id arrives off a wire frame.
+// TestClearForRun_RefusesAnEmptyRunID pins that an empty id would match every ordinary chat ask.
 func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -280,5 +263,36 @@ func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 
 	if got := len(tracker.List("")); got != 1 {
 		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
+	}
+}
+
+// TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps pins the idle window's evidence, across chats and kinds.
+func TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	tracker.Add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RequestID: 1, RunID: "wf_1", NodeID: "a"}))
+	tracker.Add(2, marotte.NewEvent(marotte.EventElicitationNeeded, runChatID("wf_1"),
+		marotte.ElicitationNeededPayload{RequestID: 2, RunID: "wf_1", NodeID: "b"}))
+	tracker.Add(3, marotte.NewEvent(marotte.EventUserInputNeeded, "c-parent",
+		marotte.UserInputNeededPayload{RequestID: 3, RunID: "wf_1", NodeID: "c"}))
+	tracker.Add(4, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RequestID: 4, RunID: "wf_1"}))
+	tracker.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RequestID: 5, RunID: "wf_2", NodeID: "d"}))
+
+	got := slices.Sorted(maps.Keys(tracker.OpenNodesForRun("wf_1")))
+	if want := []string{"a", "b", "c"}; !slices.Equal(got, want) {
+		t.Errorf("OpenNodesForRun(wf_1) = %v, want %v: every kind, any chat, no node-less ask", got, want)
+	}
+
+	if _, ok := tracker.TakeIfPresent("c-parent", 1); !ok {
+		t.Fatal("request 1 was not pending")
+	}
+	if _, held := tracker.OpenNodesForRun("wf_1")["a"]; held {
+		t.Error("an answered decision still names its node")
+	}
+	if got := tracker.OpenNodesForRun(""); got != nil {
+		t.Errorf("OpenNodesForRun(\"\") = %v, want nil: an empty run would match every chat ask", got)
 	}
 }

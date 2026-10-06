@@ -1,11 +1,4 @@
-// ---------------------------------------------------------------------------
-// Line-level diff: LCS-based, produces a flat array of add / del / ctx
-// entries suitable for two-pane rendering. Not Myers, but good enough
-// for the file sizes the editor actually shows (typically < 10k lines).
-//
-// The entries are emitted in reading order so the renderer can walk
-// them once and place lines into old/new columns.
-// ---------------------------------------------------------------------------
+// Line-level LCS diff: a flat add/del/ctx array in reading order, so the renderer walks it once.
 
 type DiffKind = "add" | "del" | "ctx";
 
@@ -39,29 +32,11 @@ export function stats(lines: DiffLine[]): DiffStats {
   return s;
 }
 
-/** Split `s` into LINES: split on "\n", strip one trailing "\r" per line, and drop
- *  the single empty element a final newline produces — so "a\nb\n" and "a\nb" are
- *  both two lines, and "\n" is one empty line.
- *
- *  ONE vocabulary for the whole diff surface. A file's final newline is the
- *  writer's terminator, not a line, so the renderer must not draw a row for it:
- *  every consumer here — `lineDiff` for the pane, the tool card's preview and the
- *  editor's diff mode, and `lineDelta` for the turn footer's `+N -M` — reads this
- *  same function, which is what makes them agree about one file. They used to
- *  differ by exactly that row, so the pane said 28 where the footer and `git diff`
- *  both said 27. The `\r` strip is what keeps a CRLF-to-LF rewrite from reading as
- *  a whole-file change; nothing rejoins these lines back into a file, so no
- *  consumer owns an EOL.
- *
- *  Its Go twin is `splitDiffLines` in `internal/buffer/linediff.go`, character for
- *  character, and the two must agree on every input.
- *
- *  RESIDUAL, accepted: a change that only ADDS OR REMOVES a file's final newline
- *  is now INVISIBLE — both sides split to the same lines, so `lineDiff` returns
- *  all context and the pane draws its "No changes" state — where `git diff` shows
- *  one deletion plus one insertion carrying `\ No newline at end of file`.
- *  `diff.test.ts` pins it as characterization and states the three reasons and the
- *  remedy. */
+/**
+ * Split into lines: on "\n", stripping one trailing "\r" each, dropping the empty element a final newline produces
+ * ("a\nb\n" and "a\nb" are two lines, "\n" is one empty line). One vocabulary for every diff consumer, so the pane and
+ * the footer agree; twin of `splitDiffLines` in `internal/buffer/linediff.go`.
+ */
 function splitLines(s: string): string[] {
   if (s === "") {
     return [];
@@ -81,23 +56,16 @@ function splitLines(s: string): string[] {
   return lines;
 }
 
-/**
- * Space threshold: if m*n exceeds this, use linear-space Hirschberg.
- * 4M cells ≈ 32MB for the dense table — safe for browser tabs.
- */
+/** Above this many m×n cells, use linear-space Hirschberg; 4M cells is about 32MB for the dense table. */
 const SPACE_THRESHOLD = 4_000_000;
 
 /**
- * Time budget for the exact algorithms, in m×n cells. SPACE_THRESHOLD
- * only bounds memory — both LCS and Hirschberg are O(mn) TIME on the
- * main thread, and the 2 MiB server file cap admits inputs far past
- * the "<10k lines" header comment. Inputs whose (prefix/suffix-trimmed)
- * middle exceeds this fall back to a coarse but valid del-all/add-all
- * edit script instead of freezing the tab. ~25M cells ≈ tens of ms.
+ * Time budget in m×n cells (~tens of ms): both algorithms are O(mn) time on the main thread and the 2 MiB server cap
+ * admits far larger inputs, so a trimmed middle past this falls back to a coarse but valid del-all/add-all script.
  */
 const TIME_BUDGET_CELLS = 25_000_000;
 
-/** Dense LCS table, bottom-up. O(mn) space — used only for small inputs. */
+/** Dense LCS table, bottom-up; O(mn) space, small inputs only. */
 function lcsTable(a: string[], b: string[]): number[][] {
   const m = a.length;
   const n = b.length;
@@ -114,10 +82,7 @@ function lcsTable(a: string[], b: string[]): number[][] {
   return t;
 }
 
-/**
- * Compute the last row of the LCS length table for a[aLo..aHi) vs b[bLo..bHi).
- * Uses O(bHi-bLo) space (two rows). Returns an array of length (bHi-bLo+1).
- */
+/** Last row of the LCS table for a[aLo..aHi) vs b[bLo..bHi), in two rows of space. */
 function lcsLastRow(
   a: string[],
   aLo: number,
@@ -143,11 +108,7 @@ function lcsLastRow(
   return prev;
 }
 
-/**
- * Hirschberg linear-space diff. Produces DiffLine[] using O(min(m,n)) space.
- * Recursively splits the problem at the midpoint of `a` and finds the optimal
- * split in `b` using forward + reverse last-row computations.
- */
+/** Hirschberg linear-space diff: split `a` at its midpoint and find the best split in `b` from forward and reverse rows. */
 function hirschbergDiff(
   a: string[],
   aLo: number,
@@ -163,11 +124,8 @@ function hirschbergDiff(
   const m = aHi - aLo;
   const n = bHi - bLo;
 
-  // There is deliberately no `m === 0` base case, and its absence is an invariant of the
-  // two call sites rather than an oversight. `lineDiff` enters only when
-  // `m * n > SPACE_THRESHOLD`, which forces `m >= 1`; the split below is reached only past
-  // `m === 1`, so `m >= 2` there and `aMid = aLo + floor(m / 2)` leaves both halves with
-  // `m >= 1`. `n === 0` IS reachable, because `bestJ` may land on either end of `bLo..bHi`.
+  // No `m === 0` base case: `lineDiff` enters only with m >= 1 and the split runs only for m >= 2, so both halves keep
+  // m >= 1. `n === 0` is reachable, since `bestJ` may land on either end.
   if (n === 0) {
     const out: DiffLine[] = [];
     for (let i = aLo; i < aHi; i++) {
@@ -208,19 +166,14 @@ function hirschbergDiff(
     return out;
   }
 
-  // Split a at midpoint
   const aMid = aLo + Math.floor(m / 2);
 
-  // Forward: LCS last row for a[aLo..aMid) vs b[bLo..bHi)
   const fwd = lcsLastRow(a, aLo, aMid, b, bLo, bHi);
 
-  // Reverse: LCS last row for reversed a[aMid..aHi) vs reversed b[bLo..bHi)
-  // We reverse by creating temporary reversed slices
   const aRev = a.slice(aMid, aHi).reverse();
   const bRev = b.slice(bLo, bHi).reverse();
   const rev = lcsLastRow(aRev, 0, aRev.length, bRev, 0, bRev.length);
 
-  // Find optimal split point in b
   let bestJ = bLo;
   let bestScore = -1;
   for (let j = bLo; j <= bHi; j++) {
@@ -231,17 +184,12 @@ function hirschbergDiff(
     }
   }
 
-  // Recurse on both halves
   const left = hirschbergDiff(a, aLo, aMid, b, bLo, bestJ, aOrig, bOrig, aOffset, bOffset);
   const right = hirschbergDiff(a, aMid, aHi, b, bestJ, bHi, aOrig, bOrig, aOffset, bOffset);
   return left.concat(right);
 }
 
-/** Compute a line-level diff. Returns an ordered list of DiffLines.
- *  When opts.ignoreWhitespace is true, lines that differ only in
- *  leading/trailing/internal whitespace collapse to context — useful
- *  for reviewing code diffs where tab/space drift would otherwise
- *  dominate the output. */
+/** Line-level diff in order. `ignoreWhitespace` collapses lines differing only in whitespace to context. */
 export function lineDiff(
   oldText: string,
   newText: string,
@@ -250,8 +198,7 @@ export function lineDiff(
   return diffLineArrays(splitLines(oldText), splitLines(newText), opts);
 }
 
-/** Diff two already-split line arrays: the engine both entry points share, so
- *  `lineDiff` and `lineDelta` cannot disagree about anything but their options. */
+/** The engine both entry points share, so `lineDiff` and `lineDelta` differ only in options. */
 function diffLineArrays(
   a: string[],
   b: string[],
@@ -264,10 +211,7 @@ function diffLineArrays(
   const aNorm = opts.ignoreWhitespace === true ? a.map(normalize) : a;
   const bNorm = opts.ignoreWhitespace === true ? b.map(normalize) : b;
 
-  // Common prefix/suffix trim (compared on normalized lines): real edits
-  // cluster, so this collapses most of the m×n area before any exact
-  // algorithm runs, and bounds the budget check below to the genuinely
-  // differing middle.
+  // Common prefix/suffix trim: edits cluster, so this removes most of the m×n area and bounds the budget check.
   let p = 0;
   const maxTrim = Math.min(a.length, b.length);
   while (p < maxTrim && aNorm[p] === bNorm[p]) {
@@ -291,9 +235,7 @@ function diffLineArrays(
   return out;
 }
 
-/** Diff the trimmed middle a[p..len-s) vs b[p..len-s), picking the exact
- *  algorithm by size — or the bounded del-all/add-all fallback when even
- *  the trimmed middle would blow the main-thread time budget. */
+/** Diff the trimmed middle by size, or the coarse fallback past the time budget. */
 function diffMiddle(
   a: string[],
   b: string[],
@@ -310,11 +252,7 @@ function diffMiddle(
     return [];
   }
 
-  // Time-budget fallback: a coarse but valid edit script (delete the
-  // whole old middle, add the whole new middle). Every consumer holds for
-  // any valid script — the renderers draw what they are given, `stats`
-  // and `windowHunks` count it — so the cost is hunk granularity, which
-  // is the honest trade at this size.
+  // Every consumer holds for any valid script, so the fallback costs only hunk granularity.
   if (m * n > TIME_BUDGET_CELLS) {
     const out: DiffLine[] = [];
     for (let i = p; i < aHi; i++) {
@@ -326,7 +264,6 @@ function diffMiddle(
     return out;
   }
 
-  // Use linear-space Hirschberg for large inputs to avoid OOM.
   if (m * n > SPACE_THRESHOLD) {
     return hirschbergDiff(
       aNorm.slice(p, aHi),
@@ -373,31 +310,16 @@ function diffMiddle(
   return out;
 }
 
-/** How many lines a change added and removed — the numbers a footer states.
- *
- *  Reads `splitLines` like `lineDiff` does, which is what makes the pane's count
- *  and this one one number rather than two that have to be kept in step. There
- *  used to be a second split here (`splitDeltaLines`, `splitLines` minus the
- *  element a final newline produces) because the renderer drew that row; the row
- *  is gone, so the second split is too.
- *
- *  Its Go twin is `lineDelta` in `internal/buffer/linediff.go`, which computes
- *  the same counts for the turn footer; the two footers render the same
- *  component, so they must agree on the same file or one of them is lying. The
- *  shared fixture is `internal/buffer/testdata/line_delta.json`. */
+/**
+ * Lines a change added and removed, read through `splitLines` like `lineDiff`. Go twin: `lineDelta` in
+ * `internal/buffer/linediff.go`; shared fixture `internal/buffer/testdata/line_delta.json`.
+ */
 export function lineDelta(oldText: string, newText: string): { added: number; removed: number } {
   const s = stats(diffLineArrays(splitLines(oldText), splitLines(newText), {}));
   return { added: s.adds, removed: s.dels };
 }
 
-// ---------------------------------------------------------------------------
-// Intra-line (word-level) diff.
-//
-// A line-level diff says a line changed; it does not say WHERE. On a modified
-// line the reader's question is which characters moved, and the row tint cannot
-// answer it. VS Code paints two layers for this: the line background plus a
-// stronger background on the changed characters only.
-// ---------------------------------------------------------------------------
+// Intra-line (word-level) diff: which characters changed on a modified line.
 
 /** A half-open character range `[start, end)` within one line. */
 export interface CharRange {
@@ -415,22 +337,20 @@ export interface WordDiff {
   readonly add: CharRange[];
 }
 
-/** Token budget per side. Past this a line is long enough that no reader is
- *  hunting individual words in it, and the m×n table stops being free. */
+/** Past this a line is too long for word hunting, and the m×n table stops being free. */
 const MAX_WORD_TOKENS = 400;
 
-/** Changed-range budget per side. Past this the two lines share so little that
- *  per-word marks read as confetti and say less than the row tint alone. */
+/** Past this, per-word marks read as confetti and say less than the row tint. */
 const MAX_WORD_RUNS = 8;
 
 function isWordCharCode(c: number): boolean {
   return (
-    (c >= 48 && c <= 57) || // 0-9
-    (c >= 65 && c <= 90) || // A-Z
-    (c >= 97 && c <= 122) || // a-z
-    c === 95 || // _
-    c === 36 || // $
-    c >= 0x80 // keep non-ASCII identifiers whole
+    (c >= 48 && c <= 57) ||
+    (c >= 65 && c <= 90) ||
+    (c >= 97 && c <= 122) ||
+    c === 95 ||
+    c === 36 ||
+    c >= 0x80
   );
 }
 
@@ -468,8 +388,7 @@ function splitWords(s: string): WordToken[] {
   return out;
 }
 
-/** Append a token's span to `out`, merging it into the previous range when the
- *  two touch — so `foo(` and `bar` produce one mark, not three. */
+/** Merges touching ranges, so `foo(` and `bar` produce one mark. */
 function pushRange(out: CharRange[], tok: WordToken): void {
   const end = tok.start + tok.text.length;
   const last = out[out.length - 1];
@@ -480,13 +399,10 @@ function pushRange(out: CharRange[], tok: WordToken): void {
   out.push({ start: tok.start, end });
 }
 
-/** Character ranges that differ between two versions of ONE line, or null when
- *  a per-word answer would not beat the row tint.
- *
- *  Null is returned when the lines share no non-blank token (the whole line IS
- *  the change) or when the change is scattered past `MAX_WORD_RUNS`. A null
- *  result is not a failure: the caller keeps the line-level tint and paints no
- *  word marks. */
+/**
+ * Ranges differing between two versions of one line, or null when per-word marks would not beat the row tint (no
+ * shared non-blank token, or more than `MAX_WORD_RUNS` changes). Null is not a failure.
+ */
 export function wordDiff(oldLine: string, newLine: string): WordDiff | null {
   if (oldLine === newLine || oldLine === "" || newLine === "") {
     return null;
@@ -532,12 +448,7 @@ export function wordDiff(oldLine: string, newLine: string): WordDiff | null {
     j++;
   }
 
-  // No shared ink means every token on both sides changed, so the marks would
-  // just restate the row tint. This also covers the whole-line rewrite: a
-  // matched token always leaves a gap in its side's ranges, so "one range
-  // spanning the entire line" cannot happen with matched ink — a separate gate
-  // for it was written, measured over 607,620 short line pairs, never fired
-  // once, and was deleted rather than left as a guard nothing can reach.
+  // No shared ink means every token changed; this also covers a whole-line rewrite (a matched token always leaves a gap).
   if (matchedInk === 0) {
     return null;
   }
@@ -547,13 +458,10 @@ export function wordDiff(oldLine: string, newLine: string): WordDiff | null {
   return { del, add };
 }
 
-/** Word-level marks for every modified line in a line diff, keyed by the line
- *  itself. A del and an add are one MODIFICATION when they sit in the same run
- *  of changed lines at the same offset within it; anything unpaired is a pure
- *  insert or delete and gets no marks.
- *
- *  Pairing by offset within a run rather than by adjacency is what survives the
- *  del/add interleaving `lineDiff` is free to emit. */
+/**
+ * Word marks for every modified line, keyed by line. A del and add pair when at the same offset within one changed
+ * run, which survives `lineDiff`'s del/add interleaving; unpaired lines get no marks.
+ */
 export function wordMarks(lines: readonly DiffLine[]): Map<DiffLine, CharRange[]> {
   const marks = new Map<DiffLine, CharRange[]>();
   let dels: DiffLine[] = [];
@@ -587,17 +495,10 @@ export function wordMarks(lines: readonly DiffLine[]): Map<DiffLine, CharRange[]
   return marks;
 }
 
-/** Window a diff to WHOLE HUNKS with surrounding context, capped on total rows.
- *
- *  This replaced `truncateChanged(diff, 3)`, whose unit was wrong rather than
- *  merely small: keeping the first three CHANGED LINES shows a 12-line rewrite
- *  as a quarter of itself, cut mid-thought. A hunk is the unit a reader thinks
- *  in, so the window keeps as many complete hunks as fit and says how many it
- *  dropped.
- *
- *  `context` lines of `ctx` are kept on each side of a hunk; runs longer than
- *  2×context collapse, with the elided middle counted. Returns the windowed
- *  lines plus the number of whole HUNKS omitted (0 when everything fit). */
+/**
+ * Window a diff to whole hunks with `context` lines each side, capped at `maxRows`. Context runs over 2×context
+ * collapse. Returns the lines and the number of whole hunks omitted.
+ */
 export function windowHunks(
   lines: DiffLine[],
   opts: { maxRows?: number; context?: number } = {},
@@ -605,7 +506,6 @@ export function windowHunks(
   const maxRows = opts.maxRows ?? 24;
   const context = opts.context ?? 2;
 
-  // Segment into runs, tagging each as a hunk (has a change) or context.
   const runs: { changed: boolean; lines: DiffLine[] }[] = [];
   for (const l of lines) {
     const changed = l.kind !== "ctx";
@@ -628,9 +528,7 @@ export function windowHunks(
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const run = runs[i]!;
     if (!run.changed) {
-      // Context adjoining a hunk is kept, up to `context` lines on the side that
-      // touches it; a long run between two hunks keeps both ends and elides the
-      // middle. A run touching no hunk on a side contributes nothing there.
+      // Context adjoining a hunk keeps up to `context` lines on the touching side; a run between hunks keeps both ends.
       const head = runs[i - 1]?.changed === true ? run.lines.slice(0, context) : [];
       const tail = runs[i + 1]?.changed === true ? run.lines.slice(-context) : [];
       if (head.length + tail.length >= run.lines.length) {
@@ -640,7 +538,7 @@ export function windowHunks(
       }
       continue;
     }
-    // A hunk goes in WHOLE or not at all — that is the point of the unit.
+    // A hunk goes in whole or not at all.
     if (out.length + run.lines.length > maxRows && kept > 0) {
       break;
     }

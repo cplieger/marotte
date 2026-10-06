@@ -8,15 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/steering"
 )
 
-// agentDoorFixture is the listing shared with internal/steering's
-// agentfiles_test.go, which holds the table stating what it MEANS. Both scans
-// here are checked against steering.DedupeAgentFiles' answer for it rather than
-// against restated expectations — three doors that each spell out the rule is the
-// arrangement this replaced, and it would rot the same way.
-//
-// The document scan is ENTRY-oriented and the entity scan is one row per agent
-// directory, but the file each picks is the same question, so that is what these
-// assert.
+// agentDoorFixture is the listing shared with internal/steering's agentfiles_test.go; both
+// scans are checked against steering.DedupeAgentFiles' answer rather than restated expectations.
 var agentDoorFixture = map[string]*fstest.MapFile{
 	"agents/.hidden.md":     {Data: []byte("# hidden\n")},
 	"agents/.md":            {Data: []byte("")},
@@ -28,8 +21,7 @@ var agentDoorFixture = map[string]*fstest.MapFile{
 	"agents/nested/keep.md": {Data: []byte("# inside a subdirectory\n")},
 }
 
-// ruleFor reads the fixture the way production does and returns the rule's answer,
-// so a door's expected file list is DERIVED rather than written down twice.
+// ruleFor returns the shared rule's answer for the fixture, so expected files are DERIVED.
 func ruleFor(t *testing.T, root fs.FS) []steering.AgentFile {
 	t.Helper()
 	entries, err := fs.ReadDir(root, "agents")
@@ -39,9 +31,8 @@ func ruleFor(t *testing.T, root fs.FS) []steering.AgentFile {
 	return steering.DedupeAgentFiles(entries)
 }
 
-// TestAgentScanDoorsAgreeWithTheSharedRule pins the consolidation itself: both
-// REST scans resolve one listing to the same files, and to the files the rule
-// names. A copy reintroduced in either door fails here.
+// TestAgentScanDoorsAgreeWithTheSharedRule pins that both REST scans resolve one listing to
+// the files the rule names.
 func TestAgentScanDoorsAgreeWithTheSharedRule(t *testing.T) {
 	root := fstest.MapFS(agentDoorFixture)
 	want := ruleFor(t, root)
@@ -68,8 +59,7 @@ func TestAgentScanDoorsAgreeWithTheSharedRule(t *testing.T) {
 	})
 
 	t.Run("document scan (kiro_docs)", func(t *testing.T) {
-		// A nil guard admits everything, which is what the MapFS tests want: this
-		// asserts the dedupe, not the provenance rules.
+		// A nil guard admits everything: this asserts the dedupe, not the provenance rules.
 		docs := scanDocsAgents(t.Context(), root, "ws/.kiro", nil).docs
 		if len(docs) != len(want) {
 			t.Fatalf("scanDocsAgents = %+v (len %d), want the rule's %+v (len %d)", docs, len(docs), want, len(want))
@@ -85,10 +75,8 @@ func TestAgentScanDoorsAgreeWithTheSharedRule(t *testing.T) {
 	})
 }
 
-// TestAgentScanDoorsSkipTheSameNonAgents states the negative half in the terms a
-// reader of the REST reply cares about: the entries the rule refuses appear in
-// NEITHER door's output, so a hidden file or a subdirectory cannot surface as a
-// row on one page and not the other.
+// TestAgentScanDoorsSkipTheSameNonAgents pins that entries the rule refuses appear in
+// neither door's output.
 func TestAgentScanDoorsSkipTheSameNonAgents(t *testing.T) {
 	root := fstest.MapFS(agentDoorFixture)
 	refused := []string{".hidden", "", "README", "nested", "reviewer.json"}
@@ -103,8 +91,7 @@ func TestAgentScanDoorsSkipTheSameNonAgents(t *testing.T) {
 			}
 		}
 		for i, d := range docs {
-			// reviewer.json is refused as a FILE (its pair's .md is chosen), so the
-			// path is what the assertion has to read for that case.
+			// reviewer.json is refused as a FILE (its .md pair wins), so the path is asserted.
 			if d.Path == "ws/.kiro/agents/"+name {
 				t.Errorf("scanDocsAgents[%d] listed %q, which the rule refuses", i, name)
 			}

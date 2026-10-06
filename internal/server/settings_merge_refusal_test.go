@@ -15,21 +15,11 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead is the claim that a
-// write which cannot read what is already there does not write at all.
-//
-// PATCH is the only method that reaches the write, and the case the file browser
-// reaches is covered: navigating it PATCHes fb_path, so the destructive sequence
-// needed no deliberate act from the user at all.
-//
-// If the read is reverted to answering "nothing is stored" for these files, every
-// case fails on the SECOND assertion rather than the first: the request answers
-// 200 and config.json comes back holding only the key the request carried, with
-// the other keys gone from disk. The byte comparison is what catches it — a keys
-// check alone would pass on a file the write left semantically equal.
+// TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead pins that a write which cannot
+// read the stored document writes nothing. The byte comparison catches a write that left
+// only the request's key on disk.
 func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
-	// Every key here is a real one a user can set, so the loss the refusal
-	// prevents is the loss the report describes rather than a synthetic one.
+	// Real keys a user can set.
 	const stored = `{"chat_retention_days":-1,"security_profile":"trusted","theme":"dark"}`
 
 	tests := []struct {
@@ -45,8 +35,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			method: http.MethodPatch,
 			seed: func(t *testing.T, path string) string {
 				t.Helper()
-				// One hand-edit away from the real thing: a trailing comma is the
-				// shape invariant 6 says the operator produces on this volume.
+				// A trailing comma: the hand-edit invariant 6 expects on this volume.
 				const broken = `{"chat_retention_days":-1,"theme":"dark",}`
 				if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
 					t.Fatalf("seed %s: %v", path, err)
@@ -71,8 +60,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			method: http.MethodPatch,
 			seed: func(t *testing.T, path string) string {
 				t.Helper()
-				// Valid JSON, so only the cap refuses it. Padding is trailing
-				// whitespace, which keeps the document parseable at any size.
+				// Valid JSON padded past the cap, so only the cap refuses it.
 				doc := append([]byte(stored), bytes.Repeat([]byte(" "), maxSettingsBytes+1-len(stored))...)
 				if err := os.WriteFile(path, doc, 0o600); err != nil {
 					t.Fatalf("seed %s: %v", path, err)
@@ -85,8 +73,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			method: http.MethodPatch,
 			seed: func(t *testing.T, path string) string {
 				t.Helper()
-				// os.Open succeeds on a directory and the read then fails, which is
-				// exactly the outcome the old code answered as "nothing stored".
+				// os.Open succeeds on a directory and the read then fails.
 				if err := os.Mkdir(path, 0o700); err != nil {
 					t.Fatalf("seed dir %s: %v", path, err)
 				}
@@ -123,9 +110,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("%s /api/settings = %d, want %d", tc.method, rec.Code, http.StatusInternalServerError)
 			}
-			// The body has to say the file was not overwritten, or the user's only
-			// signal is a failure that reads as "your change was lost" when their
-			// settings are the thing at stake.
+			// The body must say the file was not overwritten.
 			if body := rec.Body.String(); !bytes.Contains([]byte(body), []byte("not overwritten")) {
 				t.Errorf("refusal body = %s, want it to state the settings were not overwritten", body)
 			}
@@ -143,10 +128,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestSettingsWrite_StillMergesAReadableDocument is the control the refusals above
-// need: without it a handler that answered 500 unconditionally would pass every
-// case in that table. It also pins the merge itself — the keys the request does not
-// name survive, which is the behaviour the refusal exists to protect.
+// TestSettingsWrite_StillMergesAReadableDocument is the control: unnamed keys survive.
 func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, settings.Filename)
@@ -175,11 +157,8 @@ func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 	}
 }
 
-// TestHandleSettings_RefusesEveryMethodButGETAndPATCH is driven through
-// handleSettings rather than handleSettingsWrite, because the
-// refusal IS the method gate: calling the write helper would bypass the thing under
-// test. The stored document is compared afterwards, so a handler that answered 405
-// after already merging would fail on the second assertion.
+// TestHandleSettings_RefusesEveryMethodButGETAndPATCH drives handleSettings (the refusal IS
+// the method gate) and checks the stored document is untouched.
 func TestHandleSettings_RefusesEveryMethodButGETAndPATCH(t *testing.T) {
 	const stored = `{"chat_retention_days":-1,"security_profile":"unrestricted"}`
 
@@ -213,13 +192,7 @@ func TestHandleSettings_RefusesEveryMethodButGETAndPATCH(t *testing.T) {
 	}
 }
 
-// TestExistingSettingsForMerge_AbsentFileIsNotAFailure is the half of the contract
-// the refusals above must not swallow: a fresh volume has no config.json, and its
-// first settings write is the ordinary case rather than an error.
-//
-// It fails if the split is ever taken the other way — refusing everything that is
-// not a readable file — which would make a new install unable to save a setting at
-// all.
+// TestExistingSettingsForMerge_AbsentFileIsNotAFailure pins that a fresh volume can save.
 func TestExistingSettingsForMerge_AbsentFileIsNotAFailure(t *testing.T) {
 	got, err := readStoredSettings(filepath.Join(t.TempDir(), settings.Filename))
 	if err != nil {
@@ -230,19 +203,8 @@ func TestExistingSettingsForMerge_AbsentFileIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestExistingSettingsForMerge_DoesNotBlockOnAFIFO is the read side's own case.
-// os.Open on a FIFO blocks in open(2) with no context deadline to rescue it, so
-// one mkfifo at config.json strands a handler goroutine per GET. /config is a
-// granted browse mount and the agent has a shell there, so one mkfifo is the whole
-// attack. The write side's own version of this — where the wedge is the settings
-// LOCK rather than one goroutine — lives beside the primitive that holds it, in
-// internal/settings.
-//
-// Bounded rather than direct, because reverting the fix does not make this test
-// fail, it makes it HANG: os.Open on a FIFO with no writer waits forever and no
-// context deadline reaches it. The timer is what turns that into a reported
-// failure. The goroutine is left blocked on a revert, which is acceptable in a
-// test binary that is about to report a failure and exit.
+// TestExistingSettingsForMerge_DoesNotBlockOnAFIFO pins the FIFO refusal on the read side
+// (the agent has a shell in /config). Bounded by a timer: a revert HANGS rather than fails.
 func TestExistingSettingsForMerge_DoesNotBlockOnAFIFO(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, settings.Filename)
@@ -264,8 +226,7 @@ func TestExistingSettingsForMerge_DoesNotBlockOnAFIFO(t *testing.T) {
 		if got.err == nil {
 			t.Fatal("readStoredSettings over a FIFO returned a nil error, want a refusal")
 		}
-		// Named rather than any-error: the refusal has to come from the file being
-		// the wrong KIND, not from a read that happened to fail some other way.
+		// Named: the refusal must come from the file's KIND.
 		if !errors.Is(got.err, atomicfile.ErrNotRegular) {
 			t.Errorf("readStoredSettings over a FIFO = %v, want atomicfile.ErrNotRegular", got.err)
 		}

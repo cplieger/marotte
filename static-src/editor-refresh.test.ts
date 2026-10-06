@@ -13,6 +13,7 @@ interface FileRead {
   content?: string;
   content_hash?: string;
   error?: string;
+  read_only?: boolean;
 }
 interface ReadResult {
   ok: boolean;
@@ -477,5 +478,29 @@ describe("the document placeholder on the OPEN path", () => {
     activateFile(PATH);
 
     expect(armSkeleton).not.toHaveBeenCalled();
+  });
+});
+
+describe("a file the server marks read-only (a KAS tool output)", () => {
+  it("never enters conflict mode, however many markers its bytes carry", async () => {
+    apiGet.mockResolvedValue({ content: MARKED_OLD, content_hash: "h1", read_only: true });
+    activateFile(PATH);
+    await vi.waitFor(() => {
+      expect(fileStates.get(PATH)?.loaded).toBe(true);
+    });
+    const state = fileStates.get(PATH);
+    expect(state?.readOnly).toBe(true);
+    expect(state?.mode.value.kind).toBe("edit");
+  });
+
+  it("an ordinary file with the same bytes does enter conflict mode", async () => {
+    apiGet.mockResolvedValue({ content: MARKED_OLD, content_hash: "h1" });
+    activateFile(PATH);
+    await vi.waitFor(() => {
+      expect(fileStates.get(PATH)?.loaded).toBe(true);
+    });
+    const state = fileStates.get(PATH);
+    expect(state?.readOnly).toBe(false);
+    expect(state?.mode.value.kind).toBe("conflict");
   });
 });

@@ -1,13 +1,10 @@
-// Transport, client→server half: the command POST and the ids it mints. The
-// server→client half (the SSE stream, the digest, the version map) is `sse-adapter.ts`.
-//
-// Errors surface through send-state.ts. The send button is the single error
-// surface and stays clickable, so the next Send is the retry. A plain 409 busy
-// is a handshake the caller converts to a steer; a 409 carrying
-// `reason: "starting"` is a real failure it renders through the error face.
+// Transport, client→server half: the command POST and the ids it mints (the SSE half is
+// `sse-adapter.ts`). The send button is the single error surface and the next Send is the retry. A
+// plain 409 busy becomes a steer; a 409 with `reason: "starting"` is a real failure.
 
 import type { TabKind } from "./types.js";
 import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
+import { get } from "./store.js";
 import {
   registerCleanup,
   hasErrorString,
@@ -24,6 +21,7 @@ type CommandType =
   | "permission_response"
   | "elicitation_response"
   | "set_effort"
+  | "set_thinking"
   | "set_draft"
   | "set_mode"
   | "rewind_chat";
@@ -63,6 +61,7 @@ export type TypedCommand =
         request_id: number;
         option_id: string;
         file_decisions?: Record<string, boolean>;
+        rejection_reason?: string;
       };
     }
   | {
@@ -71,6 +70,8 @@ export type TypedCommand =
       payload: { request_id: number; action: string; content?: Record<string, unknown> };
     }
   | { type: "set_effort"; chat_id: string; payload: { level: string } }
+  // The effort slider's Off stop; a tier pick turns thinking back on.
+  | { type: "set_thinking"; chat_id: string; payload: { enabled: boolean } }
   // The composer text typed and not sent. An empty string is a real value: it
   // is how a sent or abandoned draft is cleared.
   | { type: "set_draft"; chat_id: string; payload: { text: string } }
@@ -82,6 +83,17 @@ export type TypedCommand =
       type: "steer";
       chat_id: string;
       payload: { text: string; message_id: string };
+    }
+  // A follow-up held for the end of the running turn (Queue mode). Attachments stay
+  // paths: the server reads them when the row is sent.
+  | {
+      type: "queue_prompt";
+      chat_id: string;
+      payload: {
+        text: string;
+        message_id: string;
+        attachments?: readonly { path: string; name: string }[];
+      };
     }
   | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
@@ -122,18 +134,14 @@ export interface SendResult {
   status: number;
   /** Server error message, if any. */
   error?: string;
-  /** Machine-readable failure class from the error envelope's additive
-   *  `reason` field (internal/command writeErr), so a caller branches on a
-   *  VALUE rather than on error prose. One reason exists today: "starting",
-   *  on the 409 prompt refusal whose admission holder cannot receive a steer
-   *  (a cold spawn, a shell command, a workflow step). */
+  /** Machine-readable failure class from the error envelope's `reason` (internal/command writeErr),
+   *  so callers branch on a VALUE. Today only "starting": a 409 whose admission holder cannot take a
+   *  steer. */
   reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
-  /** The success body, undecoded, and present only when the response parsed as
-   *  JSON. The creating commands need it: the response is the only place a caller
-   *  learns the chat id the server just minted. Undecoded on purpose — which wire
-   *  shape a command answers with is the action's business, not the transport's. */
+  /** The undecoded success body, when it parsed as JSON: the only place a creating command learns
+   *  its server-minted chat id. The wire shape is the action's business. */
   body?: unknown;
 }
 
@@ -155,10 +163,8 @@ function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
 }
 
-/** The chat a command is addressed to, or "" when it addresses none. "" is what
- *  the envelope carries for the creating commands, and what the failure notice on
- *  the other end of `BUS_COMMAND_FAILED` treats as workspace-wide — correct, since
- *  a failed create belongs to no chat. */
+/** The chat a command addresses, or "" (the creating commands): `BUS_COMMAND_FAILED`'s notice
+ *  treats "" as workspace-wide. */
 function chatIDOf(cmd: TypedCommand | Command): string {
   return "chat_id" in cmd ? (cmd.chat_id ?? "") : "";
 }
@@ -174,21 +180,15 @@ function newRequestID(): string {
   return out;
 }
 
-/** Generate a client-side user-message id. Shares entropy with
- *  `newRequestID()` but uses the `m-` prefix the server expects for
- *  user-generated message IDs. Use this everywhere a user message is
- *  about to be sent. */
+/** A client-side user-message id: `newRequestID()`'s entropy with the `m-` prefix the server
+ *  expects. Use it for every user message about to be sent. */
 export function newMessageID(): string {
   return newRequestID().replace("r-", "m-");
 }
 
-/** A correlation id for ONE create gesture, so every attempt resolves to the same
- *  chat; it has to survive a retry the user makes minutes later.
- *
- *  MINT IT AT THE DISPATCH SITE, never inside an action's `run()`: the framework
- *  re-invokes `run()` per attempt, so an id minted there is fresh every time and
- *  defeats its own purpose. The `op-` prefix keeps it inside the identifier shape
- *  the command boundary gates it with. */
+/** A correlation id for ONE create gesture, surviving a retry minutes later. MINT IT AT THE
+ *  DISPATCH SITE, never inside `run()`, which runs per attempt. `op-` keeps it in the identifier
+ *  shape the command boundary gates. */
 export function newOpID(): string {
   return newRequestID().replace("r-", "op-");
 }
@@ -210,11 +210,12 @@ function cancelInflight(): void {
 registerCleanup(cancelInflight);
 
 export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
-  // The framework threads an action's own key through every retry attempt, so
-  // honouring it here is what makes a retry dedupe; minting a fresh one would
-  // defeat the mechanism. A bare send() has none and gets a fresh one, which
-  // is right — two deliberate sends are two operations.
+  // The framework threads the action's key through every retry, so a retry dedupes; a bare send()
+  // gets a fresh one.
   const requestID = idempotencyKeyOf(cmd) ?? newRequestID();
+  const chatID = chatIDOf(cmd);
+  // Read before the round trip: the chat's row can be gone by the time it fails.
+  const chatName = chatID === "" ? "" : (get(chatID)?.name ?? "");
   const timeoutMs = opts?.timeoutMs ?? COMMAND_TIMEOUT_MS;
   const ctrl = new AbortController();
   inflight.add(ctrl);
@@ -237,7 +238,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
       signal: combined,
       body: JSON.stringify({
         type: cmd.type,
-        chat_id: chatIDOf(cmd),
+        chat_id: chatID,
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
       }),
@@ -274,7 +275,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
     // the send-error face rather than a toast.
     const reportSendState = opts?.reportSendState ?? true;
     if (r.status !== 409 && reportSendState) {
-      emitBus(BUS_COMMAND_FAILED, { chatID: chatIDOf(cmd), message: errMsg });
+      emitBus(BUS_COMMAND_FAILED, { chatID, chatName, message: errMsg });
     }
     return {
       ok: false,
@@ -298,7 +299,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
     }
     const reportSendState = opts?.reportSendState ?? true;
     if (reportSendState) {
-      emitBus(BUS_COMMAND_FAILED, { chatID: chatIDOf(cmd), message: msg });
+      emitBus(BUS_COMMAND_FAILED, { chatID, chatName, message: msg });
     }
     return { ok: false, status: 0, error: msg, code };
   } finally {

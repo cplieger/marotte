@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// kiroFSMsg builds one `_kiro/fs/*` request for the given method and path.
+// kiroFSMsg builds one `_kiro/fs/*` request for method and path.
 func kiroFSMsg(t *testing.T, id int64, method, path string) *marotte.RPCResponse {
 	t.Helper()
 	return &marotte.RPCResponse{
@@ -22,8 +22,6 @@ func kiroFSMsg(t *testing.T, id int64, method, path string) *marotte.RPCResponse
 		Params: mustJSON(t, map[string]any{"sessionId": "sess_x", "path": path}),
 	}
 }
-
-// --- stat ---
 
 func TestKiroFSStat(t *testing.T) {
 	work := t.TempDir()
@@ -63,10 +61,7 @@ func TestKiroFSStat(t *testing.T) {
 	}
 }
 
-// TestKiroFSStatWireShapeCarriesSize pins the field KAS's type guard demands.
-// isFSStatCapabilityResponse requires BOTH "type" and "size" to be PRESENT or it
-// throws "Invalid stat response" — even though KiroStatAdapter then returns only
-// {type} and nothing reads the size. Dropping it as unused breaks the call.
+// TestKiroFSStatWireShapeCarriesSize pins `size`: isFSStatCapabilityResponse throws without it.
 func TestKiroFSStatWireShapeCarriesSize(t *testing.T) {
 	data, err := json.Marshal(kiroStatBody{Type: fsTypeFile, Size: 0})
 	if err != nil {
@@ -84,9 +79,7 @@ func TestKiroFSStatWireShapeCarriesSize(t *testing.T) {
 }
 
 func TestKiroFSStatConfinesPath(t *testing.T) {
-	// The target must EXIST outside the work dir. A non-existent path (an
-	// ../../etc/passwd that ENOENTs) errors with or without confinement, so it
-	// would pass against a handler that had none — caught by red-check.
+	// The target must exist outside the work dir; an ENOENT path errors with or without confinement.
 	outside := t.TempDir()
 	target := filepath.Join(outside, "real.txt")
 	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
@@ -99,8 +92,6 @@ func TestKiroFSStatConfinesPath(t *testing.T) {
 		t.Error("err = nil for an existing path outside the work dir, want an error")
 	}
 }
-
-// --- read_directory ---
 
 func TestKiroFSReadDirectory(t *testing.T) {
 	work := t.TempDir()
@@ -135,13 +126,8 @@ func TestKiroFSReadDirectory(t *testing.T) {
 	}
 }
 
-// TestKiroFSReadDirectoryFiltersNothing pins the accepted residual of outsourcing
-// enforcement to KAS: its ignore evaluators judge the DIRECTORY a listing names,
-// not the names inside it, so a `.kiroignore`d file is still listed while its
-// contents stay unreadable. marotte adds no filter of its own — a second matcher
-// here would have to agree with KAS's gitignore semantics forever, and where it
-// disagreed the panel would describe a rule neither side applies. So the listing
-// is honest and the panel copy states the consequence.
+// TestKiroFSReadDirectoryFiltersNothing pins the accepted residual: KAS's ignore evaluators
+// judge the listed directory, not entry names, and marotte adds no matcher of its own.
 func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
 	work := t.TempDir()
 	for _, name := range []string{"keep.txt", ".env.dec", ".kiroignore"} {
@@ -164,9 +150,7 @@ func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
 	for _, e := range body.Entries {
 		got[e.Name] = true
 	}
-	// `.env.dec` is the worked example the panel copy uses, and `.kiroignore` is
-	// the always-sent floor: naming both is what makes a re-added client-side
-	// filter fail here rather than merely changing one row.
+	// `.env.dec` is the panel copy's example and `.kiroignore` the floor, so a re-added client filter fails here.
 	for _, name := range []string{"keep.txt", ".env.dec", ".kiroignore"} {
 		if !got[name] {
 			t.Errorf("%q is missing from the listing; marotte filters no entry, KAS does the enforcing", name)
@@ -174,9 +158,7 @@ func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
 	}
 }
 
-// TestKiroFSReadDirectoryMissingIsEmptyNotError matches KAS's NodeFileSystem,
-// which swallows ENOENT and returns []. Erroring instead would make a probe for
-// an optional directory look like a failure.
+// TestKiroFSReadDirectoryMissingIsEmptyNotError matches KAS's NodeFileSystem, which returns [] on ENOENT.
 func TestKiroFSReadDirectoryMissingIsEmptyNotError(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "no-such-dir"))
@@ -193,9 +175,7 @@ func TestKiroFSReadDirectoryMissingIsEmptyNotError(t *testing.T) {
 	}
 }
 
-// TestKiroFSReadDirectoryEmptyMarshalsAsArray pins the wire form. KAS's guard
-// only checks that the `entries` key exists, then calls .map on the value — a
-// null would throw inside the adapter.
+// TestKiroFSReadDirectoryEmptyMarshalsAsArray pins `[]`: KAS calls .map on `entries`.
 func TestKiroFSReadDirectoryEmptyMarshalsAsArray(t *testing.T) {
 	data, err := json.Marshal(kiroReadDirBody{Entries: []kiroDirEntry{}})
 	if err != nil {
@@ -205,8 +185,6 @@ func TestKiroFSReadDirectoryEmptyMarshalsAsArray(t *testing.T) {
 		t.Errorf("wire form = %s, want {\"entries\":[]}", data)
 	}
 }
-
-// --- delete ---
 
 func TestKiroFSDeleteFile(t *testing.T) {
 	work := t.TempDir()
@@ -225,9 +203,7 @@ func TestKiroFSDeleteFile(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteDirectoryRecurses mirrors KAS's NodeFileSystem (fs.rm with
-// recursive for a directory). This handler REPLACES that fallback, so diverging
-// would make the change a behaviour change rather than a confinement.
+// TestKiroFSDeleteDirectoryRecurses mirrors KAS's NodeFileSystem (fs.rm recursive).
 func TestKiroFSDeleteDirectoryRecurses(t *testing.T) {
 	work := t.TempDir()
 	dir := filepath.Join(work, "tree")
@@ -248,8 +224,7 @@ func TestKiroFSDeleteDirectoryRecurses(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteRefusesWorkDirRoot is the one refusal in the handler. No tool
-// means it (delete_file's arg is a targetFile) and it is unrecoverable.
+// TestKiroFSDeleteRefusesWorkDirRoot pins the handler's one refusal.
 func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "keep.txt"), []byte("x"), 0o600); err != nil {
@@ -258,10 +233,7 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	h, br := hubForFSTest(t, work)
 	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "."))
 	<-br.done
-	// Asserted against the SENTINEL, not merely "an error": with the guard
-	// removed this path reaches os.RemoveAll, which on Linux happens to refuse
-	// "." with EINVAL — so an outcome-only assertion passed while testing
-	// nothing. Caught by red-check.
+	// The sentinel, not any error: without the guard os.RemoveAll refuses "." with EINVAL anyway.
 	if !errors.Is(br.response.err, errRefusedWorkDirRoot) {
 		t.Fatalf("err = %v, want errRefusedWorkDirRoot", br.response.err)
 	}
@@ -270,12 +242,9 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteRefusesRelativeResolvedPath pins the absoluteness assertion.
-// The root comparison is only meaningful against an absolute path; a relative
-// one would slip past it and hand os.RemoveAll a target resolved against the
-// SERVER's cwd. Exercised through the helper rather than the handler because
-// resolveInsideWorkDir cannot currently produce one — the guard is there to keep
-// that true.
+// TestKiroFSDeleteRefusesRelativeResolvedPath pins the absoluteness assertion: a relative
+// path would resolve against the server's cwd. Through the helper, since
+// resolveInsideWorkDir cannot produce one today.
 func TestKiroFSDeleteRefusesRelativeResolvedPath(t *testing.T) {
 	if filepath.IsAbs("relative/path") {
 		t.Skip("platform treats the fixture as absolute")
@@ -303,10 +272,7 @@ func TestKiroFSDeleteConfinesPath(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteSuccessCarriesNoMessage pins the reply shape. KAS's
-// isFSDeleteCapabilityResponse accepts ANY object, and it THROWS a non-empty
-// `message` field as an Error — so a success that carried a status string would
-// read as a failure.
+// TestKiroFSDeleteSuccessCarriesNoMessage pins the reply: KAS throws a non-empty `message` as an error.
 func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "f"), []byte("x"), 0o600); err != nil {
@@ -324,12 +290,8 @@ func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
 	}
 }
 
-// TestKiroFSDeleteDoesNotStage pins the "no second gate" decision. KAS
-// checkpoints before its own delete and restores a rejected one by writing the
-// snapshot back through fs/write_text_file; a marotte gate here would intercept
-// that restore, ask the user to approve undoing their own rejection, and stall
-// KAS mid-restorePendingChanges. So the delete must land on disk synchronously
-// even with supervised mode on.
+// TestKiroFSDeleteDoesNotStage pins "no second gate": KAS restores a rejected delete through
+// fs/write_text_file, and a gate would intercept that restore.
 func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 	work := t.TempDir()
 	target := filepath.Join(work, "f")
@@ -352,8 +314,6 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 	}
 }
 
-// --- dispatch ---
-
 func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	cases := []struct {
@@ -365,8 +325,7 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroFSDelete, true},
 		{marotte.MethodFSRead, false},
 		{marotte.MethodFSWrite, false},
-		// The read/write rung marotte deliberately does NOT declare: claiming
-		// it here would silently move reads and writes off the staging path.
+		// Deliberately undeclared: the fs/{read,write}_text_file rung keeps every write guardrail.
 		{"_kiro/fs/read_file", false},
 		{"_kiro/fs/write_file", false},
 		{"", false},
@@ -381,16 +340,8 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	}
 }
 
-// TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises pins the
-// panic net's boundary, which is the half a recover is easy to get wrong.
-//
-// The net exists because these three verbs run on their own goroutine: a panic
-// there would take the process down, and the request it was answering would never
-// be answered, wedging the turn — so it recovers and sends an error instead. But
-// that recovery ALSO responds, and the ordinary path has already responded. A net
-// that fires on a clean return therefore overwrites a good reply with "internal
-// error" on every stat, readDirectory and delete, and logs a panic that never
-// happened.
+// TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises pins the panic net's
+// boundary: a net firing on a clean return overwrites a good reply with "internal error".
 func TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises(t *testing.T) {
 	logs := captureLogs(t)
 	work := t.TempDir()
@@ -407,8 +358,7 @@ func TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises(t *test
 	case <-time.After(2 * time.Second):
 		t.Fatal("the stat never answered")
 	}
-	// Drain the handler's goroutine so the deferred net has certainly run: it fires
-	// AFTER the response, so asserting before the drain would race it.
+	// Drain the goroutine: the deferred net fires after the response.
 	shutdownHub(t, h)
 
 	br.respMu.Lock()

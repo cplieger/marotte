@@ -1,24 +1,8 @@
-// ---------------------------------------------------------------------------
-// Banner stack: persistent, acknowledgeable conditions above the transcript.
-//
-// Three producers: the runtime-health pair (app-global, GLOBAL_BANNER, re-asserted
-// by a poller on every transport gap) and open_external_url (any chat, deferred
-// until that chat is active). Each banner is keyed on (chat_id, code), so a
-// re-assert replaces in place rather than duplicating — the property a toast has no
-// equivalent for, and the reason these three did not fold into it.
-//
-// Banners are per-device and auto-clear when the underlying condition resolves.
-// The DISMISSALS are per-device too, keyed per chat in localStorage — a phone
-// dismissing a banner must not silence the desktop, which is web-terminal's rule
-// verbatim: an acknowledgement is the viewer's. They briefly lived in the
-// server-owned arrangement as a flat `dismissed_banners` list, and that shared
-// them.
-//
-// State is a createCollection<BannerEntry>; the stack is rendered by a single
-// bindList over a computed active-chat view, so add / remove / chat-switch all
-// flow through ONE reactive render source (no direct DOM mutation that could
-// desync the reconcile view).
-// ---------------------------------------------------------------------------
+// Banner stack: persistent, acknowledgeable conditions above the transcript. Keyed on
+// (chat_id, code), so a re-assert replaces in place (what a toast cannot do). Banners and
+// their DISMISSALS are per device (dismissals per chat in localStorage): an
+// acknowledgement is the viewer's. One bindList over a computed active-chat view renders
+// every add, remove and chat switch.
 
 import { $ } from "./dom.js";
 import { activeSession } from "./store.js";
@@ -31,20 +15,12 @@ import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
 
-/** Optional clickable affordance rendered inside a banner. Two shapes, and the
- *  distinction is not cosmetic:
- *
- *   - `href` is an EXTERNAL navigation (the open_external_url "Open sign-in
- *     page" affordance). The URL is server-supplied and untrusted, so it goes
- *     through isSafeURL and only http/https renders; it opens in a new tab.
- *   - `onClick` is an IN-APP jump (a deep link to a Settings control). It
- *     renders a button and carries no URL at all, which is the point: a relative
- *     path like `/settings/permissions?highlight=x` throws inside isSafeURL's
- *     `new URL()` and would be silently dropped, and laundering an internal
- *     navigation through the guard that exists for untrusted URLs — then opening
- *     it in a new tab — is the wrong shape for jumping across your own app.
- *
- *  Exactly one of the two is used; `onClick` wins if both are set. */
+/**
+ * Optional clickable affordance inside a banner. `href` is an EXTERNAL navigation: the
+ * server-supplied URL passes isSafeURL (http/https only) and opens in a new tab. `onClick`
+ * is an IN-APP jump, a button with no URL, since a relative path would fail isSafeURL.
+ * `onClick` wins if both are set.
+ */
 interface BannerLink {
   readonly label: string;
   readonly href?: string;
@@ -62,17 +38,14 @@ interface BannerEntry {
 
 const banners = createCollection<BannerEntry>((e) => bannerKey(e.chatID, e.code));
 
-/** Sentinel chatID for app-global banners: visible on EVERY chat (and
- *  on the empty no-chat state), used for conditions that aren't scoped
- *  to one conversation — e.g. the degraded-runtime banner when
- *  kiro-cli is unavailable. Global banners clear via
- *  `clearBannerCodes(GLOBAL_BANNER, [...])`, never by chat switches. */
+/**
+ * Sentinel chatID for app-global banners, visible on EVERY chat and the empty state.
+ * Cleared via `clearBannerCodes(GLOBAL_BANNER, [...])`, never by chat switches.
+ */
 export const GLOBAL_BANNER = "*";
 
-// Visible banners = those for the active chat, plus app-global ones.
-// Tracks the collection structure + activeSession (so a chat switch
-// re-renders) and stays shallow-equal so a no-op recompute doesn't
-// reconcile.
+// Visible banners: the active chat's plus the app-global ones, shallow-equal so a no-op
+// recompute does not reconcile.
 const visibleIds = computed<readonly string[]>(
   () => {
     const activeID = activeSession.value?.id ?? "";
@@ -86,11 +59,10 @@ const visibleIds = computed<readonly string[]>(
 
 let bound = false;
 
-/** Mount + bind the banner stack. The bindList renders reactively from the
- *  collection + activeSession, so add / remove / chat-switch all re-render
- *  automatically; this is idempotent (the `bound` flag guards against
- *  double-binding) and is called both internally by `showBanner` and from the
- *  chat-switch call site in chat.ts. */
+/**
+ * Mount and bind the banner stack; idempotent (`bound`), called by `showBanner` and from
+ * chat.ts's chat-switch site.
+ */
 export function ensureBound(): void {
   if (bound) {
     return;
@@ -98,9 +70,8 @@ export function ensureBound(): void {
   bound = true;
   const container = $.bannerStack;
   container.setAttribute("aria-label", "Notifications");
-  // The stack container is the SINGLE live region for banners; individual
-  // banner nodes carry no role/aria-live (see showBanner) so an added banner
-  // announces exactly once.
+  // The container is the SINGLE live region; banner nodes carry no role/aria-live, so each
+  // announces once.
   container.setAttribute("aria-live", "polite");
   // Reuse the entry-owned element so banner identity (and any ongoing
   // transitions / focus) persists across re-renders.
@@ -111,17 +82,12 @@ export function ensureBound(): void {
   );
 }
 
-/** The COLLECTION key for one banner. No longer a localStorage key: the
- *  dismissals moved to a per-chat map, so the only composite left is the in-memory
- *  one the reactive collection is keyed by.
- *
- *  Still built with keyenc `join` rather than a template literal, and that is not
- *  vestigial: `clearBannersForChat` scans these keys by chat prefix, so a code
- *  containing the separator could otherwise let one chat's entry read as another's.
- *  It is byte-identical to `${chatID}:${code}` for every key this app produces — a
- *  chat id is `[A-Za-z0-9_-]` (ids.ValidChatID, so no ":" and no "\\") and a code
- *  is a call-site literal from the same class — which is what makes that scan
- *  correct today; the join is what keeps it correct if either field ever loosens. */
+/**
+ * The COLLECTION key for one banner, built with keyenc `join` because
+ * `clearBannersForChat` scans by chat prefix: it keeps a separator-bearing code from
+ * reading as another chat's. Byte-identical to `${chatID}:${code}` for today's ids
+ * (ids.ValidChatID) and call-site codes.
+ */
 function bannerKey(chatID: string, code: string): string {
   return join(chatID, code);
 }
@@ -170,19 +136,12 @@ function clearDismiss(chatID: string, code: string): void {
   }
 }
 
-/** Build the banner's affordance: a button for an in-app jump, an anchor for a
- *  safe external URL, or null when neither is available (an unsafe href is
- *  dropped rather than rendered inert).
- *
- *  BOTH FLAVOURS CARRY `btn-small`, THE APP'S SHARED BUTTON, and `.banner-link` is
- *  layout only. That is what every other banner already does: the
- *  `.inline-install-banner` producer is `btn-small`, and `elicitation.ts`'s
- *  external-URL card is the precedent for
- *  the ANCHOR flavour (`<a class="elicitation-url btn-small …">`). It is also what
- *  the class was missing: this rule skinned an underlined text link, so when the
- *  `onClick` branch was added it emitted a `<button>` nothing reset, and all three
- *  of its live producers rendered native UA chrome with `padding: 0` (02-reset.css's
- *  universal `*` rule beating the UA sheet's own button padding). */
+/**
+ * Build the banner's affordance: a button for an in-app jump, an anchor for a safe
+ * external URL, or null (an unsafe href is dropped). Both carry `btn-small`, the shared
+ * button, and `.banner-link` is layout only: 02-reset.css's `* { padding: 0 }` would
+ * otherwise strip a button's padding.
+ */
 function buildBannerLink(link: BannerLink): HTMLElement | null {
   if (link.onClick !== undefined) {
     const btn = el("button", { type: "button", className: "btn-small banner-link" }, link.label);
@@ -220,26 +179,12 @@ function updateBannerLink(node: HTMLDivElement, link: BannerLink): void {
   }
 }
 
-/** One glyph per severity, and they are CHARACTERS on purpose.
- *
- *  These used to mirror a settled-outcome character table in `tool-card.ts`, so a
- *  reader who had learned the transcript's shapes read a banner with no second
- *  lesson. That table is gone: the transcript's outcome vocabulary is SVG
- *  road-sign silhouettes now (`icons.ts` `outcomeIcon`), written into a row's own
- *  glyph slot. A banner has no such slot — it is a text notice, and each glyph is
- *  a restatement for the eye beside a message that already carries the meaning in
- *  words — so it keeps characters rather than borrowing marks built for a 14px
- *  icon box. What survives from the old rule is the part that mattered: the three
- *  are distinct in SHAPE, so a level is never readable by hue alone (WCAG 1.4.1).
- *
- *  U+2139 INFORMATION SOURCE for `info`: the conventional glyph for the meaning,
- *  distinct from both the cross and the triangle, and it carries text
- *  presentation by default, so it renders in the banner's own colour rather than
- *  as an emoji that would ignore it.
- *
- *  This is deliberately NOT a call to `applyOutcome`: that function requires a
- *  `.tool-icon` child and overwrites `aria-label`, which would clobber the
- *  banner's accessible text. */
+/**
+ * One glyph per severity, as CHARACTERS: a banner is a text notice with no icon slot, and
+ * the three differ in SHAPE so a level is never hue-only (WCAG 1.4.1). U+2139 for `info`
+ * has text presentation, so it takes the banner's colour. Not `applyOutcome`, which
+ * requires a `.tool-icon` and overwrites `aria-label`.
+ */
 const LEVEL_GLYPH: Readonly<Record<BannerLevel, string>> = {
   error: "\u2717",
   warning: "\u26A0",
@@ -273,24 +218,15 @@ export function showBanner(
     return;
   }
   const msg = el("span", { className: "banner-msg" }, message);
-  // The SEVERITY's non-colour channel. Without it the level lived in exactly two
-  // places, `border-left-color` and `color`, both of them colour — WCAG 1.4.1,
-  // the same failure a bare coloured dot is. The border was also the only channel
-  // that survived `forced-colors: active` (a background-color is flattened there,
-  // a border still renders) and `40-a11y.css`'s forced-colors block does not cover
-  // banners, so the shape had to land before the border could go.
-  //
-  // aria-hidden because it is a restatement for the eye: the message text is the
-  // whole accessible content, announced once by the stack's own live region.
+  // The severity's non-colour channel (WCAG 1.4.1); 40-a11y.css's forced-colors block does
+  // not cover banners. aria-hidden: the stack's live region announces the message text.
   const glyph = el(
     "span",
     { className: "banner-glyph", "aria-hidden": "true" },
     LEVEL_GLYPH[level],
   );
-  // No per-banner role/aria-live: the stack container (ensureBound) is the single
-  // aria-live="polite" region, so individual banners are NOT separately live —
-  // nesting a role="alert"/"status" child inside a live region double-announces
-  // (or announces at a conflicting politeness). Same decoupling toast.ts uses.
+  // No per-banner role/aria-live: a live child inside the live container double-announces.
+  // Same decoupling as toast.ts.
   const node = el(
     "div",
     {
@@ -306,15 +242,9 @@ export function showBanner(
     }
   }
   if (dismissible) {
-    // `icon-btn` plus the registry's own close mark, which between them leave NOTHING
-    // for a local rule: 13-messages.css carries no `.banner-dismiss` skin at all. The
-    // mark is an SVG rather than a `\u00d7` character because a text node's LINE BOX is
-    // what `align-items` centres, so the ink lands off-centre by a font-dependent
-    // amount and every character site then re-adds its own `font-size`/`line-height`
-    // to compensate (search-shell.ts states the same rule; close-mark.test.ts guards
-    // it). The CLASS survives with no rule behind it because two readers address it:
-    // `updateBannerLink` inserts the affordance before it, and banner-stack.test.ts
-    // clicks it.
+    // `icon-btn` plus the registry's close mark leave nothing for a local rule. An SVG, not
+    // `\u00d7`: `align-items` centres a text node's line box, not its ink (close-mark.test.ts).
+    // The class stays for `updateBannerLink` and the tests.
     const btn = el(
       "button",
       { type: "button", className: "icon-btn banner-dismiss", "aria-label": "Dismiss" },
@@ -346,26 +276,15 @@ export function clearBannerCodes(chatID: string, codes: string[]): void {
   }
 }
 
-/** Drop every in-memory banner for a chat that no longer exists. Called from the
- *  chat_deleted bus handler so orphan BannerEntry objects (and the DOM nodes they
- *  own) don't accumulate over a long session.
- *
- *  It no longer prunes the persisted DISMISSALS, and that half is gone rather than
- *  relocated: it existed only because the state was one global list where an entry
- *  per deleted chat accumulated forever. The dismissals are keyed per chat now,
- *  bounded by chat count with oldest-first eviction (per-chat-store.ts), so nothing
- *  has to be told a chat is gone — and a chat CAN go without this being called at
- *  all, since retention purges one with no client involved. */
+/**
+ * Drop every in-memory banner for a deleted chat (the chat_deleted bus handler), so
+ * orphan entries and their nodes do not accumulate. Dismissals are bounded per chat by
+ * per-chat-store.ts.
+ */
 export function clearBannersForChat(chatID: string): void {
-  // Prefix scan rather than a keyenc call: the library has no "prefix of a
-  // key" primitive (it does not export its escaper), so the separator is
-  // written out here. It stays correct because a chat id contains neither
-  // reserved character (ids.ValidChatID: [A-Za-z0-9_-]), so `join` emits it
-  // verbatim and `${chatID}:` is exactly the first component of every key for
-  // this chat. The trailing ":" is what keeps the scan from over-matching —
-  // chat "abc" must not clear chat "abcd" (pinned by a test in
-  // banner-stack.test.ts). If chat ids ever admit ":" or "\\", this scan is
-  // the site that breaks and must switch to splitting each key instead.
+  // keyenc has no prefix primitive, so the separator is written out. Correct because chat
+  // ids contain neither reserved character (ids.ValidChatID); the trailing ":" keeps "abc"
+  // from clearing "abcd". If ids ever admit ":" or "\\", split each key instead.
   const prefix = `${chatID}:`;
   // bindList detaches the removed entries' elements reactively.
   for (const key of banners.ids.peek()) {
@@ -374,7 +293,3 @@ export function clearBannersForChat(chatID: string): void {
     }
   }
 }
-
-// There is no pruneStaleDismissals. It capped ONE flat array of `chat:code` keys
-// at 200 entries, which is the bound a global list needs; the per-chat store owns
-// the bound now and applies it per chat with oldest-first eviction.

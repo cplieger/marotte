@@ -71,22 +71,24 @@ func (s *Store) Get(_ context.Context, id ServerID) *Server {
 func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	now := time.Now().UnixMilli()
 	rec := &Server{
-		ID:                newID(),
-		Transport:         in.Transport,
-		Name:              strings.TrimSpace(in.Name),
-		Command:           in.Command,
-		Args:              append([]string(nil), in.Args...),
-		Env:               copyPairs(in.Env),
-		URL:               in.URL,
-		Headers:           copyPairs(in.Headers),
-		DisabledTools:     append([]string(nil), in.DisabledTools...),
-		AutoApprove:       append([]string(nil), in.AutoApprove...),
-		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
-		OAuthClientSecret: strings.TrimSpace(in.OAuthClientSecret),
-		Prewarm:           in.Prewarm,
-		Enabled:           in.Enabled,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                     newID(),
+		Transport:              in.Transport,
+		Name:                   strings.TrimSpace(in.Name),
+		Command:                in.Command,
+		Args:                   append([]string(nil), in.Args...),
+		Env:                    copyPairs(in.Env),
+		URL:                    in.URL,
+		Headers:                copyPairs(in.Headers),
+		DisabledTools:          append([]string(nil), in.DisabledTools...),
+		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
+		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
+		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		Prewarm:                in.Prewarm,
+		Enabled:                in.Enabled,
+		WaitForReady:           in.WaitForReady,
+		TimeoutMS:              in.TimeoutMS,
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 	if err := Validate(rec); err != nil {
 		return nil, err
@@ -141,15 +143,9 @@ type ImportResult struct {
 	Outcome ImportOutcome `json:"outcome"`
 }
 
-// ImportServers creates every server of one pasted block, or none of them.
-//
-// ALL-OR-NOTHING: the block is one thing the user copied out of one
-// README, so installing three of five and reporting the other two
-// leaves them diffing the UI against the document.
-//
-// A name already configured with the SAME spec is `unchanged`. A name
-// configured with a DIFFERENT spec fails the paste, because the
-// alternative is a POST that silently overwrites.
+// ImportServers creates every server of one pasted block, or none: the block is one README's worth.
+// A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
+// than silently overwriting.
 func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult, error) {
 	if len(in) == 0 {
 		return nil, errors.New("no servers to connect")
@@ -223,7 +219,6 @@ func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 	rec.Env = copyPairs(sv.Env)
 	rec.Headers = copyPairs(sv.Headers)
 	rec.DisabledTools = append([]string(nil), sv.DisabledTools...)
-	rec.AutoApprove = append([]string(nil), sv.AutoApprove...)
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.servers = append(s.servers, &rec)
@@ -258,18 +253,18 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 		Env:       mergeSecrets(in.Env, existing.Env),
 		URL:       in.URL,
 		Headers:   mergeSecrets(in.Headers, existing.Headers),
-		// Both list fields go through preserveNilSlice: an omitted list means
-		// "unchanged", not "empty". DisabledTools used to take a raw copy
-		// while AutoApprove preserved, so any PUT that left disabled_tools
-		// out silently re-enabled every tool the user had turned off.
-		DisabledTools:     preserveNilSlice(in.DisabledTools, existing.DisabledTools),
-		AutoApprove:       preserveNilSlice(in.AutoApprove, existing.AutoApprove),
-		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
-		OAuthClientSecret: mergeSecret(strings.TrimSpace(in.OAuthClientSecret), existing.OAuthClientSecret),
-		Prewarm:           in.Prewarm,
-		Enabled:           in.Enabled,
-		CreatedAt:         existing.CreatedAt,
-		UpdatedAt:         time.Now().UnixMilli(),
+		// An omitted list means "unchanged", not "empty": the edit modal's PUT
+		// leaves disabled_tools out.
+		DisabledTools:          preserveNilSlice(in.DisabledTools, existing.DisabledTools),
+		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
+		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
+		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		Prewarm:                in.Prewarm,
+		Enabled:                in.Enabled,
+		WaitForReady:           in.WaitForReady,
+		TimeoutMS:              in.TimeoutMS,
+		CreatedAt:              existing.CreatedAt,
+		UpdatedAt:              time.Now().UnixMilli(),
 	}
 	// Validate runs under s.mu because rec.Env and rec.Headers were just
 	// resolved against `existing` via mergeSecrets, which only makes

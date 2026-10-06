@@ -1,21 +1,8 @@
-// ---------------------------------------------------------------------------
-// A manual page refresh must not lose the server's connect hook, and must not
-// reopen chat tabs the user closed.
-//
-// Both defects came out of boot ORDERING. The stream is opened synchronously in
-// the adapter's init, and the server answers immediately with its connect hook —
-// the handshake and the two aggregate snapshots (every unanswered ask, every
-// retained waiting status). Those are sent once per connection and never
-// re-broadcast. The chat store is empty until GET /api/chats resolves several
-// awaits later, and every consumer of a chat-scoped frame correctly bails when it
-// cannot find the chat it names, so on a refresh the whole hook was dropped:
-// every tab dot read `idle` and the composer offered Send over a live turn.
-//
-// The library's own hold is for revalidation and does not replace this gate:
-// starting the stream only after hydration would lose every frame published
-// between the chat-list response and the stream open, because a fresh hello has
-// no replay.
-// ---------------------------------------------------------------------------
+// A manual refresh must not lose the server's connect hook (handshake plus the asks and
+// waiting-status snapshots, sent once per connection) or reopen tabs the user closed. The
+// stream opens before GET /api/chats resolves, and every chat-scoped consumer bails on an
+// unknown chat, so the hook must be held until hydration. Opening the stream after
+// hydration instead would lose frames: a fresh hello has no replay.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,11 +19,8 @@ vi.mock("./store-load.js", () => ({
   chatListLoaded: vi.fn(() => false),
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: vi.fn() }));
-// Every name any module in this graph imports has to exist here: Browser Mode links ESM
-// for real rather than reading properties off a namespace object, so a partial factory
-// fails the whole file at COLLECTION. Each reader answers the EMPTY value for its type —
-// one claiming a live run would make a frame-ordering assertion pass for a reason
-// production did not supply.
+// Browser Mode links ESM for real, so every imported name must exist. Each reader answers
+// the EMPTY value, so no assertion passes on a live run production did not supply.
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: vi.fn(),
   // The adapter's `run_turn` arm asks past what this client holds, so the name has to exist
@@ -154,9 +138,8 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
   });
 
   it("releases what it held if hydration never reports in", async () => {
-    // Fake timers that still advance with the clock: the gate's watchdog is armed at
-    // init and has to be jumpable, while the stream's bytes still need real ticks to
-    // cross the reader.
+    // Fake timers that advance with the clock: the watchdog must be jumpable, the stream needs
+    // real ticks.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     boot();
     const conn = await opened();
@@ -164,9 +147,7 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     await settle();
     expect(seen).toEqual([]);
 
-    // The gate is an ordering aid, not a correctness requirement: a hydration that
-    // never lands (an auth bounce, a dead /api/chats) must not wedge the stream,
-    // because the store's own missing-session guards still hold under it.
+    // The gate is an ordering aid: a hydration that never lands must not wedge the stream.
     vi.advanceTimersByTime(25_000);
     expect(seen).toEqual(["pending_snapshot"]);
   });

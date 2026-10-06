@@ -98,8 +98,7 @@ func TestLineTracker_Get_UnknownFile(t *testing.T) {
 	}
 }
 
-// TestFileHeap_Less verifies the heap orders entries by ascending
-// lastTurn and that equal turns compare as not-less (strict <).
+// TestFileHeap_Less pins ascending lastTurn order with equal turns not less.
 func TestFileHeap_Less(t *testing.T) {
 	h := fileHeap{
 		{path: "a", lastTurn: 1},
@@ -117,8 +116,7 @@ func TestFileHeap_Less(t *testing.T) {
 	}
 }
 
-// TestFileHeap_Pop verifies Pop removes the last entry, tombstones its
-// heap index to -1, and shrinks the heap by one.
+// TestFileHeap_Pop pins that Pop removes the last entry, sets its index to -1 and shrinks the heap.
 func TestFileHeap_Pop(t *testing.T) {
 	e0 := &fileHeapEntry{path: "a", lastTurn: 1, index: 0}
 	e1 := &fileHeapEntry{path: "b", lastTurn: 2, index: 1}
@@ -138,9 +136,8 @@ func TestFileHeap_Pop(t *testing.T) {
 	}
 }
 
-// TestLineTracker_RecordFromDiffs_LineCounts verifies the recorded range spans
-// the whole new text when there is no old text to diff against — a file
-// creation really did change every line — with and without a trailing newline.
+// TestLineTracker_RecordFromDiffs_LineCounts pins that with no old text the range spans the whole new text, with or without
+// a trailing newline.
 func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -169,9 +166,7 @@ func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 	}
 }
 
-// TestLineTracker_RecordFromDiffs_OneLineEdit is the editor gutter's half of the
-// whole-file-diff bug: with KAS's whole-file NewText the tracker used to record
-// 1..300 for a one-line edit, so the gutter painted an accent dot on every line.
+// TestLineTracker_RecordFromDiffs_OneLineEdit pins that whole-file NewText once recorded 1..300 for a one-line edit.
 func TestLineTracker_RecordFromDiffs_OneLineEdit(t *testing.T) {
 	old := bigFile(300)
 	lt := NewLineTracker()
@@ -187,8 +182,7 @@ func TestLineTracker_RecordFromDiffs_OneLineEdit(t *testing.T) {
 	}
 }
 
-// TestLineTracker_RecordFromDiffs_NoOpWrite pins that a write which changed
-// nothing marks nothing: there is no modified line to paint.
+// TestLineTracker_RecordFromDiffs_NoOpWrite pins that a write that changed nothing marks nothing.
 func TestLineTracker_RecordFromDiffs_NoOpWrite(t *testing.T) {
 	same := "a\nb\nc\n"
 	lt := NewLineTracker()

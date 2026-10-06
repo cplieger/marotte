@@ -1,35 +1,7 @@
-// The document-oriented `.kiro` inventory behind `GET /api/workspace/kiro-docs`.
-//
-// # Why this is a second endpoint rather than a widened first one
-//
-// `/api/workspace/kiro-config` stays exactly as it is. It is ENTITY-oriented —
-// one row per skill DIRECTORY, agents de-duplicated across their `.json`/`.md`
-// pair — and `role-picker.ts` depends on that shape to seed the mode picker with
-// workspace agent names before a session exists. This endpoint is
-// DOCUMENT-oriented: one row per file, with the front-matter that makes a row
-// legible. The two answer different questions over the same tree, and reusing
-// one route for both would have meant a shape flag.
-//
-// # Scope is per category, deliberately narrower than a glob
-//
-// Each category names its own root. That is stricter than `.kiro/**/*.md`, which
-// would also match `.kiro/README.md` — a file no category claims, which
-// therefore gets no row. Markdown anywhere ELSE is ignored: no repo README, no
-// CONTRIBUTING, no docs/. "Show me all the project docs" is a plausible future
-// request and it is a DIFFERENT page; this one is the agent's own configuration
-// surface, and mixing repo documentation in would destroy that meaning.
-//
-// A per-repo `.kiro/` DOES count, matching the existing scan (workspace root
-// plus one level of subdirectory).
-//
-// # Caps and caching
-//
-// The old caps (20 steering / 20 skills / 10 agents per tree) cannot serve a page
-// that promises the whole inventory — this workspace alone holds ~216 documents.
-// So the caps here are per category and set above any real corpus, with a total
-// ceiling that still bounds a hostile repo. Reads are capped at the shared
-// steering.FrontMatterReadCap, and the whole scan is cached behind a
-// directory-mtime signature so front-matter parsing is not repeated per request.
+// The document-oriented `.kiro` inventory behind GET /api/workspace/kiro-docs: one row per
+// file with its front-matter. /api/workspace/kiro-config stays ENTITY-oriented because
+// role-picker.ts depends on that shape. Each category names its own root, so markdown no
+// category claims gets no row.
 
 package server
 
@@ -55,19 +27,18 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// Document categories, matching the page's sub-tabs. Wire values; the client
-// keys its tabs off them.
+// Document categories, matching the page's sub-tabs. Wire values the client keys tabs off.
 const (
 	catSteering = "steering"
 	catSkill    = "skill"
 	catAgent    = "agent"
 	catSpec     = "spec"
 	catHook     = "hook"
+	catPrompt   = "prompt"
 )
 
-// Per-category and overall bounds. Set above any plausible real corpus (~216
-// documents in this workspace) so the page shows everything, while still
-// refusing to enumerate an unbounded tree.
+// Per-category and overall bounds, set above any real corpus while still refusing an
+// unbounded tree.
 const (
 	maxDocsPerCategory = 500
 	maxDocsTotal       = 2000
@@ -76,18 +47,11 @@ const (
 	maxSpecWalkDepth = 3
 )
 
-// KiroDoc is one row on the configuration browser.
-//
-// Fields are per-category and mostly omitempty: a steering row carries an
-// inclusion and no model, an agent row the reverse, a spec row neither. The
-// client shapes each tab's columns; the server does not pretend they are
-// uniform.
+// KiroDoc is one row on the configuration browser. Fields are per-category and mostly
+// omitempty; the client shapes each tab's columns.
 type KiroDoc struct {
 	Category string `json:"category"`
-	// Name is the row label: front-matter `name`, else the first H1, else the
-	// basename. The universal fallback chain — 11 of 27 skill markdown files
-	// carry no front-matter at all (only `*/SKILL.md` is a manifest; the rest
-	// is reference material), so this is not a spec special case.
+	// Name is the row label: front-matter `name`, else the first H1, else the basename.
 	Name string `json:"name"`
 	Path string `json:"path"`
 	// Group is the parent label for a nested category: a spec's feature
@@ -107,40 +71,13 @@ type KiroDoc struct {
 	Tools            []string `json:"tools,omitempty"`
 	SteeringOverride bool     `json:"steering_override,omitempty"`
 
-	// ReadOnly says this row is not writable, so the page must render it without
-	// the edit or delete affordance.
-	//
-	// This is the row's PROVENANCE channel (D65), and it is deliberately a single
-	// asserted bit rather than a four-valued source enum. Crew's aim / kiro-user /
-	// kiro-workspace / package vocabulary does not map onto this endpoint: kiroRoots
-	// enumerates the workspace root's `.kiro` plus one level of `<repo>/.kiro` and
-	// nothing else — no global tree, no user tree, no package tree, no shipped
-	// read-only set — so every row it emits is workspace content and a source enum
-	// would have one inhabited value.
-	//
-	// NOTHING SETS IT TODAY, and that is the correction rather than an oversight.
-	// D67a set it for any entry reached through a symlink, on the premise that such
-	// a save fails with ELOOP; the premise was false (see docVerdict in
-	// kiro_docs_guard.go — the write resolves the link first and O_NOFOLLOW guards
-	// the canonical target), so the app has no writability source yet. The field
-	// stays because it is the right shape for one and the client already honours it;
-	// what went is the wrong derivation.
-	//
-	// `omitempty`, so absent means writable and read-only is asserted explicitly.
-	// Same default direction as marotte.Origin's adaptOrigin (mcp-state.ts), and for
-	// the same reason: a read-only row must only ever be produced by the server
-	// saying so, never by a field failing to arrive.
+	// ReadOnly says this row is not writable, so it renders without edit or delete. Nothing
+	// sets it today: no writability source exists yet. omitempty, so read-only is only ever
+	// asserted by the server, never produced by a field failing to arrive.
 	ReadOnly bool `json:"read_only,omitempty"`
 
-	// DeleteProtected says this row must render without the DELETE affordance while
-	// keeping its edit.
-	//
-	// A separate bit from ReadOnly because it answers a separate question. It is set
-	// for an entry reached through a symlink, where the delete route canonicalizes
-	// the path and so unlinks the link's TARGET — losing the aliased file rather
-	// than the alias. Editing through the link is what following it means; deleting
-	// through it is not. Folding the two into one flag is what made D67a claim a
-	// row was read-only while its own activation surface opened an editable file.
+	// DeleteProtected says this row renders without DELETE but keeps its edit: set for an entry
+	// reached through a symlink, where the delete route would unlink the link's TARGET.
 	DeleteProtected bool `json:"delete_protected,omitempty"`
 }
 
@@ -152,9 +89,7 @@ type KiroDocsResponse struct {
 	Truncated bool      `json:"truncated"`
 }
 
-// docScan accumulates one scan: the rows kept, and whether anything was left
-// unread. Each category scans into its own so the per-category cap is its
-// length; the tree's scan absorbs them.
+// docScan accumulates one scan: the rows kept and whether anything was left unread.
 type docScan struct {
 	docs      []KiroDoc
 	truncated bool
@@ -178,12 +113,8 @@ func (sc *docScan) absorb(part docScan) {
 	sc.truncated = sc.truncated || part.truncated
 }
 
-// docsCache memoizes one scan behind a cheap directory-mtime signature.
-//
-// Front-matter parsing is ~200 file opens per scan, and the page refetches on
-// every `settings_updated` broadcast, so an uncached scan would repeat that work
-// for an unchanged tree. The mutex also serializes concurrent requests into one
-// scan rather than N.
+// docsCache memoizes one scan behind a cheap directory signature (the page refetches on every
+// settings_updated). The mutex also serializes concurrent requests into one scan.
 type docsCache struct {
 	sig string
 	res KiroDocsResponse
@@ -201,16 +132,13 @@ func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, res)
 }
 
-// collectKiroDocs returns the cached inventory, rescanning when the signature
-// changed. Holds the cache mutex across the scan so concurrent requests share
-// one pass instead of racing several.
+// collectKiroDocs returns the cached inventory, rescanning when the signature changed.
 func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {
 	roots := s.kiroRoots()
 	sig := dirSignature(roots)
 
 	if s.kiroDocs == nil {
-		// No cache wired (the zero Server in the method-guard tests): scan
-		// directly rather than pretending a cache exists.
+		// No cache wired (the zero Server in tests): scan directly.
 		return scanKiroRoots(ctx, roots, s.sensitive)
 	}
 	s.kiroDocs.mu.Lock()
@@ -219,8 +147,7 @@ func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {
 		return s.kiroDocs.res
 	}
 	res := scanKiroRoots(ctx, roots, s.sensitive)
-	// A cancelled scan is partial; caching it would serve a truncated list for
-	// as long as the tree is unchanged.
+	// A cancelled scan is partial; caching it would serve a truncated list.
 	if ctx.Err() != nil {
 		return res
 	}
@@ -236,9 +163,8 @@ type kiroRoot struct {
 	prefix string
 }
 
-// kiroRoots enumerates the `.kiro` trees in scope: the workspace root's, plus
-// one per non-dot subdirectory. Same shape as collectKiroConfig's walk, so the
-// two endpoints agree about what "in scope" means.
+// kiroRoots enumerates the `.kiro` trees in scope: the workspace root's plus one per non-dot
+// subdirectory, the same walk as collectKiroConfig.
 func (s *Server) kiroRoots() []kiroRoot {
 	workBase := strings.TrimPrefix(s.workDir, "/")
 	specRoots := spec.Roots(s.workDir)
@@ -249,29 +175,14 @@ func (s *Server) kiroRoots() []kiroRoot {
 	return roots
 }
 
-// dirSignature builds a cheap cache key from each root's category directories:
-// the directory mtime AND its entry names.
-//
-// The entry names are load-bearing, not belt-and-braces. Linux stamps inode
-// timestamps from a COARSE clock (jiffy granularity, typically 1-4ms), so two
-// changes to one directory inside the same tick produce byte-identical mtimes —
-// measured on this host, writing two files back to back left the parent's mtime
-// identical to the nanosecond. An mtime-only signature therefore misses exactly
-// the case that matters here: the page refetches on the `settings_updated`
-// broadcast, which fires immediately after the write that changed the tree, so
-// "user adds a steering file, UI refetches" is precisely the sequence that lands
-// inside one tick. The stale list would then be served until some unrelated
-// change moved the mtime.
-//
-// So an added, removed or renamed file is detected by the name set regardless of
-// clock granularity, and a file REPLACED in place is still detected by the
-// mtime. An in-place body EDIT remains undetected, and that limit is still
-// accepted: it changes no field this endpoint reads except the description,
-// which is a display string.
+// dirSignature builds a cache key from each root's category directories: the mtime AND the
+// entry names. Names are load-bearing: Linux stamps mtimes from a coarse clock, so two
+// changes inside one tick (a write then the settings_updated refetch) give identical mtimes.
+// An in-place body edit is still undetected; it changes only the description.
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
-		for _, sub := range []string{"", "steering", "skills", "agents", "specs", "hooks"} {
+		for _, sub := range []string{"", "steering", "skills", "agents", "specs", "hooks", "prompts"} {
 			p := root.fsPath
 			if sub != "" {
 				p = filepath.Join(p, sub)
@@ -282,10 +193,6 @@ func dirSignature(roots []kiroRoot) string {
 				continue
 			}
 			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
-			// os.ReadDir returns entries sorted by name, so the signature is
-			// stable for an unchanged directory. One getdents on a small
-			// directory is far cheaper than the ~200 file opens and
-			// front-matter parses this cache exists to avoid.
 			entries, dirErr := os.ReadDir(p)
 			if dirErr != nil {
 				b.WriteString("#?")
@@ -324,7 +231,7 @@ func scanKiroRoots(ctx context.Context, roots []kiroRoot, sensitive filebrowse.S
 func scanKiroDocsFS(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	var sc docScan
 	for _, scan := range []func(context.Context, fs.FS, string, pathGuard) docScan{
-		scanDocsSteering, scanDocsSkills, scanDocsAgents, scanDocsSpecs, scanDocsHooks,
+		scanDocsSteering, scanDocsSkills, scanDocsAgents, scanDocsSpecs, scanDocsHooks, scanDocsPrompts,
 	} {
 		if ctx.Err() != nil {
 			sc.truncated = true
@@ -352,9 +259,8 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard path
 	})
 }
 
-// scanDocsSkills emits one row per skill MANIFEST (`skills/<name>/SKILL.md`).
-// Non-manifest markdown under a skill directory is reference material — the
-// regulations, the agent guides — and is deliberately not a row.
+// scanDocsSkills emits one row per skill MANIFEST (`skills/<name>/SKILL.md`); other markdown
+// under a skill directory is reference material.
 func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "skills", guard)
 	if err != nil {
@@ -372,26 +278,14 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		rel := e.Name() + "/SKILL.md"
 		data, verdict, rErr := readGuardedFS(root, "skills/"+rel, guard)
 		if rErr != nil {
-			// A directory with no manifest is still a skill (matching the
-			// entity scan), just an undescribed one. The verdict is unknown on
-			// this path, so the row keeps the editable default: read-only is
-			// asserted, never inferred from a failure.
+			// A directory with no manifest is still a skill, keeping the editable default.
 			data = nil
 		}
 		fm := steering.Parse(data)
 		name := cmp.Or(fm.Name, e.Name())
-		// A DECLARED mode only, never the default. KAS's SkillFrontMatterSchema
-		// declares no `inclusion` key — only SteeringContextFrontMatterSchema
-		// does — so steering.Parse's "always" default is the steering default
-		// leaking onto a document it was not written for. Forwarding it badged
-		// every skill in the browser as always-loaded: a claim about token cost
-		// that was never in the file, on the one axis the badge exists to answer.
-		//
-		// Not simply dropped either, because the schema is `.passthrough()` and
-		// `createSteeringCommandSource` reads `config?.inclusion` across skills
-		// and steering alike — a skill declaring `manual` or `auto` genuinely
-		// becomes a slash command, and that is worth showing. An absent mode
-		// renders no badge client-side.
+		// A DECLARED mode only, never steering.Parse's "always" default: KAS's skill schema declares
+		// no `inclusion`, so the default badged every skill always-loaded. A declared `manual` or
+		// `auto` does make a skill a slash command, so that is shown.
 		inclusion := ""
 		if fm.HasInclusion {
 			inclusion = fm.Inclusion
@@ -450,13 +344,9 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	return sc
 }
 
-// scanDocsSpecs walks `specs/` and groups each document under its feature
-// directory.
-//
-// Specs carry NO front-matter, so the label comes from the H1. A feature directory
-// holds arbitrary documents rather than a fixed requirements/design/tasks trio, and
-// fixed columns would invent empty ones and hide the rest, so a feature is a group
-// with arbitrary children, ordered requirements → design → tasks → lexical.
+// scanDocsSpecs walks `specs/` and groups each document under its feature directory. Specs
+// carry no front-matter (the label is the H1) and no fixed document trio, so a feature is a
+// group with arbitrary children, ordered requirements → design → tasks → lexical.
 func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	sc := walkMarkdown(ctx, root, "specs", catSpec, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc {
 		group := path.Dir(rel)
@@ -494,10 +384,8 @@ func sortSpecDocs(docs []KiroDoc) {
 	})
 }
 
-// scanDocsHooks emits one row per hook, expanding a v1 envelope's several hooks
-// into several rows. Reuses steering.ParseHooks so the fields stay sanitized:
-// hook files are workspace content, and a raw newline or backtick in a name
-// would break out of the span these values render into.
+// scanDocsHooks emits one row per hook, expanding a v1 envelope. steering.ParseHooks keeps
+// the fields sanitized (hook files are workspace content).
 func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "hooks", guard)
 	if err != nil {
@@ -527,6 +415,42 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGua
 	return sc
 }
 
+// scanDocsPrompts reads `prompts/*.md` at the top level only, which is all KAS
+// reads; the row name is the basename, the slash command a user types.
+func scanDocsPrompts(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
+	entries, err := readGuardedDir(root, "prompts", guard)
+	if err != nil {
+		return docScan{}
+	}
+	var sc docScan
+	for _, e := range entries {
+		if ctx.Err() != nil {
+			sc.truncated = true
+			return sc
+		}
+		if e.IsDir() || !isMarkdownEntry(e) {
+			continue
+		}
+		data, verdict, rErr := readGuardedFS(root, "prompts/"+e.Name(), guard)
+		if rErr != nil {
+			slog.Warn("kiro docs: read prompt", "name", e.Name(), "error", rErr)
+			continue
+		}
+		fm := steering.Parse(data)
+		doc := KiroDoc{
+			Category:        catPrompt,
+			Name:            strings.TrimSuffix(e.Name(), ".md"),
+			Path:            prefix + "/prompts/" + e.Name(),
+			Description:     cmp.Or(fm.Description, steering.FirstHeading(data)),
+			DeleteProtected: verdict.deleteProtected,
+		}
+		if !sc.add(&doc) {
+			return sc
+		}
+	}
+	return sc
+}
+
 // hookRows expands one v1 hook envelope into its rows. A file may carry several
 // hooks, and each is its own row.
 func hookRows(data []byte, prefix, file string, deleteProtected bool) []KiroDoc {
@@ -547,9 +471,7 @@ func hookRows(data []byte, prefix, file string, deleteProtected bool) []KiroDoc 
 	return out
 }
 
-// walkMarkdown walks `sub` under root for `.md` files, bounded in depth and
-// count, and builds a row per file via mk. Shared by the two recursive
-// categories (steering, specs).
+// walkMarkdown walks `sub` under root for `.md` files, bounded in depth and count.
 func walkMarkdown(
 	ctx context.Context,
 	root fs.FS,
@@ -565,9 +487,7 @@ func walkMarkdown(
 	return w.sc
 }
 
-// mdWalker carries the markdown walk's mutable accounting so the visitor is a
-// named method rather than a nested closure — the walk's branch set otherwise
-// counts against walkMarkdown's own complexity budget.
+// mdWalker carries the markdown walk's accounting so the visitor is a named method.
 type mdWalker struct {
 	ctx      context.Context
 	root     fs.FS
@@ -593,9 +513,7 @@ func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 		if strings.Count(rel, "/")+1 > maxSpecWalkDepth {
 			return fs.SkipDir
 		}
-		// Refused at the DIRECTORY, so the walk never enumerates what is behind
-		// a link out of the tree. Skipping only the files would still let a
-		// symlinked `steering/` cause a recursive walk of its target.
+		// Refused at the DIRECTORY, so a symlinked `steering/` cannot cause a walk of its target.
 		if !w.guard.allows(p) {
 			return fs.SkipDir
 		}
@@ -625,12 +543,8 @@ func isMarkdownEntry(d fs.DirEntry) bool {
 		!strings.ContainsRune(name, 0)
 }
 
-// docLabel implements the universal fallback chain: front-matter `name`, else
-// the first H1, else the basename without its extension.
-//
-// Universal rather than per-type because front-matter presence is not per-type:
-// specs have none by convention, and 11 of 27 skill markdown files have none
-// because only `*/SKILL.md` is a manifest.
+// docLabel implements the universal fallback chain: front-matter `name`, else the first H1,
+// else the basename without its extension.
 func docLabel(fm *steering.FrontMatter, data []byte, rel string) string {
 	if fm.Name != "" {
 		return fm.Name

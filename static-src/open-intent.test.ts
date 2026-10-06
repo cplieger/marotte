@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// AN INTENT TO OPEN NEVER CLOSES A TAB, from two directions.
-//
-// `openTab({kind})` is idempotent by subject: it activates an open tab and opens
-// a closed one, which is what a route means. A `toggle*View` helper CLOSES an
-// already-active tab, so it belongs to a user affordance that toggles — a sidebar
-// button, a keyboard shortcut — and to nothing that expresses navigation.
-//
-// The steering rule said that of `applyRoute` alone, and three call sites drifted
-// anyway. So this file holds the two mechanisms that make it a property of the
-// codebase: a SOURCE GUARD over the modules that own navigation, and a
-// BEHAVIOURAL case that drives the real tab projection twice.
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import routeApplySrc from "./route-apply.ts?raw";
@@ -27,15 +13,7 @@ import settingsSrc from "./settings.ts?raw";
 import filesSrc from "./files.ts?raw";
 import appSrc from "./app.ts?raw";
 
-// ---------------------------------------------------------------------------
-// The source guard
-// ---------------------------------------------------------------------------
-
-// PINNED LITERALLY, because the pattern IS the assertion. The trailing `\(` is
-// load-bearing in both directions: it makes the guard read CALLS rather than
-// mentions, so `tab-materialize.ts`'s prose sentence naming `toggleSettingsView`
-// and the corrected comments in `history.ts` do not trip it, and it is what makes
-// a re-added `show*`-that-toggles wrapper trip it.
+// Pinned literally: the trailing `\(` makes the guard read calls, not mentions in prose.
 const TOGGLE_CALL = /\btoggle[A-Za-z]*View\s*\(/;
 
 /** The navigation-owning modules, one row and one reason each. */
@@ -89,9 +67,7 @@ const POPULATION: readonly { readonly name: string; readonly src: string; readon
   ];
 
 describe("the source guard", () => {
-  // app.ts is deliberately NOT in the population: the applyRoute extraction is
-  // what removed it, and what remains there is the two sidebar buttons, which are
-  // the affordance the rule protects.
+  // app.ts is excluded: its two sidebar buttons are the affordance the rule protects.
   it.each(POPULATION)("$name reaches no toggle*View call ($why)", ({ src }) => {
     expect.assertions(1);
     expect(src).not.toMatch(TOGGLE_CALL);
@@ -109,24 +85,13 @@ describe("the source guard", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// An open intent is idempotent
-// ---------------------------------------------------------------------------
-//
-// Against the REAL tab projection and the fake collection in
-// `__test-helpers__/tabs-server.ts` — the shape `tabs.test.ts` uses, where every
-// open is a dispatched mutation and the `tabs_changed` frame that follows is what
-// paints, so every open is awaited.
-
 const mocks = vi.hoisted(() => ({
   requestPRFocus: vi.fn<(identity: string) => void>(),
   forceGitTab: vi.fn(),
 }));
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
-// route-apply's own graph, reduced to the arms this file does not drive. Each is a
-// no-op rather than absent, because Browser Mode links ESM for real: a name any
-// module in the graph imports has to exist on the factory.
+// No-ops rather than absent: Browser Mode links ESM for real.
 vi.mock("./deep-link.js", () => ({
   admitLocation: vi.fn(() => "opens"),
   settleDeepLinkedChat: vi.fn(),
@@ -270,9 +235,7 @@ beforeEach(() => {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
-    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
-    // type-check. Inert here: no case opens a spec tab, and closing the member is not
-    // this suite taking a position on the kind.
+    // Required by TabOpeners; inert here.
     spec: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
@@ -285,8 +248,6 @@ afterEach(() => {
 });
 
 describe("an open intent is idempotent", () => {
-  // The exact shape of the reported defect: today's `openChangeSet()` twice closes
-  // the git view, and `setGitTab` then no-ops because `tabIdFor("git")` is "".
   it("leaves the git tab open and on prs after two openGitView calls", async () => {
     expect.assertions(3);
     await openGitView("prs");
@@ -327,15 +288,7 @@ describe("a file deep link that lost its leading slash", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The same property one layer up: at the NOTIFICATION layer, where the reported
-// defect lived. A tab-layer case cannot reach it, because the route has to travel
-// through the subject vocabulary and the router's git branch to get there.
-// ---------------------------------------------------------------------------
-
-/** The projection is a round trip: the open is dispatched and the `tabs_changed`
- *  frame that follows is what paints, and the PRs tab is reached through a dynamic
- *  import on top of that. So every assertion polls. */
+/** The open is a round trip (`tabs_changed` paints) plus a dynamic import, so every assertion polls. */
 async function settled(check: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 50; i++) {
     if (check()) {
@@ -379,16 +332,13 @@ describe("a PR notification's destination", () => {
   it("opens the git tab on prs and focuses the pull request, on every click", async () => {
     expect.assertions(7);
     click();
-    // Polled on the focus request rather than on the tab, because it is the LAST
-    // step of the branch: the open has landed, the sub-tab is corrected and the
-    // chunk has loaded by the time it fires.
+    // Polled on the focus request: it is the branch's last step.
     await settled(() => mocks.requestPRFocus.mock.calls.length === 1, "the first focus request");
     expect(mocks.requestPRFocus).toHaveBeenCalledWith(identity);
     expect(tabIdFor("git")).not.toBe("");
     expect(getActiveTabRoute()).toEqual({ kind: "git", tab: "prs" });
 
-    // The SECOND click is the whole point: an intent to open is idempotent, so the
-    // tab is still open and still on prs, and the request is made again.
+    // The second click is the point: an intent to open is idempotent.
     click();
     await settled(() => mocks.requestPRFocus.mock.calls.length === 2, "the second focus request");
     expect(tabIdFor("git")).not.toBe("");

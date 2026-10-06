@@ -1,25 +1,8 @@
-// ---------------------------------------------------------------------------
-// The activity dot on a SUBAGENT tab's row.
-//
-// Five rules carry the feature and each fails silently: every OPEN subagent tab
-// gets a dot painted from its own invocation; a `tool_call_update` repaints it with
-// NO tab mutation behind it (the launching chat's transcript signal is the
-// dependency, and it is the one that turns a spinning delegate into a settled one);
-// a tab that lands AFTER its chat's messages paints on the tab-set bump alone; a
-// delegate with nothing resident paints "" rather than claiming a state; and an
-// unchanged status must still REACH the writer, because a row rebuilt since the
-// last pass has to be repainted and `recordDotStatus` is what suppresses the
-// redundant `dotVersion` bump — not the caller.
-//
-// It mocks `./tabs.js` and uses the REAL store, which is a deliberate departure
-// from the brief's "mock ./store.js": the plan's own requirement is to exercise the
-// real `subagentStatusFor` rather than re-implement the mapping in a fake, and the
-// dependency under test is production's own version bump. A hand-bumped fake signal
-// would assert the fake. So the turn is seeded through `openTurn`/`appendEntry` and
-// the settled verdict is delivered as the `tool_result` ENTRY the wire carries it
-// on, through the same operation `handlers/entries.ts` calls — which is what makes
-// the repaint case mean anything.
-// ---------------------------------------------------------------------------
+// The activity dot on a SUBAGENT tab's row. Each rule fails silently: every open subagent tab gets
+// a dot from its own invocation; a `tool_call_update` repaints it with NO tab mutation; a tab
+// landing AFTER its chat's messages paints on the tab-set bump; a delegate with nothing resident
+// paints ""; an unchanged status still REACHES the writer (`recordDotStatus` suppresses the bump).
+// The REAL store, seeded through `openTurn`/`appendEntry`, so production's version bump is tested.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
@@ -117,10 +100,8 @@ function emptyChat(chatID: string): Session {
   };
 }
 
-/** Install one empty session per named chat, then seed each one's turn. Two steps
- *  rather than one fixture object, because a chat row with no window at all is a real
- *  state (a boot-restored tab whose chat has not been fetched) and the store's own
- *  operations are the only thing that can produce a turn it will accept. */
+/** One empty session per chat, then each one's turn: a chat with no window is a real state, and
+ *  only the store's operations produce a turn it accepts. */
 function seedChats(specs: readonly (readonly [string, readonly EntryToolCall[]])[]): void {
   setSessions(specs.map(([chatID]) => emptyChat(chatID)));
   for (const [chatID, calls] of specs) {
@@ -129,7 +110,7 @@ function seedChats(specs: readonly (readonly [string, readonly EntryToolCall[]])
 }
 
 /** Seed `chatID` with one turn holding `calls` as `tool_call` entries in the ISSUER's
- *  lane, which is where an invocation lives (design 3.4). */
+ *  lane, which is where an invocation lives. */
 function seedTurn(chatID: string, calls: readonly EntryToolCall[]): void {
   openTurn(chatID, turnOpen(chatID));
   calls.forEach((call, i) => {
@@ -186,10 +167,7 @@ describe("a delegate's tab paints its own invocation's state", () => {
   });
 
   it("paints nothing at all when no invocation is resident", () => {
-    // The chat is open and its window holds no invocation for this delegate — a
-    // boot-restored tab whose chat has not been fetched, or a turn evicted from
-    // the paginated window. "" is the honest answer: not knowing is different from
-    // knowing nothing is happening, and the reserved slot stays invisible.
+    // No invocation in the window (unfetched or evicted): "" is honest; not knowing is not idle.
     seedChats([["c1", []]]);
     m.refs.push(subagentRef("c1", "task-missing"));
     tabsChanged();
@@ -226,10 +204,8 @@ describe("the launching chat's transcript is the repaint dependency", () => {
     expect(m.painted.at(-1)?.status).toBe("working");
     const before = m.painted.length;
 
-    // The real ingest path: a `tool_result` ENTRY is what carries the verdict, and
-    // the create frame's `in_progress` is only a starting state. Nothing touches the
-    // tab set here, which is the whole case — without the per-chat version read the
-    // dot would sit on `working` until some unrelated tab mutation happened along.
+    // The verdict arrives as a `tool_result` ENTRY with no tab change, so only the per-chat version
+    // read can repaint the dot.
     settle("c1", invocation("task-1", "in_progress"), "failed", 2);
     await tick();
 
@@ -256,10 +232,8 @@ describe("the launching chat's transcript is the repaint dependency", () => {
   });
 
   it("paints a tab that landed AFTER its chat's messages, on the tab-set bump alone", () => {
-    // The ordering every door except a deep link has: the card's footer link is
-    // only there because the delegate's blocks are resident, so the transcript is
-    // in place and the tab arrives a round trip later. No transcript change follows
-    // it, so the tab-set dependency is the only thing that can paint the row.
+    // The footer link exists only once the delegate's blocks are resident, so the tab arrives later and
+    // only the tab-set dependency can paint the row.
     seedChats([["c1", [invocation("task-1", "completed")]]]);
     expect(m.painted).toEqual([]);
 
@@ -272,10 +246,7 @@ describe("the launching chat's transcript is the repaint dependency", () => {
   });
 
   it("re-applies an unchanged status, because a rebuilt row has to be repainted", async () => {
-    // `setTabStatus` must be REACHED on every pass. A caller that skipped an
-    // unchanged value would leave a row rebuilt since the last write showing
-    // whatever the factory painted; suppressing the redundant `dotVersion` bump is
-    // `recordDotStatus`'s job, one layer down.
+    // `setTabStatus` must be REACHED every pass, or a rebuilt row keeps the factory's paint.
     seedChats([["c1", [invocation("task-1", "in_progress")]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
@@ -341,10 +312,8 @@ describe("a ref this client cannot resolve degrades rather than throwing", () =>
   });
 
   it("paints nothing for a WORKFLOW STEP's subtask id", () => {
-    // A hand-crafted deep link can name `wf:<workflowId>:<nodePath>`. The launch
-    // call is `run_workflow`, which `isSubagentInvocation` rejects, so the scan
-    // resolves nothing and the dot degrades to "" rather than reporting a run's
-    // state on a row that names a step.
+    // A deep link can name `wf:<workflowId>:<nodePath>`; `isSubagentInvocation` rejects `run_workflow`,
+    // so the dot degrades to "".
     const step = makeToolCall({
       id: "tc-run",
       title: "run_workflow",

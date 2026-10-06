@@ -1,5 +1,5 @@
-// Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via
-// add_token_dom verifying all token types produce correct elements.
+// Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via add_token_dom verifying all
+// token types produce correct elements.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
@@ -61,9 +61,9 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
     { token: CODE_FENCE, expectedTag: "PRE", label: "CODE_FENCE → pre" },
     { token: LINK, expectedTag: "A", label: "LINK → a" },
     { token: IMAGE, expectedTag: "IMG", label: "IMAGE → img" },
-    // The equation tokens open a plain HTML host that holds the raw LaTeX until
-    // the expression closes; the namespaced <math> subtree replaces its children
-    // at end_token. See the equation cases below and mathml.test.ts.
+    // The equation tokens open a plain HTML host that holds the raw LaTeX until the expression
+    // closes; the namespaced <math> subtree replaces its children at end_token. See the equation
+    // cases below and mathml.test.ts.
     {
       token: EQUATION_BLOCK,
       expectedTag: "SPAN",
@@ -86,18 +86,12 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Equations: the host, the namespace, and the raw degradation.
-//
-// The namespace assertion is the load-bearing one. `document.createElement`
-// would produce an element whose tagName is also "math", so a test that only
-// checked the tag name would pass on the exact defect this code exists to avoid.
-// ---------------------------------------------------------------------------
 
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 
-/** Feed one equation through the renderer the way the parser does: open the
- *  token, hand over the LaTeX as text, close it. */
+/** Feed one equation through the renderer the way the parser does: open the token, hand over the
+ *  LaTeX as text, close it. */
 function renderEquation(token: Token, latex: string): HTMLElement {
   const container = document.createElement("div");
   const r = domRenderer(container, { animateText: false });
@@ -127,8 +121,8 @@ describe("smd-renderer equations", () => {
     const math = host?.firstElementChild;
     expect(math?.tagName.toLowerCase()).toBe("math");
     expect(math?.namespaceURI).toBe(MATHML_NS);
-    // Every descendant, not just the root: one createElement anywhere in the
-    // converter would leave a subtree that does not render as mathematics.
+    // Every descendant, not just the root: one createElement anywhere in the converter would leave
+    // a subtree that does not render as mathematics.
     for (const node of math?.querySelectorAll("*") ?? []) {
       expect(node.namespaceURI).toBe(MATHML_NS);
     }
@@ -154,14 +148,14 @@ describe("smd-renderer equations", () => {
     const container = document.createElement("div");
     const r = domRenderer(container, { animateText: true });
     r.add_token(r.data, EQUATION_INLINE);
-    // Split mid-command: the parser slices at a fixed byte budget, so any
-    // delimiter or command can arrive in pieces.
+    // Split mid-command: the parser slices at a fixed byte budget, so any delimiter or command can
+    // arrive in pieces.
     r.add_text(r.data, "\\al");
     r.add_text(r.data, "pha + \\beta");
     r.end_token(r.data);
     const host = container.firstElementChild;
-    // animateText must NOT wrap an equation host's text: the chunk spans are
-    // thrown away on close, and textContent has to be the exact source.
+    // animateText must NOT wrap an equation host's text: the chunk spans are thrown away on close,
+    // and textContent has to be the exact source.
     expect(host?.querySelector("[data-vk-chunk-enter]")).toBeNull();
     const math = host?.firstElementChild;
     expect(math?.namespaceURI).toBe(MATHML_NS);
@@ -170,12 +164,6 @@ describe("smd-renderer equations", () => {
 });
 
 describe("the streaming caret attribute", () => {
-  // The CSS caret (13-messages.css) renders off `data-vk-caret`, the element
-  // text last landed in — inline after the last word, not on its own line
-  // below the paragraph, which is what a container ::after produced (user
-  // report: "the cursor seems to not lead the text output but to be on the
-  // next line").
-
   it("marks the element receiving text while streaming", () => {
     const container = document.createElement("div");
     const r = domRenderer(container, { animateText: true });
@@ -199,8 +187,8 @@ describe("the streaming caret attribute", () => {
   });
 
   it("follows into an inline element mid-paragraph", () => {
-    // Mid-inline is why the attribute cannot be a :last-child qualifier: the
-    // insertion element during a bold run is the STRONG, not the paragraph.
+    // Mid-inline is why the attribute cannot be a :last-child qualifier: the insertion element
+    // during a bold run is the STRONG, not the paragraph.
     const container = document.createElement("div");
     const r = domRenderer(container, { animateText: true });
     r.add_token(r.data, PARAGRAPH);
@@ -213,8 +201,6 @@ describe("the streaming caret attribute", () => {
   });
 
   it("writes no caret on the replay path", () => {
-    // Historical content paints flat: animateText=false gates the attribute
-    // writes, so a reloaded transcript never pays them.
     const container = document.createElement("div");
     const r = domRenderer(container, { animateText: false });
     r.add_token(r.data, PARAGRAPH);
@@ -223,14 +209,7 @@ describe("the streaming caret attribute", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Unwrapping an inline element whose token never closed.
-//
-// The parser is append-only and cannot un-open a token; the renderer still holds
-// the element at close time, so it replaces it with its own delimiter followed
-// by its children. That is what CommonMark renders for a delimiter run with no
-// closer, and it is the only route to it that does not stop the stream.
-// ---------------------------------------------------------------------------
 
 /** Open `token`, add `text`, then close it unresolved with `delim`. */
 function renderUnresolved(
@@ -344,11 +323,9 @@ describe("smd-renderer unresolved inline tokens", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The load-bearing R6 measurement, in a real browser rather than argued: the
-// per-chunk fade animates each `<span data-vk-chunk-enter>` ONCE on mount, so an
-// unwrap that recreated those spans would re-run the fade over settled text.
-// ---------------------------------------------------------------------------
+// The load-bearing R6 measurement, in a real browser rather than argued: the per-chunk fade
+// animates each `<span data-vk-chunk-enter>` ONCE on mount, so an unwrap that recreated those spans
+// would re-run the fade over settled text.
 
 describe("unwrapping does not re-mount the per-chunk fade spans", () => {
   const ANIM = "chunk-enter-probe";
@@ -399,8 +376,8 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     r.add_text(r.data, "three");
     const before = [...container.querySelectorAll("[data-vk-chunk-enter]")];
     expect(before).toHaveLength(3);
-    // The premise, polled rather than assumed: without three starts on the
-    // board there is nothing for the unwrap to re-fire and the test is vacuous.
+    // The premise, polled rather than assumed: without three starts on the board there is nothing
+    // for the unwrap to re-fire and the test is vacuous.
     await vi.waitFor(() => {
       expect(starts).toBe(3);
     });
@@ -412,25 +389,24 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     const after = [...container.querySelectorAll("[data-vk-chunk-enter]")];
     // Identity, not equality: `replaceWith(...el.childNodes)` MOVES the spans.
     expect(after).toEqual(before);
-    // Re-inserting a node DOES restart its animation in Chromium (measured: 6
-    // starts without the settled marker), so the unwrap marks the spans it moves
-    // and the CSS rule skips them.
+    // Re-inserting a node DOES restart its animation in Chromium (measured: 6 starts without the
+    // settled marker), so the unwrap marks the spans it moves and the CSS rule skips them.
     expect(after.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
     expect(starts).toBe(3);
     expect(container.textContent).toBe("**one two three");
   });
 
   it("marks the spans a label with no destination unwraps", async () => {
-    // The same mechanism now carries a second caller: a `[label]` that closes
-    // with no destination is unwrapped rather than left as an href-less anchor,
-    // so its streamed spans are re-parented too.
+    // The same mechanism now carries a second caller: a `[label]` that closes with no destination
+    // is unwrapped rather than left as an href-less anchor, so its streamed spans are re-parented
+    // too.
     const container = document.createElement("div");
     container.className = `${ANIM}-scope`;
     document.body.append(container);
     hosts.push(container);
 
-    // Targets, not a count: the text after the label legitimately mounts new
-    // spans, so only a SECOND start on an already-played one is the defect.
+    // Targets, not a count: the text after the label legitimately mounts new spans, so only a
+    // SECOND start on an already-played one is the defect.
     const started: EventTarget[] = [];
     container.addEventListener("animationstart", (e) => {
       started.push(e.target as EventTarget);
@@ -461,9 +437,7 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Table sections come from the DOM, not from a child count.
-// ---------------------------------------------------------------------------
 
 describe("smd-renderer table sections", () => {
   function rows(count: number, decorate?: (table: HTMLTableElement) => void): HTMLElement {
@@ -500,8 +474,6 @@ describe("smd-renderer table sections", () => {
   });
 
   it("still finds the sections when a third party inserts a child", () => {
-    // A caption, a colgroup or any decoration shifts `children[1]`, which is
-    // what the old child-count switch indexed.
     const table = rows(4, (t) => {
       t.insertBefore(document.createElement("caption"), t.firstChild);
     }).querySelector("table") as HTMLTableElement;
@@ -560,16 +532,14 @@ describe("smd-renderer table sections", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // A markdown link to a served file opens it in a marotte tab, not a browser tab.
-// ---------------------------------------------------------------------------
 
 describe("markdown links to served files", () => {
-  // Re-injected per test, as a plain closure: `mockReset: true` would reset a
-  // vi.fn() implementation between tests.
+  // Re-injected per test, as a plain closure: `mockReset: true` would reset a vi.fn()
+  // implementation between tests.
   const opened: [string, number | undefined][] = [];
-  // Whether the link's own handler cancelled each click, read by an ancestor
-  // listener that then cancels it anyway so the test page never navigates.
+  // Whether the link's own handler cancelled each click, read by an ancestor listener that then
+  // cancels it anyway so the test page never navigates.
   const taken: boolean[] = [];
   const hosts: HTMLElement[] = [];
 
@@ -686,8 +656,8 @@ describe("markdown links to served files", () => {
     },
   );
 
-  // A query belongs to a URL and a trailing slash names a directory, so neither
-  // is a file the editor can open.
+  // A query belongs to a URL and a trailing slash names a directory, so neither is a file the
+  // editor can open.
   it.each(["/workspace/a.md?download=1", "/workspace/marotte/", "/uploads/"])(
     "leaves %s to the browser",
     (dest) => {
@@ -703,8 +673,8 @@ describe("markdown links to served files", () => {
     expect(link.getAttribute("target")).toBe("_blank");
   });
 
-  // The editor route has no heading anchors, so the file at its top is the
-  // nearest destination; the plain link would land on a chat.
+  // The editor route has no heading anchors, so the file at its top is the nearest destination; the
+  // plain link would land on a chat.
   it.each(["#install", "#L0", "#L12tail", "#L9007199254740992"])(
     "opens the file at its top for the fragment %s",
     (fragment) => {

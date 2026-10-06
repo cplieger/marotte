@@ -16,12 +16,12 @@ import (
 
 // TestShellFence verifies the fence is sized one backtick longer than the
 // longest backtick run in the body, so command output containing a ```
-// run can never close the fence early (the MED bug/ux finding).
+// run can never close the fence early.
 func TestShellFence(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
-		want int // expected fence length in backticks
+		want int
 	}{
 		{"no backticks", "plain output", 3},
 		{"single backtick", "a`b", 3},
@@ -37,9 +37,6 @@ func TestShellFence(t *testing.T) {
 			if len(fence) != tc.want {
 				t.Errorf("shellFence(%q) len = %d, want %d", tc.body, len(fence), tc.want)
 			}
-			// The fence must be strictly longer than any backtick run in
-			// the body, so the body can never contain (and thus close
-			// with) the fence sequence itself.
 			if strings.Contains(tc.body, fence) {
 				t.Errorf("body %q contains fence %q — output could close it early", tc.body, fence)
 			}
@@ -54,19 +51,15 @@ func TestRenderShellResult_CodeFenceInOutput(t *testing.T) {
 	output := "# README\n```go\nfunc main() {}\n```\ndone"
 	got := renderShellResult(output, nil, false)
 
-	// The whole result opens and closes with a 4-backtick fence (one more
-	// than the 3-backtick run inside the output).
 	if !strings.HasPrefix(got, "````\n") {
 		t.Errorf("result should open with a 4-backtick fence:\n%s", got)
 	}
 	if !strings.HasSuffix(got, "\n````") {
 		t.Errorf("result should close with a 4-backtick fence:\n%s", got)
 	}
-	// The original output, including its inner ``` run, is preserved.
 	if !strings.Contains(got, output) {
 		t.Errorf("output not preserved verbatim:\n%s", got)
 	}
-	// A successful command still shows its exit status.
 	if !strings.Contains(got, "[exit 0]") {
 		t.Errorf("missing exit status line:\n%s", got)
 	}
@@ -77,8 +70,6 @@ func TestRenderShellResult_CodeFenceInOutput(t *testing.T) {
 // opaque "signal: killed", and a normal exit shows its code.
 func TestShellStatusLine(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		// runErr is the OS-level "signal: killed"; the timeout flag must
-		// override it with a clear, human message.
 		got := shellStatusLine(errors.New("signal: killed"), true)
 		want := "[command timed out after 30s]"
 		if got != want {
@@ -93,7 +84,6 @@ func TestShellStatusLine(t *testing.T) {
 	})
 
 	t.Run("nonzero exit code", func(t *testing.T) {
-		// Produce a genuine *exec.ExitError with a known non-zero code.
 		runErr := exec.Command("sh", "-c", "exit 3").Run()
 		if runErr == nil {
 			t.Fatal("expected a non-nil error from 'exit 3'")
@@ -117,13 +107,8 @@ func (d *heldAdmissionDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSourc
 	return false
 }
 
-// TestHandleShellInterception_HeldAdmissionReturns409Immediately pins the shell
-// door's admission: a TRY against the same per-chat reservation a prompt takes,
-// never a wait — `!echo hi` during a prompt's blocked spawn answers 409 at
-// once. The refusal short-circuits before any ChatStore access, so the
-// nil-store bench stub is sufficient; the try counter is the load-bearing
-// assertion that the door went through the reservation rather than the bridge
-// slot, which a spawn-blocked chat does not hold.
+// TestHandleShellInterception_HeldAdmissionReturns409Immediately asserts that the shell door is a TRY against
+// the prompt's reservation, never a wait.
 func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T) {
 	deps := &heldAdmissionDeps{benchDeps: newBenchDeps()}
 	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
@@ -142,9 +127,6 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 	if deps.tried != 1 {
 		t.Errorf("TryReserveTurn called %d times, want 1: the shell door admits through the reservation", deps.tried)
 	}
-	// A TRY, never a wait: the refusal is immediate, not held for the prompt
-	// admission budget. The bound is generous — the point is "no deliberate
-	// wait", not a latency budget.
 	if elapsed > time.Second {
 		t.Errorf("refusal took %v, want an immediate answer", elapsed)
 	}
@@ -177,31 +159,16 @@ func (d *shellStoreDeps) FinalizeLocalShellTurn(_ context.Context, _ marotte.Cha
 	d.finalized = append(d.finalized, output)
 }
 
-// TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand pins the
-// capture contract AT THE SITE, which the buffer's own table test never did.
-//
-// A `!cmd` whose output crosses ShellOutputCap must report the command's real
-// outcome — exit 0 — and label the output partial. The failure this guards is the
-// one procout's package doc is written about: a capping writer that reports the
-// bytes it KEPT makes os/exec's io.Copy return io.ErrShortWrite, which Cmd.Wait
-// hands back as the command's error even though the child exited 0, so a
-// successful chatty command renders as "[error: short write]" (or, when the child
-// is still writing, as "[error: signal: broken pipe]" with the process killed
-// part-way). Both shapes are measured in procout's own regression test; this one
-// checks the shell path is wired to the type that has them.
+// TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand pins the capture contract at
+// the site: output past ShellOutputCap still reports the command's real exit.
 func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skipf("sh not available: %v", err)
 	}
 	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
 	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
-	// 1,100,000 bytes, past the 1 MiB cap, in 1100 printf calls (measured at
-	// 4 ms). The unit is 1000 rather than 1024 deliberately: 1 MiB is an exact
-	// multiple of both 1024 and io.Copy's 32 KiB buffer, so an aligned producer
-	// fills the buffer to exactly the cap and the STRADDLING write — the one
-	// that has to report the full length rather than the kept length — is never
-	// reached. Red-checked: at 1024 the kept-bytes mutant passes this test, at
-	// 1000 it fails it.
+	// Units of 1000, not 1024: 1 MiB is a multiple of 1024 and of io.Copy's 32 KiB buffer, so an
+	// aligned producer would miss the short-write path.
 	p := &marotte.PromptCommand{
 		Text:      `!i=0; while [ $i -lt 1100 ]; do printf "%01000d" 0; i=$((i+1)); done`,
 		MessageID: "m-1",
@@ -222,8 +189,6 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	if !strings.Contains(body, "[output truncated at 1 MiB]") {
 		t.Error("output crossed the cap but was not labelled truncated")
 	}
-	// The kept prefix plus the fence, the status line and the note — not the
-	// whole 1100 KiB the child produced.
 	if len(body) > ShellOutputCap+1024 {
 		t.Errorf("assistant body is %d bytes, want at most the cap plus the trailer", len(body))
 	}

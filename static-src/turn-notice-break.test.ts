@@ -1,11 +1,9 @@
-// A BROKEN TURN'S REASON IS THE FRAMED PROSE UNDER THE BODY'S LAST DIVIDER. A
-// body-ending `.boundary` names the KIND and the card-level `.turn-notice` carries
-// the server's PROSE; this pins the geometry. Three parts pull against each other:
-// the DIVIDER is the frame's top edge, the FOOTER BAND's fill change is the bottom
-// one, and the reason sits between them at a SYMMETRIC inset with no second rule.
-// Real layout, because every claim is a distance; `.boundary`'s `vk-slide-up …
-// backwards` puts its rect 6px low until it runs, so the harness stops it. The
-// divider here is a `compaction` (an interrupted turn is `turn_close.outcome`).
+// A BROKEN TURN'S REASON IS THE FRAMED PROSE UNDER THE BODY'S LAST DIVIDER. A body-ending
+// `.boundary` names the KIND, the card-level `.turn-notice` carries the server's PROSE; this pins
+// the geometry. The divider is the frame's top edge, the footer BAND's fill change the bottom, and
+// the reason sits at a SYMMETRIC inset with no second rule. Each half alone passes for a broken
+// frame. The divider is a `compaction` (no `interrupted` event kind exists). `.boundary`'s
+// `vk-slide-up` puts its rect 6px low until it runs, so the harness stops that animation.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -34,19 +32,15 @@ interface Card {
 }
 
 interface CardOpts {
-  /** Whether the body ENDS with a divider, which is what opens the
-   *  frame. False builds a body whose last row is ordinary prose — the turn whose
-   *  reason came from the carrier rather than from an event row, and this file's
-   *  differential control. */
+  /** Whether the body ENDS with a divider, which opens the frame. False is the differential control:
+   *  a reason from the carrier, after ordinary prose. */
   readonly dividerLast?: boolean;
   /** Fold the card, which puts `.turn-face` between the body and the notice. */
   readonly folded?: boolean;
 }
 
-/** A `compaction` entry with an EMPTY summary, which is what `buildEvent` renders as
- *  a plain `.boundary` — a non-empty one builds the `<details class="compaction">` the
- *  reference below uses instead, so the two halves of the first case stay DIFFERENT
- *  elements and its comparison is not a constant against itself. */
+/** A `compaction` with an EMPTY summary, which `buildEvent` renders as a plain `.boundary`, so the
+ *  first case compares two DIFFERENT elements. */
 function compactionDivider(): EventEntry {
   return {
     id: "e-compaction",
@@ -68,11 +62,8 @@ function prose(text: string): HTMLElement {
   return row;
 }
 
-/** A broken turn's card, in `buildTurn`'s own child order: header, body,
- *  then the FACE (folded only), then the card-level notice, then the ledger
- *  footer. The divider comes from the real builder so its classes and label are
- *  the shipped ones; the notice is assembled the way `syncTurnNotice` assembles
- *  it, and mounted after the face the way `mountTurn` mounts it. */
+/** A broken turn's card in `buildTurn`'s child order (header, body, FACE if folded, notice, footer),
+ *  with the real divider and the notice assembled as `syncTurnNotice` does. */
 function interruptedCard({ dividerLast = true, folded = false }: CardOpts = {}): Card {
   const card = document.createElement("div");
   card.className = "turn";
@@ -190,13 +181,8 @@ describe("a broken turn's reason", () => {
       "the reason draws no rule of its own under that divider",
     ).toBe("0px");
 
-    // THE BOTTOM EDGE is the footer BAND, and it is a fill change rather than a
-    // rule: the card draws no internal seam any more, so what closes the frame is
-    // the tint step the deleted `border-top` used to sit on. Read as two
-    // backgrounds that DIFFER rather than as a colour literal, so a token retune
-    // moves with the assertion — and paired with the width, because `0px` alone
-    // passes for a footer that stopped painting a band at all, which is the shape
-    // that would reopen the "floating red prose" report this file exists for.
+    // THE BOTTOM EDGE is the footer BAND's fill change: two backgrounds that DIFFER, paired with the
+    // width, since `0px` alone passes for a footer that stopped painting.
     const trailing = getComputedStyle(footer);
     expect(trailing.borderTopWidth, "the band closes the frame, so it draws no rule").toBe("0px");
     expect(trailing.backgroundColor, "and the band is what the reader sees").not.toBe(
@@ -205,12 +191,7 @@ describe("a broken turn's reason", () => {
   });
 
   it("insets its text equally inside that frame", () => {
-    // The "0 padding vs the footing" half, now measured across the WHOLE frame
-    // rather than inside the notice's own box: the top edge is the divider and the
-    // bottom edge is where the footer band starts, so the two insets are the air
-    // below the divider's box and the air above the band's. Unaffected by the
-    // seam's deletion — the footer's `border-top` was inside its own border box,
-    // so removing it left that box's top edge exactly where it was.
+    // Measured across the WHOLE frame: the air below the divider's box against the air above the band.
     const { boundary, notice, footer } = interruptedCard();
     if (boundary === null) {
       throw new Error("no divider");
@@ -219,10 +200,7 @@ describe("a broken turn's reason", () => {
     const above = ink.top - boundary.getBoundingClientRect().bottom;
     const below = footer.getBoundingClientRect().top - ink.bottom;
     expect(above, "the air between the divider and the sentence").toBeCloseTo(INSET_PX, 0);
-    // WITHIN 1px, not equal: a Range's rect is the INK box, and this font's
-    // ascent/descent split it 1px off the line box's centre — measured 8 above and
-    // 9 below on an inset that is symmetric by declaration. Tightening this to
-    // equality would pin a font metric.
+    // WITHIN 1px: a Range rect is the INK box, which this font's metrics put 1px off centre.
     expect(
       Math.abs(below - above),
       "and the air between the sentence and the ledger",
@@ -230,27 +208,16 @@ describe("a broken turn's reason", () => {
   });
 
   it("keeps its own rule when no divider opened a frame above it", () => {
-    // THE DIFFERENTIAL, and it is required rather than thorough: `0px` is also
-    // what a notice with no frame rule at all reports, so the first case on its
-    // own passes for a reason that lost its top edge on every card. This is the
-    // turn whose reason came from the carrier rather than from an event row, so
-    // nothing above the notice draws a line and the notice draws its own.
+    // THE DIFFERENTIAL: a notice with no frame rule also reports `0px`, so the carrier-reason turn,
+    // where the notice draws its own line, is required.
     const { notice } = interruptedCard({ dividerLast: false });
     expect(getComputedStyle(notice).borderTopWidth, "one edge, drawn by the notice").toBe("1px");
   });
 
   it("keeps its own rule on a FOLDED card, where the face breaks the adjacency", () => {
-    // The hidden body is still in the DOM at `block-size: 0` with
-    // `content-visibility: hidden`, so its divider is invisible while its element
-    // is not — and what keeps the frame rules off the notice is `.turn-face`
-    // sitting between: `syncTurnFace` anchors on the notice, so the face lands
-    // above it whichever of the two mounted first. The rule is load-bearing there
-    // rather than merely retained, and that is the half the seam deletion changed:
-    // the face's fill IS the body's, so nothing but this rule marks that edge.
-    // The ORDER itself is not asserted here — this harness builds it, so an
-    // assertion on it would be reading back its own fixture. It is pinned against
-    // the real paint in turn-reason-once.test.ts, which mounts a folded broken
-    // card through `mountChatView`.
+    // The hidden body's divider is in the DOM, so `.turn-face` sitting between (`syncTurnFace` anchors
+    // on the notice) keeps the frame rules off; the face's fill IS the body's, so this rule marks the
+    // edge. The ORDER is pinned against real paint in turn-reason-once.test.ts.
     const { notice } = interruptedCard({ folded: true });
     expect(getComputedStyle(notice).borderTopWidth, "the notice draws the header's seam").toBe(
       "1px",
@@ -258,10 +225,7 @@ describe("a broken turn's reason", () => {
   });
 
   it("leaves a divider that is NOT the body's last row alone", () => {
-    // The control for the trailing-margin trim AND for the body's trailing
-    // padding. Without it the frame cases pass just as well for a rule that
-    // flattened every break's spacing in the body, which is the air those margins
-    // exist to give.
+    // The control for the margin trims: a rule flattening every break's spacing would pass the rest.
     const { card, boundary } = interruptedCard();
     if (boundary === null) {
       throw new Error("no divider");
@@ -277,13 +241,8 @@ describe("a broken turn's reason", () => {
   });
 
   it("withdraws its rule against the header band on a card with no body", () => {
-    // A tier-3 stub whose turn produced no prose puts the notice straight under the
-    // header, and a tinted band carries that edge with its fill — the same call
-    // `.turn-face` makes against the same band. It withdrew for the opposite reason
-    // until the seams were deleted (the header drew a rule of its own and two 1px
-    // lines a pixel apart is the doubling this file is named for), so the assertion
-    // is unchanged and its warrant is not. DIFFERENTIAL against the same no-divider
-    // card the third case reads, for that case's reason.
+    // A prose-less stub puts the notice under the header, where the tinted band carries the edge, as
+    // `.turn-face` does. Differential against the no-divider card.
     const bodied = interruptedCard({ dividerLast: false });
     expect(
       getComputedStyle(bodied.notice).borderTopWidth,

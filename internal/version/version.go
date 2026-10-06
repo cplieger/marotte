@@ -1,12 +1,8 @@
-// Package version holds the single-source-of-truth build version string for
-// marotte, stamped by the release image build.
+// Package version holds the build version string, stamped by the release image build.
 //
-// The -X path must be the FULL module path — `-ldflags "-X
-// github.com/cplieger/marotte/internal/version.Build=<tag>"`. A path that
-// matches no package in the build is discarded silently: the linker reports
-// nothing, the build succeeds, and Build keeps its default. This file
-// documented the module-relative spelling for its whole life, and the
-// Dockerfile copied it, so every released image was stamped "dev".
+// The -X path must be the FULL module path:
+// `-ldflags "-X github.com/cplieger/marotte/internal/version.Build=<tag>"`. The linker
+// silently discards a path matching no package, leaving the default.
 package version
 
 // Build is the release tag the image build stamps in (e.g. "v0.8.3"). Stays

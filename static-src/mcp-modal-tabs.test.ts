@@ -1,35 +1,13 @@
-// The add-integration tab bar: one tab per mode, and switching mode never hides
-// a tab.
-//
-// `data-mcp-mode` marks two different populations — one PANEL and one TAB BUTTON
-// per mode — so a selector over the bare attribute reaches both. `setMode`'s
-// panel loop was written that way, so it hid every tab button whose mode was not
-// current; and because the default mode (`search`) had no tab button at all,
-// opening the modal hid ALL of them. The bar was left as a 5px strip of its own
-// padding and border, and nothing on screen could reopen it — which took the
-// Remote URL and npm forms with it, the two the registry-search failure message
-// tells the user to switch to.
-//
-// Both halves are pinned here: the markup covers all four modes, and the runtime
-// leaves the four buttons visible whichever mode is active.
+// One tab per mode, and switching mode never hides a tab. `data-mcp-mode` marks both panels and tab buttons, so a
+// selector over the bare attribute reaches both; hiding the bar strands the Remote URL and npm forms.
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// The panels' own initialisers reach modules with real network + signal wiring;
-// this file is about which elements carry `hidden`, so they are stubbed out.
+// Stubbed: this file is about which elements carry `hidden`.
 vi.mock("./actions/tools.js", () => ({ getToolsStatus: { dispatch: async () => null } }));
 vi.mock("./tools.js", () => ({ installToolAndWait: async () => ({ ok: true }) }));
-// Replaced WHOLE, matching the sibling suites that mock this module: the
-// suspended auto-approve list's profile pointer imports `openSetting`, whose real
-// body reads `location.search` at module load and pulls in the tab projection, so
-// the panels' graph now reaches it. No case here navigates.
-vi.mock("./settings-highlight.js", () => ({
-  openSetting: (): void => {
-    /* noop */
-  },
-}));
 
 function modalMarkup(): HTMLElement {
   const start = indexHtml.indexOf('<div id="mcp-modal"');
@@ -56,8 +34,7 @@ describe("MCP add-integration tab bar (static/index.html)", () => {
       (p) => p.dataset["mcpMode"],
     );
 
-    // A mode with a panel and no tab is unreachable; a tab with no panel shows
-    // an empty modal. Both sets are the same set.
+    // A mode with a panel and no tab is unreachable; a tab with no panel shows an empty modal.
     expect([...tabbed].sort()).toEqual([...MODES].sort());
     expect([...panelled].sort()).toEqual([...MODES].sort());
   });
@@ -129,10 +106,8 @@ describe("switching mode hides panels only", () => {
 });
 
 describe("the bar keeps its labels on a phone", () => {
-  // The segments carry no icon, so the shared bar's icon-only fit would leave
-  // four EMPTY buttons if a label ever truncated; the modal's own wrap basis
-  // (60-mcp.css) is what stops that, and this measures it at the phone preset's
-  // card width rather than trusting the arithmetic.
+  // The segments carry no icon, so a truncated label would leave an empty button; the modal's wrap basis (60-mcp.css)
+  // prevents it, measured at the phone card width.
   let style: HTMLStyleElement;
   beforeAll(() => {
     style = mountAppCSS();
@@ -150,8 +125,7 @@ describe("the bar keeps its labels on a phone", () => {
       throw new Error("#mcp-modal or #mcp-modal-tabs missing");
     }
     card.classList.remove("hidden");
-    // The card is `min(36rem, 92vw)`: on a 320px phone that is 294px, and the
-    // dialog's own inset leaves the bar about this much.
+    // On a 320px phone the card is 294px, and the dialog's inset leaves the bar about this much.
     card.style.width = "270px";
 
     const segs = [...bar.querySelectorAll<HTMLElement>(".seg")];

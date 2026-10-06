@@ -51,7 +51,7 @@ Rewind and supervised review cover the agent's file-editing tool. Changes made t
 
 ## MCP servers
 
-Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server reconnects live and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID and secret you already have, then shows a sign-in link.
+Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID you already have, then shows a sign-in link.
 
 ## Tools
 

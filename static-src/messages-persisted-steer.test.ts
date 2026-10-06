@@ -1,23 +1,12 @@
-// ---------------------------------------------------------------------------
-// A PERSISTED steer renders at the `seq` where it landed, through the one primitive a
-// live one renders through.
-//
-// A steer is a `steer` ENTRY in its turn's body, so there is no live-versus-persisted pair
-// to keep consistent and no promotion: the note IS the entry at its own position. What this
-// suite defends is the note's VOCABULARY over recorded facts — whose words these are, whether
-// the agent read them, why a drop went unread, and whether it acknowledged them — because a
-// note that states the wrong one makes a false claim about the reader's own message.
-//
-// REAL store, REAL renderer, REAL layout (Browser Mode). DOM hosts before the imports, the
-// shipped transcript stylesheet, `messages.teardownAll()` per case.
-// ---------------------------------------------------------------------------
+// A persisted steer is a `steer` entry rendered at its `seq` through the live primitive. This suite defends the
+// note's vocabulary over recorded facts (whose words, read or not, why a drop went unread, acknowledged or not),
+// since a wrong one makes a false claim about the reader's own message.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Entry, Session, TurnState } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 
-// messages.ts's graph reads the shared DOM registry at module scope, and `byId`
-// throws on a missing element, so every host exists before an import resolves.
+// The graph reads the DOM registry at module scope and `byId` throws on a missing element.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -86,8 +75,7 @@ function turnOpen(turnID: string, text = "go"): Entry {
   });
 }
 
-/** The persisted shape a landed steer takes. `state` is REQUIRED on the wire, so there is no
- *  unknown-state population to render neutrally — see the dropped oracle at the tail. */
+/** The persisted shape a landed steer takes. `state` is required on the wire. */
 function steer(
   turnID: string,
   at: number,
@@ -135,8 +123,7 @@ function viewOf(chatID: string): HTMLElement {
   return el;
 }
 
-/** Mount `entries` as `chatID`'s whole transcript — one turn, the shape a page GET lands —
- *  and paint. The window is announced as a REPLAY, which is what a fetched page carries. */
+/** Mount `entries` as `chatID`'s whole transcript (one turn, announced as a replay) and paint. */
 async function paint(chatID: string, turnID: string, entries: Entry[]): Promise<HTMLElement> {
   const turns = new Map<string, TurnState>([[turnID, { entries, openEntries: new Map() }]]);
   store.setSessions([session(chatID, { turns, turn_order: [turnID], turn_count: 1 })]);
@@ -155,8 +142,7 @@ function labelOf(note: HTMLElement | undefined): string | null | undefined {
 }
 
 beforeEach(() => {
-  // The multiplexer's registry persists at module scope, so an earlier case's
-  // parked view would otherwise count against this one's LRU budget.
+  // The multiplexer's registry persists at module scope; an earlier case's parked view would count against the LRU.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
@@ -180,11 +166,9 @@ describe("a persisted steer the agent read", () => {
     expect(note?.dataset["state"]).toBe("read");
     expect(labelOf(note)).toBe("Mid-turn message");
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("use tabs");
-    // The control for the acknowledged case below: without it a note marked acknowledged
-    // unconditionally satisfies that case and nothing here notices.
+    // The control for the acknowledged case below, which an unconditional mark would otherwise satisfy.
     expect(note?.dataset["acknowledged"]).toBeUndefined();
-    // The note holds the reader's words and carries no control in either state: the
-    // acknowledgement is its own entry and a drop's resend is its own turn.
+    // The note carries no control: the acknowledgement is its own entry and a drop's resend is its own turn.
     expect(note?.querySelector(".steer-note-restore")).toBeNull();
   });
 
@@ -217,10 +201,7 @@ describe("a persisted steer the agent read", () => {
     expect(labelOf(note)).toBe("Workflow result");
   });
 
-  // The ORACLE THE ENTRY MODEL RESTORED, and the reason it is worth its own case: under the
-  // message model the persisted note lost the acknowledgement (only the live mark carried
-  // one), so a reload turned an acknowledged correction into a bare one. The ack is its own
-  // entry now, so the note reads it out of the turn's own body.
+  // The ack is its own entry, so a reload must read it out of the turn's body rather than lose it.
   it("marks the note acknowledged when the turn holds its steer_ack", async () => {
     const c = freshID("c-steer-ack");
     const t = `${c}-t1`;
@@ -239,9 +220,8 @@ describe("a persisted steer the agent read", () => {
   });
 });
 
-// The half that matters most, and the reason the state is on the entry at all: a correction
-// the agent NEVER READ. Rendering it identically to a delivered one is a false claim about
-// whether the reader's own message landed, which is worse than the note being absent.
+// A correction the agent never read must not render like a delivered one: that is a false claim about the
+// reader's message.
 describe("a persisted UNDELIVERED steer says so", () => {
   it("mounts data-state=dropped with the not-read label", async () => {
     const c = freshID("c-steer-dropped");
@@ -260,8 +240,7 @@ describe("a persisted UNDELIVERED steer says so", () => {
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("actually target main");
   });
 
-  // WHY it went unread is a recorded fact and the label states it. A value the note has no
-  // wording for adds no clause, which is what keeps upstream text off this surface.
+  // A drop value the note has no wording for adds no clause, which keeps upstream text off this surface.
   it("states a recorded drop reason and ignores one it has no wording for", async () => {
     const c = freshID("c-steer-reason");
     const t = `${c}-t1`;

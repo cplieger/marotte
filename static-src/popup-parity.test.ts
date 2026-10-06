@@ -1,23 +1,4 @@
-// EVERY POPUP IS ONE COMPONENT, measured over real layout against the assembled
-// bundle.
-//
-// The four cards a reader opens from the composer and the sidebar — status,
-// context, model, mode — already shared `.pill-expand-content`, so background,
-// border, radius, shadow and z-index were identical. What made them read as four
-// components was four properties diverging per card: padding (8/12 against 8
-// against 0), an inline floor of 11 / 14 / 12 / 12rem, a height cap on two of the
-// four, and a row size of 11px in two and 12px in the other two.
-//
-// The table below is the enumeration, so a fifth card added to `static/index.html`
-// fails here until it is listed with whatever it departs on and why. A departure
-// is declared per property per card: `EXPECTED` is what the shared rule answers,
-// and anything else has to name its reason in `overrides`.
-//
-// The second half is the type floor. There is no coarse tier on the `--fs-*`
-// scale; the popup rungs `--fs-popup` / `--fs-popup-meta` (01-tokens.css) carry
-// it, on the POINTER tier rather than a width query, and this file measures every
-// text-bearing node in every card on both tiers — which is what the block this
-// replaced could not do, having enumerated selectors and missed five.
+// EVERY POPUP IS ONE COMPONENT, measured over real layout against the assembled bundle.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
@@ -43,16 +24,11 @@ interface Popup {
 
 type Prop = "paddingTop" | "paddingLeft" | "minInlineSize" | "maxBlockSize" | "bodyFontSize";
 
-/** The shared answer per property, in resolved pixels at the fine tier.
- *  --sp-2 is 8px, 14rem is 224px, --fs-base is 13px.
- *
- *  `maxBlockSize` is `min(var(--pill-max-block, 26rem), 60dvh)`, and 416px is the
- *  26rem FALLBACK rung: these cases mount a card directly, so `clampToViewport`
- *  never runs and the measured room is unset. 26rem wins over 60dvh because the
- *  browser project's viewport is a fixed 1280x720, where 60dvh is 432px. The two
- *  bounds are pinned behaviourally further down ("caps against the MEASURED
- *  room"), which is what keeps this literal from being the only thing standing
- *  between the cap and a hard-coded height. */
+/** The shared answer per property, in resolved pixels at the fine tier. --sp-2 is 8px, 14rem is
+ *  224px, --fs-base is 13px. `maxBlockSize` is `min(var(--pill-max-block, 26rem), 60dvh)`, and
+ *  416px is the 26rem FALLBACK rung: these cases mount a card directly, so `clampToViewport`
+ *  never runs and the measured room is unset. 26rem wins over 60dvh because the browser
+ *  project's viewport is a fixed 1280x720, where 60dvh is 432px. */
 const EXPECTED: Record<Prop, string> = {
   paddingTop: "8px",
   paddingLeft: "8px",
@@ -80,14 +56,8 @@ const POPUPS: readonly Popup[] = [
     rows: () => [
       span("pill-detail", "Ready"),
       el("span", "pill-sep"),
-      // The account row is the card's one LINK now, holding a
-      // `.pill-account-lines` stack rather than the plan and the meter as direct
-      // children. NO assertion in this file changes — every computed read is on the
-      // card or on `.pill-detail` — which is exactly why this builder had to move:
-      // left as it was it would keep PASSING while no longer modelling the shipped
-      // markup, and `mount()`'s own docstring is "Mount one card the way
-      // `static/index.html` does". It was missed by the id-based census because this
-      // fixture addresses the row by CLASS.
+      // The account row is the card's one LINK now, holding a `.pill-account-lines` stack rather
+      // than the plan and the meter as direct children.
       (() => {
         const account = el("a", "pill-account");
         const lines = el("span", "pill-account-lines");
@@ -121,9 +91,8 @@ const POPUPS: readonly Popup[] = [
     cls: "pill-model-list",
     name: "the model card",
     bodyRow: ".pill-model-item",
-    // The card gives its padding to the scroller and does not scroll itself, so
-    // the effort tiers stay pinned below a list that does. Both are stated at
-    // `.pill-model-list` (15-input.css).
+    // The card gives its padding to the scroller and does not scroll itself, so the effort tiers
+    // stay pinned below a list that does. Both are stated at `.pill-model-list` (15-input.css).
     overrides: {
       paddingTop: { value: "0px", because: "the effort section bleeds to both edges" },
       paddingLeft: { value: "0px", because: "the effort section bleeds to both edges" },
@@ -162,8 +131,8 @@ const POPUPS: readonly Popup[] = [
     cls: "chat-options-card",
     name: "the chat-actions card",
     bodyRow: ".chat-opt-name",
-    // The only card whose rows WRAP: every row carries a hint sentence, so its
-    // floor is a measure for prose rather than a minimum for a one-line strip.
+    // The only card whose rows WRAP: every row carries a hint sentence, so its floor is a measure
+    // for prose rather than a minimum for a one-line strip.
     overrides: {
       minInlineSize: { value: "288px", because: "18rem is a measure for wrapped hint prose" },
     },
@@ -193,8 +162,8 @@ const POPUPS: readonly Popup[] = [
 ];
 
 const host = document.createElement("div");
-// A real anchor: the card is `position: absolute` against its slot, so it needs
-// one or the offsets resolve against the page and the width measurement moves.
+// A real anchor: the card is `position: absolute` against its slot, so it needs one or the offsets
+// resolve against the page and the width measurement moves.
 host.style.cssText = "position:fixed;top:0;left:0;inline-size:900px;block-size:600px;";
 document.body.appendChild(host);
 
@@ -214,11 +183,10 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** Mount one card the way `static/index.html` does: a `.pill-slot` holding the
- *  trigger and, as its SIBLING, the card. `is-open` is the reveal class, and
- *  without it the card sits at `opacity: 0; transform: scale(0.4)` — which does
- *  not move a computed length, but does make a failure unreadable in a
- *  screenshot. */
+/** Mount one card the way `static/index.html` does: a `.pill-slot` holding the trigger and, as
+ *  its SIBLING, the card. `is-open` is the reveal class, and without it the card sits at
+ *  `opacity: 0; transform: scale(0.4)` — which does not move a computed length, but does make a
+ *  failure unreadable in a screenshot. */
 function mount(popup: Popup): HTMLElement {
   const slot = el("span", "pill-slot");
   slot.append(el("button", "pill pill-expandable"));
@@ -261,10 +229,9 @@ describe("every popup answers one geometry", () => {
   });
 
   it("keeps the shared answer in ONE place, so a card cannot drift silently", () => {
-    // The four properties are declared on `.pill-expand-content` and nowhere
-    // else, which is what makes the parity above a property of the cascade rather
-    // than of six rules that currently agree. Measured by mounting a card with NO
-    // modifier class at all: it must already answer every shared value.
+    // The four properties are declared on `.pill-expand-content` and nowhere else, which is what
+    // makes the parity above a property of the cascade rather than of six rules that currently
+    // agree.
     document.documentElement.dataset["pointer"] = "fine";
     const bare = mount({ cls: "", name: "a bare card", bodyRow: "", rows: () => [] });
     const cs = getComputedStyle(bare);
@@ -284,13 +251,8 @@ describe("every popup answers one geometry", () => {
   });
 
   it("caps against the MEASURED room, not an authored height", () => {
-    // The cap is two bounds and each answers a different question, so each is
-    // asserted from the side where it governs. `--pill-max-block` is the ROOM
-    // between the viewport's top edge and the card's own bottom, published by
-    // `pill-expand.ts` on open; `60dvh` is the SHAPE bound that stops a menu
-    // filling the screen. A literal height would satisfy neither, and a literal is
-    // exactly what this replaced: 16rem allowed 254px where the chat-actions menu
-    // wanted 332px, so it scrolled with 595px free above it.
+    // The cap is two bounds and each answers a different question, so each is asserted from the
+    // side where it governs.
     document.documentElement.dataset["pointer"] = "fine";
     const card = mount({ cls: "", name: "a bare card", bodyRow: "", rows: () => [] });
 
@@ -302,8 +264,8 @@ describe("every popup answers one geometry", () => {
         "overflow the viewport it is anchored inside",
     ).toBe("120px");
 
-    // Room past the shape bound, so 60dvh governs: 60% of the browser project's
-    // fixed 720px viewport.
+    // Room past the shape bound, so 60dvh governs: 60% of the browser project's fixed 720px
+    // viewport.
     card.style.setProperty("--pill-max-block", "99999px");
     expect(
       getComputedStyle(card).maxBlockSize,
@@ -314,9 +276,9 @@ describe("every popup answers one geometry", () => {
   });
 
   it("caps every card's height WITH a way to reach what the cap hides", () => {
-    // A cap without a scroll is a clip, and the content it clips is the reason
-    // the card was opened. The model card is the documented exception: the CARD
-    // does not scroll, its inner `.pill-model-scroll` does.
+    // A cap without a scroll is a clip, and the content it clips is the reason the card was opened.
+    // The model card is the documented exception: the CARD does not scroll, its inner
+    // `.pill-model-scroll` does.
     document.documentElement.dataset["pointer"] = "fine";
     for (const popup of POPUPS) {
       const card = mount(popup);
@@ -329,10 +291,8 @@ describe("every popup answers one geometry", () => {
   });
 
   it("leaves the floor a FLOOR, so a card wider than it still grows", () => {
-    // What makes ONE floor safe for six cards: it is a minimum, not a width, so a
-    // card whose content needs more is not cramped by sharing it. Measured rather
-    // than reasoned, because the cards are `position: absolute` column flex
-    // containers and a stretched row does not always push its container.
+    // What makes ONE floor safe for six cards: it is a minimum, not a width, so a card whose
+    // content needs more is not cramped by sharing it.
     document.documentElement.dataset["pointer"] = "fine";
     const card = mount({
       cls: "pill-role-list",
@@ -352,8 +312,8 @@ describe("every popup answers one geometry", () => {
 });
 
 describe("no popup text is below the mobile floor on a coarse pointer", () => {
-  // 12px is the floor the app keeps under a finger; a caption reads
-  // `--fs-popup-meta`, which resolves one rung above it on the coarse tier.
+  // 12px is the floor the app keeps under a finger; a caption reads `--fs-popup-meta`, which
+  // resolves one rung above it on the coarse tier.
   const FLOOR_PX = 12;
 
   it.each(POPUPS.map((p) => [p.name, p] as const))("%s", (_name, popup) => {
@@ -362,8 +322,8 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
 
     const tooSmall: string[] = [];
     for (const node of [card, ...Array.from(card.querySelectorAll<HTMLElement>("*"))]) {
-      // Only a node that renders text of its own: a wrapper's size says nothing
-      // about what a reader sees, and an empty node has nothing to read.
+      // Only a node that renders text of its own: a wrapper's size says nothing about what a reader
+      // sees, and an empty node has nothing to read.
       const own = Array.from(node.childNodes).some(
         (c) => c.nodeType === Node.TEXT_NODE && (c.textContent ?? "").trim() !== "",
       );
@@ -384,9 +344,7 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
   });
 
   it("lifts BOTH rungs on the pointer tier, not on a width query", () => {
-    // The lift used to live in `@media (width <= 48rem)`, so an iPad — coarse
-    // pointer, desktop width — got 44px controls beside 11px captions. This
-    // measures the tier at the test viewport's own width, which is 1280.
+    // This measures the tier at the test viewport's own width, which is 1280.
     expect(window.innerWidth, "the lift must be readable at a desktop width").toBeGreaterThan(768);
 
     const card = mount(POPUPS[3] as Popup);
@@ -409,10 +367,9 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
   });
 
   it("keeps a caption UNDER its row, so it cannot outsize what it labels", () => {
-    // The two rungs collapsing onto one value would make a card's captions the same
-    // size as its rows — which is the hierarchy the size split carries. Measured on
-    // the model card, where a row's own name and its `--fs-popup-meta` credit
-    // multiplier share one flex line.
+    // The two rungs collapsing onto one value would make a card's captions the same size as its
+    // rows — which is the hierarchy the size split carries. Measured on the model card, where a
+    // row's own name and its `--fs-popup-meta` credit multiplier share one flex line.
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.dataset["pointer"] = tier;
       const card = mount(POPUPS[2] as Popup);

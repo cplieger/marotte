@@ -1,9 +1,7 @@
 package translate
 
-// Tests for the workflow-run channel and step-frame classification.
-//
-// A step is neither the chat nor a subagent, so the drop question and the
-// subagent question have different right answers for one.
+// A step is neither the chat nor a subagent, so the drop and subagent questions have
+// different answers for one.
 
 import (
 	"context"
@@ -54,13 +52,10 @@ func TestClassifyFrame(t *testing.T) {
 		{"no session id is the chat", "", false, OwnerChat},
 		{"the chat's own session", testParent, false, OwnerChat},
 		{"a registered step session", testStep, false, OwnerStep},
-		// The recovery path: after a restart the registry is cold, so a resumed
-		// run's frames carry session ids nothing announced in this process. The
-		// frame's own _meta.kiro.workflow is what still classifies them.
+		// The recovery path: with a cold registry, the frame's own _meta.kiro.workflow classifies.
 		{"an unregistered session the FRAME marks as a step", "sess_unknown", true, OwnerStep},
 		{"an unregistered, unmarked session is a subagent", testSub, false, OwnerSubagent},
-		// A marked frame on the chat's OWN session stays the chat's: the session
-		// id is the discriminator, and a marker cannot promote the parent.
+		// The session id is the discriminator; a marker cannot promote the parent.
 		{"the marker does not override the chat's own session", testParent, true, OwnerChat},
 	}
 	for _, c := range cases {
@@ -73,9 +68,8 @@ func TestClassifyFrame(t *testing.T) {
 	}
 }
 
-// TestDeriveSubSession_StepIsNotASubagent pins the narrower of the two questions.
-// A step must answer "" here, or its permission ask is emitted carrying a
-// SubSessionID that names a subagent which does not exist.
+// TestDeriveSubSession_StepIsNotASubagent pins that a step answers "", or its permission
+// ask names a subagent that does not exist.
 func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -93,10 +87,8 @@ func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
 	}
 }
 
-// TestForeignSession_DropsBothNonChatOwners pins the wider question. The three
-// dedup guards must drop a step's copy as well as a subagent's, because KAS fans
-// the identical payload out to every live session and emitting both renders it
-// twice.
+// TestForeignSession_DropsBothNonChatOwners pins that the dedup guards drop a step's copy
+// too: KAS fans one payload out to every live session.
 func TestForeignSession_DropsBothNonChatOwners(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -161,9 +153,7 @@ func TestRunNotifications_NineBecomeThree(t *testing.T) {
 			if events[0].Type != c.wantType {
 				t.Errorf("%s: event type = %q, want %q", c.method, events[0].Type, c.wantType)
 			}
-			// Every run event rides the LAUNCHING CHAT's topic: KAS parents a run
-			// on the calling chat's session, so the frame arrives on that chat's
-			// bridge and no session→chat resolution is needed.
+			// Every run event rides the LAUNCHING CHAT's topic: KAS parents a run on its session.
 			if events[0].ChatID != testChat {
 				t.Errorf("%s: chat_id = %q, want %q", c.method, events[0].ChatID, testChat)
 			}
@@ -201,12 +191,8 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 }
 
-// TestRunStart_CarriesTheScheduledMark pins a flag no client can derive: a scheduled
-// and a manual launch are indistinguishable on this frame, so only the launch path
-// knows which is which.
-//
-// The lookup must key on the WORKFLOW id — chatID is "" for exactly these runs, which
-// is also the property logAgentRun's origin gate rests on.
+// TestRunStart_CarriesTheScheduledMark pins a flag only the launch path knows, keyed on
+// the WORKFLOW id (chatID is "" for exactly these runs).
 func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -227,8 +213,7 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 			deps.scheduledRuns = c.scheduled
 			tr := New(rolesOf(deps))
 
-			// The empty chat id is the real shape: dispatch passes "" for a
-			// parentless run's lifecycle frames.
+			// The real shape: dispatch passes "" for a parentless run's lifecycle frames.
 			tr.HandleRunStart(t.Context(), "",
 				notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "nightly"}))
 
@@ -246,13 +231,8 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	}
 }
 
-// TestRunComplete_CarriesTheRunsName pins the label the completion signal needs.
-//
-// This frame is the one lifecycle notification with no top-level workflowName, so
-// the name has to come out of `finalState` — the same place the log line above
-// reads it. Without it an outcome signal can only name a uuid, and a client that
-// never saw this run's start frame (a page opened mid-run, another device) has
-// nothing at all.
+// TestRunComplete_CarriesTheRunsName pins the name read out of `finalState` (this frame has
+// no top-level workflowName), for a client that never saw the start frame.
 func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -274,14 +254,34 @@ func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 		t.Errorf("payload = %+v, want the id and status intact", p)
 	}
 
-	// A frame with no state carries no name, and the payload says so rather than
-	// inventing one; the client falls back to a generic label.
+	// A frame with no state carries no name; the client falls back to a generic label.
 	events = nil
 	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
 		"workflowId": "wf_2", "status": "failed",
 	}))
 	if p, _ := events[0].Payload.(marotte.RunFinishedPayload); p.Name != "" {
 		t.Errorf("name = %q for a frame with no finalState, want empty", p.Name)
+	}
+}
+
+func TestRunLifecycle_NamesALabelledRunByItsLabel(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	deps := capturing(&events)
+	deps.runLabels = map[string]string{"wf_1": "publish · scheduled"}
+	tr := New(rolesOf(deps))
+
+	tr.HandleRunStart(t.Context(), "",
+		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}))
+	if p, _ := events[0].Payload.(marotte.RunStartedPayload); p.Name != "publish · scheduled" {
+		t.Errorf("run_started name = %q, want the launch's label", p.Name)
+	}
+	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
+		"workflowId": "wf_2", "status": "completed",
+		"finalState": map[string]any{"workflowName": "publish", "runLabel": "publish-docs"},
+	}))
+	if p, _ := events[1].Payload.(marotte.RunFinishedPayload); p.Name != "publish-docs" {
+		t.Errorf("run_finished name = %q, want finalState.runLabel", p.Name)
 	}
 }
 
@@ -301,9 +301,8 @@ func TestRunNotifications_IgnoreFramesWithNoWorkflowID(t *testing.T) {
 	}
 }
 
-// TestNodeStart_RecordsTheStepSession pins the one side effect the notification
-// layer has, and it is what makes a step's later frames classifiable: node_start
-// is the ONLY frame that announces a step's session id.
+// TestNodeStart_RecordsTheStepSession pins that node_start, the ONLY frame announcing a
+// step's session id, records it.
 func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -323,8 +322,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	if ref.WorkflowID != "wf_1" || ref.NodeID != "build" {
 		t.Errorf("StepOf = %+v, want {wf_1 build}", ref)
 	}
-	// A node_start without a sessionId (the continuation/resume path) records
-	// nothing rather than an entry keyed on "".
+	// A node_start without a sessionId (resume) records nothing rather than a "" key.
 	tr.RunProgressHandler(marotte.RunProgressNodeStart)(t.Context(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{"workflowId": "wf_1", "nodeId": "next"}))
 	if _, ok := tr.steps.lookup(""); ok {
@@ -332,11 +330,8 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	}
 }
 
-// TestRunComplete_LeavesTheStepSessionsToItsCaller pins where the registry's
-// bound is NOT: this frame's status can be `paused`, so wiping the registry here
-// empties it MID-RUN and the resumed run's next ask resolves no run id. The gate
-// is the caller's (agent.observeComplete's `terminalRunStatus` branch), so this
-// handler forgets nothing even for a status that IS terminal.
+// TestRunComplete_LeavesTheStepSessionsToItsCaller pins that this handler forgets nothing:
+// the status can be `paused`, and the terminal gate is agent.observeComplete's.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -357,9 +352,7 @@ func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
 	}
 }
 
-// TestForgetRunSteps_DropsOneRunsSessions pins the bound at its new door. A
-// long-lived container running many workflows would otherwise hold one entry per
-// step forever, and the drop has to stay scoped to the run that ended.
+// TestForgetRunSteps_DropsOneRunsSessions pins the registry bound, scoped to the ended run.
 func TestForgetRunSteps_DropsOneRunsSessions(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -400,9 +393,8 @@ func TestStepOf_EmptySessionIsNeverAStep(t *testing.T) {
 	}
 }
 
-// TestStepChunk_TwoIterationsDoNotShareATurn pins why nodePath rather than nodeId
-// is the key: a repeat's iterations reuse the node id, and each iteration's frames
-// fold into a run turn of their own.
+// TestStepChunk_TwoIterationsDoNotShareATurn pins nodePath as the key: a repeat's
+// iterations reuse the node id.
 func TestStepChunk_TwoIterationsDoNotShareATurn(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -448,19 +440,13 @@ func (s *usageStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marott
 	return strconv.Itoa(s.mutateCalls), nil
 }
 
-// TestSessionInfoUpdate_StepMeteringCountsCreditsOnly pins the scoped allowance.
-//
-// A step's turn_completion is the ONLY record of what that step spent, and it is
-// the RUN turn's metering: the run appender takes the credits and the elapsed time
-// for the step's own turn, and the chat that launched and paid for the run is
-// billed the credits as well. Nothing else of it reaches the chat: LastTurnMs
-// describes the CONVERSATION's own last turn, so a step's elapsed time would
-// report that as however long a build step took.
+// TestSessionInfoUpdate_StepMeteringCountsCreditsOnly pins the scoped allowance: a step's
+// turn_completion feeds the RUN turn and bills credits to the launching chat, nothing else
+// (LastTurnMs is the conversation's own last turn).
 func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	t.Parallel()
-	// NO `workflow` block, deliberately: KAS's buildSessionInfoUpdate merges no
-	// promptMeta, so a step's turn_completion is byte-identical to the chat's own
-	// and the step fact can only arrive as ATTRIBUTION.
+	// No `workflow` block: KAS merges no promptMeta here, so a step's turn_completion is
+	// byte-identical to the chat's and the step fact arrives only as ATTRIBUTION.
 	infoFrame := func() json.RawMessage {
 		kiro := map[string]any{
 			"kind":                "turn_completion",
@@ -522,9 +508,8 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	}
 }
 
-// TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped pins that the
-// allowance is narrow: a step's focus, compaction and context-usage frames must
-// NOT reach the chat, or a step would rename the chat and move its context ring.
+// TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped pins that a step's focus,
+// compaction and context-usage frames never reach the chat.
 func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	t.Parallel()
 	raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": map[string]any{
@@ -543,14 +528,8 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	}
 }
 
-// TestRecordRunSteps_SeedsFromAnInspectRead pins the recovery path for step
-// attribution.
-//
-// `node_start` announces a step's session id live, but a container restart
-// empties the registry while the run carries on — so reading the run is the only
-// other moment the mapping is in hand, and `inspect` carries it on every node.
-// The assertion is on the observable consequence: the frame now classifies as a
-// step rather than as a subagent.
+// TestRecordRunSteps_SeedsFromAnInspectRead pins the recovery path: after a restart an
+// `inspect` read makes the frame classify as a step rather than a subagent.
 func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -577,15 +556,13 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	if !ok || ref.WorkflowID != "wf_1" || ref.NodeID != "build" {
 		t.Errorf("lookup(sess_build) = %+v ok=%v, want {wf_1 build} true", ref, ok)
 	}
-	// A step with no session has not started; recording an empty key would make
-	// every unattributed frame on this chat look like a step.
+	// An empty key would make every unattributed frame on this chat look like a step.
 	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("a pending step seeded an empty-keyed entry")
 	}
 }
 
-// TestRecordRunSteps_ToleratesJunk pins that seeding cannot fail a read: the run
-// endpoint passes the same bytes through to the client either way.
+// TestRecordRunSteps_ToleratesJunk pins that seeding cannot fail a read.
 func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
@@ -595,10 +572,8 @@ func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 	}
 }
 
-// TestStepToolCall_FoldsIntoTheStepsTurn pins the other half of step attribution:
-// a step's TOOL frames carry KAS's own agentSubtaskId (or none) while its TEXT
-// carries nothing, and both are routed by the dispatcher's attribution — without
-// the same routing on the tool path, one step's work fragments across two turns.
+// TestStepToolCall_FoldsIntoTheStepsTurn pins that a step's TOOL and TEXT frames route by
+// the same attribution, or one step's work fragments across two turns.
 func TestStepToolCall_FoldsIntoTheStepsTurn(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -646,19 +621,15 @@ func TestStepToolCall_FoldsIntoTheStepsTurn(t *testing.T) {
 	}
 }
 
-// TestAgentLaunchedRun_IsRecorded pins both directions of the two slog lines that
-// are an agent-launched run's only durable trace in this tier — nothing else
-// observes them, and logging a manual run would dilute the greppable class.
-//
-// slog's default logger is process-global, so no t.Parallel here.
+// TestAgentLaunchedRun_IsRecorded pins both directions of the two slog lines that are an
+// agent-launched run's only durable trace. Serial: slog's default is process-global.
 func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 	const (
 		startMsg = "agent-launched workflow run started"
 		endMsg   = "agent-launched workflow run finished"
 	)
-	// The gate is the DELIVERY ADDRESS, so the case axis is the chat id: a chat
-	// bridge's Forward stamps that chat's real id, and (*Runtime).dispatch hands a
-	// run bridge's lifecycle frames an empty one.
+	// The gate is the DELIVERY ADDRESS: a chat bridge stamps the chat's id, a run bridge's
+	// lifecycle frames get an empty one.
 	cases := []struct {
 		name       string
 		chatID     marotte.ChatID
@@ -674,9 +645,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 			tr := New(rolesOf(capturing(&events)))
 			ctx := t.Context()
 
-			// Both frames carry a parentSessionId in BOTH cases, because since 0.63.3
-			// every run has one — marotte's own launch sends the run bridge's session.
-			// So a payload field cannot separate these two runs and the address must.
+			// Both cases carry a parentSessionId, so only the address can separate them.
 			start := map[string]any{
 				"workflowId": "wf_7", "workflowName": "publish-pr", "parentSessionId": testParent,
 			}
@@ -690,8 +659,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 			tr.HandleRunStart(ctx, c.chatID, notif("_kiro/workflow/run_start", start))
 			tr.HandleRunComplete(ctx, c.chatID, notif("_kiro/workflow/run_complete", done))
 
-			// The events are unconditional; only the log line is gated. Asserting
-			// this keeps the origin gate from being "reads run_start" by accident.
+			// Only the log line is gated, so the gate cannot become "reads run_start" by accident.
 			if len(events) != 2 {
 				t.Fatalf("got %d SSE events, want 2 (started + finished) regardless of origin", len(events))
 			}
@@ -716,8 +684,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 					}
 				}
 			}
-			// The terminal line carries the outcome, because terminal covers
-			// success, failure, cancel and a policy stop.
+			// Terminal covers success, failure, cancel and a policy stop, so the line carries the status.
 			if !rec.HasAttr(endMsg, "status", "completed") {
 				got, _ := rec.AttrValue(endMsg, "status")
 				t.Errorf("%q: status = %q, want %q", endMsg, got, "completed")
@@ -726,25 +693,16 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 	}
 }
 
-// TestAgentLaunchedRun_IgnoresTheParentSessionField is the regression guard for the
-// origin class, and it replaces a test whose whole subject this change deleted (which
-// top-level-vs-finalState copy of `parentSessionId` the terminal frame decodes).
-//
-// Since 0.63.3 `_kiro/workflow/new` REQUIRES a parent, so marotte's own manual and
-// scheduled launches send the run bridge's session and every lifecycle frame carries
-// one. A gate keyed on that field would therefore log every one of them as
-// origin=agent and make the greppable class worthless — which is the whole population
-// it exists to isolate: no lease, no record, no supervisor.
-//
-// slog's default logger is process-global, so no t.Parallel here.
+// TestAgentLaunchedRun_IgnoresTheParentSessionField pins that the origin gate ignores
+// `parentSessionId`: `_kiro/workflow/new` requires one, so every marotte launch carries it.
+// Serial: slog's default is process-global.
 func TestAgentLaunchedRun_IgnoresTheParentSessionField(t *testing.T) {
 	rec := capture.Default(t)
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 	ctx := t.Context()
 
-	// The exact shape a run MAROTTE launched now produces: a populated parent in both
-	// positions, delivered on an empty chat id because it came off a run bridge.
+	// The shape a marotte launch produces: a parent in both positions, on an empty chat id.
 	tr.HandleRunStart(ctx, "", notif("_kiro/workflow/run_start", map[string]any{
 		"workflowId": "wf_9", "workflowName": "nightly", "parentSessionId": testParent,
 	}))

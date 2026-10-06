@@ -1,22 +1,6 @@
-// ---------------------------------------------------------------------------
-// Tests for fundamentals/steer-note.ts: the transcript row a steer becomes once
-// it leaves the dock.
-//
-// Two things live here that the dock used to carry: the READ state (the agent
-// consumed the message) and the agent's own account of what it DID about it.
-// Both were a green check and an extra line inside the composer, which put the
-// state of the transcript in the message box and left the transcript itself
-// unexplained.
-//
-// And one thing that is new: WHOSE words the row holds. KAS's steering buffer is
-// the only inbound channel into a live turn, so a workflow's report arrives on it
-// beside the user's corrections — with one label the report read as something the
-// reader had typed, which is the reported defect these label cases pin.
-//
-// A pure view, driven by its own data and read as DOM. The clamp is measured
-// against real layout at the bottom of the file, because "does this overflow four
-// lines" has no honest answer without it.
-// ---------------------------------------------------------------------------
+// The transcript row a steer becomes once it leaves the dock: its READ state, the agent's account,
+// and WHOSE words it holds (a workflow's report arrives on KAS's steering buffer beside the user's
+// corrections). The clamp is measured against real layout at the bottom.
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { buildSteerNote, type SteerNoteData } from "./steer-note.js";
@@ -83,10 +67,8 @@ describe("the read state", () => {
 });
 
 describe("the dropped state", () => {
-  // THE LABEL STATES WHAT IS KNOWN AND NOTHING MORE. It used to assert the resend
-  // ("Not read — sent as a new turn"), which is a claim about a turn this note
-  // cannot see: the resend is a RECORDED fact, so the resent note says it and no
-  // label may assert one. What this state knows is that the agent never read it.
+  // The label states only what is known: the agent never read it (not the resend, a turn it
+  // cannot see).
   it("says it was not read, and keeps the text", () => {
     const n = note({ text: "never read this", dropped: true });
 
@@ -96,10 +78,7 @@ describe("the dropped state", () => {
     expect(n.getAttribute("aria-label")).toBe("Not read: never read this");
   });
 
-  // THE MARK IS A RECORD, NOT AN OFFER. It used to carry "Put it back in the
-  // message box", which was the reader's only route to recovering an unread
-  // message; the resend carries the text into the next turn for them now, so a
-  // button here would ask for a job already done.
+  // A record, not an offer: the resend already carries the text into the next turn.
   it("carries no control, so the mark is a record rather than an offer", () => {
     const n = note({ text: "never read this", dropped: true });
     expect(controls(n)).toEqual([]);
@@ -116,10 +95,7 @@ describe("the dropped state", () => {
   });
 });
 
-// WHY it was never read is the reason field, and `boundary` is the value marotte's
-// own translator writes: KAS clears its buffer at every turn boundary, so a steer the
-// model never reached was dropped BY that boundary. Without a clause the label says
-// only that the words were not read, with nothing about what ended the turn first.
+// `boundary` is what marotte's translator writes: KAS clears its buffer at every turn boundary.
 describe("the reason clause", () => {
   it("words the boundary drop, so the label says what ended the turn", () => {
     const n = note({ text: "use tabs", dropped: true, reason: "boundary" });
@@ -135,10 +111,8 @@ describe("the reason clause", () => {
     expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 you deleted it: use tabs");
   });
 
-  // THE TABLE IS TOTAL OVER THE ENUM, which is what stops a reason reaching a reader
-  // as a bare label: a fourth member added to SteerReason server-side fails the
-  // client's own type check until somebody words it. Asserted as a TYPE rather than
-  // by exporting REASONS, because the table is not public surface.
+  // TOTAL over the enum: a new SteerReason fails the client's type check until it is worded.
+  // Asserted as a TYPE because the table is not public.
   it("cannot hold a reason it has no wording for", () => {
     // @ts-expect-error - a table missing `boundary` is not total over SteerReason.
     const partial: Record<SteerReason, string> = { restart: "the session restarted" };
@@ -147,9 +121,8 @@ describe("the reason clause", () => {
   });
 });
 
-// The reported defect: a workflow injects its result through the same steering
-// tools the user's own message rides, and the note said the same thing about
-// both. Nothing on the wire separated them either — see marotte.SteerOrigin.
+// A workflow injects its result through the same steering tools the user's own
+// message rides, so the note must say whose words it holds (marotte.SteerOrigin).
 describe("whose words the note holds", () => {
   it("names a workflow's report as one, and never as the reader's message", () => {
     const n = note({ text: "The review finished with 3 findings.", origin: "agent" });
@@ -193,8 +166,7 @@ describe("the message keeps its shape", () => {
     expect(textOf(n, ".steer-note-text")).not.toContain("\u2026");
   });
 
-  // It used to collapse whitespace, which destroyed the shape of anything typed
-  // as more than one line. With the text fully openable there is nothing to buy.
+  // The text is fully openable, so collapsing whitespace would only destroy its shape.
   it("keeps the newlines the reader typed", () => {
     const n = note({ text: "first line\n\nsecond line" });
     expect(textOf(n, ".steer-note-text")).toBe("first line\n\nsecond line");
@@ -203,10 +175,7 @@ describe("the message keeps its shape", () => {
   });
 });
 
-// The clamp against REAL layout, which is the only thing that can answer "does
-// this overflow four lines". Everything above builds a detached note, where both
-// scrollHeight and clientHeight read 0 and the verdict can only be the character
-// guess; these mount it under the shipped stylesheet.
+// Real layout: a detached note reads scrollHeight and clientHeight 0.
 describe("the clamp measured on the page", () => {
   let styleEl: HTMLStyleElement;
   let host: HTMLElement;

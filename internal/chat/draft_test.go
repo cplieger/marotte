@@ -11,10 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// writeRawChat plants a chat file the store did not write. The store's own API
-// cannot produce a file whose stored id disagrees with its name, which is exactly
-// why the fixture goes around it: the hazard is a file arriving from somewhere
-// else (a truncated write, an operator editing /config by hand).
+// writeRawChat plants a chat file the store did not write, such as one whose stored id disagrees with its name (a
+// truncated write, a hand-edited /config).
 func writeRawChat(t *testing.T, dir string, chatID marotte.ChatID, body string) {
 	t.Helper()
 	path := filepath.Join(dir, string(chatID), headerFileName)
@@ -26,10 +24,7 @@ func writeRawChat(t *testing.T, dir string, chatID marotte.ChatID, body string) 
 	}
 }
 
-// readRawChat returns a chat file's bytes, so a test can prove another chat's
-// file was not touched. Compared as bytes rather than through Get: the claim is
-// that nothing was written, and a decoded comparison would hide a rewrite that
-// happened to round-trip.
+// readRawChat returns a chat file's bytes; compared raw, since a round-tripping rewrite would hide in a decode.
 func readRawChat(t *testing.T, dir string, chatID marotte.ChatID) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, string(chatID), headerFileName))
@@ -72,11 +67,8 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// THE property this method exists for. The retention purge ages a chat from
-	// UpdatedAt (archive.purgeReferenceTime), so a debounced autosave that
-	// stamped it would push the purge cutoff out by a whole window on every burst
-	// of typing: a chat with an abandoned draft would never be purged, and a
-	// draft can hold a credential. Mutate would stamp it; SetDraft must not.
+	// Retention ages a chat from UpdatedAt (archive.purgeReferenceTime), so a stamping autosave would keep an abandoned
+	// draft, which can hold a credential, from ever being purged.
 	t.Run("does_not_move_the_retention_clock", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -84,10 +76,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		// The clock has millisecond resolution, so a same-tick save would pass
-		// this test even if it did stamp. Age the record past any retention window
-		// first, writing through the no-stamp path so the fixture itself does not
-		// reset what it is measuring.
+		// The clock is millisecond, so age the record first, through the no-stamp path.
 		aged := time.Now().Add(-72 * time.Hour).UnixMilli()
 		c, ok := s.Get(t.Context(), "c1")
 		if !ok {
@@ -114,8 +103,7 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// Every OTHER write is activity and must keep stamping, or the purge stops
-	// seeing real use.
+	// Every other write is activity and still stamps.
 	t.Run("mutate_still_stamps_the_clock", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -160,8 +148,7 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// A chat is a server record from its first prompt onward. Typing must not
-	// create one, or every keystroke in a fresh chat puts a row in the sidebar.
+	// Typing must not create a chat, or every keystroke adds a sidebar row.
 	t.Run("no_op_on_a_chat_that_does_not_exist", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -192,8 +179,7 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// A draft that cannot round-trip through JSON would make the chat unloadable,
-	// which is the same reason Name and message content are validated.
+	// A draft that cannot round-trip through JSON would make the chat unloadable.
 	t.Run("refuses_invalid_utf8", func(t *testing.T) {
 		t.Parallel()
 		s, err := NewStore(t.TempDir())
@@ -206,13 +192,8 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// THE cross-chat corruption path. A draft save writes the WHOLE loaded object,
-	// and the destination used to be derived from that object's own id, so a
-	// c1.json holding `"id":"c2"` made an autosave for c1 write everything it had
-	// loaded over c2.json — under c1's mutex, racing any legitimate write to c2.
-	// A file whose stored id is not its filename is reachable here: this container
-	// invites the operator to reshape /config by hand, and a truncated write leaves
-	// arbitrary bytes.
+	// A draft save writes the whole loaded object, and the destination came from its own id, so a c1.json holding
+	// `"id":"c2"` overwrote c2.json under c1's mutex. Hand edits and truncated writes make such a file reachable.
 	t.Run("refuses_a_chat_file_holding_another_chats_id", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -232,28 +213,20 @@ func TestSetDraft(t *testing.T) {
 		if _, err := s.SetDraft(t.Context(), "c1", "a draft typed into c1"); err == nil {
 			t.Error("SetDraft accepted a chat file holding another chat's id; an autosave for c1 writes the whole object over c2.json")
 		}
-		// Clearing the composer is the same save with empty text, and the planted
-		// file has no draft, so this is the one that reaches the no-change
-		// shortcut. It must report the corruption rather than return nil: this is
-		// the save a user makes without thinking about it, and a silent success
-		// here is a broken file nobody hears about.
+		// Clearing the composer reaches the no-change shortcut and must still report the corruption.
 		if _, err := s.SetDraft(t.Context(), "c1", ""); err == nil {
 			t.Error("SetDraft returned nil for an empty draft on a mismatched file; the corruption stayed silent")
 		}
 		if got := readRawChat(t, dir, "c2"); got != c2Before {
 			t.Errorf("c2.json changed under a SetDraft for c1\nbefore: %s\nafter:  %s", c2Before, got)
 		}
-		// A refusal, not a repair: nothing rewrites c1's file to agree with its
-		// name either, because guessing which half is right would destroy the
-		// other one.
+		// A refusal, not a repair: guessing which half is right destroys the other.
 		if got := readRawChat(t, dir, "c1"); !strings.Contains(got, `"impostor"`) {
 			t.Errorf("c1.json = %s, want it left exactly as found", got)
 		}
 	})
 
-	// Mutate refuses the same disagreement, whichever way it arrives: its own
-	// check names a mutator, and this proves a corrupt file cannot walk past it
-	// either. Both writers hold the same invariant, which is the point.
+	// Mutate refuses the same mismatch; both writers hold the invariant.
 	t.Run("mutate_refuses_the_same_mismatch", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -277,9 +250,7 @@ func TestSetDraft(t *testing.T) {
 		}
 	})
 
-	// The guard belongs to the WRITE PRIMITIVE, not to its callers: that is what
-	// stops the next no-stamp writer from reintroducing the bypass by forgetting
-	// a check. Asserted directly on writeHeader so it survives any future caller.
+	// The guard belongs to the write primitive, so a future no-stamp writer cannot bypass it.
 	t.Run("write_primitive_refuses_a_mismatched_object", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()

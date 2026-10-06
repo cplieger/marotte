@@ -1,11 +1,4 @@
-// ---------------------------------------------------------------------------
 // reveal.ts — the constant-latency reveal cursor.
-//
-// The subject is TIME, so the clock is injected and every test drives it frame
-// by frame. `schedule`/`cancel` stand in for requestAnimationFrame; a frame runs
-// only if the controller asked for one, which is what makes "the loop stopped"
-// an assertion rather than a wait.
-// ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
@@ -94,9 +87,9 @@ function harness(initial = ""): Harness {
 
 describe("createReveal", () => {
   it("never writes the text it was constructed with", () => {
-    // A mid-turn connect arrives holding the transcript so far, and a repaint
-    // remounts a bubble around text already on screen. Neither is a token
-    // arriving now, so neither is revealed — the caller paints it directly.
+    // A mid-turn connect arrives holding the transcript so far, and a repaint remounts a bubble
+    // around text already on screen. Neither is a token arriving now, so neither is revealed — the
+    // caller paints it directly.
     const h = harness("everything that already happened");
     expect(h.writes).toHaveLength(0);
     expect(h.idle).toBe(true);
@@ -115,10 +108,8 @@ describe("createReveal", () => {
   });
 
   it("delivers every character exactly once, in order", () => {
-    // The correctness invariant the whole feature rests on: the parser
-    // downstream is append-only, so a dropped, doubled or reordered slice is
-    // unrecoverable. Driven through setText deliberately — the resync path,
-    // where a caller re-publishes the full text over an initial prefix.
+    // The correctness invariant the whole feature rests on: the parser downstream is append-only,
+    // so a dropped, doubled or reordered slice is unrecoverable.
     const h = harness("head. ");
     const body = "head. " + "The quick brown fox jumps over the lazy dog. ".repeat(12);
     h.setText(body);
@@ -129,9 +120,9 @@ describe("createReveal", () => {
   });
 
   it("reproduces the exact text over any chunk split and frame timing", () => {
-    // The same exactly-once invariant, over the live path: whatever sizes the
-    // chunks arrive in and however frames interleave with them, concatenating
-    // the emitted slices is the concatenation of the appended deltas.
+    // The same exactly-once invariant, over the live path: whatever sizes the chunks arrive in and
+    // however frames interleave with them, concatenating the emitted slices is the concatenation of
+    // the appended deltas.
     fc.assert(
       fc.property(
         fc.array(fc.string(), { maxLength: 30 }),
@@ -151,8 +142,8 @@ describe("createReveal", () => {
   });
 
   it("ignores an empty delta rather than waking the loop", () => {
-    // An idle cursor handed nothing must not schedule a frame: that frame has
-    // nothing to write and its exit announces a spurious idle to the caller.
+    // An idle cursor handed nothing must not schedule a frame: that frame has nothing to write and
+    // its exit announces a spurious idle to the caller.
     const h = harness("settled");
     h.append("");
     expect(h.running).toBe(false);
@@ -160,9 +151,9 @@ describe("createReveal", () => {
   });
 
   it("keeps flowing after the last growth, then stops itself", () => {
-    // The standing backlog is what bridges an inter-burst gap: the reveal is
-    // still behind the live edge when the bursts stop, so it must keep writing
-    // rather than freeze and surge on the next one.
+    // The standing backlog is what bridges an inter-burst gap: the reveal is still behind the live
+    // edge when the bursts stop, so it must keep writing rather than freeze and surge on the next
+    // one.
     const h = harness();
     h.append("y".repeat(300));
     h.frames(3);
@@ -176,8 +167,8 @@ describe("createReveal", () => {
   });
 
   it("holds a sliver back rather than spending a write on it", () => {
-    // At the floor rate a per-frame write is one character, and every write is a
-    // permanent node downstream. Only the final slice may be short.
+    // At the floor rate a per-frame write is one character, and every write is a permanent node
+    // downstream. Only the final slice may be short.
     const h = harness();
     h.append("z".repeat(40)); // small backlog: the floor rate governs
     h.frames(400);
@@ -192,17 +183,14 @@ describe("createReveal", () => {
     const h = harness();
     h.append("a".repeat(1000));
     h.frames(10);
-    // 10 frames at the 600 chars/sec ceiling is at most ~100 characters, and the
-    // slew makes the real figure lower.
+    // 10 frames at the 600 chars/sec ceiling is at most ~100 characters, and the slew makes the
+    // real figure lower.
     expect(h.text().length).toBeLessThan(200);
   });
 
   it("clears a large dump sub-linearly, not at the flat cap", () => {
-    // A whole code block landing in one chunk. The flat 600 chars/sec ceiling
-    // alone would trail for 33 seconds; the backlog/MAX_DRAIN_SECS ceiling takes
-    // over and clears it in about 9. Both bounds are asserted, because the
-    // interesting failure is in either direction: a regression that drops the
-    // escape hatch makes this crawl, and one that drops the cap makes it a dump.
+    // A whole code block landing in one chunk. The flat 600 chars/sec ceiling alone would trail for
+    // 33 seconds; the backlog/MAX_DRAIN_SECS ceiling takes over and clears it in about 9.
     const h = harness();
     const dump = "b".repeat(20_000);
     h.append(dump);
@@ -213,10 +201,9 @@ describe("createReveal", () => {
   });
 
   it("holds its measured drain-from-cold curve", () => {
-    // The table in MAX_DRAIN_SECS's comment, pinned. These are the figures a
-    // constant change has to be judged against, so they belong in a test rather
-    // than only in prose. Frames, at 60fps, for the whole text to land when all
-    // of it arrives at once.
+    // The table in MAX_DRAIN_SECS's comment, pinned. These are the figures a constant change has to
+    // be judged against, so they belong in a test rather than only in prose. Frames, at 60fps, for
+    // the whole text to land when all of it arrives at once.
     const budget: [len: number, frames: number][] = [
       [40, 44],
       [200, 59],
@@ -233,16 +220,16 @@ describe("createReveal", () => {
         frames += 1;
       }
       expect(h.text()).toHaveLength(len);
-      // Tolerance absorbs float drift across engines without absorbing a real
-      // change to any of the five constants.
+      // Tolerance absorbs float drift across engines without absorbing a real change to any of the
+      // five constants.
       expect(frames).toBeGreaterThan(expected - 4);
       expect(frames).toBeLessThan(expected + 4);
     }
   });
 
   it("absorbs a backgrounded tab instead of discharging on refocus", () => {
-    // The first frame after a refocus reports a gap of whole seconds. Unclamped,
-    // rate × dt would hand over the entire backlog in one write.
+    // The first frame after a refocus reports a gap of whole seconds. Unclamped, rate × dt would
+    // hand over the entire backlog in one write.
     const h = harness();
     h.append("c".repeat(5000));
     h.frames(20); // build up an applied rate
@@ -272,9 +259,8 @@ describe("createReveal", () => {
   });
 
   it("finishNow on a settled cursor still announces idle", () => {
-    // The bubble finalizes from onIdle, so the one-write path and the
-    // nothing-to-write path have to agree; otherwise a caret survives a
-    // finishNow that happened to have no remainder.
+    // The bubble finalizes from onIdle, so the one-write path and the nothing-to-write path have to
+    // agree; otherwise a caret survives a finishNow that happened to have no remainder.
     const h = harness("all of it");
     h.finishNow();
     expect(h.writes).toHaveLength(0);
@@ -282,8 +268,8 @@ describe("createReveal", () => {
   });
 
   it("accepts growth after it has gone idle", () => {
-    // A block can be sealed and then grow again (a late chunk for a bubble whose
-    // liveness was misjudged), so the cursor must restart rather than stay shut.
+    // A block can be sealed and then grow again (a late chunk for a bubble whose liveness was
+    // misjudged), so the cursor must restart rather than stay shut.
     const h = harness();
     h.append("first part. ");
     h.frames(400);
@@ -296,8 +282,8 @@ describe("createReveal", () => {
   });
 
   it("survives a frame pair with no elapsed time", () => {
-    // Two ticks inside one millisecond give dt = 0. Nothing may advance, and
-    // nothing may divide by it.
+    // Two ticks inside one millisecond give dt = 0. Nothing may advance, and nothing may divide by
+    // it.
     const h = harness();
     h.append("e".repeat(100));
     h.frames(2);

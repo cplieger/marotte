@@ -1,25 +1,15 @@
-// Actions for the native (Cedar) permission policy — the sole tool-call
-// authorization surface on v3.
-// ---------------------------------------------------------------------------
+// Actions for the native (Cedar) permission policy, the sole tool-call authorization surface.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { PolicyExplainResult } from "../types.js";
 
-// --- Native Cedar policy rules (v3 / KAS) -----------------------------------
-// These write the user/workspace permissions.yaml, which KAS hot-reloads. No
-// optimistic update: the native view is a server projection, refetched after
-// a successful edit (and on the permissions_changed SSE), so it can never
-// drift from what KAS actually enforces.
+// These write permissions.yaml, which KAS hot-reloads. No optimistic update: the view is a server
+// projection refetched after an edit (and on permissions_changed), so it cannot drift from KAS.
 
-/** Add, remove, or update a native policy rule. op="add" defaults an empty
- *  effect to "ask" server-side (conservative); op="remove" and op="update"
- *  need the exact existing rule. Removing a deny — like any update that
- *  widens access (deny→ask, deny→allow, ask→allow) — needs confirm=true.
- *  op="update" changes the rule's effect to new_effect in one atomic file
- *  write. guard_resource (add+allow only) pre-flights the write against
- *  the live policy: when an explicit ask rule already covers that resource
- *  the allow would be silently shadowed (ask > allow), so the server
- *  refuses with 409 instead of persisting a rule that changes nothing. */
+/** Add, remove, or update a native policy rule. "add" defaults an empty effect to "ask"; "remove"
+ *  and "update" need the exact existing rule; any widening change needs confirm=true.
+ *  guard_resource (add+allow only) makes the server refuse 409 when an explicit ask rule would
+ *  silently shadow the allow (ask > allow). */
 export interface NativeRuleArgs {
   op: "add" | "remove" | "update";
   scope: "user" | "workspace";
@@ -36,8 +26,7 @@ export interface NativeRuleArgs {
 
 export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: string }>({
   name: "permissions.edit_native_rule",
-  // Both ops are idempotent server-side (add no-ops if identical rule exists;
-  // remove no-ops if absent), so a retried timeout is safe.
+  // Both ops no-op server-side when already applied, so a retried timeout is safe.
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   idempotencyKey: true,
@@ -46,9 +35,8 @@ export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: 
   error: "Could not update policy rule",
 });
 
-/** Simulate the policy decision for a capability/resource. Pure — KAS
- *  evaluateSingleResource raises no consent prompt (verified live), so this
- *  is safe to call as a UI pre-flight. Errors are shown inline, not toasted. */
+/** Simulate the policy decision for a capability/resource. KAS evaluateSingleResource raises no
+ *  consent prompt, so this is a safe UI pre-flight. Errors are shown inline. */
 export const explainPolicy = apiAction<
   { capability?: string; tool_id?: string; resource?: string },
   PolicyExplainResult
@@ -59,18 +47,10 @@ export const explainPolicy = apiAction<
   error: false,
 });
 
-/** Select the security profile.
- *
- *  Its own endpoint rather than a settings patch because a selection REPLACES the
- *  policy: it clears both writable permissions files and lets the profile's presets
- *  be the whole policy. `seed` is the Customize button, which materialises the
- *  profile in force into the editable table first, so the two doors into Custom
- *  differ by this one flag.
- *
- *  Not retryable and not idempotency-keyed, deliberately. It is destructive and not
- *  idempotent in the way a retry needs: a replayed request after a partial failure
- *  would clear a policy the user has since started editing. A failed selection is
- *  reported and the user chooses again, which is one click. */
+/** Select the security profile. Its own endpoint: a selection REPLACES the policy, clearing both
+ *  writable permissions files; `seed` (Customize) first materialises the profile into the table.
+ *  Not retryable or keyed: a replay after a partial failure would clear a policy the user has
+ *  since started editing. */
 export const setSecurityProfile = apiAction<
   { profile: string; seed: boolean },
   { ok?: boolean; error?: string }

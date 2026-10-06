@@ -9,18 +9,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestInitialize_SecretStorageTracksTheStore pins that
-// `_meta.kiro.secretStorage` is declared from StartOpts.SecretStorage rather
-// than as a literal true.
-//
-// The asymmetry is the whole point, and it is why the false case matters more
-// than the true one. Declaring the capability is a commitment: KAS rethrows a
-// client-side store failure into its MCP connect path, so a bridge that offers
-// credential storage with no store behind it turns every MCP OAuth connect into
-// a failure (runtime's secretStoreResult answers -32603). NOT offering it costs one
-// `POST /register` per spawn and nothing else. So a regression to a hardcoded
-// true is strictly worse than the state before the capability existed, and the
-// false subtest is what catches it — it fails against the literal this replaced.
+// TestInitialize_SecretStorageTracksTheStore pins that `_meta.kiro.secretStorage` follows StartOpts.SecretStorage.
+// The false case matters more: KAS rethrows a client store failure into MCP connect, so offering storage with no
+// store fails every MCP OAuth connect, while not offering it costs one `POST /register` per spawn.
 func TestInitialize_SecretStorageTracksTheStore(t *testing.T) {
 	script := `#!/bin/sh
 while IFS= read -r line; do
@@ -52,9 +43,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		// Knowledge on, so the unrelated-capability check below has a true to look
-		// for: both knowledge keys are gated on it now, and this test's subject is
-		// that gating ONE capability leaves the rest of the block alone.
+		// Knowledge on, so the check below has a true capability to find.
 		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
@@ -81,8 +70,7 @@ done
 		if !strings.Contains(got, `"secretStorage":false`) {
 			t.Errorf("initialize should carry an explicit secretStorage:false; got: %s", got)
 		}
-		// The rest of the handshake must be unaffected: this gates one
-		// capability, not the whole _meta.kiro block.
+		// The rest of _meta.kiro is unaffected.
 		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"knowledge":true`) {
 			t.Errorf("initialize lost unrelated base capabilities; got: %s", got)
 		}

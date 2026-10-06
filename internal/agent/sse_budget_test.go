@@ -1,12 +1,7 @@
 package agent
 
-// The cold-connect WIRE-BYTE gate. Every assertion here measures rec.Body after
-// rt.handleSSE — the bytes that actually go out — never a count of events, because
-// the defect being gated is a payload size and an event count cannot see it. Since
-// the connect hook stopped carrying turn content (the live turn reaches the client
-// through GET /api/chats/{id} and the live_turn digest subject), the gate is that
-// no turn byte reaches the wire at connect however many busy chats there are, and
-// that the two lists the handshake does carry stay within their caps.
+// The cold-connect wire-byte gate, measured on rec.Body: no turn byte reaches the wire at connect whatever the
+// busy-chat count, and the handshake's two lists stay within caps.
 
 import (
 	"context"
@@ -22,20 +17,15 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// Fixture sizes, all deliberately OVER the state measured on the live instance
-// (18 open tabs, 6 concurrent runs, one 33.5 MB chat file): a gate sized
-// at the observation would pass the moment the observation moved.
+// Fixture sizes are deliberately above the live measurement (18 tabs, 6 runs, a 33.5 MB chat file).
 const (
 	fixtureReasoningBytes  = 3 << 20
 	fixtureContentBytes    = 1 << 20
 	fixtureToolCalls       = 20
 	fixtureToolOutputBytes = 100 << 10
-	// fixtureDeltaChunks keeps the fill a STREAM rather than one delta, so the
-	// per-block accumulation the wire performs is the accumulation measured.
+	// fixtureDeltaChunks keeps the fill a stream, accumulating as the wire does.
 	fixtureDeltaChunks = 8
-	// fixturePendingPerms and fixturePendingRunAsks keep the non-snapshot
-	// remainder non-zero, so the total assertion can still fail on a connect that
-	// withholds every snapshot.
+	// fixturePendingPerms and fixturePendingRunAsks keep a non-snapshot remainder, so the total can still fail.
 	fixturePendingPerms    = 2
 	fixturePendingRunAsks  = 1
 	fixtureBusyChats       = 6
@@ -45,10 +35,7 @@ const (
 	fixtureConnectDeadline = 150 * time.Millisecond
 )
 
-// newBudgetRuntime builds the runtime the budget tests connect to, with the
-// open-tab set WIRED: an unwired store makes every chat look open for a different
-// reason, so a fixture that skipped it could not tell a tab filter that works from
-// one that was never consulted.
+// newBudgetRuntime wires the open-tab set: unwired, every chat looks open for another reason.
 func newBudgetRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	dir := t.TempDir()
@@ -61,16 +48,12 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 	rt := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(rt)
-	rt.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, rt) })
 	return rt
 }
 
-// busyChatsWithHugeTurns opens n busy chats, each with a PROMPT-sourced open turn
-// holding 3 MiB of reasoning, 1 MiB of text and 20 tool calls of 100 KiB (the bytes
-// the flatness gate would see if a connect path ever read a turn again), one open
-// chat TAB, and 2 pending permission asks plus 1 run ask across the set so the
-// connect carries a real pending set beside the busy list.
+// busyChatsWithHugeTurns opens n busy chats, each with a prompt-sourced open turn of 3 MiB reasoning, 1 MiB
+// text and 20 × 100 KiB tool calls, one open tab, and a few pending asks across the set.
 func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID {
 	tb.Helper()
 	ids := make([]marotte.ChatID, 0, n)
@@ -86,9 +69,7 @@ func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID 
 	return ids
 }
 
-// fillTurn writes one turn's worth of content through the accumulator's own
-// methods: reasoning and text as separate lanes of deltas, then the tool calls,
-// each with its output already settled.
+// fillTurn writes a turn through the accumulator's own methods.
 func fillTurn(tb testing.TB, log *turnlog.Turn, chatID string) {
 	tb.Helper()
 	ctx := tb.Context()
@@ -119,8 +100,7 @@ func fillTurn(tb testing.TB, log *turnlog.Turn, chatID string) {
 	}
 }
 
-// openBudgetChatTab puts the chat in the server-owned open-tab set, which is the
-// half of the fixture a tab filter reads.
+// openBudgetChatTab puts the chat in the server-owned open-tab set.
 func openBudgetChatTab(tb testing.TB, rt *Runtime, id marotte.ChatID) {
 	tb.Helper()
 	if _, _, _, err := rt.tabs.Open(tb.Context(), marotte.OpenTab{
@@ -131,8 +111,7 @@ func openBudgetChatTab(tb testing.TB, rt *Runtime, id marotte.ChatID) {
 	}
 }
 
-// seedPendingDecisions adds the unanswered asks a real reconnect replays beside the
-// snapshots, so the measured total includes the part no snapshot cap can shrink.
+// seedPendingDecisions adds unanswered asks no snapshot cap can shrink.
 func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	tb.Helper()
 	if len(ids) == 0 {
@@ -164,24 +143,20 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	}
 }
 
-// coldConnect drives one cold v3 connect and hands back the recorder, whose Body IS
-// the measured wire bytes.
+// coldConnect drives one cold v3 connect; the recorder's Body is the measured bytes.
 func coldConnect(t *testing.T, rt *Runtime, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	return coldConnectAs(t, rt, false, query)
 }
 
-// coldConnectAs is coldConnect with the connect shape chosen: a legacy request sends
-// no SSE-Wire header, which is how a v2 bundle presents.
+// coldConnectAs chooses the shape: legacy sends no SSE-Wire header.
 func coldConnectAs(t *testing.T, rt *Runtime, legacy bool, query ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	return serveConnect(t, rt, hookOnlyContext(t), legacy, query...)
 }
 
-// hookOnlyContext is a request context that is already done. The retry line, the
-// hello, the Last-Event-ID replay and the OnConnect hook are all written before the
-// hub's live loop reads the context, so the body is the same as under a deadline;
-// the live loop then returns at once instead of idling until the deadline.
+// hookOnlyContext is an already-done request context: everything up to the OnConnect hook is written before the
+// live loop reads it, which then returns at once.
 func hookOnlyContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -189,9 +164,7 @@ func hookOnlyContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// liveConnectAs is coldConnectAs for a test that needs the live loop to run (a
-// keepalive, or a cut measured against the deadline): it ends at
-// fixtureConnectDeadline.
+// liveConnectAs runs the live loop until fixtureConnectDeadline.
 func liveConnectAs(t *testing.T, rt *Runtime, legacy bool) *httptest.ResponseRecorder {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureConnectDeadline)
@@ -220,8 +193,7 @@ func TestHandleSSE_ColdConnectIsFlatInTheNumberOfBusyChats(t *testing.T) {
 	}
 }
 
-// measureColdConnect returns the wire bytes of one cold v3 connect over n busy
-// chats each holding a huge turn, and asserts no turn content reached the wire.
+// measureColdConnect returns one cold connect's wire bytes and asserts no turn content reached the wire.
 func measureColdConnect(t *testing.T, n int) int {
 	t.Helper()
 	rt := newBudgetRuntime(t)
@@ -236,9 +208,7 @@ func measureColdConnect(t *testing.T, n int) int {
 	return len(body)
 }
 
-// TestHandleSSE_ConnectedCarriesEveryBusyChatUpToTheCap pins the one per-chat
-// cost that survives: 37 bytes of id per busy chat, and BusyStated true while the
-// list fits.
+// TestHandleSSE_ConnectedCarriesEveryBusyChatUpToTheCap pins the one per-chat cost, 37 bytes, and BusyStated while it fits.
 func TestHandleSSE_ConnectedCarriesEveryBusyChatUpToTheCap(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)

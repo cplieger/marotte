@@ -1,33 +1,11 @@
 package translate
 
-// A runtime census of the `_meta.kiro` fields KAS sends and marotte drops.
-//
-// KAS owns this payload's shape and nothing documents it. Every field
-// below is decoded into a Go struct, so a field KAS starts sending is
-// discarded by encoding/json with no error and no log line —
-// `ACPModeUpdateWire` is the standing evidence the class is real: it
-// read `modeId` where KAS sends `currentModeId`, so agent-initiated mode
-// changes were silently never persisted.
-//
-// This is the runtime half of a pair. internal/kascap's census answers
-// the client→agent direction statically; it cannot see this direction,
-// since what KAS chooses to send is a property of a running session
-// rather than of the bundle's initialize handler.
-//
-// Three properties keep a diagnostic from becoming a defect of its own.
-// It never materializes a value: one byte of each field is read to name
-// its JSON type. It is bounded twice, per frame and per process, and
-// reaching the process bound latches the whole probe off rather than
-// growing a map. And it cannot fail a turn: the only operations are a
-// length check, one map decode whose error is discarded, byte
-// comparisons, and a lock/unlock with the log emitted after the unlock.
-//
-// Always on: censusMeta costs 1391 ns/op and 553 B/op against
-// HandleAssistantChunk's 112764 ns/op and 845747 B/op — 1.2% of the time
-// on the hottest path in the app. A sample budget would be actively
-// wrong here on top of unnecessary: the fields most worth discovering
-// ride rare frames (a refusal, a policy denial, a checkpoint), which is
-// exactly what a per-frame budget spends itself before reaching.
+// A runtime census of the `_meta.kiro` fields KAS sends and marotte drops: encoding/json
+// discards an unknown field silently (a misread `modeId` once lost every agent mode
+// change). internal/kascap covers the client-to-agent direction statically. The probe
+// never materializes a value, is bounded per frame and per process (latching off at the
+// cap), and cannot fail a turn. Always on: it is ~1% of the hottest path, and the fields
+// worth finding ride rare frames a sample budget would miss.
 
 import (
 	"encoding/json"
@@ -39,38 +17,22 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// maxCensusObjectBytes skips the probe for an oversized `_meta.kiro`
-// object. The map decode is O(keys), so without this a hostile or
-// malformed block carrying many keys turns one frame into that many map
-// inserts. 64 KiB is orders of magnitude above every real block measured
-// on this wire.
+// maxCensusObjectBytes skips the probe for an oversized `_meta.kiro` object, so a block
+// with many keys cannot turn one frame into that many map inserts.
 const maxCensusObjectBytes = 64 << 10
 
-// maxCensusKeys bounds the distinct (name, type) pairs held for the life
-// of the process. Both halves of a key are backend-controlled, so an
-// unbounded map is a memory sink; reaching the cap disables the probe
-// rather than continuing.
+// maxCensusKeys bounds the distinct (name, type) pairs held for the process's life (both
+// halves are backend-controlled); reaching it disables the probe.
 const maxCensusKeys = 128
 
-// maxCensusNameBytes bounds one reported field name: backend-controlled
-// text going to a logfmt line, sanitized and capped like any other
-// untrusted string on a human-read surface.
+// maxCensusNameBytes bounds one reported field name, untrusted text on a logfmt line.
 const maxCensusNameBytes = 64
 
-// censusLedger remembers which (name, type) pairs have been reported, so
-// a stream of per-turn frames reports each novel shape once.
-//
-// A mutex and a plain map, not an unlocked module-level set: a
-// concurrent map write in Go is a fatal, unrecoverable runtime error, and
-// BridgeCoordinator.Forward runs one goroutine per bridge, so N open
-// chats means N concurrent decoders.
-//
-// A plain map rather than sync.Map: the write path runs once per novel
-// key, and len() has to be exact for the cap below, which sync.Map
-// cannot give without a second counter.
+// censusLedger remembers which (name, type) pairs were reported, so each novel shape is
+// reported once. Mutex-guarded because each bridge decodes on its own goroutine; a plain
+// map because the cap needs an exact len().
 type censusLedger struct {
-	// reported leads: govet fieldalignment wants the pointer-bearing field ahead
-	// of the mutex, and the bool last.
+	// reported leads: fieldalignment wants the pointer-bearing field before the mutex.
 	reported map[string]struct{}
 	mu       sync.Mutex
 	off      bool
@@ -105,14 +67,8 @@ func (l *censusLedger) disabled() bool {
 	return l.off
 }
 
-// knownKeys returns the cached lowercased member-name set for a type.
-//
-// Cached because censusMeta runs on every frame and the walk below
-// allocates a map and reflects over every field — a per-frame
-// recomputation is the one way this diagnostic could show up in a
-// profile.
-//
-// The returned map is shared and must be treated as read-only.
+// knownKeys returns the cached lowercased member-name set for a type; cached because
+// censusMeta runs on every frame. The map is shared: read-only.
 func knownKeys(t reflect.Type) map[string]struct{} {
 	if cached, ok := knownKeyCache.Load(t); ok {
 		if set, isSet := cached.(map[string]struct{}); isSet {
@@ -124,30 +80,20 @@ func knownKeys(t reflect.Type) map[string]struct{} {
 	return derived
 }
 
-// knownKeyCache memoizes knownKeysOf per type. A sync.Map rather than a guarded
-// map because this one is read-mostly with a fixed key set (two types today), the
-// exact shape sync.Map is for — unlike the ledger, whose cap needs an exact len().
+// knownKeyCache memoizes knownKeysOf per type: read-mostly with a fixed key set, the
+// shape sync.Map is for.
 var knownKeyCache sync.Map
 
-// knownKeysOf returns the lowercased JSON member names a struct type
-// consumes, including those of any embedded or nested struct reached by
-// a field with no json tag of its own.
-//
-// Derived from the struct tags rather than hand-listed, so the known set
-// cannot drift from the parser it describes.
-//
-// Lowercased because encoding/json matches object members
-// case-insensitively: a frame sending `MessageId` is consumed by the
-// `messageId` field, so a case-sensitive comparison would report a field
-// that was read.
+// knownKeysOf returns the lowercased JSON member names a struct type consumes, including
+// embedded and untagged nested structs. Derived from the tags so it cannot drift;
+// lowercased because encoding/json matches members case-insensitively.
 func knownKeysOf(t reflect.Type) map[string]struct{} {
 	out := make(map[string]struct{})
 	collectKnownKeys(t, out, 0)
 	return out
 }
 
-// maxCensusDepth bounds the tag walk. A wire struct is a handful of levels deep;
-// the bound exists so a recursive type cannot spin rather than as a real limit.
+// maxCensusDepth bounds the tag walk so a recursive type cannot spin.
 const maxCensusDepth = 8
 
 func collectKnownKeys(t reflect.Type, out map[string]struct{}, depth int) {
@@ -168,8 +114,7 @@ func collectKnownKeys(t reflect.Type, out map[string]struct{}, depth int) {
 		case name != "":
 			out[strings.ToLower(name)] = struct{}{}
 		default:
-			// No tag: encoding/json matches the FIELD name for an ordinary field,
-			// and promotes an embedded struct's members into this object.
+			// No tag: encoding/json matches the FIELD name, and promotes an embedded struct's members.
 			if f.Anonymous {
 				collectKnownKeys(f.Type, out, depth+1)
 				continue
@@ -179,10 +124,8 @@ func collectKnownKeys(t reflect.Type, out map[string]struct{}, depth int) {
 	}
 }
 
-// jsonKindOf names a raw value's JSON type from its first byte, which is
-// all the probe ever reads. Naming the type and never the value is what
-// makes the report safe to log: a field's contents cannot leak from code
-// that does not decode them.
+// jsonKindOf names a raw value's JSON type from its first byte, all the probe reads, so a
+// field's contents cannot leak into the log.
 func jsonKindOf(raw json.RawMessage) string {
 	for _, b := range raw {
 		switch b {
@@ -205,21 +148,16 @@ func jsonKindOf(raw json.RawMessage) string {
 	return "empty"
 }
 
-// censusMeta reports, once per process, every member of one `_meta.kiro`
-// object that the given wire type does not consume.
-//
-// declined names members the type deliberately does not read: `preview`
-// and `rawOutput` are skipped on purpose, so without listing them the
-// probe would fire on its first frame and mute itself before reporting
-// anything real.
+// censusMeta reports, once per process, every member of one `_meta.kiro` object the given
+// wire type does not consume. declined lists members skipped on purpose, without which
+// the probe would fire on its first frame and mute itself.
 func censusMeta(label string, raw json.RawMessage, target reflect.Type, declined ...string) {
 	if len(raw) == 0 || len(raw) > maxCensusObjectBytes || census.disabled() {
 		return
 	}
 	var members map[string]json.RawMessage
 	if json.Unmarshal(raw, &members) != nil {
-		// Not an object, or malformed. The caller's own decode reports that; a
-		// diagnostic must not report it twice.
+		// Not an object, or malformed: the caller's own decode reports that.
 		return
 	}
 	known := knownKeys(target)
@@ -248,12 +186,8 @@ func censusMeta(label string, raw json.RawMessage, target reflect.Type, declined
 	}
 }
 
-// declines reports whether name is one the caller deliberately does not read.
-//
-// A linear scan over the caller's own short list rather than a merge into the
-// cached known set, because that set is SHARED: adding to it would mutate a map
-// every other caller reads, and copying it per frame would put back the
-// allocation the cache exists to remove. Today the longest list has one member.
+// declines reports whether name is one the caller deliberately does not read. Scanned, not
+// merged into the cached set, because that set is SHARED by every caller.
 func declines(declined []string, name string) bool {
 	for _, d := range declined {
 		if strings.EqualFold(d, name) {
@@ -263,16 +197,9 @@ func declines(declined []string, name string) bool {
 	return false
 }
 
-// censusMeteringUnit reports a metering unit label marotte does not sum.
-//
-// The one place a value is reported rather than a name, because here the
-// label is the discovery: the field name `unit` is known, so no
-// field-name probe can see that KAS started billing in a new dimension.
-//
-// Safe to log: a unit is a low-cardinality dimension name from the
-// backend's own billing vocabulary, never a quantity or an identifier.
-// It is sanitized and capped anyway, since it is still backend-controlled
-// text on a log line.
+// censusMeteringUnit reports a metering unit label marotte does not sum. A value rather
+// than a name, because `unit` is a known field: only its label shows a new billing
+// dimension. A low-cardinality vocabulary word, still sanitized and capped.
 func censusMeteringUnit(unit string) {
 	if unit == "" || unit == meteringUnitCredit || census.disabled() {
 		return

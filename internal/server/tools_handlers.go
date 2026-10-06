@@ -1,7 +1,3 @@
-// Tools feature-gating probe. The tools REST surface itself is the
-// cplieger/toolbelt httpapi projection, mounted in server.go; this
-// file keeps the one marotte-specific endpoint on that prefix.
-
 package server
 
 import (
@@ -31,15 +27,11 @@ var statusBinaries = []string{
 	"jdtls", "kotlin-language-server",
 }
 
-// handleToolStatus: GET /api/tools/status
-//
-// Bare PATH presence probes for the well-known binaries feature panels
-// gate on (e.g. the MCP modal's "Setting up Node..." spinner).
+// handleToolStatus serves GET /api/tools/status: bare PATH presence probes for the binaries
+// feature panels gate on.
 func handleToolStatus(w http.ResponseWriter, r *http.Request) {
-	// Gated here rather than on the ServeMux pattern: a `GET `-prefixed pattern
-	// stops being an exact match for a non-GET, which hands PATCH/DELETE
-	// /api/tools/status to the /api/tools/ subtree mount — toolbelt's
-	// /api/tools/{name} handlers, with name="status". See ListenAndServe.
+	// Gated here, not on the pattern: a GET pattern would hand PATCH/DELETE /api/tools/status to
+	// toolbelt's /api/tools/{name} with name="status". See ListenAndServe.
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -51,14 +43,8 @@ func handleToolStatus(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, out)
 }
 
-// handleToolReconcile: POST /api/tools/reconcile
-//
-// Converge the volume on whatever tools.json now says, rather than at the next
-// boot only. Job-shaped rather than blocking: Reconcile enqueues and returns, so
-// the answer is the same 202 {job} every toolbelt mutation gives and progress
-// streams over the tool_job_* SSE; a null job means nothing to converge.
-//
-// Registered method-lessly; see ListenAndServe for why.
+// handleToolReconcile serves POST /api/tools/reconcile: converge on tools.json now. Answers
+// 202 {job} like every toolbelt mutation; a null job means nothing to converge.
 func (s *Server) handleToolReconcile(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
@@ -69,9 +55,7 @@ func (s *Server) handleToolReconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	job, _, err := s.tools.Reconcile(toolbelt.ReconcileFull)
 	if err != nil {
-		// Reconcile loads the manifest before it enqueues, so a hand-edited
-		// tools.json is a caller-triggerable refusal rather than a fault: 400
-		// carrying the reason, as every neighbouring /api/tools mutation gives.
+		// A hand-edited tools.json is a caller-triggerable refusal: 400 with the reason.
 		slog.Warn("tools: reconcile refused", "error", logsafe.Field(err.Error()))
 		httpreply.BadRequest(w, err.Error())
 		return

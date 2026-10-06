@@ -3,26 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { allRules, loadCSS } from "./__test-helpers__/css-rules.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// ---------------------------------------------------------------------------
 // Every rotating ring turns at ONE period.
-//
-// `vk-spin` had nine consumers across three periods (0.6s, 0.8s, 0.9s) and the
-// period tracked nothing measurable: a 12px ring ran at both 0.6s and 0.8s and a
-// 16px ring at both, so the spinner was one idiom at three speeds and two rings
-// of the same size could sit side by side visibly drifting apart. This is the
-// other half of the dot consolidation, whose own token comment names "the run
-// card's spinners" among the periods it did not reach.
-//
-// Two halves, because either alone passes while the app is broken. The SWEEP is
-// over every stylesheet rather than the four that carry spinners today, so a
-// tenth consumer written with a literal fails here instead of shipping. And a
-// literal is not the only way to get this wrong: `var(--spin-dur)` with no
-// declaration behind it is valid CSS text that resolves to nothing at
-// computed-value time, which makes the whole `animation` shorthand invalid and
-// runs NO animation — a ring that has stopped rather than one at the wrong speed,
-// and nothing to grep for. So the second half reads the period off a real
-// element.
-// ---------------------------------------------------------------------------
 
 /** Every shipped stylesheet, so the sweep cannot miss a file. */
 const sheets = import.meta.glob<string>("./css/*.css", {
@@ -52,12 +33,8 @@ describe("the spinner period", () => {
 
     for (const [path, css] of Object.entries(sheets)) {
       for (const { selector, body } of allRules(css)) {
-        // `allRules` descends into at-rules, so a `@keyframes` STEP arrives here
-        // as a style rule whose selector is `from` / `to` / a percentage list.
-        // `vk-spin`'s own step now mentions the token it animates
-        // (`--vk-spin-arc`), which made the definition read as a consumer that
-        // declares no animation — this file used to claim steps never reached it,
-        // which was only true while that step read `transform: rotate(360deg)`.
+        // `allRules` descends into at-rules, so a `@keyframes` STEP arrives here as a style rule
+        // whose selector is `from` / `to` / a percentage list.
         if (/^(?:from|to|-?[\d.]+%)(?:\s*,\s*(?:from|to|-?[\d.]+%))*$/.test(selector)) {
           continue;
         }
@@ -65,10 +42,9 @@ describe("the spinner period", () => {
           continue;
         }
         consumers++;
-        // `vk-spin[\w-]*` rather than `vk-spin`, because the idiom has two
-        // keyframes now: `vk-spin` turns a ring's painted arc and `vk-spin-dash`
-        // marches the one mark that is a stroked arc instead. One period for
-        // both is the rule; which property carries it is not.
+        // `vk-spin[\w-]*` rather than `vk-spin`, because the idiom has two keyframes now: `vk-spin`
+        // turns a ring's painted arc and `vk-spin-dash` marches the one mark that is a stroked arc
+        // instead. One period for both is the rule; which property carries it is not.
         if (!/animation:\s*vk-spin[\w-]*\s+var\(--spin-dur\)/.test(body)) {
           offenders.push(`${path} { ${selector} }`);
         }
@@ -81,8 +57,8 @@ describe("the spinner period", () => {
   });
 
   it("declares that token, so the animation actually runs", () => {
-    // The declaration and its value, from source: an element cannot tell a
-    // missing token from one whose value happens to be the default.
+    // The declaration and its value, from source: an element cannot tell a missing token from one
+    // whose value happens to be the default.
     expect(loadCSS("01-tokens.css")).toContain("--spin-dur:");
 
     const el = document.createElement("span");
@@ -91,8 +67,8 @@ describe("the spinner period", () => {
 
     const [anim] = el.getAnimations();
     expect(anim, "the .spinner ring is animating").toBeDefined();
-    // `animationName` is CSSAnimation's, not the Animation base's — narrowing
-    // also asserts this is a CSS animation rather than a WAAPI one.
+    // `animationName` is CSSAnimation's, not the Animation base's — narrowing also asserts this is
+    // a CSS animation rather than a WAAPI one.
     expect(anim).toBeInstanceOf(CSSAnimation);
     if (anim instanceof CSSAnimation) {
       expect(anim.animationName).toBe("vk-spin");
@@ -102,9 +78,8 @@ describe("the spinner period", () => {
   });
 
   it("gives two rings of different sizes the same period", () => {
-    // The defect in one assertion: `.spinner` (16px) ran at 0.8s while
-    // `.btn-loading`'s ring (12px) ran at 0.6s, so a save button beside a
-    // loading list drifted against it.
+    // `.spinner` (16px) and `.btn-loading`'s ring (12px) share one period, or a save button beside a
+    // loading list drifts against it.
     const big = document.createElement("span");
     big.className = "spinner";
     const small = document.createElement("span");
@@ -114,8 +89,8 @@ describe("the spinner period", () => {
     const durOf = (e: Element): EffectTiming["duration"] =>
       e.getAnimations()[0]?.effect?.getTiming().duration;
 
-    // Both halves stated, or the case passes vacuously the moment the token goes
-    // missing and each ring reports `undefined` — equal, and both stopped.
+    // Both halves stated, or the case passes vacuously the moment the token goes missing and each
+    // ring reports `undefined` — equal, and both stopped.
     expect(durOf(big)).toBe(600);
     expect(durOf(small)).toBe(600);
     expect(durOf(big)).toBe(durOf(small));

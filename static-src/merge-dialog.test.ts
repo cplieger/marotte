@@ -19,8 +19,7 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { WALKERS } from "./audit/walkers.js";
 
-/** The static dialog markup from index.html, reduced to what the module
- *  resolves: the ids, the method group and the close hooks. */
+/** The dialog markup from index.html, reduced to the ids, the method group and the close hooks. */
 function mountDialog(): void {
   document.body.innerHTML = `
     <dialog id="pr-merge-dialog">
@@ -34,7 +33,6 @@ function mountDialog(): void {
     </dialog>`;
 }
 
-/** A dispatch handle settling to `outcome`, the shape the action framework returns. */
 function handle(outcome: Record<string, unknown>): unknown {
   const settled = Promise.resolve(outcome);
   return Object.assign(
@@ -43,7 +41,6 @@ function handle(outcome: Record<string, unknown>): unknown {
   );
 }
 
-/** The affordances read answering `strategies`. */
 function lists(strategies: string[]): unknown {
   return handle({
     status: "success",
@@ -160,8 +157,7 @@ describe("merge method dialog", () => {
     await p;
   });
 
-  // Which spellings are merge strategies is the library's to say (ADR-0102), so
-  // the dialog offers every one the repository lists and removes none.
+  // Which spellings are merge strategies is the library's to say, so every listed one is offered.
   it("offers every strategy the repository lists, in its order", async () => {
     mocks.readAffordances.mockImplementation(() => lists(["merge", "squash", "manually-merged"]));
     const p = openMergeMethodDialog(OPTS);
@@ -390,7 +386,7 @@ describe("merge method dialog on a phone", () => {
     mocks.readAffordances.mockReset();
     mocks.loadSettings.mockResolvedValue(settingsPayload());
     mocks.readAffordances.mockImplementation(() => lists(["merge", "squash", "rebase"]));
-    // The page's markup at a 390px phone's 90vw, under the app's stylesheet.
+    // A 390px phone's 90vw, under the app's stylesheet.
     document.body.innerHTML = `
       <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" style="width: 351px">
         <h3 id="pr-merge-title"></h3>

@@ -3,32 +3,16 @@ package agent
 import (
 	"context"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// The two marotte settings whose value has to reach the AGENT, resolved into
-// StartOpts at every spawn.
-//
-// These are not the kiro-cli feature flags in Settings → General: measured
-// on the stock 2.19.2 KAS bundle, the kiro-cli settings store is unreachable
-// from KAS's ACP path (zero occurrences of cli.json, kiro-cli/settings,
-// readSettingsFile, loadCliSettings), so `toolSearch.enabled` and
-// `chat.enableKnowledge` moved onto the keys KAS does read:
-// `_meta.kiro.settings.toolSearch` and the two `knowledge` rows.
-//
-// Read PER SPAWN, like securityPresets: a bridge factory runs per chat, so a
-// value captured at construction would pin every later chat to whatever was
-// set when the server booted. Neither setting is live — KAS resolves both at
-// session creation and freezes them for that session's life.
+// Settings whose value must reach the agent, resolved into StartOpts per spawn. KAS's ACP path
+// never reads kiro-cli's settings store (2.19.2), so these ride levers it does read. KAS
+// freezes both at session creation.
 
-// toolSearchEnabled reports whether a session should ship KAS's tool_search
-// tool instead of every MCP tool's full description.
-//
-// Defaults OFF, matching kiro-cli's own default: tool search trades one
-// extra round-trip per tool the agent decides to use against the context
-// every tool description costs on every turn, earning its keep only at 5+
-// MCP servers. An absent key therefore already reads as false, so no
-// settings.Default() entry is needed.
+// toolSearchEnabled reports whether a session defers MCP tools behind KAS's tool_load/tool_call
+// pair. Off by default, matching kiro-cli; an absent key reads false.
 func toolSearchEnabled(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeyToolSearchEnabled, &b) {
@@ -37,18 +21,9 @@ func toolSearchEnabled(ctx context.Context, configDir string) bool {
 	return b
 }
 
-// knowledgeEnabled reports whether a session gets the knowledge feature: the
-// index listing in msg0 and KAS's Knowledge tool. Both, because they are two
-// thirds of one gate.
-//
-// Defaults ON: the knowledge index, its REST surface and its UI all predate
-// this switch, so reading an absent key as false would silently take the
-// knowledge tool away from every existing install on first boot after the
-// upgrade. settings.Default() advertises true to match.
-//
-// It does NOT gate `_kiro/knowledge` — that handler consults neither key, so
-// the knowledge panel still lists and edits the store with the switch off.
-// The switch decides what the AGENT can reach, not what a person can.
+// knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's
+// Knowledge tool. On by default (settings.Default() matches) so existing installs keep it. It
+// gates the agent only, never `_kiro/knowledge` or the panel.
 func knowledgeEnabled(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeyKnowledgeEnabled, &b) {
@@ -57,22 +32,81 @@ func knowledgeEnabled(ctx context.Context, configDir string) bool {
 	return b
 }
 
-// memoryEnabled reports whether a session opts into kiro-cli's memory
-// subsystem: the `userMemoryOptIn` row's value and the child environment's
-// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED.
-//
-// Defaults OFF and the zero value IS the answer here (unlike
-// knowledgeEnabled), so no settings.Default() entry is needed. Off is not a
-// quiet state though — it still SENDS the veto, because an absent key reads
-// as "let the experiment decide" and an AWS-side ramp can flip that
-// silently.
-//
-// Per spawn like its siblings, and doubly not live: the gate is frozen at
-// session creation AND the environment is fixed when the subprocess starts.
-func memoryEnabled(ctx context.Context, configDir string) bool {
-	var b bool
-	if !settings.FieldInto(ctx, configDir, settings.KeyMemoryEnabled, &b) {
-		return false
+// memoryPreference resolves the Memory dropdown for a spawn. An absent,
+// unreadable or unrecognised value takes settings.DefaultMemoryMode.
+func memoryPreference(ctx context.Context, configDir string) marotte.MemoryPreference {
+	mode := settings.DefaultMemoryMode
+	var v string
+	if settings.FieldInto(ctx, configDir, settings.KeyMemoryMode, &v) {
+		mode = v
 	}
-	return b
+	return settings.MemoryPreferenceFor(mode)
+}
+
+// agentFeatures resolves the Agent-capabilities settings a spawn sends KAS; an absent or invalid
+// value takes its default, and an administrator lock wins.
+func agentFeatures(ctx context.Context, configDir string, locks map[string]marotte.GovernanceLock) marotte.AgentFeatures {
+	var f marotte.AgentFeatures
+	if plan := settingString(ctx, configDir, settings.KeySpecPlanning, settings.ValidSpecPlanning); plan != settings.SpecPlanningOff {
+		f.SpecPlan = plan
+	}
+	f.SpecAskClarification = settingBool(ctx, configDir, settings.KeySpecPlanningAskFirst)
+	f.InlineAgents = lockedBool(locks, marotte.LockInlineAgents, settingBool(ctx, configDir, settings.KeyInlineAgents))
+	f.SteeringReminders = settingBool(ctx, configDir, settings.KeySteeringReminders)
+	f.Workflows = settings.DefaultWorkflowsEnabled
+	var workflows bool
+	if settings.FieldInto(ctx, configDir, settings.KeyWorkflowsEnabled, &workflows) {
+		f.Workflows = workflows
+	}
+	f.Workflows = lockedBool(locks, marotte.LockWorkflows, f.Workflows)
+	f.WorkValidation = settingString(ctx, configDir, settings.KeyWorkValidation, settings.ValidFeatureChoice)
+	f.InfraSafetyMonitor = settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice)
+	f.TerminalCommandTimeoutMs = terminalCommandTimeoutMs(ctx, configDir)
+	return f
+}
+
+// terminalCommandTimeoutMs reads the shell tool's default timeout; 0 is unset.
+func terminalCommandTimeoutMs(ctx context.Context, configDir string) int {
+	var ms int
+	if settings.FieldInto(ctx, configDir, settings.KeyTerminalCommandTimeoutMs, &ms) && settings.ValidTerminalCommandTimeoutMs(ms) {
+		return ms
+	}
+	return 0
+}
+
+// settingBool reads a default-false bool setting.
+func settingBool(ctx context.Context, configDir, key string) bool {
+	var b bool
+	return settings.FieldInto(ctx, configDir, key, &b) && b
+}
+
+// settingString reads a string setting, the zero value for absent, unreadable or invalid; every
+// caller's zero value is its default.
+func settingString(ctx context.Context, configDir, key string, valid func(string) bool) string {
+	var v string
+	if settings.FieldInto(ctx, configDir, key, &v) && valid(v) {
+		return v
+	}
+	return ""
+}
+
+// autoCompactionPolicy reads whether marotte may compact a chat and at what percentage;
+// invalid values read as the defaults (on, 80).
+func autoCompactionPolicy(ctx context.Context, configDir string) (enabled bool, pct int) {
+	enabled, pct = settings.DefaultAutoCompactionEnabled, settings.DefaultAutoCompactPct
+	var b bool
+	if settings.FieldInto(ctx, configDir, settings.KeyAutoCompactionEnabled, &b) {
+		enabled = b
+	}
+	var p int
+	if settings.FieldInto(ctx, configDir, settings.KeyAutoCompactPct, &p) && settings.ValidAutoCompactPct(p) {
+		pct = p
+	}
+	return enabled, pct
+}
+
+// sessionDisablesAutoCompaction is the session-door value: KAS's own compaction goes off when
+// marotte must be the only compactor (point above 80, which KAS would pre-empt) or nothing may compact.
+func sessionDisablesAutoCompaction(enabled bool, pct int) bool {
+	return !enabled || pct > settings.DefaultAutoCompactPct
 }

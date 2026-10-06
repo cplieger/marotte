@@ -1,8 +1,6 @@
 package agent
 
-// The acceptance test for a run's tab: nothing is faked below the runtime, and the tab
-// assertions read the PERSISTED tabs.json rather than the in-memory set, because the
-// document is the set every device projects.
+// A run tab's acceptance test: nothing faked below the runtime, asserting the persisted tabs.json every device projects.
 
 import (
 	"context"
@@ -58,13 +56,11 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, dir
 }
 
-// openChatTab creates a chat through the coordinator, as a New chat gesture does. The
-// returned subject's Ref is the chat id and its ID is what a run tab nests under.
+// openChatTab creates a chat through the coordinator; the subject's Ref is the chat id, its ID what a run tab nests under.
 func openChatTab(t *testing.T, h *Runtime, opID string) marotte.TabSubject {
 	t.Helper()
 	opened, err := h.Membership().CreateChatAndOpen(t.Context(), command.ChatCreate{
@@ -77,14 +73,12 @@ func openChatTab(t *testing.T, h *Runtime, opID string) marotte.TabSubject {
 	return opened.Subject
 }
 
-// TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat drives an `open_tab` carrying a
-// workflow id and NOTHING else — no store, no frames, no chat id on that client. The
-// subject is the command boundary, so payload validation and the parent fill are both
-// in the path.
+// TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat drives an `open_tab` carrying only a workflow id
+// through the command boundary.
 func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
-	// The lease names the launching chat, the fact the deep link cannot carry.
+	// The lease names the launching chat the deep link cannot carry.
 	h.translateACPEvent(marotte.ChatID(chatTab.Ref), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_deeplink", "workflowName": "publish-pr",
 	}))
@@ -108,24 +102,21 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	}
 }
 
-// TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat is the lease half of the deep
-// link's precondition, for the population that has no chat to nest under: a manual or
-// scheduled run's frames are workspace-global and it hosts its own bridge under the
-// synthetic `run:` id, so its lease must exist and must name no chat.
+// TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat pins that a manual or scheduled run's lease exists and names no chat.
 func TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat(t *testing.T) {
 	h, _ := newTabbedRuntime(t)
 	openChatTab(t, h, "op-chat")
 
-	// The workspace-global lifecycle frame a launch verb's run produces.
+	// The workspace-global lifecycle frame of a launched run.
 	h.translateACPEvent("", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_scheduled", "workflowName": "nightly",
 	}))
-	// And a frame arriving on the run's OWN bridge, whose chat id is synthetic.
+	// And one on the run's own synthetic-id bridge.
 	h.translateACPEvent(runChatID("wf_scheduled"), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": "wf_scheduled", "nodeId": "coder",
 	}))
 
-	// The orphan sweep and the deadline read it, and fillRunParent answers off its chat id.
+	// The orphan sweep and deadline read it; fillRunParent answers off its chat id.
 	if l, held := h.runs.lease("wf_scheduled"); !held {
 		t.Error("the parentless run lost its lease, so nothing bounds or sweeps it")
 	} else if l.ChatID != "" {

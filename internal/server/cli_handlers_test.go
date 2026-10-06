@@ -11,9 +11,7 @@ import (
 	"testing"
 )
 
-// fakeCLIRunner is an in-memory CLIRunner for exercising handler logic
-// without a real kiro-cli binary. It records which method the handler
-// invoked so tests can assert the STDOUT-only path is used.
+// fakeCLIRunner is an in-memory CLIRunner recording which method the handler invoked.
 type fakeCLIRunner struct {
 	stdout    string
 	truncated bool
@@ -57,10 +55,8 @@ func postDiagnostics(t *testing.T, runner CLIRunner) *httptest.ResponseRecorder 
 	return rec
 }
 
-// TestHandleDiagnostics_StdoutOnlyAndShape verifies the handler uses the
-// STDOUT-only capped runner (never the combined stdout+stderr Run path),
-// forwards the expected args + cap, and returns the {"report": ...} shape
-// the client renders as text.
+// TestHandleDiagnostics_StdoutOnlyAndShape verifies the STDOUT-only capped runner, its args
+// and cap, and the {"report": ...} shape.
 func TestHandleDiagnostics_StdoutOnlyAndShape(t *testing.T) {
 	f := &fakeCLIRunner{stdout: `{"q-details":{"version":"1.2.3"}}`}
 	rec := postDiagnostics(t, f)
@@ -112,7 +108,6 @@ func TestHandleDiagnostics_OversizeCappedAndMarked(t *testing.T) {
 	if !strings.HasSuffix(report, marker) {
 		t.Fatalf("report missing %q suffix (len=%d)", marker, len(report))
 	}
-	// Capped, so the body is at most the cap.
 	body := strings.TrimSuffix(report, marker)
 	if len(body) > diagnosticsMaxBytes {
 		t.Errorf("capped body len = %d, want <= %d", len(body), diagnosticsMaxBytes)
@@ -137,13 +132,8 @@ func TestHandleDiagnostics_NotTruncatedNoMarker(t *testing.T) {
 	}
 }
 
-// TestHandleDiagnostics_ExecError verifies a failed spawn is a 502 carrying the
-// generic error envelope and no report body.
-//
-// The STATUS is the load-bearing half: the client's action framework classifies by
-// it, so a 200 with an error envelope reached every apiGet-style caller as success.
-// This route has no 200-with-error wire contract to honour — writeCmdResult's is a
-// git-panel convention.
+// TestHandleDiagnostics_ExecError verifies a failed spawn is a 502 with the generic error
+// envelope: the client classifies by status.
 func TestHandleDiagnostics_ExecError(t *testing.T) {
 	f := &fakeCLIRunner{runErr: errors.New("boom")}
 	rec := postDiagnostics(t, f)
@@ -223,12 +213,8 @@ func TestExecCLIRunner_RunStdoutCapped_Truncates(t *testing.T) {
 	}
 }
 
-// Stderr is captured but not returned, so the log is the only place it goes. It
-// is the diagnostic for a kiro-cli invocation that failed with nothing useful on
-// stdout — and a run that wrote nothing to stderr must not produce a line, or the
-// channel fills with empty records and stops being worth reading.
-//
-// Not parallel: it swaps the process-wide slog default.
+// TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr pins that captured stderr is logged,
+// and that an empty stderr logs nothing. Not parallel: it swaps the slog default.
 func TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {

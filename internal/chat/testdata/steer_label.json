@@ -38,9 +38,9 @@
       "label": "Workflow result not delivered · the turn ended first",
       "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:52",
-        "internal/translate/steering.go:112",
-        "internal/translate/steering.go:121"
+        "internal/agent/command_chat_ops.go:57",
+        "internal/translate/steering.go:101",
+        "internal/translate/steering.go:110"
       ]
     },
     {
@@ -50,8 +50,8 @@
       "label": "Workflow result not delivered · the session restarted",
       "compared": true,
       "sites": [
-        "internal/agent/bridge_coord.go:1206",
-        "internal/agent/entry_merge.go:601"
+        "internal/agent/bridge_coord.go:1153",
+        "internal/agent/entry_merge.go:493"
       ]
     },
     {
@@ -61,10 +61,10 @@
       "label": "Workflow result",
       "compared": true,
       "sites": [
-        "internal/agent/run_appender.go:81",
-        "internal/agent/run_bounds.go:457",
-        "internal/translate/steering.go:180",
-        "internal/translate/steering.go:90"
+        "internal/agent/run_appender.go:70",
+        "internal/agent/run_bounds.go:352",
+        "internal/translate/steering.go:165",
+        "internal/translate/steering.go:82"
       ]
     },
     {
@@ -75,7 +75,7 @@
       "compared": false,
       "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
       "sites": [
-        "internal/translate/projection_entries.go:246"
+        "internal/translate/projection_entries.go:216"
       ]
     },
     {
@@ -85,9 +85,9 @@
       "label": "Not read · the turn ended first",
       "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:52",
-        "internal/agent/steer_buffer.go:281",
-        "internal/translate/steering.go:112"
+        "internal/agent/command_chat_ops.go:57",
+        "internal/agent/steer_buffer.go:304",
+        "internal/translate/steering.go:101"
       ]
     },
     {
@@ -97,7 +97,7 @@
       "label": "Not read · you deleted it",
       "compared": true,
       "sites": [
-        "internal/agent/steer_buffer.go:275"
+        "internal/agent/steer_buffer.go:298"
       ]
     },
     {
@@ -107,7 +107,8 @@
       "label": "Not read · the session restarted",
       "compared": true,
       "sites": [
-        "internal/agent/entry_merge.go:601"
+        "internal/agent/entry_merge.go:493",
+        "internal/agent/runtime.go:643"
       ]
     },
     {
@@ -117,8 +118,8 @@
       "label": "Mid-turn message",
       "compared": true,
       "sites": [
-        "internal/translate/steering.go:180",
-        "internal/translate/steering.go:90"
+        "internal/translate/steering.go:165",
+        "internal/translate/steering.go:82"
       ]
     },
     {
@@ -129,90 +130,97 @@
       "compared": false,
       "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
       "sites": [
-        "internal/translate/projection_entries.go:246"
+        "internal/translate/projection_entries.go:216"
       ]
     }
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1206",
+      "site": "internal/agent/bridge_coord.go:1153",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:52",
+      "site": "internal/agent/command_chat_ops.go:57",
       "form": "literal",
       "origin": "",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:601",
+      "site": "internal/agent/entry_merge.go:493",
       "form": "mutation",
       "origin": "",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:81",
+      "site": "internal/agent/run_appender.go:70",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:457",
+      "site": "internal/agent/run_bounds.go:352",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/steer_buffer.go:275",
+      "site": "internal/agent/runtime.go:643",
+      "form": "literal",
+      "origin": "user",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/steer_buffer.go:298",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "deleted"
     },
     {
-      "site": "internal/agent/steer_buffer.go:281",
+      "site": "internal/agent/steer_buffer.go:304",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/projection_entries.go:246",
+      "site": "internal/translate/projection_entries.go:216",
       "form": "literal",
       "origin": "",
       "state": "",
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:112",
+      "site": "internal/translate/steering.go:101",
       "form": "literal",
       "origin": "",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:121",
+      "site": "internal/translate/steering.go:110",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/steering.go:180",
+      "site": "internal/translate/steering.go:165",
       "form": "literal",
       "origin": "",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/translate/steering.go:90",
+      "site": "internal/translate/steering.go:82",
       "form": "literal",
       "origin": "",
       "state": "read",

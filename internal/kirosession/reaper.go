@@ -18,6 +18,7 @@ package kirosession
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -65,14 +66,9 @@ func New(sessionsDir, workspaceRoot string) *Reaper {
 	return &Reaper{sessionsDir: sessionsDir, workspaceRoot: root, guard: defaultGuard}
 }
 
-// belongsToWorkspace reports whether the session at sessionDir names this reaper's
-// workspace root in its own workspacePaths.
-//
-// A mismatch is a skip and so is DOUBT (unreadable record, absent or empty list,
-// decode error): a wrong skip costs disk, a wrong removal costs another
-// workspace's history. The reap paths glob across every bucket under one
-// $KIRO_HOME and never read the hash, so no collision is needed for a reap to
-// cross workspaces.
+// belongsToWorkspace reports whether the session at sessionDir names this reaper's workspace root
+// in its own workspacePaths. A mismatch is a skip and so is DOUBT (unreadable record, empty list):
+// a wrong skip costs disk, a wrong removal another workspace's history.
 func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
 	paths, _, ok := readSessionRecord(sessionDir)
 	if !ok {
@@ -92,13 +88,9 @@ func namesRoot(paths []string, root string) bool {
 	return false
 }
 
-// readSessionRecord decodes the two facts this package reads out of a session's own
-// session.json: the workspace roots it claims, and the workflow RUN it was created
-// for (empty for every non-step session). ok is false when the file is absent,
-// unreadable or undecodable.
-//
-// ONE reader for both, because two reads of one file could disagree while a KAS
-// write lands between them.
+// readSessionRecord decodes the two facts this package reads from a session's session.json: the
+// workspace roots it claims and the workflow RUN it was created for (empty for non-step sessions);
+// ok is false when absent or undecodable. One reader, so two reads cannot disagree.
 func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID string, ok bool) {
 	data, err := os.ReadFile(filepath.Join(sessionDir, sessionRecordName))
 	if err != nil {
@@ -145,14 +137,10 @@ func (r *Reaper) Reap(sessionID string) {
 	r.removeCLISidecars(sessionID)
 }
 
-// Sweep removes orphaned session state: any session dir or cli sidecar whose id is
-// not in referenced and is older than the guard, plus dead v2-engine files
-// (bare-uuid, no sess_ prefix). Returns the number of sessions reaped. `referenced`
-// must be the COMPLETE keep-list — every chat's chain unioned with every live
-// bridge's session — because age is not evidence a session is disposable, so a
-// caller holding a partial set skips the sweep instead. An EMPTY set is refused
-// while the tree holds sessions: it is indistinguishable from a misconfigured one
-// and would delete every transcript on the volume. Step sessions: orphanReapable.
+// Sweep removes orphaned session state: any session dir or cli sidecar whose id is not in
+// referenced and is older than the guard, plus dead v2-engine files. Returns the number reaped.
+// `referenced` must be the COMPLETE keep-list, every chat's chain unioned with every live bridge's
+// session; anything less deletes live history.
 func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 	if r == nil {
 		return 0
@@ -290,14 +278,9 @@ const (
 	spareLiveRun
 )
 
-// spareReason answers both questions the sweep asks of an aged, unreferenced
-// candidate off ONE read of its session.json: does it name this workspace, and is
-// it a workflow STEP whose run is still on disk. A step session is referenced by no
-// chat, so without the second question the sweep reaps it mid-run and the step's
-// transcript — readable only out of that directory — goes with it. The bound is the
-// run's own retention: KAS prunes the workflows tree for nobody, so what reclaims a
-// spared step session is DELETE /api/runs/{id}. The run dir is looked for in the
-// candidate's OWN bucket, and the workspace question is asked first.
+// spareReason answers, off ONE read of session.json, whether an aged unreferenced candidate names
+// this workspace and whether it is a workflow STEP whose run is still on disk; a step session is
+// referenced by no chat, so without the second question a sweep would reap it mid-run.
 func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	paths, workflowID, ok := readSessionRecord(path)
 	// The sweep enumerates every bucket, so a session belonging to another workspace
@@ -308,10 +291,19 @@ func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	if workflowID == "" {
 		return spareNone
 	}
-	if info, sErr := os.Stat(filepath.Join(sub, workflowsDirName, workflowID)); sErr == nil && info.IsDir() {
+	runDir := filepath.Join(sub, workflowsDirName, workflowID)
+	info, sErr := os.Stat(runDir)
+	switch {
+	case sErr == nil && info.IsDir():
+		return spareLiveRun
+	case sErr == nil, errors.Is(sErr, fs.ErrNotExist):
+		return spareNone
+	default:
+		// Only a clean ENOENT says the run is gone; any other fault is doubt.
+		slog.Debug("kirosession sweep: run dir could not be stat'ed; sparing its step session",
+			"path", runDir, "error", sErr)
 		return spareLiveRun
 	}
-	return spareNone
 }
 
 // sweepCLI reaps orphaned files under sessions/cli/: v3 sess_<id>.* sidecars whose
@@ -362,19 +354,18 @@ func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[
 	return isV3
 }
 
-// sidecarReapable reports whether the cli/ sidecars for sessionID may be removed.
-//
-// A sidecar carries no workspacePaths, so ownership is answered by the session DIR
-// it belongs to; a sidecar with no dir anywhere is stranded — the shape a crash
-// between the two removals leaves — and stays reclaimable. It asks spareReason
-// rather than belongsToWorkspace because EVERY reason the dir sweep spares a
-// session is a reason to keep its history: a workspace check alone spared the
-// directory and deleted the sidecar beside it.
+// sidecarReapable reports whether the cli/ sidecars for sessionID may be removed. A sidecar carries
+// no workspacePaths, so its session DIR answers; a sidecar with no dir anywhere is stranded (a
+// crash between removals) and stays reclaimable.
 func (r *Reaper) sidecarReapable(sessionID string) bool {
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	stranded := true
 	for _, d := range dirs {
-		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+		info, err := os.Stat(d)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false // a dir that exists but cannot be judged keeps its sidecar
+		}
+		if err != nil || !info.IsDir() {
 			continue
 		}
 		stranded = false

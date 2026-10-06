@@ -117,6 +117,9 @@ export interface FileState {
    *  unknown (a source that did not supply one), which degrades to the old
    *  write-unconditionally behaviour rather than blocking the save. */
   loadedHash: string;
+  /** The server marked the file read-only (a KAS tool output): no Edit control
+   *  and no conflict mode. */
+  readOnly: boolean;
   /** Load/save failure for this file, "" when there is none. Reactive because a
    *  PREDICATE depends on it: `#editor-git-diff-btn` has exactly one writer, an
    *  effect in editor-core.ts, and `loadFile` assigns this field long after the
@@ -190,6 +193,7 @@ class EditorState {
       current,
       loaded: false,
       loadedHash: "",
+      readOnly: false,
       error: signal(""),
       mode,
       dirty,

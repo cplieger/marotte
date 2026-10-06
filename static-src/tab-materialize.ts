@@ -1,9 +1,5 @@
-// tab-materialize: the ONE place a TabSubject becomes a TabViewSpec.
-//
-// Chat / editor / run behaviour is INJECTED and the five singletons load through a
-// lazy import: those modules call back into this factory, so a static import here
-// closes a cycle. DOM-free, and both store reads are untracked, so materializing
-// inside an effect subscribes the caller to nothing.
+// The ONE place a TabSubject becomes a TabViewSpec. Chat, editor and run behaviour is INJECTED and
+// the singletons load lazily (static imports would close cycles). DOM-free; store reads untracked.
 
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./route-path.js";
@@ -74,10 +70,8 @@ export function registerTabOpeners(next: TabOpeners): void {
   openers = next;
 }
 
-/** The registered openers, or a throw. Throws for EVERY kind, the five
- *  injection-free singletons included, so an unwired composition root fails at the
- *  first tab it materializes instead of producing a spec whose `onShow` silently
- *  does nothing. */
+/** The registered openers, or a throw for EVERY kind, so an unwired composition root fails at the
+ *  first tab rather than producing an inert `onShow`. */
 function requireOpeners(kind: TabKind): TabOpeners {
   if (openers === null) {
     throw new Error(
@@ -104,11 +98,7 @@ const FALLBACK_CHAT_NAME = "New conversation";
  *  handlers/run.ts's `runLabel` fallback. */
 const FALLBACK_RUN_NAME = "Workflow run";
 
-/** A chat's label, from the chat store.
- *
- *  `store.get` is an untracked peek (the collection's own contract), so this is
- *  safe to call from inside an effect. An empty stored name is the same case as
- *  no row at all: every existing caller writes the fallback for it. */
+/** A chat's label from the chat store (`store.get` is an untracked peek); empty name = fallback. */
 function chatName(chatID: string): string {
   const name = get(chatID)?.name ?? "";
   return name === "" ? FALLBACK_CHAT_NAME : name;
@@ -155,29 +145,15 @@ function webTabName(path: string): string {
 
 // --- The subagent ref codec ---
 
-/** The one composite ref on this wire: `<chatID>/<agentSubtaskID>`.
- *
- *  It has to be composite because nothing indexes a subtask id to a chat. A run
- *  gets away with a bare id because `GET /api/runs/{id}` resolves one cold; a
- *  delegate has no endpoint and no cross-chat index, so its blocks are only
- *  findable through the chat that holds them.
- *
- *  A slash separator is safe rather than convenient: `ids.ValidChatID` admits no
- *  slash, and the command boundary validates a chat ref with it, so the FIRST
- *  slash is always the seam even when a subtask id carries more (a workflow
- *  step's `wf:<id>:<a/b>` shape does, though a step never reaches this kind).
- *
- *  The codec lives here because this is the module that reads and writes what
- *  every ref MEANS — the factory in one direction, `subjectForRoute` in the
- *  other — so a second spelling elsewhere could disagree with it. */
+/** The one composite ref on this wire: `<chatID>/<agentSubtaskID>`, since a delegate is findable
+ *  only through its chat. `ids.ValidChatID` admits no slash, so the FIRST slash is the seam. The
+ *  codec lives with the module that owns every ref's meaning. */
 export function subagentRef(chatID: string, subtaskID: string): string {
   return `${chatID}/${subtaskID}`;
 }
 
-/** Split a subagent ref back into its two halves. Both empty for a malformed
- *  ref, which the factory renders as a page that says it cannot find the
- *  delegate rather than as a thrown error on someone else's device: a ref
- *  arrives from the persisted set, so a bad one has to be survivable. */
+/** Split a subagent ref; both halves empty for a malformed persisted ref (rendered as "cannot find
+ *  the delegate", never thrown). */
 export function parseSubagentRef(ref: string): { chatID: string; subtaskID: string } {
   const cut = ref.indexOf("/");
   if (cut <= 0 || cut === ref.length - 1) {
@@ -186,21 +162,9 @@ export function parseSubagentRef(ref: string): { chatID: string; subtaskID: stri
   return { chatID: ref.slice(0, cut), subtaskID: ref.slice(cut + 1) };
 }
 
-/** A delegate's label AND its dot, from the chat store's own record of its
- *  invocation.
- *
- *  Derived rather than carried, so a tab RESTORED on boot reads the same as one
- *  the transcript's link opened. The scan is over one chat's resident messages
- *  and runs once per materialization, not per render; a chat whose page has not
- *  been fetched yet has no invocation to find and falls back, and the next
- *  materialization (or `subagent-dots.ts`'s effect) corrects it.
- *
- *  BOTH facts come off ONE scan because they come off one tool call: the row
- *  cannot say `wf-workflow-creator` while its dot says nothing, and it used to —
- *  the name was seeded here and the dot only by the effect, so on the door that
- *  matters (a transcript link, where the invocation is already resident) the row
- *  painted its real name beside an empty slot for a frame. Seeding the dot is
- *  also what lets `12-tabs.css` stop reserving that slot for this kind. */
+/** A delegate's label AND dot from ONE scan of its invocation, so a restored tab reads like a
+ *  linked one and the row never names a delegate beside an empty slot. An unfetched chat falls
+ *  back until the next materialization or `subagent-dots.ts` corrects it. */
 function subagentTabFacts(
   chatID: string,
   subtaskID: string,
@@ -210,24 +174,16 @@ function subagentTabFacts(
   if (tc === undefined) {
     return { name: FALLBACK_SUBAGENT_NAME, dot: "" };
   }
-  // The delegate's SECOND input, the same one `subagent-dots.ts` passes: its chat's own
-  // turn liveness, so a row seeded from a resident invocation cannot paint a stale spinner
-  // the effect would immediately correct.
-  // `session` is non-undefined wherever `tc` is, which the compiler cannot see through the
-  // conditional above; the absent arm answers the claim-nothing direction either way.
+  // The chat's turn liveness, as `subagent-dots.ts` passes, so no stale spinner is seeded. `session`
+  // is defined wherever `tc` is; the absent arm claims nothing.
   const live = session === undefined || turnLive(session);
   return { name: subagentLabel(tc), dot: subagentStatusFor(tc.status, live) };
 }
 
 // --- Pass-through subject facts ---
 
-/** The sub-tab position, as the store spells it.
- *
- *  A subject says "no parent" with an EMPTY STRING and the store says it with an
- *  ABSENT field, so the translation happens once, here. Both mean the same thing
- *  to the two sides that read them: `insertRow` promotes an orphan to top level
- *  and so does the server's Open, for the same reason — a tab nobody can see is
- *  worse than a tab in the wrong place. */
+/** The sub-tab position as the store spells it (ABSENT for no parent, where a subject says "").
+ *  `insertRow` and the server's Open both promote an orphan to top level. */
 function parentOf(subject: TabSubject): { parentId?: string } {
   return subject.parent === "" ? {} : { parentId: subject.parent };
 }
@@ -239,17 +195,9 @@ function dotOf(status: TabDotStatus | ""): { dotStatus?: TabDotStatus } {
   return status === "" ? {} : { dotStatus: status };
 }
 
-/** Run a singleton's loader through a LAZY import, swallowing a failed chunk
- *  load the way app.ts already does: the tab is open and visible, and there is
- *  nothing useful to tell a reader about a chunk that did not arrive.
- *
- *  Every singleton loader is reached this way, including the three app.ts imports
- *  statically today, and the reason is the same seam: settings-tabs.ts, git.ts
- *  and files.ts all reach tabs.ts, and the following stage puts a materializeTab
- *  call inside tabs.ts's own toggle helpers, so a static import here would close
- *  a cycle exactly as a static import of chat.ts would. The import specifier stays
- *  written out at each call site because a bundler resolves a literal, not an
- *  expression. */
+/** Run a singleton's loader through a LAZY import, swallowing a failed chunk load as app.ts does.
+ *  Lazy for every singleton: they reach tabs.ts, which calls materializeTab, so a static import
+ *  closes a cycle. Specifiers stay literal at each call site for the bundler. */
 function lazily(load: Promise<unknown>): void {
   void load.catch(() => {
     /* noop */
@@ -258,18 +206,9 @@ function lazily(load: Promise<unknown>): void {
 
 // --- The factory ---
 
-/** Produce the local half of a tab from the shared half.
- *
- *  Exhaustive over TabKind with NO default branch: every case returns, so a
- *  tenth kind makes the function fall off its end and `strictNullChecks` rejects
- *  it. Do not add a default — it would turn that compile error into a runtime
- *  one on every connected device.
- *
- *  Never calls a toggle-style opener. A factory that toggles is not a factory:
- *  `toggleSettingsView` and its four siblings CLOSE the tab when it is already
- *  active, so reaching one from here would make materializing a subject destroy
- *  the tab it describes. The loaders below are the plain LOADER half of those
- *  doors, which is the same rule app.ts's restore already follows. */
+/** Produce the local half of a tab from the shared half. Exhaustive over TabKind with NO default:
+ *  a new kind falls off the end and `strictNullChecks` rejects it. Never calls a toggle-style
+ *  opener (it would close the active tab it describes); only the LOADER halves. */
 export function materializeTab(subject: TabSubject): TabViewSpec {
   const reg = requireOpeners(subject.kind);
   switch (subject.kind) {
@@ -303,11 +242,8 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         name: fileName(path),
         icon: TAB_ICONS.editor,
         view: TAB_VIEWS.editor,
-        // No line, and no mode. A `#L<line>` fragment and the edit/diff/image
-        // mode are the OPENER's arguments, not facts about what is open, so they
-        // stay where they are today: the mode in `fileStates`, the line in the
-        // pushRoute the opener issues after this. Matches openEditorView's route
-        // exactly.
+        // No line or mode: those are the OPENER's arguments (`fileStates`, its pushRoute). Matches
+        // openEditorView's route.
         route: { kind: "file", path },
         owns: subject.owns,
         ...parentOf(subject),
@@ -324,12 +260,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
     }
     case "run": {
       const workflowID = subject.ref;
-      // A RUN TAB IS ALWAYS A VIEW: `owns: false`, no `onClose`, so dismissing it
-      // stops nothing. One component serves a workflow run and a subagent, and a × that
-      // means "close this" on one door and "destroy the work" on another cannot be
-      // learned. A parentless run can therefore outlive every view of it; stopping one
-      // is the CANCEL VERB, which run-view.ts never gates on the door. The launching
-      // chat's × still cancels its runs: it destroys the conversation, not a view of it.
+      // A RUN TAB IS ALWAYS A VIEW: `owns: false`, no `onClose`, so dismissing it stops nothing. A
+      // parentless run can outlive every view, so stopping is the CANCEL VERB, offered regardless of door
+      // (run-view.ts). The launching chat's × still cancels its runs.
       return {
         name: runName(workflowID),
         icon: TAB_ICONS.run,
@@ -379,12 +312,8 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         refresh: () => {
           reg.subagent.refresh(chatID, subtaskID);
         },
-        // No onClose: the page is a projection of blocks the chat store owns, so
-        // a close destroys nothing. Every door opens it with `owns: false`, which
-        // is what makes an owned subagent tab unrepresentable rather than merely
-        // unhandled. The page and the renders mounted into it are released by
-        // `subagent-view.ts`'s demand effect, which drops them when no open tab
-        // names a member of the group that page projects.
+        // No onClose: the page projects blocks the chat store owns; `subagent-view.ts`'s demand effect
+        // releases it.
       };
     }
     case "settings":
@@ -392,10 +321,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         name: "Settings",
         icon: TAB_ICONS.settings,
         view: TAB_VIEWS.settings,
-        // The CANONICAL sub-tab, because a subject cannot carry one: a
-        // singleton's Ref is empty. The actual sub-tab is corrected afterwards by
-        // setSettingsTab / applyRoute, which is how the boot restore already
-        // works.
+        // The CANONICAL sub-tab (a singleton's Ref is empty); setSettingsTab / applyRoute correct it.
         route: { kind: "settings", tab: "general" },
         owns: subject.owns,
         ...parentOf(subject),
@@ -553,14 +479,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
 
 // --- The inverse ---
 
-/** The subject a URL route names: which tab kind, and which ref. The inverse of the
- *  `route` each case above produces, beside them so a new kind is ONE compile error
- *  covering both directions. Total over the eleven kinds, no default branch.
- *
- *  A singleton's sub-position is DROPPED (`/settings/tools` and `/settings` name one
- *  tab), because applyRoute corrects it after the activation. A FILES ref is the tab's
- *  ORIGIN, so this answers what a route MINTS; which OPEN browser a route addresses is
- *  `filesTabForRoute`'s question. */
+/** The subject a URL route names, the inverse of each case's `route`, total with no default, so a
+ *  new kind is one compile error for both directions. A singleton's sub-position is DROPPED; a
+ *  FILES ref is the ORIGIN a route mints (`filesTabForRoute` addresses open browsers). */
 export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
   switch (route.kind) {
     case "chat":

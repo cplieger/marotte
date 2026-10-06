@@ -48,14 +48,9 @@ func isDir(p string) bool {
 	return err == nil && info.IsDir()
 }
 
-// Address resolves a workspace-relative spec directory against roots: dir must
-// equal <root.Rel>/specs/<name> for one root, with name a single non-empty
-// segment that is not "." or "..". Anything else answers ok false.
-//
-// It lives here rather than at either consumer because two of them now resolve
-// the same string — the GET and the approve command — and a second copy could
-// disagree about which directories are addressable, which for the command would
-// mean recording an approval against a spec the GET refuses to serve.
+// Address resolves a workspace-relative spec directory against roots: dir must equal
+// <root.Rel>/specs/<name> for one root, name a single segment other than "." or "..".
+// Shared by the GET and the approve command, so the two agree on what is addressable.
 func Address(roots []Root, dir string) (Root, string, bool) {
 	for _, root := range roots {
 		name, found := strings.CutPrefix(dir, root.Rel+"/specs/")

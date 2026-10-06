@@ -1,8 +1,5 @@
 package agent
 
-// Pure-function tests extracted from bridge_fs.go: the slicing, truncation, and
-// tool-call-id helpers bridge_fs uses on every agent fs/* round trip.
-
 import (
 	"context"
 	"math"
@@ -10,17 +7,7 @@ import (
 	"testing"
 )
 
-// TestTruncateForStaging_Table is GONE with truncateForStaging. It capped the
-// old/new text a staged write carried in its SSE payload, and there is no staged
-// write: KAS holds the content and marotte's fs handler writes through.
-
-// TestCurrentMessageCount is GONE with currentMessageCount. It counted a chat's
-// persisted messages as the "restore watermark on every snapshot", and snapshots
-// are KAS's now — the same deletion that orphaned internal/checkpoint. Nothing in
-// production asked the question, so there is no behaviour left to pin.
-
-// TestSliceByLines_Table consolidates the pure-function edge cases for
-// sliceByLines into a single table-driven test.
+// TestSliceByLines_Table covers sliceByLines' edge cases.
 func TestSliceByLines_Table(t *testing.T) {
 	t.Parallel()
 	line2 := 2
@@ -57,24 +44,15 @@ func TestSliceByLines_Table(t *testing.T) {
 	}
 }
 
-// FuzzSliceByLines exercises the line-slicing parser with arbitrary inputs.
-// Invariant: for any (content, line, limit) where line >= 1 and limit >= 1,
-// the output is a substring of content (or empty).
-//
-// Since the strings.Lines rewrite the substring half is true by construction
-// (the result is one slice expression over content), so what this target now
-// guards is that the two offset walks cannot produce lo > hi or an out-of-range
-// index — which would panic rather than fail an assertion.
+// FuzzSliceByLines pins that the two offset walks never yield lo > hi or an out-of-range
+// index, which would panic.
 func FuzzSliceByLines(f *testing.F) {
 	f.Add("a\nb\nc\n", 2, 2)
 	f.Add("a\nb\n", 99, 1)
 	f.Add("a\nb\nc\n", 2, math.MaxInt)
 	f.Add("", 1, 1)
 	f.Add("single", 1, 1)
-	// Terminator shapes strings.Lines and strings.SplitAfter disagree about:
-	// a bare '\r', a '\r\n' pair, and a body with no trailing newline. The
-	// differential sweep behind the rewrite found no divergence on any of
-	// them, and these seeds are what keep that true.
+	// Terminator shapes strings.Lines and strings.SplitAfter disagree about.
 	f.Add("a\r\nb\r\n", 1, 1)
 	f.Add("a\rb\rc", 2, 1)
 	f.Add("no trailing newline", 1, 2)
@@ -96,9 +74,7 @@ func FuzzSliceByLines(f *testing.F) {
 	})
 }
 
-// TestFsErrorIsRoutine pins the routine-vs-real classification used to
-// decide whether an fs error is worth logging: a cap-exceeded rejection is
-// routine; nil and real errors are not.
+// TestFsErrorIsRoutine pins that only a cap-exceeded rejection is routine.
 func TestFsErrorIsRoutine(t *testing.T) {
 	t.Parallel()
 	if got := fsErrorIsRoutine(errCapExceeded); !got {
@@ -112,15 +88,8 @@ func TestFsErrorIsRoutine(t *testing.T) {
 	}
 }
 
-// TestSliceByLines_offsetLimitOvershootReturnsTail pins the read-window
-// offset arithmetic. When the window starts past line 1 (start > 0) and the
-// requested limit is larger than the number of lines that remain, the result
-// must be the clamped tail of the file, never an over-read. The window end is
-// narrowed to start+limit only while limit is smaller than the remaining-line
-// count (end-start); flipping that subtraction to addition (end+start) pushes
-// end past the slice length and panics instead of returning the tail. The
-// existing table covers limit==remaining and limit>>remaining; this pins the
-// just-past-remaining point where the sign of the offset math is observable.
+// TestSliceByLines_offsetLimitOvershootReturnsTail pins the clamped tail just past the
+// remaining-line count, where flipping end-start to end+start panics.
 func TestSliceByLines_offsetLimitOvershootReturnsTail(t *testing.T) {
 	t.Parallel()
 	line, limit := 2, 4 // start at line 2; only 2 lines remain in a 3-line file

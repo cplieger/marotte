@@ -130,7 +130,6 @@ func TestSearch_FindsMatchRecursively(t *testing.T) {
 	if res.Matched != 4 {
 		t.Errorf("matched = %d, want 4: one matching line per hit, nothing cut", res.Matched)
 	}
-	// Line numbers are 1-based and the excerpt is the matching line.
 	for _, m := range res.Matches {
 		if m.Line < 1 {
 			t.Errorf("%s: line = %d, want >= 1", m.Path, m.Line)
@@ -161,8 +160,6 @@ func TestSearch_CaseSensitivity(t *testing.T) {
 		t.Errorf("case=1 matches = %v, want only lower.txt", matchPaths(sensitive))
 	}
 
-	// Anything other than "1" reads as insensitive, matching the transcript
-	// search's rule for the same parameter.
 	other := decodeSearch(t, searchReq(t, h,
 		map[string]string{"path": prefix, "q": "needle", "case": "true"}))
 	if len(other.Matches) != 2 {
@@ -236,7 +233,6 @@ func TestSearch_ReplyCapOnAFullyReadTreeIsACutNotAHole(t *testing.T) {
 	if res.Truncated {
 		t.Error("truncated = true after a walk that read every file: a full reply is a cut, not a hole")
 	}
-	// Per-file cap: no single file may contribute more than maxFileMatches.
 	byPath := map[string]int{}
 	for _, m := range res.Matches {
 		byPath[m.Path]++
@@ -249,9 +245,7 @@ func TestSearch_ReplyCapOnAFullyReadTreeIsACutNotAHole(t *testing.T) {
 }
 
 func TestSearch_SensitivePathNeverInResults(t *testing.T) {
-	// The mount claims /config, so the REAL sensitive prefixes apply. The walk
-	// reaches these from ABOVE — nobody asked for them by name — which is the
-	// case an os.Root cannot cover, since it has no sub-path denial.
+	// The walk reaches these sensitive paths from ABOVE, the case an os.Root cannot cover.
 	h, backing := searchHandlerAt(t, "/config")
 	writeTree(t, backing, map[string]string{
 		"mcp-secrets.json":             `{"token":"needle-secret"}`,
@@ -271,7 +265,6 @@ func TestSearch_SensitivePathNeverInResults(t *testing.T) {
 	if len(got) != 1 || got[0] != "/config/visible.txt" {
 		t.Fatalf("matches = %v, want only /config/visible.txt", got)
 	}
-	// The bytes themselves must never reach the wire, whatever the path list says.
 	body := res.Matches[0].Excerpt
 	for _, leak := range []string{"needle-secret", "needle-server", "accessToken", "private key"} {
 		if strings.Contains(body, leak) {
@@ -293,10 +286,6 @@ func TestSearch_OutsideGrantedRootsRefused(t *testing.T) {
 func TestSearch_SymlinkOutOfMountNotWalked(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	writeTree(t, dir, map[string]string{"own.txt": "needle here\n"})
-	// A symlink to a real out-of-mount tree, planted where the walk will meet
-	// it. Symlinks are skipped outright, so its contents are never read; the
-	// os.Root would refuse the target anyway, and this closes the in-mount
-	// cycle and duplicate-report cases as well.
 	outside := t.TempDir()
 	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("needle outside\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -304,7 +293,6 @@ func TestSearch_SymlinkOutOfMountNotWalked(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	// And a self-referential in-mount link, which would cycle if followed.
 	if err := os.Symlink(dir, filepath.Join(dir, "loop")); err != nil {
 		t.Fatal(err)
 	}
@@ -334,10 +322,6 @@ func TestSearch_SkipsBinaryAndNonRegular(t *testing.T) {
 	if len(got) != 1 || got[0] != filepath.Join(dir, "text.txt") {
 		t.Fatalf("matches = %v, want only text.txt", got)
 	}
-	// Two files were read and one contributed nothing: the binary was sniffed
-	// and dropped before its bytes were read, and the answer covers it. The FIFO
-	// is never opened — its name is all the search may consult — so it is not
-	// scanned, and a skip the search chose is not a hole in the answer.
 	if res.Scanned != 2 {
 		t.Errorf("scanned = %d, want 2 (text + binary read; the FIFO is name-only)", res.Scanned)
 	}
@@ -350,8 +334,6 @@ func TestSearch_CancelledWritesNothing(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	writeTree(t, dir, map[string]string{"a.txt": "needle\n"})
 
-	// Deliberately pre-cancelled: the property is that a scan whose caller is
-	// already gone writes no body, rather than reporting a half-scan as whole.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	rec := searchReqCtx(t, h, ctx, map[string]string{"path": prefix, "q": "needle"})
@@ -385,9 +367,6 @@ func TestSearch_Globs(t *testing.T) {
 		exclude string
 		want    []string
 	}{{
-		// A separator-free pattern matches the BASENAME, which is what makes
-		// the common spelling do the common thing: path.Match's `*` does not
-		// cross "/", so a path-form `*.go` would match root.go alone.
 		name:    "basename pattern reaches every depth",
 		include: "*.go",
 		want:    rel("node_modules/pkg/x.go", "root.go", "src/a.go", "src/deep/b.go"),
@@ -469,8 +448,6 @@ func TestSearch_EmptyQueryAndMethod(t *testing.T) {
 		if len(res.Matches) != 0 || res.Scanned != 0 || res.Truncated {
 			t.Errorf("q=%q result = %+v, want an empty scan", q, res)
 		}
-		// A nil slice would serialise as JSON null, which the client must not
-		// have to narrow.
 		if !strings.Contains(searchReq(t, h,
 			map[string]string{"path": prefix, "q": q}).Body.String(), `"matches":[]`) {
 			t.Errorf("q=%q body must carry an empty array, not null", q)
@@ -508,7 +485,6 @@ func TestExcerptLine(t *testing.T) {
 	}{
 		{name: "short line comes back whole", line: "  hello needle  ", hitRune: 8, want: "hello needle"},
 		{name: "CRLF loses its CR", line: "needle\r", hitRune: 0, want: "needle"},
-		// The hit sits at byte 7 and rune 6: the index is a RUNE index.
 		{name: "multi-byte is not split", line: "héllo needle", hitRune: 6, want: "héllo needle"},
 	}
 	for _, tc := range tests {
@@ -550,32 +526,20 @@ func TestMatchLines_ExcerptWindowFollowsTheOriginalBytes(t *testing.T) {
 	}
 }
 
-// --- confinement: the object READ is the object the walk admitted ---
-
 // searchDirAt opens one directory the way the walk opens it: through the mount's
 // own root handle, one component at a time, refusing a symlink at every step.
 func searchDirAt(t *testing.T, h *Handler, abs string) *os.File {
 	t.Helper()
-	f, err := openSearchRoot(loc{m: &h.mounts[0], abs: abs})
+	f, err := openPinnedRoot(loc{m: &h.mounts[0], abs: abs})
 	if err != nil {
-		t.Fatalf("openSearchRoot(%q): %v", abs, err)
+		t.Fatalf("openPinnedRoot(%q): %v", abs, err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	return f
 }
 
-// TestSearch_SwappedNameIsNotReadAfterAdmission is the confinement property the
-// whole walk is built for: between the moment an entry is CLASSIFIED as a
-// browsable regular file and the moment its bytes are read, a process able to
-// write into the granted tree can replace that name — or one of its ancestors —
-// with a symlink to a denied file. The mount boundary survives that (the target
-// is inside the mount), so the only thing standing between the swap and an
-// excerpt of /config/mcp-secrets.json on the wire is that the read never
-// resolves the name a second time.
-//
-// Both halves are exercised at the exact boundary the swap targets, because the
-// window between admission and read cannot be opened deterministically from
-// outside: the test performs the swap in it directly.
+// TestSearch_SwappedNameIsNotReadAfterAdmission asserts that between classifying an entry as a browsable
+// regular file and reading its bytes, a name swapped for a link must not be read.
 func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 	const secret = "needle-secret-token"
 
@@ -587,11 +551,8 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		})
 		dir := searchDirAt(t, h, "/config/pub")
 
-		// The walk has read the dirent, applied (Sensitive{}).Blocks("/config/pub/notes.txt")
-		// and the globs, and admitted it. This is that candidate.
 		cand := searchCandidate{name: "notes.txt", abs: "/config/pub/notes.txt"}
 
-		// The swap, in the window the old check-then-reopen sequence left open.
 		notes := filepath.Join(backing, "pub", "notes.txt")
 		if err := os.Remove(notes); err != nil {
 			t.Fatal(err)
@@ -606,9 +567,6 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		if len(hits) != 0 {
 			t.Fatalf("read %d hits from a name swapped to a symlink: %+v", len(hits), hits)
 		}
-		// The refusal IS the guarantee, so it is not a hole in the answer: reporting
-		// it as truncation would tell every caller its result was partial whenever a
-		// symlink sat in a searched tree.
 		if got.unread {
 			t.Error("readCandidate reported a swap refusal as an unread file; a refused symlink is a deliberate skip, not a loss")
 		}
@@ -628,9 +586,6 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		dir := searchDirAt(t, h, "/config")
 		d := searchDir{f: dir, abs: "/config"}
 
-		// The walk has classified "pub" as a browsable directory. Now it becomes a
-		// link into the chat store, whose contents Sensitive.Blocks would have denied
-		// under their own names but cannot deny under /config/pub/...
 		pub := filepath.Join(backing, "pub")
 		if err := os.Rename(pub, pub+".moved"); err != nil {
 			t.Fatal(err)
@@ -648,14 +603,8 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 	})
 
-	// The PREMISE, pinned so a future simplification cannot quietly remove the
-	// reason openChild exists: an *os.Root follows a symlink whose target stays
-	// inside its mount, and passing O_NOFOLLOW to Root.OpenFile does not change
-	// that — the root adds O_NOFOLLOW to every component itself and then resolves
-	// the link it finds. So neither the confined read nor the confined open can
-	// express "refuse a symlink here"; only an openat against the containing
-	// directory's descriptor can. If this test ever fails, the dependency's
-	// behaviour changed and this file's design note is what to re-read.
+	// The premise, pinned so openChild keeps its reason: an *os.Root follows an in-mount symlink,
+	// and passing O_NOFOLLOW to Root.OpenFile does not stop it.
 	t.Run("the mount root follows an in-root symlink", func(t *testing.T) {
 		h, backing := searchHandlerAt(t, "/config")
 		writeTree(t, backing, map[string]string{
@@ -676,9 +625,8 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 		_ = f.Close()
 
-		// And the primitive the search actually uses refuses it.
 		dir := searchDirAt(t, h, "/config")
-		if got, openErr := openChild(dir, "decoy.txt", "/config/decoy.txt", searchFileFlags); openErr == nil {
+		if got, openErr := openChild(dir, "decoy.txt", "/config/decoy.txt", pinnedFileFlags); openErr == nil {
 			_ = got.Close()
 			t.Error("openChild followed a symlink; the search's whole confinement rests on it not doing that")
 		} else if !isSwapRefusal(openErr) {
@@ -686,8 +634,6 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 	})
 }
-
-// --- bounded work: one directory cannot defeat cancellation or the caps ---
 
 // allocatedBy reports how many bytes fn allocated. TotalAlloc is cumulative and
 // unaffected by collection, so the measurement is stable; every assertion on it
@@ -704,9 +650,6 @@ func allocatedBy(fn func()) uint64 {
 
 func TestSearch_HugeDirectoryIsNotReadBeforeCancellationIsChecked(t *testing.T) {
 	h, dir, _ := testDir(t)
-	// Entries that would never consume the FILE budget even if the scan ran:
-	// the point is that the directory's inventory is not materialised before the
-	// walk gets a chance to refuse it, and the file cap cannot bound that work.
 	const entries = 20_000
 	for i := range entries {
 		name := filepath.Join(dir, fmt.Sprintf("e%05d.bin", i))
@@ -715,16 +658,12 @@ func TestSearch_HugeDirectoryIsNotReadBeforeCancellationIsChecked(t *testing.T) 
 		}
 	}
 
-	// Already gone: the walk must observe that before it reads the directory.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	sc := newFileScan(ctx, "needle", false, nil, nil, Sensitive{})
 
 	grew := allocatedBy(func() { sc.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 
-	// A whole-directory ReadDir allocates one entry per name before the first
-	// check, which for this directory is megabytes. One chunk is 256 entries, and
-	// the walk should not even reach that.
 	const bound = 256 << 10
 	if grew > bound {
 		t.Errorf("a cancelled scan allocated %d bytes over a %d-entry directory, want under %d: "+
@@ -737,9 +676,8 @@ func TestSearch_HugeDirectoryIsNotReadBeforeCancellationIsChecked(t *testing.T) 
 
 func TestSearch_DirectoryLargerThanOneChunkIsFullyWalked(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	// More than one ReadDir chunk, with the matches deliberately in the SECOND
-	// chunk: a loop that stops after the first read, or that miscounts the EOF
-	// boundary, finds none of them.
+	// Matches deliberately in the SECOND ReadDir chunk: a loop stopping after the first read finds
+	// none.
 	const total = searchReadDirChunk + 7
 	hitFrom, hitTo := searchReadDirChunk, searchReadDirChunk+5
 	for i := range total {
@@ -765,14 +703,10 @@ func TestSearch_DirectoryLargerThanOneChunkIsFullyWalked(t *testing.T) {
 	}
 }
 
-// --- a binary costs the sniff prefix, not the per-file ceiling ---
-
 func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 	h, dir, _ := testDir(t)
-	// One binary per read worker, each at the per-file ceiling. Reading first and
-	// asking "was that binary?" afterwards means the fan-out holds
-	// searchWorkers * maxSearchFileSize of bytes that were never going to be
-	// reported; sniffing first means it holds searchWorkers * binarySniffN.
+	// One binary per read worker at the per-file ceiling: reading before sniffing would hold
+	// searchWorkers * maxSearchFileSize of unreported bytes.
 	payload := make([]byte, maxSearchFileSize)
 	copy(payload, "needle\x00binary")
 	for i := range searchWorkers {
@@ -782,8 +716,6 @@ func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 		}
 	}
 
-	// allocatedBy collects first and TotalAlloc is cumulative, so the fixture's
-	// own 512 KiB is already behind the measurement window.
 	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	grew := allocatedBy(func() { sc.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 
@@ -793,8 +725,6 @@ func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 	if sc.matched != 0 {
 		t.Errorf("matched = %d, want 0: a match inside a binary is not reportable", sc.matched)
 	}
-	// The whole-read order needed searchWorkers * 512 KiB = 4 MiB. The sniff
-	// order needs searchWorkers * 8 KiB plus the walk's own overhead.
 	bound := uint64(searchWorkers*binarySniffN) + (256 << 10)
 	if grew > bound {
 		t.Errorf("scanning %d ceiling-sized binaries allocated %d bytes, want under %d: "+
@@ -802,8 +732,6 @@ func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 			searchWorkers, grew, bound)
 	}
 }
-
-// --- a text file costs one ceiling, once ---
 
 // A file at the ceiling is read into ONE buffer that the scan then reads as a
 // string without copying, so a worker holds about one ceiling and
@@ -819,16 +747,12 @@ func TestSearch_TextFileIsReadIntoOneBuffer(t *testing.T) {
 	if sc.files != 1 || sc.matched != 1 {
 		t.Fatalf("files = %d, matched = %d, want 1 and 1 (the file was read to its last line)", sc.files, sc.matched)
 	}
-	// One ceiling for the file, plus the sniff window, the copy's scratch buffer
-	// and the walk's own overhead. A second copy of the file lands well past it.
 	const bound = maxSearchFileSize + (256 << 10)
 	if grew > bound {
 		t.Errorf("reading one %d-byte text file allocated %d bytes, want under %d: the file was copied after it was read",
 			maxSearchFileSize, grew, bound)
 	}
 }
-
-// --- globs are relative to the folder searched, not to the mount ---
 
 func TestSearch_GlobsMatchThePathUnderTheSearchedFolder(t *testing.T) {
 	h, dir, prefix := testDir(t)
@@ -852,9 +776,6 @@ func TestSearch_GlobsMatchThePathUnderTheSearchedFolder(t *testing.T) {
 		exclude string
 		want    []string
 	}{{
-		// The reader is looking at project/src and types what is under it. A
-		// mount-relative subject would silently require them to spell the
-		// searched folder's own prefix, and answer "no matches" when they don't.
 		name:    "include with a separator is relative to the searched folder",
 		at:      "project/src",
 		include: "deep/*.go",
@@ -866,8 +787,6 @@ func TestSearch_GlobsMatchThePathUnderTheSearchedFolder(t *testing.T) {
 		exclude: "src/node_modules",
 		want:    rel("project/src/a.go", "project/src/deep/x.go"),
 	}, {
-		// At the mount root the two coordinate spaces coincide, which is why the
-		// original glob tests could not see the difference.
 		name:    "at the mount root the searched folder IS the mount",
 		at:      "",
 		include: "project/src/*.go",
@@ -976,7 +895,6 @@ func TestWalkDir_DirectoryBudgetIsInclusive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// walkDir closes the handle on the way out.
 
 			sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 			sc.dirs = tc.dirs
@@ -1121,13 +1039,6 @@ func TestSearch_FileAtExactDepthBudgetIsFound(t *testing.T) {
 	}
 }
 
-// --- Name search ----------------------------------------------------------
-//
-// The reported defect: a search covered a file's BYTES and never the name it is
-// called, so a tree of images was unsearchable and a file the content path
-// deliberately skips (a binary, an oversized file) could not be found at all.
-// Each case below names the decision it pins.
-
 // TestSearch_FindsAFileByName is the reported bug: the one file whose name holds
 // the needle is a binary, so the content path opens it, sniffs it and drops it.
 func TestSearch_FindsAFileByName(t *testing.T) {
@@ -1252,10 +1163,6 @@ func TestSearch_NameMatchHonoursCaseSensitivity(t *testing.T) {
 		"insensitive reaches both spellings": {
 			q: "needle", want: []string{upper, lower},
 		},
-		// The NEEDLE is folded once per scan, not per entry, so an uppercase
-		// query has to reach a lowercase name. Without this row the fold is
-		// unobservable: every other insensitive case types the needle already
-		// folded, so a name test reading the RAW needle would pass them all.
 		"insensitive folds the needle as well as the name": {
 			q: "NEEDLE", want: []string{upper, lower},
 		},
@@ -1391,8 +1298,6 @@ func TestSearch_SymlinkNameMatchesAndItsContentIsNotFollowed(t *testing.T) {
 	t.Run("a_link_at_a_sensitive_path_is_not_a_row", func(t *testing.T) {
 		h, backing := searchHandlerAt(t, "/config")
 		writeTree(t, backing, map[string]string{"visible.txt": "nothing in here\n"})
-		// Two links to the same harmless file: one wearing a sensitive NAME, one
-		// not. Only the second may be a row.
 		for _, name := range []string{"mcp-secrets.json", "other-secrets.txt"} {
 			if err := os.Symlink("visible.txt", filepath.Join(backing, name)); err != nil {
 				t.Fatal(err)
@@ -1526,8 +1431,6 @@ func TestSearch_SearchRootIsNotItsOwnNameMatch(t *testing.T) {
 		}
 	})
 }
-
-// --- the wire contract, shared with the TypeScript consumer ---
 
 type fileSearchFixture struct {
 	Comment []string         `json:"_comment"`

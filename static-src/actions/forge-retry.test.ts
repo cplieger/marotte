@@ -1,9 +1,8 @@
-// Retry behaviour of the forge actions:
-// - signOut: NOT retryable (destructive DELETE may succeed on timeout)
-// - startDeviceFlow: retryable, no auto-retry (no toast — error: false)
-// - cloneRepo: NOT retryable (an interrupted clone can leave a partial
-//   destination, so a retry reports a false "already exists")
-// - connectPAT: retryable + retry config, auto-retries, idempotency key reused
+// Retry classification of the forge actions:
+// - signOut: NOT retryable (a timed-out DELETE may have succeeded)
+// - startDeviceFlow: retryable, no auto-retry, no toast
+// - cloneRepo: NOT retryable (a partial destination makes a retry report "already exists")
+// - connectPAT: retryable with retry config; the idempotency key is reused
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -32,11 +31,6 @@ function networkError(): never {
   throw new TypeError("Failed to fetch");
 }
 
-// ===========================================================================
-// signOut — retryable: false (destructive DELETE that may succeed on timeout),
-// error toast WITHOUT Retry button
-// ===========================================================================
-
 describe("forge.signOut retry", () => {
   it("does NOT auto-retry on network error (destructive DELETE)", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
@@ -47,7 +41,6 @@ describe("forge.signOut retry", () => {
     await vi.advanceTimersByTimeAsync(1000);
     await p;
 
-    // One attempt: a timed-out DELETE may have succeeded server-side.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     // No toast and so no Retry button: the account row renders the refusal.
     expect(toast.error).not.toHaveBeenCalled();
@@ -66,12 +59,6 @@ describe("forge.signOut retry", () => {
   });
 });
 
-// ===========================================================================
-// cloneRepo — NOT retryable: an interrupted clone may have left a partial
-// destination server-side, so a retry would hit the "already exists" refusal
-// and report a misleading failure instead of the real one.
-// ===========================================================================
-
 describe("forge.cloneRepo retry", () => {
   it("does NOT auto-retry on network error", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
@@ -84,15 +71,12 @@ describe("forge.cloneRepo retry", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(result).toBeNull();
-    // No toast emitted — error: false, the caller aggregates.
     expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("gives up only on a STALLED stream, never on elapsed time", async () => {
-    // One progress chunk, then silence forever: the stall detector must
-    // abort. The inverse (a slow clone that keeps streaming) is pinned by
-    // the streaming tests in forge-actions.test.ts — liveness is measured
-    // from received chunks, not budgeted by a wall clock.
+    // One chunk, then silence: the stall detector must abort. Liveness is measured from chunks (the
+    // slow-but-streaming inverse is in forge-actions.test.ts).
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({
       start(c) {
@@ -114,10 +98,6 @@ describe("forge.cloneRepo retry", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 });
-
-// ===========================================================================
-// connectPAT — retryable + retry config, auto-retries fire
-// ===========================================================================
 
 describe("forge.connectPAT retry", () => {
   it("auto-retries on network error with idempotency key reused", async () => {
@@ -144,7 +124,6 @@ describe("forge.connectPAT retry", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(result).toEqual({ status: "ok" });
 
-    // Idempotency key reused
     const key1 = headerValue(fetchSpy.mock.calls[0]![1], IDEMPOTENCY_HEADER);
     const key2 = headerValue(fetchSpy.mock.calls[1]![1], IDEMPOTENCY_HEADER);
     const key3 = headerValue(fetchSpy.mock.calls[2]![1], IDEMPOTENCY_HEADER);
@@ -171,10 +150,6 @@ describe("forge.connectPAT retry", () => {
   });
 });
 
-// ===========================================================================
-// startDeviceFlow — retryable (no retry config), no toast
-// ===========================================================================
-
 describe("forge.startDeviceFlow retry", () => {
   it("no auto-retry (no retry config), returns null on network error", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
@@ -182,17 +157,13 @@ describe("forge.startDeviceFlow retry", () => {
 
     const result = await startDeviceFlow.dispatch(GITHUB_START);
 
-    // Only 1 attempt — no retry config
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(result).toBeNull();
-    // No toast (error: false)
     expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("retryable flag enables manual retry via onError callback", async () => {
-    // Even though error: false suppresses the toast retry button,
-    // the retryable classification is still available for callers
-    // using onError to implement their own retry UI.
+    // `error: false` drops the toast's Retry, but the retryable classification still reaches onError.
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;

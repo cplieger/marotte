@@ -169,6 +169,7 @@ type EntryToolCall struct {
 	AgentSubtaskID string          `json:"agent_subtask_id,omitempty"`
 	WorkflowID     string          `json:"workflow_id,omitempty"`
 	TerminalID     string          `json:"terminal_id,omitempty"`
+	SourcePath     string          `json:"source_path,omitempty"`
 	Checkpoint     *ToolCheckpoint `json:"checkpoint,omitempty"`
 	Disclosed      *ToolDisclosed  `json:"disclosed,omitempty"`
 	Denial         *ToolDenial     `json:"denial,omitempty"`
@@ -190,6 +191,9 @@ type EntryToolResult struct {
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
 	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
 	Denial     *ToolDenial     `json:"denial,omitempty"`
+	Offload    *ToolOffload    `json:"offload,omitempty"`
+	// Interaction is how the call's approval or question was answered.
+	Interaction *ToolInteraction `json:"interaction,omitempty"`
 	// Truncated is what the STORE dropped to bound this result on disk, nil on
 	// every result that fit; OutputBytes and HasFull are the served PREVIEW's
 	// markers, as on EntryToolCall. The three sit on the result as well as on the
@@ -293,7 +297,18 @@ type EntryModelSwitched struct {
 	// EffortLevel for Chat.Effort's reason: a level another build wrote must decode
 	// rather than throw, which a closed wire enum would not.
 	Effort string `json:"effort,omitempty"`
+	// Reason is set only on a switch KAS made by itself; absent on the reader's
+	// own picks.
+	Reason ModelSwitchReason `json:"reason,omitempty"`
 }
+
+// ModelSwitchReason says why KAS moved a chat off its model. A closed enum
+// because the client words it, so the wording table must be total.
+type ModelSwitchReason string
+
+// ModelSwitchReasonUnavailable is KAS repinning a model the account cannot
+// use, seen as an unsolicited config_option_update moving the chat's model.
+const ModelSwitchReasonUnavailable ModelSwitchReason = "unavailable"
 
 // ModeSwitchSource says who applied a mode switch. The renderer BRANCHES on it —
 // an agent-initiated switch is labelled as the agent's — so it is a closed enum
@@ -367,17 +382,48 @@ type EntryReconciled struct {
 // `tool_use`), and a closed enum here made every chat holding one undecodable.
 // Outcome is the closed enum, because ConcludeStopReason derives it.
 type EntryTurnClose struct {
-	ChangedFiles   map[string]*FileChange `json:"changed_files,omitempty"`
-	Refusal        *RefusalInfo           `json:"refusal,omitempty"`
-	Outcome        TurnOutcome            `json:"outcome"`
-	StopReasonRaw  string                 `json:"stop_reason_raw,omitempty"`
-	FailureReason  string                 `json:"failure_reason,omitempty"`
-	Model          string                 `json:"model,omitempty"`
-	CodeReferences []CodeReference        `json:"code_references,omitempty"`
-	Credits        float64                `json:"credits,omitempty"`
-	ElapsedMs      float64                `json:"elapsed_ms,omitempty"`
-	Truncated      bool                   `json:"truncated,omitempty"`
+	ChangedFiles  map[string]*FileChange `json:"changed_files,omitempty"`
+	Refusal       *RefusalInfo           `json:"refusal,omitempty"`
+	Outcome       TurnOutcome            `json:"outcome"`
+	StopReasonRaw string                 `json:"stop_reason_raw,omitempty"`
+	FailureReason string                 `json:"failure_reason,omitempty"`
+	// FailureKind classifies a failed turn the client offers a remedy for.
+	// Empty for every other ending.
+	FailureKind    FailureKind     `json:"failure_kind,omitempty"`
+	Model          string          `json:"model,omitempty"`
+	CodeReferences []CodeReference `json:"code_references,omitempty"`
+	// EngineErrorClass is the engine's error class for a broken turn, set only
+	// for a class rpcerr.KnownClass names: an unmapped error's class is minified.
+	EngineErrorClass string `json:"engine_error_class,omitempty"`
+	// Throughput is KAS's streaming estimate for the turn's model output.
+	Throughput *TurnThroughput `json:"throughput,omitempty"`
+	// RequestIDs are the backend request ids of the turn's model calls.
+	RequestIDs []string `json:"request_ids,omitempty"`
+	// Recoveries are KAS's wire names for the recoveries the turn needed
+	// (`empty`, `streamError`, `authExpiry`, …); an open vocabulary.
+	Recoveries []string `json:"recoveries,omitempty"`
+	// Steering is the ids (file URIs for documents on disk) of the steering KAS
+	// added to the context during the turn, first-seen order.
+	Steering  []string `json:"steering,omitempty"`
+	Credits   float64  `json:"credits,omitempty"`
+	ElapsedMs float64  `json:"elapsed_ms,omitempty"`
+	Truncated bool     `json:"truncated,omitempty"`
 }
+
+// TurnThroughput is KAS's estimate of a turn's streamed model output: tokens
+// estimated from characters, over the time chunks were actually arriving.
+type TurnThroughput struct {
+	EstimatedTokens   int64   `json:"estimated_tokens"`
+	ActiveStreamingMs float64 `json:"active_streaming_ms"`
+}
+
+// FailureKind names a turn failure with a reader-facing remedy. A registered
+// wire enum, so the client's branch over it is total.
+type FailureKind string
+
+// FailureKindContextLimit is a turn that overflowed the model's context window:
+// the remedy is compacting the context and sending the prompt again.
+const FailureKindContextLimit FailureKind = "context_limit"
 
 // SaySegmentID is the id of the k-th segment of a say a seal split: `<say>#k`.
 func SaySegmentID(say string, k int) string {
@@ -434,6 +480,7 @@ func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 		AgentSubtaskID: tc.AgentSubtaskID,
 		WorkflowID:     tc.WorkflowID,
 		TerminalID:     tc.TerminalID,
+		SourcePath:     tc.SourcePath,
 		Checkpoint:     tc.Checkpoint,
 		Disclosed:      tc.Disclosed,
 		Denial:         tc.Denial,
@@ -462,6 +509,7 @@ func ToolCallOfEntry(e *EntryToolCall) ToolCall {
 		AgentSubtaskID: e.AgentSubtaskID,
 		WorkflowID:     e.WorkflowID,
 		TerminalID:     e.TerminalID,
+		SourcePath:     e.SourcePath,
 		Checkpoint:     e.Checkpoint,
 		Disclosed:      e.Disclosed,
 		Denial:         e.Denial,
@@ -485,6 +533,8 @@ func EntryToolResultOf(tc *ToolCall) EntryToolResult {
 		Checkpoint:  tc.Checkpoint,
 		Disclosed:   tc.Disclosed,
 		Denial:      tc.Denial,
+		Offload:     tc.Offload,
+		Interaction: tc.Interaction,
 		Truncated:   tc.Truncated,
 		Title:       tc.Title,
 		Kind:        tc.Kind,

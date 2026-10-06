@@ -13,23 +13,14 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// utilityPrompter is the AI text generation this handler needs: one round trip
-// that takes a prompt and a reasoning-effort level and returns text.
-//
-// Declared here, at the consumer, rather than in a shared contract package.
-// 1 method against the *agent.Runtime that satisfies it, which exports well over a
-// hundred — none of the rest is any business of a commit-message endpoint. The
-// effort level is a parameter rather than a second method because the three
-// endpoints below differ only in what they pass: a branch name is cheap
-// (EffortLow), reading a diff is not (EffortMedium).
+// utilityPrompter is the AI text generation this handler needs: one round trip taking a prompt and
+// an effort level and returning text.
 type utilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error)
 }
 
-// AIHandler registers the AI-backed git endpoints (commit-message,
-// pr-description). Separated from Handler because these have a
-// fundamentally different dependency profile: they need an AI bridge
-// but no git subprocess execution beyond basic diff/log.
+// AIHandler registers the AI-backed git endpoints (commit-message, pr-description), apart from
+// Handler because they need an AI bridge and little git.
 type AIHandler struct {
 	prompter utilityPrompter
 	workDir  string
@@ -89,9 +80,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 	dir := a.repoDir(body.Repo)
 
-	// --no-textconv here too, even though --stat prints no content: the
-	// flag stops the textconv PROGRAM from running, not merely its output
-	// from showing.
+	// --no-textconv even with --stat: the flag stops the textconv program from running at all.
 	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached", "--stat")
 	if err != nil || strings.TrimSpace(diff) == "" {
 		writeGitError(w, KindNoStaged, "")
@@ -109,8 +98,6 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 
 	prompt := buildCommitPrompt(commitHistory, fullDiff)
 
-	// Medium effort: the task reads a full staged diff and must infer the
-	// change's intent; low-effort output on complex diffs reads generic.
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortMedium)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
@@ -174,8 +161,6 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 
 	prompt := buildPRPrompt(log, diff)
 
-	// Medium effort: reads a branch diff + commit log (same class as the
-	// commit-message task).
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortMedium)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
@@ -183,9 +168,6 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Clean up: strip markdown fences (including language-tagged variants
-	// like ```markdown / ```diff) via the shared helper so this stays in
-	// sync with extractCommitMessage.
 	result = strings.TrimSpace(result)
 	result = modeltext.StripCodeFence(result)
 	result = strings.TrimSpace(result)
@@ -193,11 +175,9 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: result})
 }
 
-// handleBranchName suggests a branch name for the repo's work in progress.
-// Context priority: uncommitted changes (status + capped diff) when any
-// exist, else the most recent commits (the user may have just committed
-// onto the wrong branch and wants a home for the work). Existing branch
-// names feed the prompt for style-matching and collision avoidance.
+// handleBranchName suggests a branch name for the repo's work in progress: from uncommitted changes
+// when any exist, else the most recent commits; existing branch names feed the prompt for style and
+// collisions.
 func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -225,8 +205,6 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 	}
 	prompt := buildBranchPrompt(strings.TrimSpace(branches), workContext)
 
-	// Low effort: a short name from a small context; no diff reasoning
-	// depth needed.
 	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, marotte.EffortLow)
 	if err != nil {
 		slog.Error("branch name generation failed", "error", err)
@@ -249,8 +227,6 @@ func uncommittedContext(ctx context.Context, dir string) string {
 	if err != nil || strings.TrimSpace(status) == "" {
 		return ""
 	}
-	// Combined staged + unstaged diff against HEAD, capped small: branch
-	// naming needs the gist, not the whole change.
 	diff, dErr := gitCmd(ctx, dir, "diff", "--no-textconv", "HEAD")
 	if dErr != nil {
 		diff = ""

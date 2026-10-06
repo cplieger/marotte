@@ -1,8 +1,5 @@
 package command
 
-// The empty-turn recovery gate: three clauses, each of which has to hold before a
-// prompt is re-executed and paid for twice.
-
 import (
 	"context"
 	"slices"
@@ -14,22 +11,21 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// recoveryOutcome is a TurnOutcomeAccess whose captured result and later-turn
-// answer the test dictates, so each clause of the gate can be moved on its own.
-// Its admission slot is a real single-holder slot, so the retry's TRY-reserve
-// contract — a competitor that won the slot abandons the retry — is exercised
-// rather than scripted.
+// recoveryOutcome is a TurnOutcomeAccess whose captured result and later-turn answer the test
+// dictates, with a real single-holder admission slot so the retry's try-reserve contract is
+// exercised.
 type recoveryOutcome struct {
 	laterTurn   bool
+	stopped     bool
 	reserved    bool
 	openedTurns []marotte.TurnOpenSource
 	mu          sync.Mutex
 }
 
-func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, source marotte.TurnOpenSource, _ *marotte.EntryPrompt, _ func(*marotte.Chat)) (string, error) {
+func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.openedTurns = append(o.openedTurns, source)
+	o.openedTurns = append(o.openedTurns, open.Source)
 	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
@@ -46,6 +42,12 @@ func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, 
 
 func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, string) bool { return o.laterTurn }
 
+func (o *recoveryOutcome) StopRequestedAfter(marotte.ChatID, string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.stopped
+}
+
 func (o *recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
@@ -55,6 +57,12 @@ func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, 
 		return AdmissionAcquired
 	}
 	return AdmissionStarting
+}
+
+func (o *recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
+
+func (o *recoveryOutcome) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+	return o.TryReserveTurn(c, s)
 }
 
 func (o *recoveryOutcome) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
@@ -75,7 +83,7 @@ func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 
 func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
-func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
+func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 }
 
 // recoveryBridges records whether the recovery tore the session down, which is the
@@ -83,6 +91,9 @@ func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, s
 // "did the gate fire".
 type recoveryBridges struct {
 	*benchDeps
+	// onOpen runs inside OpenBridge, standing in for whatever lands mid-spawn.
+	onOpen func()
+	bridge *recoveryBridge
 	closed int
 }
 
@@ -91,19 +102,28 @@ func (b *recoveryBridges) CloseBridge(context.Context, marotte.ChatID, marotte.T
 }
 
 func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return &recoveryBridge{}, nil
+	if b.onOpen != nil {
+		b.onOpen()
+	}
+	if b.bridge == nil {
+		b.bridge = &recoveryBridge{}
+	}
+	return b.bridge, nil
 }
 
 // recoveryBridge is a Bridge that grants the prompt slot and answers every call,
 // so the firing row runs the retry to the end rather than abandoning it at the
 // slot.
-type recoveryBridge struct{}
+type recoveryBridge struct {
+	calls int
+}
 
 func (*recoveryBridge) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
 	return &marotte.RPCResponse{}, nil
 }
 
-func (*recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
+func (b *recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
+	b.calls++
 	return &marotte.RPCResponse{}, 0, nil
 }
 
@@ -117,9 +137,9 @@ func (*recoveryBridge) EndPromptCall()                                   {}
 func (*recoveryBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
 func (*recoveryBridge) PromptGeneration() uint64                         { return 1 }
 
-// The three clauses, each one moved on its own from a firing baseline. Every row
+// The four clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.
-func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
+func TestRecoverEmptyTurn_GateRequiresAllClauses(t *testing.T) {
 	firing := marotte.TurnResult{
 		Stop:           marotte.StopReasonEndTurn,
 		EmittedNothing: true,
@@ -129,6 +149,7 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 		name      string
 		result    marotte.TurnResult
 		laterTurn bool
+		stopped   bool
 		wantFire  bool
 	}{
 		{
@@ -137,9 +158,6 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 			wantFire: true,
 		},
 		{
-			// A locally-closed turn's outcome is the prompt response's, which can be
-			// nothing richer than end_turn or cancelled and carries nothing on a fault.
-			// `end_turn` there says only that marotte had nothing better to call it.
 			name:     "the turn was closed LOCALLY, so its end_turn is an inference",
 			result:   marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true},
 			wantFire: false,
@@ -155,20 +173,24 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 			wantFire: false,
 		},
 		{
-			// The STRUCTURAL clause, and the only one that depends on no frame arriving.
-			// A zero-content or tool-only auto-wake never sends agentInitiated, so a
-			// mis-binding is never revised and the mis-bound pre-open closes with the
-			// first three clauses satisfied. What it necessarily violates is this one:
-			// the real agent-initiated turn is a later turn on the same chat.
+			// The structural clause, the one that depends on no frame arriving: a mis-bound
+			// pre-open satisfies the first three clauses, but the real agent-initiated turn is a
+			// later turn on the same chat.
 			name:      "a later turn opened, so the bracket this turn closed on was not ours",
 			result:    firing,
 			laterTurn: true,
 			wantFire:  false,
 		},
+		{
+			name:     "a stop was requested after the turn opened",
+			result:   firing,
+			stopped:  true,
+			wantFire: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			outcome := &recoveryOutcome{laterTurn: tc.laterTurn}
+			outcome := &recoveryOutcome{laterTurn: tc.laterTurn, stopped: tc.stopped}
 			bridges := &recoveryBridges{benchDeps: newBenchDeps()}
 			p := &marotte.PromptCommand{Text: "an ordinary question", MessageID: "m1"}
 
@@ -192,6 +214,35 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 					"the message of the turn it replaced", outcome.openedTurns)
 			}
 		})
+	}
+}
+
+// TestRecoverEmptyTurn_StopDuringRespawnSendsNothing: a stop landing while the
+// retry's bridge spawns reaches no bridge that could carry it, so the retry's own
+// read is the only thing between the reader's Stop and a second paid prompt.
+func TestRecoverEmptyTurn_StopDuringRespawnSendsNothing(t *testing.T) {
+	outcome := &recoveryOutcome{}
+	bridges := &recoveryBridges{benchDeps: newBenchDeps()}
+	bridges.onOpen = func() {
+		outcome.mu.Lock()
+		outcome.stopped = true
+		outcome.mu.Unlock()
+	}
+	roles := promptRolesOf(bridges)
+	roles.admission = outcome
+	roles.turnOutcome = outcome
+	firing := marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
+
+	recoverEmptyTurn(t.Context(), roles, "c1", "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
+
+	if bridges.closed != 1 {
+		t.Errorf("session refreshes = %d, want 1: the stop landed after the refresh", bridges.closed)
+	}
+	if len(outcome.openedTurns) != 0 {
+		t.Errorf("turns opened = %v, want none for a stopped retry", outcome.openedTurns)
+	}
+	if bridges.bridge == nil || bridges.bridge.calls != 0 {
+		t.Errorf("prompt calls on the respawned bridge = %v, want 0", bridges.bridge)
 	}
 }
 

@@ -1,66 +1,11 @@
-// ---------------------------------------------------------------------------
-// Tool group: collapsible container that wraps consecutive tool calls.
-//
-// THE BOX ONLY EXISTS FROM THE SECOND CONSECUTIVE CALL. A lone tool call is not
-// a group of one: a header summarising "Read 1 file: a.ts" over a single card
-// that already says exactly that is two renderings of one fact, wrapped in a
-// disclosure with nothing to hide. So a one-member shell carries CLS_BARE, and
-// `14-tools.css` answers it by dropping all three things that make a member a ROW
-// rather than a card — the header, the first row's separator hairline, and the
-// tighter `padding-block`. What is left is PIXEL-IDENTICAL to a standalone
-// `.tool-call`, because `.tool-group` and `.tool-call` already declare the same
-// four chrome properties (background, border, radius, overflow) from the same
-// tokens: measured 42px against 42px in headless Chromium with the real card
-// builder, and a screenshot of each came out BYTE-IDENTICAL. The padding half is
-// the one a synthetic fixture hides — a hand-rolled card measures under both
-// floors, so both states report the floor and the 6px gap is invisible.
-//
-// The shell is mounted on the FIRST card and gains its chrome by class when the
-// second lands, rather than the first card being mounted bare and re-parented
-// later. Re-seating a node restarts its CSS animations and blurs focus inside it,
-// and `.tool-call` carries `vk-slide-up` — so promoting a card mid-stream would
-// replay the entry slide on a card the reader is already looking at, and would
-// drop focus if they had opened its output or diff. The cost of the cheaper path
-// is stated plainly: the selector `.tool-group` stops meaning "two or more", so
-// anything reading it (a CSS rule, a test, an audit script) must consult
-// `groupIsBare`. The bare header is `display: none`, which removes it from the
-// accessibility tree AND from tab order, so there is no phantom `aria-expanded`
-// and no dead tab stop. The second cost, also stated: the first card SHRINKS 6px
-// when the second lands, in the same frame as the header appearing — one reflow
-// inside a change that is already adding 37px of header.
-//
-// A BARE GROUP NEVER COLLAPSES, in either direction: its body region IS the lone
-// card, so closing the disclosure would make the card vanish.
-//
-// The collapse trigger is POSITIONAL, not a count: a group stays open while it is
-// the newest thing in its container and folds when the next element is posted
-// after it. THE VERDICT IS APPLIED AT CONSTRUCTION — `ensureGroupDisclosure` reads
-// the value the dispatcher pushes in through `setGroupSuperseded` and creates the
-// controller already closed — and `autoCollapseGroup` is the LIVE path only, for a
-// group superseded while the reader is watching it. That split is what stops a
-// repaint animating: the disclosure primitive commits the OPEN height before it
-// writes the change (`runTransition` forces a style flush on purpose), so "create
-// it open and close it in the same task" animates exactly as loudly as closing it a
-// frame later, and disposing-and-recreating a region whose open height has reached
-// one frame animates too. Constructing the controller in its FINAL state is the only
-// silent route. A pass that rebuilds a superseded run therefore PAINTS the fold
-// rather than replaying it.
-// The header shows a per-kind summary (e.g. "Read 5 files: a.ts, b.go, + 3 more")
-// or a mixed breakdown for heterogeneous groups ("7 operations: 4 reads, 2 edits,
-// 1 search").
-//
-// User-initiated clicks disable auto-collapse (the group becomes user-
-// controlled) so the UI doesn't fight against the reader.
-//
-// FAILURE IS NOT NOISE, and that is the axis the grouping rules turn on.
-// Collapsing exists to hide items that are individually uninteresting; a failed
-// call is the opposite. So: a group holding a failure never auto-collapses, one
-// that fails while already collapsed re-opens itself, the header's mark takes
-// the SHAPE and tint of the WORST status inside it (one red member makes a red
-// triangle, so the reader can act on a closed group without opening it), and the
-// summary NAMES the failure rather than averaging it away — `Ran 12 commands ·
-// 1 failed`.
-// ---------------------------------------------------------------------------
+// Tool group: a collapsible container over consecutive tool calls, with a per-kind or mixed summary.
+// The box exists only FROM THE SECOND CALL: a one-member shell carries CLS_BARE and renders
+// pixel-identical to a standalone `.tool-call`. The shell is mounted on the FIRST card and gains
+// chrome by class, since re-seating a card replays its entry slide and drops focus; so the
+// `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
+// POSITIONAL: a group folds once something is posted after it, applied at construction when already
+// superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
+// FAILURE IS NOT NOISE: a failed member blocks or undoes the fold and sets the header's mark.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
@@ -81,29 +26,17 @@ const CLS_USER_TOGGLED = "tool-group-user-toggled";
  *  no second flag or counter to keep in step. */
 const CLS_BARE = "tool-group-bare";
 
-// Per-group disclosure controllers for the .tool-group-body region. The
-// collapse STATE MACHINE (user latch, auto-collapse, the CLS_* classes) stays
-// marotte's; the region-only disclosure (trigger: null) supplies the animated
-// height 0↔auto plus aria-hidden + inert on the collapsed card region — which
-// the old display:none class flip provided only partially.
-//
-// ABSENT on a BARE shell, which is what makes `ensureGroupDisclosure` create-only:
-// the controller is minted by the refresh that takes the group non-bare, in the
-// state the verdict below asks for, and nothing re-creates it afterwards.
+// Per-group disclosure controllers for .tool-group-body; the collapse STATE MACHINE stays marotte's.
+// ABSENT on a BARE shell: minted once by the refresh that makes the group non-bare, in the verdict's
+// state.
 const groupCtls = new WeakMap<HTMLElement, DisclosureController>();
 
-// The newest-element verdict for a group, pushed in by the dispatcher at every card
-// append (`setGroupSuperseded`). Read ONCE, by the refresh that creates the
-// controller — after that the state machine owns the fold. A group with no entry
-// reads as NOT superseded, the same direction `syncContainerCollapse`'s own
-// absent-seat rule takes, so the two cannot disagree and be born expanded and folded
-// by one pass.
+// The newest-element verdict, pushed per card append. Read ONCE, by the refresh that creates the
+// controller. No entry means NOT superseded, the same default as `syncContainerCollapse`.
 const groupSuperseded = new WeakMap<HTMLElement, boolean>();
 
-/** Record whether the run this group holds is FOLLOWED by a later element. Written
- *  per card append rather than once at creation, on purpose: a run can straddle a
- *  cold-build slice boundary, so the pass that appends the second card is not always
- *  the pass that created the group, and only the current block index has the answer. */
+/** Record whether this group's run is FOLLOWED by a later element. Written per card append: a run
+ *  can straddle a cold-build slice boundary, and only the current block index knows. */
 export function setGroupSuperseded(group: HTMLElement, superseded: boolean): void {
   groupSuperseded.set(group, superseded);
 }
@@ -115,25 +48,18 @@ export function groupBody(group: HTMLElement): HTMLElement {
 }
 
 /** Whether this shell is holding fewer than two members, so it renders as a plain
- *  card with no header. Read it rather than the `.tool-group` selector: that
- *  selector no longer means "a group of two or more". */
+ *  card with no header. Read it rather than the `.tool-group` selector, which does
+ *  not mean "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
   return group.classList.contains(CLS_BARE);
 }
 
 // --- Header update ---
 
-/** Build a `.tool-group` shell: header (role=button, tabindex, aria-expanded)
- *  + keyboard (Enter/Space) + click collapse toggle. The caller appends the
- *  tool-call children and owns per-container grouping — the block dispatcher
- *  groups per render container (including nested subagent bodies), so there is
- *  no single global "current group" anymore. */
+/** Build a `.tool-group` shell: header (role=button, tabindex, aria-expanded) and a click/keyboard
+ *  collapse toggle. The caller appends the cards and owns per-container grouping. */
 export function buildToolGroupShell(): HTMLDivElement {
-  // Born BARE, so "bare ⇔ fewer than two members" holds at every instant
-  // including the one between construction and the first append. The alternative
-  // is leaving the first card's own refreshGroupHeader to add it, which is
-  // invisible in production (mountToolCard builds, appends and refreshes in one
-  // task) and would make the invariant true only after that task.
+  // Born BARE, so "bare ⇔ fewer than two members" holds at every instant, construction included.
   const group = el("div", { className: `tool-group ${CLS_BARE}` }) as HTMLDivElement;
   const header = el(
     "div",
@@ -144,18 +70,11 @@ export function buildToolGroupShell(): HTMLDivElement {
       "aria-expanded": "true",
       [CHROME_ATTR]: "",
     },
-    // The shared disclosure chevron, replacing a `content: "▸ "` that appeared
-    // ONLY when the group was collapsed — so an expanded group advertised
-    // nothing and the affordance had to be discovered. It is present in both
-    // states now and rotates, like every other disclosure in the app.
+    // The shared disclosure chevron, present in both states.
     chevronEl(),
-    // The header's verdict slot: an ICON slot, sharing `.tool-icon` for the tint
-    // classes. paintGroupOutcome writes one of `outcomeIcon("ok")` / `("fail")` /
-    // `("warn")` into it as a node, so a collapsed group of twelve searches shows a
-    // verdict rather than a magnifier — the KIND is named in the summary text
-    // instead. It writes NO node while the group runs, because there is no verdict
-    // yet; `14-tools.css` draws the hollow ring that says so, and the box is sized
-    // by the slot either way so the count text does not shift when it settles.
+    // The verdict slot, sharing `.tool-icon` for tints: paintGroupOutcome writes an outcome glyph (the
+    // KIND is in the summary). Empty while running, where `14-tools.css` draws a hollow ring; the slot
+    // sizes the box so the count text does not shift.
     el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;
@@ -170,31 +89,20 @@ export function buildToolGroupShell(): HTMLDivElement {
   });
   group.appendChild(header);
   group.appendChild(el("div", { className: "tool-group-body" }));
-  // NO disclosure here, and the header's `aria-expanded="true"` above is markup
-  // rather than a claim: a shell is born CLS_BARE and a bare shell has nothing to
-  // disclose (its header is `display: none`, so it is out of the accessibility tree
-  // and out of tab order). `ensureGroupDisclosure` mints the controller when the
-  // second card makes the group real, in its final open/closed state — the same
-  // "withdraw the control when there is nothing to reveal" rule
-  // `fundamentals/subagent-block.ts` `syncDisclosure` and `tool-card.ts`
-  // `refreshToolDisclosure` already follow.
+  // NO disclosure yet: a bare shell has nothing to disclose and its header is `display: none`.
+  // `ensureGroupDisclosure` mints it when the second card lands.
   return group;
 }
 
-/** Bring a group's header into line with its members: the bare class, the body
- *  region's existence (this is the ONE creation site — `ensureGroupDisclosure`), the
- *  summary text and the outcome verdict. Called after each card append, on every tool
- *  status flip, and on collapse toggle. */
+/** Bring a group's header into line with its members: the bare class, the body region (created
+ *  only here, via `ensureGroupDisclosure`), the summary and the verdict. Called after each append,
+ *  on every status flip and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
   const calls = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  // The ONE writer of the bare class, and it runs after every card append, on
-  // every status flip and on every collapse toggle — so the class is a pure
-  // function of the member count and reversible if a group ever drops to one.
-  // It sits ABOVE the summary-span guard below because it needs only `calls`:
-  // behind that guard the invariant would hold for a shell carrying a count span
-  // and not for one without.
+  // The ONE writer of the bare class, a pure function of the member count. Above the summary-span
+  // guard, which would otherwise exempt a shell without a count span.
   group.classList.toggle(CLS_BARE, calls.length < 2);
   // Deliberately ABOVE the summary-span guard too, and for the same reason: it needs
   // only `calls`, and a shell carrying no count span would otherwise never get its
@@ -215,14 +123,10 @@ export function refreshGroupHeader(group: HTMLElement): void {
   paintGroupOutcome(group, calls, counts);
 }
 
-/** Give a non-bare group its body region, ONCE, in its FINAL open/closed state.
- *
- *  CREATE-ONLY, which is what keeps the state machine the only thing that moves a
- *  fold afterwards: a later refresh finds the controller and returns. The reverse
- *  transition (non-bare → bare, which `pruneEmptyContainers` can produce by dropping
- *  a member) therefore leaves the controller in place; noted rather than handled,
- *  because a disposal there would also have to clear `region.style.height` by hand —
- *  `DisclosureController.dispose()` pins `0px` for a closed region. */
+/** Give a non-bare group its body region ONCE, in its FINAL open/closed state, so the state machine
+ *  alone moves a fold afterwards. A non-bare → bare drop (`pruneEmptyContainers`) leaves the
+ *  controller in place: disposing would also need `region.style.height` cleared, since
+ *  `dispose()` pins `0px` for a closed region. */
 function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
   if (groupIsBare(group) || groupCtls.has(group)) {
     return;
@@ -234,10 +138,8 @@ function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
   }
 }
 
-/** Whether this group's region is created CLOSED. Exactly `autoCollapseGroup`'s
- *  carve-outs, read at construction: the dispatcher's verdict, and then the three
- *  refusals — a reader who has decided, a failure inside (failure is not noise), and
- *  a member still running. */
+/** Whether the region is created CLOSED: `autoCollapseGroup`'s carve-outs at construction (the
+ *  verdict, then a reader's decision, a failure, a running member). */
 function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   if (groupSuperseded.get(group) !== true || group.classList.contains(CLS_USER_TOGGLED)) {
     return false;
@@ -253,23 +155,15 @@ function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   return true;
 }
 
-/** The AUTO-collapsed marking: the class the state machine reads and the header
- *  state a screen reader reads, with one writer for both. The summary refresh stays
- *  the caller's rather than joining it, because `ensureGroupDisclosure` runs INSIDE
- *  `refreshGroupHeader` — refreshing here would re-enter it, and the enclosing call
- *  finishes the job anyway. */
+/** The AUTO-collapsed marking: one writer for the class and the header state. The caller refreshes
+ *  the summary: this runs inside `refreshGroupHeader`, which would re-enter. */
 function markAutoCollapsed(group: HTMLElement): void {
   group.classList.add(CLS_AUTO_COLLAPSED);
   group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
-/** How many settled members of a group failed, how many refused, and how many
- *  were stopped. ONE walk, because the roll-up needs all three and the FOLD needs
- *  only `failures` — a stopped OR refused member must keep folding, since both
- *  are settles, as the delegate card already treats them. `denied` is in none of
- *  them, unlike `declined`: a policy refusal means the command never RAN, so it
- *  contributes nothing to what this group did, while a declined call ran and
- *  answered. */
+/** How many settled members failed, refused and were stopped, in ONE walk. Only `failures` blocks
+ *  the FOLD; stopped and refused are settles. `denied` counts in none: a policy refusal never RAN. */
 interface GroupCounts {
   readonly failures: number;
   readonly declined: number;
@@ -293,10 +187,8 @@ function countOutcomes(calls: HTMLElement[]): GroupCounts {
   return { failures, declined, aborted };
 }
 
-/** Every word here is the one a tool ROW announces for that state (`tool-card.ts`
- *  `outcomeWord`), so the group and its members agree. Ordered worst-first, which
- *  is also `paintGroupOutcome`'s order, so on the ordinary group — one non-clean
- *  population — the mark and its own clause name the same thing. */
+/** Each word is the one a tool ROW announces (`tool-card.ts` `outcomeWord`). Worst-first, as
+ *  `paintGroupOutcome` orders the mark. */
 function namedCounts({ failures, declined, aborted }: GroupCounts): string {
   const parts: string[] = [];
   if (failures > 0) {
@@ -311,20 +203,10 @@ function namedCounts({ failures, declined, aborted }: GroupCounts): string {
   return parts.map((p) => ` \u00b7 ${p}`).join("");
 }
 
-/** Tint the group's mark to the worst status inside it, and give it the SHAPE that
- *  state carries. Reads the members' own `data-outcome`, so there is one source for
- *  the state. `denied` folds onto `ok` deliberately: the summary has no word for a
- *  policy refusal that is not this app's word for a stop.
- *
- *  ONE mark for a MIXED group, so the two amber states need an order: `declined`
- *  outranks `warn` because a refusal is something the WORK did and a stop is
- *  something the READER did, so the one they did not cause is the one to surface.
- *  The summary names both populations either way, which is what keeps the fold of
- *  the other one from being a loss.
- *
- *  The mark is `icons.ts` `outcomeIcon` rather than `applyOutcome`: this slot has no
- *  identity glyph to keep for a success. `running` writes no node — its mark is the
- *  hollow ring `14-tools.css` draws on the slot. */
+/** Tint the group's mark to the worst member status (`data-outcome`), with that state's SHAPE.
+ *  `denied` folds onto `ok`. In a MIXED group `declined` (the WORK) outranks `warn` (the READER);
+ *  the summary names both. `outcomeIcon`, not `applyOutcome`: no identity glyph to keep.
+ *  `running` writes no node (the CSS ring). */
 function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], counts: GroupCounts): void {
   const icon = group.querySelector<HTMLElement>(".tool-group-icon");
   if (icon === null) {
@@ -521,11 +403,8 @@ export function maybeCollapseGroup(node: HTMLElement): void {
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
 
-  // A failure inside the group defeats collapse in BOTH directions: it blocks an
-  // auto-collapse, and it re-opens a group that already auto-collapsed before
-  // the failing member settled. Without the second half a failure inside a run
-  // of twelve is invisible — the group closed while everything still looked fine.
-  // The FAILURE count alone: a stopped member folds like any other settle.
+  // A failure defeats collapse in BOTH directions: it blocks an auto-collapse and re-opens a group
+  // that folded before the member settled. Failures only; a stopped member folds.
   if (countOutcomes(calls).failures > 0) {
     if (
       group.classList.contains(CLS_AUTO_COLLAPSED) &&
@@ -542,24 +421,11 @@ export function maybeCollapseGroup(node: HTMLElement): void {
     }
     return;
   }
-
-  // No count-based collapse here any more: a group stays OPEN while it is the
-  // newest card and collapses when the next element is posted after it —
-  // autoCollapseGroup, called by the dispatcher at the moment the run of
-  // consecutive calls ends.
 }
 
-/** Collapse a group whose run of consecutive calls just ENDED (something else
- *  was posted after it). The positional rule that replaced "auto-collapse after
- *  ≥3 completed calls": the newest card is the open one, and being superseded
- *  is what closes it. A BARE group is exempt (there is no box to fold), a user
- *  toggle outranks it, a failure inside blocks it (failure is not noise), and a
- *  still-running member keeps it open — that member's status flip re-runs
- *  maybeCollapseGroup, which re-opens on failure.
- *
- *  THE LIVE PATH ONLY. A group the verdict already condemned when its region was
- *  created is closed by `ensureGroupDisclosure` instead, silently; this one animates,
- *  which is what a supersede the reader is watching should do. */
+/** Collapse a group whose run of consecutive calls just ENDED. Exempt: a BARE group, a user toggle,
+ *  a failure inside, a running member (whose status flip re-runs maybeCollapseGroup). THE LIVE PATH
+ *  ONLY, and animated; a group condemned at creation is closed silently by `ensureGroupDisclosure`. */
 export function autoCollapseGroup(group: HTMLElement): void {
   // A BARE group's body region IS the lone card, and its header is hidden — so
   // closing the disclosure would make the card vanish with no affordance to bring
@@ -569,11 +435,8 @@ export function autoCollapseGroup(group: HTMLElement): void {
   }
   const ctl = groupCtls.get(group);
   if (ctl === undefined) {
-    // No region to close, so no class either: the marking and the fold are one fact,
-    // and a group carrying CLS_AUTO_COLLAPSED with its body wide open is the shape a
-    // reader cannot act on. Unreachable through `refreshGroupHeader` (a non-bare group
-    // has a controller by then), so this is agreement with `ensureGroupDisclosure`
-    // rather than a guard against a known caller.
+    // No region, so no class: a CLS_AUTO_COLLAPSED group with an open body is unactionable. Unreachable
+    // through `refreshGroupHeader`; agreement with `ensureGroupDisclosure`.
     return;
   }
   if (
@@ -597,8 +460,7 @@ export function autoCollapseGroup(group: HTMLElement): void {
     }
   }
   // An AUTO collapse removes height ABOVE the reader, so it is compensated.
-  // This is the one ANIMATED height change of the three layout-change cases, via
-  // createDisclosure.
+  // The one ANIMATED compensated height change, via createDisclosure.
   preserveReadingPosition(() => {
     markAutoCollapsed(group);
     ctl.close();

@@ -1,16 +1,4 @@
-// Property 12's STORE half: live and reload agree across a revert.
-//
-// A `turn_revert` frame is an ordinary append into its CARRIER plus two writes the
-// envelope cannot state: the drop of every held turn the revert took, and the count
-// the surviving high-water leaves behind. Both read `from_n` alone, which is why a
-// partial window (turns 6 and 7 resident, the carrier paged out) is the case every
-// arm below is shaped around: a rule spelled over `turn_order` POSITIONS answers it
-// by dropping nothing, and a count merged through the header's `Math.max` answers it
-// by keeping the pre-revert value, and both leave `derivedHasMore` armed forever.
-//
-// The real store and the real loader, with only the HTTP boundary faked: the abort
-// arm asserts THROUGH the two registered hooks, so it exercises the wire `boot.ts`
-// builds rather than a mock of the repair map.
+// The STORE half of revert: live and reload agree across a revert.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fc from "fast-check";
 import { makeSession, makeTurn } from "./__test-helpers__/model.js";
@@ -25,14 +13,12 @@ import {
 } from "./store.js";
 import { abortReadsForRevert, loadMessages, requestTurnRange } from "./store-load.js";
 import type { Entry, EntryTurnRevert } from "./wire/types.gen.js";
-// A type-only import of the mocked module, so `importOriginal` can be typed without an
-// inline `import()` annotation (the lint config forbids those) and without a runtime edge.
 import type * as ApiClient from "./api-client.js";
 
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 
-// Spread `importOriginal`: a whole-module factory drops every other export this
-// module's graph reaches, which is the collection failure section 1.2 bans.
+// Spread `importOriginal`: a whole-module factory drops every other export this module's graph
+// reaches, which is the collection failure section 1.2 bans.
 vi.mock("./api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiClient>();
   return { ...actual, apiGetTyped: mockApiGetTyped };
@@ -40,8 +26,8 @@ vi.mock("./api-client.js", async (importOriginal) => {
 
 const CHAT = "c-1";
 
-/** One `turn_revert` entry, in its carrier's lane-less position. `seq` is the
- *  carrier's next, which is what makes the hole check apply to it unchanged. */
+/** One `turn_revert` entry, in its carrier's lane-less position. `seq` is the carrier's next,
+ *  which is what makes the hole check apply to it unchanged. */
 function revert(carrier: string, seq: number, p: Partial<EntryTurnRevert> = {}): Entry {
   const payload: EntryTurnRevert = {
     from: "t-5",
@@ -95,8 +81,8 @@ describe("the revert handler", () => {
   });
 
   it("drops by ORDINAL on a partial window, so turns above the cut go with it", () => {
-    // The `?before=` paging case: the store legitimately holds the two newest turns
-    // and not the one the revert names, so `from`'s POSITION in `turn_order` is -1.
+    // The `?before=` paging case: the store legitimately holds the two newest turns and not the one
+    // the revert names, so `from`'s POSITION in `turn_order` is -1.
     seed(6, 7);
     appendEntry(CHAT, revert("t-4", 0));
 
@@ -110,8 +96,8 @@ describe("the revert handler", () => {
     seed(6, 7);
     appendEntry(CHAT, revert("t-4", 0));
 
-    // `appendEntry` classifies an entry naming an absent turn as a hole, and in the
-    // partial-window case the envelope names exactly such a turn.
+    // `appendEntry` classifies an entry naming an absent turn as a hole, and in the partial-window
+    // case the envelope names exactly such a turn.
     expect(repaired).toEqual([]);
   });
 
@@ -127,8 +113,8 @@ describe("the revert handler", () => {
   });
 
   it("writes the surviving high-water on the no-survivor frame PAIR, 1 and not 0", () => {
-    // The carrier's `turn_opened` arrives first (section 2.2 step 3 mints it at the
-    // surviving high-water plus one), then the revert naming turn 1 of 7.
+    // The carrier's `turn_opened` arrives first (section 2.2 step 3 mints it at the surviving
+    // high-water plus one), then the revert naming turn 1 of 7.
     seed(1, 7);
     openTurn(CHAT, {
       id: "t-c",
@@ -279,8 +265,8 @@ describe("the revert handler", () => {
   }
 
   it("aborts an OLDER page read in flight, so its turns above the cut are never seated", async () => {
-    // Device B holds 6..7 and is scrolling up; device A rewinds from 3. Turns 3..5 are
-    // reverted and B never held them, so the drop and `reverted` cannot name them.
+    // Device B holds 6..7 and is scrolling up; device A rewinds from 3. Turns 3..5 are reverted and
+    // B never held them, so the drop and `reverted` cannot name them.
     seed(6, 7);
     const read = heldRead();
     const load = loadMessages(CHAT, "t-6");
@@ -305,16 +291,16 @@ describe("the revert handler", () => {
 
     stale.answer(page([1, 2, 3, 4, 5], 5));
     fresh.answer(page([1, 2], 2));
-    // The aborted caller answers with the re-issued load's result: an activation awaiting
-    // it must see a loaded window, not a failure.
+    // The aborted caller answers with the re-issued load's result: an activation awaiting it must
+    // see a loaded window, not a failure.
     expect(await first).toBe(true);
     expect(heldOrdinals()).toEqual([1, 2]);
     expect(get(CHAT)?.turn_count).toBe(2);
   });
 
   it("aborts a NEWEST page read even when the revert dropped nothing this window held", async () => {
-    // The window has not caught up with the tail: it holds 1..2 while the pre-revert
-    // answer in flight carries 3..4, which the revert took.
+    // The window has not caught up with the tail: it holds 1..2 while the pre-revert answer in
+    // flight carries 3..4, which the revert took.
     seed(1, 2);
     const stale = heldRead();
     mockApiGetTyped.mockResolvedValueOnce(page([1, 2], 2));
@@ -330,8 +316,8 @@ describe("the revert handler", () => {
   });
 
   it("drops a held turn a NEWEST page no longer serves, for a client that missed the revert", async () => {
-    // Device B slept past the replay window: no `turn_revert` reached it, so it still
-    // holds 3..5 while the server serves 1..2 under a count of 2.
+    // Device B slept past the replay window: no `turn_revert` reached it, so it still holds 3..5
+    // while the server serves 1..2 under a count of 2.
     seed(1, 5);
     mockApiGetTyped.mockResolvedValueOnce(page([1, 2], 2));
     expect(await loadMessages(CHAT)).toBe(true);
@@ -372,9 +358,9 @@ describe("the revert handler", () => {
           seed(lo, hi);
           const carrierResident = carrierHeld && carrierN >= lo;
           const carrier = carrierResident ? `t-${String(carrierN)}` : "t-absent";
-          // A held carrier's record sits at that turn's next `seq` — the hole check
-          // applies to a `turn_revert` unchanged, so a seq that does not fit is a hole
-          // and the handler never runs.
+          // A held carrier's record sits at that turn's next `seq` — the hole check applies to a
+          // `turn_revert` unchanged, so a seq that does not fit is a hole and the handler never
+          // runs.
           appendEntry(
             CHAT,
             revert(carrier, carrierResident ? 1 : 0, {

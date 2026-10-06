@@ -1,13 +1,7 @@
 package command
 
-// The coordinator under concurrency. These are the cases the operation lock
-// exists for, and each asserts an INVARIANT rather than an outcome, because the
-// outcome legitimately depends on who won.
-//
-// Run under -race. The gate command for this package is
-// `go test -count=1 -race ./internal/command/`, and every case here is designed
-// to fail loudly rather than flakily: the assertions are consistency properties
-// that hold for every interleaving, so a pass is not a scheduling accident.
+// The coordinator under concurrency: each case asserts an INVARIANT, not an outcome, because who
+// wins legitimately varies. Run under -race.
 
 import (
 	"context"
@@ -21,24 +15,12 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// TestMembership_ConcurrentCreateAndDeleteOfOneChat asserts the pair the two
-// stores must agree on, and asserts it as a BICONDITIONAL rather than as an
-// expected winner: the chat exists if and only if it has a tab.
-//
-// Both halves matter and they are different defects. A chat with no tab is
-// unreachable — nothing can open it and no client can see it. A tab with no chat
-// is a row that can only fail, and it survives until the next restart because
-// Prune runs at load.
-//
-// The create and the delete are genuinely racing (no handoff, no sleep), and the
-// loop runs enough iterations that the interleaving varies. A test that named a
-// winner would be pinning the scheduler.
+// TestMembership_ConcurrentCreateAndDeleteOfOneChat asserts a biconditional rather than a winner:
+// the chat exists if and only if it has a tab.
 func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 	for i := range 40 {
 		store := testsupport.NewInMemoryChatStore()
 		mem, st, _ := newRacedMembership(t, store)
-		// The delete needs an id, so the chat is created first and the RACE is a
-		// second create of the same op against the delete of what it produced.
 		first := createChat(t, mem, "op-race")
 		chatID := marotte.ChatID(first.Chat.ID)
 
@@ -65,12 +47,8 @@ func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 	}
 }
 
-// TestMembership_TwoOpensRaceForTheFinalSlot. Exactly one wins, the loser gets
-// the product limit's 409, and the set lands EXACTLY at MaxOpenTabs.
-//
-// The last assertion is the one that would catch a check-then-act reservation:
-// two opens that both read "47 open, room for one" would both mint, leaving 49
-// tabs in a collection whose whole limit is 48.
+// TestMembership_TwoOpensRaceForTheFinalSlot: exactly one wins, the loser gets the 409, and the set
+// lands EXACTLY at MaxOpenTabs, which catches a check-then-act reservation.
 func TestMembership_TwoOpensRaceForTheFinalSlot(t *testing.T) {
 	for i := range 20 {
 		store := testsupport.NewInMemoryChatStore()
@@ -109,14 +87,8 @@ func TestMembership_TwoOpensRaceForTheFinalSlot(t *testing.T) {
 	}
 }
 
-// TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace is the live-repair
-// rule under concurrency: the retry must land in the SAME pass, so no tab for a
-// deleted chat survives the call, whatever else is running.
-//
-// The concurrent open is what makes it a race rather than the sequential case:
-// it either wins (its tab is then closed by the delete's own walk) or is refused
-// (the record is already gone). Either way the end state is the same, which is
-// the property.
+// TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace asserts that the retry lands in the same pass, so no
+// tab for a deleted chat survives the call.
 func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 	for i := range 20 {
 		store := testsupport.NewInMemoryChatStore()
@@ -163,13 +135,8 @@ func newRacedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store
 	}), st, bus
 }
 
-// hookedChats runs a hook the FIRST time Get is called for a chat, from inside
-// the coordinator's critical section.
-//
-// It is what makes the lock's effect observable rather than sampled: an
-// interleaving that depends on two goroutines hitting a window measured in
-// nanoseconds is not something a test can schedule, and a loop that hopes for it
-// passes for the wrong reason far more often than it fails.
+// hookedChats runs a hook the first time Get is called for a chat, inside the coordinator's
+// critical section, so the lock's effect is observed rather than sampled.
 type hookedChats struct {
 	*testsupport.InMemoryChatStore
 	hook func()
@@ -185,18 +152,8 @@ func (h *hookedChats) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat
 	return c, ok
 }
 
-// TestMembership_ADeleteCannotInterleaveWithACreate holds the operation lock to
-// its purpose, deterministically.
-//
-// The hook fires INSIDE CreateChatAndOpen, between its record read and its tab
-// write — the one window where a delete could leave a tab whose chat is gone. It
-// starts the delete and waits a bounded time for it to finish. With the lock the
-// delete cannot start, so the wait expires and the create completes against a
-// record that is still there; without it the delete lands in the window and the
-// create then mints a tab for a chat nothing can open.
-//
-// The wait FAILS CLOSED: expiring is the passing path, so a slow machine cannot
-// turn this into a false failure — it can only cost the wait.
+// TestMembership_ADeleteCannotInterleaveWithACreate fires the hook inside CreateChatAndOpen,
+// between its record read and its tab write, the one window a delete could split.
 func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	inner := testsupport.NewInMemoryChatStore()
 	st, err := tabs.NewStore(t.TempDir())
@@ -217,15 +174,12 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 			defer close(deleted)
 			_ = mem.DeleteChatAndCloseTabs(context.Background(), chatID, "op-del")
 		}()
-		// Bounded: with the lock held this expires, which is the correct outcome.
 		select {
 		case <-deleted:
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
 
-	// A repeat of the same op, so it resolves to the chat above and reaches the
-	// hook with the record present.
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		OpID: "op-race", Init: func(c *marotte.Chat) { c.Name = "racer" },
 	})

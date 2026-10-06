@@ -1,14 +1,5 @@
-// The chat-actions menu: four rows, each of which must do what it says.
-//
-// What is worth pinning here is the DISPATCH each row makes, because three of the
-// four are the only door to a server verb and the fourth is a modal open. The
-// card is built entirely in TS (index.html carries an empty one), so this file
-// also stands in for a markup test of it.
-//
-// The goal row gets the most attention, because it is the one row whose output is
-// consumed by a PARSER rather than by a handler of ours. So these tests run KAS's
-// own parser (transcribed below) over the exact string the row sends, instead of
-// restating that parser's conclusions in assertions of their own.
+// The chat-actions menu: pins each row's dispatch (the card is TS-built, so this is also
+// the markup test). The goal row's string is run through KAS's transcribed parser.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { uploadLimitHint } from "./upload-policy.js";
@@ -18,6 +9,7 @@ const {
   openTangentChat,
   openRunView,
   setSupervisedDispatch,
+  setInterruptDispatch,
   compactDispatch,
   launchDispatch,
   recipesDispatch,
@@ -25,12 +17,22 @@ const {
   sendPromptTo,
   transportSend,
   toastError,
+  chatNotice,
   collapseAll,
+  renameDispatch,
+  sessionDispatch,
+  copyDispatch,
+  downloadChatExport,
 } = vi.hoisted(() => ({
+  renameDispatch: vi.fn(),
+  sessionDispatch: vi.fn(),
+  copyDispatch: vi.fn(),
+  downloadChatExport: vi.fn(),
   openFilePicker: vi.fn(),
   openTangentChat: vi.fn(),
   openRunView: vi.fn(),
   setSupervisedDispatch: vi.fn(),
+  setInterruptDispatch: vi.fn(),
   compactDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
@@ -38,22 +40,35 @@ const {
   sendPromptTo: vi.fn(),
   transportSend: vi.fn(),
   toastError: vi.fn(),
+  chatNotice: vi.fn(),
   collapseAll: vi.fn(),
 }));
 
 let activeID = "";
 let supervised: boolean | undefined;
+let interruptMode: "steer" | "queue" | undefined;
 let thinking = false;
 let messageCount = 3;
 
-/** The active chat as the menu sees it. `message_count` is what decides whether
- *  the chat holds a conversation, so it is a knob here: the tangent row is
- *  unavailable until it does. */
+/** The active chat as the menu sees it; `message_count` unlocks the tangent row. */
 function session():
-  { id: string; supervised_mode: boolean | undefined; message_count: number } | undefined {
+  | {
+      id: string;
+      name: string;
+      supervised_mode: boolean | undefined;
+      interrupt_mode: "steer" | "queue" | undefined;
+      message_count: number;
+    }
+  | undefined {
   return activeID === ""
     ? undefined
-    : { id: activeID, supervised_mode: supervised, message_count: messageCount };
+    : {
+        id: activeID,
+        name: "My chat",
+        supervised_mode: supervised,
+        interrupt_mode: interruptMode,
+        message_count: messageCount,
+      };
 }
 
 vi.mock("./store.js", () => ({
@@ -66,9 +81,7 @@ vi.mock("./store.js", () => ({
   isThinking: (id: string) => id === activeID && thinking,
   isEmptyChat: (s: { message_count: number } | undefined) =>
     s === undefined || s.message_count === 0,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   get: vi.fn(() => undefined),
   getActive: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
@@ -79,50 +92,43 @@ vi.mock("./files-picker.js", () => ({ openFilePicker }));
 vi.mock("./chat.js", () => ({ openTangentChat }));
 vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
+// A refusal about the active chat is named for it through the notice door.
+vi.mock("./notice-subject.js", () => ({ chatNotice }));
 vi.mock("./actions/chat.js", () => ({
   setSupervised: { dispatch: setSupervisedDispatch },
+  setInterruptMode: { dispatch: setInterruptDispatch },
   compactChat: { dispatch: compactDispatch },
+  renameChat: { dispatch: renameDispatch },
+  downloadKiroSession: { dispatch: sessionDispatch },
+  MAX_CHAT_NAME_UNITS: 128,
 }));
+vi.mock("./actions/messages.js", () => ({ copyClipboard: { dispatch: copyDispatch } }));
+vi.mock("./chat-export.js", () => ({ downloadChatExport }));
 vi.mock("./actions/runs.js", () => ({
   launchRun: { dispatch: launchDispatch },
   loadRecipes: { dispatch: recipesDispatch },
 }));
-// The composer's send path. submit.ts is the ONE module allowed to decide
-// prompt-versus-steer, so the goal row goes through it; the two lower-level
-// senders stay mocked so a row that bypassed it is observable rather than a
-// network error.
+// submit.ts alone decides prompt-versus-steer, so the goal row goes through it; the lower
+// senders are mocked so a bypass is observable.
 vi.mock("./submit.js", () => ({ submitPrompt }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo }));
 vi.mock("./transport.js", () => ({ send: transportSend, newMessageID: () => "m-1" }));
 
 import type * as ChatOptionsModule from "./chat-options.js";
 
-/** Cache-buster for the re-imports below.
- *
- * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
- * map is URL-keyed, so a following `await import()` hands back the CACHED
- * instance and every test after the first observes stale module state. Busting
- * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
- * extension is load-bearing — written `.js` the suite still passes while coverage
- * silently attributes every evaluation to a file that does not exist.
- *
- * Only the module under test is busted. Its own dependencies keep their plain
- * specifiers, so `vi.mock` still intercepts them and a shared module the test
- * also imports is the same instance the fresh module got.
+/**
+ * Cache-buster for the re-imports below: `vi.resetModules()` does not re-evaluate in
+ * Browser Mode (URL-keyed map), so busting the specifier mints a fresh instance (`.ts` for
+ * coverage attribution). Only the module under test is busted, so `vi.mock` still applies.
  */
 let bootSeq = 0;
 
-/** KAS's `parseGoalCommand`, transcribed verbatim from the 2.18.1 bundle
- *  (`node_modules/@kiro/agent/dist/server/acp-server.js`, offset 19305949).
- *
- *  The row's entire contract is "this function accepts what we send, and reads
- *  back what the user typed", so the tests RUN it. Asserting the composed string
- *  against a hand-written expectation would only pin our own reading of the
- *  regex; the failure mode being guarded against is that reading being wrong.
- *
- *  On the prompt path a null return means the text falls through to the MODEL as
- *  prose (`session/prompt`, offset 21305522, calls this before invoking it), so
- *  null is never an acceptable answer for anything this row sends. */
+/**
+ * KAS's `parseGoalCommand`, transcribed verbatim from the 2.18.1 bundle
+ * (`@kiro/agent/dist/server/acp-server.js`). The tests RUN it, so our reading of the regex
+ * is not what is pinned. A null return sends the text to the MODEL as prose, so null is
+ * never acceptable for anything the row sends.
+ */
 function parseGoalCommand(userText: string): { description: string; maxIterations: number } | null {
   const trimmed = userText.trim();
   if (!trimmed.startsWith("/goal ") && trimmed !== "/goal") {
@@ -145,11 +151,10 @@ function parseGoalCommand(userText: string): { description: string; maxIteration
   return { description, maxIterations };
 }
 
-/** The minimum composer DOM initChatOptions touches, plus a fresh module state.
- *
- *  Returns the module INSTANCE it initialised, not the file's top-level import:
- *  the latch is module-level, so a fresh registry means a fresh latch, and
- *  asserting idempotence against a different instance would assert nothing. */
+/**
+ * The minimum composer DOM initChatOptions touches, plus fresh module state. Returns the
+ * initialised INSTANCE: the latch is module-level.
+ */
 async function mountMenu(): Promise<{ card: HTMLElement; mod: typeof ChatOptionsModule }> {
   document.body.innerHTML = `
     <span class="pill-slot">
@@ -185,12 +190,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   activeID = "c-active";
   supervised = false;
+  interruptMode = undefined;
   thinking = false;
   messageCount = 3;
-  // Left armed on purpose. Nothing on the goal path should reach the recipe list
-  // any more, and a resolved reply means a regression that did would proceed far
-  // enough to be caught by the explicit negative rather than dying in an
-  // unhandled rejection somewhere unrelated.
+  // Left armed: a regression reaching the recipe list proceeds to the explicit negative.
   recipesDispatch.mockResolvedValue({
     recipes: [
       { name: "publish", source: "bundled://publish" },
@@ -200,10 +203,9 @@ beforeEach(() => {
 });
 
 describe("the chat-actions menu", () => {
-  // Five residents, and the count is the assertion: a sixth added without a
-  // decision, or one silently lost to a refactor, both show up here. The order is
-  // asserted too, because the switch is reserved for last.
-  it("holds exactly five entries, the switch last", async () => {
+  // Seven rows, the switch last: an addition or loss shows here; the interrupt choices are
+  // rows of their own.
+  it("holds exactly seven entries, the switch last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
@@ -211,24 +213,25 @@ describe("the chat-actions menu", () => {
       "Set a goal",
       "Start a tangent",
       "Compact the context",
+      "Rename chat",
+      "Steer",
+      "Queue",
       "Supervised mode",
     ]);
   });
 
-  // The switch sorts last because it is the one resident that is a SWITCH rather
-  // than an action, and it keeps the label+checkbox shape rather than the button
-  // shape the other three share.
+  // The switch is a label with a checkbox; the rest are buttons.
   it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
-    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(4);
-    const row = card.querySelector<HTMLLabelElement>("label.chat-opt-row");
+    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(5);
+    const row = card.querySelector<HTMLLabelElement>(
+      'label.chat-opt-row[for="chat-opt-supervised"]',
+    );
     expect(row?.htmlFor).toBe("chat-opt-supervised");
     expect(row?.querySelector<HTMLInputElement>("input")?.type).toBe("checkbox");
   });
 
-  // A card holding buttons must not sit inside its trigger button: invalid HTML,
-  // and assistive tech flattens it. The trigger is a real <button>, so this is
-  // the same guard pill-expand.test.ts applies to the markup.
+  // A card of buttons inside its trigger <button> is invalid HTML (as in pill-expand.test.ts).
   it("keeps every row out of the trigger button", async () => {
     const { card } = await mountMenu();
     for (const btn of Array.from(card.querySelectorAll(".chat-opt-btn"))) {
@@ -236,9 +239,7 @@ describe("the chat-actions menu", () => {
     }
   });
 
-  // Every hint is a sentence a user reads, so no em dashes — the attach row's
-  // own test checks its cap text, this one covers the whole card including the
-  // hint the tangent row swaps in when it is unavailable.
+  // No em dashes in any hint, in either tangent state.
   it("carries no em dash in any hint, in either tangent state", async () => {
     for (const count of [0, 3]) {
       messageCount = count;
@@ -250,14 +251,91 @@ describe("the chat-actions menu", () => {
   });
 });
 
+describe("the chat strip", () => {
+  function strip(card: HTMLElement): HTMLButtonElement[] {
+    return Array.from(card.querySelectorAll<HTMLButtonElement>(".chat-opt-strip-btn"));
+  }
+
+  it("leads the card with four captioned buttons, each with a full name", async () => {
+    const { card } = await mountMenu();
+    expect(card.firstElementChild?.classList.contains("chat-opt-strip")).toBe(true);
+    expect(strip(card).map((b) => b.querySelector(".chat-opt-strip-caption")?.textContent)).toEqual(
+      ["Link", "Markdown", "JSON", "Session"],
+    );
+    expect(strip(card).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Copy link to this chat",
+      "Export chat as Markdown",
+      "Export chat as JSON",
+      "Download Kiro session",
+    ]);
+  });
+
+  it("copies the chat's full URL and flashes Copied", async () => {
+    copyDispatch.mockImplementation((_t: string, o?: { onSuccess?: () => void }) => {
+      o?.onSuccess?.();
+      return Promise.resolve();
+    });
+    const { card } = await mountMenu();
+    const link = strip(card)[0]!;
+    link.click();
+    expect(copyDispatch).toHaveBeenCalledWith(
+      `${location.origin}/chat/c-active`,
+      expect.objectContaining({ silent: true }),
+    );
+    expect(link.querySelector(".chat-opt-strip-caption")?.textContent).toBe("Copied");
+  });
+
+  it("routes the three downloads to their exports", async () => {
+    const { card } = await mountMenu();
+    const [, md, json, session] = strip(card);
+    md!.click();
+    json!.click();
+    session!.click();
+    expect(downloadChatExport).toHaveBeenNthCalledWith(1, "c-active", "My chat", "md");
+    expect(downloadChatExport).toHaveBeenNthCalledWith(2, "c-active", "My chat", "json");
+    expect(sessionDispatch).toHaveBeenCalledWith({ chatID: "c-active", name: "My chat" });
+  });
+
+  it("is unavailable with no chat", async () => {
+    activeID = "";
+    const { card } = await mountMenu();
+    expect(strip(card).every((b) => b.disabled)).toBe(true);
+  });
+});
+
+describe("rename chat", () => {
+  it("opens a bounded field holding the current name and sends the new one", async () => {
+    const { card } = await mountMenu();
+    clickRow(card, "Rename chat");
+    const input = card.querySelector<HTMLInputElement>('input[aria-label="Chat name"]')!;
+    expect(input.value).toBe("My chat");
+    expect(input.maxLength).toBe(128);
+    input.value = "  Release notes ";
+    input.form!.requestSubmit();
+    expect(renameDispatch).toHaveBeenCalledWith({ chatID: "c-active", name: "Release notes" });
+  });
+
+  it("sends nothing for an unchanged name", async () => {
+    const { card } = await mountMenu();
+    clickRow(card, "Rename chat");
+    card.querySelector<HTMLInputElement>('input[aria-label="Chat name"]')!.form!.requestSubmit();
+    expect(renameDispatch).not.toHaveBeenCalled();
+  });
+
+  it("names the chat when it refuses an empty name", async () => {
+    const { card } = await mountMenu();
+    clickRow(card, "Rename chat");
+    const input = card.querySelector<HTMLInputElement>('input[aria-label="Chat name"]')!;
+    input.value = "   ";
+    input.form!.requestSubmit();
+    expect(renameDispatch).not.toHaveBeenCalled();
+    expect(chatNotice).toHaveBeenCalledWith("c-active", "Type a name first", "error");
+  });
+});
+
 describe("attach a file", () => {
-  // The picker's own "Upload here" calls input.click() inside ITS handler, so the
-  // dialog's gesture is two clicks deeper. What this row must not do is put an
-  // await between the menu click and the picker open — the browser's
-  // user-activation window is the one thing a file input cannot ask for later.
-  //
-  // Asserted SYNCHRONOUSLY (no await after the click) precisely because that is
-  // the property: an `await` anywhere on the path would make this fail.
+  // No await between the menu click and the picker open: a file input cannot regain the
+  // gesture's activation window. Asserted SYNCHRONOUSLY for that reason.
   it("opens the picker synchronously on the click", async () => {
     const { card } = await mountMenu();
     clickRow(card, "Attach a file");
@@ -275,9 +353,7 @@ describe("attach a file", () => {
     );
   });
 
-  // The cap used to be discoverable only as a server 413. Asserted against
-  // uploadLimitHint rather than a copied numeral: a literal here is a second
-  // statement of the limit that can disagree with the one the pre-flight enforces.
+  // Against uploadLimitHint, not a copied numeral that could disagree with the pre-flight.
   it("states the upload cap on the row", async () => {
     const { card } = await mountMenu();
     const hint = card.querySelector(".chat-opt-hint")?.textContent ?? "";
@@ -294,11 +370,8 @@ describe("start a tangent", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // The row is UNAVAILABLE rather than error-toasting on a chat with no
-  // conversation, and that is the whole point of it: a chat is client-side only
-  // until its first prompt, so the fork 404'd server-side (errForkParentUnknown)
-  // AFTER openTangentChat had already opened and activated the sub-tab — a stray
-  // empty sub-tab plus a failure notice, for a control that read as available.
+  // Unavailable, not error-toasting, with no conversation: the fork would 404
+  // (errForkParentUnknown) after the sub-tab opened.
   it.each([
     ["a brand-new chat with no messages", "c-active", 0],
     ["no active chat at all", "", 3],
@@ -314,9 +387,7 @@ describe("start a tangent", () => {
     expect(rowButton(card, "Start a tangent").disabled).toBe(false);
   });
 
-  // The hint says what to do NEXT, not what went wrong: the row is unavailable
-  // before the user has done anything, so naming the missing message is the only
-  // useful thing it can say.
+  // The hint names what unlocks the row.
   it("swaps the hint for one naming what unlocks the row", async () => {
     messageCount = 0;
     const { card } = await mountMenu();
@@ -324,15 +395,14 @@ describe("start a tangent", () => {
     expect(hint).toContain("Send a message first");
   });
 
-  // The disabled attribute is the refusal, so pressing it says nothing at all.
-  // A toast here would be the old behaviour wearing a dimmed row: an error for a
-  // control the user was told is unavailable.
+  // The disabled attribute is the refusal, so a press says nothing.
   it("dispatches nothing and says nothing when pressed with no conversation", async () => {
     messageCount = 0;
     const { card } = await mountMenu();
     clickRow(card, "Start a tangent");
     expect(openTangentChat).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
+    expect(chatNotice).not.toHaveBeenCalled();
   });
 
   it("refuses in the handler as well, so a stale enabled row cannot fork nothing", async () => {
@@ -342,7 +412,8 @@ describe("start a tangent", () => {
     btn.disabled = false;
     btn.click();
     expect(openTangentChat).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
   });
 });
 
@@ -376,10 +447,8 @@ describe("set a goal", () => {
     return call?.[1];
   }
 
-  // The exact string, with the parse it has to survive. Both halves matter: a
-  // composed command that KAS's parser returns null for reaches the model as
-  // prose, and one it parses into the wrong objective silently sets a different
-  // goal from the one that was typed.
+  // The exact string and its parse: a null parse reaches the model as prose, a wrong one sets
+  // a different goal.
   it("sends the objective alone when no cap is given", async () => {
     const { card } = await mountMenu();
     const sent = setGoal(card, "make the test suite pass");
@@ -406,11 +475,8 @@ describe("set a goal", () => {
     });
   });
 
-  // Clamped by marotte rather than left to KAS: the same arithmetic
-  // (`Math.min(Math.max(n, 1), 200)`), applied before the string is built, so the
-  // suffix is always a value the parser keeps. `-3` never reaches the regex as a
-  // cap in any case — `\d+` cannot match a sign — so passing it through would
-  // silently append it to the objective instead.
+  // Clamped by marotte with KAS's arithmetic, so the suffix is always kept; `\d+` cannot
+  // match `-3`, which would otherwise join the objective.
   it.each([
     ["0", 1],
     ["-3", 1],
@@ -426,9 +492,7 @@ describe("set a goal", () => {
     expect(parseGoalCommand(sent as string)?.maxIterations).toBe(want);
   });
 
-  // A cap that is not a whole number is DROPPED, not forwarded. `--max soon`
-  // fails the `\d+` match, so KAS would read "ship it --max soon" as the whole
-  // objective — the goal statement silently gains two words of marotte's UI.
+  // A non-integer cap is DROPPED: `--max soon` would become part of the objective.
   it.each([
     ["a word", "soon"],
     ["a fraction", "5.5"],
@@ -441,10 +505,7 @@ describe("set a goal", () => {
     expect(parseGoalCommand(sent as string)?.description).toBe("ship it");
   });
 
-  // The recipe route is GONE, and this is what keeps it gone. It could not set the
-  // iteration bound at all: the bundled recipe's repeat node is written
-  // maxIterations 200 and launchGoal applies the user's number by mutating that
-  // node on a clone, so a launch by source ran to 200 whatever was asked for.
+  // No recipe route: a launch by source ran to 200 iterations whatever was asked.
   it("launches no run and fetches no recipe", async () => {
     const { card } = await mountMenu();
     setGoal(card, "ship it", "5");
@@ -453,9 +514,7 @@ describe("set a goal", () => {
     expect(openRunView).not.toHaveBeenCalled();
   });
 
-  // The command goes through submit.ts, which is the one module allowed to decide
-  // prompt-versus-steer. Reaching the lower-level senders directly would skip that
-  // decision and the shared send lifecycle with it.
+  // Through submit.ts, the one prompt-versus-steer decision and the shared send lifecycle.
   it("sends through the composer's own send path", async () => {
     const { card } = await mountMenu();
     setGoal(card, "ship it");
@@ -464,9 +523,7 @@ describe("set a goal", () => {
     expect(transportSend).not.toHaveBeenCalled();
   });
 
-  // A bare `/goal` is exactly the input parseGoalCommand returns null for, so it
-  // would fall through to the model as prose. Refused here instead, where there is
-  // something to say about it.
+  // A bare `/goal` parses to null and would reach the model; refused here instead.
   it.each([
     ["empty", ""],
     ["whitespace only", "   "],
@@ -474,19 +531,16 @@ describe("set a goal", () => {
     const { card } = await mountMenu();
     expect(setGoal(card, objective)).toBeUndefined();
     expect(submitPrompt).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
   });
 
-  // Mid-turn, Send means STEER (submit.ts), and `_session/steer` is not the prompt
-  // path — parseGoalCommand has exactly one call site in the 2.18.1 bundle and it
-  // is `session/prompt`. So a steered command is prose to the running turn, which
-  // is the failure this row exists to avoid.
+  // Mid-turn Send means STEER, and parseGoalCommand only runs on `session/prompt`.
   it("refuses while a turn is running", async () => {
     thinking = true;
     const { card } = await mountMenu();
     expect(setGoal(card, "ship it")).toBeUndefined();
     expect(submitPrompt).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
   });
 
   it("refuses when no chat is active", async () => {
@@ -497,10 +551,7 @@ describe("set a goal", () => {
     expect(toastError).toHaveBeenCalledTimes(1);
   });
 
-  // There is no clear verb, upstream or here. parseGoalCommand takes the whole
-  // body as the objective, so `/goal clear` launches a goal whose objective is the
-  // word "clear" — a control offering it would misfire silently rather than do
-  // nothing. Stopping a goal is cancelling its run.
+  // No clear verb: `/goal clear` would be a goal named "clear". Stopping is cancelling the run.
   it("offers no clear verb and composes none", async () => {
     const { card } = await mountMenu();
     const form = openForm(card);
@@ -549,9 +600,8 @@ describe("compact the context", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // The two states CmdCompact refuses: no live session (409 errNoBridge, because a
-  // chat is client-side only until its first prompt) and a turn in flight (409
-  // errCompactRefused). Disabled rather than a toast, following the tangent row.
+  // The two states CmdCompact refuses (errNoBridge, errCompactRefused); disabled like the
+  // tangent row.
   it.each([
     ["a brand-new chat with no messages", "c-active", 0, false],
     ["no active chat at all", "", 3, false],
@@ -590,6 +640,7 @@ describe("compact the context", () => {
     clickRow(card, "Compact the context");
     expect(compactDispatch).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
+    expect(chatNotice).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -603,7 +654,8 @@ describe("compact the context", () => {
     btn.disabled = false;
     btn.click();
     expect(compactDispatch).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledTimes(1);
+    expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
   });
 
   // The card is built once at init and outlives every chat switch.
@@ -633,9 +685,7 @@ describe("supervised mode", () => {
     expect(setSupervisedDispatch).toHaveBeenCalledWith({ chatID: "c-active", enabled: true });
   });
 
-  // No chat yet: nothing to persist against, and the visual resets rather than
-  // claiming a setting that was never stored. The supervised DEFAULT for new chats
-  // lives in Settings, which is where a before-the-first-prompt choice belongs.
+  // No chat: the visual resets and nothing persists; the new-chat default lives in Settings.
   it("resets the visual and persists nothing with no active chat", async () => {
     activeID = "";
     const { card } = await mountMenu();
@@ -647,12 +697,59 @@ describe("supervised mode", () => {
   });
 });
 
+// What Send means while a turn runs: a per-chat radio pair, Steer the default.
+describe("the interrupt mode", () => {
+  function radio(card: HTMLElement, mode: "steer" | "queue"): HTMLInputElement {
+    const el = card.querySelector<HTMLInputElement>(`#chat-opt-interrupt-${mode}`);
+    if (el === null) {
+      throw new Error(`no ${mode} radio`);
+    }
+    return el;
+  }
+
+  it("selects Steer for a chat that has recorded no mode", async () => {
+    const { card } = await mountMenu();
+    expect(radio(card, "steer").checked).toBe(true);
+    expect(radio(card, "queue").checked).toBe(false);
+  });
+
+  it("mirrors the active chat's recorded mode", async () => {
+    interruptMode = "queue";
+    const { card } = await mountMenu();
+    expect(radio(card, "queue").checked).toBe(true);
+    expect(radio(card, "steer").checked).toBe(false);
+  });
+
+  it("dispatches the mode for the active chat when a choice is picked", async () => {
+    const { card } = await mountMenu();
+    radio(card, "queue").checked = true;
+    radio(card, "queue").dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).toHaveBeenCalledWith({ chatID: "c-active", mode: "queue" });
+  });
+
+  it("names the group for assistive tech", async () => {
+    const { card } = await mountMenu();
+    const group = card.querySelector('[role="radiogroup"]');
+    const label = document.getElementById(group?.getAttribute("aria-labelledby") ?? "");
+    expect(label?.textContent).toBe("While the agent works, Send\u2026");
+  });
+
+  it("records nothing and selects nothing with no active chat", async () => {
+    activeID = "";
+    const { card } = await mountMenu();
+    radio(card, "queue").checked = true;
+    radio(card, "queue").dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).not.toHaveBeenCalled();
+    expect(radio(card, "queue").checked).toBe(false);
+  });
+});
+
 // initChatOptions is called once from app.ts, but the latch is what makes a
-// second call safe — without it a re-init would append a second set of four rows.
+// second call safe — without it a re-init would append a second set of rows.
 describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(5);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(8);
   });
 });

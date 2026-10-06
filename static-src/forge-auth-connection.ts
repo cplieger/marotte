@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// Where a new connection points: the server host and the per-connection
-// options, shared by the device sign-in and the token form in one add pane.
-// ---------------------------------------------------------------------------
+// Where a new connection points, shared by the device sign-in and the token form in one add pane.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";

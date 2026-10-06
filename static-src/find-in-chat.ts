@@ -1,48 +1,5 @@
-// ---------------------------------------------------------------------------
-// Find in Chat (Ctrl-F / Cmd-F): an in-chat message search overlay.
-//
-// Scoped to the ACTIVE chat's rendered messages (`#messages`).
-//
-// The list is paginated (store-load.ts's page size), never DOM-trimmed, so a
-// match can sit in a page that is not loaded yet.
-//
-// The WALKER itself is find-engine.ts now, shared with the editor's find over a
-// diff pane or rendered markdown — the same problem, one implementation. What
-// stays here is the transcript's own half: the server pre-pass, the counter, the
-// step list, the streaming re-run, and the popup.
-//
-// The real blind spots are three, and they are why the enumeration moves
-// server-side rather than being patched in that walker: non-resident pages;
-// resident rows whose `content-visibility: auto` makes checkVisibility report
-// false while rendering is skipped; and hidden or collapsed subtrees, which
-// progressive collapse adds a third time.
-//
-// So the server's answer is the STEP LIST as well as the count, and a list belongs
-// to the TEXT IN THE BOX (`serverHitsQuery`, one writer). The DOM pass keeps two
-// jobs — it highlights, and it is what a step lands on — and it is the whole step
-// list when no answer is owned yet.
-//
-// Native-find override policy (researched against 2024-2026 a11y/UX guidance):
-//   - Overriding Ctrl-F is only acceptable because we provide an EQUIVALENT
-//     in-page find: highlight, an aria-live "N of M" counter, next/prev
-//     stepping, and scroll-into-view. Like native find, it never restructures
-//     page content — it only wraps matches in <mark> and cleanly unwraps on
-//     close.
-//   - The override is NARROW: it only fires when the chat view is the active
-//     context. Over the editor, shell, settings, git, or files views the
-//     browser's native find is left untouched.
-//   - Escape hatch: a SECOND Ctrl-F while our find field already has focus
-//     falls through to the browser's native find (no preventDefault).
-//   - No focus trap: Tab moves through the widget and back out to the page.
-//     Escape closes and restores focus to wherever it was before opening.
-//
-// The keydown listener is registered from app.ts (the composition root) via
-// handleFindHotkey — this module is a leaf (imports dom/scroll/reactive; nothing
-// imports it except app.ts, the History page's cross-chat handoff and the test),
-// so there is no import cycle. The one door out of it, the run tab a
-// workflow-step hit navigates to, is reached through a LAZY import, so that chunk
-// stays lazy and the leaf claim still holds.
-// ---------------------------------------------------------------------------
+// Find in Chat (Ctrl-F / Cmd-F): a search overlay scoped to the active chat. A local DOM pass marks what is rendered;
+// the server's answer is the honest count and the step list, and stepping reveals hits the DOM cannot mark.
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
@@ -63,11 +20,7 @@ import type { Nouns, Tally } from "./textsearch/copy.js";
 import type { SearchShell } from "./search-shell.js";
 import type { Hit, SearchResult, SegmentKind } from "./wire/types.gen.js";
 
-// Debounce for live re-runs while the transcript changes (streaming): large
-// enough to coalesce a burst of streamed chunks. The TYPING debounce is
-// search-shell.ts's SEARCH_DEBOUNCE_MS — it was authored here and in
-// files-search.ts with the same value and a comment in each saying so, which is
-// what a shared constant is for.
+// Coalesces a burst of streamed chunks. The typing debounce is search-shell.ts's SEARCH_DEBOUNCE_MS.
 const RERUN_DEBOUNCE_MS = 150;
 
 /** The transcript's unit nouns: a hit is a match, and the scan reads messages. */
@@ -79,11 +32,6 @@ const NOUNS: Nouns = {
 /** The tally of no answer: nothing read, nothing matched, nothing cut. */
 const NO_ANSWER: Tally = { scanned: 0, matched: 0, truncated: false };
 
-// ---------------------------------------------------------------------------
-// Overlay controller (module singleton) — wires the FindEngine to the live
-// #messages DOM, the search bar UI, keyboard handling, and the Ctrl-F hotkey.
-// ---------------------------------------------------------------------------
-
 let overlayEl: HTMLElement | null = null;
 let shell: SearchShell | null = null;
 let popup: PopupController | null = null;
@@ -92,63 +40,26 @@ let engine: FindEngine | null = null;
 let lastFocus: HTMLElement | null = null;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** The walker's root: the ACTIVE transcript view. Resolved by the multiplexer's
- *  own class contract rather than an import — messages.ts sits above this
- *  module in the graph (it injects the search reveal builder), so reaching it
- *  statically would cycle. Falls back to the multiplexer itself for fixtures
- *  (and the boot instant) where no view is mounted. */
+/** The active transcript view, by the multiplexer's class contract rather than an import (messages.ts sits above this). */
 function findRoot(): HTMLElement {
   return $.messages.querySelector<HTMLElement>(":scope > .transcript-view.is-active") ?? $.messages;
 }
-/** Unregister for the live re-run's ride on the transcript's shared
- *  MutationObserver (scroll.ts owns the one observer); null while closed. */
+/** Unregister for the re-run's ride on scroll.ts's shared MutationObserver; null while closed. */
 let unobserveTranscript: (() => void) | null = null;
-/** Engine ops in flight whose own DOM writes must not re-trigger the re-run.
- *  A counter rather than a boolean so nested `applyEngine` calls stay safe. */
+/** Engine ops in flight whose own writes must not re-trigger the re-run; a counter so nested calls stay safe. */
 let engineWrites = 0;
-/** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack
- *  a second subscriber on the bus. */
+/** Unsubscribe for the tab teardown, so a rebuilt module cannot stack subscribers. */
 let unsubTab: (() => void) | null = null;
 
-// ---------------------------------------------------------------------------
-// The step list: the SERVER's answer, and who it belongs to.
-//
-// Stepping walks the server's hits whenever there is an answer FOR THE TEXT IN
-// THE BOX. That is the whole rule, and it replaced a gate that walked them only
-// when the DOM had marked nothing — which left every hit the walker cannot see
-// unreachable on any transcript holding one resident mark: collapsed delegate
-// output, a non-resident page, a workflow step. The counter already admits those
-// exist ("N in chat"), so Enter going dead on them was the overlay contradicting
-// itself. The DOM pass keeps its other two jobs — it HIGHLIGHTS, and it is what a
-// step LANDS on — and it is the whole step list when no server answer is owned.
-// ---------------------------------------------------------------------------
+// The step list is the server's answer whenever there is one for the text in the box.
 
-/** The last successful server answer's list, in WIRE order. Counting reads this;
- *  the WALK reads `stepOrder`. A failed re-fetch keeps the previous list, matching
- *  chat-search.ts's rule for the reveal: a transient failure must not collapse the
- *  search under the reader. */
+/** The last successful answer, in wire order; the walk reads `stepOrder`. A failed re-fetch keeps it (chat-search.ts's rule). */
 let serverHits: Hit[] = [];
-/** That answer's tally, adopted in the same write as `serverHits` so the two
- *  cannot describe different answers. `matched` is the whole-chat count the list
- *  is cut against (cut iff it exceeds `serverHits.length`); `scanned` is how many
- *  messages were read; `truncated` is the scan's own reach, false for a chat read
- *  whole. */
+/** Adopted with `serverHits` in one write; `matched` is the whole-chat count, cut iff it exceeds the list. */
 let serverTally: Tally = NO_ANSWER;
-/** The query whose answer is standing. WRITTEN IN EXACTLY ONE PLACE — `render`,
- *  when it adopts an answer — and read by four consumers: `step`, both of
- *  `updateCounter`'s branches, and the note.
- *
- *  It is not defensive dressing. The shell's `query` callback runs the DOM pass
- *  synchronously and RETURNS the fetch, so for the whole debounce-plus-round-trip
- *  window `engine.query === shell.value` holds while these hits still belong to
- *  the PREVIOUS query — and an Enter in that window would navigate to text the
- *  reader has already replaced, which on a chat with delegated work most likely
- *  means opening another tab and tearing this overlay down. */
+/** The query whose answer stands, written only in `render` and read by `step`, `updateCounter` and the note. */
 let serverHitsQuery = "";
-/** The walk order: `[...local, ...crossTab]`, each phase in wire order. A hit this
- *  client answers IN PLACE comes before one it answers by opening another view, so
- *  a reader stepping a chat with delegated work is not thrown out of the
- *  transcript every second press. */
+/** `[...local, ...crossTab]`, each in wire order, so in-place hits come before those opening another view. */
 let stepOrder: Hit[] = [];
 /** `stepOrder[localCount]` is the first cross-tab hit, so the cursor reaching it
  *  IS the crossing. */
@@ -158,39 +69,16 @@ let localCount = 0;
 let announcedBoundary = false;
 /** Position in `stepOrder` while stepping drives navigation; -1 = none. */
 let hitCursor = -1;
-/** One navigation in flight at a time: paging in a hit spans awaits, and a
- *  second Enter mid-flight would race the first's reveal and selection. */
+/** One navigation at a time: paging spans awaits, and a second Enter would race the first's reveal. */
 let navBusy = false;
-/** THIS client jumped to another tab from a hit, so the tab change about to
- *  arrive is ours. `navigateToHit` writes it (with `resumeKey`) immediately before
- *  the lazy import, because on success the switch tears the overlay down before
- *  anything else could; the `BUS_TAB_CHANGED` subscriber only READS it and clears
- *  it, which is why it stays a plain boolean rather than carrying the identity. */
+/** This client caused the coming tab change; written just before the lazy import, since the switch tears the overlay down. */
 let crossTabJump = false;
-/** The hit the reader left on, as a `@cplieger/keyenc` join of
- *  `[turn_id, entry_id, segment_kind, offset]` — an IDENTITY rather
- *  than the index, because the chat can grow while the reader is away and every
- *  index would move. Spent by the next open's re-run, in `render`, which clears it
- *  whether or not it resolved; a key naming no hit in the fresh `stepOrder` resets
- *  the cursor to -1 rather than throwing. */
+/** The hit the reader left on, as a keyenc identity (the chat may grow while away, so not an index). */
 let resumeKey = "";
-/** A handoff asked the next answer to LAND on `resumeKey`'s hit rather than only
- *  restore the cursor to it: another surface found the conversation and counted
- *  its matches, so opening the box on the first DOM mark would leave the reader
- *  where a retyped query would have. Spent with `resumeKey`, in `render`. */
+/** A handoff asked the next answer to land on `resumeKey`'s hit, not just restore the cursor. */
 let landOnResume = false;
 
-/** The walk order for one answer, partitioned ONCE by destination.
- *
- *  The key is the entry's `lane`, a property of the hit that never changes and the
- *  same predicate `navigateToHit` already routes on — the client's own ROUTING
- *  rather than a claim about what the transcript renders. An INVOCATION hit is lane
- *  `""` (the call is the ISSUER's entry, and only the delegate's own entries carry
- *  its uuid), so it stays phase 1 and lands on the card the transcript draws for it.
- *
- *  `serverHits` is deliberately NOT sorted in place — every other consumer counts
- *  that list — and this runs once per answer rather than per press, so the cursor
- *  means the same thing across a re-render of the same answer. */
+/** Partitioned once by the hit's `lane`, the predicate `navigateToHit` routes on. */
 function buildStepOrder(hits: Hit[]): Hit[] {
   const isLocal = (h: Hit): boolean => (h.lane ?? "") === "";
   const local = hits.filter(isLocal);
@@ -198,9 +86,7 @@ function buildStepOrder(hits: Hit[]): Hit[] {
   return [...local, ...hits.filter((h) => !isLocal(h))];
 }
 
-/** Where a cross-tab return resumes: the position of `resumeKey`'s hit in the
- *  FRESH `stepOrder`, or -1 when there is no key or the chat grew past it. Spends
- *  the key either way, so a stale identity cannot bind a later answer. */
+/** The resume position in the fresh `stepOrder`, or -1; spends the key either way so a stale identity cannot apply later. */
 function resumeIndex(): number {
   const key = resumeKey;
   resumeKey = "";
@@ -215,15 +101,7 @@ function hitKey(hit: Hit): string {
   return join(hit.turn_id, hit.entry_id, hit.segment_kind, String(hit.offset));
 }
 
-/** Open state lives on the popup and NOWHERE ELSE.
- *
- *  It used to be a module boolean, and that is what made a tab switch leave the
- *  feature half-alive: hiding the view left the flag true, the mutation
- *  registration active, the <mark> elements welded into the transcript and every fold the
- *  search had opened still open, so returning to the chat re-revealed a search
- *  mid-flight. One source of truth means every close path — the ×, Escape
- *  anywhere in the document, an outside click, the trigger, a tab switch — runs
- *  the same teardown, because they all run through hide(). */
+/** Open state lives on the popup and nowhere else, so every close path tears down fully. */
 function isOpen(): boolean {
   return popup?.isOpen === true;
 }
@@ -235,9 +113,7 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-/** The bar's nav buttons: SVG glyphs, so `align-items: center` centres the ink
- *  rather than a line box. See search-shell.ts's searchIconButton for why a text
- *  `×` or `↑` cannot be centred by any authored value. */
+/** SVG glyphs, so `align-items: center` centres the ink (see search-shell.ts's searchIconButton). */
 function navButton(
   label: string,
   hint: string,
@@ -253,9 +129,7 @@ function ensureBuilt(): void {
   }
   engine = new FindEngine(findRoot());
 
-  // A DIV rather than a span, and `search-status` beside its own class: the
-  // counter is a LINE under the controls (24-find.css `.search-status`), which
-  // collapses to zero height while empty, so it needs a block box of its own.
+  // A div with `search-status`: the counter is a line under the controls (24-find.css) that collapses while empty.
   const count = el("div", {
     id: "chat-find-count",
     className: "chat-find-count search-status",
@@ -272,9 +146,7 @@ function ensureBuilt(): void {
     step(1);
   });
 
-  // The COUNTER and the prev/next pair are this surface's alone — a cursor has a
-  // position in a document, which a ranked list does not — so they arrive
-  // through `compose` as ordinary controls rather than becoming shell features.
+  // The counter and prev/next are this surface's alone (a cursor has a document position), so they come through `compose`.
   const built = createSearchShell<SearchResult>({
     id: "chat-find",
     regionClass: "chat-find search-pop uip-popup",
@@ -286,15 +158,10 @@ function ensureBuilt(): void {
     inputTitle: "Find in chat. Press Ctrl+F again to use the browser's find.",
     matchCase: true,
     closeButton: true,
-    // `noteClass` is not optional here: the shell defaults it to `search-note`,
-    // so without it every `.chat-find-note` rule matches nothing and the note
-    // keeps intrinsic height while empty.
+    // Required: the shell defaults to `search-note`, so without it no `.chat-find-note` rule matches.
     note: true,
     noteClass: "chat-find-note",
-    // THE COUNTER IS A SIBLING OF THE ROW, not an item inside it: it holds
-    // sentences as well as a cursor, and beside four fixed-width buttons a
-    // sentence painted over them (24-find.css `.search-status` carries the
-    // measurement). Its own line wraps and grows the box instead.
+    // The counter is a sibling of the row: it holds sentences, which painted over the buttons beside it.
     compose: ({ input, caseButton, closeButton, note }) => [
       el(
         "div",
@@ -309,37 +176,19 @@ function ensureBuilt(): void {
       if (engine === null) {
         return null;
       }
-      // The LOCAL pass runs first and synchronously, so typing stays responsive
-      // on what is already resident. The server pre-pass below is what makes the
-      // count honest: the DOM walker prunes hidden and collapsed subtrees, so a
-      // folded turn's hit is invisible to it until the reveal lands.
+      // The local pass runs first and synchronously; the server pre-pass makes the count honest (the walker prunes hidden content).
       applyEngine(() => {
         engine?.search(query, ctx.caseSensitive);
       });
       updateCounter(query);
-      // Not while a handoff's landing is pending: the first mark is not where that
-      // open is going, and a scroll to it would be undone by the answer.
+      // Not while a handoff's landing is pending: that open is going elsewhere.
       if (!landOnResume) {
         revealCurrent();
       }
       return runServerSearch(getActiveId(), query, ctx.caseSensitive);
     },
     render: (result, query) => {
-      // THE ONE WRITER of the standing answer. Seven values move together or none
-      // does, which is what makes "a step list belongs to the text in the box" a
-      // property of the code rather than a rule to remember: the list, its tally,
-      // its walk order, the phase boundary, the cursor and the OWNERSHIP.
-      //
-      // A null is a failed fetch, and every one of them STANDS — the previous
-      // answer, its tally, its cursor, its reveal and its ownership — so a
-      // transient failure never un-says something true. What keeps that safe is
-      // the ownership itself: every reader below is gated on it, so an answer left
-      // standing across a query change is unspendable rather than wrong, and the
-      // moment the reader types that text back it is spendable again against the
-      // same list.
-      // Whether this answer is the one a handoff asked to land on: the flag is
-      // spent with the key it rides on, and a key the fresh list does not hold
-      // (the chat moved on) lands nowhere rather than on a guessed neighbour.
+      // The one writer of the standing answer: seven values move together or none does.
       let land = false;
       if (result !== null) {
         serverHits = result.matches;
@@ -352,23 +201,14 @@ function ensureBuilt(): void {
         announcedBoundary = false;
       }
       const owned = serverHitsQuery === query;
-      // ABOVE the early return: refining after a cut is exactly the gesture the
-      // note invites, so a query refined to zero hits has to clear the sentence
-      // rather than leave it beside a counter reading "No matches".
-      // OWNERSHIP-gated for the failed-fetch case on the same path: the standing
-      // answer may belong to text the reader has since replaced, and the note
-      // describes THAT answer.
+      // Above the early return: a query refined to zero hits must clear the cut sentence.
       shell?.setNote(owned ? cutNote() : "");
       if (result === null || result.matches.length === 0) {
-        // Repaint even with nothing to walk: the OWNERSHIP moved in this call, and
-        // the counter's session figure and its no-results skin are both gated on
-        // it — so an empty answer is where a genuine miss earns that skin, rather
-        // than on every keystroke while the fetch was still in flight.
+        // Repaint even with nothing to walk: ownership moved, and the session figure and miss skin are gated on it.
         updateCounter(query);
         return;
       }
-      // Re-run over the now-revealed DOM so the marks and the count cover the
-      // turns the reveal opened.
+      // Re-run over the revealed DOM so marks and count cover the opened turns.
       applyEngine(() => {
         engine?.search(query, shell?.caseSensitive ?? false);
       });
@@ -399,42 +239,19 @@ function ensureBuilt(): void {
     }
   });
 
-  // Anchor over the transcript (messages-wrap-outer is position:relative).
-  //
-  // HIDDEN BEFORE THE FIRST OPEN, and this is not cosmetic. The primitive only
-  // writes `[hidden]` at the END of a leave, so a freshly built panel is visible
-  // to the layout — and this one is `position: absolute` at `z-index: 60` over
-  // the transcript with `opacity: 0`, so without this it would swallow every
-  // click in its rectangle before search had ever been opened. pill-expand.ts
-  // normalizes the same way for the same reason.
+  // Hidden before the first open: the popup writes `[hidden]` only at a leave's end, so a fresh region would be visible.
   built.region.hidden = true;
   byId("messages-wrap-outer").appendChild(built.region);
   overlayEl = built.region;
 
-  // The reveal lifecycle is the primitive's: outside-click dismissal,
-  // document-level Escape, the trigger's ARIA, single-open coordination, and the
-  // is-open / is-leaving pair that lets BOTH legs animate. It drives the
-  // `[hidden]` attribute rather than the `.hidden` class, which is what removes
-  // the `display: none !important` the close could never animate out of.
-  //
-  // `isolateEscape: false` so the app's global Escape coordinator still sees the
-  // key, the same contract pill-expand.ts keeps.
-  //
-  // The trigger is looked up defensively: the popup only needs it to write ARIA
-  // and to exempt it from outside-click, and a fixture without the toolbar must
-  // still be able to open the box.
+  // The popup owns dismissal, Escape, ARIA, single-open and the is-open/is-leaving animation pair.
   popup = createPopup(built.region, {
     trigger: document.getElementById("find-btn"),
     group: "app-search",
     isolateEscape: false,
     haspopup: "dialog",
     onOpen: () => {
-      // Re-root the walker on the ACTIVE transcript view: parked sibling views
-      // hold other chats' text, which must stay out of the count, the marks and
-      // the tab order (they are inert). The root is stable for the whole open —
-      // a tab switch closes the search (below) — so a fresh engine per open is
-      // the entire lifecycle. Falls back to the multiplexer for fixtures that
-      // never mounted a view.
+      // Re-root on the active view: parked sibling views hold other chats' text.
       if (engine !== null && engine.root !== findRoot()) {
         applyEngine(() => {
           engine?.clear();
@@ -442,15 +259,7 @@ function ensureBuilt(): void {
         engine = new FindEngine(findRoot());
       }
       startObserving();
-      // aria-pressed, not aria-expanded: find is a TOGGLE, not a disclosure of
-      // this button's own content, and `.active` in this app means "this
-      // singleton tab is active" (tabs.ts syncSidebarButtons owns that class).
-      // 70-selection.css already styles `.icon-btn[aria-pressed="true"]`, so the
-      // visual is the app's one selected treatment with no local rule.
-      //
-      // The primitive writes aria-expanded on the same element and that is left
-      // in place: it is the truthful description of a revealable panel, no rule
-      // matches it, and removing it would fight the primitive on every open.
+      // aria-pressed: find is a toggle, and `.active` means "this singleton tab is active" (tabs.ts).
       document.getElementById("find-btn")?.setAttribute("aria-pressed", "true");
       built.focus();
       built.run();
@@ -466,26 +275,10 @@ function ensureBuilt(): void {
     },
   });
 
-  // A tab switch CLOSES the search and FORGETS the query. Subscribed here, once,
-  // at build time; the unsubscribe exists so a rebuilt module cannot stack two.
-  //
-  // Closing alone left the box pre-filled, and `openFindInChat` runs on open — so
-  // the next chat's find opened holding the previous chat's query and immediately
-  // searched a transcript that query was never typed against. Dropping it on the
-  // switch and NOT on an ordinary close is the useful split: reopening the find on
-  // the same chat still remembers what you were looking for, which is what the
-  // browser's own find does.
-  //
-  // ONE EXCEPTION, and it is the return trip: a switch THIS box caused by stepping
-  // onto a cross-tab hit keeps the query, so coming back and pressing Ctrl-F
-  // re-runs it and `render` restores the cursor to the hit the reader left on.
-  // Activating a run or a delegate page does not change the active CHAT, so the
-  // kept query still belongs to the transcript it was typed against — which is the
-  // exact condition the clear exists to protect.
+  // A tab switch closes the search and forgets the query, or the next chat's open searches with it.
   unsubTab?.();
   unsubTab = onBus(BUS_TAB_CHANGED, () => {
-    // Consumed here, one-shot, BEFORE the close: teardown leaves it standing (it
-    // cannot know which switch it is running under), so this is the only reader.
+    // Read one-shot before the close; teardown leaves it standing.
     const ours = crossTabJump;
     crossTabJump = false;
     closeChatFind();
@@ -495,13 +288,7 @@ function ensureBuilt(): void {
   });
 }
 
-/** Everything the open state owns, released in one place.
- *
- *  Called from the popup's onClose, so it runs on EVERY close path. The mark
- *  unwrap and the server-search reset are the two that cannot be skipped: marks
- *  left behind are welded into the transcript for the rest of the session, and a
- *  skipped reset leaves the turns the search opened open, permanently
- *  rearranging a transcript as a side effect of having searched it. */
+/** Release everything the open state owns, from the popup's onClose so it runs on every close path. */
 function teardown(): void {
   stopObserving();
   shell?.cancel();
@@ -512,14 +299,7 @@ function teardown(): void {
   applyEngine(() => {
     engine?.clear();
   });
-  // Everything that describes the CURRENT open, and nothing that describes the
-  // journey out of it: `crossTabJump` and `resumeKey` are deliberately LEFT
-  // STANDING. The ordering makes that unavoidable rather than a special case — the
-  // BUS_TAB_CHANGED subscriber calls closeChatFind(), whose popup onClose runs this
-  // function, so a teardown that cleared them would delete the resume state in the
-  // same turn the jump set it. Recording them AFTER the close instead is refused:
-  // the subscriber has to READ the flag to decide whether to keep the query, so it
-  // must already be set when the subscriber runs.
+  // `crossTabJump` and `resumeKey` stay standing: they describe the journey out, not the open.
   serverHits = [];
   serverTally = NO_ANSWER;
   stepOrder = [];
@@ -527,23 +307,14 @@ function teardown(): void {
   announcedBoundary = false;
   serverHitsQuery = "";
   hitCursor = -1;
-  // Unlike `resumeKey`, the landing describes the open it was asked for: a
-  // handoff arms it AFTER the switch's own close has run, so nothing here can
-  // delete it early, and a box the reader closed before its answer landed owes
-  // the next open a restored cursor, not a jump.
+  // Cleared here: a handoff arms it after the switch's own close, so this cannot delete it early.
   landOnResume = false;
   resetServerSearch();
   shell?.setNote("");
   updateCounter("");
 }
 
-/** Run a DOM-mutating engine op without our own <mark> writes and class toggles
- *  re-triggering the live re-run (the loop would be rerun → marks → rerun at the
- *  debounce's period). The shared observer delivers records on a microtask
- *  queued WHILE `fn` mutates, so releasing the guard one microtask after `fn`
- *  returns is deterministic where a synchronous flag would race the delivery —
- *  the same guarantee the disconnect/reconnect of a privately-owned observer
- *  used to give. */
+/** Run an engine op without its own marks re-triggering the live re-run. */
 function applyEngine(fn: () => void): void {
   engineWrites++;
   try {
@@ -559,26 +330,12 @@ function step(dir: 1 | -1): void {
   if (engine === null || shell === null) {
     return;
   }
-  // If the query changed since the last search (fast type-then-Enter), search
-  // first — that lands on the first match, matching native find's behaviour.
+  // A changed query searches first, landing on the first match like native find.
   if (engine.query !== shell.value) {
     shell.run();
     return;
   }
-  // THE SPINE: an owned server answer IS the step list, whatever the walker
-  // managed to mark. The DOM pass still highlights and is still what a step lands
-  // on, and it is the whole list when nothing is owned — an in-flight window, or a
-  // first query whose fetch failed.
-  //
-  // The two shapes this replaced are both unsound, and the suite already contained
-  // the fixture that proves it. `serverHits.length > engine.total` cannot detect
-  // divergence: 2 marks in one message against 2 hits, one of them in a message
-  // that is not resident, reads as `2 > 2` = false while a hit is unreachable. And
-  // a UNION needs a join the client cannot make honestly — the server's offset
-  // indexes raw source, a mark's indexes rendered text, the per-block counts differ
-  // wherever markdown or a diff window intervenes, and `pickNearestMark` is a
-  // ranking with a similarity floor rather than an identity — so it would
-  // double-visit and report a total that is neither list's.
+  // The spine: an owned server answer is the step list, whatever the walker marked.
   if (serverHits.length > 0 && serverHitsQuery === shell.value) {
     stepServerHit(dir);
     return;
@@ -594,36 +351,22 @@ function step(dir: 1 | -1): void {
   revealCurrent();
 }
 
-/** Paint the counter for `query`.
- *
- *  The query is a PARAMETER rather than a read of the box, so a count can never
- *  describe a search other than the one that produced it. */
+/** The query is a parameter, so a count cannot describe another search. */
 function updateCounter(query: string): void {
   if (countEl === null || engine === null) {
     return;
   }
   const owned = serverHitsQuery === query;
-  // TWO GRAMMARS, one owner. Stepping the session list prints a position IN that
-  // list; everything else prints the DOM position with the session figure beside
-  // it. One owner is what keeps the position stable across the re-run a streaming
-  // turn triggers — a second writer would repaint the DOM form under a reader who
-  // is walking the server's.
+  // Two grammars, one owner: a session-list position while stepping, else the DOM position with the session figure.
   if (stepsOwnedList(query)) {
     countEl.textContent = steppedCounter();
     overlayEl?.classList.remove("chat-find-no-results");
     return;
   }
-  // The session tally is ownership-gated, for the same reason the note is: until
-  // the answer belongs to the text in the box it describes a query the reader has
-  // replaced. The no-results SKIN takes the same condition, because "unknown" and
-  // "zero" are different states and flashing the miss skin on every keystroke
-  // would be a worse lie than a stale number.
+  // The session tally is ownership-gated, like the note.
   const session = owned ? serverTally : NO_ANSWER;
   countEl.textContent = domCounter(engine, query, session);
-  // The skin is a claim that the text is NOWHERE in the conversation, so it needs
-  // an owned answer saying so: while the fetch is in flight the honest state is
-  // "not known yet", and painting a miss on every keystroke of a query the server
-  // has not answered is a worse lie than a stale number.
+  // The miss skin claims the text is nowhere, so it needs an owned answer saying so.
   const noResults = query !== "" && engine.total === 0 && owned && serverTally.matched === 0;
   overlayEl?.classList.toggle("chat-find-no-results", noResults);
 }
@@ -636,9 +379,7 @@ function revealCurrent(): void {
   if (mark === null) {
     return;
   }
-  // Freeze the auto-scroll controller so a streaming turn doesn't yank the
-  // view back to the bottom while the user reads a match — but only when the
-  // jump actually leaves the live edge, which is `jumpTo`'s call to make.
+  // Freeze auto-scroll so streaming does not yank the view, only when the jump leaves the live edge (`jumpTo`'s rule).
   jumpTo(mark, {
     block: "center",
     inline: "nearest",
@@ -646,38 +387,18 @@ function revealCurrent(): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Server-hit navigation: the pipeline that makes a hit with no DOM mark
-// reachable. Page the message in, reveal its turn (stub build included), open
-// the delegate/reasoning chain over the matched block, re-walk, and select the
-// nearest mark — or, when the match is not in rendered text at all, select the
-// block itself and SAY so. Never a silent no-op.
-// ---------------------------------------------------------------------------
+// Server-hit navigation: page the message in, reveal its turn, open the disclosure chain, re-walk, pick the mark.
 
-/** How many older pages one navigation may fetch hunting for its message.
- *  Generous — at 50 messages a page this is 10000 messages — because the
- *  reader asked for exactly this hit; the cap only bounds a server that keeps
- *  claiming `has_more` without ever delivering the message. */
+/** Generous (10000 messages at 50 a page); the cap only bounds a server that never says `has_more: false`. */
 const HIT_PAGE_CAP = 200;
 
-/** Below this excerpt similarity the best candidate mark is not credibly THE
- *  hit — the same text elsewhere in the block, not this occurrence — so
- *  navigation falls back to selecting the block rather than claiming a
- *  precision it does not have. Dice over word tokens; an honest match scores
- *  well above this even with markdown syntax stripped out of the rendering,
- *  and a wrong occurrence shares little beyond the needle itself. */
+/** Below this similarity the candidate is the same text elsewhere, so the block is selected instead. */
 const SIM_FLOOR = 0.3;
 
-/** How long the "look here" wash stays on a container the navigation selected
- *  (block selection and `message`-kind hits). Past the CSS animation so the
- *  class strip is a cleanup, not the visual cutoff; also the reduced-motion
- *  backstop, where `animationend` never fires (settings-highlight.ts sets the
- *  precedent). */
+/** Past the CSS animation, so the class strip is cleanup. */
 const FLASH_FALLBACK_MS = 2000;
 
-/** The sentence that explains the partition, once per answer, on the press that
- *  first crosses into phase 2. Without it the reader has to infer the rule from
- *  being thrown out of the transcript. */
+/** Explains the partition once per answer, on the press that first crosses into phase 2. */
 const BOUNDARY_NOTICE = "the rest are in delegate pages and run tabs";
 
 function stepServerHit(dir: 1 | -1): void {
@@ -697,12 +418,7 @@ function stepServerHit(dir: 1 | -1): void {
   landOnHit(hit);
 }
 
-/** Land on `hit`, the way every press does.
- *
- *  The SYNCHRONOUS landing first. Without it every press takes the async pipeline
- *  — a reveal, an on-demand turn build, possibly a rAF pair — and `navBusy` DROPS
- *  an Enter arriving mid-flight, so holding Enter would drop presses on hits whose
- *  text is already on screen, where today it steps briskly. */
+/** Synchronous landing first: `navBusy` drops Enters while the async pipeline runs. */
 function landOnHit(hit: Hit): void {
   if (landInPlace(hit)) {
     return;
@@ -713,13 +429,7 @@ function landOnHit(hit: Hit): void {
   });
 }
 
-/** Land on `hit` with no await and no re-walk, or answer false and let the async
- *  pipeline run.
- *
- *  It succeeds only where nothing has to be fetched, revealed or opened: the hit is
- *  this client's to answer in place, it names a span rather than a whole entry,
- *  its element is mounted, and one of the marks ALREADY inside that element is
- *  credibly this occurrence. Everything else is the existing path, unchanged. */
+/** Land on `hit` with no await, or answer false for the async pipeline; only where nothing must be fetched or opened. */
 function landInPlace(hit: Hit): boolean {
   if (engine === null || shell === null) {
     return false;
@@ -739,18 +449,13 @@ function landInPlace(hit: Hit): boolean {
   applyEngine(() => {
     engine?.setCurrent(chosen);
   });
-  // Through the counter's own owner rather than painting the line here: the
-  // position it prints is `updateCounter`'s first branch, and one writer is what
-  // keeps a landing from disagreeing with the next repaint.
+  // Through `updateCounter`, the one writer, so a landing cannot disagree with the next repaint.
   updateCounter(shell.value);
   revealCurrent();
   return true;
 }
 
-/** The counter over the DOM marks: the cursor among them, with the server's
- *  whole-chat count beside it only when it exceeds them. An empty walk reads as
- *  the empty state the tally decides: nothing anywhere, or matched and not shown
- *  here (every hit inside a pruned subtree or a non-resident page). */
+/** The DOM-mark counter, with the whole-chat count beside it only when it exceeds the marks. */
 function domCounter(eng: FindEngine, query: string, tally: Tally): string {
   if (query === "") {
     return "";
@@ -764,10 +469,7 @@ function domCounter(eng: FindEngine, query: string, tally: Tally): string {
   return cursorCount(eng.currentIndex + 1, eng.total, exceeding(tally.matched, eng.total));
 }
 
-/** The counter while the server's list is being stepped: the position in THAT
- *  list, with the whole-chat count beside it only when the list was cut short of
- *  it. The same gate `domCounter` applies to the marks, so both grammars show the
- *  second figure exactly when it says more than the first. */
+/** The counter while stepping the server's list, with the whole-chat count only when the list was cut. */
 function steppedCounter(): string {
   return cursorCount(
     hitCursor + 1,
@@ -781,62 +483,31 @@ function exceeding(matched: number, total: number): number | undefined {
   return matched > total ? matched : undefined;
 }
 
-/** The note under a CUT answer: how much of the chat's count the list holds and
- *  how far the scan reached. "" for an answer the list holds whole, because a
- *  sentence restating the counter is noise (24-find.css's rule for this line). */
+/** The note under a cut answer; "" when the list holds it whole. */
 function cutNote(): string {
   return serverTally.matched > serverHits.length
     ? scanNote(serverTally, serverHits.length, NOUNS)
     : "";
 }
 
-/** Whether the STEPPED grammar is the honest thing to print for `query`: a cursor
- *  is standing in the server's list, and that list is the answer for `query`.
- *
- *  ONE owner, read by `updateCounter`'s stepped branch and by `paintHitPosition`
- *  below, because all three print that same grammar and only one of them may decide
- *  when it is true. */
+/** Whether the stepped grammar is honest for `query`: one owner for the counter and the landing gate. */
 function stepsOwnedList(query: string): boolean {
   return hitCursor >= 0 && serverHits.length > 0 && serverHitsQuery === query;
 }
 
-/** Paint the stepped position, with `·`-separated suffixes for whatever this press
- *  also has to say — the phase boundary, the destination, or what navigation could
- *  not do.
- *
- *  GATED HERE rather than at the call sites, and it closes a defect the deferred
- *  diff introduced: this function and `showHitNotice` (which is one call to it) are
- *  the two that WRITE, so a guard beside one await would leave the next caller
- *  unprotected. A landing now spans up to `DEFERRED_DIFF_WAIT_MS`, which is long
- *  enough for the reader to retype or for a fresh answer to land underneath it, and
- *  either way this press's position describes a list nobody is walking — so it
- *  paints nothing, exactly as `updateCounter` prints no stepped position there.
- *  The BOX rather than a parameter, because the question is whether the standing
- *  answer is still the one the reader has. */
+/** Paint the stepped position with suffixes, gated here so a press that lost ownership paints nothing. */
 function paintHitPosition(...suffixes: (string | (() => string))[]): void {
   if (countEl === null || !stepsOwnedList(shell?.value ?? "")) {
     return;
   }
-  // A suffix may arrive as a THUNK so that producing it happens after the gate: an
-  // argument is evaluated before the call, so `takeBoundaryNotice()` spelled as a
-  // value spends its once-per-answer latch even on a press this function then
-  // refuses, and the crossing sentence is lost for good. Unreachable while both
-  // crossing callers are synchronous and immediately post-step, and made structural
-  // rather than left to that coincidence, because this file's landings now span
-  // awaits. The alternative — a second entry point carrying its own copy of the gate
-  // — is the two-spellings-of-one-rule shape the file avoids elsewhere.
+  // Thunks are produced after the gate, so `takeBoundaryNotice()` does not spend its latch on a gated-off paint.
   const parts = suffixes.map((s) => (typeof s === "function" ? s() : s)).filter((s) => s !== "");
   countEl.textContent = [steppedCounter(), ...parts].join(" \u00b7 ");
 }
 
-/** The boundary sentence if this press is the crossing, "" otherwise. Spends the
- *  once-per-answer latch, so it composes into whatever paint the press was going to
- *  make rather than needing a paint of its own — the crossing is always a cross-tab
- *  press, whose own paint the switch is about to tear down. */
+/** Spends the once-per-answer latch. */
 function takeBoundaryNotice(): string {
-  // `localCount === 0` is not the crossing: with no phase 1 there is nothing to
-  // cross FROM, and "the rest are elsewhere" would be false about an answer whose
-  // every hit is elsewhere.
+  // With no phase 1 there is nothing to cross from.
   if (announcedBoundary || localCount === 0 || hitCursor !== localCount) {
     return "";
   }
@@ -844,13 +515,7 @@ function takeBoundaryNotice(): string {
   return BOUNDARY_NOTICE;
 }
 
-/** State the one thing navigation could not do, on the live-region counter.
- *  The next counter repaint replaces it, which is the right lifetime for a
- *  per-hit remark.
- *
- *  Every caller is POST-AWAIT, which is why it is one call to `paintHitPosition`
- *  rather than a second writer: the ownership gate there covers this one by
- *  construction. */
+/** Every caller is post-await, which is why it re-checks ownership. */
 function showHitNotice(suffix: string): void {
   paintHitPosition(suffix);
 }
@@ -860,26 +525,12 @@ async function navigateToHit(hit: Hit): Promise<void> {
   if (chatID === "" || engine === null) {
     return;
   }
-  // A DELEGATE's hit goes to that delegate's TAB, the only surface that renders its
-  // entries: the transcript draws the invocation card and drops the lane, so there is
-  // no DOM segment here for `entryElement` to find. Skipping `ensureHitResident` and
-  // `revealHitTurn` is the point — the destination is another tab. There is no step
-  // arm beside it: a run's steps are entries of the RUN's own log, so no hit in a
-  // chat's log can name one.
+  // A delegate's hit opens its tab, the only surface rendering its entries.
   const lane = hit.lane ?? "";
   if (lane !== "") {
-    // Painted BEFORE the open, with the DESTINATION and, on the crossing, the
-    // boundary sentence: on success the tab switch tears the overlay down
-    // (BUS_TAB_CHANGED -> closeChatFind), so anything said afterwards is said to
-    // nobody, and on a refused open this is the accurate position for a reader
-    // still on the transcript. Through the existing role=status counter, so it is
-    // spoken as well as shown.
+    // Painted before the open: the tab switch tears the overlay down.
     paintHitPosition(takeBoundaryNotice, "opening the delegate's page");
-    // BOTH resume values, immediately before the lazy import, because the switch
-    // this open causes is what tears the overlay down: `teardown` therefore has to
-    // EXEMPT them (it runs in the same turn), and the subscriber only reads the
-    // flag. Written even on a path that may fail — a stale one-shot flag costs a
-    // kept query, where a missing one costs the reader their place.
+    // Both resume values just before the lazy import; teardown exempts them because it runs in the same turn.
     crossTabJump = true;
     resumeKey = hitKey(hit);
     try {
@@ -904,15 +555,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
   if (!isOpen() || shell === null) {
     return;
   }
-  // THE TWO TURN-LEVEL KINDS RESOLVE FROM THE TURN, AHEAD OF THE ROW LOOKUP,
-  // because neither renders inside the message row: the attachment pills live in
-  // the turn HEADER and the failure reason in the card-level `.turn-notice`. A
-  // tier-3 STUB turn has no `.turn-body` at all, so on the very turns where the
-  // notice is the whole rendered content the row lookup below returns null and
-  // this arm would never be reached.
-  //
-  // AFTER residency and the reveal, though: a turn paged out of the window has no
-  // card to select, and paging it in is what makes one exist.
+  // The two turn-level kinds resolve from the turn card ahead of the row lookup: neither renders in the message row.
   if (hit.segment_kind === "turn_failure" || hit.segment_kind === "attachment") {
     const card = turnCardEl(hit.turn_id);
     if (card === null) {
@@ -925,9 +568,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
       hit.segment_kind === "turn_failure"
         ? card.querySelector<HTMLElement>(":scope > .turn-notice")
         : card.querySelector<HTMLElement>(":scope > .turn-header .turn-req-attachments");
-    // No disclosure chain and no row requirement: both regions sit in the card's
-    // resting state, and a turn whose text `turnFailureText` suppresses has no
-    // notice at all — which is what the walk's own miss notice then reports.
+    // Both regions sit in the card's resting state, so no disclosure chain.
     await landOrNotice(region ?? card, hit, region !== null);
     return;
   }
@@ -936,20 +577,14 @@ async function navigateToHit(hit: Hit): Promise<void> {
     showHitNotice("could not be shown");
     return;
   }
-  // An `entry` hit locates the entry, not a span in it: container navigation,
-  // scroll + brief highlight. Routing here is what makes the ranker's
-  // segment_len division unreachable for this kind — its segment_len is 0 by
-  // contract, and no zero-guard below has to know that.
+  // An `entry` hit gets container navigation, which keeps the ranker's segment_len division unreachable.
   if (hit.segment_kind === "entry") {
     selectContainer(target);
     updateCounter(shell.value);
     return;
   }
   openDisclosureChain(target, hit);
-  // A preview-less diff card loads its diff FROM THE OPEN, so the text this hit
-  // names does not exist until the bulk lands. Bounded, and `null` for every other
-  // shape — including a card already showing its preview, which therefore takes no
-  // await at all and behaves exactly as it did.
+  // A preview-less diff card loads its diff on open, so the text does not exist until the bulk lands.
   const arriving = awaitDeferredDiff(target, hit);
   if (arriving !== null) {
     await arriving;
@@ -959,38 +594,14 @@ async function navigateToHit(hit: Hit): Promise<void> {
       return;
     }
   }
-  // Narrow AFTER the chain opened, never inside `resolveSegmentEl`: the regions a
-  // tool kind narrows to reach their state two ways, and both are late. The input
-  // `<pre>` and the denial block are BUILT by `detailsBody` on the first open, so
-  // on a closed card neither exists; `.tool-output` is part of the card shell, so
-  // the element exists from the mount but holds no text until that open. Either
-  // way, narrowing before the open answers a mark-free element for every closed
-  // card — the common case, and exactly the case the narrowing is for.
+  // Narrow after the chain opened: the input `<pre>` and denial block are built by `detailsBody` on first open.
   const narrowed = narrowToolTarget(target, hit);
   await landOrNotice(narrowed ?? target, hit, narrowed !== null);
 }
 
-/** Walk `walkTarget`, select the mark that is credibly THIS hit, or select the
- *  region and SAY what happened. The shared tail of every resolution path — the
- *  row path and the turn-level one — so the two cannot answer a miss differently.
- *
- *  `narrowed` is the narrowing OUTCOME rather than the selector, because
- *  `missNotice` reads it and one owner of the query is the point. */
+/** Walk, select the credible mark, or select the region and say what happened; shared by every resolution path. */
 async function landOrNotice(walkTarget: HTMLElement, hit: Hit, narrowed: boolean): Promise<void> {
-  // A landing may not MOVE the reader once this press has stopped owning the list,
-  // and that is a wider rule than the counter's: every effect below is a write the
-  // reader SEES — `jumpTo` and `revealCurrent` scroll, `selectContainer` flashes,
-  // `engine.setCurrent` moves the mark — so a landing arriving up to
-  // `DEFERRED_DIFF_WAIT_MS` after the reader retyped would jump the transcript to a
-  // hit for a query they have left, with the counter (correctly) saying nothing
-  // about it. Silent motion is worse than a stale sentence, not better.
-  //
-  // The SAME predicate the counter uses, because it is the same question — is the
-  // standing answer still the one the reader has — and one owner is what stops the
-  // two disagreeing about whether a press is live. Every legitimate entry passes it:
-  // `landOnHit` is reached only through `stepOrder[hitCursor]`, which is `undefined`
-  // for a cursor of -1 under `noUncheckedIndexedAccess`, so a cursor is always
-  // standing in the owned list by the time this runs.
+  // A landing may not move the reader once this press lost the list: every effect below is a visible write.
   if (!stepsOwnedList(shell?.value ?? "")) {
     return;
   }
@@ -1001,30 +612,18 @@ async function landOrNotice(walkTarget: HTMLElement, hit: Hit, narrowed: boolean
   // asks, and never reaches the notice below either.
   let rendered = true;
   if (chosen === -1) {
-    // A miss can mean the text is not THERE, or that it was not RENDERED when the
-    // walker ran. The four cards that carry a transcript's mass are
-    // `content-visibility: auto` (css/14-tools.css), so their content is skipped
-    // while off screen and the walker prunes it — and a hit the reader has not
-    // scrolled to yet is exactly that. Scrolling to it is what renders it, so
-    // navigate FIRST and ask once more before claiming the text is not there.
+    // A miss may mean not rendered: the transcript's heavy cards are `content-visibility: auto` (css/14-tools.css), so
+    // jump and wait one rendered frame.
     jumpTo(walkTarget, { block: "center", inline: "nearest", behavior: "auto" });
     rendered = await nextRender();
-    // Closed, the transcript repainted this element away, or the reader moved off
-    // this answer, while the frame rendered. The ownership term is the entry guard's,
-    // re-asked because this is the file's own idiom at an await boundary (`isOpen()`
-    // is checked at each one for the same reason) and because the two effects left
-    // below — the flash and the mark — are the ones the entry guard was protecting.
-    // `shell` needs no re-check: it is assigned once at build.
+    // Closed, repainted away, or no longer owning the answer during the frame.
     if (!isOpen() || !walkTarget.isConnected || !stepsOwnedList(shell?.value ?? "")) {
       return;
     }
     chosen = walkAndPick(walkTarget, hit);
   }
   if (chosen === -1) {
-    // Syntax-only match (link target, emphasis marker, fence info), a best
-    // candidate below the similarity floor, or text that is genuinely elsewhere:
-    // select the NARROWED region and say why, so the flash lands on the diff
-    // rather than on the whole card.
+    // Syntax-only match, low similarity or elsewhere: select the narrowed region and say why.
     selectContainer(walkTarget);
     showHitNotice(missNotice(hit, rendered, narrowed));
     return;
@@ -1036,11 +635,7 @@ async function landOrNotice(walkTarget: HTMLElement, hit: Hit, narrowed: boolean
   revealCurrent();
 }
 
-/** Walk the transcript again and pick the mark that is credibly THIS hit.
- *
- *  The walk is what makes marks exist inside content that has only just become
- *  visible — a disclosure chain the navigation opened, or a card a scroll brought
- *  on screen. -1 when nothing inside `target` is credibly the hit. */
+/** The walk makes marks exist inside content that only just became visible. */
 function walkAndPick(target: HTMLElement, hit: Hit): number {
   applyEngine(() => {
     engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
@@ -1048,19 +643,10 @@ function walkAndPick(target: HTMLElement, hit: Hit): number {
   return pickNearestMark(target, hit);
 }
 
-/** Ceiling on the frame wait below. Four 60Hz frames: long enough that a busy
- *  frame does not lose the re-walk, short enough that the fallback is not itself
- *  a stall the reader can feel. */
+/** Four 60Hz frames: a busy frame keeps its re-walk, and the fallback is no felt stall. */
 const RENDER_WAIT_CEILING_MS = 64;
 
-/** One RENDERED frame, or the ceiling, whichever lands first. `true` when a frame
- *  was actually delivered, which is what makes a following miss CONCLUSIVE.
- *
- *  The second callback is the first point after the previous frame was laid out,
- *  which is when a `content-visibility: auto` card a scroll just reached holds
- *  walkable text. THE TIMEOUT IS NOT BELT-AND-BRACES: a hidden page gets no
- *  animation frames, so the bare pair never settled inside `stepServerHit`'s
- *  `navBusy` latch, leaving find's next/prev inert until the tab came forward. */
+/** One rendered frame or the ceiling; `true` when a frame was delivered, which makes a following miss conclusive. */
 function nextRender(): Promise<boolean> {
   return new Promise((resolve) => {
     const ceiling = setTimeout(() => {
@@ -1075,12 +661,7 @@ function nextRender(): Promise<boolean> {
   });
 }
 
-/** Page older history in until the hit's TURN is resident. Bounded by the server's
- *  own `has_more`, a no-progress check, and a page cap.
- *
- *  The window pages by TURN and holds whole turns, so residency is one map lookup and
- *  the cursor it pages from is the oldest resident turn id — the same value
- *  `?before=` takes. */
+/** Page history until the hit's turn is resident, bounded by `has_more`, a no-progress check and a page cap. */
 async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
   const resident = (): boolean => getActive()?.turns.has(hit.turn_id) === true;
   for (let pages = 0; !resident(); pages++) {
@@ -1108,14 +689,7 @@ function turnCardEl(turnID: string): HTMLElement | null {
   return findRoot().querySelector<HTMLElement>(`.turn[data-reconcile-key="${CSS.escape(turnID)}"]`);
 }
 
-/** The rendered element of the hit's ENTRY, inside its own turn card. Null means the entry is
- *  not mounted here — a turn the reveal could not build, or an entry the window dropped.
- *
- *  TWO stamps, because a prose RUN is one element for several entries: `data-entry-id` is its
- *  first member's, `data-entries` the rest, which `writeRunEntries` (messages-blocks.ts) owns.
- *
- *  A TOOL kind's answer is the whole `.tool-call`; the region inside it is
- *  `narrowToolTarget`'s, after the disclosure has opened. */
+/** The hit's entry element in its own turn card; null when not mounted. Two stamps, for a prose run's members. */
 function entryElement(turnID: string, entryID: string): HTMLElement | null {
   const card = turnCardEl(turnID);
   if (card === null) {
@@ -1128,19 +702,11 @@ function entryElement(turnID: string, entryID: string): HTMLElement | null {
   if (stamped === null) {
     return null;
   }
-  // A prose run is stamped on its ROW — that is what a window drop removes — so both
-  // shapes answer with the bubble, which is what every consumer downstream flashes,
-  // walks and jumps to.
+  // Both shapes answer with the bubble, which every consumer flashes, walks and jumps to.
   return stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped;
 }
 
-/** Which region inside a tool card each tool kind's text is RENDERED in. A kind
- *  with no row here narrows to nothing and the card is walked whole, which is
- *  what every non-tool kind wants.
- *
- *  `tool_title` and `tool_disclosed` are ONE rendered position, because
- *  `disclosedClaim` replaces the card's title in the display — so exactly one of
- *  the two is ever on screen per card and both walk `.tool-title`. */
+/** Which region inside a tool card each kind's text renders in; a kind with no row walks the whole card. */
 const TOOL_DIFF_PREVIEW = ".tool-diff-preview";
 const TOOL_TARGET: Partial<Record<SegmentKind, string>> = {
   tool_title: ".tool-title",
@@ -1151,14 +717,7 @@ const TOOL_TARGET: Partial<Record<SegmentKind, string>> = {
   tool_output: ".tool-output",
 };
 
-/** The region inside the hit's tool card that holds THIS kind's text, or null
- *  when there is none to narrow to.
- *
- *  Without it six kinds would share one walk target — the whole `.tool-call` —
- *  and `pickNearestMark` ranks every mark inside it, so a query matching both a
- *  call's arguments and its output could land a `tool_input` hit on the output's
- *  mark, and a diff's own notice could never fire while any other credible mark
- *  existed in the card. */
+/** Without narrowing six kinds would share the whole `.tool-call` as one walk target. */
 function narrowToolTarget(target: HTMLElement, hit: Hit): HTMLElement | null {
   const selector = TOOL_TARGET[hit.segment_kind];
   if (selector === undefined) {
@@ -1168,24 +727,7 @@ function narrowToolTarget(target: HTMLElement, hit: Hit): HTMLElement | null {
   return card.querySelector<HTMLElement>(selector);
 }
 
-/** The one-line remark for a hit whose second walk found no credible mark.
- *
- *  THREE states, not two, and the diff sentences replace exactly one of them.
- *  With NO frame delivered the walk ran against content that may simply not be
- *  painted yet — a hidden tab, or a paint past the ceiling — so every kind claims
- *  "later" rather than "absent"; a diff on a hidden tab is unpainted rather than
- *  windowed out, and pointing at the diff would send the reader to a region for a
- *  problem they do not have. With a frame delivered, a `tool_diff` says which of
- *  the two things it is: the card renders a mini-diff whose shown hunks do not
- *  carry the match (`windowHunks` keeps 24 rows), or it renders no diff at all
- *  even after `awaitDeferredDiff` opened the card and waited for one.
- *
- *  THAT SECOND SENTENCE SAYS WHAT HAPPENED RATHER THAN WHAT TO DO, because
- *  opening the card is now what this code just tried: it is the reader's only
- *  remaining lever (retry it, or read the whole diff from the file), and telling
- *  them to open a card that is already open would be advice for a state they are
- *  not in. Neither sentence claims more than the wire can support: a hit carries no
- *  diff ordinal, and with Diffs[0]-only there is nothing else it could name. */
+/** Three states: no frame delivered (not rendered), rendered but not found, or a diff-specific sentence. */
 function missNotice(hit: Hit, rendered: boolean, narrowed: boolean): string {
   if (!rendered) {
     return "not rendered yet";
@@ -1198,27 +740,10 @@ function missNotice(hit: Hit, rendered: boolean, narrowed: boolean): string {
   return "not in rendered text";
 }
 
-/** The kinds whose rendered element lives inside `.tool-details`, so reaching one
- *  means opening the card's own disclosure — that region is where `detailsBody`
- *  BUILDS the input `<pre>` and the denial block, and where it appends a settled
- *  call's output text. `tool_title` and `tool_disclosed` are deliberately absent:
- *  both share the claim line, which is in the card's resting state.
- *
- *  `tool_diff` is absent too and is NOT the same case, which is why it is answered
- *  by `awaitDeferredDiff` instead of by a member here. `insertDiffPreview` inserts
- *  the mini-diff BEFORE `.tool-details`, so this set's question — does the text
- *  live inside that region — is simply false for it; and a preview-less card needs
- *  an AWAIT beside the open, which membership of a synchronous set cannot carry. */
+/** Kinds rendered inside `.tool-details`, where `detailsBody` builds the input `<pre>` and denial block on first open. */
 const OPENS_TOOL_DETAILS = new Set<SegmentKind>(["tool_output", "tool_input", "tool_denial"]);
 
-/** Open a tool card's own disclosure, when it has one and it is closed.
- *
- *  The single owner of that click, because two callers make it — this file's
- *  disclosure chain for the three kinds above, and `awaitDeferredDiff` for a
- *  preview-less diff — and they must not drift on how a closed card is recognised.
- *  Activating the real control rather than writing the attribute is what keeps the
- *  disclosure controller behind it agreeing with the DOM, exactly as the group
- *  case does. */
+/** The single owner of that click (the disclosure chain and `awaitDeferredDiff` both need it). */
 function openToolCardDetails(card: HTMLElement): void {
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle?.getAttribute("aria-expanded") === "false") {
@@ -1226,23 +751,7 @@ function openToolCardDetails(card: HTMLElement): void {
   }
 }
 
-/** Activate a transcript control the way a reader would, WITHOUT the click reaching
- *  the document.
- *
- *  `element.click()` dispatches a bubbling click, and this search box is a popup
- *  whose outside-dismissal listens for one at `document` (ui-primitives'
- *  `popup-core.ts`), so find opening a card or a group ON THE READER'S BEHALF read
- *  as the reader clicking outside the box and closed it — taking the query, the
- *  cursor and the counter with it. Latent for the three kinds whose landing is
- *  synchronous, which paint their position into a box that is already leaving; FATAL
- *  for a deferred diff, whose answer lands after an await and would find the overlay
- *  gone, so nothing at all reaches the reader.
- *
- *  A bubble-phase `stopPropagation` on the control itself rather than a hand-built
- *  event: every listener on the control still runs, in registration order
- *  (`stopPropagation` is not `stopImmediatePropagation`), so `createDisclosure`'s
- *  handler and `tool-card.ts`'s body builder are activated exactly as a real click
- *  activates them — and only the ancestors, `document` among them, are spared. */
+/** Activate without the click reaching the document: this popup's outside-dismissal would close the search. */
 function activateQuietly(control: HTMLElement): void {
   const stop = (e: Event): void => {
     e.stopPropagation();
@@ -1255,14 +764,7 @@ function activateQuietly(control: HTMLElement): void {
   }
 }
 
-/** Open every closed disclosure between the hit's element and its turn body, so the
- *  walker can reach the text: reasoning `<details>` through the platform API, tool groups
- *  by ACTIVATING their real header, so the controller behind it keeps agreeing with the
- *  DOM. A hit whose kind lives inside `.tool-details` also opens its card's own disclosure.
- *
- *  It stops at `.turn-body` because an entry's element IS a card, note or row that body holds,
- *  so every disclosure that can hide one is BETWEEN the two. The card is resolved with
- *  `closest` rather than from `target`, so a caller passing a REGION inside it still works. */
+/** Open every closed disclosure between the element and its turn body, through each control's real path. */
 function openDisclosureChain(target: HTMLElement, hit: Hit): void {
   for (let cur: HTMLElement | null = target; cur !== null; cur = cur.parentElement) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {
@@ -1286,55 +788,13 @@ function openDisclosureChain(target: HTMLElement, hit: Hit): void {
   }
 }
 
-/** Ceiling on the deferred-diff wait below.
- *
- *  `stepServerHit` DROPS an Enter while `navBusy` is latched, so this bounds how
- *  long a keystroke may be swallowed rather than how long a request may take: the
- *  bulk's own budget is `@cplieger/fetch`'s 30s, and hanging the walk for that is
- *  worse than the miss notice. Long enough for a same-origin request the server
- *  answers off the chat file; a second visit to the same hit is free either way — the
- *  SUCCESS path because `toolCallBulk` memoises per `(chatID, toolCallID)` and the
- *  preview is then on screen, the DEAD one because `openBroughtNoDiff` answers before
- *  this ceiling is armed again. */
+/** `stepServerHit` drops Enters while `navBusy` is latched, so this bounds a swallowed keystroke. */
 const DEFERRED_DIFF_WAIT_MS = 1500;
 
-/** Cards whose open already tried the bulk and brought no diff back.
- *
- *  It bounds a DEAD diff hit to one ceiling per card rather than one per visit: the
- *  three endings that deliver nothing — no `chatID`, a null bulk, a zero-change diff
- *  — leave the preview absent and the disclosure present, and `detailsBody`'s
- *  builder has already run and will not run again, so every later visit re-entered
- *  and waited the full `DEFERRED_DIFF_WAIT_MS` for something nothing was going to
- *  send. `toolCallBulk` memoises only the SUCCESS path, so it cannot answer this.
- *
- *  A WeakSet keyed on the element rather than a `data-` attribute: this is find's own
- *  bookkeeping, nothing else reads it, and publishing it into the card's markup would
- *  invite a second reader — where the set keeps the DOM clean and dies with the
- *  element, so a re-mounted card is asked once more, which is right because its
- *  builder is fresh too. A bulk that answers PAST the ceiling still lands its
- *  preview, and the resting-preview guard below wins on the next visit, so marking
- *  at the ceiling cannot hide a diff that did arrive. */
+/** Bounds a dead diff hit to one ceiling per card rather than per visit. */
 const openBroughtNoDiff = new WeakSet<HTMLElement>();
 
-/** Open a preview-less `tool_diff` card and answer the bounded wait for its diff,
- *  or `null` when there is nothing to wait for.
- *
- *  A call whose diff exceeded the preview budget renders NO diff at rest — the
- *  MAJORITY case, 4,625 of 7,285 diff-bearing calls — and loads it from the bulk
- *  when the reader OPENS the card (`tool-card.ts`'s `DEFERRED_PARTS`). So opening
- *  the disclosure is precisely what makes this hit's text exist, and the walk has
- *  to wait for it: the open is synchronous, so widening `OPENS_TOOL_DETAILS` alone
- *  would re-walk before the diff arrived and report a miss for every one of them.
- *
- *  `null` rather than a resolved promise for a card that ALREADY renders its
- *  preview, so that path takes no await at all and behaves exactly as it did
- *  before this existed: no disclosure opened, no fetch, not even a microtask hop.
- *  Same answer for a card carrying no disclosure, where nothing is coming.
- *
- *  THE FETCH IS THE PRICE AND IT IS BOUNDED TO ONE HIT: it happens only for a hit
- *  the reader actually stepped onto, which is what makes it acceptable where a
- *  bulk fetch per Enter was refused. Nothing here prefetches, opens
- *  speculatively, or costs anything per hit at list time. */
+/** Open a preview-less `tool_diff` card and wait, bounded, for its diff; null when nothing is coming. */
 function awaitDeferredDiff(target: HTMLElement, hit: Hit): Promise<void> | null {
   if (hit.segment_kind !== "tool_diff") {
     return null;
@@ -1343,10 +803,7 @@ function awaitDeferredDiff(target: HTMLElement, hit: Hit): Promise<void> | null 
   if (card === null) {
     return null;
   }
-  // A diff already on screen is the resting-state path, unchanged; a card whose open
-  // has already brought nothing back has nothing more coming, so a second visit to
-  // that hit answers at once instead of paying the ceiling again; a card with no
-  // disclosure has nothing to open. All three answer `null`.
+  // A diff on screen is the resting path; a card that already came back empty answers at once.
   if (
     card.querySelector(TOOL_DIFF_PREVIEW) !== null ||
     openBroughtNoDiff.has(card) ||
@@ -1358,25 +815,7 @@ function awaitDeferredDiff(target: HTMLElement, hit: Hit): Promise<void> | null 
   return waitForDiffPreview(card);
 }
 
-/** The first `.tool-diff-preview` to appear on `card`, or the ceiling.
- *
- *  A MutationObserver rather than a poll: the arrival is one `insertBefore` the
- *  bulk's own `then` performs, so there is exactly one thing to observe and a poll
- *  would trade a wake-up cadence for it.
- *
- *  `subtree: true` because the callback and `awaitDeferredDiff`'s own guard both ask
- *  `card.querySelector(TOOL_DIFF_PREVIEW)` — a DESCENDANT question — so the
- *  subscription matches the question rather than the direct-child position
- *  `insertDiffPreview` happens to use today. Pinning that coincidence would make a
- *  nested insert added later fail SILENTLY as a ceiling rather than a landing, which
- *  is the worst failure shape available here; matching the guard costs one option.
- *
- *  THE CEILING IS NOT BELT-AND-BRACES: three ordinary endings deliver no preview
- *  at all — a card with no `chatID` requests nothing, a null bulk applies nothing,
- *  and `insertDiffPreview` returns early on a zero-change diff — and each has to
- *  reach the miss notice rather than hang the walk. It also covers a card the
- *  reader had already opened, whose builder ran once and will not run again. Reaching
- *  it MARKS the card, so the next visit to that hit answers without waiting. */
+/** A MutationObserver, not a poll: the arrival is one `insertBefore`. */
 function waitForDiffPreview(card: HTMLElement): Promise<void> {
   return new Promise((resolve) => {
     const obs = new MutationObserver((_records, observer) => {
@@ -1396,13 +835,7 @@ function waitForDiffPreview(card: HTMLElement): Promise<void> {
   });
 }
 
-/**
- * The nearest-match ranking over the target's marks, as the engine index of
- * the winner (-1 = no credible mark). Excerpt similarity first — the server
- * matched raw markdown and the DOM holds rendered text, so ordinals cannot be
- * trusted across the two — then relative position (`wantFraction` against the
- * mark's offset in the target's text), ties to the lowest index.
- */
+/** Excerpt similarity first (raw markdown vs rendered text), then position. -1 means no credible mark. */
 function pickNearestMark(target: HTMLElement, hit: Hit): number {
   const excerptTokens = tokenSet(hit.excerpt);
   const offsets = markOffsets(target);
@@ -1410,8 +843,7 @@ function pickNearestMark(target: HTMLElement, hit: Hit): number {
   let best = -1;
   let bestSim = -1;
   let bestDist = Infinity;
-  // A hit spanning several nodes is several marks sharing one `data-hit`; the
-  // first piece is where the hit starts, and it alone is a candidate.
+  // A multi-node hit shares one `data-hit`; its first piece is the candidate.
   const seen = new Set<number>();
   for (const mark of target.querySelectorAll<HTMLElement>("mark.find-hit")) {
     const index = Number(mark.getAttribute("data-hit"));
@@ -1431,14 +863,7 @@ function pickNearestMark(target: HTMLElement, hit: Hit): number {
   return bestSim >= SIM_FLOOR ? best : -1;
 }
 
-/** The hit's position as a fraction of the text the walk MEASURES, which is the
- *  element's and not the segment's.
- *
- *  A prose RUN is one element for several entries, so `offset` — relative to
- *  the entry's own segment — is re-based through that run's offset table. An entry
- *  rendering its own element has nothing to re-base, and its segment IS that text. Zero
- *  when the server reports no segment: an `entry`-kind hit takes the container path and
- *  never reaches here, and a divide by it would rank every mark at NaN. */
+/** A prose run is one element for several entries, so the offset is re-based over the run (`runOffsetOf`). */
 function wantFraction(hit: Hit): number {
   const run = runOffsetOf(hit.turn_id, hit.entry_id);
   if (run !== undefined && run.total > 0) {
@@ -1447,10 +872,7 @@ function wantFraction(hit: Hit): number {
   return hit.segment_len > 0 ? hit.offset / hit.segment_len : 0;
 }
 
-/** The target's full text in document order plus each mark's start offset in
- *  it. One walk serves every candidate. UTF-16 units rather than the server's
- *  runes — both sides of the position comparison are RATIOS, so the skew of a
- *  surrogate pair moves both numerators the same way. */
+/** UTF-16 units, not runes: both sides of the comparison are fractions. */
 function markOffsets(target: HTMLElement): { text: string; marks: Map<HTMLElement, number> } {
   const marks = new Map<HTMLElement, number>();
   let text = "";
@@ -1470,11 +892,7 @@ function markOffsets(target: HTMLElement): { text: string; marks: Map<HTMLElemen
   return { text, marks };
 }
 
-/** The context radius the server's excerpt carries, so the two sides of the
- *  similarity comparison span the same amount of text. The Go twin is
- *  `chat.searchExcerptRadius` (internal/chat/search.go), and the two are held
- *  together by chat-search.node.test.ts, which reads both files as text — there is
- *  no wire field to carry it and no codegen either side. */
+/** Twin of `chat.searchExcerptRadius` (internal/chat/search.go); the two must match. */
 const EXCERPT_RADIUS = 60;
 
 /** The rendered-side counterpart of the server's excerpt: the text around the
@@ -1484,9 +902,7 @@ function contextAround(text: string, at: number, mark: HTMLElement): string {
   return text.slice(Math.max(0, at - EXCERPT_RADIUS), at + len + EXCERPT_RADIUS);
 }
 
-/** Word tokens for similarity: lowercased, split on anything that is not a
- *  letter or digit — which is what strips markdown syntax (`**`, backticks,
- *  link brackets) out of the comparison between raw and rendered text. */
+/** Splitting on non-alphanumerics strips markdown syntax from the comparison. */
 function tokenSet(s: string): Set<string> {
   return new Set(
     s
@@ -1510,9 +926,7 @@ function dice(a: Set<string>, b: Set<string>): number {
   return (2 * inter) / (a.size + b.size);
 }
 
-/** Container selection: scroll it into view and flash the shared "look here"
- *  wash (24-find.css). The class comes off on animationend, with a timer as
- *  the reduced-motion backstop where the animation never runs. */
+/** The class comes off on animationend, with a timer as the reduced-motion backstop. */
 function selectContainer(target: HTMLElement): void {
   target.classList.add("find-target-flash");
   target.addEventListener(
@@ -1549,9 +963,7 @@ function stopObserving(): void {
   unobserveTranscript = null;
 }
 
-/** The transcript changed (streaming, a new turn, a chat switch). Re-run the
- *  search so the counter stays honest, preserving the current index and NOT
- *  scrolling (the user isn't stepping). */
+/** Re-run so the counter stays honest, preserving the index and not scrolling. */
 function scheduleRerun(): void {
   if (rerunTimer !== undefined) {
     clearTimeout(rerunTimer);
@@ -1579,22 +991,13 @@ function openFindInChat(): void {
   if (!popup.isOpen) {
     lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
-  // show() on an already-open popup is a no-op reveal, so re-focus and re-run
-  // here rather than in onOpen alone: the toolbar button and the hotkey both
-  // reach an open box and both should land the caret in it.
+  // show() on an open popup is a no-op, so focus and re-run here.
   popup.show();
   shell?.focus();
   shell?.run();
 }
 
-/** Open the transcript search carrying `query` and land on `hit`: the handoff
- *  from a surface that found the CONVERSATION and counted its matches (the
- *  History page), so the count it showed is a number the reader can reach. Rides
- *  the cross-tab RESUME: the box re-runs `query`, `render` finds the hit in the
- *  fresh answer, and the landing is the pipeline a keypress takes; a hit the fresh
- *  answer no longer holds is not chased. The caller opens the chat's TAB first and
- *  awaits it: the switch closes this box and clears the active chat's query, so a
- *  handoff running before it would be undone by it. */
+/** Open the search with `query` and land on `hit`: the handoff from a surface that counted the conversation's matches. */
 export function openChatFindAt(query: string, hit: Hit): void {
   ensureBuilt();
   if (shell === null) {
@@ -1606,23 +1009,17 @@ export function openChatFindAt(query: string, hit: Hit): void {
   openFindInChat();
 }
 
-/** Close the transcript search, running the full teardown: hiding the box instead
- *  would leave the observer, the marks and the folds behind. Idempotent, so a
- *  close that re-enters through the popup's onClose is a no-op.
+/**
+ * Close the search with the full teardown. Idempotent.
  *
- *  @internal Test seam.
- *  @knipignore The test loads this module through a cache-busting dynamic specifier. */
+ * @internal Test seam.
+ * @knipignore The test loads this module through a cache-busting dynamic specifier.
+ */
 export function closeChatFind(): void {
   popup?.hide();
 }
 
-/** Toggle the transcript search. What the toolbar button means.
- *
- *  The button used to call the OPEN path, so a second click re-focused,
- *  re-selected and re-ran the search of a box that was already open — a control
- *  that looks like a toggle and is not. `files-search.ts` already had this shape,
- *  and `tabs.ts`'s toggle/open verb pair is the same distinction for a whole
- *  view. */
+/** Toggle the search; what the toolbar button means. */
 export function toggleChatFind(): void {
   if (!chatFindActiveContext()) {
     return;
@@ -1653,15 +1050,10 @@ function findInputFocused(): boolean {
   return shell !== null && document.activeElement === shell.input;
 }
 
-/** Global Ctrl-F / Cmd-F handler, registered on document from app.ts via
- *  find-dispatch. Opens (or refocuses) the in-chat find widget when the chat
- *  view is active. A second Ctrl-F while the find field already has focus falls
- *  through to the browser's native find (the escape hatch).
- *
- *  The HOTKEY opens rather than toggles, deliberately: a second Ctrl-F is the
- *  escape hatch to native find, so making it close would spend the app's only
- *  a11y justification for overriding the chord. The BUTTON toggles
- *  (toggleChatFind) because a button that only ever opens is not a toggle. */
+/**
+ * Global Ctrl-F / Cmd-F (via find-dispatch): opens or refocuses the widget when the chat view is active. A repeat press
+ * while the field has focus goes to native find.
+ */
 export function handleFindHotkey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() !== "f" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
     return;
@@ -1677,9 +1069,10 @@ export function handleFindHotkey(e: KeyboardEvent): void {
   openFindInChat();
 }
 
-/** @internal Test seam: whether the transcript search is open.
- *
- *  @knipignore The test loads this module through a cache-busting dynamic specifier. */
+/**
+ * @internal Test seam: whether the search is open.
+ * @knipignore The test loads this module through a cache-busting dynamic specifier.
+ */
 export function _isChatFindOpen(): boolean {
   return isOpen();
 }

@@ -1,12 +1,5 @@
-// A WRITE THAT CHANGES NOTHING MUST CHURN NOTHING, and a write that carries a fact must
-// not drop it.
-//
-// Four guards whose whole job is to be invisible, so the only way to pin one is to assert
-// that a repaint did NOT happen — or, for the header's watermark, that a field the server
-// sent survived the re-sync.
-//
-// A separate file from `store.test.ts` deliberately: `store.ts` is under concurrent edit,
-// and its own suite is the file most likely to be touched alongside it.
+// A WRITE THAT CHANGES NOTHING MUST CHURN NOTHING, and a write that carries a fact must not drop
+// it.
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   setSessions,
@@ -66,8 +59,6 @@ beforeEach(() => {
   setActive("a");
 });
 
-// --- The working label ----------------------------------------------------------------
-
 describe("setWorkingLabel", () => {
   it("repaints when the label actually changes", async () => {
     expect(await bumped("a", () => setWorkingLabel("a", "Compacting"))).toBe(true);
@@ -77,14 +68,12 @@ describe("setWorkingLabel", () => {
   it("repaints nothing when the same label is written again", async () => {
     setWorkingLabel("a", "Compacting");
     await Promise.resolve();
-    // The label is re-derived on a cadence the DATA does not follow, so the same value
-    // arrives repeatedly; each one reaching the renderer is a transcript pass per frame.
+    // The label is re-derived on a cadence the DATA does not follow, so the same value arrives
+    // repeatedly; each one reaching the renderer is a transcript pass per frame.
     expect(await bumped("a", () => setWorkingLabel("a", "Compacting"))).toBe(false);
     expect(get("a")?.working_label).toBe("Compacting");
   });
 });
-
-// --- The steer rollback ---------------------------------------------------------------
 
 describe("restoreSteers", () => {
   it("puts a captured snapshot back", async () => {
@@ -102,9 +91,9 @@ describe("restoreSteers", () => {
   });
 
   it("leaves the dock alone when the snapshot it is rolling back is EMPTY", async () => {
-    // `dropConfirmedSteers` answers `[]` when nothing was confirmed, and `withSteers`
-    // DELETES the field for an empty list — so an unguarded rollback of that answer would
-    // clear the rows the drop deliberately kept.
+    // `dropConfirmedSteers` answers `[]` when nothing was confirmed, and `withSteers` DELETES the
+    // field for an empty list — so an unguarded rollback of that answer would clear the rows the
+    // drop deliberately kept.
     recordSteerSent("a", "m1", "still waiting");
     recordSteerSent("a", "m2", "also waiting");
     await Promise.resolve();
@@ -118,8 +107,6 @@ describe("restoreSteers", () => {
     expect(steerCount("a")).toBe(2);
   });
 });
-
-// --- The header re-sync ---------------------------------------------------------------
 
 describe("upsertHeader and the compaction watermark", () => {
   it("adopts a watermark the header carries onto a row that already exists", () => {
@@ -136,14 +123,8 @@ describe("upsertHeader and the compaction watermark", () => {
   });
 });
 
-// --- The window size a model's own description states --------------------------------
-
 describe("parseContextSize reads a bare 1M as a window", () => {
-  // The `<N>M context` spellings are a table in `store.test.ts`. This is the arm BELOW it:
-  // the catalog ships descriptions that name the window without the word "context" at all
-  // (`Claude Sonnet 4.5 (1M)`), and the client's own `MODEL_CONTEXT_SIZES` is empty, so
-  // this regex is the only thing standing between such a model and a context ring that
-  // reports no window at all.
+  // The `<N>M context` spellings are a table in `store.test.ts`.
   const cases: [string, number | undefined][] = [
     ["Claude Sonnet 4.5 (1M)", 1_000_000],
     ["1M", 1_000_000],

@@ -1,4 +1,3 @@
-// Table-driven tests for file-extensions.ts extToLang and extToIconKey.
 import { describe, it, expect } from "vitest";
 import { extToLang, extToIconKey, KNOWN_EXTENSIONS, FILE_EXTS } from "./file-extensions.js";
 

@@ -1,22 +1,5 @@
-// The match counter of both find bars, against the shipped stylesheet.
-//
-// THE DEFECT THIS PINS: the counter was a slot BETWEEN the field and the buttons
-// (`min-inline-size: 4.5rem` + `white-space: nowrap`, one rule in 24-find.css and a
-// byte-identical twin in 20-editor.css), while both of its writers put whole
-// SENTENCES in it — `domCounter`'s `emptyNote` for an empty walk, and
-// `paintHitPosition`'s `·`-joined per-press notices after the cursor. A DECLARED
-// `min-inline-size` replaces a flex item's automatic minimum size, so the box
-// shrank under its own text, `nowrap` refused to wrap it and the default
-// `overflow: visible` painted it across all four buttons and out through the
-// popup's border. Reported as the counter overlapping the controls.
-//
-// So the assertions are about INK against the buttons, not about a width: a
-// declaration-level guard cannot see the case, because every declaration involved
-// was individually reasonable.
-//
-// Both bars are booted for real, because the fix is ONE shared rule
-// (`.search-status`) and a test over one bar would not notice the other's copy
-// coming back.
+// Both find bars' match counter against the shipped stylesheet: it once sat between the field and buttons and painted
+// over them; now it is its own row.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -24,9 +7,7 @@ import { emptyNote, cursorCount } from "./textsearch/copy.js";
 import type * as ModFindInChat from "./find-in-chat.js";
 import type * as ModEditorFind from "./editor-find.js";
 
-// find-in-chat.ts's graph, with the mock set its own CSS suite uses and for the
-// same reasons: scroll.ts self-initialises against DOM this file does not build,
-// and the block dispatcher's graph reaches through it.
+// find-in-chat.ts's graph: scroll.ts self-initialises against DOM this file does not build.
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   onTranscriptMutate: vi.fn(() => () => undefined),
@@ -40,13 +21,12 @@ vi.mock("./messages-blocks.js", () => ({
   blockElement: vi.fn(),
   runOffsetOf: vi.fn(() => undefined),
 }));
-// editor-find.ts's one graph edge that reaches real editor scrolling.
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: vi.fn(),
   flashEditorLine: vi.fn(),
   markEditorSpan: vi.fn(),
   clearEditorMark: vi.fn(),
-  // Present so real-ESM linking succeeds; editor-diff and editor-openers import them.
+  // Present for real-ESM linking (editor-diff and editor-openers import them).
   trackEditorView: () => undefined,
   captureSelection: () => undefined,
   restoreEditorView: () => undefined,
@@ -58,11 +38,7 @@ const NOUNS = {
   scanned: { one: "message", many: "messages" },
 };
 
-/** The strings the counter's own writers can produce, longest last. Derived from
- *  the real producers rather than transcribed, so a copy change moves the fixture:
- *  `emptyNote` is what `domCounter` prints for an empty walk, `cursorCount` the
- *  cursor, and the last row is the cursor with the two `·`-joined notices
- *  `paintHitPosition` appends on a cross-destination landing. */
+/** Derived from the real producers, so a copy change moves the fixture. */
 function counterStrings(): string[] {
   const boundary = "the rest are in delegate pages and run tabs";
   const miss = "only in this call's diff, which did not load";
@@ -86,9 +62,7 @@ afterAll(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** Rect intersection with a half-pixel tolerance, so a shared edge is not a hit.
- *  BOTH axes: the fix puts the counter on its own row, so a horizontal-only test
- *  reports every button as overlapped and passes for the broken layout too. */
+/** Both axes: the counter is on its own row, so a horizontal-only test passes the broken layout. */
 function intersects(a: DOMRect, b: DOMRect): boolean {
   return (
     a.right > b.left + 0.5 &&
@@ -98,8 +72,7 @@ function intersects(a: DOMRect, b: DOMRect): boolean {
   );
 }
 
-/** The counter's INK, which is what paints over a button — its own box may be
- *  narrower (that was the defect) or wider (a wrapped line's box is the column). */
+/** The ink, not the box: a wrapped line's box is the column. */
 function inkOf(el: HTMLElement): DOMRect {
   const r = document.createRange();
   r.selectNodeContents(el);
@@ -134,12 +107,7 @@ async function bootChatBar(): Promise<Bar> {
   return { box, count, buttons: [...box.querySelectorAll("button")] };
 }
 
-/** A phone's width, because the editor's bar is FULL WIDTH and the browser project's
- *  viewport is fixed at 1280: at that width the field's own shrink frees enough room
- *  for every string below, so the case could not fail and would be worth nothing.
- *  The bar overlapped from about 480px of bar width down, which is a phone in
- *  portrait and a narrow window, so this is the deployment rather than a squeeze
- *  invented for the test. */
+/** A phone width: at 1280 the field's shrink frees room for every string, so the case could not fail. */
 const PHONE_W = "390px";
 
 async function bootEditorBar(): Promise<Bar> {
@@ -187,9 +155,7 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
   });
 
   for (const [name, boot] of BARS) {
-    // BOTH pointer tiers: `--btn-h` is 2.25rem on a fine pointer and 2.75rem on a
-    // coarse one, so the button cluster is 32px wider under a finger and the row
-    // that squeezed the counter squeezed it harder there.
+    // `--btn-h` is 2.25rem fine, 2.75rem coarse, so the buttons squeeze harder under a finger.
     for (const tier of ["fine", "coarse"] as const) {
       it(`keeps every counter string clear of ${name}'s buttons on a ${tier} pointer`, async () => {
         document.documentElement.setAttribute("data-pointer", tier);
@@ -197,22 +163,15 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
         expect(buttons.length).toBeGreaterThan(0);
         const readings = counterStrings().map((text) => {
           count.textContent = text;
-          // A layout read, so the paint is irrelevant and the transition on this
-          // element's own height is not: `block-size` is animated, and its
-          // TARGET is what the rects below have to be taken against. Reading the
-          // width and the ink needs no settle (neither is transitioned), and the
-          // vertical overlap question is answered by the row above it, which is
-          // static.
+          // `block-size` is animated, so rects are taken against its target.
           void box.offsetWidth;
           const ink = inkOf(count);
           return {
             text,
             hitButtons: buttons.filter((b) => intersects(ink, b.getBoundingClientRect())).length,
-            // The MECHANISM, stated separately from the symptom: the box shrank
-            // under its own text and the text painted out of it.
+            // The mechanism: the box shrank under its text.
             textPastOwnBox: count.scrollWidth - count.clientWidth,
-            // And out through the popup's border, which is how the empty-state
-            // sentence left the box entirely.
+            // And out through the popup's border.
             inkPastBoxRight: ink.right - box.getBoundingClientRect().right > 0.5,
           };
         });
@@ -224,16 +183,10 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
 
     it(`reserves ${name} no line while the counter says nothing`, async () => {
       const { box, count } = await boot();
-      // `domCounter` answers "" for an empty query, so this IS the state a box
-      // just opened is in, and keeping it costless is what leaves the resting bar
-      // one row now that the counter is a line of its own. What it can fail
-      // against: a reserved line (`min-block-size`) or an unconditional margin,
-      // which is exactly what `.chat-find-note`'s own record says it used to have
-      // — 16px of nothing with 4px of gap above it.
+      // `domCounter` answers "" for an empty query, the just-opened state, which must cost no height.
       count.textContent = "";
       await settle();
-      // READ AS STRINGS before the removal: `getComputedStyle` hands back a LIVE
-      // object, so a property accessed after `remove()` answers "" for everything.
+      // Read as strings first: `getComputedStyle` is live, so it answers "" after `remove()`.
       const empty = getComputedStyle(count);
       const emptyBlockSize = empty.blockSize;
       const emptyOverflowY = empty.overflowY;
@@ -242,12 +195,9 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
       count.remove();
       expect({
         counterHeight,
-        // The direct statement, measured rather than derived from the padding: the
-        // bar is the height it would be if the counter were not in the layout.
+        // Measured: the bar is the height it would be without the counter.
         barUnchanged: box.getBoundingClientRect().height === withCounter,
-        // And the two declarations the GROWTH animates through, which the zero
-        // height above does not imply: an empty block box is 0 tall on its own, so
-        // without these the line still costs nothing and simply snaps open.
+        // The declarations the growth animates through, which a zero height does not imply.
         emptyBlockSize,
         emptyOverflowY,
       }).toEqual({
@@ -260,10 +210,7 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
   }
 
   it("resolves ONE shape for both bars rather than two rules that agree today", async () => {
-    // The two counters carried byte-identical 6-declaration rules in two files,
-    // which is the drift this file's subject removed. A computed comparison is
-    // what notices a re-added local rule, because a re-added rule would still
-    // pass every assertion above.
+    // The two counters share one rule; a re-added local rule shows only in a computed comparison.
     const chat = await bootChatBar();
     const chatStyle = shapeOf(chat.count);
     const editor = await bootEditorBar();
@@ -271,8 +218,7 @@ describe("the find bars' match counter under the shipped stylesheet", () => {
   });
 });
 
-/** The declarations that decide whether a long counter can paint over a control.
- *  `whiteSpace` and `minInlineSize` are the two the defect was made of. */
+/** `whiteSpace` and `minInlineSize` are the two the defect was made of. */
 function shapeOf(el: HTMLElement): Record<string, string> {
   const cs = getComputedStyle(el);
   return {
@@ -285,9 +231,7 @@ function shapeOf(el: HTMLElement): Record<string, string> {
   };
 }
 
-/** Two frames plus longer than the longest transition in the sheet: this element's
- *  `block-size` is animated, so a height read taken in the same task as the text
- *  change is the PRE-transition value. */
+/** Past the longest transition: `block-size` is animated. */
 function settle(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {

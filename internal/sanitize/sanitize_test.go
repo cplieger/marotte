@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// Tests for StripANSI, Unicode, isHidden and the Output composition.
-
-// --- StripANSI ---
-
 func TestStripANSI(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"plain text", "plain text"},
@@ -68,8 +64,6 @@ func TestStripANSI_is_idempotent(t *testing.T) {
 		}
 	}
 }
-
-// --- Unicode / isHidden / Output ---
 
 func TestIsHiddenUnicode_classifies_every_branch(t *testing.T) {
 	tests := []struct {

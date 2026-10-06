@@ -1,8 +1,5 @@
-// ---------------------------------------------------------------------------
-// Tests for spec-path.ts, mirroring the Go table in internal/spec/roots_test.go
-// (TestDirOf) row for row: the two implementations are one contract, so a row
-// added on one side is added on the other.
-// ---------------------------------------------------------------------------
+// Tests for spec-path.ts, mirroring the Go table in internal/spec/roots_test.go (TestDirOf) row for
+// row: the two implementations are one contract, so a row added on one side is added on the other.
 
 import { describe, it, expect } from "vitest";
 import { specDirOf } from "./spec-path.js";

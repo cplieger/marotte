@@ -1,11 +1,6 @@
 package bridge
 
-// Parse-error tracking state machine.
-//
-// parseErrTracker implements burst-then-summarize-then-circuit-break
-// logic for malformed JSON lines from kiro-cli. It is a pure state
-// machine with no external dependencies or I/O, making it
-// independently testable with table-driven cases.
+// parseErrTracker is a pure burst, summarize, circuit-break state machine for kiro-cli's malformed JSON lines.
 
 import "time"
 
@@ -19,19 +14,15 @@ const (
 	parseErrCircuitBreak                       // consecutive ceiling hit, tear down
 )
 
-// parseErrBurst is the first N parse-error lines readLoop emits
-// verbatim before switching to summary-only mode. parseErrWindow is
-// the summary-line cadence; parseErrMaxConsecutive is the consecutive-
-// failure ceiling that triggers bridge teardown so the runtime recreates
-// a fresh subprocess on the next prompt.
+// parseErrBurst is the verbatim lines before summary mode, parseErrWindow the summary cadence, and
+// parseErrMaxConsecutive the consecutive-failure ceiling that tears the bridge down for a fresh one.
 const (
 	parseErrBurst          = 10
 	parseErrWindow         = 30 * time.Second
 	parseErrMaxConsecutive = 1000
 )
 
-// parseErrTracker encapsulates the burst-then-summary parse-error
-// logging and circuit-breaker logic previously inlined in readLoop.
+// parseErrTracker holds the burst/summary logging and circuit-breaker state for readLoop.
 type parseErrTracker struct {
 	windowStart time.Time
 	lastErrorAt time.Time
@@ -39,16 +30,8 @@ type parseErrTracker struct {
 	consecutive int
 }
 
-// parseErrDecay is how long the storm window survives without a new error. Past
-// it the burst/summary accounting starts over, so a long-lived bridge that saw
-// one storm hours ago gets its verbatim burst back instead of staying in
-// summary-only mode for the life of the process.
-//
-// It does NOT touch the circuit breaker, and it must not: the breaker counts
-// CONSECUTIVE failures, which Reset clears on every frame that parses, so
-// parseErrMaxConsecutive frames with not one valid frame between them is a dead
-// stream at any pace. Decaying that count would make the breaker unable to fire
-// on a stream that fails totally but slowly.
+// parseErrDecay is how long the storm window lives without a new error, so a long-lived bridge regains its verbatim
+// burst. It never touches the breaker: Reset clears that on every valid frame, so a slow total failure still trips.
 const parseErrDecay = 5 * time.Minute
 
 // Record notes a parse error and returns the action readLoop should take.
@@ -70,9 +53,7 @@ func (t *parseErrTracker) Record() parseErrAction {
 		}
 		return parseErrLog
 	}
-	// now, not a second time.Now(): one decision must not straddle two readings
-	// of the clock, or the decay above and the window here answer about
-	// different instants.
+	// One clock reading per decision, so decay and window agree.
 	if now.Sub(t.windowStart) > parseErrWindow {
 		t.windowStart = now
 		return parseErrSummarize
@@ -83,6 +64,5 @@ func (t *parseErrTracker) Record() parseErrAction {
 // Reset clears the consecutive counter on a successful parse.
 func (t *parseErrTracker) Reset() { t.consecutive = 0 }
 
-// SummaryCount returns the number of suppressed errors since the last
-// summary (total minus the initial burst).
+// SummaryCount returns the errors suppressed since the last summary (total minus the burst).
 func (t *parseErrTracker) SummaryCount() int { return t.total - parseErrBurst }

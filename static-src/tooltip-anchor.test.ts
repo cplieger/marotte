@@ -1,26 +1,8 @@
-// A TOOLTIP POINTS AT INK, NOT AT A HIT BOX.
-//
-// Three of this app's tooltip triggers are rows whose box is the layout's rather
-// than their content's: the turn footer's ledger button (the band IS its hit box,
-// `turn-footer-inset.test.ts`), that footer's changed-file rows, and the git
-// Changes tab's file rows. All three paint their ink at the leading edge, so a tip
-// centred on the trigger lands in empty space — measured on the live instance at
-// 269px, 264px and 243px from the ink respectively, over 4, 19 and 320 rows.
-//
-// `data-tooltip-anchor` on the ink is what fixes it, and the attribute is DERIVED
-// from the `attribute` option ui-primitives is configured with (`tooltip.ts` passes
-// `data-tooltip`), so the app's own wiring is part of the claim: a rename that moved
-// one and not the other would leave every mark inert with nothing else failing.
-// That is why this measures through `./tooltip.js` rather than calling the library
-// directly.
-//
-// The library owns the mechanism (mark clipping, the fallbacks, the nested-trigger
-// rule) and pins it; what is measured here is that a real row built by a real
-// builder ends up with its tip over its own ink.
-//
-// It therefore has a FLOOR: the installed `@cplieger/ui-primitives` must be a build
-// whose tooltip reads the mark. A failure here where the marks are present in the
-// builders is that pin being behind, not a regression in this app.
+// A TOOLTIP POINTS AT INK, NOT AT A HIT BOX. Three triggers are rows whose box is the layout's (the
+// turn footer's ledger button and changed-file rows, the git Changes rows), so a centred tip landed
+// ~250px from the ink. `data-tooltip-anchor` is DERIVED from the `attribute` option `tooltip.ts`
+// configures, so this measures through `./tooltip.js`. Requires a ui-primitives build whose
+// tooltip reads the mark; a failure with marks present means that pin is behind.
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -57,16 +39,13 @@ afterEach(() => {
 });
 
 /** A turn card carrying its footer, panel open, at the transcript's own measure.
- *  `--content-max-w` rather than the viewport, because the row's slack — the empty
- *  space the tip used to land in — is what the column's width decides. */
+ *  `--content-max-w` rather than the viewport, because the row's slack is what the
+ *  column's width decides. */
 function mountFooter(files: Record<string, FileChange>): HTMLElement {
   card = document.createElement("div");
   card.className = "turn";
   card.style.inlineSize = "800px";
-  // Where the centred transcript column actually sits at this viewport. A card at
-  // x=0 puts every tip against the viewport clamp (`margin: 4`), which is the
-  // positioner working and would hide the property under it: the tip's centre would
-  // read 60 whatever it was asked for.
+  // The centred column's real position: at x=0 the viewport clamp would hide the property.
   card.style.marginInlineStart = "240px";
   document.body.appendChild(card);
   const d = {
@@ -105,17 +84,9 @@ function centerX(el: Element): number {
   return r.left + r.width / 2;
 }
 
-/** The tip is centred ON `mark` rather than on `trigger`.
- *
- *  The killing assertion is the EQUALITY, not a containment: a tip merely
- *  overlapping the ink passes for a row whose box happens to be near its content,
- *  and the ledger button's width is exactly that — layout the footer's grid decides
- *  (it took the row's whole slack on the build the complaint was made against, and
- *  its own content width on this one). Centre-on-the-mark can only hold when the
- *  mark placed it, at either width.
- *
- *  The premise beside it is the reason the property matters at all: the trigger IS
- *  bigger than the ink, so its centre is not the ink's. */
+/** The tip is centred ON `mark`, not on `trigger`. EQUALITY, not containment: the ledger
+ *  button's width is the footer grid's, so overlap could pass by accident. The trigger is asserted
+ *  bigger than the ink, or the property would be vacuous. */
 function expectAnchoredTo(tip: HTMLElement, mark: Element, trigger: HTMLElement): void {
   const m = mark.getBoundingClientRect();
   const t = trigger.getBoundingClientRect();

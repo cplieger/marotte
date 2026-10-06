@@ -14,10 +14,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// idemHandler returns a handler that counts invocations and writes the
-// given status, Content-Type, and body. The returned counter reports how
-// many times the handler actually ran — the core signal every dedup
-// assertion turns on (cached → counter stays put; passthrough → it climbs).
+// idemHandler returns a handler writing the given status, Content-Type and body, plus a
+// counter of how many times it ran.
 func idemHandler(status int, ct, body string) (http.Handler, *atomic.Int32) {
 	var calls atomic.Int32
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -45,9 +43,8 @@ func serveIdem(mw http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// (1) + (2): a fresh key runs the handler once and caches the outcome;
-// repeating the same method+path+key replays the cached status, body,
-// and Content-Type without re-invoking the handler.
+// TestIdempotency_replaysCachedResponse pins that a repeated method+path+key replays the
+// cached status, body and Content-Type without re-invoking the handler.
 func TestIdempotency_replaysCachedResponse(t *testing.T) {
 	c := newIdempotencyCache(idempotencyTTL)
 	defer c.stop()
@@ -91,8 +88,8 @@ func TestIdempotency_differentKeyReexecutes(t *testing.T) {
 	}
 }
 
-// (4): the same key on a DIFFERENT path is not a hit — the composite
-// cache key (method+path+key) keeps routes from colliding.
+// TestIdempotency_sameKeyDifferentPathReexecutes pins that the composite key keeps routes
+// from colliding.
 func TestIdempotency_sameKeyDifferentPathReexecutes(t *testing.T) {
 	c := newIdempotencyCache(idempotencyTTL)
 	defer c.stop()
@@ -106,10 +103,8 @@ func TestIdempotency_sameKeyDifferentPathReexecutes(t *testing.T) {
 	}
 }
 
-// (5)+(6)+(7): requests that must never be deduped pass straight
-// through — the handler runs on every call. Covers GET/HEAD/OPTIONS
-// (even with a key), a missing header, a control-char key, and an
-// over-length key.
+// TestIdempotency_passthrough pins that safe methods, a missing header, a control-char key
+// and an over-length key are never deduped.
 func TestIdempotency_passthrough(t *testing.T) {
 	longKey := strings.Repeat("a", maxIdempotencyKeyBytes+1)
 	cases := []struct {
@@ -179,16 +174,8 @@ func TestIdempotency_clientErrorCachedAndReplayed(t *testing.T) {
 	}
 }
 
-// TestIdempotency_completeDoesNotAliasTheCallerBody pins complete's own
-// documented contract — the cached bytes are a COPY of the caller's buffer, so a
-// later reuse of it cannot rewrite an already-cached response.
-//
-// It exists because that contract was unasserted: replacing the copy with a
-// straight assignment left every idempotency test green (measured — the whole
-// TestIdempotency set passes with `cp := body`), because the middleware discards
-// the capturing writer as soon as the handler returns, so nothing in production
-// reuses the buffer today. The copy is the guard against a future writer that
-// pools one, and a guard no test states is a guard the next reader deletes.
+// TestIdempotency_completeDoesNotAliasTheCallerBody pins complete's copy contract: no test
+// caught a straight assignment, and the copy guards against a future pooled writer.
 func TestIdempotency_completeDoesNotAliasTheCallerBody(t *testing.T) {
 	c := newIdempotencyCache(idempotencyTTL)
 	defer c.stop()
@@ -206,25 +193,9 @@ func TestIdempotency_completeDoesNotAliasTheCallerBody(t *testing.T) {
 	}
 }
 
-// (10): once the TTL elapses, the cached entry is lazily evicted on the
-// next access and the handler re-executes.
-//
-// In a synctest bubble at the PRODUCTION idempotencyTTL. It used to construct
-// the cache with a 15 ms TTL and sleep 40 ms of real time — a class-(b) wait,
-// nothing here is racing an async effect — and asserted against a 15 ms fixture
-// rather than the 5 minutes the app ships. A synthetic clock makes the shipped
-// value free, and synctest.Sleep (Go 1.27) is time.Sleep plus synctest.Wait.
-//
-// The 30-second offset is load-bearing and was found by mutation, not by
-// reading. The janitor sweeps with `>= ttl` on a 1-minute ticker started when
-// the cache is constructed, and idempotencyTTL is an exact multiple of that
-// tick — so an entry created at synthetic t=0 reaches age == ttl at the very
-// instant a tick fires, and the JANITOR evicts it before begin's `< ttl` is ever
-// consulted. Measured: with no offset, both mutants survive — flipping begin's
-// boundary from `<` to `<=` and deleting its lazy eviction outright both leave
-// this test green, because the sweep does the work either way. Offset by 30 s the
-// entry expires at 5m30s, between the 5m and 6m ticks, and begin's own boundary
-// is what the assertions below see.
+// TestIdempotency_ttlExpiryReexecutes pins lazy TTL eviction at the PRODUCTION
+// idempotencyTTL in a synctest bubble. The 30-second offset is load-bearing: without it the
+// entry expires exactly on a janitor tick, which evicts it before begin's own boundary runs.
 func TestIdempotency_ttlExpiryReexecutes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newIdempotencyCache(idempotencyTTL)
@@ -240,8 +211,7 @@ func TestIdempotency_ttlExpiryReexecutes(t *testing.T) {
 			t.Fatalf("within TTL: handler calls = %d, want 1", calls.Load())
 		}
 
-		// A replay does not re-stamp ts (begin returns the entry and complete
-		// never runs), so age is measured from the first request throughout.
+		// A replay does not re-stamp ts, so age is measured from the first request.
 		synctest.Sleep(idempotencyTTL - time.Nanosecond)
 		serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
 		if calls.Load() != 1 {
@@ -256,10 +226,8 @@ func TestIdempotency_ttlExpiryReexecutes(t *testing.T) {
 	})
 }
 
-// (11): two truly-concurrent requests under the same key — the first
-// claims the in-flight marker and runs; the second gets 409. Exactly
-// one handler invocation. (Chosen contract: 409 for concurrent
-// duplicates; genuine idempotent retries are sequential.)
+// TestIdempotency_concurrentDuplicateGets409 pins that a truly-concurrent duplicate gets 409
+// and the handler runs once.
 func TestIdempotency_concurrentDuplicateGets409(t *testing.T) {
 	c := newIdempotencyCache(idempotencyTTL)
 	defer c.stop()
@@ -300,9 +268,8 @@ func TestIdempotency_concurrentDuplicateGets409(t *testing.T) {
 	}
 }
 
-// (12): a response larger than the body cap is written through to the
-// client in full but not cached, so a single fat response can't pin
-// memory — and the next request with the same key re-executes.
+// TestIdempotency_oversizeBodyNotCached pins that an over-cap response is written through
+// in full but not cached.
 func TestIdempotency_oversizeBodyNotCached(t *testing.T) {
 	c := newIdempotencyCache(idempotencyTTL)
 	c.maxBody = 16 // tiny cap so the test stays cheap
@@ -321,9 +288,8 @@ func TestIdempotency_oversizeBodyNotCached(t *testing.T) {
 	}
 }
 
-// sweep drops expired COMPLETED entries while leaving fresh ones and
-// in-flight markers untouched (in-flight is cleared by its owning
-// request, never age-swept).
+// TestIdempotency_sweepDropsExpiredKeepsInflightAndFresh pins that sweep drops expired
+// completed entries and never an in-flight marker.
 func TestIdempotency_sweepDropsExpiredKeepsInflightAndFresh(t *testing.T) {
 	c := newIdempotencyCache(time.Hour) // long TTL; sweep is driven directly
 	defer c.stop()
@@ -349,9 +315,8 @@ func TestIdempotency_sweepDropsExpiredKeepsInflightAndFresh(t *testing.T) {
 	}
 }
 
-// validIdempotencyKey gates which keys participate in dedup. Behavioral
-// table: opaque composite keys (slashes, colons, arrows, spaces, UTF-8)
-// must pass; empty, control-char, and over-length keys must not.
+// TestValidIdempotencyKey: opaque composite keys pass; empty, control-char and over-length
+// keys do not.
 func TestValidIdempotencyKey(t *testing.T) {
 	cases := []struct {
 		name string
@@ -401,11 +366,7 @@ func TestIdempotentMethod(t *testing.T) {
 	}
 }
 
-// TestIdempotency_sweepDeletesEntryAtExactTTL verifies the sweep TTL boundary
-// is inclusive: an entry whose age is exactly the TTL is evicted. sweep takes
-// `now` as a parameter, so the boundary is deterministic. The sibling
-// TestIdempotency_sweepDropsExpiredKeepsInflightAndFresh uses ages well past
-// the TTL and so does not pin the boundary itself.
+// TestIdempotency_sweepDeletesEntryAtExactTTL pins the sweep's inclusive TTL boundary.
 func TestIdempotency_sweepDeletesEntryAtExactTTL(t *testing.T) {
 	c := &idempotencyCache{
 		entries: map[string]*idempotencyEntry{},
@@ -447,10 +408,7 @@ func TestIdempotency_beginEvictsAtCapacity(t *testing.T) {
 	}
 }
 
-// TestIdempotency_middlewareDoesNotCache500 verifies the cache-eligibility
-// boundary at status 500: a handler returning exactly 500 is treated as a
-// transient server error and is NOT cached, so the composite key is absent
-// from the cache afterward and a retry can re-run against a recovered backend.
+// TestIdempotency_middlewareDoesNotCache500 pins that exactly 500 is not cached.
 func TestIdempotency_middlewareDoesNotCache500(t *testing.T) {
 	c := &idempotencyCache{
 		entries:    map[string]*idempotencyEntry{},
@@ -491,19 +449,8 @@ func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
 	}
 }
 
-// TestIdempotency_commandRouteParticipates is the test the command-path
-// unification rests on. POST /api/command used to dedup itself, inside the
-// dispatcher, keyed on a request_id BODY field — a second cache with no
-// in-flight marker, so two concurrent duplicates both executed. That cache is
-// deleted and the envelope field with it; the route's only idempotency is this
-// middleware now. So the thing worth pinning is no longer a cache's behaviour
-// (the tests above cover that) but the WIRING: that the command route is inside
-// the production stack's dedup layer, and that a duplicate is answered without
-// the handler running twice.
-//
-// It goes through s.middlewareStack rather than a hand-built chain for the same
-// reason TestMiddlewareStack_GuardOrder does: a stack assembled here would keep
-// passing after someone reorders or drops the real one.
+// TestIdempotency_commandRouteParticipates pins the WIRING: POST /api/command sits inside
+// the production stack's dedup layer (s.middlewareStack, not a hand-built chain).
 func TestIdempotency_commandRouteParticipates(t *testing.T) {
 	handler, calls := idemHandler(http.StatusOK, "application/json", `{"ok":true}`)
 	mux := http.NewServeMux()

@@ -1,5 +1,3 @@
-// The PR tab's cycle: the view signal while the tab is shown, and the refresh button.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   actions,
@@ -67,7 +65,6 @@ beforeEach(resetPRsTab);
 afterEach(restorePRsTab);
 
 describe("the view signal", () => {
-  /** The git view's real shape: the view, the PR panel inside it, the mount. */
   function stageView(): { view: HTMLElement; panel: HTMLElement } {
     document.body.innerHTML = `
       <div id="git-view" class="hidden" data-tab-view>
@@ -84,7 +81,7 @@ describe("the view signal", () => {
     return { view, panel };
   }
 
-  /** What each watch said and under which stream tag; the page is pinned on its own. */
+  /** The page is pinned on its own. */
   async function watched(): Promise<unknown[]> {
     const { watchPRView } = await actions();
     return vi
@@ -92,8 +89,7 @@ describe("the view signal", () => {
       .mock.calls.map((c) => ({ watching: c[0].watching, tag: c[0].tag }));
   }
 
-  // Sibling pages of one browser profile share the stream tag, so one page
-  // leaving must not end the other's watch.
+  // Sibling pages of one browser profile share the stream tag, so one leaving must not end the other's watch.
   it("names its page on every watch, the same page each time", async () => {
     routeAPI();
     const { view, panel } = stageView();
@@ -187,7 +183,6 @@ describe("the view signal", () => {
 });
 
 describe("the refresh button", () => {
-  /** The PR panel's toolbar and mount, as the page declares them. */
   function stageToolbar(): HTMLButtonElement {
     document.body.innerHTML = `
       <div class="git-tab-toolbar">
@@ -201,12 +196,10 @@ describe("the refresh button", () => {
     return btn;
   }
 
-  /** The sentence the toolbar shows beside the button. */
   function statusText(): string {
     return document.querySelector(".git-tab-toolbar [role='status']")?.textContent ?? "";
   }
 
-  /** The refresh route's answer, naming the cycle that serves the press. */
   async function answerCycle(cycle: string | Promise<Record<string, unknown>>): Promise<void> {
     const { requestPRCycle } = await actions();
     const outcome =
@@ -223,7 +216,6 @@ describe("the refresh button", () => {
     return vi.mocked(requestPRCycle.dispatch).mock.calls.length;
   }
 
-  /** Two connections, both read at cycle 3, the tab initialised over them. */
   async function twoConnections(): Promise<HTMLButtonElement> {
     const btn = stageToolbar();
     routeAPI({ forges: [githubForge, gitlabForge] });
@@ -262,7 +254,7 @@ describe("the refresh button", () => {
     ).toBe("#7");
     expect(btn.getAttribute("aria-busy")).toBe("true");
 
-    // Every connection has to reach the asked cycle, not just the first to answer.
+    // Every connection must reach the asked cycle, not just the first to answer.
     frame(entry(githubForge, "5", [pr(1, 0)]));
     expect(btn.disabled).toBe(true);
     expect(btn.getAttribute("aria-busy")).toBe("true");

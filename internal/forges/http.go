@@ -20,12 +20,8 @@ import (
 // codeNotSupported answers an optional role the connection's client lacks.
 const codeNotSupported = "not_supported"
 
-// broadcaster is the SSE fan-out a forge connection change and an inventory
-// entry are announced on. *agent.Runtime satisfies it.
-//
-// Declared HERE, at the consumer, rather than in a shared contract package.
-// 1 method against a *agent.Runtime exporting well over a hundred; this package fires
-// two event kinds and needs nothing else from the runtime at all.
+// broadcaster is the SSE fan-out a forge connection change and an inventory entry are announced on;
+// *agent.Runtime satisfies it.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
@@ -54,12 +50,9 @@ func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
 	}
 }
 
-// SetOnChange wires a callback fired whenever a forge connection
-// changes (PAT login, OAuth completion, disconnect, refresh). Called
-// once at composition; used to refresh the steering forge-snapshot
-// cache and regenerate environment.md. The callback must not block —
-// it runs on the HTTP request path — and must not capture the request
-// context (composition kicks its work onto the app-lifetime context).
+// SetOnChange wires a callback fired whenever a forge connection changes (login, OAuth completion,
+// disconnect, refresh), used to refresh the steering forge-snapshot cache. It must not block or
+// capture the request context: it runs on the request path.
 func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 
 // SetPoller wires the poller whose inventory the inventory routes answer from.
@@ -199,8 +192,6 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "missing forge id")
 		return
 	}
-	// ID is "kind:host" — the colon could be percent-encoded but we
-	// keep it literal.
 	id, sub, _ := splitFirst(tail)
 	op, rest, _ := splitFirst(sub)
 	// A login is how a forge that has no row yet gets one.

@@ -1,33 +1,13 @@
-// ---------------------------------------------------------------------------
-// The attachment pill — one component, two homes.
-//
-// The composer's staged row and a sent turn's header draw the SAME pill: same
-// badge source (badgeForExt), same label, same click. It lives here rather than
-// in attachments.ts because the second consumer is `fundamentals/turn-header.ts`,
-// a pure view, and reaching into the composer module from there would drag
-// `$.attachmentRow` — a dom.ts getter that THROWS on a missing element — into
-// every test that renders a turn. It would also inherit composer semantics: the
-// staged pill's `×` removes a file from the next prompt, and a sent turn's pill
-// must not be removable. So removal is an opt-in the caller passes, and the
-// composer is the only caller that passes it.
-//
-// STRUCTURE: the body button and the `×` are SIBLINGS inside the `<li>`, never
-// nested. A `<button>` cannot contain a `<button>`, so making the body the
-// outer element was never available; and with siblings, a click on `×` cannot
-// reach the open handler at all, which is a structural guarantee rather than a
-// stopPropagation call that a later edit can forget.
-// ---------------------------------------------------------------------------
+// The attachment pill, shared by the composer and a sent turn's header (a pure view that
+// must not reach `$.attachmentRow`). Removal is the composer's opt-in. Body and `×` are
+// SIBLINGS, so a `×` click cannot reach the open handler.
 
 import { el } from "@cplieger/reactive";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { badgeForExt, extOf } from "./file-extensions.js";
 
-/** The two fields a pill draws.
- *
- *  Structurally satisfied by attachments.ts's `AttachedFile` (the staged list)
- *  and by the generated wire `Attachment` (the persisted list), which is what
- *  lets one view serve both without either side converting. */
+/** The two fields a pill draws, satisfied by both `AttachedFile` and the wire `Attachment`. */
 export interface AttachmentRef {
   path: string;
   name: string;
@@ -36,11 +16,10 @@ export interface AttachmentRef {
 /** Shown when the extension carries no badge of its own. */
 const FALLBACK_BADGE = "📎";
 
-/** Open handler, injected — the same pattern `initTurnHeaderCallbacks` uses for
- *  Copy, and for the same reason: opening a file reaches `editor-openers` and
- *  `tabs` behind it, and neither the composer's leaf nor a `fundamentals/` view
- *  may import that subgraph. Default is a no-op so a pill built in a test
- *  renders without wiring. */
+/**
+ * Open handler, injected: opening reaches `editor-openers` and `tabs`, which neither the
+ * composer nor a `fundamentals/` view may import. A no-op default for tests.
+ */
 let _open: (path: string) => void = () => {
   /* not wired */
 };

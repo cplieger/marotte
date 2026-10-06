@@ -1,11 +1,13 @@
 package kascap
 
-// enabledMember is the one member name KAS reads inside a settings entry
-// (isSettingEnabled returns val.enabled). Named rather than inlined because the
-// spelling is invisible on the wire when it is wrong: an object without this
-// exact key resolves to undefined, which is neither the true a feature needs nor
-// the false a veto needs. Any future row that sends a runtime bool here must
-// build its object around this constant for that reason.
+import (
+	"cmp"
+	"strconv"
+)
+
+// enabledMember is the one member name KAS reads inside a settings entry (isSettingEnabled returns
+// val.enabled). A misspelling is invisible on the wire: it resolves to undefined, neither true nor
+// false.
 const enabledMember = "enabled"
 
 // enabled is the shape every _meta.kiro.settings entry marotte SENDS takes. A
@@ -14,33 +16,62 @@ const enabledMember = "enabled"
 // them rather than a coincidence repeated at each row.
 func enabled() map[string]any { return map[string]any{enabledMember: true} }
 
-// enabledIf is enabled()'s runtime twin, for a row whose value comes from a
-// Spawn field rather than from the compiled table.
-//
-// Two states, both meaningful, which is why this is not `enabled()` behind a
-// presence gate: `{"enabled": false}` is how KAS is told a feature is OFF, and it
-// is a different statement from an absent key. Both resolve false through
-// isSettingEnabled, so the distinction is invisible where absent-means-false is
-// all a row needs — and it is the whole mechanism where a key has to VETO
-// something the client cannot otherwise reach (userMemoryOptIn) or has to answer
-// a resolver that compares against a real boolean.
+// enabledIf is enabled()'s runtime twin, for a row whose value comes from a Spawn field.
+// `{"enabled": false}` is how KAS is told a feature is OFF, a different statement from an absent
+// key where a key must veto something or answer a resolver comparing a real boolean.
 func enabledIf(on bool) map[string]any { return map[string]any{enabledMember: on} }
 
 // hooksValue is the v2 hook-engine opt-in object. Not a bare true: KAS requires
 // an object carrying a v2 member and then checks that member (resolverObject).
 func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": true} }
 
-// envWorkflows is the operator off switch for the workflows row. Named after the
-// capability rather than the fix, because a variable an operator reads in a
-// compose file has to say what it controls; the MAROTTE_ prefix is this app's
-// (WT_ is reserved for the two names web-terminal-kiro reads too).
-const envWorkflows = "MAROTTE_AGENT_WORKFLOWS"
+// specPlanValue builds settings.specPlan: off sends {"enabled": false}; on adds
+// KAS's workflow and the inverted clarification flag.
+func specPlanValue(s *Spawn) map[string]any {
+	if s.SpecPlan == "" {
+		return enabledIf(false)
+	}
+	return map[string]any{enabledMember: true, "workflow": s.SpecPlan, "skipClarification": !s.SpecAskClarification}
+}
+
+// choiceValue maps a follow-kiro-cli setting onto a row: empty withholds the
+// key so KAS's own resolution decides.
+func choiceValue(choice string) (any, bool) {
+	switch choice {
+	case "on":
+		return enabledIf(true), true
+	case "off":
+		return enabledIf(false), true
+	}
+	return nil, false
+}
 
 // table is every capability key marotte knows about, sent or withheld.
 //
 // Row order is presentation only. Both builders emit maps, and encoding/json
 // sorts map keys, so no wire byte depends on this order.
 var table = []decl{
+	{
+		key:      "resolvesSteeringCommands",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+		because: `WITHHELD on purpose. KAS reads clientMeta.resolvesSteeringCommands at every
+non-agent-initiated prompt and, unless it is true, activates the manual or
+auto steering document a leading /<name> names for that turn. marotte relies on
+that native activation (the slash menu lists those documents), so sending true
+would turn every /<steering> into prose the model reads.`,
+	},
+	{
+		key:      "notifications",
+		door:     doorConnection,
+		resolver: resolverObject,
+		send:     false,
+		because: `WITHHELD on purpose. notifications.documentsChanged !== false gates
+_kiro/steering/documents_changed, which marotte consumes for each steering
+document's configIssues (the /docs badges). Withholding the object keeps the
+default, on.`,
+	},
 	{
 		key:      "openExternalUrl",
 		door:     doorConnection,
@@ -61,15 +92,15 @@ agent/bridge_v3_hostreq.go).`,
 		value:    true,
 		send:     true,
 		because: `_meta.kiro.infrastructureSafety opts into KAS's Infrastructure-Safety
-gate for infrastructure-as-code tool calls. Safe-by-default: KAS installs
-the gate only when this capability AND an AWS governance flag
-(infraSafetyMonitor|infraSafetyEnforce) are both set, and that flag is off
-by default on individual/Builder-ID accounts — so declaring it has zero
-effect there (verified on a live probe: no gate, getProperties returns []).
-It is required for the gate's statusChanged/propertiesChanged notifications
-to ever surface (translate/safety.go); on an enterprise account with the
-flag on, enforce mode can block infra-as-code writes remotely. Distinct
-from supervised mode, which is KAS's autopilot gate.`,
+gate for infrastructure-as-code tool calls. It is NOT dormant on individual
+accounts: initialize installs the gate (on a hooks-enabled bridge) when this
+capability is declared AND the monitor is on, and the monitor reads the client's
+infraSafetyMonitor setting when one is sent, else the kiroInfraSafetyMonitor
+experiment, which AWS has ramped on for individual accounts (measured on
+2.27.0's "Active experiments" log line). marotte sends no infraSafetyMonitor, so
+the experiment decides. Required for the gate's statusChanged/propertiesChanged
+notifications to surface (translate/safety.go); infraSafetyEnforce can block
+infra-as-code writes. Distinct from supervised mode (KAS's autopilot gate).`,
 	},
 	{
 		key:      "userInput",
@@ -93,12 +124,16 @@ user_input_response command.`,
 		value:    true,
 		send:     true,
 		because: `_meta.kiro.backgroundProcesses opts into KAS's background-process tools
-(control_bash_process, list_processes, get_process_output). KAS serves
-them from its own ACPBackgroundProcessManager over standard
+(list_processes, get_process_output and a start/stop tool) over standard
 terminal/create + terminal/output, which marotte already implements
-(agent/agent_terminal.go) — so the capability is the whole integration:
-without it the agent has no way to run a dev server or a watcher
-without blocking its turn on a foreground command.`,
+(agent/agent_terminal.go). Without process tools the agent cannot run a dev
+server or a watcher without blocking its turn on a foreground command.
+
+From 2.27.0 it is the FALLBACK: the backgroundExecution session-door setting
+outranks it and selects the engine's control_process class over the same
+client-terminal executor. This key answers only for a session whose resolved
+backgroundExecution is false, such as the steps of a run persisted with false
+before that row existed, which would otherwise get no process tools.`,
 	},
 	{
 		key:      "knowledge",
@@ -108,9 +143,8 @@ without blocking its turn on a foreground command.`,
 		// Value-gated, always present: resolveCapabilities compares `=== true`, so
 		// the key has to carry a real boolean either way. Gated on the SAME field
 		// as the knowledge SETTING row below, because the two are two thirds of one
-		// gate and turning one off alone reproduces the defect that made the third
-		// key necessary.
-		gate: func(s Spawn) (any, bool) { return s.Knowledge, true },
+		// gate and turning one off alone breaks it.
+		gate: func(s *Spawn) (any, bool) { return s.Knowledge, true },
 		because: `_meta.kiro.knowledge gates getKnowledgeListing into the system prompt,
 i.e. it tells the agent WHICH knowledge bases are indexed (four lines
 per base, undefined when none). marotte ships the knowledge UI, so the
@@ -140,7 +174,7 @@ switch decides what the AGENT can reach, not what a person can.`,
 		send:     true,
 		// Always present, value from the spawn: a false is a real declaration
 		// here, not an omission. See because.
-		gate: func(s Spawn) (any, bool) { return s.SecretStorage, true },
+		gate: func(s *Spawn) (any, bool) { return s.SecretStorage, true },
 		because: `_meta.kiro.secretStorage opts into KAS's AcpSecretStorage: it then asks
 the client to HOLD the MCP OAuth credentials it derives (the DCR result,
 the token set, the PKCE verifier) via _kiro/secret/{get,store,delete}.
@@ -168,7 +202,7 @@ means KAS never asks, so the unanswerable request is never made.`,
 		send:     true,
 		// Presence-gated, not value-gated: when hooks are off the key is absent
 		// entirely, which is what the pre-kascap literal did with an if.
-		gate: func(s Spawn) (any, bool) { return hooksValue(), s.Hooks },
+		gate: func(s *Spawn) (any, bool) { return hooksValue(), s.Hooks },
 		because: `hooks opts into KAS's v2 hook engine. Set on the utility bridge (so
 _kiro/hooks/list|setEnabled|triggerHook are available for the
 hooks-management dashboard) AND on chat bridges (so the workspace's
@@ -202,7 +236,7 @@ works.`,
 		// rather than enabled(), because the resolver needs the object shape in
 		// both states: isSettingEnabled reads .enabled unchecked, so {"enabled":
 		// false} is the off state and an absent member would be undefined.
-		gate: func(s Spawn) (any, bool) { return enabledIf(s.Knowledge), true },
+		gate: func(s *Spawn) (any, bool) { return enabledIf(s.Knowledge), true },
 		because: `_meta.kiro.settings.knowledge is the THIRD part of the knowledge
 gate, and without it the other two are decoration.
 isSettingEnabled(settings, "knowledge") treats an absent key as
@@ -227,40 +261,40 @@ without disturbing how the store is built.`,
 		key:      "toolSearch",
 		door:     doorConnection,
 		resolver: resolverSetting,
-		send:     true,
-		// PRESENCE-gated, unlike the knowledge pair: absent already resolves false
-		// at isSettingEnabled, so an off state has nothing to say and sending
-		// {"enabled": false} would only add bytes.
-		gate: func(s Spawn) (any, bool) { return enabled(), s.ToolSearch },
-		because: `_meta.kiro.settings.toolSearch makes KAS ship its built-in tool_search
-tool INSTEAD of every connected MCP tool's full description. The agent then asks
-tool_search by intent and gets matches back, which trades one extra round-trip per
-tool it decides to use against the context every description costs on every turn
-(~200-500 tokens each). Worth it at 5+ MCP servers, a latency tax below that,
-which is why it is off by default and a user setting rather than a constant.
+		send:     false,
+		because: `WITHHELD, because "Load MCP tools on demand" now drives KAS's other
+deferral mode through the child environment (the KIRO_FEATURE_TOOL_LOAD_ENABLED
+environment row below) and this key is the mode it replaces.
+_meta.kiro.settings.toolSearch makes KAS ship tool_search in place of every MCP
+tool's description, and each activation ADDS the loaded tools to the request's
+tools array (2.26.1 bundle ~11,121,900). Growing the array per load invalidates
+the prompt cache and walks a thinking model into a signature mismatch, and a
+narrow agent allowlist drops the tool_search loader itself (filterTools, @403,369).
+The tool_load arm keeps the array fixed for the session, runs a loaded tool through
+tool_call, and its tool pair carries @mcp-disclosure, which the allowlist filter
+always re-admits.
 
-THIS ROW EXISTS BECAUSE THE CONTROL WAS POINTED AT THE WRONG DOOR. Settings →
-General wrote kiro-cli's own toolSearch.enabled through /api/kiro-settings, and
-measured on the stock 2.19.2 bundle that store is unreachable from KAS's ACP
-path: zero occurrences of cli.json, kiro-cli/settings, readSettingsFile and
-loadCliSettings, and each chat.* literal appearing exactly once, every one a
-"@see kiro-cli:" cross-reference inside the settings schema rather than a read.
-So the toggle wrote a real file, kiro-cli's TUI honoured it, and a marotte chat
-never saw it. The key KAS does read is this one, through
-isSettingEnabled(settings, "toolSearch") plus a second isFeatureEnabled site.
+Not sent as a fallback beside the env var: with the arm on KAS forces this key off
+(Nr = !toolLoad && isSettingEnabled(settings, "toolSearch"), @11,119,827), so it is
+inert while the arm exists, and if upstream ever removed the arm a still-sent key
+would silently reinstate the array-growing mode. Withheld, the census and the next
+release read surface that removal instead.
 
-Gated on marotte's tool_search_enabled setting, resolved per spawn
-(internal/agent's toolSearchEnabled), so a flip reaches the NEXT chat. It cannot
-reach an open one: KAS resolves the value at session creation and freezes it,
-which is what the setting's hint has to say.`,
+History worth keeping: the toggle once wrote kiro-cli's own toolSearch.enabled
+through /api/kiro-settings, and measured on the stock 2.19.2 bundle that store is
+unreachable from KAS's ACP path: zero occurrences of cli.json, kiro-cli/settings,
+readSettingsFile and loadCliSettings, and each chat.* literal appearing exactly
+once, every one a "@see kiro-cli:" cross-reference inside the settings schema.`,
 	},
 	{
 		key:      "workflows",
 		door:     doorSession,
 		resolver: resolverSetting,
-		env:      envWorkflows,
-		value:    enabled(),
-		send:     true,
+		// Value-gated, always present: on load KAS takes the client value over
+		// the persisted workflowsEnabled, so an explicit false is what turns a
+		// resumed chat's workflow tools off.
+		gate: func(s *Spawn) (any, bool) { return enabledIf(s.Workflows), true },
+		send: true,
 		because: `_meta.kiro.settings.workflows gates the agent's workflow TOOLS the
 same way: resolveWorkflows resolves an absent key to false, which
 removes the whole workflowChatTools array (run_workflow,
@@ -300,10 +334,41 @@ parseKiroMeta rather than being stripped. That is a property of somebody
 else's schema, which is why TestSessionNewCarriesWorkflowsAtSessionDoor
 pins the wire and the census pins the version it was read from.
 
-Carries an env override because it is the one row here that changes what
-the AGENT can do rather than what it can see, and it creates
-agent-origin workflow runs in a tier with no run supervisor. See the env
-column: MAROTTE_AGENT_WORKFLOWS=false stops sending it.`,
+Driven by the "Workflows" setting (workflows_enabled, default on), which
+gates what the AGENT can reach: KAS's workflowsGatedOn hides the run tool,
+the chat workflow tools and the steering doc, while _kiro/workflow/new reads
+no workflowsEnabled, so marotte's own run surfaces work either way. The
+utility bridge resolves no setting and sends false.`,
+	},
+	{
+		key:      "backgroundExecution",
+		door:     doorSession,
+		resolver: resolverSetting,
+		value:    enabled(),
+		send:     true,
+		because: `SENT {"enabled": true} on both session doors, so every session marotte
+creates (chat, utility, run bridge) and every workflow step (KAS copies the
+parent's resolved value into run state) uses KAS's control_process class: a start
+whose turn was cancelled, whose approval went stale or that is now blocked is
+refused just before terminal/create, and stopping an untracked id says so. Same
+tool ids, schema and terminal/* traffic as the backgroundProcesses class, because
+the process manager is chosen separately (terminal:true and no sandbox means
+marotte's terminal handlers). KAS reads it per session, setting over persisted
+over the experiment registry, so it also pins the class against a ramp. The census
+cannot see it: KAS reads it through a variable-key resolver, so this row is its
+only record.`,
+	},
+	{
+		key:      "shellType",
+		door:     doorSession,
+		resolver: resolverCapability,
+		value:    "bash",
+		send:     true,
+		because: `SENT on both session doors so KAS resolves the session's shell from
+metadata instead of a _kiro/terminal/shell_type round trip during session
+creation. KAS's own workflow step reloads carry no shellType and still probe, so
+agent/bridge_v3_hostreq.go keeps answering; its value is marotte.HostShellType and
+must equal this one (pinned by a bridge test, since kascap imports nothing).`,
 	},
 	{
 		key:      "goal",
@@ -335,9 +400,9 @@ that node on a clone, so launching the recipe by source instead bounds
 every goal at 200. Stop sending this key and that row goes back to
 reaching the model as prose.
 
-marotte still does not decode available_commands_update and ships no
-palette, so the TYPED verb is discoverable only to a user who already
-knows it; the menu row is the discoverable door. Note the loop it starts
+The composer's / menu lists /goal from available_commands_update (the
+catalog keeps only kind workflow with commandId goal), so the typed verb
+is discoverable there too. Note the loop it starts
 is an ordinary workflow run parented on the calling session, so it lands
 in the same unsupervised population as an agent-launched run — and its
 frames arrive on the calling chat's topic, which is why the row opens no
@@ -390,9 +455,6 @@ reads as false at every one of the sites above.`,
 		resolver: resolverSetting,
 		value:    enabled(),
 		send:     true,
-		// The two tool names below carried markdown backticks as comment
-		// decoration in bridge.go. A raw string cannot hold a backtick, so the
-		// decoration is dropped; every word is verbatim.
 		because: `subagentOrchestration swaps the agent's delegation tool: absent
 gives one-shot invoke_sub_agent, present gives
 orchestrate_subagent, which wraps the same invoke config and adds
@@ -509,29 +571,143 @@ bounded by the reaper, which is the authority that knows about chains.`,
 		key:      "specPlan",
 		door:     doorSession,
 		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return specPlanValue(s), true },
+		send:     true,
+		because: `SENT on both session doors from Spec planning (spec_planning, default
+off, matching kiro-cli, the IDE and Crew). resolveSpecPlan reads
+{enabled, workflow, skipClarification} per session, and its only effect on a
+kiro-cli client is Autonomous mode: the {{#specPlanEnabled}} arms live only in
+the four Autonomous planner subagent templates, which then MUST plan through
+subagent/create-spec (an explicit-visibility delegate no other mode reaches)
+and write .kiro/specs/<feature>/, which the spec tab renders. Every other
+mode's prompt and tools are unchanged.
+
+Always present, off included: session/load takes the client value first and
+falls back to the persisted specPlanEnabled, so withholding false would keep a
+chat created while the setting was on planning through specs forever. KAS's
+defaults are workflow quick and skipClarification true; the checkbox maps to
+skipClarification false.`,
+	},
+	{
+		key:      "inlineAgents",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.InlineAgents), true },
+		send:     true,
+		because: `SENT from "Inline helper agents" (inline_agents_enabled, default off,
+matching kiro-cli's yf("inlineAgents","off")). Read once at initialize
+(isSettingEnabled on the initialize settings) to add an inlineAgent parameter
+to the delegation tool, so the agent can define a one-off helper with a model
+and effort it picks instead of only a registered agent. The helper inherits the
+parent's permissions and tools, so the permission surface is unchanged. Never in
+spec mode, which builds its tools with inline agents off. Value-gated so off is
+an explicit pin rather than an absence.`,
+	},
+	{
+		key:      "steeringReminders",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.SteeringReminders), true },
+		send:     true,
+		because: `SENT from "Steering reminders" (steering_reminders_enabled, default off,
+matching kiro-cli). The live key is the un-underscored one: the schema declares
+_steeringReminders, but the reader is Ty("steeringReminders") through the
+initialize settings bridge, so the schema spelling is inert. When on, a long
+conversation re-injects the steering docs that fit a size budget as one
+<steering-reminder> block, skipped when they do not fit. Value-gated so off holds
+against a ramp.`,
+	},
+	{
+		key:      "validation",
+		door:     doorSession,
+		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return choiceValue(s.WorkValidation) },
+		send:     true,
+		because: `SENT only when the user has chosen ("Work validation", work_validation:
+"on" or "off"); the default sends nothing, so kiro-cli's own resolution decides
+(the client value, then the persisted validationSettingEnabled, then the
+AB_VALIDATION experiment). When on, KAS registers its bundled validation agent in
+the default and vibe subagent sets, a reviewer the agent can call to challenge a
+substantial, under-verified change. Both session doors: KAS re-reads and persists
+it on load, so a choice reaches a resumed chat. fta (the workflow coder's twin)
+stays withheld.`,
+	},
+	{
+		key:      "infraSafetyMonitor",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return choiceValue(s.InfraSafetyMonitor) },
+		send:     true,
+		because: `SENT only when the user has chosen ("AWS CloudFormation safety check",
+cloudformation_safety_check: "on" or "off"); the default sends nothing, so the
+KIRO_INFRA_SAFETY_MONITOR experiment decides, as in kiro-cli. Read inside
+initialize (Object.hasOwn on the settings), and honoured only on a connection
+that declares hooks and the infrastructureSafety capability: on a CloudFormation
+template write or a cdk deploy/destroy, Kiro's service derives safety properties
+and reports a would-violate as a safety status. Monitor mode never blocks.`,
+	},
+	{
+		key:      "steeringSupervisor",
+		door:     doorSession,
+		resolver: resolverSetting,
+		value:    enabledIf(false),
+		send:     true,
+		because: `SENT as a compiled {"enabled": false} on both session doors: a veto.
+vGt reads it with the experiment as fallback (N??K), so an explicit false holds
+against AB_STEERING_SUPERVISOR. In 2.27.x the supervisor runs in shadow mode only
+(buildPreToolUseGate logs "shadow: non-blocking, verdict not applied"): one fast
+model call per allow-listed tool call whose verdict is discarded, so enabling it
+buys cost and nothing else. Revisit when verdicts are applied.`,
+	},
+	{
+		key:      "_providerPowers",
+		door:     doorSession,
+		resolver: resolverSetting,
+		gate:     func(s *Spawn) (any, bool) { return enabledIf(s.ToolLoad), true },
+		send:     true,
+		because: `SENT with its underscore, tied to "Load MCP tools on demand": both defer
+tool descriptions until needed. When on, installed Powers' MCP tools are reached
+through the kiro_powers tool instead of the direct list. KAS reads it only on
+session/load (session/new initialises providerPowersEnabled false), so a chat's
+first session keeps the direct list until it resumes; that is upstream's read
+site.`,
+	},
+	{
+		key:      "fta",
+		door:     doorSession,
+		resolver: resolverSetting,
 		send:     false,
-		because: `WITHHELD, pending a probe that prices it. specPlan is not a display
-toggle: resolveSpecPlan reads {enabled, workflow, skipClarification} per
-session, and enabling it flips the bundled prompt arms
-({{#specPlanEnabled}} blocks) from "explore and plan" to "MANDATORY: you
-MUST use spec-driven planning", adds subagent/create-spec to the agent's
-declared delegation set, and persists specPlanEnabled + specWorkflow onto
-the session record so the choice survives a reload.
-
-So it changes what the agent DOES on an ordinary prompt, and it points
-that behaviour at a spec surface marotte does not have: /specs was
-deleted (the board's write side could not work, since every
-_kiro/spec/invoke verb drives a fire-and-forget turn with no ACP
-turn-end signal), and specs are documents on the /docs tab now. Sending
-this would make the agent produce and delegate against artifacts the UI
-can only browse, and it would do it two tiers before anything in marotte
-can drive a spec.
-
-What a probe has to answer before this can flip: which spec artifacts a
-run actually writes and where, whether create-spec's turns are observable
-on this wire at all, and whether 'quick' or 'full' is the right workflow
-for a chat-first client. Note skipClarification defaults to TRUE, so a
-naive enable also silences the clarification round.`,
+		because: `WITHHELD, matching kiro-cli (no client sends it; default off). fta's prompt
+arms live only in the bundled workflow coder agents, so it is the workflow twin of
+validation and has no chat behaviour of its own.`,
+	},
+	{
+		key:      "infraSafetyEnforce",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD so only an account-level governance setting can turn it on.
+Enforce mode blocks infrastructure writes remotely and asks for an override;
+pinning it false would override an organization that requires it.`,
+	},
+	{
+		key:      "terminal",
+		door:     doorConnection,
+		resolver: resolverSettingObject,
+		gate: func(s *Spawn) (any, bool) {
+			if s.TerminalCommandTimeoutMs <= 0 {
+				return nil, false
+			}
+			return map[string]any{enabledMember: true, "commandTimeoutMs": s.TerminalCommandTimeoutMs}, true
+		},
+		send: true,
+		because: `SENT when "Shell command timeout" is set (terminal_command_timeout_ms).
+initialize stores wGt(settings), which returns commandTimeoutMs only while
+enabled is true, and the shell tool uses it as the DEFAULT when the model passes
+no timeout of its own (clamped to 1,800,000; unset is 120,000). Same semantics as
+the Kiro IDE's kiroAgent.terminalCommandTimeout. A running bridge is updated live
+through _kiro/terminal/settings_changed, which is how clearing it reaches KAS
+({"enabled": false}).`,
 	},
 	{
 		key:      "specPhaseCheckpoints",
@@ -587,20 +763,10 @@ neither is a security decision.`,
 		key:      "policyPreset",
 		door:     doorSession,
 		resolver: resolverCapability,
-		// GATED rather than a compiled value, since 2026-08-25: the ids come from
-		// the active security profile (policyfile.Profile), which is a setting the
-		// user changes without a rebuild. The row was a fixed
-		// []string{"read-workspace"}, and that value is now what the GUARDED
-		// profile happens to send, so the floor this Because describes is
-		// unchanged for anyone who never touches the picker.
-		//
-		// Present only for a NON-EMPTY set, and that is the Custom profile's whole
-		// implementation: sending no key at all is what makes the permissions
-		// files the entire policy. An empty array would not do — resolvePresetIds
-		// treats a zero-length array as absent anyway, so sending one would add
-		// bytes that mean nothing and invite a reader to think Custom grants a
-		// floor it does not.
-		gate: func(s Spawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
+		// Gated on the active security profile. Present only for a NON-EMPTY set, which is the
+		// Custom profile's whole implementation: no key makes the permissions files the entire
+		// policy. resolvePresetIds treats an empty array as absent anyway.
+		gate: func(s *Spawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
 		send: true,
 		because: `policyPreset restores the fs_read floor that KAS grants a bundled mode
 and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
@@ -651,40 +817,29 @@ unclaimed.txt: this row is the only record it exists.`,
 		key:      "disableAutoCompaction",
 		door:     doorSession,
 		resolver: resolverSetting,
-		send:     false,
-		because: `WITHHELD, and this is the row a future reader should hit BEFORE
-re-proposing the Auto-compact toggle, because the toggle existed, did nothing, and
-was deleted rather than wired.
+		// Always present: KAS persists the resolved value, so a session once
+		// opened with true (by another client or an earlier marotte setting)
+		// stays off unless every load sends false explicitly.
+		gate: func(s *Spawn) (any, bool) { return enabledIf(s.DisableAutoCompaction), true },
+		send: true,
+		because: `SENT, value-gated, on the session door only. The chat's compaction
+policy (auto_compaction_enabled, auto_compact_pct) sets it true when the switch is
+off or the point is above 80%, where marotte compacts the chat itself; every other
+session sends false.
 
-It is a LIVE key, unlike the compaction object beside it. resolveDisableAutoCompaction
-reads it from three inputs — the session call's own _meta, the initialize _meta, and
-KAS's persisted session metadata — and freezes the answer until the next session
-load. It is invisible to the census only because its two reads spell the receiver
-sessionSettings and initializeSettings while the census regex was anchored on
-parsed2; that regex is generalised now, so the key appears in the census as a
-declared row rather than as a finding.
+resolveDisableAutoCompaction reads three inputs, the session call's own _meta, the
+initialize _meta and KAS's persisted session metadata, and freezes the answer per
+session until the next load. Absence falls through to the persisted value, so
+withholding false would leave an earlier true in force: that is why the row is
+always present. It stays off the initialize door because KAS-created workflow step
+sessions get settings {workflows, memory} only and must resolve false from the
+initialize input.
 
-WHY NOT SEND IT. Its ON state contradicts a documented marotte invariant. The
-composer is deliberately never disabled on a full context, and static-src's
-context-ui.ts records why: kiro-cli compacts on the next turn, so refusing the send
-told the user about a problem they could do nothing about. Disabling auto-compaction
-makes that problem real — the turn fails on overflow, with KAS's own message saying
-to compact manually and retry.
-
-THREE PREREQUISITES, all absent, and they are the actual cost of the feature:
-
-  1. This row, sending {"enabled": true} on the session door. The resolver reads
-     .enabled, so a bare true resolves undefined.
-  2. A ContextWindowExceededError arm in internal/command's promptFailureClass.
-     Today that error arrives as an unmapped -32603, fails isAuthShaped and
-     isValidationShaped, classifies classTransient, and is RETRIED TWICE before the
-     user is told anything.
-  3. A compact affordance in the UI. _kiro/session/compact is fully wired
-     (internal/command/compact.go) and reachable only by typing /compact — no
-     button, no menu row, no palette entry.
-
-Wiring 1 without 2 and 3 turns a recoverable full context into a failed turn with
-no way out but a slash command nobody documented.`,
+The flag disables more than the 80% summarization: KAS's 95% truncation and its
+context-overflow recovery go with it, so an overflow fails the turn with
+ContextWindowExceededError (-32000) and internal/command names the Compact button.
+In-chat subagents share the parent's session services, so they run without
+compaction too; nothing marotte can call compacts a subagent.`,
 	},
 	{
 		key:      "compaction",
@@ -707,89 +862,64 @@ nothing. Both fields and the wedge are gone. A row saying "declared upstream wit
 zero readers, so there is nothing to send and nothing to withhold" is the honest
 record, and it keeps unclaimed.txt meaningful by claiming the key.
 
-Six sibling keys are in the same state and share this row's reasoning rather than
-getting one each: thinking, tangentMode, todoList, checkpoint, _subagent and
-_delegate are all declared in KAS's schema with zero readers. Two of them had
-marotte toggles (chat.enableCheckpoint, chat.enableTodoList) and those toggles are
-deleted; _subagent's live counterpart is subagentOrchestration, which this table
-already sends, so behaviour there is correct today.`,
+Five sibling keys are in the same state and share this row's reasoning rather than
+getting one each: thinking, tangentMode, checkpoint, _subagent and _delegate are
+all declared in KAS's schema with zero readers. chat.enableCheckpoint's marotte
+toggle is deleted; chat.enableTodoList's went too, and its todoList key left the
+schema at 2.27.0. _subagent's live counterpart is subagentOrchestration, which
+this table already sends, so behaviour there is correct today.`,
+	},
+	{
+		key:      "memory",
+		door:     doorSession,
+		resolver: resolverSettingObject,
+		// Always present: an absent key falls back to KAS's own default
+		// {read_write, reflection: true}, so Off has to be SENT.
+		gate: func(s *Spawn) (any, bool) {
+			return map[string]any{"mode": cmp.Or(s.MemoryMode, "disabled"), "reflection": s.MemoryReflection}, true
+		},
+		send: true,
+		because: `SENT on both session doors, from the Memory dropdown (settings.KeyMemoryMode),
+always explicit. KAS reads it through U$ (data.memory), not isSettingEnabled, so its
+value is {mode, reflection} and not the {enabled} object. mode is disabled, read_only
+or read_write; reflection is background learning and only acts under read_write.
+KAS's policy builder applies mode AFTER the entitlement gate, so disabled turns
+injection, the memory tool, writes and extraction off whatever the experiment says.
+
+Session door, not connection door, because only a SESSION-door preference upgrades
+a session persisted with memoryConfigSource "legacy" (every session marotte created
+before this row) to "explicit" on load. A legacy session's persisted config is KAS's
+default {read_write, reflection: true}, so omitting this key on a load turns memory
+fully on for that chat. Once explicit, KAS keeps the session's persisted mode on
+every later load; the bridge re-sends the reflection half through the
+memoryReflection config option after a load.
+
+An empty mode is sent as disabled, so a spawn that resolves no setting (the utility
+bridge) fails closed. Sending any memory field flips the source to explicit, which
+is also what makes KAS stop reading userMemoryOptIn.`,
 	},
 	{
 		key:      "userMemoryOptIn",
 		door:     doorConnection,
 		resolver: resolverSetting,
-		// Always present, value from the spawn, and the presence is the whole
-		// point: withholding this key is the one state that must never happen,
-		// because an absent key reads as "no opinion, let the experiment decide".
-		// A false here is a refusal; an absent key is a shrug. See because.
-		gate: func(s Spawn) (any, bool) { return enabledIf(s.Memory), true },
-		send: true,
-		because: `THE VETO, and the one row here whose value is normally false. It
-refuses kiro-cli's memory subsystem for every session marotte starts unless the
-user has opted in through the memory_enabled setting.
-
-GATED, not ungated, since the setting exists — but the gate moves the VALUE and
-never the presence, which is the opposite of every presence-gated row here. Off
-sends {"enabled": false} rather than going quiet, because absent is not off.
-
-WHY IT IS SENT AT ALL, when the 2.19.1 row withheld it. That row named two watch
-conditions and said the veto "is what to reach for if a watch condition below
-fires". One fired. On 2.19.1 neither memory key appeared in
-ENV_FEATURE_VARIABLES, which is what made the subsystem client-unreachable and
-the veto pointless; on 2.19.2 the map carries
-AB_MEMORY_EXTERNAL -> KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED, and the env provider
-parses that variable to a real boolean, so the gate is now reachable and one
-environment variable turns memory on.
-
-WHY THE ENVIRONMENT VARIABLE IS NOT A SUFFICIENT KILL SWITCH, which is the fact
-that makes this row load-bearing rather than belt-and-braces. resolveMemoryEnabled
-reads AB_MEMORY_INTERNAL first and only falls through to AB_MEMORY_EXTERNAL when
-the internal arm reads "disabled". AB_MEMORY_INTERNAL is NOT in
-ENV_FEATURE_VARIABLES, so an AWS-side ramp of the internal arm makes the ternary
-never consult the external key and no value of the variable can reach the
-decision. Setting it to "false" would look like a kill switch and would not be
-one. This key is the only lever that vetoes BOTH arms, and the variable is the
-only lever that can turn memory ON, so the two are not redundant mechanism: each
-covers a case the other cannot, which is why one marotte setting drives both.
-
-THE VALUE MUST BE EXACTLY THIS SHAPE. KAS reads the key as a TRI-STATE — it tests
-hasOwnProperty(settings,"userMemoryOptIn") and only then calls isSettingEnabled —
-and its gate refuses on an explicit false alone. isSettingEnabled returns
-val.enabled unchecked, so an EMPTY object yields undefined, which is not false and
-does NOT veto. That is the inverse of the trap every other settings row here
-guards against, and it is why the golden asserts these literal bytes rather than
-the key's presence.
-
-WHAT TURNING IT ON COSTS, recorded because the switch does not make these go
-away. The store is affirmatively unreachable through marotte's file surface, since
-internal/filebrowse deny-lists the home tree as credentials, so the model writes
-entries no user can read or delete. Scoping collapses: residency is computed from
-ONE workspace path and marotte sends a single cwd for every chat, so every repo
-under /workspace shares one bucket and the feature's headline scope-resident
-injection does not function. And there is NO cleanup mechanism upstream, so the
-store grows without bound. The setting's hint says the first and the third.
-
-Do not plant a .git in /workspace to fix the scoping. Residency resolves from one
-path, so whatever remote that .git names becomes a single repo tag for every
-session; RepoResolver stops at the first .git walking up, so it never sees the
-clones below; a .git with no parseable remote yields nothing at all; and making
-the mount a repo changes git's behaviour for every agent command run outside a
-clone. The real fix is a per-chat working directory, which is a design rather than
-an edit.
-
-WATCH. A "client" provider appearing in buildFeatureConfigRegistry would let the
-settings bridge supply the experiment value directly; neither memory key is in a
-census regex, so the census will not report it. This row's veto survives that and
-every backend ramp, so the watch is now informational rather than urgent.`,
+		send:     false,
+		because: `WITHHELD since the memory row went out. It was the legacy veto
+({"enabled": false} on every session). Any settings.memory field on the session
+door makes KAS's memory config source explicit, and an explicit session no longer
+reads this key, so it would veto nothing. Sending it would still refuse the
+sessionless _kiro/memory/* calls the Memories tab makes: without a sessionId KAS
+resolves memory through the legacy path, which reads this key. Kept as a row so
+the census keeps it claimed.`,
 	},
 	{
 		key:      "memoryEnable",
 		door:     doorConnection,
 		resolver: resolverSetting,
 		send:     false,
-		because: `WITHHELD, and unlike its sibling userMemoryOptIn — which marotte now
-SENDS as a veto — this key must not be sent in either direction, because it is
-read at two sites and only one of them is about the memory gate.
+		because: `WITHHELD, like its sibling userMemoryOptIn but for a different reason:
+that key is redundant beside the explicit memory row and would refuse sessionless
+CRUD, while this one must not be sent in either direction, because it is read at
+two sites and only one of them is about the memory gate.
 
 Site one IS the memory gate: resolveMemoryEnabled takes
 isSettingEnabled(settings,"memoryEnable") as an isInsiderChannel substitute "for
@@ -803,12 +933,12 @@ configuration where AWS has shipped the insider arm.
 Site two is the reason to withhold it whatever site one does. The key is ALSO read
 through isFeatureEnabled("memoryEnable"), which feeds resolveRemoteToolAllowlist,
 and for a kiro-cli client that pushes the remote searchMemories tool into the
-allowlist. So sending it hands the model a remote memory-search tool over a store
-this deployment vetoes — a half-on state with no upside.
+allowlist. So sending it hands the model a remote memory-search tool marotte does
+not offer, beside the local store the memory row already controls.
 
 Withholding is sufficient at both sites: absent resolves false through
-isSettingEnabled and through the bridged isFeatureEnabled provider alike. The veto
-that matters is userMemoryOptIn's, and it is a different key.`,
+isSettingEnabled and through the bridged isFeatureEnabled provider alike. The memory
+preference that matters is the memory row's, and it is a different key.`,
 	},
 	{
 		key:      "streamingShellContent",
@@ -886,5 +1016,179 @@ changing nothing. The trap is the opposite direction: sending
 {"enabled": false} here is the only way to disable it, and a future row
 that sets send:true must carry a value deliberately rather than inherit
 the enabled() shape the other settings rows use.`,
+	},
+	{
+		key:      "KIRO_FEATURE_AUTH_EXPIRY_RETRY_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Retries a turn once on AccessDeniedError before anything is emitted (default on).`,
+	},
+	{
+		key:      "KIRO_FEATURE_BACKGROUND_EXECUTION_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Selects KAS's newer ControlProcess tool class; the backgroundExecution session-door
+row already pins it, and a session setting outranks this arm.`,
+	},
+	{
+		key:      "KIRO_FEATURE_CGS_DELEGATION_V2_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Subagent delegation v2; no marotte surface depends on which version runs.`,
+	},
+	{
+		key:      "KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The Infrastructure-Safety monitor arm. The infraSafetyMonitor settings row
+carries the user's choice when there is one; the env arm stays with the
+experiment, which is what decides when the setting is left at kiro-cli's default.`,
+	},
+	{
+		key:      "KIRO_FEATURE_KUTS_TELEMETRY_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Picks which endpoint set KAS's standalone telemetry exports to (default on).
+Whether telemetry is sent is telemetry.enabled, which the Data sharing control owns.`,
+	},
+	{
+		key:      "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The external memory eligibility arm. marotte used to write it from the memory
+setting; the session-door memory row's explicit mode replaces that, and mode
+"disabled" holds whatever the arm says.`,
+	},
+	{
+		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The LLM session title on chat bridges. Run bridges turn the title off through
+KIRO_DISABLE_SESSION_TITLE_LLM instead (row below).`,
+	},
+	{
+		key:      "KIRO_FEATURE_STALL_TOOL_CONTINUATION_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Continues a turn stalled after a tool result (default on).`,
+	},
+	{
+		key:      "KIRO_FEATURE_STEERING_SUPERVISOR_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The steering supervisor; the steeringSupervisor settings row vetoes it on the
+session door, which the client value does without pinning the env arm.`,
+	},
+	{
+		key:      "KIRO_FEATURE_STREAM_IDLE_WATCHDOG_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).`,
+	},
+	{
+		key:      "KIRO_FEATURE_UNIFIED_AGENT_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Derived by the bundle's experiment-gate helper from settingKey unifiedAgent; also
+un-gates the bundled default-v2 mode.`,
+	},
+	{
+		key:      "KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Backend user-agent shape; not pinned by decision.`,
+	},
+	{
+		key:      "KIRO_FEATURE_VALIDATION_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The bundled validation reviewer; the validation settings row carries the user's
+choice when there is one, and otherwise this arm's experiment decides.`,
+	},
+	{
+		key:      "KIRO_DISABLE_EXPERIMENT_CONFIG",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+Turning off the experiment service would stop every ramp at once; not pinned by
+decision.`,
+	},
+	{
+		key:      "KIRO_DISABLE_RECAP",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+		because: `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+marotte does not enable sessionRecap, so there is no recap to disable.`,
+	},
+	{
+		key:      "KIRO_FEATURE_TOOL_LOAD_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		gate:     func(s *Spawn) (any, bool) { return strconv.FormatBool(s.ToolLoad), true },
+		send:     true,
+		because: `SENT in both states from "Load MCP tools on demand" (tool_search_enabled,
+default off, Crew c2). The env provider outranks the experiment, so an explicit
+"false" holds the arm shut against a server-side ramp. With it on, KAS keeps the
+tools array fixed (tool_load + tool_call) and forces settings.toolSearch off,
+which is why the toolSearch settings row is withheld.`,
+	},
+	{
+		key:      "KIRO_DISABLE_SESSION_TITLE_LLM",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		gate: func(s *Spawn) (any, bool) {
+			if !s.DisableSessionTitles {
+				return nil, false
+			}
+			return "true", true
+		},
+		send: true,
+		because: `SENT on RUN bridges only (Spawn.DisableSessionTitles). Nothing renders a
+workflow step session's title, so the fast-model title call is spend with no
+reader. KAS tests this variable before the feature registry, so it beats the
+ramped experiment. Chat bridges keep the title: it names History rows.`,
 	},
 }

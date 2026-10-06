@@ -1,7 +1,6 @@
-// The rail's SET of turns: the session-wide index, extended forwards by the resident
-// window. Neither side alone answers "which turns exist" — the index cannot see the
-// turn running now, the window cannot see the turns paged out. Pure and DOM-free,
-// like `turns.ts` beside it.
+// The rail's SET of turns: the session-wide index, extended forwards by the resident window.
+// Neither side alone answers "which turns exist" — the index cannot see the turn running now, the
+// window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
 import type { Turn, TurnOutcome } from "./turns.js";
@@ -16,9 +15,9 @@ export interface TurnSummary {
   agent_initiated?: boolean;
 }
 
-/** The merged set plus the session's turn count. `total` is the highest `n` seen, so
- *  the index's count once one has landed and the highest RESIDENT `n` before that:
- *  positions are correct for the window and re-scale when the index arrives. */
+/** The merged set plus the session's turn count. `total` is the highest `n` seen, so the index's
+ *  count once one has landed and the highest RESIDENT `n` before that: positions are correct for
+ *  the window and re-scale when the index arrives. */
 export interface MergedTurns {
   turns: TurnSummary[];
   total: number;
@@ -33,11 +32,10 @@ export interface ValidatedIndex {
 /** The hover label's cap, matching `internal/chat/turns.go`'s `turnFirstLineMax`. */
 const FIRST_LINE_MAX = 120;
 
-/** Validate the index, which arrives through an unchecked cast rather than a
- *  generated decoder. A non-finite `n` reaches `calc(NaN * …)`, an invalid
- *  declaration the browser drops, so a bad row would pin a marker to the top of the
- *  track rather than misplace it. Identity and position are DROPPED, description is
- *  COERCED. One `console.warn` per call, which is one per fetch. */
+/** Validate the index, which arrives through an unchecked cast rather than a generated decoder.
+ *  A non-finite `n` reaches `calc(NaN * …)`, an invalid declaration the browser drops, so a bad
+ *  row would pin a marker to the top of the track rather than misplace it. Identity and position
+ *  are DROPPED, description is COERCED. One `console.warn` per call, which is one per fetch. */
 export function validateTurnIndex(raw: unknown): ValidatedIndex {
   if (!Array.isArray(raw)) {
     return { turns: [], dropped: 0 };
@@ -93,13 +91,9 @@ export function validateTurnIndex(raw: unknown): ValidatedIndex {
   return { turns: rows, dropped };
 }
 
-/** Sit an unreadable `ts` on a neighbour rather than leaving it at the epoch, so the
- *  decoded row carries a plausible start time.
- *
- *  NOTHING READS `TurnSummary.ts` any more: the rail's pause reporting was its one
- *  consumer and it is deleted (2026-09). This stays because `ts` is still the wire's
- *  field and answering for a malformed one is the validator's job, not because a surface
- *  renders it. */
+/** Sit an unreadable `ts` on a neighbour rather than leaving it at the epoch, so the decoded row
+ *  carries a plausible start time. This stays because `ts` is still the wire's field and
+ *  answering for a malformed one is the validator's job, not because a surface renders it. */
 function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
   if (bad.length === 0) {
     return;
@@ -128,12 +122,11 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
   }
 }
 
-/** Merge the resident window into the fetched index, BY `n`: that is the POSITION the
- *  rail renders, and the appender assigns it at open and stores it (section 8.10), so
- *  both sides name a turn by the same number and no turn can take two slots.
- *
- *  Resident wins per field with no exemption, because it sees the turn running now and
- *  a window never holds part of a turn (section 6.3). */
+/** Merge the resident window into the fetched index, BY `n`: that is the POSITION the rail
+ *  renders, and the appender assigns it at open and stores it (section 8.10), so both sides name
+ *  a turn by the same number and no turn can take two slots. Resident wins per field with no
+ *  exemption, because it sees the turn running now and a window never holds part of a turn
+ *  (section 6.3). */
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],
@@ -168,9 +161,9 @@ function residentRow(t: Turn): TurnSummary {
   return out;
 }
 
-/** A request as ONE readable line, rune-safe. A TWIN of `internal/chat/turns.go`
- *  `firstLine`, because the index cannot answer for the turn that is running and the
- *  two spellings must agree for every turn it can. No shared fixture yet. */
+/** A request as ONE readable line, rune-safe. A TWIN of `internal/chat/turns.go` `firstLine`,
+ *  because the index cannot answer for the turn that is running and the two spellings must agree
+ *  for every turn it can. No shared fixture yet. */
 function firstLine(s: string): string {
   const collapsed = s.replace(/\s+/gu, " ").trim();
   // Code points, not graphemes: Go's `for range` yields runes and the cap must match.

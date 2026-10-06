@@ -3,14 +3,11 @@ package translate
 import (
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// permOptionWire decodes one inbound permission option. ACP sends the id
-// as camelCase `optionId`; the SSE-facing marotte.PermissionOption tags it
-// `option_id`, and Go's case-insensitive match does not bridge the
-// underscore — so we decode from this wire struct and map to the SSE type.
 // approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
 const approvalTypeTurn = "turn_approval"
 
@@ -20,48 +17,35 @@ type permOptionWire struct {
 	Kind     string `json:"kind"`
 }
 
-// HandlePermissionRequest processes session/request_permission from kiro-cli.
-//
-// The v3 params object is FLAT — {sessionId, toolCall{...}, options[]} —
-// and the JSON-RPC correlation id is on the envelope (msg.ID), NOT inside
-// params. decodeParams decodes msg.Params directly, so the decode struct
-// must match those fields at top level; a `params`-wrapped struct (or an
-// `id` field read from params) decodes to all-zero, yielding an empty dialog
-// and request_id=0 (the outcome would then be answered on id 0, wedging the
-// tool call and disabling the shell auto-policy). Mirror HandleElicitationCreate,
-// which decodes flat and reads *msg.ID.
+// HandlePermissionRequest processes session/request_permission. The v3 params are FLAT
+// ({sessionId, toolCall, options}) and the correlation id is the envelope's msg.ID: a
+// params-wrapped decode reads all zeros and answers on id 0, wedging the tool call.
 func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
-		// Without an id we cannot route the outcome back to the agent, so
-		// drop rather than show a dialog whose answer can never arrive.
+		// No id, no route for the outcome: drop rather than show an unanswerable dialog.
 		slog.Warn("permission request missing id", "chat_id", chatID)
 		return
 	}
-	// Field order is fieldalignment's rather than the wire's: Meta leads because
-	// its Consent block carries the struct's only pointer, and the slice trails
-	// because its len/cap are two scalars the GC would otherwise have to scan
-	// past to reach a later pointer.
+	// Field order is fieldalignment's rather than the wire's.
 	type permReq struct {
-		// Meta carries the turn-approval discriminator, its file list, and
-		// 2.19.1's persistability verdict. Named block rather than an inline
-		// struct — see ACPPermissionMeta for why this frame in particular earns
-		// one.
-		Meta      ACPPermissionMeta `json:"_meta"`
-		SessionID string            `json:"sessionId"`
+		SessionID string `json:"sessionId"`
 		ToolCall  struct {
 			ToolCallID string           `json:"toolCallId"`
 			Title      string           `json:"title"`
 			Kind       marotte.ToolKind `json:"kind"`
+			Locations  []struct {
+				Path string `json:"path"`
+			} `json:"locations"`
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
+		// Meta carries the turn-approval discriminator, its file list and the persistability
+		// verdict (see ACPPermissionMeta).
+		Meta ACPPermissionMeta `json:"_meta"`
 	}
 	reqID := *msg.ID
 	req, err := decodeParams[permReq](msg)
 	if err != nil {
-		// CANCELLED, which names no option, is the only safe answer to a frame
-		// whose options[] could not be read: inventing an option id would answer
-		// with a choice the request never offered. run_unattended.go refuses to
-		// fabricate one for the same reason.
+		// CANCELLED names no option: the only safe answer when options[] could not be read.
 		t.refuseAsk(ctx, chatID, marotte.MethodRequestPermission, reqID, marotte.PermissionOutcomeCancelled(), err)
 		return
 	}
@@ -70,85 +54,100 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 
 	options := make([]marotte.PermissionOption, len(req.Options))
 	for i, o := range req.Options {
-		// Name is the text ON the button the user clicks, so it is as much a
-		// decision surface as the title: a card whose title is safe and whose
-		// "Reject" button reads "Allow" is deceived just the same. OptionID and
-		// Kind are opaque identifiers the client echoes back, not display text,
-		// so they are left exactly as received — sanitizing an identifier would
-		// change what the answer means.
+		// Name is the button text, a decision surface like the title; OptionID and Kind are echoed
+		// identifiers and stay exactly as received.
 		options[i] = marotte.PermissionOption{OptionID: o.OptionID, Name: displayText(o.Name), Kind: o.Kind}
 	}
 
-	// No secondary shell classifier: kiro-cli's native Cedar policy
-	// already auto-resolved everything it could — a request that
-	// reaches marotte is a genuine ask and always surfaces to the user.
+	// Workspace-relative, like every other path marotte puts on the wire.
+	files := t.approvalFiles(&req.Meta.Kiro)
 
-	// A turn approval's files, workspace-relative. relPath because every other
-	// path marotte puts on the wire is relative and a client that had to handle
-	// both would get it wrong somewhere.
-	var files []marotte.ApprovalFile
-	if req.Meta.Kiro.Type == approvalTypeTurn {
-		files = make([]marotte.ApprovalFile, 0, len(req.Meta.Kiro.Files))
-		for _, f := range req.Meta.Kiro.Files {
-			files = append(files, marotte.ApprovalFile{
-				Path:        t.relPath(f.Path),
-				SnapshotURI: f.SnapshotURI,
-				ActionID:    f.ToolCallID,
-			})
-		}
-	}
-
-	// Whether the card may offer to persist a rule for this command, translated
-	// to a marotte CODE rather than forwarded as KAS's reason string. Absent
-	// means persistable, so nil is a yes and only present-and-false blocks the
-	// offer — a plain bool here would read false for every pre-2.19.1 frame and
-	// suppress the Always-allow row everywhere.
-	//
-	// This replaces the client's own guess: static-src/permission.ts used to
-	// test the command against a shell-metacharacter regex, which was wrong in
-	// both directions — it suppressed `git commit -m "fix"` (a quote, though
-	// `git *` matches it) and it offered the row for a command KAS cannot parse
-	// at all, where the click wrote a rule that could never match.
+	// Persistability as a marotte CODE, not KAS's reason string. Absent means persistable, so only
+	// present-and-false blocks the offer (a plain bool would block every pre-2.19.1 frame).
 	var alwaysAllowBlocked marotte.AlwaysAllowBlock
 	if c := req.Meta.Kiro.Consent.PersistableConsent; c != nil && !*c {
 		alwaysAllowBlocked = marotte.AlwaysAllowBlockUnparseable
 	}
 
-	// A workflow STEP's ask is attributed to its run, whichever bridge it
-	// arrived on: the launching chat's for an agent-launched run, the run
-	// bridge for a manual one. The run id is what lets a run tab render an ask
-	// keyed to a different surface, and the node id is what makes the card say
-	// WHO is asking.
-	step := t.steps.refFor(req.SessionID)
-	var mcpTool *marotte.MCPToolIdentity
-	serverName := displayText(req.Meta.Kiro.MCPTool.Identity.ServerName)
-	toolName := displayText(req.Meta.Kiro.MCPTool.Identity.ToolName)
-	if serverName != "" && toolName != "" {
-		mcpTool = &marotte.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
+	// A step's ask is attributed to its run whichever bridge it arrived on; the node id says WHO asks.
+	step, watch := t.askStep(req.SessionID, &req.Meta.Kiro)
+	var locations []string
+	for _, l := range req.ToolCall.Locations {
+		if l.Path != "" {
+			locations = append(locations, t.relPath(l.Path))
+		}
 	}
+	mcpTool := mcpToolIdentity(&req.Meta.Kiro)
 
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
 		RequestID:  reqID,
 		ToolCallID: req.ToolCall.ToolCallID,
-		// THE TITLE IS A DECISION SURFACE, which is why it is the one string on
-		// this payload that gets defused. It is composed upstream of the tool
-		// call — reachable by an agent that read a poisoned file — and it is the
-		// only description of the action the human is approving. A Bidi override
-		// in it renders `rm -rf /workspace` as an innocuous find command while
-		// the approved action is unchanged, so the card lies about what
-		// pressing Allow does. See displayText for the measured before/after.
+		// THE TITLE IS A DECISION SURFACE, the one string here that is defused: a Bidi override in it
+		// could render `rm -rf /workspace` as a harmless command (see displayText).
 		Title:              displayText(req.ToolCall.Title),
 		Kind:               toolKindFromWire(req.ToolCall.Kind),
 		SubSessionID:       subSessionID,
 		RunID:              step.WorkflowID,
 		NodeID:             step.NodeID,
+		Watch:              watch,
+		Locations:          locations,
+		ConsentRound:       req.Meta.Kiro.ConsentRound,
 		Options:            options,
 		Files:              files,
 		AlwaysAllowBlocked: alwaysAllowBlocked,
+		AdminRequired:      req.Meta.Kiro.Consent.Scope == consentScopeAdministration,
+		// KAS reads a reason only at the ordinary tool approval, the one ask carrying toolId.
+		AcceptsRejectionReason: req.Meta.Kiro.ToolID != "" && req.Meta.Kiro.Type != approvalTypeTurn &&
+			slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }),
 	})
 	t.bus.Broadcast(ctx, evt)
 	t.pendingPerms.PendingPermsAdd(reqID, evt)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelApproval}))
 	t.push.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, chatID)
 }
+
+// approvalFiles is a turn approval's file list, workspace-relative; nil on any
+// other ask.
+func (t *Translator) approvalFiles(k *ACPPermissionKiroBlock) []marotte.ApprovalFile {
+	if k.Type != approvalTypeTurn {
+		return nil
+	}
+	files := make([]marotte.ApprovalFile, 0, len(k.Files))
+	for _, f := range k.Files {
+		files = append(files, marotte.ApprovalFile{
+			Path:        t.relPath(f.Path),
+			SnapshotURI: f.SnapshotURI,
+			ActionID:    f.ToolCallID,
+		})
+	}
+	return files
+}
+
+// askStep attributes an ask to its workflow step, falling back to the watch a
+// workflow WATCH raised when the step registry names none.
+func (t *Translator) askStep(sessionID string, k *ACPPermissionKiroBlock) (StepRef, *marotte.PermissionWatch) {
+	step := t.steps.refFor(sessionID)
+	w := k.WorkflowWatch
+	if w == nil || w.WorkflowID == "" {
+		return step, nil
+	}
+	if step.WorkflowID == "" {
+		step = StepRef{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
+	}
+	return step, &marotte.PermissionWatch{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
+}
+
+// mcpToolIdentity is the MCP server and tool an ask names, nil unless both are.
+func mcpToolIdentity(k *ACPPermissionKiroBlock) *marotte.MCPToolIdentity {
+	serverName := displayText(k.MCPTool.Identity.ServerName)
+	toolName := displayText(k.MCPTool.Identity.ToolName)
+	if serverName == "" || toolName == "" {
+		return nil
+	}
+	return &marotte.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
+}
+
+// consentScopeAdministration is the consent scope of an ask the administrator's
+// managed-settings rules raise.
+const consentScopeAdministration = "administration"

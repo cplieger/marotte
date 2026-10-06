@@ -1,11 +1,9 @@
 package agent
 
-// The run surface: the two reads, and the routes that forward to KAS's own control verbs.
-// marotte adds no control of its own. The RUN read passes `state` and `nodePlan` through
-// VERBATIM, rather than hold a second representation of a structure it does not own.
+// The run surface: two reads, and routes that forward to KAS's own control verbs. The run read
+// passes `state` and `nodePlan` through verbatim.
 
-// The STEP read is what passthrough cannot answer, since `inspect` carries only what a
-// step chose to DECLARE: it loads that step's own KAS session and projects the replay.
+// The step read loads a step's own KAS session and projects the replay: `inspect` carries only what a step declared.
 
 import (
 	"context"
@@ -27,10 +25,9 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// handleRun: GET /api/runs/{workflowId} → one run's full state. Two things happen besides
-// the passthrough: the step sessions in the returned tree are RECORDED, the only recovery
-// path for step-frame attribution after a restart empties that registry mid-run; and a
-// failed read is graded three ways, because 404 is the one the client reads as final.
+// handleRun serves GET /api/runs/{workflowId}: the run's full state. It records the tree's step sessions
+// (the only attribution recovery after a restart) and grades a failed read three ways, since the
+// client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -50,11 +47,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
-		// A 404 here is a SETTLED answer about the run, and the client spends it as one:
-		// it stops re-reading. So a read that never REACHED the engine may not land in
-		// that arm, and only an *marotte.RPCError is the engine answering — a bridge that
-		// would not start, a deadline and a dead read loop each say nothing about whether
-		// the run exists, so each is worth another read.
+		// Only an *marotte.RPCError is the engine answering; anything else says nothing about whether the run exists, so it is not a 404.
 		if _, answered := errors.AsType[*marotte.RPCError](err); !answered {
 			slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
 				"error", err, "detail", rpcerr.Details(err))
@@ -68,12 +61,10 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rr.runs.translate.RecordRunSteps(raw)
-	// A run parked on a person with no ask on this server gets one reconstructed from its
-	// state — the container-restart path, since the ask registry is in memory. The response
-	// stays VERBATIM: the synthesised ask travels on the `run_input_needed` SSE instead.
+	// A run parked on a person with no ask here gets one reconstructed (the restart path); the response stays
+	// verbatim and the ask travels on `run_input_needed`.
 	rr.runs.reconcileNeedInput(r.Context(), id, raw)
-	// AFTER the reconcile, which is what mints a restart-recovered ask: a snapshot taken
-	// first reports none on exactly the run whose question needs finding.
+	// After the reconcile, which mints the restart-recovered ask.
 	out, err := withOpenAsks(raw, rr.runs.asks.SnapshotRun(id))
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks",
@@ -84,11 +75,8 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, out)
 }
 
-// withOpenAsks splices one top-level `open_asks` key into KAS's own reply. The decode is
-// a map of RAW values, which is what keeps the passthrough forward-tolerant: a top-level
-// key KAS adds later survives, and every nested value stays byte-identical. A nil slice
-// is substituted so the key serialises as [] and never null — an agent reading `null`
-// cannot tell "no open ask" from "this build does not report them".
+// withOpenAsks splices one top-level `open_asks` key into KAS's reply, decoding to raw values so future
+// keys survive and nested values stay byte-identical. Never null: an agent could not tell "none" from "unsupported".
 func withOpenAsks(raw json.RawMessage, asks []marotte.RunOpenAsk) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -108,10 +96,9 @@ func withOpenAsks(raw json.RawMessage, asks []marotte.RunOpenAsk) (json.RawMessa
 	return json.Marshal(obj)
 }
 
-// handleStepTranscript: GET /api/runs/{id}/steps/{path...} → one step's transcript. The
-// path is compared against the joined `StepSession.Path` as it stands, so a node id
-// containing a `/` is not addressable, and its FIRST segment must be the workflow id.
-// EVERY 4xx here is SETTLED, so a `gone` or `unavailable` verdict is a 200 instead.
+// handleStepTranscript serves GET /api/runs/{id}/steps/{path...}: one step's transcript. The path must
+// match the joined StepSession.Path and begin with the workflow id, so a node id containing `/` is
+// not addressable. Every 4xx is settled, so `gone` and `unavailable` are 200s.
 func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -145,12 +132,9 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 	webhttp.WriteJSON(w, out)
 }
 
-// handleTurnRange: GET /api/runs/{id}/turns/{turn}?after=<seq> → one step turn's tail
-// out of the run's own log, plus its open tails and its run_turn stamp. The twin of the
-// chat's range read, addressed by TURN rather than by step path because that is what a
-// `run_turn` stamp names: a parallel node holds several open turns in one log, so the
-// step's transcript cannot say which one moved. A turn the log does not hold is a 404,
-// the one outcome a caller can cause.
+// handleTurnRange serves GET /api/runs/{id}/turns/{turn}?after=<seq>: one step turn's tail from the run's
+// log, its open tails and its run_turn stamp. Addressed by turn: a parallel node holds several open turns.
+// An unknown turn is 404.
 func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -189,12 +173,9 @@ func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseAfterSeq reads ?after= as the seq the caller already holds and translates it to
-// the log's INCLUSIVE lower bound: from = after + 1 when present, 0 when absent, which
-// asks for the WHOLE turn, turn_open included — no seq value can ask for that, since the
-// turn_open IS seq 0. The wire spelling stays exclusive, and the twin of this door is the
-// chat router's parseAfterParam. A value at the type's ceiling is refused, because the
-// translation would wrap back onto the whole turn.
+// parseAfterSeq maps the exclusive ?after= to the log's inclusive lower bound (after+1, or 0 for the
+// whole turn including turn_open). Twin of the chat router's parseAfterParam. The type's ceiling is
+// refused: it would wrap.
 func parseAfterSeq(r *http.Request) (from uint64, ok bool) {
 	v := r.URL.Query().Get("after")
 	if v == "" {
@@ -207,8 +188,7 @@ func parseAfterSeq(r *http.Request) (from uint64, ok bool) {
 	return n + 1, true
 }
 
-// The three lists travel as `[]` rather than null: the client decodes each with its own
-// array reader, and a null is a decode failure that loses the whole page.
+// The three lists travel as `[]`: a null fails the client's array decode and loses the page.
 func nonNilRunEntries(e []marotte.Entry) []marotte.Entry {
 	if e == nil {
 		return []marotte.Entry{}
@@ -230,9 +210,8 @@ func nonNilStamps(s []*marotte.SubjectStamp) []*marotte.SubjectStamp {
 	return s
 }
 
-// handleLiveRuns: GET /api/runs/live → every live lease as `{workflow_id, chat_id,
-// executing}`. PRESENCE-based over marotte-local state, so it costs no KAS call: a real
-// status would mean one `inspect` per lease behind a page load. Staleness errs to KEEPING.
+// handleLiveRuns serves GET /api/runs/live: every live lease as `{workflow_id, chat_id, executing}`.
+// Presence over local state, no KAS call; staleness errs to keeping.
 func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -243,17 +222,13 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
-// liveRunRows projects every held lease. ONE projection with TWO doors — this route and
-// the SSE connect handshake — enforced by a shared function rather than a shared type, so
-// the two answers cannot disagree about what a live run IS. Cannot fail: Store.List
-// returns a clone under its own lock.
+// liveRunRows projects every held lease, shared by this route and the SSE connect so they agree. Cannot fail.
 func (rs *Runs) liveRunRows() []marotte.LiveRun {
 	rows, _ := rs.liveRunRowsStamped()
 	return rows
 }
 
-// liveRunRowsStamped is liveRunRows with the `runs` stamp, the lease store's own
-// collection version paired with the set under the store's lock.
+// liveRunRowsStamped is liveRunRows with the lease store's `runs` version, paired under its lock.
 func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) {
 	held, version := rs.leaseStore().ListStamped()
 	out := make([]marotte.LiveRun, 0, len(held))
@@ -267,12 +242,11 @@ func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) 
 	return out, marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
 }
 
-// status reads one run's current status, or "" when the run is unknown, which the caller
-// turns into a 404. Its own call: a control decision is made against the status as of NOW.
+// status reads one run's current status, "" for an unknown run (the caller's 404): control decisions use the status as of now.
 func (rr *runRoutes) status(ctx context.Context, workflowID string) (string, error) {
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
-		// Both are "no status to gate on" rather than a fault: the caller 404s.
+		// Both mean no status to gate on.
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			return "", nil
 		}
@@ -304,8 +278,7 @@ func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, marotte.RecipesResponse{Recipes: recipes})
 }
 
-// handleLaunch: POST /api/runs → launch one PARENTLESS run. 409 when the recipe already
-// has a live run: the wire shape of the single-run rule the Run ⇄ Cancel button needs.
+// handleLaunch serves POST /api/runs: one parentless run, 409 when the recipe already has a live run.
 func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -322,27 +295,20 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
-		// KAS's launch-time validation names the problem (a bad input set, an
-		// unregistered agent), so forward it rather than a sentinel: the fix is the user's.
+		// KAS's launch validation names the problem, and the fix is the user's.
 		httpreply.BadRequest(w, rpcerr.Text(err))
 		return
 	}
 	webhttp.WriteJSON(w, marotte.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
-// handleCancel: POST /api/runs/{id}/cancel → ask the run to stop. The response confirms
-// the ASK, not the stop: cancel is a node-boundary verb, so the terminal frame follows.
+// handleCancel serves POST /api/runs/{id}/cancel. The reply confirms the ask; the terminal frame follows the stop.
 func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbCancel)
 }
 
-// handleControls: GET /api/runs/{id}/controls → what may be done to this run, and
-// one sentence per verb it refuses. See marotte.RunControlsResponse for why the
-// server owns the answer.
-//
-// Its own route rather than a field on the passthrough above, which must stay a
-// verbatim relay. The client fetches it on pointing at a run and again on that
-// run's `run_finished`, so it is one request per tab open, not per repaint.
+// handleControls serves GET /api/runs/{id}/controls: what may be done and why not
+// (marotte.RunControlsResponse). Its own route so the passthrough stays verbatim.
 func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -369,11 +335,71 @@ func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 		Verbs:        aff.Verbs,
 		Refused:      aff.Refused,
 		ParentChatID: string(aff.origin.parent.chat),
+		PauseNodeID:  aff.PauseNodeID,
 	})
 }
 
-// handlePause / handleResume are cancel's shape; the affordance table carries which
-// statuses permit them.
+func (rr *runRoutes) handleExtend(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	var body marotte.RunExtendRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if body.NodeID == "" {
+		httpreply.BadRequest(w, "missing node id")
+		return
+	}
+	if body.Iterations < 1 || body.Iterations > maxExtendIterations {
+		httpreply.BadRequest(w, "iterations must be between 1 and 1000")
+		return
+	}
+	if _, ok := rr.permits(w, r, verbExtend, id); !ok {
+		return
+	}
+	rr.writeRepeatResult(w, verbExtend, id,
+		rr.runs.ExtendRepeat(r.Context(), id, body.NodeID, body.Iterations))
+}
+
+func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	var body marotte.RunFinishLoopRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if body.NodeID == "" {
+		httpreply.BadRequest(w, "missing node id")
+		return
+	}
+	if _, ok := rr.permits(w, r, verbFinishLoop, id); !ok {
+		return
+	}
+	rr.writeRepeatResult(w, verbFinishLoop, id, rr.runs.FinishRepeat(r.Context(), id, body.NodeID))
+}
+
+// writeRepeatResult answers the repeat verbs: failed spawn 500, an {updated:false} decline 409 with KAS's reason.
+func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
+	switch {
+	case err == nil:
+		webhttp.Ok(w)
+	case errors.Is(err, errRunHostStart):
+		slog.Warn("run control failed", "verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		httpreply.InternalError(w, errors.New(verb+" failed"))
+	case errors.Is(err, errStepStatusRefused):
+		httpreply.Conflict(w, rpcerr.Text(err))
+	default:
+		rr.writeControlErr(w, verb, id, err)
+	}
+}
+
+// handlePause and handleResume share cancel's shape; the affordance table gates them.
 func (rr *runRoutes) handlePause(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbPause)
 }
@@ -382,11 +408,8 @@ func (rr *runRoutes) handleResume(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbResume)
 }
 
-// handleRetry: POST /api/runs/{id}/retry → reset the run's failed work and report
-// WHAT WAS RESET. Its own handler rather than a runVerb, for handleStepStatus's
-// reason inverted: the verb table's issue signature answers `error` alone, and
-// retry's reply is the outcome — collapsed to `{"ok":true}`, a retry that reset zero
-// nodes is indistinguishable from one that reset five.
+// handleRetry serves POST /api/runs/{id}/retry and reports what was reset, so its own handler: runVerb
+// answers `error` alone.
 func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -401,8 +424,7 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The gate's own answer, forwarded: it carries the run's parent chat, which is
-	// what the verb needs to find the process that holds the run.
+	// The gate's answer carries the parent chat the verb needs.
 	out, err := rr.runs.Retry(r.Context(), id, aff)
 	if err != nil {
 		rr.writeControlErr(w, verbRetry, id, err)
@@ -411,14 +433,12 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, out)
 }
 
-// handleDelete: DELETE /api/runs/{id} — removes the run from KAS and drops marotte's
-// lease, timer and recorded end reason. Not recoverable, so the client confirms first.
+// handleDelete serves DELETE /api/runs/{id}: removes the run from KAS and drops marotte's lease, timer and reason. Unrecoverable.
 func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbDelete)
 }
 
-// handleStepStatus: POST /api/runs/{id}/step — mark a step completed, failed or running
-// so a wedged run advances. Its own handler rather than a runVerb: it carries a body.
+// handleStepStatus serves POST /api/runs/{id}/step: mark a step completed, failed or running. Its own handler: it has a body.
 func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -437,9 +457,7 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid step-status payload")
 		return
 	}
-	// `errRunHostStart` is a failed SPAWN, so a 400 with its text would tell the reader
-	// they asked wrongly and hand them an internal path; `errStepStatusRefused` and
-	// `errLaunchSessionUnavailable` are states of the run, at 409; everything else is a 400.
+	// errRunHostStart is a server fault (500), errStepStatusRefused and errLaunchSessionUnavailable are run states (409), anything else 400.
 	err := rr.runs.SetStepStatus(r.Context(), id, body.NodeID, body.Status)
 	switch {
 	case err == nil:
@@ -459,8 +477,7 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleAnswer: POST /api/runs/{id}/answer — answer a step parked on a question. REST
-// rather than an `/api/command` envelope: a parentless run's ask has no chat id.
+// handleAnswer serves POST /api/runs/{id}/answer. REST: a parentless run's ask has no chat id.
 func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -480,18 +497,17 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		webhttp.Ok(w)
 	case errors.Is(err, errAskAlreadySettled):
-		// A state of the world: another surface got there first.
+		// Another surface got there first.
 		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errRunNotParked):
-		// Also a state of the world, and the one refusal the reader can ACT on: the card
-		// is back, so 409 carries the retry sentence rather than a 400.
+		// The retryable refusal: the card is back, so the 409 carries the retry sentence.
 		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case errors.Is(err, errLaunchSessionUnavailable):
 		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRunHostStart):
-		// A failed spawn is this server's fault, so it must not read as the caller's.
+		// A failed spawn is this server's fault.
 		slog.Warn("run answer: could not host the run", "workflow_id", logsafe.Field(id),
 			"ask_id", logsafe.Field(body.AskID), "error", err)
 		httpreply.InternalError(w, errors.New("answer failed"))
@@ -502,23 +518,21 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// runVerb describes one run-control verb: how to issue it, and which statuses it is legal
-// from. The gate exists because KAS's refusals are throws surfacing as -32603 with the
-// reason buried in `error.data`, two of them ordinary user timing; it is one trip stale.
+// runVerb describes one run-control verb: how to issue it and its legal statuses. The gate exists because
+// KAS refuses with -32603 throws; it is one trip stale.
 type runVerb struct {
 	name  string
 	issue func(*Runs, context.Context, string) error
-	// method is EXPLICIT on every verb, or the one DELETE would be the only stated method.
+	// method is explicit on every verb.
 	method string
-	// from lists the statuses the verb is legal from. Empty means unrestricted.
+	// from lists legal statuses; empty is unrestricted.
 	from []marotte.RunStatus
 }
 
 var (
 	runVerbCancel = runVerb{
 		name: verbCancel,
-		// Deliberately unrestricted: cancel is the tab-close gesture and must never
-		// be the verb that fails; KAS is idempotent on an already-terminal run.
+		// Unrestricted: cancel is the tab-close gesture; KAS is idempotent on a terminal run.
 		issue:  (*Runs).Cancel,
 		method: http.MethodPost,
 	}
@@ -534,7 +548,7 @@ var (
 		method: http.MethodPost,
 		from:   []marotte.RunStatus{marotte.RunStatusPaused},
 	}
-	// Delete is unrestricted like cancel, plus it is the only way a row leaves History.
+	// Unrestricted, and the only way a row leaves History.
 	runVerbDelete = runVerb{
 		name:   verbDelete,
 		issue:  (*Runs).Delete,
@@ -542,15 +556,11 @@ var (
 	}
 )
 
-// verbDelete is the History row's delete. Deliberately outside run_affordance.go's
-// table: it is never offered as a control, so listing it there would put a verb in
-// the row's vocabulary that the row must not draw.
+// verbDelete is the History row's delete, kept out of run_affordance.go's table since it is never drawn as a control.
 const verbDelete = "delete"
 
-// permits gates one verb on the run's affordance, writing the refusal itself, and
-// hands the affordance back so the verb can act on the ANSWER rather than resolving
-// the same facts again. The refusal carries the affordance's own sentence when it
-// has one, and falls back to naming the status when the status alone is the reason.
+// permits gates one verb on the run's affordance, writing the refusal (its sentence, else the status), and
+// returns the affordance for the verb to act on.
 func (rr *runRoutes) permits(
 	w http.ResponseWriter, r *http.Request, verb, id string,
 ) (*runAffordance, bool) {
@@ -580,23 +590,19 @@ func (rr *runRoutes) permits(
 
 const runClaimInFlightText = "Another action on this run is already under way. Refresh to see the result."
 
-// writeControlErr answers a verb that reached KAS and failed, distinguishing a
-// refusal from a fault. InternalError is kept for what it is for: a fault that is
-// not the reader's to act on. Anonymising the rest sent the reader the constant
-// "internal error" while the actionable sentence went only to the container log.
+// writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
+// InternalError is for faults that are not the reader's.
 func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case errors.Is(err, errRunHostStart):
-		// FIRST: a re-host whose handshake KAS itself refused puts an *RPCError UNDER
-		// this sentinel, and the type test below would report this server's failed
-		// spawn as a state of the run.
+		// First: a re-host KAS refused wraps an *RPCError under this sentinel.
 		slog.Warn("run control failed",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case errors.Is(err, errLaunchSessionUnavailable):
-		// A state of the run, not a fault.
+		// A state of the run.
 		slog.Info("run control unavailable: the run's launching session cannot be opened here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.Conflict(w, launchSessionUnavailableText)
@@ -604,22 +610,18 @@ func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err
 		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case errors.Is(err, errRetryOutcomeUnreadable):
-		// The engine ACCEPTED the verb and only its report is unusable, so 502: the
-		// sentence sends the reader to a refresh rather than to a second retry of
-		// work that may already be running.
+		// KAS accepted the verb and only its report is unusable: 502, sending the reader to a refresh.
 		slog.Warn("run control landed but its report could not be read",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
 	case errors.Is(err, workflow.ErrJustClaimed):
-		// KAS says another PROCESS, but the competing claim is usually a second verb on
-		// this same carrier: the host lock is not held across the verb's RPC.
+		// KAS says "another process", but usually it is a second verb on this carrier (the host lock is not held across the RPC).
 		slog.Info("run control refused: another claim on the run is in flight",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, runClaimInFlightText)
 	case isRPCRefusal(err):
-		// KAS declined. Its sentence names the reason and the fix is frequently the
-		// reader's, so it is forwarded rather than replaced by a sentinel.
+		// KAS's sentence names the reason, and the fix is often the reader's.
 		slog.Info("run control refused by the workflow engine",
 			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 		httpreply.Conflict(w, rpcerr.Text(err))
@@ -630,9 +632,7 @@ func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err
 	}
 }
 
-// isRPCRefusal reports whether the failure is KAS's own answer rather than a fault
-// on this side. Matched at any wrapping depth, because the verb helpers wrap with
-// fmt.Errorf on the way up.
+// isRPCRefusal reports whether the failure is KAS's answer rather than a local fault, at any wrapping depth.
 func isRPCRefusal(err error) bool {
 	_, ok := errors.AsType[*marotte.RPCError](err)
 	return ok

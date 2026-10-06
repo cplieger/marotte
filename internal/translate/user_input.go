@@ -8,25 +8,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// HandleUserInput processes a _kiro/userInput request from KAS (2.14+):
-// the agent's user_input tool asked a structured question (plan-mode
-// clarification, spec gate) and KAS forwarded it because we advertised
-// the _meta.kiro.userInput initialize capability. We surface a question
-// dialog and the eventual reply is sent by CmdUserInputResponse via
-// bridge.Respond ({action:"answered", answer} — anything else advances
-// the agent to its next phase upstream).
-//
-// The request is a real JSON-RPC request (envelope id present), routed
-// here like _kiro/mcp/elicitation; the correlation id is msg.ID. The
-// pending-permissions tracker replays the dialog on reconnect, exactly
-// like a permission prompt. The question also arrives as a pending
-// tool_call (kind "other", _meta.kiro.toolId "user_input") that KAS
-// completes itself once answered — no tool bookkeeping here.
+// HandleUserInput processes a _kiro/userInput request (KAS 2.14+, advertised through the
+// _meta.kiro.userInput capability): it surfaces a question dialog whose reply
+// CmdUserInputResponse sends. The correlation id is msg.ID, and the pending tracker
+// replays the dialog on reconnect. KAS completes the matching user_input tool_call itself.
 func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
-		// The request must be answerable; without an id we cannot route
-		// a response, so drop rather than show a dialog whose answer
-		// can't reach the agent (KAS would stall the question forever).
+		// Without an id no response can be routed, and KAS would stall the question forever.
 		slog.Warn("user input request missing id", "chat_id", chatID)
 		return
 	}
@@ -51,9 +39,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 	step := t.steps.refFor(p.SessionID)
 	evt := marotte.NewEvent(marotte.EventUserInputNeeded, chatID, marotte.UserInputNeededPayload{
 		RequestID: reqID,
-		// The question is the other half of the decision surface the options
-		// are: it is what the human is answering, the agent composes it, and
-		// nothing on the wire bounds it. Same rule as a permission title.
+		// The question is model-composed and unbounded on the wire; same rule as a permission title.
 		Question:     displayText(p.Question),
 		Options:      options,
 		ToolCallID:   p.ToolCallID,
@@ -67,9 +53,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 	t.push.NotifyPush(ctx, "The agent has a question", marotte.PushKindPermission, chatID)
 }
 
-// wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option
-// shapes. At package scope rather than inside the handler so the sanitizer below
-// can name them.
+// wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option shapes.
 type wireUserInputSubOption struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -83,34 +67,18 @@ type wireUserInputOption struct {
 	Recommended     bool                     `json:"recommended"`
 }
 
-// Bounds on what a userInput question may put on screen. The agent
-// composes these options, so they are model output over a trusted
-// channel. Three failure modes without bounds: a long list pushes the
-// composer off screen; an empty title renders an unreadable card whose
-// answer is also empty text; two identical titles make the answer
-// ambiguous, since the reply carries the title rather than an index.
+// Bounds on what a userInput question may put on screen: a long list pushes the composer
+// off screen, an empty title answers empty text, and duplicate titles make the answer
+// ambiguous (the reply carries the title, not an index).
 const (
 	maxUserInputOptions    = 24
 	maxUserInputSubOptions = 24
 )
 
-// sanitizeUserInputOptions drops what cannot be answered, defuses what is
-// shown, and bounds what is left.
-//
-// Dropping rather than refusing the whole question: one unusable option
-// among five still leaves a question worth asking.
-//
-// displayText runs before TrimSpace and before the dedup, and that order
-// is load-bearing: the preset turns each unsafe rune into a space, so
-// sanitizing first and trimming after correctly empties a title of
-// nothing but a Bidi override, where trimming first would leave a blank
-// card that answers with an invisible control character when chosen. The
-// dedup must also see the sanitized form, or two titles differing only in
-// invisible controls would survive as visually identical cards — exactly
-// the ambiguity it exists to prevent.
-//
-// The title IS the answer sent back to the agent, so the text the human
-// read and the text the agent receives have to be the same string.
+// sanitizeUserInputOptions drops what cannot be answered, defuses what is shown, and bounds
+// the rest. displayText runs before TrimSpace and the dedup: trimming first leaves a blank
+// card that answers with an invisible control, and dedup on the raw form lets two visually
+// identical titles survive. The title IS the answer the agent receives.
 func sanitizeUserInputOptions(in []wireUserInputOption) []marotte.UserInputOption {
 	options := make([]marotte.UserInputOption, 0, min(len(in), maxUserInputOptions))
 	seen := make(map[string]struct{}, len(in))
@@ -138,8 +106,7 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []marotte.UserInputOptio
 	return options
 }
 
-// sanitizeUserInputSubOptions applies the same rules one level down. Split
-// out to keep the parent inside the complexity budget.
+// sanitizeUserInputSubOptions applies the same rules one level down.
 func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []marotte.UserInputSubOption {
 	subs := make([]marotte.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
 	seen := make(map[string]struct{}, len(in))

@@ -13,8 +13,8 @@ import {
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 
-// The summary sentence is the only way a user can confirm the rule they built
-// means what they intended, so it is pinned independently of the DOM.
+// The summary sentence is the only way a user can confirm the rule they built means what they
+// intended, so it is pinned independently of the DOM.
 describe("describeSpec", () => {
   it("names an hourly step and its offset", () => {
     expect(describeSpec({ freq: "hourly", interval: 6, hour: 0, minute: 15 })).toBe(
@@ -52,8 +52,8 @@ describe("describeSpec", () => {
     ).toBe("Every day at 09:00");
   });
 
-  // A weekly spec with no days is the one state the picker can hold that the
-  // server would reject, so the summary must say so rather than read as valid.
+  // A weekly spec with no days is the one state the picker can hold that the server would reject,
+  // so the summary must say so rather than read as valid.
   it("flags a weekly rule with no days chosen", () => {
     expect(describeSpec({ freq: "weekly", weekdays: [], hour: 9, minute: 0 })).toContain(
       "Pick at least one day",
@@ -79,8 +79,8 @@ describe("describeSpec", () => {
   });
 });
 
-// A minute-level rule is an interval AND a phase, so the sentence has to state
-// both or it describes a different schedule than the one that will fire.
+// A minute-level rule is an interval AND a phase, so the sentence has to state both or it describes
+// a different schedule than the one that will fire.
 describe("describeSpec for minutely", () => {
   it("names the step alone when the phase is zero", () => {
     expect(describeSpec({ freq: "minutely", interval: 15, hour: 0, minute: 0 })).toBe(
@@ -89,8 +89,8 @@ describe("describeSpec for minutely", () => {
   });
 
   it("names the phase, not the raw minute", () => {
-    // A step of 15 chosen at :37 fires at 07,22,37,52 — so :07 is the anchor
-    // that describes the rule, and printing :37 alone would name one of four.
+    // A step of 15 chosen at :37 fires at 07,22,37,52 — so :07 is the anchor that describes the
+    // rule, and printing :37 alone would name one of four.
     expect(describeSpec({ freq: "minutely", interval: 15, hour: 0, minute: 37 })).toBe(
       "Every 15 minutes from :07",
     );
@@ -102,8 +102,8 @@ describe("describeSpec for minutely", () => {
     );
   });
 
-  // A hand-edited store could hold a zero the form cannot produce; NaN in the
-  // sentence would be worse than a wrong number.
+  // A hand-edited store could hold a zero the form cannot produce; NaN in the sentence would be
+  // worse than a wrong number.
   it("does not print NaN for a zero interval", () => {
     expect(describeSpec({ freq: "minutely", interval: 0, hour: 0, minute: 20 })).not.toContain(
       "NaN",
@@ -111,14 +111,9 @@ describe("describeSpec for minutely", () => {
   });
 });
 
-/**
- * mount builds the form and exposes what it would SEND.
- *
- * The picker edits a working COPY of the spec — Cancel is a no-op rather than an
- * undo — so the caller's own object never sees a keystroke, and asserting on it
- * would pass for the wrong reason forever. Save is the observation point, and it
- * is the one that matters: it is the spec that reaches the server.
- */
+/** mount builds the form and exposes what it would SEND. The picker edits a working COPY of the
+ *  spec — Cancel is a no-op rather than an undo — so the caller's own object never sees a
+ *  keystroke, and asserting on it would pass for the wrong reason forever. */
 function mount(
   spec: ScheduleSpec,
   autoApprove = false,
@@ -164,9 +159,9 @@ function mount(
   };
 }
 
-// The floor exists because "every minute" is what a user types when they mean
-// "often", and the server refuses it. The form has to refuse it too, or the only
-// feedback is a failed save with no reason on screen.
+// The floor exists because "every minute" is what a user types when they mean "often", and the
+// server refuses it. The form has to refuse it too, or the only feedback is a failed save with no
+// reason on screen.
 describe("the minute interval floor", () => {
   it("agrees with the server's range", () => {
     expect(INTERVAL_BOUNDS.minutely.min).toBe(5);
@@ -191,8 +186,8 @@ describe("the minute interval floor", () => {
     for (const refused of ["1", "0", "60", "7.5"]) {
       step.value = refused;
       step.dispatchEvent(new Event("change"));
-      // Refused, and the previous value is what would be sent — the same
-      // silent-ignore the time field uses, never a spec the server would reject.
+      // Refused, and the previous value is what would be sent — the same silent-ignore the time
+      // field uses, never a spec the server would reject.
       expect(form.save().interval).toBe(15);
     }
 
@@ -201,8 +196,8 @@ describe("the minute interval floor", () => {
     expect(form.save().interval).toBe(5);
   });
 
-  // The offset is the other half of "at this minute, every X", and it is bounded
-  // by the clock rather than by the step.
+  // The offset is the other half of "at this minute, every X", and it is bounded by the clock
+  // rather than by the step.
   it("bounds the offset to a minute of the hour", () => {
     const form = mount({ freq: "minutely", interval: 15, hour: 0, minute: 7 });
     const offset = form.body.querySelector<HTMLInputElement>(".sched-num");
@@ -218,9 +213,9 @@ describe("the minute interval floor", () => {
     expect(form.save().minute).toBe(42);
   });
 
-  // `interval` is one field serving two units, so a frequency switch has to
-  // re-bound it: 45 minutes is legal, 45 hours is not, and the server would
-  // reject the save with nothing on the form having said why.
+  // `interval` is one field serving two units, so a frequency switch has to re-bound it: 45 minutes
+  // is legal, 45 hours is not, and the server would reject the save with nothing on the form having
+  // said why.
   it("re-bounds the shared step when the frequency changes", () => {
     const spec: ScheduleSpec = { freq: "hourly", interval: 45, hour: 0, minute: 0 };
     clampInterval(spec);
@@ -258,15 +253,15 @@ describe("the minute interval floor", () => {
     (sel as HTMLSelectElement).value = "hourly";
     sel?.dispatchEvent(new Event("change"));
     expect(form.save().interval).toBe(24);
-    // The painted field agrees with what would be sent; showing 45 over an
-    // interval of 24 would be the form lying about it.
+    // The painted field agrees with what would be sent; showing 45 over an interval of 24 would be
+    // the form lying about it.
     expect(form.body.querySelector<HTMLInputElement>(".sched-num")?.value).toBe("24");
   });
 });
 
-// A schedule runs with nobody watching, and the form is the only place that fact
-// is stated before the job is created. The setting it reports is GLOBAL: there is
-// no per-schedule grant, so wording that implies one would be false.
+// A schedule runs with nobody watching, and the form is the only place that fact is stated before
+// the job is created. The setting it reports is GLOBAL: there is no per-schedule grant, so wording
+// that implies one would be false.
 describe("the unattended note", () => {
   it("states the refusal and the budget when auto-approve is off", () => {
     const note = buildUnattendedNote(false, vi.fn());
@@ -303,8 +298,8 @@ describe("the unattended note", () => {
     expect(onOpenPermissions).toHaveBeenCalledTimes(1);
   });
 
-  // The live read-out is the whole point: boilerplate would describe both
-  // outcomes and commit to neither.
+  // The live read-out is the whole point: boilerplate would describe both outcomes and commit to
+  // neither.
   it("reaches the form, reflecting the value it was built with", () => {
     const build = (autoApprove: boolean): string =>
       buildSchedulePicker({
@@ -343,9 +338,9 @@ const view = (over: Partial<ScheduleView>): ScheduleView => ({
   ...over,
 });
 
-// The outcome is the only signal an unattended schedule has. Nobody watches a
-// 02:00 run, so a row that promised a next run and said nothing about the last
-// one let the same failure repeat every night in silence.
+// The outcome is the only signal an unattended schedule has. Nobody watches a 02:00 run, so a row
+// that promised a next run and said nothing about the last one let the same failure repeat every
+// night in silence.
 describe("describeOutcome", () => {
   it("says nothing for a schedule that has never fired", () => {
     expect(describeOutcome(view({}))).toBe("");
@@ -358,8 +353,8 @@ describe("describeOutcome", () => {
     expect(out).toBe(`last started ${formatStamp("2026-08-10T02:00:00+02:00")}`);
   });
 
-  // The reason is the actionable half, because it names the fix, so it is kept
-  // whole rather than reduced to the word "failed".
+  // The reason is the actionable half, because it names the fix, so it is kept whole rather than
+  // reduced to the word "failed".
   it("leads with the word failed and keeps the reason", () => {
     const out = describeOutcome(
       view({
@@ -420,17 +415,17 @@ describe("summaryLine", () => {
     expect(summaryLine(view({}))).toBe("Every day at 02:00");
   });
 
-  // The next run comes from the SERVER, never recomputed here, so the line
-  // cannot disagree with what will actually fire.
+  // The next run comes from the SERVER, never recomputed here, so the line cannot disagree with
+  // what will actually fire.
   it("appends the server's resolved next run", () => {
     const line = summaryLine(view({ next_run_at: "2026-08-10T02:00:00+02:00" }));
     expect(line).toContain("Every day at 02:00");
     expect(line).toContain("next ");
   });
 
-  // Rule, then what will happen, then what happened last. A failure has to be
-  // readable on the row itself: /docs/workflows is where a nightly schedule is
-  // looked at, and nothing else surfaces its outcome.
+  // Rule, then what will happen, then what happened last. A failure has to be readable on the row
+  // itself: /docs/workflows is where a nightly schedule is looked at, and nothing else surfaces its
+  // outcome.
   it("carries the rule, the next run and the last outcome in that order", () => {
     const line = summaryLine(
       view({
@@ -451,8 +446,8 @@ describe("summaryLine", () => {
     );
   });
 
-  // A disabled schedule reads "Not scheduled" and nothing else: its history is
-  // not what the row is for once it will not fire again.
+  // A disabled schedule reads "Not scheduled" and nothing else: its history is not what the row is
+  // for once it will not fire again.
   it("stays 'Not scheduled' when disabled, outcome or not", () => {
     expect(summaryLine(view({ enabled: false, last_status: "started" }))).toBe("Not scheduled");
   });
@@ -463,17 +458,17 @@ describe("defaultSpec", () => {
     const s = defaultSpec();
     expect(s.freq).toBe("daily");
     expect(s.hour).toBe(2);
-    // Every conditional control needs a value up front, or switching frequency
-    // would render an empty field.
+    // Every conditional control needs a value up front, or switching frequency would render an
+    // empty field.
     expect(s.interval).toBeGreaterThan(0);
     expect(s.weekdays?.length).toBeGreaterThan(0);
     expect(s.month_day).toBeGreaterThan(0);
   });
 });
 
-// Save could only ever produce enabled=true, so Remove was the one off-switch
-// and deleting the rule was the price of pausing it. The store, summaryLine and
-// the server's runner already modelled disabled; only the form could not reach it.
+// Save could only ever produce enabled=true, so Remove was the one off-switch and deleting the rule
+// was the price of pausing it. The store, summaryLine and the server's runner already modelled
+// disabled; only the form could not reach it.
 describe("pausing a schedule", () => {
   const daily = (): ScheduleSpec => ({ freq: "daily", hour: 2, minute: 0 });
 
@@ -531,8 +526,8 @@ describe("pausing a schedule", () => {
     expect(summary?.textContent).toBe(rule);
   });
 
-  // Remove keys on the record existing, not on it running. Keying it on enabled
-  // (as it did) leaves a paused schedule with no way to delete it.
+  // Remove keys on the record existing, not on it running. Keying it on enabled (as it did) leaves
+  // a paused schedule with no way to delete it.
   it("offers Remove for a paused schedule and withholds it when there is none", () => {
     expect(mount(daily(), false, { enabled: false }).remove()).not.toBeNull();
     expect(mount(daily(), false, { enabled: true }).remove()).not.toBeNull();

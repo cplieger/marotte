@@ -1,25 +1,9 @@
 package agent
 
-// Hooks state: list the workspace's .kiro/hooks/*.json hooks and flip their
-// enabled flag, over the v3 (KAS) _kiro/hooks/* requests.
-//
-// "Run now" is DELETED, not relocated: it was `_kiro/hooks/triggerHook`,
-// whose runCommand path made KAS call back `_kiro/hooks/executeHook` and
-// made marotte run `sh -c` on a command a file specifies — this app's most
-// security-sensitive path. The deletion is clean because Run-now was its
-// ONLY caller; hook autofire does not use it.
-//
-// Hooks are workspace-GLOBAL, so these ops route through the long-lived
-// UTILITY bridge, which opts into KAS's v2 hook engine via
-// _meta.kiro.hooks={enabled,v2} in its initialize handshake. Without that
-// gate _kiro/hooks/list throws "not available when v2Hooks is disabled".
-//
-// Autofire is unaffected: chat bridges enable the same hook engine, and in
-// v2 mode KAS loads the hook files and runs runCommand hooks internally in
-// its own process runner — verified live (chat autofire produces zero
-// executeHook callbacks) and mechanically (no chat-bridge dispatcher has a
-// case for that method). marotte's create_hook command still writes hook
-// files directly; this surface manages them.
+// Hooks state: list .kiro/hooks/*.json and flip their enabled flag over KAS's _kiro/hooks/*
+// requests. Hooks are workspace-global, so they route through the utility bridge, which enables
+// KAS's v2 hook engine (_meta.kiro.hooks={enabled,v2}); without it _kiro/hooks/list throws.
+// Chat bridges enable the same engine, and KAS runs runCommand hooks itself.
 
 import (
 	"context"
@@ -39,8 +23,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// hookCallTimeout bounds a list / setEnabled round-trip. The only slow path
-// is the first call, lazily spinning up the utility bridge.
+// hookCallTimeout bounds a list or setEnabled round-trip; only the first call starts the utility bridge.
 const hookCallTimeout = 45 * time.Second
 
 // actionRunCommand / actionAskAgent are the two KAS hook action types.
@@ -48,8 +31,6 @@ const (
 	actionRunCommand = "runCommand"
 	actionAskAgent   = "askAgent"
 )
-
-// --- KAS wire types (_kiro/hooks/list result) ---
 
 type kasHookAction struct {
 	Type    string `json:"type"` // runCommand | askAgent
@@ -84,18 +65,9 @@ type kasHookResult struct {
 	Success bool   `json:"success"`
 }
 
-// --- client-facing types (GET /api/hooks) ---
-
-// hookInfo is one hook in the GET /api/hooks response. ID is a URL-safe
-// opaque handle (base64url of the KAS id) the client echoes back to the
-// enabled endpoint.
-//
-// Scope is "workspace" or "global" (kiro-cli 2.13+: $HOME/.kiro/hooks/*.json,
-// loaded in every workspace — derived from _meta.filePath, since the wire
-// carries no scope field). FilePath is workspace-relative for workspace
-// hooks; for global hooks it is a ~-prefixed display path only — the
-// filebrowse deny-list blocks that tree, so the client renders no open
-// affordance for global rows.
+// hookInfo is one hook in GET /api/hooks. ID is a base64url handle of the KAS id. Scope is
+// "workspace" or "global" ($HOME/.kiro/hooks, kiro-cli 2.13+, derived from _meta.filePath).
+// A global FilePath is a ~-prefixed display path only; filebrowse blocks that tree.
 type hookInfo struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -105,16 +77,9 @@ type hookInfo struct {
 	Command    string `json:"command,omitempty"`
 	Prompt     string `json:"prompt,omitempty"`
 	Matcher    string `json:"matcher,omitempty"`
-	// MatcherWarning is DERIVED: what is wrong with this hook's
-	// trigger-and-matcher pairing, or empty when nothing is —
-	// `missing_tool_matcher` for a PreToolUse/PostToolUse hook with no
-	// matcher, `ineffective` for a matcher on a trigger with nothing to
-	// match on. Computed server-side (marotte.ClassifyHookMatcher) so the
-	// trigger-to-subject table lives once.
-	//
-	// `ineffective` overlaps create_hook's own refusal of that pairing
-	// deliberately: the refusal covers what marotte writes, this field
-	// covers what it READS — a hand-written or copied-in hook file.
+	// MatcherWarning is derived by marotte.ClassifyHookMatcher: `missing_tool_matcher` for a tool
+	// trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match. It
+	// covers hand-written files create_hook would refuse.
 	MatcherWarning string `json:"matcher_warning,omitempty"`
 	FilePath       string `json:"file_path,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
@@ -131,9 +96,8 @@ type hooksListResponse struct {
 	Hooks []hookInfo `json:"hooks"`
 }
 
-// encodeHookID / decodeHookID map the KAS hook id (an absolute path with a
-// "#hook-N" suffix — not URL-path-safe) to/from a base64url opaque handle used
-// in the /api/hooks/{id}/... routes.
+// encodeHookID and decodeHookID map a KAS hook id (an absolute path plus "#hook-N") to a
+// URL-safe base64url handle.
 func encodeHookID(kasID string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(kasID))
 }
@@ -146,16 +110,8 @@ func decodeHookID(encoded string) (string, error) {
 	return string(b), nil
 }
 
-// hookScopeAndPath classifies a KAS absolute hook filePath and renders its
-// client-facing path. Workspace hooks → workspace-relative; anything
-// outside the workspace is a global hook (kiro-cli 2.13:
-// $HOME/.kiro/hooks) → a ~-prefixed display path when it resolves under
-// HOME, absolute otherwise. Display only either way.
-//
-// Uses pathinside.RelEscapes rather than a leading-".." prefix check: the
-// separator-precise rule correctly classifies a hook under a directory
-// whose name merely BEGINS with two dots ("..drafts/build.kiro.hook") as
-// workspace rather than global.
+// hookScopeAndPath classifies a KAS hook path: under the workspace it is workspace-relative,
+// otherwise global, shown ~-prefixed under HOME. pathinside.RelEscapes keeps a "..drafts" directory workspace-scoped.
 func (st *Settings) hookScopeAndPath(abs string) (scope, path string) {
 	if abs == "" {
 		return hookScopeWorkspace, ""
@@ -171,19 +127,14 @@ func (st *Settings) hookScopeAndPath(abs string) (scope, path string) {
 	return hookScopeGlobal, abs
 }
 
-// hooksListRaw ensures the utility bridge and issues _kiro/hooks/list for
-// the workspace. workspacePaths is passed explicitly so the entry loads
-// even if the session hasn't yet.
+// hooksListRaw issues _kiro/hooks/list on the utility bridge, passing workspacePaths explicitly.
 func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
 	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		keyWorkspacePaths: []string{st.lifecycle.workDir},
-		// includeDisabled is load-bearing: without it registry.list()
-		// filters disabled hooks out of the response, which made the
-		// dashboard toggle a ONE-WAY DOOR — writing enabled:false made the
-		// row disappear with no way to re-enable it from the UI.
+		// includeDisabled, or a disabled hook vanishes and can never be re-enabled from the UI.
 		"includeDisabled": true,
 	})
 	if err != nil {
@@ -223,10 +174,7 @@ func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 	return info
 }
 
-// --- HTTP handlers (registered by registerHooksRoutes) ---
-
-// handleHooksList: GET /api/hooks → the workspace's hooks (name, trigger,
-// action summary, enabled). Read-only.
+// handleHooksList serves GET /api/hooks, read-only.
 func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	hooks, err := st.hooksListRaw(r.Context())
 	if err != nil {
@@ -237,8 +185,7 @@ func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	for i := range hooks {
 		out = append(out, st.toHookInfo(&hooks[i]))
 	}
-	// Workspace hooks before global ones (stable within each group) so the
-	// dashboard's canonical order matches the scope grouping on every device.
+	// Workspace hooks first, stable within each group.
 	slices.SortStableFunc(out, func(a, b hookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
@@ -257,9 +204,8 @@ type hookEnabledReq struct {
 	Enabled bool `json:"enabled"`
 }
 
-// handleHookSetEnabled: POST /api/hooks/{id}/enabled {enabled} → flip a hook's
-// enabled flag (persisted to its .kiro/hooks/*.json file by KAS). Broadcasts
-// hooks_changed so every device refetches.
+// handleHookSetEnabled serves POST /api/hooks/{id}/enabled {enabled}; KAS persists the flag and
+// hooks_changed is broadcast.
 func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	hookID, ok := hookIDFromPath(w, r)
 	if !ok {
@@ -289,17 +235,13 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 	webhttp.Ok(w)
 }
 
-// broadcastHooksChanged fans out hooks_changed (workspace-global) so every
-// device refetches GET /api/hooks. Fired after a create/toggle and by the
-// utility bridge on a _kiro/hooks/didChange notification — the didChange
-// half is what keeps a hand-edited hook FILE reaching the UI, since the
-// docs scan's own memoization would otherwise serve a stale trigger.
+// broadcastHooksChanged fans out hooks_changed after a create or toggle and on
+// _kiro/hooks/didChange, which is how a hand-edited hook file reaches the UI.
 func (st *Settings) broadcastHooksChanged() {
 	st.broadcast(context.Background(), marotte.NewEvent(marotte.EventHooksChanged, "", marotte.HooksChangedPayload{}))
 }
 
-// hookIDFromPath decodes the base64url {id} path segment into a KAS hook id,
-// writing a 400 and returning ok=false on a malformed id.
+// hookIDFromPath decodes the {id} segment, writing a 400 and returning false on a malformed one.
 func hookIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	hookID, err := decodeHookID(r.PathValue("id"))
 	if err != nil || hookID == "" {
@@ -309,8 +251,7 @@ func hookIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return hookID, true
 }
 
-// parseHookResult decodes a {success, code?, error?} reply; a nil/empty body is
-// treated as failure so a silent success is never assumed.
+// parseHookResult decodes a {success, code?, error?} reply; an empty body is a failure.
 func parseHookResult(raw json.RawMessage) kasHookResult {
 	if len(raw) == 0 {
 		return kasHookResult{}
@@ -335,18 +276,15 @@ func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	httpreply.BadRequest(w, msg)
 }
 
-// writeHookErr maps a bridge / kiro-cli failure to 502 with a generic message
-// (details logged, not leaked). Like knowledge.go there is no errNoLiveBridge
-// case: the utility bridge is auto-started, so a failure here is a backend
-// fault, not a "open a chat first" condition.
+// writeHookErr maps a bridge failure to 502 with a generic message. The utility bridge
+// auto-starts, so there is no "open a chat first" case.
 func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
-// registerHooksRoutes wires the hooks-state endpoints. No POST
-// /api/hooks/{id}/trigger — adding one back would restore the executeHook
-// shell path along with it.
+// registerHooksRoutes wires the hooks endpoints. There is deliberately no trigger route: it
+// would restore the executeHook shell path.
 func (st *Settings) registerHooksRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/hooks", st.handleHooksList)
 	mux.HandleFunc("POST /api/hooks/{id}/enabled", st.handleHookSetEnabled)

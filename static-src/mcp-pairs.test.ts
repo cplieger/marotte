@@ -1,4 +1,3 @@
-// Unit tests for mcp-pairs.ts — collectKeyPairs and renderKeyPairList.
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("./icons.js", () => ({ ICON_CLOSE: "<svg></svg>" }));
@@ -58,10 +57,7 @@ describe("renderKeyPairList", () => {
     expect(valIn!.value).toBe("");
   });
 
-  // The header list's name placeholder is the one discoverable pointer to the
-  // API-token path: Cloudflare and friends take a bearer token here, and nothing
-  // else on the remote form says so. Both kinds are asserted so swapping the
-  // ternary's arms fails rather than passing on one of them.
+  // The header name placeholder is the one pointer to the API-token path; both kinds are asserted so swapped arms fail.
   it.each([
     { kind: "header" as const, want: "Authorization" },
     { kind: "env" as const, want: "VAR_NAME" },

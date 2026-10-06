@@ -1,21 +1,23 @@
-// Boot wiring for @cplieger/actions: connects the library's injection
-// points to marotte's toast, api-client, and transport layers.
-// Import this module once at app startup (app.ts) before any action dispatch.
-// ---------------------------------------------------------------------------
+// Wires @cplieger/actions to marotte's toast, api-client and transport layers. Import once at
+// startup (app.ts) before any action dispatch.
 
 import { configure, configureTransport } from "@cplieger/actions";
-import { error as toastError, success as toastSuccess } from "../toast.js";
+import { actionNotice, subjectName } from "../notice-subject.js";
+import { configureSubjectNotice, takeSubject } from "./subject.js";
 import { send as transportSend } from "../transport.js";
 
 export function initActions(): void {
   configure({
     success: (msg) => {
-      toastSuccess(msg);
+      const { subject, name } = takeSubject();
+      actionNotice(subject, msg, "success", undefined, name);
     },
     error: (msg, retry) => {
-      toastError(msg, retry);
+      const { subject, name } = takeSubject();
+      actionNotice(subject, msg, "error", retry, name);
     },
   });
+  configureSubjectNotice(actionNotice, subjectName);
 
   configureTransport(async (cmd, { signal }) => {
     const r = await transportSend(cmd as Parameters<typeof transportSend>[0], {

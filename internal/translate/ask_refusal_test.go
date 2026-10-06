@@ -6,27 +6,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestAskHandlers_AnswerAnUndecodableRequest is the red check for the wedge
-// class on the three ask handlers.
-//
-// Each handler verifies the envelope id before it decodes, so a frame reaching
-// the decode is provably a REQUEST, and KAS's sendRequest carries no timeout: a
-// bare return strands the tool batch until process teardown, and the unattended
-// floor cannot rescue it because the frame never reached a tracker. So the
-// assertion is that an answer was written ON THAT ID at all.
-//
-// The payload half is the part that must not regress into something worse than
-// the drop. KAS's turn-approval path fails OPEN — it answers approved when the
-// requestPermission call throws — so a JSON-RPC error on a turn_approval frame
-// would apply every unreviewed write in the turn. Hence rpcErr must be nil and
-// the result must be the kind's own fail-closed value, and for a permission that
-// value must name no option: fabricating one answers with a choice the request
-// never offered.
+// TestAskHandlers_AnswerAnUndecodableRequest pins an answer on the frame's id for each ask
+// handler, with no rpcErr (turn approval fails OPEN on one) and the kind's own fail-closed
+// value; a permission's names no option.
 func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
-	// Each case's params are well-formed JSON whose TYPES do not match the
-	// handler's decode struct, which is the reachable trigger: the fields are
-	// type-stable strings today, so what breaks a decode is an upstream shape
-	// change to a field — including a decorative one.
+	// Well-formed JSON whose TYPES mismatch the decode struct: an upstream shape change.
 	cases := map[string]struct {
 		params map[string]any
 		call   func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse)
@@ -40,8 +24,7 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 			want: marotte.PermissionOutcomeCancelled(),
 		},
 		"permission: a decorative meta field changed shape": {
-			// _meta.kiro.consent is 2.19.1 decoration that shares the struct with
-			// the routing fields, so a change to it takes the whole ask down.
+			// _meta.kiro.consent shares the struct with the routing fields, so a change to it breaks the ask.
 			params: map[string]any{
 				"sessionId": "s",
 				"_meta":     map[string]any{"kiro": map[string]any{"consent": true}},
@@ -96,10 +79,8 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequest_RefusalNamesNoOption pins the one property that
-// makes cancelled the only safe permission answer here: it selects nothing.
-// Answering with a fabricated optionId would apply a choice the request never
-// offered, which run_unattended.go's floor already refuses to do.
+// TestHandlePermissionRequest_RefusalNamesNoOption pins that cancelled selects nothing (a
+// fabricated optionId would apply an unoffered choice).
 func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
 	deps := newBaseDeps()
 	tr := New(rolesOf(deps))
@@ -125,9 +106,8 @@ func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
 	}
 }
 
-// TestAskHandlers_DecodedFrameStillReachesTheTracker is the other direction: the
-// refusal must not have displaced the ordinary path, which registers the ask for
-// reconnect replay and answers nothing itself.
+// TestAskHandlers_DecodedFrameStillReachesTheTracker pins that the ordinary path still
+// registers the ask for reconnect replay.
 func TestAskHandlers_DecodedFrameStillReachesTheTracker(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))

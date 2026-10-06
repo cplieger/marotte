@@ -63,9 +63,7 @@ func TestTemplateToResponse(t *testing.T) {
 	}
 }
 
-// KAS omits the `model` config option entirely when its model cache holds nothing, so that
-// option's PRESENCE is the only signal separating "this is the catalog" from "there was no
-// catalog".
+// KAS omits the `model` option when its cache is empty, so presence is the only "no catalog" signal.
 func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t *testing.T) {
 	const present = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-1", "options": [{"value": "m-1", "name": "One"}]}
@@ -94,9 +92,7 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 	}
 }
 
-// The verdict is the option's PRESENCE, not len(Models): an all-[Deprecated] template is
-// still a catalog KAS answered with, and deriving the verdict from the filtered list sends
-// the client into a retry loop over a read that can never change.
+// The verdict is the option's presence, not len(Models), or an all-[Deprecated] catalog loops the client.
 func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t *testing.T) {
 	const raw = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-old", "options": [
@@ -132,9 +128,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	}
 }
 
-// The client keeps static fallbacks for a 200 carrying empty lists, so a failure here is
-// INVISIBLE in the UI and the log line is the only evidence — which also means a guard
-// flipped to fire on success reports a broken catalog on every page load.
+// A degrade is invisible in the UI (static fallbacks), so the log line is the only evidence.
 func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	const goodReply = `{
 	  "modes": {"currentModeId": "vibe", "availableModes": [
@@ -231,8 +225,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		}
 	})
 
-	// A live session's report beats the session-less template, per list: this endpoint is the
-	// client's only copy of the vocabulary, so the weaker of the two loses the workspace agents.
+	// A live session's report beats the session-less template, per list.
 	t.Run("a live catalog wins over the template", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -280,9 +273,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	})
 }
 
-// Asserted on the raw BYTES, because decoding into the struct cannot see this
-// (len(nil) == 0): a degrade branch omitting a slice puts `null` on the wire where success
-// puts `[]`, and a generated decoder requiring an array fails on the failure path alone.
+// Asserted on raw bytes: decoding cannot see `null` versus `[]`.
 func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 	cases := map[string]func(*fakeBridge){
 		"an unreachable bridge": func(br *fakeBridge) {

@@ -1,29 +1,4 @@
-// ---------------------------------------------------------------------------
-// Find in files: the file browser's recursive content search.
-//
-// Server-side by necessity, not preference. The client holds one directory's
-// listing, so there is nothing here to search recursively, and the server owns
-// the confinement (the granted-roots allow-list plus one kernel-confined root
-// per mount) that a walk has to run inside. Wire contract:
-// internal/filebrowse/search.go.
-//
-// TWO SURFACES, ONE VOCABULARY. The bar deliberately mirrors find-in-chat's:
-// the same `Aa` latched match-case toggle spelled with the same `aria-pressed`,
-// the same typing debounce, the same second-press escape hatch back to the
-// browser's native find. Ctrl-F means "find in what I am looking at" in both,
-// and a reader should not have to learn two boxes.
-//
-// IT SAYS WHAT IT DID NOT READ. A repo holds far more files than the caps allow,
-// so the scan stops routinely; a bare "no matches" over a stopped scan tells the
-// reader the text is nowhere when most of the tree was never opened. The note
-// is the shared search grammar (textsearch/copy.ts) over the reply's tally, with
-// this surface's nouns, so it reads like the History page's cross-chat note.
-//
-// It writes into its OWN results list rather than #fb-list. Four things in
-// files.ts assume every row in that list is an entry of one directory (the git
-// badge repaint, the selection highlight sweep, the sorted-name index behind
-// shift-select, and the stagger index), and a hit row would break each.
-// ---------------------------------------------------------------------------
+// Find in files, server-side by necessity: the client holds one listing and the server owns confinement.
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
@@ -49,11 +24,7 @@ const NOUNS: Nouns = {
   scanned: { one: "file", many: "files" },
 };
 
-/** The glob convention, stated where the user meets it.
- *
- *  It is a real convention rather than raw glob semantics, so it has to be
- *  written down somewhere a reader will see: a `*` does not cross a `/`, which
- *  is why a pattern with no slash is matched against the file NAME. */
+/** A `*` does not cross a `/`; stated where the user meets the convention. */
 const GLOB_HINT =
   "One or more patterns, comma separated. " +
   "A pattern without a slash matches the file name at any depth, for example *.go. " +
@@ -63,13 +34,9 @@ const GLOB_HINT =
 export interface FilesSearchCtx {
   /** The folder the browser is showing, which is the search ROOT. */
   getSearchPath: () => string;
-  /** Bring the file browser into view. Injected rather than imported, because
-   *  files.ts owns the opener and importing it here would be a cycle. It must SHOW
-   *  and never toggle: every door here can run with the files tab already active,
-   *  where a toggle closes the view the bar is about to render into. */
+  /** Bring the browser into view; injected (importing files.ts would be a cycle). Must show, never toggle. */
   activateBrowser: () => void;
-  /** Navigate the browser to a folder a NAME hit named, and close the search.
-   *  Injected rather than imported: the graph runs files -> files-search. */
+  /** Navigate to a name hit's folder and close the search; injected (files imports files-search). */
   openFolder: (path: string) => void;
 }
 
@@ -78,26 +45,15 @@ let barEl: HTMLElement | null = null;
 let resultsEl: HTMLElement | null = null;
 let includeEl: HTMLInputElement | null = null;
 let excludeEl: HTMLInputElement | null = null;
-/** The box's shell: the field, the `Aa` toggle, the note, the debounce and the
- *  supersession guard. Its abort signal is its OWN — sharing the browser's would
- *  make a search and a directory load cancel each other. */
+/** Its own abort signal: sharing the browser's would cancel searches and directory loads against each other. */
 let shell: SearchShell | null = null;
 let lastMatches: FileMatch[] = [];
-/** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack a
- *  second subscriber on the bus. Mirrors find-in-chat.ts and editor-find.ts. */
+/** Unsubscribe for the tab teardown, so a rebuilt module does not stack subscribers. */
 let unsubTab: (() => void) | null = null;
-/** The id of the files tab the open bar belongs to, `""` when no bar is open.
- *
- *  `""` is a VALUE, not a missing field: the teardown never fires for it, so a bar
- *  opened while nothing is active (`getActiveTabId()` answers `""` on an empty
- *  strip) is not torn down by the first activation that follows. */
+/** The files tab the open bar belongs to, "" when closed or opened on an empty strip (the teardown never fires for ""). */
 let searchOwnerID = "";
 
-// --- Pure helpers (exported for tests) -------------------------------------
-
-/** The search URL for one query. `case=1` only when asked, because the server
- *  reads an absent parameter as insensitive; the transcript search sends the
- *  same flag the same way, so the two boxes cannot disagree about the toggle. */
+/** The search URL. `case=1` only when asked: the server reads absence as insensitive, as for the transcript search. */
 export function searchURL(
   path: string,
   query: string,
@@ -117,16 +73,9 @@ export function searchURL(
   return `/api/files/search?${q.toString()}`;
 }
 
-/** A hit's path as the reader should see it: relative to the folder searched
- *  when it sits under it, absolute otherwise (a root search spans mounts, where
- *  there is no one folder to be relative to). */
+/** Relative to the folder searched when under it, else absolute (a root search spans mounts). */
 export function hitLabel(searchPath: string, abs: string): string {
-  // A hit's `path` is container-absolute (`FileMatch.Path`: "the same namespace
-  // every other /api/file* route speaks"), and so is the folder that was
-  // searched, so the prefix is the search path itself. It used to be spelled
-  // `/${searchPath}` because the browser's own paths were rootless — the one
-  // place that mismatch was visible, since a label that failed to strip simply
-  // showed the whole path.
+  // Both the hit path and the searched folder are container-absolute (`FileMatch.Path`), so the prefix is the path itself.
   if (searchPath === "" || searchPath === FB_ROOT) {
     return abs;
   }
@@ -134,14 +83,10 @@ export function hitLabel(searchPath: string, abs: string): string {
   return abs.startsWith(root) ? abs.slice(root.length) : abs;
 }
 
-/** Reconcile key for a hit row. Two hits differ by path AND line, and a colon
- *  is a legal filename character, so the composite goes through keyenc rather
- *  than a template literal. */
+/** Reconcile key: path and line through keyenc, since a colon is a legal filename character. */
 export function hitKey(m: FileMatch): string {
   return join("hit", m.path, String(m.line));
 }
-
-// --- DOM -------------------------------------------------------------------
 
 function globField(id: string, placeholder: string, label: string): HTMLInputElement {
   return searchField({
@@ -161,11 +106,7 @@ function ensureBuilt(): void {
   excludeEl = globField("fb-search-exclude", "Exclude: node_modules", "Exclude patterns");
   const globRow = el("div", { className: "fb-search-row fb-search-globs" }, includeEl, excludeEl);
 
-  // The GLOB ROW is this surface's alone — a transcript has no paths to include
-  // or exclude — so it arrives through `compose` rather than becoming a shell
-  // feature. Everything above it is the shell's: the field's attributes, the
-  // debounce, the supersession guard, the `Aa` toggle's aria-pressed idiom and
-  // the note.
+  // The glob row is this surface's alone, so it arrives through `compose`; the rest is the shell's.
   const built = createSearchShell<FileSearchResult>({
     id: "fb-search",
     regionClass: "fb-search hidden",
@@ -186,7 +127,7 @@ function ensureBuilt(): void {
     ],
     query: async (query, qctx) => {
       const trimmed = query.trim();
-      // An empty root means no browser is bound, so there is no folder to search.
+      // An empty root means no browser is bound.
       if (trimmed === "" || ctx === null || ctx.getSearchPath() === "") {
         return null;
       }
@@ -215,8 +156,7 @@ function ensureBuilt(): void {
       lastMatches = res.matches;
       renderResults(searchPath);
       if (res.matches.length === 0) {
-        // A stopped scan must be stated: an empty result over one would
-        // otherwise read as "the text is nowhere".
+        // A stopped scan is stated, or an empty result reads as "nowhere".
         built.setNote(
           emptyNote(
             classify({
@@ -247,9 +187,7 @@ function ensureBuilt(): void {
     role: "list",
   });
 
-  // The glob fields feed the same query, so they schedule the same run and carry
-  // the same key contract. Sharing wireSearchKeys is what keeps Escape meaning
-  // the same thing in all three fields.
+  // The glob fields share wireSearchKeys, so Escape means the same in all three.
   for (const target of [includeEl, excludeEl]) {
     target.addEventListener("input", () => {
       built.schedule();
@@ -269,8 +207,7 @@ function ensureBuilt(): void {
   barEl = built.region;
   resultsEl = results;
 
-  // Keyed on tab IDENTITY rather than the destination KIND: a switch from files tab A
-  // to B carries `kind: "files"`, so B would inherit A's query and hit list.
+  // Keyed on tab identity, not kind: files tab A to B is still `kind: "files"`.
   unsubTab?.();
   unsubTab = onBus(BUS_TAB_CHANGED, (e) => {
     if (searchOwnerID !== "" && e.to !== searchOwnerID) {
@@ -279,14 +216,7 @@ function ensureBuilt(): void {
   });
 }
 
-/** The row for one hit.
- *
- *  LINE decides the SHAPE: a content hit (line >= 1) keeps the `:N` + excerpt
- *  row, and a name hit (line 0) is icon + label only, because a name has neither
- *  a line number nor a matching line to quote. KIND decides only where the row
- *  GOES, and the switch is total over the generated enum: a kind this bundle does
- *  not know fails the reply at the decoder rather than reaching a row nothing can
- *  open. */
+/** Line decides shape (content hit: `:N` + excerpt; name hit: icon + label). Kind decides the click's destination. */
 function hitRow(m: FileMatch, label: string): HTMLElement {
   const isDir = m.kind === "dir";
   const isName = m.line === 0;
@@ -339,20 +269,15 @@ function renderResults(searchPath: string): void {
   reconcile(resultsEl, lastMatches, {
     key: hitKey,
     mount: (m: FileMatch) => hitRow(m, hitLabel(searchPath, m.path)),
-    // Nothing on a hit row changes in place: a re-run produces a new hit set,
-    // and a row whose path and line are unchanged shows the same line.
+    // A re-run produces a new hit set; an unchanged row shows the same line.
     update: () => undefined,
   });
 }
 
-// --- Lifecycle -------------------------------------------------------------
-
-/** Open state is the bar's own class, not a second boolean.
- *
- *  Unlike the transcript's box this is NOT a popup: its results render into a
- *  sibling element OUTSIDE the panel, so the primitive's outside-click dismissal
- *  would close the bar on the first click of a result row. Placement decides
- *  dismissal, which is why search-shell.ts owns neither. */
+/**
+ * Open state is the bar's own class. Not a popup: results render outside the panel, so outside-click dismissal would
+ * close it on a hit click.
+ */
 function isOpen(): boolean {
   return barEl !== null && !barEl.classList.contains("hidden");
 }
@@ -361,26 +286,18 @@ export function initFilesSearch(c: FilesSearchCtx): void {
   ctx = c;
 }
 
-/** Open (or refocus) the search bar.
- *
- *  Reachable from the toolbar button as well as the hotkey, and that is not
- *  optional: find-in-chat records the same rule, because a feature whose only
- *  door is Ctrl-F is undiscoverable on a desktop and unreachable on a tablet
- *  with no keyboard. */
+/** Open or refocus the bar; reachable from the toolbar too, since a Ctrl-F-only feature is undiscoverable. */
 export function openFilesSearch(): void {
   ctx?.activateBrowser();
   ensureBuilt();
   if (barEl === null || shell === null || resultsEl === null) {
     return;
   }
-  // Read AFTER activateBrowser, so the id recorded is the tab the bar opens over.
-  // Every production door arrives with an active files tab, so this read is it.
+  // Read after activateBrowser, so it records the tab the bar opens over.
   searchOwnerID = getActiveTabId();
   barEl.classList.remove("hidden");
   resultsEl.classList.remove("hidden");
   $.fbList.classList.add("hidden");
-  // The app toolbar's one contextual Find button is the only visible trigger;
-  // the duplicate button in this bottom bar is gone.
   $.findBtn.setAttribute("aria-pressed", "true");
   shell.focus();
   shell.run();
@@ -401,14 +318,10 @@ export function closeFilesSearch(): void {
   shell?.setNote("");
 }
 
-/** Drop the search entirely: close it AND forget what was typed, so the next look at
- *  this browser is a directory listing rather than someone's old query. The GLOBS go
- *  with the query — they are part of the search the reader composed, and a stale
- *  `Exclude: node_modules` silently narrows a later one. */
+/** Drop the search: close it and forget the query and globs. */
 export function resetFilesSearch(): void {
   closeFilesSearch();
-  // Unconditional, because `closeFilesSearch` early-returns on an already-closed
-  // bar: a closed bar must not be reachable by a later switch's teardown.
+  // Unconditional: `closeFilesSearch` early-returns on a closed bar.
   searchOwnerID = "";
   if (shell !== null) {
     shell.input.value = "";
@@ -426,13 +339,10 @@ export function _isFilesSearchOpen(): boolean {
   return isOpen();
 }
 
-/** Ctrl-F / Cmd-F for a files or editor tab, dispatched from app.ts.
- *
- *  Carries its own second-press escape hatch, exactly as handleFindHotkey does:
- *  a repeat press while our field already has focus falls through with no
- *  preventDefault, so the browser's native find stays reachable. That hatch is
- *  the a11y justification for overriding the key at all, so each destination
- *  owns one rather than the dispatcher guessing. */
+/**
+ * Ctrl-F / Cmd-F for a files or editor tab, from app.ts. A repeat press while the field has focus falls through with
+ * no preventDefault, so the browser's own find stays reachable.
+ */
 export function handleFindInFilesHotkey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() !== "f" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
     return;
@@ -444,28 +354,22 @@ export function handleFindInFilesHotkey(e: KeyboardEvent): void {
   openFilesSearch();
 }
 
-/** The first printable keystroke on a bound files tab opens the search bar and lands
- *  in it. No `preventDefault`, which is what makes the character arrive: the field is
- *  focused during this keydown, so the keypress/input that follow target it and dead
- *  keys and IME composition survive.
- *
- *  A bare `?` never reaches here, correctly: keys.ts calls `stopImmediatePropagation`
- *  for it so the shortcuts sheet opens, and this is one of those sibling listeners. */
+/**
+ * The first printable keystroke on a bound files tab opens the bar and lands in it: no `preventDefault`, and the
+ * field is focused during this keydown.
+ */
 export function handleFilesTypeAhead(e: KeyboardEvent): void {
-  // The tab store answers which view is on screen; F2 and find-dispatch.ts already
-  // ask it this way, and two mechanisms for one question drift.
+  // The tab store answers which view is on screen, as F2 and find-dispatch.ts ask it.
   if (getActiveTabKind() !== "files") {
     return;
   }
-  // With the bar open the field has focus, so the character lands there already.
   if (isOpen()) {
     return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
     return;
   }
-  // `length === 1` excludes Enter, Escape, Tab, the arrows and the F-keys without
-  // enumerating them; Space is a focused control's activation key.
+  // `length === 1` excludes named keys; Space activates a focused control.
   if (e.key.length !== 1 || e.key === " ") {
     return;
   }
@@ -479,16 +383,14 @@ export function handleFilesTypeAhead(e: KeyboardEvent): void {
   ) {
     return;
   }
-  // A bare keystroke can land in the window between the activation and the lazy
-  // bind, where an unbound browser's search root answers "".
+  // A keystroke can land before the lazy bind, where the root is "".
   if ((ctx?.getSearchPath() ?? "") === "") {
     return;
   }
   openFilesSearch();
 }
 
-/** Toggle the file search. What the toolbar button and the dispatcher's button
- *  route mean — the same shape find-in-chat's toggle now has. */
+/** Toggle the file search: what the toolbar and dispatcher buttons mean. */
 export function toggleFilesSearch(): void {
   if (isOpen()) {
     closeFilesSearch();

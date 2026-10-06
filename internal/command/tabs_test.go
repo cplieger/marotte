@@ -1,13 +1,7 @@
 package command
 
-// The four tab commands at their DOOR: what a payload may say, and what status a
-// refusal answers with.
-//
-// The ordering, the capacity reservation and the event are the coordinator's and
-// are tested in membership_test.go. What is left here is the part a handler owns —
-// the payload's shape, the identifier bounds, and the status each sentinel maps
-// to — plus the two response fields whose absence would strand a client:
-// `created` on an open and `closed` on a close.
+// The tab commands at their DOOR: what a payload may say and the status a refusal answers with;
+// ordering, capacity and events are tested in membership_test.go.
 
 import (
 	"encoding/json"
@@ -110,8 +104,6 @@ func TestCmdOpenTab_PayloadRefusals(t *testing.T) {
 			want:    http.StatusBadRequest,
 		},
 		{
-			// The store's own refusal, surfaced through the handler's mapping: a
-			// singleton takes no ref.
 			desc:    "a singleton carrying a ref",
 			payload: marotte.OpenTabCommand{Kind: marotte.TabKindSettings, Ref: "/workspace/x.go"},
 			want:    http.StatusBadRequest,
@@ -364,12 +356,8 @@ func TestTabCommands_AnUnwiredStoreIs503(t *testing.T) {
 	}
 }
 
-// TestCmdCreateChat_RetryFinishesTheTabWrite is the requirement at the command
-// boundary rather than at the coordinator's: one gesture, one chat, and the
-// retry's RESPONSE carries the subject a client needs to render.
-//
-// The first attempt's tab write is made to fail, which is the only way to reach
-// the state — and a state a real deployment reaches on a full disk.
+// TestCmdCreateChat_RetryFinishesTheTabWrite asserts that one gesture, one chat, and the retry's RESPONSE
+// carries the subject a client renders.
 func TestCmdCreateChat_RetryFinishesTheTabWrite(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, _ := newFlakyMembership(t, store)

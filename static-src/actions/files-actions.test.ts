@@ -1,4 +1,3 @@
-// Tests for files.ts: createFile, createFolder, renameFile, deleteFilesBatch, upload.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
@@ -9,14 +8,9 @@ vi.mock("../toast.js", () =>
 
 vi.mock("../api-client.js", () => ({
   apiGetOrError: vi.fn(),
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Inert: present only so real-ESM linking succeeds.
   apiGet: undefined,
-  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
-  // read in the projection. Nothing under test lists tabs, so the name only has
-  // to exist for real-ESM linking.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: undefined,
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
@@ -131,7 +125,6 @@ describe("files.delete (batch)", () => {
 
     const { deleteFilesBatch } = await import("./files.js");
     await deleteFilesBatch.dispatch({ dir: "/", names: ["target.ts"], listEl });
-    // After rollback, the exit class should be removed
     expect(row.classList.contains("fb-row-exiting")).toBe(false);
   });
 
@@ -211,13 +204,7 @@ describe("partialUploadOf", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Composite idempotency / dedupe keys (keyenc `join`).
-//
-// These keys travel as the `Idempotency-Key` HTTP header, which the Go
-// middleware treats as opaque — it never parses or builds one — so only
-// within-client injectivity matters here.
-// ---------------------------------------------------------------------------
+// The keys travel as an opaque `Idempotency-Key` header, so only within-client injectivity matters.
 
 describe("files.rename idempotency key", () => {
   async function keyFor(args: { dir: string; original: string; newName: string }): Promise<string> {
@@ -231,11 +218,8 @@ describe("files.rename idempotency key", () => {
   }
 
   it("distinguishes two renames the old '->' form collapsed", async () => {
-    // THE live defect this adoption fixes. "->" is a legal filename sequence,
-    // so `files.rename:${dir}/${original}->${newName}` gave both of these
-    // renames the key "files.rename:/w/a->b->c". The Go idempotency middleware
-    // then replayed the first cached 200 and the second rename silently never
-    // happened for the 5-minute TTL.
+    // "->" is a legal filename sequence: a string-built key gave both renames
+    // "files.rename:/w/a->b->c", and the middleware replayed the first 200 for the TTL.
     const a = { dir: "/w", original: "a", newName: "b->c" };
     const b = { dir: "/w", original: "a->b", newName: "c" };
     const oldKey = (x: typeof a): string => `files.rename:${x.dir}/${x.original}->${x.newName}`;
@@ -251,8 +235,7 @@ describe("files.rename idempotency key", () => {
   });
 
   it("separates the directory from the original name", async () => {
-    // The old form joined dir and original with "/", so ("/a", "b/c") and
-    // ("/a/b", "c") produced one key for two different files.
+    // A "/"-joined dir and original gives ("/a", "b/c") and ("/a/b", "c") one key.
     const x = await keyFor({ dir: "/a", original: "b/c", newName: "z" });
     const y = await keyFor({ dir: "/a/b", original: "c", newName: "z" });
     expect(x).not.toBe(y);
@@ -291,8 +274,7 @@ describe("files.create idempotency keys", () => {
 });
 
 describe("files.delete dedupe key", () => {
-  /** Dispatch a batch delete and report whether fetch ran (a deduped second
-   *  dispatch is folded into the first in-flight promise and never fetches). */
+  /** Dispatch a batch delete and report how many fetches ran (a deduped dispatch never fetches). */
   async function dispatchBoth(first: string[], second: string[]): Promise<number> {
     mockFetch.mockImplementation(
       () =>
@@ -311,10 +293,8 @@ describe("files.delete dedupe key", () => {
   }
 
   it("does not collapse the batch [\u201ca,b\u201d] into the batch [\u201ca\u201d,\u201cb\u201d]", async () => {
-    // A "," -joined list cannot tell one filename containing a comma from two
-    // filenames. Nested through its own join, the two batches differ, so both
-    // dispatches really run (3 fetches: 1 + 2) instead of the second being
-    // folded into the first.
+    // A ","-joined list cannot tell one comma-bearing name from two; the nested join can, so both
+    // dispatches run (3 fetches: 1 + 2).
     const oldKey = (names: string[]): string => `files.delete:${names.slice().sort().join(",")}`;
     expect(oldKey(["a,b"])).toBe(oldKey(["a", "b"]));
 

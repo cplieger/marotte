@@ -26,31 +26,32 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// pushPayload is the typed wire shape for Web Push notification payloads.
-//
-// marotte.PushSubject is EMBEDDED so fitToCap's size check (which marshals this
-// struct) automatically charges every subject field against the cap; a
-// separate subject copy could under-count the payload by exactly the amount
-// that makes the vendor reject it.
+// pushPayload is the Web Push payload wire shape. PushSubject is EMBEDDED so fitToCap's
+// marshaled-size check charges every subject field against the cap.
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	marotte.PushSubject
+	// ChatName is the chat's display name when the push was sent, because the page
+	// that toasts it may already have dropped the chat's row.
+	ChatName string `json:"chat_name,omitempty"`
 }
 
-// Send delivers a push notification to all subscribers, debounced per KIND AND SUBJECT
-// (so one pull request settling does not suppress another's verdict). Pass a zero
-// subject for a workspace-global notification with nothing single behind it.
-//
-// preflightSend returns nil to mean DO NOT SEND, against a non-nil EMPTY slice meaning
-// every gate passed but nobody is subscribed. Only the first returns here; the second
-// still fans out to zero endpoints, having already stamped the debounce.
-func (s *Service) Send(ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject) {
+// pushChatNameCap bounds ChatName: the page shows 40 characters of it
+// (notice-subject.ts MAX_NAME_CHARS), and 160 bytes hold 40 of the widest runes.
+const pushChatNameCap = 160
+
+// Send delivers a push notification to all subscribers, debounced per kind AND subject.
+// A zero subject is workspace-global; chatName is empty when the subject is not a chat.
+// preflightSend's nil means do not send; a non-nil empty slice has stamped the debounce.
+func (s *Service) Send(
+	ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject, chatName string,
+) {
 	slog.Debug("push: send", "kind", string(notifyType))
-	// Trim against the *marshaled* size, not the raw title+body length: the JSON envelope
-	// and any escaping count toward pushBodyCap, so a naive check leaves the encoded
-	// payload over the cap and push() drops it rather than truncating it.
-	if t, b, truncated := fitToCap(title, body, subject); truncated {
+	// Trim against the MARSHALED size: the JSON envelope and escaping count toward pushBodyCap,
+	// and push() drops an over-cap payload rather than truncating it.
+	chatName, _ = runesafe.SanitizeSingleLineCapped(chatName, pushChatNameCap, pushTruncMarker)
+	if t, b, truncated := fitToCap(title, body, subject, chatName); truncated {
 		slog.Warn("push: payload too large, truncating",
 			"bytes", len(title)+len(body), "cap", pushBodyCap)
 		title, body = t, b
@@ -59,7 +60,7 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType marot
 	if subs == nil {
 		return
 	}
-	payload, err := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
+	payload, err := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject, ChatName: chatName})
 	if err != nil {
 		slog.Error("push: marshal payload", "error", err)
 		return
@@ -67,13 +68,10 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType marot
 	s.fanOut(ctx, s.absent(subs, notifyType, subject, payload), payload, notifyType)
 }
 
-// absent is the send filter: the subscriptions whose profile is not receiving the
-// event on a stream. After preflight and before the encrypt, and here rather than in
-// the coordinator so the one caller that bypasses it (the PR status poller) is
-// filtered too. A present subscription is skipped for good: nothing re-runs Send
-// when the profile later flips to gone (deferred.go is the switched-off exception).
-// A subscription with no presence row is sent, so a tag mismatch costs one
-// notification too many, never one too few.
+// absent is the send filter: subscriptions whose profile is not receiving the event on a
+// stream. It lives here, not in the coordinator, so the PR status poller is filtered too.
+// A subscription with no presence row is sent: a tag mismatch costs one notification too
+// many, never one too few.
 func (s *Service) absent(
 	subs []marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, payload []byte,
 ) []marotte.PushSubscription {
@@ -122,8 +120,7 @@ func (s *Service) fanOut(
 	s.pruneStale(outcome.prunable())
 }
 
-// Suppressed reports how many subscriptions the send filter skipped for kind
-// since the service started. The test-only probe reads it.
+// Suppressed reports how many subscriptions the send filter skipped for kind since start.
 func (s *Service) Suppressed(kind marotte.PushKind) uint64 {
 	if counter, ok := s.suppressed[kind]; ok {
 		return counter.Load()
@@ -149,10 +146,7 @@ func (s *Service) PresenceTransitions() (alive, expired uint64) {
 	return s.presence.Transitions()
 }
 
-// fanOut is what one notification's deliveries came to. It exists because
-// whether an AUTHORIZATION refusal may be pruned is not a property of that
-// subscriber's own answer: see prunable.
-//
+// fanOut is what one notification's deliveries came to (see prunable).
 // record is called under the fan-out's mutex; prunable only after it joins.
 type fanOut struct {
 	gone         []string // 404/410: over, whatever this server's keys are
@@ -174,14 +168,10 @@ func (f *fanOut) record(d disposition, endpoint string) {
 	}
 }
 
-// prunable is the endpoint set this fan-out earned the right to delete, and it
-// logs the verdict because only a human re-subscribing undoes a prune.
-//
-// A 404/410 is the service saying the subscription is gone, so it goes on its
-// own answer. A 401/403 equally means "your keypair or clock is wrong", so it
-// goes only when another subscriber accepted this same notification: that
-// delivery is the proof this server's credentials work, and a server-side
-// mistake refuses everyone at once, so nothing is deleted.
+// prunable is the endpoint set this fan-out may delete; it logs the verdict because only a
+// re-subscribe undoes a prune. A 404/410 goes on its own answer. A 401/403 goes only when
+// another subscriber accepted this notification: that proves this server's credentials
+// work, while a server-side mistake refuses everyone and so deletes nothing.
 func (f *fanOut) prunable() []string {
 	switch {
 	case len(f.authRejected) == 0:
@@ -239,12 +229,8 @@ func classify(code int) disposition {
 }
 
 // deliver sends one payload to one subscriber, retrying the retryable, and reports the
-// disposition it ended on (a give-up reports dispRetry: keep). No queue and no
-// dead-letter store, deliberately: an unanswered permission is replayed on reconnect
-// and a finished turn is already in the transcript, so an undelivered notification
-// costs a nudge rather than state and the retry budget is wall-time, not an attempt
-// count. Log lines carry the subscription's tag, never its endpoint, which is a
-// capability URL.
+// disposition it ended on (a give-up reports dispRetry: keep). Log lines carry the
+// subscription's tag, never its endpoint, which is a capability URL.
 func (s *Service) deliver(
 	ctx context.Context,
 	sub marotte.PushSubscription,
@@ -258,9 +244,7 @@ func (s *Service) deliver(
 	for attempt := 1; ; attempt++ {
 		code, retryAfter, err := s.push(ctx, sub, payload, kind)
 		if err != nil {
-			// A transport failure has no status to classify. Treat it as
-			// transient (a dropped connection is the commonest cause) and let
-			// the budget decide whether it is worth another try.
+			// A transport failure has no status: treat it as transient and let the budget decide.
 			slog.Warn("push: send failed", "tag", tag, "code", code,
 				"attempt", attempt, "error", withoutEndpoint(err))
 			if !s.waitRetry(ctx, attempt, deadline, 0, &backoff, tag) {
@@ -306,12 +290,9 @@ func withoutEndpoint(err error) error {
 	return err
 }
 
-// waitRetry sleeps before the next attempt and reports whether to make one.
-// Refuses when the attempt cap is reached, the budget is spent, or a
-// Retry-After would land past the notification's usefulness window.
-//
-// Backoff is exponential with FULL jitter (uniform over [0, backoff)) so a
-// vendor outage recovering does not land every subscriber's retry at once.
+// waitRetry sleeps before the next attempt and reports whether to make one: no once the
+// attempt cap or budget is spent, or a Retry-After lands past the notification's usefulness.
+// Full jitter keeps a recovering vendor from receiving every subscriber's retry at once.
 func (s *Service) waitRetry(
 	ctx context.Context,
 	attempt int,
@@ -347,10 +328,8 @@ func (s *Service) waitRetry(
 	}
 }
 
-// permanentHint names what a permanent failure means, because the status alone
-// does not say whose bug it is and these are all marotte's. An authorization
-// refusal is NOT here: it has its own disposition, because whose key is wrong
-// decides whether the subscription may be deleted.
+// permanentHint names what a permanent failure means; each is marotte's bug. Authorization
+// refusals have their own disposition, because whose key is wrong decides pruning.
 func permanentHint(code int) string {
 	switch code {
 	case http.StatusBadRequest:
@@ -383,12 +362,8 @@ func parseRetryAfter(h string) time.Duration {
 	return 0
 }
 
-// preflightSend evaluates every pre-send gate (healthy, preference,
-// unknown-kind, per-subject debounce) under a single mu hold, records
-// the new debounce timestamp, and returns the subscriber snapshot to
-// POST to — or nil if the send should be dropped. Holding mu across
-// the decision + stamp closes the TOCTOU between "should send" and
-// "record last-push". See Send's doc comment for the nil-vs-empty contract.
+// preflightSend evaluates every pre-send gate and stamps the debounce under one mu hold
+// (closing the decide/record TOCTOU), and returns the subscriber snapshot, or nil to drop.
 func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.PushSubject) []marotte.PushSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -433,8 +408,7 @@ func (s *Service) pruneDebounceLocked() {
 	}
 }
 
-// pruneStale deletes the listed endpoints from s.subs and persists
-// the updated set. No-op on empty input so callers don't need a guard.
+// pruneStale deletes the listed endpoints from s.subs and persists the set; no-op on empty.
 func (s *Service) pruneStale(stale []string) {
 	if len(stale) == 0 {
 		return
@@ -455,12 +429,8 @@ const (
 	urgencyHigh   = "high"
 )
 
-// urgencyFor maps a notification kind onto its RFC 8030 section 5.3 urgency, so
-// a push service holding messages back on a low-battery device holds back the
-// right ones. A permission ask blocks the turn until it is answered, which is
-// the spec's "time-sensitive alert" row; everything else is a "chat or calendar
-// message". normal is also the spec's default, and is sent anyway so every
-// request states its own urgency.
+// urgencyFor maps a kind onto its RFC 8030 section 5.3 urgency. A permission ask blocks
+// the turn ("time-sensitive alert"); everything else is "chat or calendar message".
 func urgencyFor(kind marotte.PushKind) string {
 	if kind == marotte.PushKindPermission {
 		return urgencyHigh
@@ -468,18 +438,11 @@ func urgencyFor(kind marotte.PushKind) string {
 	return urgencyNormal
 }
 
-// RFC 8030 section 5.2 TTLs: how long a push service may hold a notification for
-// a device that is OFFLINE. That is a different question from pushRetryBudget,
-// which bounds how long THIS server keeps retrying a failing service — do not
-// derive one from the other.
-//
-// Each value is how long the notification is still worth showing. Past it the
-// service drops the message, which is the wanted outcome: an alert about
-// something that has stopped being true costs the reader more than silence.
+// RFC 8030 section 5.2 TTLs: how long a push service may hold a notification for an
+// OFFLINE device. Not pushRetryBudget (this server's retrying); do not derive one from the
+// other. Each value is how long the notification is still worth showing.
 const (
-	// A permission ask blocks the turn and the dock replays every unanswered one on
-	// reconnect, so all this notification buys is promptness. Ten minutes on, the
-	// container may have restarted or another device answered.
+	// The dock replays an unanswered permission ask on reconnect, so this buys only promptness.
 	ttlPermission = 10 * time.Minute
 	// "The agent finished" is moot an hour later: by then the reader has either come
 	// back to the chat or stopped waiting.
@@ -489,11 +452,8 @@ const (
 	ttlPRStatus = 24 * time.Hour
 )
 
-// ttlFor maps a notification kind onto the TTL header value it travels with.
-//
-// An unrecognised kind takes the longest window: Send's preflight refuses every
-// invalid kind, so reaching the default means the wire grew a kind this build
-// does not know, and delivering that late is a smaller harm than dropping it.
+// ttlFor maps a kind onto its TTL header value. An unknown kind (the wire grew one this
+// build lacks) takes the longest window: delivering late beats dropping it.
 func ttlFor(kind marotte.PushKind) string {
 	return ttlSeconds(ttlDuration(kind))
 }
@@ -526,9 +486,8 @@ func (s *Service) push(
 	payload []byte,
 	kind marotte.PushKind,
 ) (int, time.Duration, error) {
-	// Bound the payload before any allocation, which is what makes encryptPayload's
-	// len(payload)+1 provably bounded. The spec caps a record at 4096 bytes;
-	// pushBodyCap is the pre-pad ceiling.
+	// Bound the payload before any allocation; this is what bounds encryptPayload's
+	// len(payload)+1. pushBodyCap is the pre-pad ceiling under the spec's 4096-byte record.
 	if len(payload) > pushBodyCap {
 		return 0, 0, fmt.Errorf("payload too large: %d bytes (max %d)", len(payload), pushBodyCap)
 	}
@@ -541,9 +500,8 @@ func (s *Service) push(
 		return 0, 0, err
 	}
 
-	// Derive from BOTH the caller's ctx and the service lifecycle, UNCONDITIONALLY:
-	// merging only when s.lifetime is already cancelled leaves a send that started
-	// healthy blind to a later Close, running until the client timeout.
+	// Merge with s.lifetime UNCONDITIONALLY: merging only when it is already cancelled leaves
+	// a send that started healthy blind to a later Close.
 	reqCtx, mergeCleanup := mergeCtx(ctx, s.lifetime)
 	defer mergeCleanup()
 
@@ -562,23 +520,17 @@ func (s *Service) push(
 	if err != nil {
 		return 0, 0, err
 	}
-	// Drain + close so keep-alive can reuse the connection for the next push to the
-	// same vendor host, capped because the body is untrusted. A failed drain is
-	// ignored: it closes the response anyway and the next push opens a connection.
+	// Drain (capped: the body is untrusted) and close so keep-alive can reuse the connection.
 	if _, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, pushResponseCap)); copyErr != nil {
-		// Already at debug level: drain failures are expected when
-		// the push service closes the connection immediately.
 		slog.Debug("push: drain response body", "error", copyErr)
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), nil
 }
 
-// encryptPayload performs RFC 8291 (aes128gcm) content encryption of
-// payload for the subscriber's keys and returns the wire body:
-// salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
-// The caller (push) bounds len(payload) to pushBodyCap before calling,
-// so the len(payload)+1 allocation below is provably small.
+// encryptPayload performs RFC 8291 (aes128gcm) content encryption and returns the wire
+// body: salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
+// The caller bounds len(payload) to pushBodyCap.
 func encryptPayload(sub marotte.PushSubscription, payload []byte) ([]byte, error) {
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
@@ -648,20 +600,15 @@ func encryptPayload(sub marotte.PushSubscription, payload []byte) ([]byte, error
 // exceeds the budget fitToCap hands it.
 const pushTruncMarker = "..."
 
-// fitToCap trims the body — then, only if an empty body still overflows, the title —
-// until the marshaled pushPayload is at most pushBodyCap bytes, and reports whether
-// anything was trimmed. Sizing against the MARSHALED form (JSON envelope and escaping
-// included) is required because push() rejects anything over the cap outright.
-//
-// Trimming goes through runesafe's Capped pair, so the byte cap never splits a rune and
-// the marker is charged inside the cap (the body keeps CR/LF, being legitimately
-// multi-line). The loop terminates because each pass strictly shrinks one field.
-func fitToCap(title, body string, subject marotte.PushSubject) (fitTitle, fitBody string, truncated bool) {
-	if marshaledLen(title, body, subject) <= pushBodyCap {
+// fitToCap trims the body, then (only if an empty body still overflows) the title, until
+// the marshaled pushPayload fits pushBodyCap, and reports whether it trimmed. runesafe's
+// Capped pair never splits a rune and charges the marker inside the cap.
+func fitToCap(title, body string, subject marotte.PushSubject, chatName string) (fitTitle, fitBody string, truncated bool) {
+	if marshaledLen(title, body, subject, chatName) <= pushBodyCap {
 		return title, body, false
 	}
-	for marshaledLen(title, body, subject) > pushBodyCap {
-		over := marshaledLen(title, body, subject) - pushBodyCap
+	for marshaledLen(title, body, subject, chatName) > pushBodyCap {
+		over := marshaledLen(title, body, subject, chatName) - pushBodyCap
 		switch {
 		case len(body) > over:
 			body, _ = runesafe.SanitizeCapped(body, len(body)-over, pushTruncMarker)
@@ -676,17 +623,13 @@ func fitToCap(title, body string, subject marotte.PushSubject) (fitTitle, fitBod
 	return title, body, true
 }
 
-// marshaledLen is the byte length of the JSON-encoded notification payload.
-// Marshaling three strings cannot fail, so the error is intentionally dropped.
-func marshaledLen(title, body string, subject marotte.PushSubject) int {
-	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
+// marshaledLen is the byte length of the JSON-encoded payload; marshaling cannot fail here.
+func marshaledLen(title, body string, subject marotte.PushSubject, chatName string) int {
+	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject, ChatName: chatName})
 	return len(p)
 }
 
-// mergeCtx returns a context derived from primary that is also
-// cancelled when secondary is done. This lets the push HTTP request
-// respect both the caller's per-send cancellation and the service's
-// lifecycle shutdown signal.
+// mergeCtx returns a context derived from primary that is also cancelled when secondary is done.
 func mergeCtx(primary, secondary context.Context) (ctx context.Context, cleanup func()) {
 	ctx, cancel := context.WithCancel(primary)
 	stop := context.AfterFunc(secondary, func() { cancel() })

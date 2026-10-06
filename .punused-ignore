@@ -13,13 +13,9 @@
 # code can see a call made through an interface, through reflection
 # (encoding/json), from another language, or from a _test.go DECLARATION
 # (punused never inspects those, though references from them do count).
-#
-# One entry may report as "matches nothing" on a given run: punused caps a
-# single invocation at a 30s context deadline and drops the rest of the
-# shard silently (the masked error reads "file already closed", which the
-# gate filters), and internal/marotte is over that budget. The policy.go entry
-# is the one that flickers. Entries here are the union of a complete
-# per-FILE scan, so this file stays a superset either way.
+# Scan with a gopls built by the module's Go toolchain: an older-built gopls
+# does not count a Go 1.27 promoted-field composite-literal key as a reference
+# (textsearch.Tally's Scanned and Truncated then read as test-only).
 
 # --- 1. Cross-language wire contract: enum members the TypeScript client
 # consumes. cmd/wire-codegen walks the Go AST (wiregen) and emits
@@ -77,16 +73,13 @@ field Value is
 field Tally is
 field ReadOnly is
 
-# Whole-file entries: every exported struct in these two files is a
-# wiregen-registered wire type (ElicitationPropertySchema,
-# ElicitationRequestSchema / PolicyRuleCore, PolicyRule, PolicyView,
-# PolicyExplainResult, PolicyErrorItem), so every field is generated into
-# types.gen.ts + decoders.gen.ts and filled by encoding/json. The
-# elicitation schemas are pass-through JSON-Schema: marotte forwards the
+# Whole-file entry: every exported struct in this file is a wiregen-registered
+# wire type (ElicitationPropertySchema, ElicitationRequestSchema), so every
+# field is generated into types.gen.ts + decoders.gen.ts and filled by
+# encoding/json. The schemas are pass-through JSON-Schema: marotte forwards the
 # MCP server's form definition to the client verbatim and never inspects a
 # property, which is exactly why no Go code reads these fields.
 internal/marotte/elicitation.go
-internal/marotte/policy.go
 
 # --- 3. Inbound envelopes decoded by encoding/json, deliberately not read.
 # internal/marotte/commands.go holds the client -> server command payloads; the
@@ -250,6 +243,10 @@ method (*statusError).Unwrap
 # assignment a compile error.
 method (*cappedBuffer).Write
 
+# headBuffer.Write is the same shape: WorkingDiff assigns it to the git
+# child's Stdout, so os/exec is its only caller.
+method (*headBuffer).Write
+
 # --- 17. Test-isolation seam, same shape as sections 13 and 14. The per-chat
 # file cap is DERIVED from the cgroup memory limit, so its refusal paths are
 # unreachable in a test without an override: crossing a cap sized off the
@@ -291,24 +288,18 @@ method (*Service).PresenceTransitions
 # door for future capability logic and tests are its only consumers by design.
 method (*Bridge).AgentKiroCapabilities
 
-# --- 21. The entry log's own lifecycle and counter verbs. OpenEntryLog is
-# EXPORTED and hands back a value holding an open write descriptor, so Close is
-# that constructor's paired release verb: a caller that opens a log outside the
-# store (which is what every direct-open test does, including the reopen fixture
-# that simulates a process restart) has no other way to give the descriptor back.
-# The store itself releases through Remove, which is why Close has no store
-# caller. Counters is the log's own answer to how many turns it holds and which
-# is newest -- the value the header CACHES -- so it is the source a test compares
-# the header's turn_count against; deleting it removes the only way to check the
+# --- 21. The entry log's own counter verbs. Counters is the log's own answer to
+# how many turns it holds and which is newest -- the value the header CACHES --
+# so it is the source a test compares the header's turn_count against;
+# deleting it removes the only way to check the
 # cache against its source, which is the disagreement class the entry log's
-# design exists to make impossible. Deletion was the alternative considered for
-# both and declined for those reasons, not for reachability.
+# design exists to make impossible. Deletion was the alternative considered and
+# declined for that reason, not for reachability.
 # TurnRange is the locked door onto turnRangeLocked, which production reaches
 # through TurnPage: it is the UNPAGED whole-turn read, so it is the oracle the
 # chat, agent and turnlog tests compare persisted entries and the paged answer
 # against. Migrating those callers to TurnPage would make the paging read its
 # own witness. Deletion was considered and declined for that reason.
-method (*EntryLog).Close
 method (*EntryLog).Counters
 method (*EntryLog).TurnRange
 

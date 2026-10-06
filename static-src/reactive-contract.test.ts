@@ -1,16 +1,14 @@
-// Two properties of `@cplieger/reactive` that marotte code reasons from, neither
-// stated in the library's own docs. A DEPENDENCY contract: its subject is the
-// library, and its value is a version bump going red rather than a leak found later.
+// Two properties of `@cplieger/reactive` that marotte code reasons from, neither stated in the
+// library's own docs. A DEPENDENCY contract: its subject is the library, and its value is a version
+// bump going red rather than a leak found later.
 
 import { describe, it, expect } from "vitest";
 import { signal, effect, reconcile } from "@cplieger/reactive";
 
 describe("a nested effect's lifetime is its OWN", () => {
-  // `mcp-ui.ts`'s foreign row list carried the opposite claim in a comment for as long
-  // as it existed ("the enclosing list effect disposes nested effects on re-run"), and
-  // the leak that belief hid was one live effect per row per re-run, each writing into
-  // a detached node. The row's disposer is held in a map now, and this is the premise
-  // that makes holding it necessary.
+  // `mcp-ui.ts`'s foreign row list carried the opposite claim in a comment for as long as it
+  // existed ("the enclosing list effect disposes nested effects on re-run"), and the leak that
+  // belief hid was one live effect per row per re-run, each writing into a detached node.
   it("survives its parent effect re-running", () => {
     const outer = signal(0);
     const inner = signal(0);
@@ -47,12 +45,8 @@ describe("a nested effect's lifetime is its OWN", () => {
   });
 });
 
-// An element LEAVING the list leaves every element before it SEATED (since
-// `@cplieger/reactive` 2.1.1, which removes departing elements before the placement
-// walk), which is what makes a key safe to derive from content. A re-seat restarts
-// animations and drops `:hover` and focus. A DEPENDENCY contract: a downgrade or a
-// library regression trips these four cases, and focus is the assertion because
-// identity survives a re-seat.
+// An element LEAVING the list leaves every element before it SEATED, which is what makes a key safe
+// to derive from content again.
 describe("reconcile leaves a predecessor seated when a later element leaves", () => {
   const mount = (k: string): HTMLElement => {
     const b = document.createElement("button");
@@ -97,9 +91,9 @@ describe("reconcile leaves a predecessor seated when a later element leaves", ()
     }
   });
 
-  // An insertion was never exposed to the defect: an inserted element lands exactly
-  // where the predecessor's `nextSibling` already points, so nothing before it moves
-  // whichever order the library removes and places in.
+  // An insertion was never exposed to the defect: an inserted element lands exactly where the
+  // predecessor's `nextSibling` already points, so nothing before it moves whichever order the
+  // library removes and places in.
   it("but NOT when an element is merely INSERTED", () => {
     const { host, first } = seated(["a", "c"]);
     try {

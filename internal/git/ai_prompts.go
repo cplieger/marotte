@@ -99,11 +99,8 @@ DIFF:
 Generate the PR description:`)),
 }
 
-// buildCommitPrompt constructs the AI prompt for commit message generation.
-// Template execution failure is logged and the partial buffer is returned —
-// promptTemplates are validated at init via template.Must(), so the expected
-// failure modes are all "closed" (callers still get a usable prompt, just
-// possibly with a missing section).
+// buildCommitPrompt constructs the AI prompt for commit message generation. The templates are
+// validated at init, so a template failure is logged and the partial buffer returned.
 func buildCommitPrompt(commitHistory, fullDiff string) string {
 	var b strings.Builder
 	if err := promptTemplates[promptCommit].Execute(&b, map[string]any{
@@ -186,24 +183,9 @@ func stripSurroundingQuotes(msg string) string {
 	}
 }
 
-// capSubject caps the subject line at subjectMaxRunes. It prefers breaking at a
-// word boundary past subjectWordBreakMin so short subjects aren't silently
-// truncated mid-word.
-//
-// The unit is RUNES, not bytes. It used to slice bytes while its doc said
-// "chars", which for a non-ASCII subject cut a multi-byte rune in half and
-// produced invalid UTF-8 — the JSON encoder then replaced the fragment with
-// U+FFFD, so the user saw a replacement character in a suggested commit message.
-// The word-break threshold moved to the same unit for the same reason: a byte
-// index compared against 30 means a different thing in each script.
-//
-// strings.CutLast (1.27) replaces a strings.LastIndex plus a slice at the index
-// it returned. The site qualifies on the rule that decides most of them: the
-// separator is a single LITERAL (" "), and `before` is exactly the prefix the
-// old arithmetic computed. It is not the "last whitespace-separated field" shape
-// that strings.Fields owns — a tab in a commit subject is not a word break this
-// function has ever honoured, and treating it as one would be a behaviour change
-// dressed as a modernization.
+// capSubject caps the subject line at subjectMaxRunes, preferring a word boundary past
+// subjectWordBreakMin. RUNES, not bytes: a byte cut splits a multi-byte rune into U+FFFD. Only a
+// literal space is a word break.
 func capSubject(subject string) string {
 	if utf8.RuneCountInString(subject) <= subjectMaxRunes {
 		return subject

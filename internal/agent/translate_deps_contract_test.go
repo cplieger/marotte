@@ -9,18 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// TranslateRolesContractTest exercises every method of every translate role
-// against a concrete wiring. Purpose: catch drift between Runtime's implementations
-// and the translate package's expectations.
-//
-// It takes the Roles value rather than one aggregate interface, so the subject is
-// the wiring agent actually performs: a role whose owner stopped satisfying it
-// fails to compile at the literal, and a method that regresses fails here.
-//
-// Every field is now a different OWNER rather than two composites both filled
-// with the runtime, which is what this test made visible: it used to reach eleven
-// methods through r.Streaming and r.Perms, so it was really asserting that one
-// type answered everything.
+// TranslateRolesContractTest exercises every method of every translate role against the real wiring: an owner
+// that stops satisfying a role fails to compile at the literal, a regressing method fails here.
 func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *translate.Roles) {
 	t.Helper()
 
@@ -56,8 +46,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 	})
 
 	t.Run("TerminalOutput_unknown_terminal_is_not_ok", func(t *testing.T) {
-		// The false direction is the one that matters: an unknown terminal must
-		// report not-known, because adoption logs a miss on exactly that.
+		// An unknown terminal reports not-known, which adoption logs as a miss.
 		r := newRoles(t)
 		if _, _, ok := r.Terminals.Output("term-never-created"); ok {
 			t.Error("Output(unknown) reported ok, want false")
@@ -69,8 +58,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		if r.MCP == nil {
 			t.Fatal("MCP role is nil")
 		}
-		r.MCP.RecordConnected(t.Context(), "test-server", nil, nil, nil)
-		r.MCP.SignalReady()
+		r.MCP.RecordConnected(t.Context(), "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
@@ -99,13 +87,11 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("SetGovernance_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.Governance.SetGovernance(marotte.GovernanceStatePayload{})
+		r.Governance.SetGovernance(t.Context(), marotte.GovernanceStatePayload{})
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unlaunched_run", func(t *testing.T) {
-		// A run nothing launched is not scheduled. This is the direction that
-		// matters: reporting a manual run as scheduled would put a start toast on
-		// every launch the user made by hand.
+		// A manual run reported as scheduled would toast every hand launch.
 		r := newRoles(t)
 		if r.RunOrigin.IsScheduled("wf-never-launched") {
 			t.Error("IsScheduled(unlaunched) = true, want false")
@@ -122,26 +108,15 @@ func TestHub_TranslateRolesContract(t *testing.T) {
 	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
 		h, cs, _ := newTestHub()
-		// A wire turn opens against the chat's record, so the fold target needs one.
+		// A wire turn opens against the chat's record.
 		cs.seed(t, "c1", nil)
-		// The production wiring itself, not a copy of it: a copy keeps passing
-		// after the real one changes.
+		// The production wiring itself, not a copy.
 		return h.translateRoles()
 	})
 }
 
-// TestRequireWired_RefusesBothNils pins the constructor guard, and the second
-// case is the one that shipped.
-//
-// A role assigned from a nil *T is a non-nil INTERFACE holding a nil pointer, so
-// an IsNil() check on the field passes while the receiver is nil — the typed-nil
-// trap. The first version of this guard had exactly that hole, and a
-// deliberately-late h.lines assignment walked straight through it.
-//
-// The guard is production code rather than a test over New's output on purpose:
-// a test that rebuilds the roles after New has returned sees every field
-// populated, because by then they are. Only a check at the call site sees WHEN
-// New read them, which is the whole bug.
+// TestRequireWired_RefusesBothNils pins the guard, including the typed nil (a nil *T in an interface) that a
+// field IsNil() misses. It runs in production at the call site: after New returns every field looks populated.
 func TestRequireWired_RefusesBothNils(t *testing.T) {
 	full := func() *translate.Roles {
 		h, _, _ := newTestHub()

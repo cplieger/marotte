@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
-# Fetch the terminal's web fonts into static/vendor/fonts/ for local development.
+# Fetch the terminal's web fonts into static/vendor/fonts/ for local development
+# (static/vendor/ is gitignored and filled by the Dockerfile in the image build).
 #
-# static/vendor/ is gitignored and the Dockerfile is what fills it, so a clone
-# running `go run ./cmd/bundle` renders the shell on the platform monospace. This
-# is the local half of that fetch; the server warns at boot when it is missing.
-#
-# Every URL, destination name and digest is READ OUT OF THE DOCKERFILE's `# repin:`
-# markers. A second copy of the pins here would be a second thing to bump, and the
-# one that drifts is the one nobody runs in CI.
-#
-# The cache key is the digest set, so a version bump lands in a fresh directory and
-# a partial fetch is repaired by the next run rather than served: `.complete` is
-# written last and is the only thing that makes a cache dir usable.
+# Every URL, destination name and digest is read from the Dockerfile's `# repin:`
+# markers, so the pins have one copy. The cache key is the digest set, and
+# `.complete` is written last: only it makes a cache dir usable.
 set -euo pipefail
 
 cd -- "$(dirname -- "$0")/.."
@@ -19,9 +12,8 @@ cd -- "$(dirname -- "$0")/.."
 dockerfile=Dockerfile
 dest_dir=static/vendor/fonts
 
-# One row per marker: <dep> <version-arg> <dest> <sha-arg> <url-template>. The dest
-# defaults to the URL's basename; a marker overrides it with `dest=` where two
-# projects would otherwise both land a file called LICENSE in one directory.
+# One row per marker: <dep> <version-arg> <dest> <sha-arg> <url-template>; `dest=`
+# overrides the URL basename where two projects would both land a LICENSE.
 rows=$(awk '
 	/^#[[:space:]]*repin:/ {
 		dep = ""; url = ""; dest = ""
@@ -83,10 +75,8 @@ EOF
 key=$(printf '%s' "$font_rows" | while IFS=$'\t' read -r _ _ sha_arg _; do arg_value "$sha_arg"; done | sha256sum | cut -c1-16)
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/marotte-fonts/$key"
 
-# The digest list, in `sha256sum -c` form, against the cache. It is both the
-# admission test for a cached tree and the verification of a fresh fetch, so a
-# file that rotted in the cache is re-fetched rather than copied: the digests are
-# the authority and `.complete` only says a fetch finished.
+# The digest list (`sha256sum -c` form) admits a cached tree and verifies a fresh
+# fetch, so a rotted cached file is re-fetched.
 manifest=$(
   while IFS=$'\t' read -r dep dest sha_arg _; do
     [ -n "$dep" ] || continue

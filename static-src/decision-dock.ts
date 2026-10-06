@@ -1,34 +1,7 @@
-// ---------------------------------------------------------------------------
-// The interaction dock: where the agent asks the user something.
-//
-// Three things need an answer mid-turn — a permission request, an MCP
-// elicitation form, and a structured question — and all three used to be
-// centered <dialog> modals with a backdrop. They are one region now, docked in
-// the BOTTOM BAR: above the message box, inside the bar so it shares its
-// background, and never inside the text input. The bar grows upward to expose
-// it and shrinks back when it is answered.
-//
-// Why a dock and not a modal, in order of how much each cost:
-//
-//   - A modal blocks the transcript. The decision is ABOUT the transcript
-//     ("may I run this", "which of these files do you want"), and the modal
-//     covered the evidence needed to answer it. In the dock the user can
-//     scroll, read the diff, open a file, and then answer.
-//   - It is a bottom-bar region rather than a composer feature on purpose: the
-//     workflow-run tab has no composer, so a dock owned by the prompt box
-//     would leave a run with nowhere to ask. `mountDecisionDock(host)` takes
-//     its host, and any bottom bar can be one.
-//   - Focus is NOT trapped (it was, in two of the three). Trapping focus in a
-//     non-modal region is a bug, not a feature: the user is meant to leave it
-//     and come back. `focus-trap.ts` went with the modals.
-//
-// The queue is this module's, and it is per-chat. The old permission dialog had
-// no queue at all: a second request re-rendered the same element and the first
-// one's callback was dropped on the floor, leaving KAS waiting forever on an id
-// nothing would ever answer. Decisions are keyed by chat so switching tabs and
-// coming back still shows the ask — previously the SSE handler's active-chat
-// gate dropped it and only a reconnect brought it back.
-// ---------------------------------------------------------------------------
+// The interaction dock: where the agent asks the user something (permission, MCP elicitation, structured question,
+// workflow-step question). A bottom-bar region rather than a modal, so the transcript the decision is about stays
+// readable; any bottom bar can host it (`mountDecisionDock(host)`), since the run tab has no composer. Focus is not
+// trapped: the region is non-modal. The queue is per-chat, so a second ask never overwrites the first.
 
 import { el, signal, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -37,11 +10,12 @@ import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
 import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
-import { buildPermissionCard } from "./permission.js";
+import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
 import { buildRunInputCard } from "./run-input.js";
 import { info } from "./toast.js";
+import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import type {
@@ -56,13 +30,11 @@ import type {
 interface PermissionDecision {
   kind: "permission";
   chatID: string;
-  /** The workflow run this ask belongs to, when it is a step's ("" otherwise).
-   *  What lets a run tab render an ask that is KEYED to the launching chat. */
+  /** The workflow run this ask belongs to ("" otherwise); lets a run tab render an ask keyed to the launching chat. */
   runID?: string;
   requestID: number;
   payload: PermissionNeededPayload;
-  /** Answer. `fileDecisions` is sent only for a turn approval. */
-  submit: (optionID: string, fileDecisions?: Record<string, boolean>) => void;
+  submit: (answer: PermissionAnswer) => void;
 }
 
 interface ElicitationDecision {
@@ -83,21 +55,11 @@ interface UserInputDecision {
   submit: (action: "answered" | "dismissed", answer?: string) => void;
 }
 
-/** A workflow STEP asking a question, and the one kind that is not
- *  request-shaped.
- *
- *  The other three are an open JSON-RPC request with an int64 id: something
- *  upstream is blocked on a response and the ask dies with the bridge carrying it.
- *  This one is DURABLE — the run stays parked across a bridge death and a
- *  container restart — has no request id at all, and is answered by a fresh
- *  `session/prompt` the server addresses to the paused step's own session. So it
- *  carries a STRING id, which is what moved the dock's internal key to a
- *  per-kind composition (`decisionIdentity`) rather than the bare request number.
- *
- *  `submit(null)` is CONTINUE WITHOUT ANSWERING: the step is re-driven with KAS's
- *  default continuation instead of the user's words. It exists for the
- *  post-restart case where the question text is gone (the ask registry is in
- *  memory) and a reader cannot answer what they cannot read. */
+/**
+ * A workflow step's question: durable across bridge death and restart, answered by a fresh `session/prompt` to the
+ * paused step's session, and carrying a string id (hence `decisionIdentity`). `submit(null)` continues without
+ * answering, for the post-restart case where the question text is gone (the ask registry is in memory).
+ */
 interface RunInputDecision {
   kind: "run_input";
   chatID: string;
@@ -106,19 +68,15 @@ interface RunInputDecision {
   askID: string;
   payload: RunInputNeededPayload;
   submit: (text: string | null) => void;
-  /** Ask the agent that launched this run to answer, on a CHAT-PARENTED ask only:
-   *  its presence is what puts the Defer button on the card. */
+  /** Asks the launching agent to answer, on a chat-parented ask only; its presence puts the Defer button on the card. */
   defer?: () => void | Promise<void>;
 }
 
-/** The dock's input. Only the union is exported — a caller enqueues a
- *  decision, and the per-kind shapes are this module's business. */
+/** The dock's input; the per-kind shapes are this module's business. */
 export type Decision =
   PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
 
-/** The three REQUEST-shaped kinds: an open JSON-RPC request with an int64 id.
- *  Named so `decision_settled`, which is keyed by that id, can be typed against
- *  exactly the kinds it can name. */
+/** The three request-shaped kinds (an open JSON-RPC request with an int64 id), which `decision_settled` can name. */
 type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
 
 function isRequestDecision(d: Decision): d is RequestDecision {
@@ -128,58 +86,41 @@ function isRequestDecision(d: Decision): d is RequestDecision {
 /** Per-chat FIFO of unanswered decisions. The head is the one on screen. */
 const queues = new Map<string, Decision[]>();
 
-/** The queue key a run OWNS, the twin of `runChatPrefix` in
- *  `internal/agent/run_host.go`. A parentless run's asks are keyed to it (there is
- *  no chat), and so is any ask this server reconstructed for a run nothing hosts.
- *  It is deliberately not a chat id: no tab and no session row answers to it. */
+/**
+ * The queue key a run owns, twin of `runChatPrefix` in `internal/agent/run_host.go`. Not a chat id: no tab or session
+ * row answers to it.
+ */
 const RUN_CHAT_PREFIX = "run:";
 
-/** Bumped on every queue mutation so the render effect re-runs. The active
- *  chat id alone is not enough of a trigger: a decision arriving for the chat
- *  already on screen changes nothing the store can see. */
+/** Bumped on every queue mutation: a decision arriving for the chat on screen changes nothing the store can see. */
 const queueVersion = signal(0);
 function bump(): void {
   queueVersion.value = queueVersion.peek() + 1;
 }
 
-/** Which of the three motion phases a host is in. The attribute
- *  `data-dock-phase` carries the same word into `css/26-dock.css`, which owns
- *  every duration, easing and keyframe. */
+/** `data-dock-phase` carries the same word into `css/26-dock.css`, which owns every duration and keyframe. */
 type Phase = "entering" | "leaving" | "advancing";
 
-/** The phase windows in milliseconds, the TWIN of the durations in
- *  `css/26-dock.css` (`--dur-standard`, `--dock-exit-dur`, `--dur-exit`).
- *
- *  There is deliberately no `transitionend` or `animationend` listener anywhere
- *  in this module: one timer per host is the sole cleanup authority, which
- *  removes a whole class of leak because there is no listener to orphan. The
- *  cost of that choice is this duplication, so `decision-dock.test.ts` reads the
- *  durations back out of the stylesheet and asserts the two agree — a retune of
- *  one side cannot silently desynchronise the cleanup from the animation.
- *
- *  Exported for that test only; nothing else reads it. */
+/**
+ * Twin of the durations in `css/26-dock.css` (`--dur-standard`, `--dock-exit-dur`, `--dur-exit`): one timer per host is
+ * the only cleanup (no transitionend listener to orphan), and `decision-dock.test.ts` asserts the two agree. Test-only export.
+ */
 export const DOCK_PHASE_MS: Readonly<Record<Phase, number>> = {
   entering: 200,
   leaving: 120,
   advancing: 150,
 };
 
-/** The two inline values a phase writes on the host box, as strings. `""` means
- *  "hand the property back to the stylesheet" — `height: auto` and
- *  `margin-block-end: var(--sp-2)`. */
+/** `""` hands the property back to the stylesheet (`height: auto`, `margin-block-end: var(--sp-2)`). */
 interface BoxState {
   height: string;
   margin: string;
 }
 
-/** One mounted dock: its element, which decisions it shows, what it last
- *  rendered, and the live phase's three pieces of state. The composer's dock
- *  shows the ACTIVE CHAT's queue; a run tab's shows one RUN's decisions wherever
- *  they are keyed — an agent-launched run's ask lives under the launching chat's
- *  id, a manual one's under `run:<id>`, and the run tab must render both.
- *
- *  Each host owns its own phase, so the composer dock and a run dock rendering
- *  the same decision can be at different points without interfering. */
+/**
+ * One mounted dock. The composer's shows the active chat's queue; a run tab's shows one run's decisions wherever keyed
+ * (launching chat id or `run:<id>`). Each host owns its own phase.
+ */
 interface DockHost {
   el: HTMLElement;
   match: (d: Decision) => boolean;
@@ -193,11 +134,10 @@ interface DockHost {
   /** Bumped by `endPhase`. A timer callback whose generation has moved on
    *  returns without touching the DOM. */
   gen: number;
-  /** This host's render subscription, so a host whose element is going away can
-   *  be released. The two docks in `static/index.html` never are; a per-page
-   *  host is (`spec-view.ts` builds one per open spec and drops it with the
-   *  page), and without the disposer that page's effect would keep rendering
-   *  into a detached element for the tab's remaining lifetime. */
+  /**
+   * This host's render subscription, released when a per-page host (`spec-view.ts`) drops; otherwise the effect renders
+   * into a detached element for the tab's lifetime.
+   */
   stop: () => void;
 }
 
@@ -208,12 +148,10 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
   addHost(hostEl, (d) => d.chatID === activeChatID());
 }
 
-/** Wire the run view's dock: it shows the CURRENT run's decisions regardless
- *  of which surface they are keyed to — an agent-launched run's ask is queued
- *  under the launching chat's id, a manual one's under `run:<id>`, and the run
- *  tab must render both. One shared view element serves every run tab, so the
- *  run is a GETTER and a tab switch re-keys the same host (the switch bumps the
- *  queue version via renderRunDock). Idempotent per host element. */
+/**
+ * Wire the run view's dock: the current run's decisions, whether keyed to the launching chat or `run:<id>`. The run is
+ * a getter because one view element serves every run tab. Idempotent per host element.
+ */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
     const id = runID();
@@ -221,14 +159,10 @@ export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): 
   });
 }
 
-/** Wire a dock that shows ONE NAMED chat's queue, the chat named by a GETTER.
- *
- *  `mountDecisionDock` is the composer's variant and reads whichever chat is
- *  ACTIVE; a page that is not the composer has no active chat to read (with a
- *  spec tab on screen there is no active chat tab at all) and knows its own
- *  chat instead. A getter rather than a value for `mountRunDecisionDock`'s
- *  reason: a re-parent changes the id during the host's life, so an id captured
- *  at mount would name the previous parent. Idempotent per host element. */
+/**
+ * Wire a dock showing one named chat's queue, for a page with no active chat (a spec tab). A getter because a
+ * re-parent changes the id during the host's life. Idempotent per host element.
+ */
 export function mountChatDecisionDock(hostEl: HTMLElement, chatID: () => string): void {
   addHost(hostEl, (d) => {
     const id = chatID();
@@ -236,16 +170,15 @@ export function mountChatDecisionDock(hostEl: HTMLElement, chatID: () => string)
   });
 }
 
-/** Re-render every dock. The run view calls this when the run on screen
- *  changes: the host's match closure reads new state the reactive graph cannot
- *  see, so the repaint needs an explicit nudge. */
+/** Re-render every dock; the run view calls it when its run changes, which the reactive graph cannot see. */
 export function rerenderDocks(): void {
   bump();
 }
 
-/** Release a host whose element is going away: stop its render subscription,
- *  end any phase it is in, and forget it. Unknown elements are ignored, so a
- *  page may call it unconditionally on teardown. */
+/**
+ * Release a host whose element is going away: stop its subscription, end its phase, forget it. Unknown elements
+ * are ignored.
+ */
 export function unmountDecisionDock(hostEl: HTMLElement): void {
   const i = hosts.findIndex((h) => h.el === hostEl);
   const h = hosts[i];
@@ -271,8 +204,6 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     stop: () => undefined,
   };
   hosts.push(h);
-  // Two triggers: the active chat changed (a different queue is on screen), or
-  // this module's queue changed (a decision arrived or was answered).
   h.stop = effect(() => {
     touch(activeSession, queueVersion);
     renderHost(h);
@@ -286,9 +217,8 @@ function activeChatID(): string {
 /** Enqueue a decision and show it when its chat is the one on screen. */
 export function pushDecision(d: Decision): void {
   const q = queues.get(d.chatID) ?? [];
-  // A re-delivered ask (SSE connect replays every unanswered permission AND every
-  // parked step's question) must not stack a second copy of itself. Per-kind
-  // identity, so a run ask's string id and a request id cannot be compared.
+  // SSE connect replays every unanswered permission and parked question, so a re-delivery must not stack. Per-kind
+  // identity, so a string ask id and a request id are never compared.
   const id = decisionIdentity(d);
   if (q.some((existing) => existing.kind === d.kind && decisionIdentity(existing) === id)) {
     return;
@@ -298,14 +228,10 @@ export function pushDecision(d: Decision): void {
   bump();
 }
 
-/** Drop every decision keyed to this surface without answering: the chat went
- *  away (its tab closed, or another device deleted it) or the client can no
- *  longer support the claim that any of them is live (a transport gap). Does NOT
- *  call submit — nothing is owed to a request the agent has abandoned.
- *
- *  Unconditional, unlike `dropTurnDecisions`: when the chat itself is gone there
- *  is no surface left to answer on, and `close_chat` / `delete_chat` cancel the
- *  chat's runs server-side, so a run-scoped ask keyed here is dead too. */
+/**
+ * Drop every decision keyed to this surface without answering (chat gone, or a transport gap). Never calls submit.
+ * Unconditional: `close_chat` / `delete_chat` cancel the chat's runs server-side, so run asks keyed here are dead too.
+ */
 export function dropDecisions(chatID: string): void {
   if (!queues.delete(chatID)) {
     return;
@@ -313,13 +239,10 @@ export function dropDecisions(chatID: string): void {
   bump();
 }
 
-/** Drop every ask a RUN owns, which the per-chat sweep above cannot reach.
- *
- *  That sweep walks the chat store, so a `run:<workflowId>` key escaped it. The
- *  replay re-offers what is still open and does NOT replay the settle, so an ask
- *  ANSWERED during the outage kept its card: the click answered 409 and the dock
- *  spliced a closed question. Keyed on the PREFIX, not on `runID`: an ask keyed to
- *  a launching chat carries one too, and `dropDecisions` owns that queue. */
+/**
+ * Drop every ask a run owns (`run:` prefix), which the per-chat sweep cannot reach; the replay re-offers what is still
+ * open. Keyed on the prefix: chat-keyed run asks belong to `dropDecisions`.
+ */
 export function dropRunDecisions(): void {
   let dropped = false;
   for (const chatID of [...queues.keys()]) {
@@ -333,43 +256,18 @@ export function dropRunDecisions(): void {
   }
 }
 
-/** Drop every unanswered ask belonging to this RUN, wherever it is filed, WITHOUT
- *  submitting an answer.
- *
- *  ALL FOUR kinds are run-scoped and all four are reached by this filter.
- *  `handlers/turn.ts` stamps `runID: p.run_id ?? ""` on `permission`,
- *  `elicitation` and `user_input` alike — a step's ask carries its run whichever
- *  of the three doors it came through — and `handlers/run.ts` stamps
- *  `runID: p.workflow_id` on `run_input`. So the filter is broader than a
- *  request-shaped question: a step's permission and its elicitation have no other
- *  remover either, because `collapseSettledRunInput` matches on kind plus ask id
- *  so it cannot name one, and all three carry a `runID`, which is exactly what
- *  `dropTurnDecisions` deliberately exempts.
- *
- *  For `run_input` this is a second, idempotent pass: that kind is already retired
- *  server-side on the run's terminal transition (`forgetBounds` ->
- *  `settleAsksForRun` -> `run_input_settled`).
- *
- *  Not answering is safe because a terminal run has no step left to consume an
- *  answer. The server clears its own `pendingPerms` on the same transition
- *  (`forgetBounds` -> `ClearPendingPermsForRun`), so the SSE connect replay no
- *  longer re-offers the question and this clear is not the only thing standing.
- *  The residual is narrow and stated: another client currently RENDERING one of
- *  these cards keeps it until its next reload, because the server drops those
- *  entries silently — `SettledByMoot` is restricted to a run ask by its own
- *  contract.
- *
- *  Matches the same join `runPendingAsks` makes, so the predicate that says a run
- *  is waiting and the one that clears the wait cannot disagree about which asks
- *  belong to a run. Refuses an empty id, which `runID` is on every ordinary chat
- *  ask. */
+/**
+ * Drop every unanswered ask of this run, wherever filed, without answering. All four kinds carry `runID`
+ * (handlers/turn.ts, handlers/run.ts), so a step's permission and elicitation have no other remover. Safe: a terminal
+ * run has no step to consume an answer, and the server clears its own pending set on the same transition. Same join
+ * as `runPendingAsks`. Refuses an empty id.
+ */
 export function dropRunAsks(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
   const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
-  // The run is over, so every ask it owns is too — including one whose per-ask
-  // settle never arrived, which is the path `collapseSettledRunInput` cannot cover.
+  // Includes an ask whose per-ask settle never arrived, which `collapseSettledRunInput` cannot cover.
   heldAnswers.delete(workflowID);
   let dropped = false;
   for (const [chatID, q] of queues) {
@@ -389,31 +287,11 @@ export function dropRunAsks(workflowID: string): void {
   }
 }
 
-/** Drop the decisions a TURN owned, leaving a workflow run's alone.
- *
- *  TWO triggers, and the second is what reaches a run's ORPHANS. `turn_ended` on a
- *  chat is the obvious one. The other is a run's own TERMINAL frame, gated on the
- *  launching chat being idle with no sibling run live (`handlers/run.ts`): a step's
- *  request-shaped ask can arrive with `run_id` empty, which puts it outside every
- *  run-scoped remover's reach and inside this one's, and no `turn_ended` fires for
- *  that chat while the run is going because the attribution gate drops a
- *  step-driven turn's `turn_end`.
- *
- *  A permission, an elicitation and a question all BLOCK the turn that raised
- *  them, so a turn that has ended cannot still be waiting on one: it was
- *  answered (already spliced), or it was abandoned when the turn was cancelled —
- *  and `cmdCancel` clears the server's own pending set, so the entry left here is
- *  a card for a request nothing will accept an answer for. Keeping it marked the
- *  chat as needing a decision indefinitely, since `tabStatusFor` puts `input`
- *  ahead of every other state.
- *
- *  A run-scoped ask is exempt and the exemption is load-bearing: an
- *  agent-launched run is parented on the calling chat's session but OUTLIVES the
- *  turn that launched it (a goal run ends its turn immediately and then runs),
- *  and its asks are queued under that chat's id. Dropping those would strand the
- *  run waiting for an answer no surface is offering any more, which is the exact
- *  failure the dock's queue was built to end. `dropRunAsks` above is what ends the
- *  exemption once the RUN itself is over. */
+/**
+ * Drop the decisions a turn owned, leaving run asks alone. Triggers: `turn_ended`, and a run's terminal frame while
+ * the launching chat is idle (a step's ask can arrive with empty `run_id`). A blocking ask cannot outlive its turn.
+ * Run-scoped asks are exempt: an agent-launched run outlives the turn that launched it; `dropRunAsks` ends that.
+ */
 export function dropTurnDecisions(chatID: string): void {
   const q = queues.get(chatID);
   if (q === undefined) {
@@ -431,37 +309,19 @@ export function dropTurnDecisions(chatID: string): void {
   bump();
 }
 
-/** Does this chat hold an unanswered decision? The tab strip's activity dot asks,
- *  so a background chat blocked on a permission stops looking identical to one
- *  that is merely working.
- *
- *  Reads `queueVersion.value` (not `.peek()`) on purpose: the caller is a
- *  reactive effect, and this read is what subscribes it to the arrival and the
- *  answering of a decision. The queue is this module's state, so there is
- *  nothing in the chat store for that effect to have keyed on instead.
- *
- *  A `run:<id>` key is not a chat and has no tab, so it simply never matches. */
+/**
+ * Whether this chat holds an unanswered decision (the tab dot). Reads `queueVersion.value` so the calling effect
+ * subscribes to arrivals and answers. A `run:<id>` key never matches.
+ */
 export function hasPendingDecision(chatID: string): boolean {
   touch(queueVersion);
   return (queues.get(chatID)?.length ?? 0) > 0;
 }
 
-/** What ONE workflow run is waiting on a person for.
- *
- *  The transcript's run card asks, so a step blocked on a permission stops looking
- *  identical to a step doing work — the same masking `hasPendingDecision` above
- *  closed for a background chat's tab dot, one level down. The run's own status
- *  cannot answer it: KAS blocks the asking step's turn and leaves the run
- *  `running`, so `inspect` reports nothing wrong.
- *
- *  Scans every queue rather than one, because a run's asks are keyed two ways and
- *  the card knows only the run: an agent-launched run's ask sits under the LAUNCHING
- *  CHAT's id with `run_id` stamped on the payload, a parentless one's under the
- *  synthetic `run:<id>` chat id. Same join `mountRunDecisionDock` makes.
- *
- *  Reads `queueVersion.value` (not `.peek()`) for the reason above it: the caller is
- *  the card's own render effect, and this read is what subscribes it to an ask
- *  arriving or being answered. */
+/**
+ * What one workflow run waits on a person for (the run card): KAS leaves the run `running` while a step is blocked.
+ * Scans every queue (same join as `mountRunDecisionDock`), and reads `queueVersion.value` to subscribe the caller.
+ */
 export function runPendingAsks(workflowID: string): RunAsks {
   touch(queueVersion);
   const nodes = new Set<string>();
@@ -477,9 +337,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
         continue;
       }
       count++;
-      // Absent whenever the step-session registry never saw the asking
-      // sub-session, which is why the card takes the count separately: the run is
-      // blocked either way, only the ROW cannot be named.
+      // Absent when the step-session registry never saw the sub-session; the run is blocked either way.
       const node = d.payload.node_id ?? "";
       if (node !== "") {
         nodes.add(node);
@@ -492,9 +350,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
   return { count, nodes, label };
 }
 
-/** One line naming what an ask wants. Per-kind and private, because the three
- *  payload shapes are this module's business — the run card takes the sentence, not
- *  a payload to read fields off. */
+/** Per-kind and private: the run card takes the sentence, not a payload. */
 function askLabel(d: Decision): string {
   switch (d.kind) {
     case "permission":
@@ -504,38 +360,19 @@ function askLabel(d: Decision): string {
     case "user_input":
       return d.payload.question;
     case "run_input":
-      // Empty is the post-restart case rather than an error: the ask registry is in
-      // memory, so the text is gone while the run is still parked and the server
-      // reconstructs an ask from its state with no question on it.
+      // Empty after a restart: the ask registry is in memory, so the server reconstructs the ask without its question.
       return d.payload.question === "" ? RUN_INPUT_FALLBACK : d.payload.question;
   }
 }
 
-/** Retire a decision ANOTHER surface answered (`decision_settled`), and say who
- *  answered it.
- *
- *  Every surface is offered the same ask — each tab, plus a run tab watching the
- *  same run — and only the first answer is accepted, so on every other surface
- *  the card outlives the question. It used to sit there looking live, and
- *  clicking it achieved nothing: the server took the answer, the agent ignored
- *  it for a request id it had already resolved, and nothing said so.
- *
- *  It does NOT call submit: the request is answered, and a second answer on one
- *  id is exactly what this exists to prevent.
- *
- *  Attribution is only surfaced when the card was ON SCREEN, which `renderedKey`
- *  is the record of. A card the reader never saw needs no explanation, and the
- *  surface that DID answer reaches this with nothing to remove — `settle` splices
- *  the entry before the answer goes out — so it never explains itself to the
- *  person who just clicked.
- *
- *  Answers the settled ask's run id ("" for the chat's own ask), or undefined when
- *  no card for it was queued here. */
+/**
+ * Retire a decision another surface answered (`decision_settled`) without calling submit, and say who answered it
+ * when the card was on screen (`renderedKey`). Returns the settled ask's run id ("" for a chat's own), or undefined
+ * when none was queued here.
+ */
 export function collapseSettledDecision(
   chatID: string,
-  // The three REQUEST-shaped kinds only, and narrowed rather than widened to the
-  // whole union: `decision_settled`'s payload is keyed by an int64 request id, and
-  // a run ask has none. Its retirement is `collapseSettledRunInput` below.
+  // Request-shaped kinds only: `decision_settled` is keyed by an int64 id; run asks use `collapseSettledRunInput`.
   kind: RequestDecision["kind"],
   requestID: number,
   settledBy: SettledBy,
@@ -552,22 +389,18 @@ export function collapseSettledDecision(
   }
   const key = decisionKey(chatID, kind, String(requestID));
   if (hosts.some((h) => h.renderedKey === key)) {
-    // The toast announces itself into the shared live region (politely), so a
-    // second announce() call here would read the same sentence twice.
-    info(settledMessage(kind, settledBy));
+    // The toast announces itself into the shared live region; a second announce() would read it twice.
+    info(named(noticeSubject(chatID), settledMessage(kind, settledBy)));
   }
   bump();
-  // The settle frame names the chat the ask travelled on, not the run it was about,
-  // and the banner it raised was tagged by the run: the queue is where that
-  // attribution survives, so the retraction reads it back from here.
+  // The settle frame names the chat, the banner was tagged by the run; the queue is where that attribution survives.
   return settled?.runID ?? "";
 }
 
-/** What the reader is told about a card that collapsed under them. The three
- *  causes call for different reactions, so they read differently: another window
- *  means a person decided, the unattended floor means a deadline did, and `moot`
- *  means NOBODY decided — the thing being asked about moved on or ended, so a
- *  sentence claiming an answer would be one the reader can disprove. */
+/**
+ * Three causes read differently: another window (a person), the unattended floor (a deadline), `moot` (nobody;
+ * the subject moved on, so claiming an answer would be false).
+ */
 function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
   const subject = settledSubject(kind);
   switch (settledBy) {
@@ -599,17 +432,10 @@ function settledSubject(kind: Decision["kind"]): string {
   }
 }
 
-/** Retire a run ask that was answered or waived elsewhere (`run_input_settled`).
- *
- *  Its own entry point rather than a widened `collapseSettledDecision`, because the
- *  two events carry different identities: that one is keyed by an int64 request id,
- *  this one by a string ask id. Threading both through one function would mean a
- *  parameter that is only meaningful for half its callers.
- *
- *  The run ask is found by scanning EVERY queue rather than one, for
- *  `runPendingAsks`' reason: an ask is keyed to the launching chat for an
- *  agent-parented run and to `run:<workflowId>` for a parentless one, and the
- *  settle event names only the run. */
+/**
+ * Retire a run ask answered or waived elsewhere (`run_input_settled`), keyed by string ask id. Scans every queue:
+ * the event names only the run.
+ */
 export function collapseSettledRunInput(
   workflowID: string,
   askID: string,
@@ -618,8 +444,7 @@ export function collapseSettledRunInput(
   if (workflowID === "" || askID === "") {
     return;
   }
-  // Ahead of the scan and unconditional: the ask is over whether or not a card for
-  // it is still queued here, so held words for it have stopped being wanted.
+  // Unconditional: the ask is over whether or not a card is still queued here.
   forgetHeldAnswer(workflowID, askID);
   for (const [chatID, q] of queues) {
     const i = q.findIndex(
@@ -633,30 +458,18 @@ export function collapseSettledRunInput(
       queues.delete(chatID);
     }
     if (hosts.some((h) => h.renderedKey === decisionKey(chatID, "run_input", askID))) {
-      info(settledMessage("run_input", settledBy));
+      info(named(noticeSubject(chatID), settledMessage("run_input", settledBy)));
     }
     bump();
     return;
   }
 }
 
-/** The words a reader typed into a run-input card, held by the ask they answer.
- *
- *  `settle` splices the entry BEFORE the answer goes out, so the card carrying the
- *  text is already gone by the time the server can refuse it — and the one refusal
- *  that is RETRYABLE re-offers the SAME ask on a fresh `run_input_needed`
- *  (`errRunNotParked`: the run is momentarily between steps). Without this the
- *  reader got their question back with an empty box and retyped, which is short of
- *  the condition invariant 2 grants the optimistic dock its one carve-out on: a
- *  refusal rolls the row back AND returns the text, so nothing vanishes unreplaced.
- *
- *  Per ask rather than one slot, so answering a second parked step cannot silently
- *  evict the first one's words. NESTED by run rather than keyed on a composite,
- *  because the two things that end an ask end it at those two granularities:
- *  `collapseSettledRunInput` per ask and `dropRunAsks` per run, which between them
- *  are every path an ask can leave by — so the map is bounded by the open-ask
- *  population. The chat-scoped sweeps need no hook of their own: deleting a chat
- *  cancels its runs server-side, and that terminal transition settles their asks. */
+/**
+ * A run-input card's typed words, held per ask: `settle` splices before sending, so a retryable refusal
+ * (`errRunNotParked`) re-offers the same ask and must return the text. Nested by run because `collapseSettledRunInput`
+ * (per ask) and `dropRunAsks` (per run) are every exit, which bounds the map.
+ */
 const heldAnswers = new Map<string, Map<string, string>>();
 
 /** The text this ask is holding, or "" — what a rebuilt card seeds its box with. */
@@ -664,9 +477,7 @@ function heldAnswer(d: RunInputDecision): string {
   return heldAnswers.get(d.payload.workflow_id)?.get(d.askID) ?? "";
 }
 
-/** Hold the words being sent, so a retryable refusal returns them with the ask.
- *  A `null` text is CONTINUE WITHOUT ANSWERING, which retires the question rather
- *  than answering it, so whatever was held is dropped instead. */
+/** Hold the words being sent; a `null` text continues without answering, so the hold is dropped instead. */
 function holdAnswer(d: RunInputDecision, text: string | null): void {
   if (text === null) {
     forgetHeldAnswer(d.payload.workflow_id, d.askID);
@@ -677,7 +488,6 @@ function holdAnswer(d: RunInputDecision, text: string | null): void {
   heldAnswers.set(d.payload.workflow_id, byAsk);
 }
 
-/** Forget one ask's held words, and the run's bucket once it holds none. */
 function forgetHeldAnswer(workflowID: string, askID: string): void {
   const byAsk = heldAnswers.get(workflowID);
   if (byAsk === undefined) {
@@ -689,24 +499,15 @@ function forgetHeldAnswer(workflowID: string, askID: string): void {
   }
 }
 
-/** Answer a decision and retire it. The settle-once guard is here rather than
- *  in each card, because "answered already" is a property of the queue entry,
- *  not of the DOM that rendered it.
- *
- *  Membership, not head position, is the guard. With one host they were the
- *  same thing; with a run tab in play they are not — the tab can legitimately
- *  render a step's ask that sits BEHIND the chat's own ask in the launching
- *  chat's queue, and refusing that answer would leave a dead button. Each
- *  request id is its own JSON-RPC exchange, so answering out of queue order is
- *  protocol-correct; what must never happen is answering one twice, and
- *  splice-by-identity gives exactly that. */
+/**
+ * Answer a decision and retire it. The settle-once guard lives here because "answered" is the queue entry's property.
+ * Membership, not head position: a run tab may answer an ask queued behind the chat's own, which is protocol-correct.
+ */
 function settle(d: Decision, run: () => void): void {
   const q = queues.get(d.chatID);
   const i = q?.indexOf(d) ?? -1;
   if (q === undefined || i < 0) {
-    // Already answered or dropped: the reply would target a request the
-    // server has forgotten, and a double answer on one request id is worse
-    // than a dropped click.
+    // A double answer on one request id is worse than a dropped click.
     return;
   }
   q.splice(i, 1);
@@ -717,10 +518,7 @@ function settle(d: Decision, run: () => void): void {
   bump();
 }
 
-/** The decisions a host should show, across every queue, FIFO within each.
- *  Queue iteration order is insertion order, which is stable enough: a host
- *  either matches one chat's queue (the composer) or filters by run id, where
- *  cross-queue order barely arises (one run's asks come from one bridge). */
+/** Insertion order across queues is stable enough: a run's asks come from one bridge. */
 function matching(h: DockHost): Decision[] {
   const out: Decision[] = [];
   for (const q of queues.values()) {
@@ -733,23 +531,15 @@ function matching(h: DockHost): Decision[] {
   return out;
 }
 
-/** Identity of one decision WITHIN its kind: the int64 request id for the three
- *  request-shaped asks, the server-composed ask id for a run ask.
- *
- *  It became a string when the fourth kind arrived, and minting a synthetic number
- *  for that kind was the alternative: it would have had to share one id space with
- *  real JSON-RPC request ids, which start at zero per bridge, so a collision was
- *  the ordinary case rather than a race. */
+/**
+ * Within-kind identity: int64 request id, or the run ask id. A synthetic number would share the per-bridge JSON-RPC
+ * id space, where collisions are ordinary.
+ */
 function decisionIdentity(d: Decision): string {
   return d.kind === "run_input" ? d.askID : String(d.requestID);
 }
 
-/** Identity of one decision as a string, so "what is rendered" can be compared
- *  against an event naming a decision this module may not be holding.
- *
- *  keyenc rather than a template join: a run ask id is arbitrary text the server
- *  composed out of wire values, and a separator inside one part would let two
- *  different decisions produce one key. */
+/** keyenc rather than a template join: a run ask id is arbitrary text, and a separator inside it would merge two keys. */
 function decisionKey(chatID: string, kind: Decision["kind"], identity: string): string {
   return join(chatID, kind, identity);
 }
@@ -759,17 +549,14 @@ function renderHost(h: DockHost): void {
   const head = mine[0];
 
   if (head === undefined) {
-    // `renderedKey` is cleared the moment a `leaving` phase starts, so a second
-    // render with an empty queue does not restart the exit.
+    // Cleared when `leaving` starts, so a second empty render does not restart the exit.
     if (h.renderedKey !== "") {
       swap(h, undefined, 0);
     }
     return;
   }
 
-  // Rebuilding a card the user is filling in would discard their typing, so a
-  // render for the same decision is a no-op. Only the depth line, which lives
-  // outside the card, updates in place. This branch MUST NOT start a phase.
+  // A rebuild would discard the user's typing, so the same decision is a no-op apart from the depth line. MUST NOT start a phase.
   const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   const depth = mine.length;
   if (key === h.renderedKey) {
@@ -780,61 +567,28 @@ function renderHost(h: DockHost): void {
   swap(h, head, depth);
 }
 
-// ---------------------------------------------------------------------------
-// The phase machine.
-//
-// `renderHost` is still the only funnel and it gained no lookahead: the phase
-// falls out of two facts it already had. Whether another decision is queued
-// behind the answered one is not DETECTED, it is OBSERVED — `settle` splices the
-// answered entry and then calls `bump()`, so by the time the render effect runs,
-// `matching(h)[0]` is already the NEXT decision, or undefined when the queue is
-// empty. The advance is therefore the ordinary render path, keyed on nothing
-// new: no coupling to click handlers, no timing dependency on an animation, no
-// change to queue semantics. Every retirement path (`settle`,
-// `collapseSettledDecision`, `dropDecisions`, `dropTurnDecisions`) animates
-// identically for free, because they all splice then bump.
-//
-// The dispatch is NEVER gated on any of this. `settle` splices, calls `submit`
-// and bumps synchronously inside the click handler, so the response is on the
-// wire BEFORE the render effect that starts the animation runs.
-// ---------------------------------------------------------------------------
+// The phase machine. The next head is observed, not detected: `settle` splices then `bump()`s, so the render sees the
+// next decision or none, and every retirement path animates the same way. The dispatch is never gated on motion.
 
-/** Swap the host's content, animating the change unless motion is off.
- *
- *  | had content on screen | has an incoming head | phase     |
- *  |-----------------------|----------------------|-----------|
- *  | no                    | yes                  | entering  |
- *  | yes                   | yes                  | advancing |
- *  | yes                   | no                   | leaving   |
- *
- *  (No/no is unreachable: `renderHost` returns early.) */
+/**
+ * Swap the host's content, animating unless motion is off: nothing->head enters, head->head advances, head->nothing
+ * leaves (nothing->nothing returns early in `renderHost`).
+ */
 function swap(h: DockHost, head: Decision | undefined, depth: number): void {
-  // Measured FIRST, before endPhase and before any write, so it reads the LIVE
-  // height. One code path then serves all three starting states: collapsed
-  // (0), settled (the card's height), and mid-animation (wherever the box
-  // currently is) — which is what makes rapid Allow-Allow-Allow morph from the
-  // current geometry instead of snapping.
+  // Measured first, before `endPhase` or any write, so it reads the live height and rapid answers morph from it.
   const from = measure(h);
   const phase: Phase =
     head === undefined ? "leaving" : h.renderedKey === "" ? "entering" : "advancing";
 
-  // Idempotent, and every phase starts with it: at most one timer and one
-  // outgoing element per host, ever.
+  // Idempotent: at most one timer and one outgoing element per host.
   endPhase(h);
 
-  // Every card on screen here is about to be replaced or moved into the inert
-  // outgoing wrapper, so this is the one point a card LEAVES — and a clamp's
-  // release has to be explicit, because the observer's own zero-size callback may
-  // never arrive (`clamp-text.ts` `releaseClamp`). Before `show`, or the incoming
-  // card's own clamp would be swept the moment it was attached.
+  // The one point a card leaves, so clamps are released here explicitly (`clamp-text.ts` `releaseClamp`). Before `show`,
+  // or the incoming card's clamp would be swept.
   releaseClampsIn(h.el);
 
-  // Reduced motion and a background tab take NO phase at all: same final DOM,
-  // same response behaviour, no outgoing element and no timer, so there is
-  // nothing left to clean up. `document.hidden` is in the gate for a real
-  // reason — animations do not advance in a background tab but `setTimeout`
-  // does, so without it the user would return to a stale outgoing card sitting
-  // at full opacity over the new one.
+  // Reduced motion and a background tab take no phase: animations stall in a background tab while `setTimeout` runs, so
+  // a stale outgoing card would remain at full opacity.
   if (motionOff()) {
     if (head === undefined) {
       h.el.replaceChildren();
@@ -846,14 +600,11 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
     return;
   }
 
-  // The answered card stays on screen for the phase. Nothing to take on an
-  // enter: the host is either empty or mid-collapse with its content already
-  // detached.
+  // Nothing to take on enter: the host is empty or its content already detached.
   const outgoing = phase === "entering" ? null : takeOutgoing(h);
 
   if (head === undefined) {
-    // `.hidden` deliberately does NOT land here — it lands in `finishPhase`,
-    // after the collapse. Adding it now is what made the old exit unanimatable.
+    // `.hidden` lands in `finishPhase`, after the collapse; adding it here makes the exit unanimatable.
     h.el.replaceChildren();
     h.renderedKey = "";
   } else {
@@ -877,9 +628,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
   }, DOCK_PHASE_MS[phase]);
 }
 
-/** Put a decision on screen. Identical on the animated and the instant path, so
- *  `announce()` keeps firing on exactly today's schedule — once per new head,
- *  with the card already in the DOM and never itself opacity-0. */
+/** Identical on both paths, so `announce()` fires once per new head with the card in the DOM and never opacity-0. */
 function show(h: DockHost, head: Decision, depth: number): void {
   h.el.replaceChildren(buildCard(head), depthRow(depth));
   h.el.classList.remove("hidden");
@@ -887,9 +636,7 @@ function show(h: DockHost, head: Decision, depth: number): void {
   announce(announcementFor(head));
 }
 
-/** The box's current geometry. A collapsed host is `display: none`, which
- *  occupies nothing at all — margin included — so its margin start is 0 rather
- *  than the resting value `getComputedStyle` still reports for it. */
+/** A collapsed host is `display: none`, so its margin is 0 whatever `getComputedStyle` reports. */
 function measure(h: DockHost): BoxState {
   const height = `${String(h.el.getBoundingClientRect().height)}px`;
   if (h.el.classList.contains("hidden")) {
@@ -898,16 +645,10 @@ function measure(h: DockHost): BoxState {
   return { height, margin: getComputedStyle(h.el).marginBlockEnd };
 }
 
-/** Pin the box at a measured geometry with transitions SUPPRESSED, then release
- *  to the target.
- *
- *  The suppression is the single most load-bearing mechanical fact here.
- *  Measured in Chromium: writing the pin with transitions live starts a height
- *  transition for the PIN, and clearing the inline value in the same task then
- *  cancels it and starts no replacement — the box snaps. A forced reflow alone
- *  does not fix it and neither does waiting two animation frames. Suppressing
- *  for the pin's duration makes the release the only style change the transition
- *  machinery sees. */
+/**
+ * Pin the box at a measured geometry with transitions suppressed, then release. Measured in Chromium: a live
+ * transition on the pin is cancelled by the same-task release and the box snaps; neither a reflow nor two frames fix it.
+ */
 function pinAndRelease(h: DockHost, from: BoxState, to: BoxState): void {
   const s = h.el.style;
   s.transition = "none";
@@ -920,12 +661,10 @@ function pinAndRelease(h: DockHost, from: BoxState, to: BoxState): void {
   s.marginBlockEnd = to.margin;
 }
 
-/** Move the answered content into a neutralised wrapper that stays on screen for
- *  the phase. `aria-hidden` so it is not read a second time, `inert` so it can
- *  be neither tabbed into nor clicked (the retained-handle case is also caught
- *  by `settle`'s membership guard, which is the authoritative one). Moving a
- *  focused button into an inert subtree blurs it, which is exactly what the
- *  previous `replaceChildren()` already produced. */
+/**
+ * The answered content in a neutralised wrapper: `aria-hidden` (no second reading) and `inert` (no tab or click;
+ * `settle`'s membership guard is authoritative).
+ */
 function takeOutgoing(h: DockHost): HTMLElement | null {
   const kids = [...h.el.children];
   if (kids.length === 0) {
@@ -937,8 +676,7 @@ function takeOutgoing(h: DockHost): HTMLElement | null {
   return wrap;
 }
 
-/** Tear down whatever phase this host is in. Idempotent, and safe to call when
- *  there is no phase. */
+/** Tear down this host's phase. Idempotent. */
 function endPhase(h: DockHost): void {
   h.gen++;
   if (h.timer !== null) {
@@ -953,8 +691,7 @@ function endPhase(h: DockHost): void {
   h.el.style.marginBlockEnd = "";
 }
 
-/** The phase's window elapsed. The generation check is what makes a superseded
- *  timer harmless even if it somehow escaped `clearTimeout`. */
+/** The generation check makes a superseded timer harmless even if it escaped `clearTimeout`. */
 function finishPhase(h: DockHost, gen: number, phase: Phase): void {
   if (h.gen !== gen) {
     return;
@@ -965,9 +702,7 @@ function finishPhase(h: DockHost, gen: number, phase: Phase): void {
   }
 }
 
-/** Animate nothing: the reader asked for no motion, or the tab is in the
- *  background where animations do not advance. Read live per transition rather
- *  than cached, so flipping the preference takes effect on the next swap. */
+/** Read live per transition, so the preference takes effect on the next swap. */
 function motionOff(): boolean {
   if (document.hidden) {
     return true;
@@ -1020,9 +755,9 @@ function announcementFor(d: Decision): string {
 function buildCard(d: Decision): HTMLElement {
   switch (d.kind) {
     case "permission":
-      return buildPermissionCard(d.chatID, d.payload, (optionID, fileDecisions) => {
+      return buildPermissionCard(d.chatID, d.payload, (answer) => {
         settle(d, () => {
-          d.submit(optionID, fileDecisions);
+          d.submit(answer);
         });
       });
     case "elicitation":
@@ -1035,17 +770,15 @@ function buildCard(d: Decision): HTMLElement {
       return buildUserInputCard(d.payload, (action, answer) => {
         settle(d, () => {
           d.submit(action, answer);
-          // AFTER the answer goes out, and inside settle's callback: a surface
-          // that carries an answer out must not act on an ask another surface
-          // already answered, and must not act before the agent has it.
+          // After the answer goes out, inside settle's callback: never act on an ask another surface answered, or before the
+          // agent has it.
           if (action === "answered" && answer !== undefined) {
             emitBus(BUS_USER_INPUT_ANSWERED, { chatID: d.chatID, answer });
           }
         });
       });
     case "run_input":
-      // The hold goes INSIDE settle's callback, so an ask another surface already
-      // answered leaves nothing behind: settle refuses and the callback never runs.
+      // Inside settle's callback, so an already-answered ask leaves nothing held.
       return buildRunInputCard(
         d.payload,
         heldAnswer(d),
@@ -1055,9 +788,7 @@ function buildCard(d: Decision): HTMLElement {
             d.submit(text);
           });
         },
-        // UNWRAPPED, unlike every other action in this function: a deferral answers
-        // nothing, so splicing the entry would take the card off every surface while
-        // the run is still parked and the question still open.
+        // Unwrapped: a deferral answers nothing, and splicing would remove the card while the run is still parked.
         d.defer,
       );
     default:
@@ -1066,10 +797,7 @@ function buildCard(d: Decision): HTMLElement {
   }
 }
 
-/** Reset module state for test isolation. Production never calls this.
- *
- *  `endPhase` first, and not optionally: a pending cleanup timer from one test
- *  would otherwise fire into the next test's DOM. */
+/** Reset module state between tests. `endPhase` first: a pending timer would fire into the next test's DOM. */
 export function _resetForTest(): void {
   for (const h of hosts) {
     endPhase(h);
@@ -1081,9 +809,7 @@ export function _resetForTest(): void {
   queueVersion.value = 0;
 }
 
-/** @internal How many hosts are mounted. The one observable of a RELEASE: a
- *  host left behind renders into a detached element for the tab's lifetime, and
- *  every other symptom of that is invisible from outside this module. */
+/** @internal Number of mounted hosts: the one observable of a release. */
 export function _hostCount(): number {
   return hosts.length;
 }

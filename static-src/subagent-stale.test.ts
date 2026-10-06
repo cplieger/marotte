@@ -1,11 +1,8 @@
-// A DELEGATE THAT DIED RENDERS LIKE ONE THAT WORKS unless its chat's OWN turn liveness is
-// read: `store.ts`'s `subagentStatusFor` folds an `in_progress` invocation onto `aborted`
-// once the chat holds no live turn. `delegate_dot.json`'s `stale` row states what each
-// surface then says; this file adds the two DIRECTIONS (stale folds, live does not) and
-// the reconcile: a `busy_chats` frame that clears a chat's latch settles its delegate
-// cards in the SAME pass, because a page load replays no streamed frame. Browser
-// placement with every production import DYNAMIC: the dispatcher's graph reaches
-// `scroll.ts`, which builds itself against a real `#messages` at import.
+// A delegate whose `tool_result` never arrived reads `in_progress` forever, so its state folds
+// against the chat's OWN turn liveness: a closed turn settles its unsettled calls as `aborted`
+// (`Turn.Close`), and the client folds onto that. `delegate_dot.json`'s `stale` row is the
+// cross-language statement; this adds both directions and the reconcile (a `busy_chats` clear must
+// settle cards in the SAME pass). Production imports are DYNAMIC: `scroll.ts` builds at import.
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type * as ModBlocks from "./messages-blocks.js";
@@ -133,10 +130,8 @@ function mount(status: ToolStatus): HTMLElement {
   return card;
 }
 
-/** The word the card announces, off whichever channel its head owns. A card the dispatcher
- *  seats has an OPENER, so its head is the anchor that opens the delegate's page and names
- *  itself `<delegate>, <word>`; a head with no opener carries an `.sr-only` span instead
- *  (`subagent-block.ts` `refreshName` — one owner, chosen by which head was built). */
+/** The word the card announces: an opener head names itself `<delegate>, <word>`, otherwise an
+ *  `.sr-only` span (`subagent-block.ts` `refreshName`). */
 function wordOf(card: HTMLElement): string {
   const head = card.querySelector<HTMLElement>(".subagent-header");
   const label = head?.getAttribute("aria-label");

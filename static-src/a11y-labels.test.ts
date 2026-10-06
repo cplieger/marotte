@@ -19,10 +19,8 @@ describe("a11y: missing labels", () => {
     const dismiss = showToast("File saved", "success", 5000);
     const toast = document.querySelector(".uip-toast--success")!;
     expect(toast).not.toBeNull();
-    // The library decouples announcement from the visual node: the toast is
-    // keyboard-focusable with a visually-hidden dismiss hint, and the message
-    // is announced through the shared polite live region rather than an
-    // aria-label on the node (which would double-announce / nest live regions).
+    // The toast is keyboard-focusable with a visually-hidden dismiss hint, and its message is
+    // announced through the shared polite live region, not an aria-label (double announce).
     expect(toast.getAttribute("tabindex")).toBe("0");
     expect(toast.querySelector(".uip-visually-hidden")?.textContent).toBe("Click to dismiss.");
     expect(toast.querySelector(".uip-toast-msg")?.textContent).toBe("File saved");
@@ -61,7 +59,6 @@ describe("a11y: missing labels", () => {
     // Setup minimal DOM for settings-tabs
     const bar = document.createElement("div");
     bar.id = "settings-tab-bar";
-    // ("git" removed: the Git & forges settings tab was retired.)
     const tabs = ["general", "tools", "permissions", "instructions"];
     for (const t of tabs) {
       const btn = document.createElement("button");
@@ -89,16 +86,11 @@ describe("a11y: missing labels", () => {
 });
 
 describe("a11y: permissions rule-form labels (static markup)", () => {
-  // The Permissions-panel adders (Active policy, Test a decision, Agent
-  // ignore — the legacy Command-rules adder was removed with the P8 Cedar
-  // migration) were reworked from unlabeled chip rows into labeled
-  // .rule-form grids (audit C7). Guard the real markup: every control sits
-  // inside a <label> that carries a visible .rf-label, and the submit
-  // affordance is a labeled button, not an icon-only pill.
+  // Every Permissions-panel rule-form control sits inside a <label> with a visible
+  // .rf-label, and the submit affordance is a labeled button, not an icon-only pill.
   it("every rule-form control has a visible label and a labeled submit button", () => {
-    // Parse only the permissions-panel slice (comment marker to the next
-    // panel's marker): a full-document parse would make the runner chase the
-    // <link rel=stylesheet> over the network.
+    // Parse only the permissions-panel slice: a full-document parse would make the runner
+    // fetch the <link rel=stylesheet>.
     const start = indexHtml.indexOf("<!-- Permissions:");
     const end = indexHtml.indexOf("<!-- Instructions:");
     expect(start).toBeGreaterThan(-1);
@@ -127,9 +119,7 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
       expect(submit?.textContent?.trim(), "submit must carry a visible text label").not.toBe("");
     }
 
-    // The permissions-ui.ts ids the controllers bind to must all survive the
-    // markup rework (the redesign keeps ids stable so the TS needs no
-    // structural changes).
+    // The ids the permissions-ui.ts controllers bind to.
     for (const id of [
       "native-rule-scope",
       "native-rule-capability",
@@ -149,10 +139,8 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
 });
 
 describe("a11y: autocomplete on every autocompletable input (static markup)", () => {
-  // Chrome's "[DOM] Input elements should have autocomplete attributes"
-  // violation fires per focused field, so it only ever names one. Sweep the
-  // whole file instead, over the raw text rather than a parse: a full-document
-  // innerHTML would make the runner chase the <link rel=stylesheet>.
+  // Chrome's autocomplete violation names one focused field at a time, so sweep the raw
+  // file text (a full parse would fetch the stylesheet).
   it("no autocompletable input is missing an autocomplete attribute", () => {
     const autocompletable = ["text", "password", "url", "email", "search", "number", "tel"];
     const offenders: string[] = [];
@@ -181,8 +169,6 @@ describe("a11y: autocomplete on every autocompletable input (static markup)", ()
     expect(indexHtml).not.toContain('autocomplete="username"');
     const clientId = /<input\b[^>]*id="mcp-remote-oauth-client-id"[^>]*>/.exec(indexHtml)?.[0];
     expect(clientId).toContain('autocomplete="off"');
-    const secret = /<input\b[^>]*id="mcp-remote-oauth-client-secret"[^>]*>/.exec(indexHtml)?.[0];
-    expect(secret).toContain('autocomplete="new-password"');
   });
 });
 
@@ -208,11 +194,6 @@ describe("a11y: keyboard navigation on picker grid", () => {
   });
 });
 
-// The supervised-pill aria-expanded test is gone with the pill. It also could
-// not fail: it mocked makeExpandable and then asserted the mock's own
-// aria-expanded flip. That contract belongs to @cplieger/ui-primitives'
-// createPopup, which owns and tests it.
-
 describe("a11y: tool-card aria-expanded on toggle", () => {
   it("tool-disclosure button starts with aria-expanded=false and aria-label", async () => {
     vi.resetModules();
@@ -226,9 +207,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       openFileDiff: () => {
         /* noop */
       },
-      // navigate.ts imports this name, and Browser Mode links ESM for real
-      // rather than reading properties off a namespace object, so it has to
-      // exist. `undefined` is what the node runner gave it.
+      // navigate.ts imports this name and Browser Mode links ESM for real, so it must exist.
       openFileGitDiff: undefined,
     }));
     const { buildToolCard } = await import("./tool-card.js");
@@ -261,9 +240,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       openFileDiff: () => {
         /* noop */
       },
-      // navigate.ts imports this name, and Browser Mode links ESM for real
-      // rather than reading properties off a namespace object, so it has to
-      // exist. `undefined` is what the node runner gave it.
+      // navigate.ts imports this name and Browser Mode links ESM for real, so it must exist.
       openFileGitDiff: undefined,
     }));
     const { buildToolCard } = await import("./tool-card.js");
@@ -420,9 +397,8 @@ describe("a11y: failed tool aria-expanded", () => {
       "c-a11y",
     );
 
-    // The failed branch auto-expands the details (expandToolDetails → the
-    // disclosure controller), which must keep the toggle's aria-expanded and
-    // the region's aria-hidden in sync.
+    // The failed branch auto-expands the details, which must keep aria-expanded and the
+    // region's aria-hidden in sync.
     expect(details.getAttribute("aria-hidden")).toBe("false");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 

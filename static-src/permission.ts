@@ -1,10 +1,6 @@
-// Permission card, rendered in the interaction dock (decision-dock.ts owns the queue,
-// the host and the settle-once guard; this file builds DOM and reports the choice).
-// Two shapes, discriminated by `files`: a TOOL permission (input preview, one button
-// per option, "Always allow" for shell commands) and a TURN APPROVAL (KAS's
-// `autopilot: off` gate, answered with a per-ACTION decision map). The decision unit
-// is the ACTION, not the file: entries sharing an action_id toggle together. An
-// OMITTED id counts as a REJECT, so a decision is sent for every action offered.
+// Permission card: the agent is asking to do something, rendered in the interaction dock
+// (decision-dock.ts owns the queue, the host and the settle -once guard; this file only builds DOM
+// and reports the choice).
 
 import type {
   AlwaysAllowBlock,
@@ -24,8 +20,18 @@ import { iconEl } from "./icon-el.js";
 
 const PREVIEW_CHAR_CAP = 500;
 
-/** Answer callback. `fileDecisions` is present only for a turn approval. */
-type SelectFn = (optionID: string, fileDecisions?: Record<string, boolean>) => void;
+/** One answer to a permission ask. `fileDecisions` rides only a turn approval; `rejectionReason`
+ *  only a deny of an ask that accepts a note. */
+export interface PermissionAnswer {
+  readonly optionID: string;
+  readonly fileDecisions?: Record<string, boolean>;
+  readonly rejectionReason?: string;
+}
+
+/** The deny note's cap, the server's `MaxRejectionReasonRunes`. */
+const REJECTION_REASON_MAX = 1000;
+
+type SelectFn = (answer: PermissionAnswer) => void;
 
 /** Build the dock card for one permission request. */
 export function buildPermissionCard(
@@ -37,9 +43,9 @@ export function buildPermissionCard(
   if (files.length > 0) {
     return buildTurnApprovalCard(payload, files, onSelect);
   }
-  // Resolved HERE, at render time, rather than when the ask was enqueued: a
-  // queued permission can be built long after it arrived, and the tool call
-  // carrying the input may not have been ingested yet at that point.
+  // Resolved HERE, at render time, rather than when the ask was enqueued: a queued permission can
+  // be built long after it arrived, and the tool call carrying the input may not have been ingested
+  // yet at that point.
   return buildToolPermissionCard(
     payload,
     lookupToolInput(chatID, payload.tool_call_id ?? ""),
@@ -47,9 +53,8 @@ export function buildPermissionCard(
   );
 }
 
-/** The agent's own arguments for the tool it is asking to run — the thing the
- *  user is actually approving. Walks back from the newest turn because the ask
- *  is about the turn in flight. */
+/** The agent's own arguments for the tool it is asking to run — the thing the user is actually
+ *  approving. Walks back from the newest turn because the ask is about the turn in flight. */
 function lookupToolInput(chatID: string, toolCallID: string): unknown {
   if (toolCallID === "") {
     return undefined;
@@ -74,8 +79,6 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
   }
   return undefined;
 }
-
-// --- Tool permission -------------------------------------------------------
 
 function buildToolPermissionCard(
   payload: PermissionNeededPayload,
@@ -109,9 +112,58 @@ function buildToolPermissionCard(
     );
   }
 
+  // An administrator's ask outranks every allow rule, so neither Always allow nor the profile
+  // picker can stop it asking; the card says who asks instead.
+  const adminAsk = payload.admin_required === true;
+  if (adminAsk) {
+    body.appendChild(
+      el(
+        "div",
+        { className: "approval-origin approval-admin" },
+        "Your administrator requires approval for this",
+      ),
+    );
+  }
+
+  const watch = payload.watch;
+  if (watch !== undefined) {
+    body.appendChild(
+      el(
+        "div",
+        { className: "approval-origin approval-watch" },
+        `workflow watch: ${watch.workflow_id} / ${watch.node_id}`,
+      ),
+    );
+  }
+
+  const round = payload.consent_round ?? 0;
+  if (round > 1) {
+    body.appendChild(
+      el(
+        "div",
+        { className: "approval-origin approval-round" },
+        `Another approval for this same tool call (${String(round)})`,
+      ),
+    );
+  }
+
   const toolCallID = payload.tool_call_id ?? "";
   if (toolCallID !== "") {
     body.appendChild(el("div", { className: "approval-id" }, toolCallID));
+  }
+
+  const locations = payload.locations ?? [];
+  if (locations.length > 0) {
+    const list = el("ul", {
+      className: "dock-file-list approval-locations",
+      "aria-label": "Files this tool call touches",
+    });
+    for (const path of locations) {
+      list.appendChild(
+        el("li", { className: "dock-file-row" }, el("span", { className: "dock-file-path" }, path)),
+      );
+    }
+    body.appendChild(list);
   }
 
   const preview = formatInputPreview(input);
@@ -119,6 +171,7 @@ function buildToolPermissionCard(
     body.appendChild(el("pre", { className: "approval-input" }, preview));
   }
 
+  const note = payload.accepts_rejection_reason === true ? buildRejectionNote() : null;
   const actions = el("div", { className: "approval-actions" });
   for (const opt of payload.options) {
     const btn = el(
@@ -132,12 +185,18 @@ function buildToolPermissionCard(
       opt.name,
     );
     btn.addEventListener("click", () => {
-      onSelect(opt.option_id);
+      // Only a reject_once answer carries the note: KAS ignores one anywhere else.
+      const reason = opt.kind === "reject_once" ? (note?.value.trim() ?? "") : "";
+      onSelect(
+        reason !== ""
+          ? { optionID: opt.option_id, rejectionReason: reason }
+          : { optionID: opt.option_id },
+      );
     });
     actions.appendChild(btn);
   }
 
-  if (kind === "execute" && !isModeSwitch) {
+  if (kind === "execute" && !isModeSwitch && !adminAsk) {
     const alwaysRow = buildAlwaysAllowRow(
       title,
       payload.options,
@@ -149,32 +208,34 @@ function buildToolPermissionCard(
     }
   }
 
-  const card = el("div", { className: "dock-card dock-permission" }, body, actions);
+  const card =
+    note === null
+      ? el("div", { className: "dock-card dock-permission" }, body, actions)
+      : el("div", { className: "dock-card dock-permission" }, body, note, actions);
   if (isModeSwitch) {
     card.classList.add("mode-switch");
   }
-  if (!isModeSwitch) {
+  if (!isModeSwitch && !adminAsk) {
     card.appendChild(buildPolicyPointer());
   }
   return card;
 }
 
-/** A pointer to the security profile picker, for the reader who is tired of being
- *  asked. Its own row BELOW the answer buttons, deliberately not among them.
- *
- *  It NAVIGATES and nothing else — the click opens Settings and flashes the
- *  picker, which the user then has to select in and confirm there. That is the
- *  whole reason it is a link and not a control: the profile is Settings-only, so
- *  answering a prompt must never be a path that widens the policy as a side
- *  effect. A "grant this capability" button here would be exactly that path.
- *
- *  It aims at `security-profile-list` because that is the control that exists. It
- *  used to aim at `workspace-relax-checkbox`, which the profile picker replaced —
- *  and highlightControl is quiet on an unknown id, so the link opened the panel and
- *  silently highlighted nothing.
- *
- *  A mode switch gets none of this: it grants no capability, so the policy panel
- *  has nothing to say about it. */
+/** The optional deny note above the answer buttons. */
+function buildRejectionNote(): HTMLTextAreaElement {
+  const note = el("textarea", {
+    className: "approval-reason",
+    rows: 1,
+    maxLength: REJECTION_REASON_MAX,
+    placeholder: "Optional: tell the agent why you're denying",
+  }) as HTMLTextAreaElement;
+  note.setAttribute("aria-label", "Reason for denying (optional)");
+  return note;
+}
+
+/** A pointer to the security profile picker, for the reader who is tired of being asked. Its own
+ *  row BELOW the answer buttons, deliberately not among them. It aims at `security-profile-list`
+ *  because that is the control that exists. */
 function buildPolicyPointer(): HTMLElement {
   const link = el("button", { type: "button", className: "approval-policy-link" }, "Settings");
   link.addEventListener("click", () => {
@@ -189,16 +250,14 @@ function buildPolicyPointer(): HTMLElement {
   );
 }
 
-// --- Turn approval ---------------------------------------------------------
-
 /** Files sharing one action id: the atomic review unit. */
 interface ActionGroup {
   actionID: string;
   paths: string[];
 }
 
-/** Group by action id, preserving first-seen order so the list is stable
- *  across the re-render a queue change causes. */
+/** Group by action id, preserving first-seen order so the list is stable across the re-render a
+ *  queue change causes. */
 function groupByAction(files: readonly ApprovalFile[]): ActionGroup[] {
   const byID = new Map<string, ActionGroup>();
   for (const f of files) {
@@ -218,9 +277,9 @@ function buildTurnApprovalCard(
   onSelect: SelectFn,
 ): HTMLElement {
   const groups = groupByAction(files);
-  // Default: keep everything. The turn's writes are ALREADY on disk (KAS holds
-  // the snapshots, not the bytes), so "keep" is the state the workspace is in —
-  // an unchecked default would misrepresent what unchecking costs.
+  // Default: keep everything. The turn's writes are ALREADY on disk (KAS holds the snapshots, not
+  // the bytes), so "keep" is the state the workspace is in — an unchecked default would
+  // misrepresent what unchecking costs.
   const keep = new Map<string, boolean>(groups.map((g) => [g.actionID, true]));
 
   const body = el(
@@ -252,9 +311,9 @@ function buildTurnApprovalCard(
       "Roll back all",
     );
     rejectAll.addEventListener("click", () => {
-      // The reject OPTION is the whole-turn no. Sending the map as well would
-      // be redundant, and KAS restores everything on this path anyway.
-      onSelect(rejectOpt.option_id);
+      // The reject OPTION is the whole-turn no. Sending the map as well would be redundant, and KAS
+      // restores everything on this path anyway.
+      onSelect({ optionID: rejectOpt.option_id });
     });
     actions.appendChild(rejectAll);
   }
@@ -266,13 +325,13 @@ function buildTurnApprovalCard(
       "Keep selected",
     );
     apply.addEventListener("click", () => {
-      // Every offered action gets an entry: an omitted id is a reject, so a
-      // sparse map would silently roll back whatever it left out.
+      // Every offered action gets an entry: an omitted id is a reject, so a sparse map would
+      // silently roll back whatever it left out.
       const decisions: Record<string, boolean> = {};
       for (const g of groups) {
         decisions[g.actionID] = keep.get(g.actionID) ?? true;
       }
-      onSelect(acceptOpt.option_id, decisions);
+      onSelect({ optionID: acceptOpt.option_id, fileDecisions: decisions });
     });
     actions.appendChild(apply);
   }
@@ -282,8 +341,8 @@ function buildTurnApprovalCard(
 
 function fileCountLabel(fileCount: number, groupCount: number): string {
   const files = fileCount === 1 ? "1 file" : `${String(fileCount)} files`;
-  // Only mention actions when they differ from files, which happens exactly
-  // when a rename bundled several paths under one id.
+  // Only mention actions when they differ from files, which happens exactly when a rename bundled
+  // several paths under one id.
   return groupCount === fileCount ? files : `${files} in ${String(groupCount)} changes`;
 }
 
@@ -299,8 +358,8 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
   for (const p of g.paths) {
     label.appendChild(el("span", { className: "dock-file-path" }, p));
   }
-  // A multi-path group is one decision; say so rather than letting it read as
-  // a list the user can split.
+  // A multi-path group is one decision; say so rather than letting it read as a list the user can
+  // split.
   if (g.paths.length > 1) {
     label.appendChild(
       el("span", { className: "dock-file-atomic" }, "moved together, one decision"),
@@ -320,8 +379,8 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
   diffBtn.addEventListener("click", () => {
     const first = g.paths[0];
     if (first !== undefined) {
-      // vs HEAD, because the write already landed: the working tree IS the
-      // proposed state, so git shows exactly what this turn did.
+      // vs HEAD, because the write already landed: the working tree IS the proposed state, so git
+      // shows exactly what this turn did.
       openChange(first);
     }
   });
@@ -334,19 +393,17 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
   return row;
 }
 
-// --- Shared ----------------------------------------------------------------
-
-/** Turn a tool input (usually an object, sometimes raw JSON string or
- *  undefined) into a user-readable preview string. Returns "" if there is
- *  nothing meaningful to show — caller skips the preview block entirely. */
+/** Turn a tool input (usually an object, sometimes raw JSON string or undefined) into a
+ *  user-readable preview string. Returns "" if there is nothing meaningful to show — caller
+ *  skips the preview block entirely. */
 function formatInputPreview(input: unknown): string {
   if (input === undefined || input === null) {
     return "";
   }
   let text: string;
   if (typeof input === "string") {
-    // kiro-cli sometimes sends rawInput as a pre-serialized JSON string;
-    // try to reparse for pretty-print, fall back to the raw string.
+    // kiro-cli sometimes sends rawInput as a pre-serialized JSON string; try to reparse for
+    // pretty-print, fall back to the raw string.
     try {
       text = JSON.stringify(JSON.parse(input), null, 2);
     } catch {
@@ -369,42 +426,26 @@ function formatInputPreview(input: unknown): string {
   return text;
 }
 
-/** Copy for each reason the offer to persist a rule is withdrawn. A Record over
- *  the union rather than a switch, so adding a server-side code without deciding
- *  what to tell the reader is a type error here.
- *
- *  This is marotte's wording, not KAS's: the server drops the upstream reason
- *  string at the translate seam and forwards a code (see AlwaysAllowBlock). */
+/** Copy for each reason the offer to persist a rule is withdrawn. A Record over the union rather
+ *  than a switch, so adding a server-side code without deciding what to tell the reader is a
+ *  type error here. */
 const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
   unparseable:
     "Always allow is unavailable. kiro-cli cannot parse this command, so a saved rule would never match it.",
 };
 
-/** The Always-allow slot when a saved rule could never match.
- *
- *  A one-line NOTE, deliberately not a disabled button: a control that does
- *  nothing teaches the reader to distrust every other one. There is no second
- *  escape hatch here either — the card already carries buildPolicyPointer at
- *  the security-profile picker, which is the real one. */
+/** The Always-allow slot when a saved rule could never match. */
 function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
   return el("div", { className: "always-allow-unavailable" }, ALWAYS_ALLOW_UNAVAILABLE[blocked]);
 }
 
-/** Characters that make a token unusable as the source of a pattern.
- *
- *  A preset is a MATCH pattern, so a token that already carries glob syntax has
- *  two readings that do not agree: `[a-z]* --force` derives `[a-z]* *`, which
- *  grants nothing read literally and a whole class of commands read as a glob.
- *  Neither is what the reader approved, so no preset is derived from it. */
+/** Characters that make a token unusable as the source of a pattern. */
 const PATTERN_UNSAFE_RE = /[*?[\]{}!]/;
 
-/** The preset patterns for one command's argv: base, base + flags, exact.
- *
- *  Each is dropped when the tokens it is derived FROM carry glob syntax, which
- *  is why this is per preset rather than per row: the row, the Allow-once button
- *  and the custom-pattern input all survive, so refusing a derivation never
- *  dead-ends the reader. Whether a saved rule could match at all is a different
- *  question, answered server-side by `always_allow_blocked`. */
+/** The preset patterns for one command's argv: base, base + flags, exact. Each is dropped when
+ *  the tokens it is derived FROM carry glob syntax, which is why this is per preset rather than
+ *  per row: the row, the Allow-once button and the custom-pattern input all survive, so refusing
+ *  a derivation never dead-ends the reader. */
 function derivePresets(effective: readonly string[]): string[] {
   const derivable = (tokens: readonly string[]): boolean =>
     !tokens.some((t) => PATTERN_UNSAFE_RE.test(t));
@@ -426,24 +467,10 @@ function derivePresets(effective: readonly string[]): string[] {
   return presets;
 }
 
-/** Build the "Always allow..." expansion for shell commands: each preset
- *  persists a workspace-scope native allow rule (the same permissions.yaml
- *  the Settings → Permissions editor writes; KAS hot-reloads it), then
- *  approves the pending request. Mirrors the IDE's trust patterns — base
- *  command, base + flags, exact — skipping a leading `sudo`.
- *
- *  Returns null when there is no allow option to approve with (the offer was
- *  never there to withdraw), and the note above when `blocked` says a saved
- *  rule could never match. That verdict is KAS's, arriving on the request
- *  itself: it generates the same three candidate patterns and probes each
- *  through the live policy engine, which is a question marotte cannot answer
- *  and must not guess at.
- *
- *  `derivePresets` gates something else and the two must not be conflated:
- *  whether ANY saved rule could match is KAS's question about the row, while
- *  whether a DERIVED pattern grants more than what was approved is this
- *  client's question about one preset. So the row stands and only the
- *  derivation is refused. */
+/** Build the "Always allow..." expansion for shell commands: each preset persists a
+ *  workspace-scope native allow rule (the same permissions.yaml Returns null when there is no
+ *  allow option to approve with (the offer was never there to withdraw), and the note above when
+ *  `blocked` says a saved rule could never match. */
 function buildAlwaysAllowRow(
   command: string,
   options: readonly PermissionOption[],
@@ -460,8 +487,8 @@ function buildAlwaysAllowRow(
 
   const trimmed = command.trim();
   const parts = trimmed.split(/\s+/);
-  // Mirror the IDE: derive patterns from the real command, not the sudo
-  // wrapper (a `sudo *` allow would be far broader than intended).
+  // Mirror the IDE: derive patterns from the real command, not the sudo wrapper (a `sudo *` allow
+  // would be far broader than intended).
   const baseIdx = parts[0] === "sudo" && parts.length > 1 ? 1 : 0;
   const base = parts[baseIdx] ?? "";
   if (base === "") {
@@ -471,11 +498,9 @@ function buildAlwaysAllowRow(
 
   const body = el("div", { className: "always-allow-body" });
 
-  // Persist the allow rule, then approve. The approval WAITS for the rule
-  // write: guard_resource makes the server refuse when an explicit ask rule
-  // covers this command (the allow would be shadowed), and a failed write
-  // leaves the ask standing — the user can still Allow once. Buttons disable
-  // while the write is in flight so a double-click can't double-fire.
+  // Persist the allow rule, then approve. The approval WAITS for the rule write: guard_resource
+  // makes the server refuse when an explicit ask rule covers this command (the allow would be
+  // shadowed), and a failed write leaves the ask standing — the user can still Allow once.
   const persistThenApprove = async (pattern: string): Promise<void> => {
     const buttons = body.querySelectorAll("button");
     for (const b of buttons) {
@@ -490,14 +515,14 @@ function buildAlwaysAllowRow(
       guard_resource: trimmed,
     });
     if (res === null || res.error !== undefined) {
-      // Write failed (or was refused): the action's toast explains why.
-      // Leave the permission pending; re-enable for another choice.
+      // Write failed (or was refused): the action's toast explains why. Leave the permission
+      // pending; re-enable for another choice.
       for (const b of buttons) {
         b.disabled = false;
       }
       return;
     }
-    onSelect(allowOpt.option_id);
+    onSelect({ optionID: allowOpt.option_id });
   };
 
   for (const pattern of presets) {
@@ -516,9 +541,9 @@ function buildAlwaysAllowRow(
   const input = el("input", {
     type: "text",
     className: "chip-input",
-    // The first surviving preset, never `${base} *`: with a metacharacter in the
-    // base that string is the pattern the derivation just refused, and offering
-    // it as a placeholder hands the reader the grant it declined to derive.
+    // The first surviving preset, never `${base} *`: with a metacharacter in the base that string
+    // is the pattern the derivation just refused, and offering it as a placeholder hands the reader
+    // the grant it declined to derive.
     placeholder: presets[0] ?? "command *",
     "aria-label": "Custom command pattern",
   }) as HTMLInputElement;

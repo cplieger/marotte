@@ -10,18 +10,14 @@ import (
 	"github.com/cplieger/marotte/internal/parallel"
 )
 
-// chatEntry is a chat directory's (id, full path) pair gathered during a
-// directory scan, handed off to the parallel header reader.
+// chatEntry is a chat directory's (id, full path) pair from a directory scan, for the parallel header reader.
 type chatEntry struct {
 	id   string
 	path string
 }
 
-// readHeadersParallel reads chat headers for each entry concurrently (bounded at
-// 8 workers) and returns the successfully-read headers.
-//
-// No per-chat lock is needed: the header read is read-only and writes go through
-// atomic temp+rename.
+// readHeadersParallel reads chat headers concurrently (8 workers) and returns those read. No per-chat lock: reads are
+// read-only and writes are atomic renames.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
@@ -33,7 +29,7 @@ func readHeadersParallel(
 	type result struct {
 		header marotte.ChatHeader
 		ok     bool
-		// lost: the chat EXISTS but could not be read; !ok also covers a vanished one.
+		// lost: the chat exists but could not be read; !ok also covers a vanished one.
 		lost bool
 	}
 	results := make([]result, len(valid))
@@ -41,8 +37,8 @@ func readHeadersParallel(
 	ran := parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
 		c, err := NewEntryHeader(ce.path).Read(ctx)
 		if err != nil {
-			// ENOENT is a concurrent delete: genuinely gone. Anything else leaves an
-			// existing chat missing, which a keep-list caller must not read as whole.
+			// ENOENT is a concurrent delete; anything else leaves an existing chat missing, which a keep-list caller must not
+			// read as complete.
 			if !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("chat: skipping unreadable file",
 					"chat_id", ce.id, "error", err)
@@ -54,9 +50,8 @@ func readHeadersParallel(
 	})
 
 	headers := make([]marotte.ChatHeader, 0, len(valid))
-	// An unvisited slot is zero-valued, so neither ok nor lost: completeness has to
-	// come from the item count. A truncated scan marked complete authorises the
-	// session reaper to delete the KAS sessions of every chat it missed.
+	// An unvisited slot is zero-valued, so completeness comes from the count: a truncated scan marked complete would let
+	// the session reaper delete the KAS sessions of every chat it missed.
 	complete = ran == len(valid)
 	for i := range results {
 		switch {

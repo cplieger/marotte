@@ -11,13 +11,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// The one invariant the index keeps: it never rejects a chat the scan matches.
-// Logs are built over every span kind the scan reads (title, prompt, attachment
-// names, prose in two lanes, reasoning, tool title/input/output/diff, a steer, plan
-// entries, a failure reason) from an alphabet whose runes change case and byte
-// length under folding; a query is usually a case-flipped slice of one of those
-// spans, so most draws match. The oracle is the scan itself plus titleHits, never
-// a second trigram walk.
+// The index never rejects a chat the scan matches. Logs cover every span kind, from an alphabet whose runes change
+// case and byte length under folding; queries are mostly case-flipped slices of spans. The oracle is the scan plus
+// titleHits.
 func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 	alphabet := []rune("abcdeKkİiΣσßẞé✓ x\n")
 	text := func(rt *rapid.T, label string, max int) string {
@@ -56,13 +52,8 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 			rt.Fatalf("filter rejected query %q that the scan matched (%d body hits, %d title hits) in chat %q with %d entries",
 				query, res.Matched, titleHits(name, query), name, len(entries))
 		}
-		// The appender's filter: built by a query over the log as it stood, then
-		// extended one entry at a time, each read alone. It holds whatever the
-		// query-time build holds, and a tool_call's whole input besides. Neither
-		// half sees the drawn set the scan read with: drawn is a bit the appender
-		// flips, and a filter built while a turn was undrawn outlives the append
-		// that draws it, so the scan's drawn set is the strictest the build can
-		// be held to and the build must hold to every one.
+		// The appender's filter: built over the log so far, then extended entry by entry. Neither half sees the scan's drawn
+		// set, which is the strictest the build can be held to.
 		builtOver := rapid.IntRange(0, len(entries)).Draw(rt, "built_over")
 		extended := buildChatFilter(name, entries[:builtOver])
 		for i := builtOver; i < len(entries); i++ {
@@ -75,8 +66,7 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 	})
 }
 
-// drawTurn is one turn of a random shape, each shape feeding a different set of
-// segment kinds.
+// drawTurn is one turn of a random shape, each shape feeding different segment kinds.
 func drawTurn(rt *rapid.T, i int, text func(*rapid.T, string, int) string) *turnFixture {
 	id := fmt.Sprintf("t-%d", i)
 	switch rapid.IntRange(0, 3).Draw(rt, id+"_shape") {
@@ -112,8 +102,7 @@ func drawTurn(rt *rapid.T, i int, text func(*rapid.T, string, int) string) *turn
 	}
 }
 
-// sliceRunes is a random rune window of s, at most max runes long and at least
-// three where s allows, so most windows are long enough to carry a trigram.
+// sliceRunes is a random rune window of s, at most max runes and at least three where possible.
 func sliceRunes(rt *rapid.T, s string, max int) string {
 	runes := []rune(s)
 	if len(runes) == 0 {
@@ -125,8 +114,7 @@ func sliceRunes(rt *rapid.T, s string, max int) string {
 	return string(runes[start:end])
 }
 
-// flipCase upper-cases a random subset of s's runes, so the query differs from the
-// span it was cut from by case alone.
+// flipCase upper-cases a random subset of s's runes.
 func flipCase(rt *rapid.T, s string) string {
 	var b strings.Builder
 	for i, r := range s {

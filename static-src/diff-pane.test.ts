@@ -1,5 +1,3 @@
-// Tests for diff-pane.ts: row windowing, the no-changes state, word marks and
-// syntax highlighting.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { renderDiffPane } from "./diff-pane.js";
 import { lineDiff, type DiffLine } from "./diff.js";
@@ -51,12 +49,7 @@ describe("renderDiffPane maxRows truncation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The no-changes state. An all-context diff rendered as two identical file
-// listings reads as broken markup, and it is the ORDINARY case for a chat's
-// changed-file link: that link diffs HEAD against the working tree, so once
-// the write is committed the two agree.
-// ---------------------------------------------------------------------------
+// An all-context diff is the ordinary case for a committed chat file link (HEAD vs working tree).
 
 describe("renderDiffPane with nothing changed", () => {
   it("says so instead of laying out two identical columns", () => {
@@ -71,8 +64,7 @@ describe("renderDiffPane with nothing changed", () => {
   });
 
   it("keeps the chrome, so the whitespace toggle is still reachable", () => {
-    // Ignoring whitespace can be what collapsed the diff to context in the
-    // first place; without the toolbar there is no way to turn it back off.
+    // Ignoring whitespace can be what collapsed the diff, so the toggle must remain to turn it back off.
     const pane = renderDiffPane([ctx(1, 1, "same")], {
       oldLabel: "HEAD",
       newLabel: "working tree",
@@ -81,7 +73,6 @@ describe("renderDiffPane with nothing changed", () => {
     expect(pane.querySelector(".diff-pane-header")).not.toBeNull();
     expect(pane.querySelector(".diff-pane-ws-toggle")).not.toBeNull();
     expect(pane.querySelector(".diff-none")).not.toBeNull();
-    // No rows, so nothing scrolls and there is no position to map.
     expect(pane.querySelector(".diff-map")).toBeNull();
   });
 
@@ -92,18 +83,8 @@ describe("renderDiffPane with nothing changed", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The reported symptom, pinned at the pane rather than at the split: a
-// newline-terminated file used to render one added row too many, because
-// `splitLines` kept the empty element the final newline produces and this pane
-// draws a row per `DiffLine`. Measured on the live instance: 28 `.diff-row-add`
-// against `git diff`'s 27, and 380 for a 379-line untracked file.
-//
-// This is the case that fails if the drop is ever reverted at the renderer's
-// expense — and the pane is deliberately NOT where it could be fixed, since it
-// holds `DiffLine[]` and cannot tell a genuine trailing empty line from the
-// artifact ("a\n\n" yields two empty elements and only the second is one).
-// ---------------------------------------------------------------------------
+// A newline-terminated file renders no extra added row. `splitLines` owns that, since the pane holds `DiffLine[]`
+// and cannot tell a real trailing empty line from the artifact.
 
 describe("renderDiffPane over a real lineDiff", () => {
   it("draws no phantom trailing row for a newline-terminated file", () => {
@@ -126,11 +107,7 @@ describe("renderDiffPane over a real lineDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Word-level marks and syntax highlighting, in BOTH shapes. The two used to
-// disagree: only the unified column highlighted, so clicking a changed filename
-// in chat landed on a flatter rendering than the inline peek that sent you.
-// ---------------------------------------------------------------------------
+// Word marks and highlighting in both shapes, so a click-through never lands on a flatter rendering.
 
 function textsOf(pane: HTMLElement, sel: string): string[] {
   return Array.from(pane.querySelectorAll(sel), (n) => n.textContent ?? "");
@@ -162,8 +139,7 @@ describe("renderDiffPane word marks", () => {
 
 describe("renderDiffPane syntax highlighting", () => {
   it("resolves the language from a file PATH, not just an extension", () => {
-    // `normalizeLang` compares the whole string, so a path matched nothing and
-    // every diff in the app rendered unhighlighted. Both callers pass a path.
+    // `normalizeLang` compares the whole string, so a path once matched nothing; both callers pass a path.
     const pane = renderDiffPane([add(1, "func main() {")], {
       unified: true,
       lang: "internal/git/exec.go",
@@ -194,14 +170,7 @@ describe("renderDiffPane syntax highlighting", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The header's captions, and the reported symptom: "working tree" sat left of
-// the working-tree column. The toggle used to share the labels' flex line, so
-// both labels shrank around it while the BODY split at 50% regardless — the
-// caption boundary and the column boundary were two different numbers. Measured
-// against the real assembled cascade, because that is the only instrument that
-// can tell an aligned caption from a nearly-aligned one.
-// ---------------------------------------------------------------------------
+// Captions must sit over their columns: measured against the assembled cascade.
 
 describe("the diff pane's column captions", () => {
   let css: HTMLStyleElement;
@@ -210,7 +179,6 @@ describe("the diff pane's column captions", () => {
   beforeAll(() => {
     css = mountAppCSS();
     host = document.createElement("div");
-    // A width the pane can split, and a height its columns can scroll in.
     host.style.cssText = "position:fixed;inset:0;width:800px;height:300px";
     document.body.appendChild(host);
   });
@@ -238,8 +206,7 @@ describe("the diff pane's column captions", () => {
 
   it("starts each caption's cell at its own column's left edge", () => {
     const pane = paneWithLabels();
-    // The label carries its own `padding-inline`, so the CELL edge is the number
-    // that has to agree with the column; compare the cell's box, not the text's.
+    // The label carries its own `padding-inline`, so the cell edge is compared.
     const oldCell = leftEdge(".diff-pane-label-old", pane);
     const newCell = leftEdge(".diff-pane-label-new", pane);
     expect(oldCell).toBeCloseTo(leftEdge(".diff-col-old", pane), 0);
@@ -253,17 +220,14 @@ describe("the diff pane's column captions", () => {
   });
 
   it("gives each map mark a SIDE, so the strip is not colour alone", () => {
-    // A deletion belongs to the left column and an addition to the right, so a
-    // mark on that half says which side moved without reading its hue — the
-    // channel a reader who cannot separate red from green still has.
+    // A mark's side says which column moved without relying on hue.
     host.replaceChildren();
     const pane = renderDiffPane(
       [
         ctx(1, 1, "a"),
         del(2, "gone"),
         ctx(3, 2, "b"),
-        // A rewrite. The map breaks it into TWO marks, one per side, because
-        // that is what the columns render; see "reads a rewrite as two marks".
+        // A rewrite: two marks, one per side.
         del(4, "x"),
         add(3, "y"),
         ctx(5, 4, "c"),
@@ -274,8 +238,7 @@ describe("the diff pane's column captions", () => {
     host.appendChild(pane);
     const map = pane.querySelector<HTMLElement>(".diff-map");
     expect(map).not.toBeNull();
-    // A mark's containing block is the map's PADDING box, so measure that
-    // rather than the border box — the strip carries a left border.
+    // A mark's containing block is the map's padding box (the strip has a left border).
     const outer = map!.getBoundingClientRect();
     const trackLeft = outer.left + map!.clientLeft;
     const trackWidth = map!.clientWidth;
@@ -290,16 +253,14 @@ describe("the diff pane's column captions", () => {
     expect(box(".diff-map-mark-del").width).toBeCloseTo(half, 0);
     expect(box(".diff-map-mark-add").right).toBeCloseTo(trackLeft + trackWidth, 0);
     expect(box(".diff-map-mark-add").width).toBeCloseTo(half, 0);
-    // No mark spans the whole track: a full-width band would be a kind the rows
-    // never show, so every mark commits to one side.
+    // No mark spans the whole track: every mark commits to one side.
     for (const mark of map!.querySelectorAll<HTMLElement>(".diff-map-mark")) {
       expect(mark.getBoundingClientRect().width).toBeCloseTo(half, 0);
     }
   });
 
   it("survives a whitespace re-render, control included", () => {
-    // The toolbar is the pane's FIRST row, so the old "remove every sibling
-    // after the header" swap would have deleted the checkbox mid-click.
+    // The toolbar is the pane's first row, so "remove every sibling after the header" would delete the checkbox.
     const pane = paneWithLabels();
     const box = pane.querySelector<HTMLInputElement>(".diff-pane-ws-toggle input");
     expect(box).not.toBeNull();
@@ -308,16 +269,11 @@ describe("the diff pane's column captions", () => {
     expect(pane.querySelector(".diff-pane-ws-toggle")).not.toBeNull();
     expect(pane.querySelectorAll(".diff-pane-toolbar")).toHaveLength(1);
     expect(pane.querySelectorAll(".diff-pane-header")).toHaveLength(1);
-    // Both sides only differ in the string, so ignoring whitespace changes
-    // nothing and the rebuilt body is still a real diff rather than an empty box.
     expect(pane.querySelector(".diff-pane-body")).not.toBeNull();
   });
 });
 
-// Which element scrolls. The two axes fight: `overflow-x` on a column makes it a
-// scroll container, and a scroll container contributes no content height to the
-// body's `auto` grid row, so without an explicit one the column clips the file at
-// one scrollport. Only the real cascade sees this.
+// `overflow-x` makes a column a scroll container, which contributes no content height to the body's `auto` row.
 
 describe("the diff pane's scrollers", () => {
   let css: HTMLStyleElement;
@@ -354,7 +310,6 @@ describe("the diff pane's scrollers", () => {
     for (const sel of [".diff-col-old", ".diff-col-new"]) {
       const col = pane.querySelector<HTMLElement>(sel);
       expect(col, sel).not.toBeNull();
-      // As tall as its own rows, so the body's scroll range covers the file.
       expect(col!.scrollHeight, sel).toBeCloseTo(col!.clientHeight, -1);
     }
     const lastRow = pane.querySelector<HTMLElement>(".diff-col-new .diff-row:last-child");
@@ -365,7 +320,6 @@ describe("the diff pane's scrollers", () => {
     const pane = tallPane();
     for (const sel of [".diff-col-old", ".diff-col-new"]) {
       const col = pane.querySelector<HTMLElement>(sel);
-      // Only the 1px column divider, never a reserved bar.
       expect(col!.offsetWidth - col!.clientWidth, sel).toBeLessThanOrEqual(1);
     }
   });
@@ -378,13 +332,7 @@ describe("the diff pane's scrollers", () => {
     ]);
   });
 
-  // The horizontal bar. A column is as tall as the file, so its own bar sits below
-  // every scroll position but the last; this one is a sibling of the scroller at
-  // the scrollport's bottom edge.
-  //
-  // Every assertion here POLLS rather than waiting a fixed number of frames: the
-  // bar is sized from a ResizeObserver and the columns follow it on a scroll
-  // event, so a frame count is a guess that a loaded full-suite run loses.
+  // The shared horizontal bar sits at the scrollport's bottom. Assertions poll: the bar is ResizeObserver-sized.
   function settles(check: () => void): Promise<void> {
     return vi.waitFor(check, { timeout: 3000, interval: 20 });
   }
@@ -406,8 +354,7 @@ describe("the diff pane's scrollers", () => {
     const pane = widePane(true);
     const bar = pane.querySelector<HTMLElement>(".diff-pane-hbar")!;
     const col = pane.querySelector<HTMLElement>(".diff-col-old")!;
-    // The bar spans both columns, so sizing its spacer to the content width would
-    // leave it with no range at all.
+    // The bar spans both columns, so a content-width spacer would leave no range.
     await settles(() => {
       const range = col.scrollWidth - col.clientWidth;
       expect(range).toBeGreaterThan(0);
@@ -437,8 +384,7 @@ describe("the diff pane's scrollers", () => {
   });
 
   it("gives both columns one scroll range, even when only one side is wide", async () => {
-    // Without the shared width a drag to the far end clamps at the narrower
-    // side's maximum and snaps back.
+    // Without the shared width a drag clamps at the narrower side's maximum.
     host.replaceChildren();
     const lines: DiffLine[] = [];
     for (let i = 0; i < 200; i++) {
@@ -453,7 +399,6 @@ describe("the diff pane's scrollers", () => {
     };
     await settles(() => {
       expect(range(".diff-col-old")).toBeGreaterThan(0);
-      // Within the 1px column divider.
       expect(range(".diff-col-new")).toBeCloseTo(range(".diff-col-old"), -0.5);
     });
   });
@@ -468,12 +413,8 @@ describe("the diff pane's scrollers", () => {
   });
 
   it("leaves a diff that fits with nothing to scroll", async () => {
-    // The span equalises the columns' scroll RANGE, so a pane with no range must
-    // not carry one: `scrollWidth` is floored at `clientWidth` and `.diff-col-old`
-    // spends 1px of its content box on the divider's border, so publishing the max
-    // over the two columns puts every row 1px past the column holding it — a
-    // phantom overscroll on the ordinary case, and the 1px the pane's own
-    // max-content track used to ratchet on.
+    // A pane with no range carries no span: `.diff-col-old` spends 1px on the divider, so a max over both columns would
+    // overscroll every row by 1px.
     const pane = widePane(false);
     const bar = pane.querySelector<HTMLElement>(".diff-pane-hbar")!;
     const viewport = pane.querySelector<HTMLElement>(".diff-pane-viewport")!;
@@ -488,9 +429,7 @@ describe("the diff pane's scrollers", () => {
   });
 
   it("gives back the range when a pane that overflowed comes to fit", async () => {
-    // The other direction, reachable by widening the window: the span is published
-    // while the diff overflows, and a stale one left behind keeps every row wider
-    // than the column that now holds it.
+    // Widening past the content must clear a stale span.
     const pane = widePane(true);
     const bar = pane.querySelector<HTMLElement>(".diff-pane-hbar")!;
     const viewport = pane.querySelector<HTMLElement>(".diff-pane-viewport")!;
@@ -498,7 +437,6 @@ describe("the diff pane's scrollers", () => {
       expect(viewport.style.getPropertyValue("--diff-hspan")).not.toBe("");
       expect(bar.classList.contains("is-idle")).toBe(false);
     });
-    // Widen past the content, which resizes the observed column and re-measures.
     host.style.inlineSize = "6000px";
     await settles(() => {
       expect(bar.classList.contains("is-idle")).toBe(true);
@@ -513,16 +451,10 @@ describe("the diff pane's scrollers", () => {
 
   it("keeps it out of the accessibility tree and out of the tab order", () => {
     const bar = widePane(true).querySelector<HTMLElement>(".diff-pane-hbar")!;
-    // A pointer duplicate of scrolling the focusable columns already provide.
     expect(bar.getAttribute("aria-hidden")).toBe("true");
     expect(bar.hasAttribute("tabindex")).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// The whitespace toggle's explanation. The label names the switch and cannot
-// say what flipping it does, which is the question a reader has about it.
-// ---------------------------------------------------------------------------
 
 describe("the whitespace toggle's tooltip", () => {
   it("says what ignoring whitespace does to a line", () => {
@@ -535,16 +467,10 @@ describe("the whitespace toggle's tooltip", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The change map: where the edits are, without scrolling the file to find out.
-// One mark per contiguous run of changed rows, positioned as a percentage of the
-// row count — every row is the same height, so an index maps linearly onto the
-// scroller and no measurement is involved.
-// ---------------------------------------------------------------------------
+// One mark per contiguous run of changed rows, as a percentage of the row count (all rows are one height).
 
 describe("the change map", () => {
-  // Percentages come back through the CSSOM, which normalizes the text ("10%"
-  // for "10.0000%"), so read them as numbers.
+  // The CSSOM normalizes percentage text, so read numbers.
   function marks(pane: HTMLDivElement): { cls: string; top: number; height: number }[] {
     return [...pane.querySelectorAll<HTMLElement>(".diff-map-mark")].map((m) => ({
       cls: m.className,
@@ -569,8 +495,7 @@ describe("the change map", () => {
     ];
     const pane = renderDiffPane(lines, { oldLabel: "HEAD", newLabel: "working tree" });
     const got = marks(pane);
-    // FOUR marks, not three: the rewrite at 4-5 is a deletion above an addition,
-    // which is what the columns render.
+    // Four marks: the rewrite is a deletion above an addition.
     expect(got).toHaveLength(4);
     expect(got.map((m) => m.cls)).toEqual([
       "diff-map-mark diff-map-mark-del",
@@ -578,11 +503,8 @@ describe("the change map", () => {
       "diff-map-mark diff-map-mark-add",
       "diff-map-mark diff-map-mark-add",
     ]);
-    // Row 1 of 10, one row tall.
     expect(got[0]!.top).toBe(10);
     expect(got[0]!.height).toBe(10);
-    // The rewrite's deletion row and addition row are separate marks on opposite
-    // sides, mirroring the two columns.
     expect(got[1]!.top).toBe(40);
     expect(got[1]!.height).toBe(10);
     expect(got[2]!.top).toBe(50);
@@ -591,8 +513,7 @@ describe("the change map", () => {
   });
 
   it("breaks a run where the KIND changes, not only on a context row", () => {
-    // A multi-line replacement is one contiguous block of changed rows, so
-    // without the kind break it is a single mark naming both sides at once.
+    // Without the kind break a multi-line replacement is one mark naming both sides.
     const lines: DiffLine[] = [
       ctx(1, 1, "a"),
       del(2, "x"),
@@ -605,7 +526,6 @@ describe("the change map", () => {
       "diff-map-mark diff-map-mark-del",
       "diff-map-mark diff-map-mark-add",
     ]);
-    // Two deletion rows above one addition row, in row order.
     expect(got[0]!.top).toBe(20);
     expect(got[0]!.height).toBe(40);
     expect(got[1]!.top).toBe(60);
@@ -620,8 +540,6 @@ describe("the change map", () => {
   });
 
   it("sits beside the scroller rather than inside it", () => {
-    // A cell of the scroller's grid is as tall as the file; the map has to be as
-    // tall as the scrollport.
     const pane = renderDiffPane(MODIFIED, {});
     const map = pane.querySelector<HTMLElement>(".diff-map");
     expect(map?.parentElement?.className).toBe("diff-pane-viewport");
@@ -629,8 +547,7 @@ describe("the change map", () => {
   });
 
   it("measures against the RENDERED rows when the diff is truncated", () => {
-    // The map drives the scroller, and the scroller holds the rows that were
-    // rendered — so a percentage over the whole diff would point past its end.
+    // The map drives the scroller over the rendered rows, so a percentage of the whole diff would point past its end.
     const lines = [add(1, "one"), ctx(2, 2, "two"), add(3, "three"), add(4, "four")];
     const pane = renderDiffPane(lines, { maxRows: 2 });
     const got = marks(pane);
@@ -640,16 +557,14 @@ describe("the change map", () => {
   });
 
   it("draws no map in the unified shape", () => {
-    // That column is not the vertical scroller (the card around it is), so
-    // there is no scroll position for a viewport box to report.
+    // The unified column is not the vertical scroller.
     const pane = renderDiffPane(MODIFIED, { unified: true });
     expect(pane.querySelector(".diff-map")).toBeNull();
     expect(pane.classList.contains("diff-pane-mapped")).toBe(false);
   });
 
   it("stays out of the accessibility tree", () => {
-    // The rows themselves state what changed; this is a pointer shortcut to a
-    // position they already carry, so it takes no tab stop and no hit target.
+    // A pointer shortcut to positions the rows carry: no tab stop, no hit target.
     const pane = renderDiffPane(MODIFIED, {});
     expect(pane.querySelector(".diff-map")?.getAttribute("aria-hidden")).toBe("true");
     expect(pane.querySelectorAll(".diff-map [tabindex], .diff-map button")).toHaveLength(0);

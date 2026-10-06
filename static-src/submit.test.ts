@@ -1,10 +1,7 @@
-// Tests for submit.ts — what Send MEANS, which depends on whether a turn is already
-// running. Drives the REAL store, so the steer projection is observable, with the send
-// primitive, the steer action and the attachment row mocked at the module boundary. The
-// cases that matter are the ones the retired queue got wrong: a message typed mid-turn
-// reaches the RUNNING turn, a plain 409 steers rather than buffering while a 409-starting
-// does not, nothing appears on screen until the server's own frame says so, attachments
-// degrade to path references, and a failed send is recoverable in place.
+// What Send MEANS, over the REAL store with the send primitive, steer action and attachment row
+// mocked: a mid-turn message reaches the RUNNING turn, a plain 409 steers while 409-starting does
+// not, nothing shows before the server's frame, attachments degrade to paths, a failed send is
+// recoverable in place.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -12,40 +9,51 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockSendPromptTo,
   mockSteer,
+  mockQueue,
   mockTakeAttachments,
+  mockHasAttachments,
   mockAddAttachmentTo,
   mockAttachmentGeneration,
   mockTypedCommand,
+  mockInvokesCatalog,
   mockClearAgentDown,
   mockReportSendRefused,
   mockRestoreFailedSend,
+  mockChatNotice,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
   mockSteer: vi.fn(),
+  mockQueue: vi.fn(),
   mockTakeAttachments: vi.fn(() => [] as unknown[]),
+  mockHasAttachments: vi.fn(() => false),
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
+  mockInvokesCatalog: vi.fn(() => false),
   mockClearAgentDown: vi.fn(),
   mockReportSendRefused: vi.fn(),
   mockRestoreFailedSend: vi.fn(),
+  mockChatNotice: vi.fn(),
 }));
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
-vi.mock("./actions/chat.js", () => ({ steerChat: { dispatch: mockSteer } }));
+vi.mock("./notice-subject.js", () => ({ chatNotice: mockChatNotice }));
+vi.mock("./actions/chat.js", () => ({
+  steerChat: { dispatch: mockSteer },
+  queuePrompt: { dispatch: mockQueue },
+}));
 vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
+vi.mock("./slash-menu.js", () => ({ invokesCatalogCommand: mockInvokesCatalog }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
+  hasAttachments: mockHasAttachments,
   addAttachmentTo: mockAddAttachmentTo,
   attachmentGeneration: mockAttachmentGeneration,
 }));
 // Both are mocked for the same reason the others are: they own real DOM, and
 // send-state's module-level effect paints the send button on import.
 vi.mock("./send-state.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Undefined: present only so real-ESM linking succeeds.
   setAgentDown: undefined,
   setSSEStatus: undefined,
   clearAgentDown: mockClearAgentDown,
@@ -68,7 +76,15 @@ vi.mock("./composer-state.js", () => ({
 }));
 
 import { submitPrompt } from "./submit.js";
-import { setSessions, setActive, setThinking, steerCount, openTurn } from "./store.js";
+import {
+  get,
+  setSessions,
+  setActive,
+  setThinking,
+  steerCount,
+  openTurn,
+  setChatInterruptMode,
+} from "./store.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -121,10 +137,8 @@ function steeredText(call = 0): string {
   return (mockSteer.mock.calls[call]?.[0] as { text: string } | undefined)?.text ?? "";
 }
 
-/** A DispatchHandle-shaped mock return: dispatch() hands back a promise
- *  augmented with `outcome`, and submit.ts reads ONLY the outcome — the
- *  never-rejecting result promise cannot distinguish a void success from a
- *  failure's null without it. */
+/** A DispatchHandle-shaped return: submit.ts reads ONLY `outcome`, since the never-rejecting
+ *  result cannot tell a void success from a failure's null. */
 function steerHandle(outcome: unknown): { outcome: Promise<unknown> } {
   return { outcome: Promise.resolve(outcome) };
 }
@@ -140,6 +154,11 @@ function steerRefused(message: string, code?: string): { outcome: Promise<unknow
   });
 }
 
+/** The args the queue action was dispatched with on the Nth call. */
+function queuedArgs(call = 0): Record<string, unknown> | undefined {
+  return mockQueue.mock.calls[call]?.[0] as Record<string, unknown> | undefined;
+}
+
 /** The message id the send primitive was called with on the Nth dispatch. */
 function sentMessageID(call = 0): string {
   return (
@@ -150,9 +169,11 @@ function sentMessageID(call = 0): string {
 beforeEach(() => {
   vi.clearAllMocks();
   mockTakeAttachments.mockReturnValue([]);
+  mockHasAttachments.mockReturnValue(false);
   mockAttachmentGeneration.mockReturnValue(0);
   mockTypedCommand.mockReturnValue(false);
   mockSteer.mockReturnValue(steerOk());
+  mockQueue.mockReturnValue(steerOk());
 });
 
 describe("submitPrompt on an idle chat", () => {
@@ -181,11 +202,8 @@ describe("submitPrompt on an idle chat", () => {
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "b.ts", 7);
   });
 
-  // The user-visible bug: a prompt that was ACCEPTED and then lost its turn came
-  // back into the composer, which is indistinguishable from an Enter that never
-  // cleared the box. `CmdPrompt` persists and broadcasts the user row before the
-  // ACP call and nothing rolls it back, so the echo is already in the store by the
-  // time the turn dies and the POST answers 500.
+  // An ACCEPTED prompt that then lost its turn must not return to the composer: `CmdPrompt` persists
+  // the user row before the ACP call and never rolls it back.
   describe("a prompt the server already accepted", () => {
     /** Fail the send, but echo the user row first, the way the server does. */
     function failAfterEcho(): void {
@@ -263,6 +281,52 @@ describe("submitPrompt on an idle chat", () => {
 });
 
 describe("submitPrompt during a turn", () => {
+  it("holds a saved-prompt command instead of steering it, and hands the text back", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    mockInvokesCatalog.mockReturnValue(true);
+
+    expect(await submitPrompt("c1", "/review a.ts")).toBe("held");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockTakeAttachments).not.toHaveBeenCalled();
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "/review a.ts");
+    expect(mockChatNotice).toHaveBeenLastCalledWith(
+      "c1",
+      "That command runs as a new turn. Send it when the agent is idle.",
+    );
+    mockInvokesCatalog.mockReturnValue(false);
+  });
+
+  it("holds a message carrying a context reference, which only a new turn resolves", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+
+    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "look at #[[file:a.ts]] too");
+  });
+
+  // The chat read idle, so the hold above did not apply, and a turn started before
+  // the POST landed. The 409 must not carry the reference into a steer or a queued row.
+  it.each(["steer", "queue"] as const)(
+    "holds a context reference a 409 would turn into a busy verb (%s mode)",
+    async (mode) => {
+      resetStore("c1");
+      setChatInterruptMode("c1", mode);
+      mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
+      mockAttachmentGeneration.mockReturnValue(5);
+      mockSendPromptTo.mockResolvedValue("queued");
+
+      expect(await submitPrompt("c1", "see #[[file:b.ts]]")).toBe("held");
+      expect(mockSteer).not.toHaveBeenCalled();
+      expect(mockQueue).not.toHaveBeenCalled();
+      expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "see #[[file:b.ts]]");
+      expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 5);
+      expect(mockChatNotice).toHaveBeenLastCalledWith("c1", expect.stringContaining("new turn"));
+    },
+  );
+
   // The whole reason this module changed: the message has to reach the turn
   // that is running, not the one after it.
   it("steers instead of sending a prompt", async () => {
@@ -276,8 +340,7 @@ describe("submitPrompt during a turn", () => {
   });
 
   // A turn can start between reading `thinking` and the POST landing; the server
-  // answers that with 409. The old code buffered it until the turn ended, which
-  // is precisely the case a steer exists for.
+  // answers that with 409, which is precisely the case a steer exists for.
   it("steers when the server reports 409 busy", async () => {
     resetStore("c1");
     mockSendPromptTo.mockResolvedValue("queued");
@@ -287,10 +350,7 @@ describe("submitPrompt during a turn", () => {
     expect(steeredText()).toBe("wait, stop");
   });
 
-  // Submit itself writes no store rows: the optimistic chip is the ACTION's
-  // (drawn in its optimistic hook, rolled back on refusal), and this module
-  // only decides prompt-versus-steer. With the action mocked, a steer leaves
-  // the projection untouched.
+  // Submit writes no store rows: the optimistic chip is the action's, mocked here.
   it("records nothing locally", async () => {
     resetStore("c1");
     setThinking("c1", true);
@@ -318,10 +378,7 @@ describe("submitPrompt during a turn", () => {
   });
 });
 
-// The steer refusal class the server stamps reason no_turn on: the chat was
-// idle by the time the steer landed — stale thinking, a shell holder, or the
-// turn ending mid-flight. The message should have been a prompt, so submit
-// converts it into one instead of surfacing a failure the user must redo.
+// `no_turn`: the chat was idle when the steer landed, so submit converts it into a prompt.
 describe("a steer refused with no_turn", () => {
   const noTurn = (): { outcome: Promise<unknown> } =>
     steerRefused("nothing is running to steer, so send this as a prompt instead", "no_turn");
@@ -352,10 +409,7 @@ describe("a steer refused with no_turn", () => {
   });
 
   it("stops converting once the budget is spent, at the error face", async () => {
-    // A chat flipping between busy and idle faster than the round trips must
-    // terminate, not loop: steer → no turn → prompt → 409 busy → steer → no
-    // turn again is the budget's worth, and the attempt ends as a failure the
-    // next Send retries.
+    // Busy/idle flapping must terminate: one budget's worth of hops, then a failure the next Send retries.
     resetStore("c1");
     setThinking("c1", true);
     mockSteer.mockReturnValue(noTurn());
@@ -378,11 +432,8 @@ describe("a steer refused with no_turn", () => {
   });
 });
 
-// The third 409 class: reason "starting". The admission slot is held by a cold spawn, a
-// shell command or a workflow step — none of which can receive a steer — so this is not
-// the steer conversion. It is not a POST-PERSIST class either, and that is the entry log
-// paying for itself: the turn is opened AFTER the admission slot is acquired, so a refused
-// admission appends nothing and there is no row for the text to be sitting in.
+// 409 "starting": the holder cannot take a steer. The turn opens AFTER admission, so the refusal
+// appended nothing and the text is handed back like any pre-persist failure.
 describe("submitPrompt on a 409-starting refusal", () => {
   /** Refuse with "starting" and append NOTHING, which is what the server does now: no
    *  `turn_open` carries this id, so `hasMessage` answers false and the text comes back. */
@@ -409,10 +460,7 @@ describe("submitPrompt on a 409-starting refusal", () => {
   });
 
   it("hands the text and the attachments back, because nothing was persisted", async () => {
-    // INVERTED by the entry log, and the inversion is the whole point of recording it: the
-    // old rule was that this refusal landed AFTER the user row, so returning the text put
-    // the message on screen twice. A turn opens after the admission slot now, so this
-    // refusal is an ordinary pre-persist failure and keeping the text would lose it.
+    // A turn opens after the admission slot, so this is a pre-persist failure: keeping the text would lose it.
     resetStore("c1");
     mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
     starting();
@@ -439,10 +487,8 @@ describe("submitPrompt on a 409-starting refusal", () => {
   });
 
   it("retries as a PROMPT, not a steer", async () => {
-    // The action's starting arm retracts the optimistic thinking (pinned in
-    // actions/chat-prompt.test.ts), so the chat reads idle here and the retry
-    // goes down the send path — the busy face said "send again", and a steer
-    // would be undeliverable against the same holder.
+    // The action retracts the optimistic thinking (actions/chat-prompt.test.ts), so the retry goes down
+    // the send path.
     resetStore("c1");
     starting();
     await submitPrompt("c1", "hello");
@@ -562,13 +608,104 @@ describe("steer attachments", () => {
     expect(steeredText()).toBe("plain");
   });
 
+  it("sends an attachment-only steer as the path lines alone", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    mockHasAttachments.mockReturnValue(true);
+    mockTakeAttachments.mockReturnValue([{ path: "shot.png", name: "shot.png" }]);
+
+    await submitPrompt("c1", "");
+    expect(steeredText()).toBe("Attached file: shot.png");
+  });
+
   it("skips an attachment with no usable path rather than emitting a blank line", async () => {
     resetStore("c1");
     setThinking("c1", true);
-    mockTakeAttachments.mockReturnValue([{ path: "" }, { path: "ok.ts" }, {}]);
+    mockTakeAttachments.mockReturnValue([
+      { path: "", name: "" },
+      { path: "ok.ts", name: "ok.ts" },
+    ]);
 
     await submitPrompt("c1", "one good file");
     expect(steeredText()).toBe("one good file\n\nAttached file: ok.ts");
+  });
+});
+
+// QUEUE MODE: a busy chat holds the message for the turn's end instead of steering it.
+describe("submitPrompt in Queue mode", () => {
+  function busyQueueChat(): void {
+    resetStore("c1");
+    setChatInterruptMode("c1", "queue");
+    setThinking("c1", true);
+  }
+
+  it("queues a follow-up mid-turn and never steers", async () => {
+    busyQueueChat();
+
+    expect(await submitPrompt("c1", "then add tests")).toBe("queued");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(queuedArgs()).toMatchObject({ chatID: "c1", text: "then add tests" });
+  });
+
+  it("keeps attachments as attachments rather than folding them into the text", async () => {
+    busyQueueChat();
+    mockTakeAttachments.mockReturnValue([{ path: "src/a.ts", name: "a.ts" }]);
+
+    await submitPrompt("c1", "look at this");
+    expect(queuedArgs()).toMatchObject({
+      text: "look at this",
+      attachments: [{ path: "src/a.ts", name: "a.ts" }],
+    });
+  });
+
+  it("queues when a prompt meets a plain 409, the turn having started underneath it", async () => {
+    resetStore("c1");
+    setChatInterruptMode("c1", "queue");
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    expect(await submitPrompt("c1", "hello")).toBe("queued");
+    expect(mockQueue).toHaveBeenCalledTimes(1);
+    expect(mockSteer).not.toHaveBeenCalled();
+  });
+
+  it("sends the prompt it should have been when the turn ended first", async () => {
+    busyQueueChat();
+    mockQueue.mockReturnValue(steerRefused("nothing is running", "no_turn"));
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the text back and shows the server's words when the queue is full", async () => {
+    busyQueueChat();
+    mockQueue.mockReturnValue(steerRefused("this chat already holds the most follow-ups", "full"));
+
+    expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
+    expect(mockReportSendRefused).toHaveBeenCalledWith(
+      "this chat already holds the most follow-ups",
+    );
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  // A lost response is not a refusal when the header already lists the row: the
+  // server holds the text and the attachments, so handing them back duplicates them.
+  it("hands nothing back when the row the server already queued lost its response", async () => {
+    busyQueueChat();
+    mockTakeAttachments.mockReturnValue([{ path: "a.ts", name: "a.ts" }]);
+    mockQueue.mockImplementation((args: { messageID: string; text: string }) => {
+      const session = get("c1");
+      if (session !== undefined) {
+        session.queued = [{ id: args.messageID, text: args.text }];
+      }
+      return steerRefused("connection lost", "network");
+    });
+
+    expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    expect(mockAddAttachmentTo).not.toHaveBeenCalled();
   });
 });
 
@@ -579,5 +716,21 @@ describe("submitPrompt guards", () => {
     expect(await submitPrompt("c1", "")).toBe("failed");
     expect(mockSendPromptTo).not.toHaveBeenCalled();
     expect(mockSteer).not.toHaveBeenCalled();
+  });
+
+  it("sends an attachment-only prompt when the box is empty", async () => {
+    resetStore("c1");
+    mockHasAttachments.mockReturnValue(true);
+    mockTakeAttachments.mockReturnValue([{ path: "shot.png", name: "shot.png" }]);
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitPrompt("c1", "")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledWith(
+      "c1",
+      "",
+      expect.objectContaining({
+        attachments: [{ path: "shot.png", name: "shot.png" }],
+      }),
+    );
   });
 });

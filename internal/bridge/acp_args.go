@@ -1,8 +1,5 @@
-// Operator-supplied kiro-cli launch flags: the MAROTTE_KIRO_ACP_ARGS filter.
-//
-// kiro-cli acp accepts eight flags. marotte emits --agent-engine and
-// --auth-method, refuses six flag families that conflict with its invariants,
-// and leaves --agent, -v, and future flags available to operators.
+// Operator-supplied kiro-cli launch flags (MAROTTE_KIRO_ACP_ARGS). marotte emits --agent-engine and --auth-method,
+// refuses every flag that conflicts with them or that kiro-cli rejects on v3, and passes -v and future flags.
 
 package bridge
 
@@ -15,6 +12,7 @@ const (
 	flagAgentEngine     = "--agent-engine"
 	flagAuthMethod      = "--auth-method"
 	flagAuthMethodAlias = "--authMethod"
+	flagAgent           = "--agent"
 	flagTrustAll        = "--trust-all-tools"
 	flagTrustAllShort   = "-a"
 	flagTrustTools      = "--trust-tools"
@@ -26,6 +24,7 @@ var valueBearing = map[string]bool{
 	flagAgentEngine:     true,
 	flagAuthMethod:      true,
 	flagAuthMethodAlias: true,
+	flagAgent:           true,
 	flagTrustTools:      true,
 	flagModel:           true,
 	flagEffort:          true,
@@ -63,6 +62,9 @@ func FilterACPArgs(fields []string) []string {
 	return kept
 }
 
+// v3Refused opens every reason for a flag kiro-cli rejects alongside --agent-engine=v3.
+const v3Refused = "kiro-cli refuses this alongside --agent-engine=v3 and exits before initialize, so it would kill every chat bridge; "
+
 func refuseReason(name string) (reason string, refused bool) {
 	switch name {
 	case flagAgentEngine:
@@ -70,9 +72,11 @@ func refuseReason(name string) (reason string, refused bool) {
 	case flagAuthMethod, flagAuthMethodAlias:
 		return "kiro-cli rejects an invalid auth method and exits before initialize, so it would kill every chat bridge; marotte fixes relay authentication to cli", true
 	case flagModel, flagEffort:
-		return "kiro-cli refuses this alongside --agent-engine=v3 and exits before initialize, so it would kill every chat bridge; pick the model and reasoning effort per chat in the composer instead", true
+		return v3Refused + "pick the model and reasoning effort per chat in the composer instead", true
+	case flagAgent:
+		return v3Refused + "pick the role per chat with the mode pill instead", true
 	case flagTrustAll, flagTrustAllShort, flagTrustTools:
-		return "inert on v3; tool authorization is kiro-cli's Cedar policy; edit permissions.yaml (Settings → Permissions) instead", true
+		return v3Refused + "tool authorization is kiro-cli's Cedar policy; edit permissions.yaml (Settings → Permissions) instead", true
 	default:
 		return "", false
 	}

@@ -1,30 +1,11 @@
-// ---------------------------------------------------------------------------
-// The four tab mutations. Every change to the open-tab set goes through one
-// of these; nothing else may send a tab command.
-//
-// A response is what the server committed (a subject, a `closed` list, a
-// version), reconciled by the pending-op machine against the `tabs_changed`
-// frame that follows, idempotent by id.
-//
-// The version in every reply is for the machine, never the watermark: only
-// an EVENT advances the watermark (tabs-sync.ts). A response-adopted v+2
-// would make another device's in-flight v+1 read as stale, destroying the
-// gap check.
-//
-// `dedupe` is a per-command decision. `open_tab` dedupes on (kind, ref) via
-// a key function — the default key would include the unique `op_id` and
-// collapse nothing. `close_tab` dedupes on the id, same reasoning. `pin_tab`
-// and `reorder_tabs` dedupe on nothing: pin -> unpin -> pin must end pinned,
-// and A -> B -> A must end at A, so collapsing the repeat would silently
-// leave the collection one step behind. None of these four carries an
-// argument-composite idempotency key for the same reason — inside the TTL a
-// repeated mutation would replay a cached success and never run
-// (`files.rename` shipped this once).
-//
-// `op_id` is a dispatch ARGUMENT, never minted inside `run()`: the framework
-// re-invokes `run()` per retry and hoists only the idempotency key, so an
-// op minted there would be fresh on every attempt and correlate nothing.
-// ---------------------------------------------------------------------------
+// The four tab mutations; nothing else may send a tab command. A reply is what the server
+// committed, reconciled by the pending-op machine against the following `tabs_changed` frame.
+// Its version feeds the machine, never the watermark: only an EVENT advances it (tabs-sync.ts),
+// or another device's in-flight v+1 would read as stale. `open_tab` and `close_tab` dedupe via a
+// key function (the default key includes the unique `op_id`); `pin_tab` and `reorder_tabs` dedupe
+// on nothing, and none takes an argument-composite idempotency key, so a repeat is never collapsed.
+// `op_id` is a dispatch ARGUMENT: `run()` is re-invoked per retry, so one minted there correlates
+// nothing.
 
 import { join as joinKey } from "@cplieger/keyenc";
 
@@ -46,9 +27,8 @@ export interface OpenTabArgs {
   opID: string;
 }
 
-/** What the server committed for an open. `created: false` is load-bearing:
- *  an already-open (kind, ref) commits nothing, bumps no version, and emits
- *  no event, so the pending-op machine retires such an op on the spot. */
+/** What the server committed for an open. `created: false` commits nothing and emits no event, so
+ *  the pending-op machine retires such an op on the spot. */
 export interface OpenTabReply {
   subject: TabSubject;
   created: boolean;
@@ -105,14 +85,12 @@ export interface CloseTabArgs {
   opID: string;
 }
 
-/** How long a close dispatch may stay unanswered before the pending-op
- *  machine VERIFIES instead: the removal stays applied, nothing restores,
- *  and a re-list settles it on authoritative evidence. */
+/** How long a close may stay unanswered before the pending-op machine VERIFIES by re-listing
+ *  (the removal stays applied). */
 const CLOSE_CONFIRM_MS = 5000;
 
-/** What the server committed for a close. `closed` is a list (a parent and
- *  its children close as one mutation), and empty is a normal answer —
- *  two devices can close one tab. */
+/** What the server committed for a close: a list (a parent and children close together); empty
+ *  is normal, since two devices can close one tab. */
 export interface CloseTabReply {
   closed: string[];
   version: number;
@@ -147,9 +125,8 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
       version: body === null ? 0 : numberField(body, "version"),
     };
   },
-  // No framework toast: a TIMEOUT is inconclusive (the close may have
-  // committed, so the machine verifies), while a DEFINITIVE refusal is the
-  // close gesture's own to report alongside its rollback.
+  // No framework toast: a TIMEOUT is inconclusive (the machine verifies), and a definitive refusal
+  // is the close gesture's to report with its rollback.
   error: false,
 });
 
@@ -158,9 +135,7 @@ export interface ReorderTabsArgs {
   opID: string;
 }
 
-/** The exact-set refusal: a 409 means the set moved under the drag, so the
- *  gesture's arrangement describes a collection that no longer exists —
- *  re-list, never re-send. */
+/** The exact-set refusal: the set moved under the drag, so re-list, never re-send. */
 export const REORDER_STALE = "stale" as const;
 
 /** The version the reorder committed, for the pending-op machine. */
@@ -189,8 +164,7 @@ export const reorderTabsCommand = defineAction<
       { signal, reportSendState: false },
     );
     if (r.status === 409) {
-      // Not an error to the reader: the strip reflects a set this device
-      // had not caught up with. The caller rolls the drop back and re-lists.
+      // Not an error to the reader: the caller rolls the drop back and re-lists.
       return REORDER_STALE;
     }
     if (!r.ok) {
@@ -226,8 +200,7 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      // 404 rather than the empty answer a close gets: a pin is a statement
-      // ABOUT a tab, so naming one that is not open is a mistake, not a race.
+      // 404, not a close's empty answer: a pin names a tab, so an unknown one is a mistake, not a race.
       throw sendFailure(r, "pin that tab");
     }
     return true;
@@ -241,9 +214,8 @@ export interface ReparentTabArgs {
   opID: string;
 }
 
-/** Hang an open tab under an open chat tab. No dedupe, for the pin's reason: two
- *  moves in a row must both land. The reply carries the subject as it now reads,
- *  because an unchanged parent commits nothing and emits no frame to adopt from. */
+/** Hang an open tab under an open chat tab. No dedupe (two moves must both land); the reply
+ *  carries the subject, since an unchanged parent emits no frame to adopt from. */
 export const reparentTabCommand = defineAction<ReparentTabArgs, TabSubject>({
   name: "tabs.reparent",
   networkMode: "always",
@@ -279,16 +251,13 @@ function asObject(body: unknown): Record<string, unknown> | null {
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
 }
 
-/** The committed version out of a reply body, 0 when absent or malformed —
- *  below every real version, so the machine treats it as already covered. */
+/** The committed version, 0 when absent or malformed: below every real one, so already covered. */
 function numberField(body: Record<string, unknown>, key: string): number {
   const v = body[key];
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Turns a transport failure into the shape the framework's error surface
- *  reads. `ActionError` is not imported: the framework normalizes a thrown
- *  Error and reads `status` off it when present. */
+/** A transport failure as the framework's error surface reads it (a thrown Error with `status`). */
 function sendFailure(r: SendResult, what: string): Error & { status?: number } {
   const err: Error & { status?: number } = new Error(r.error ?? `Could not ${what}`);
   err.status = r.status;

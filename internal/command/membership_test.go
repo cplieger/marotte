@@ -1,9 +1,6 @@
 package command
 
-// The ordering that makes a chat without its tab, or a tab without its chat,
-// unreachable. Driven over a REAL tabs.Store: the properties are the store's
-// behaviour under the coordinator's lock, and a fake would let both halves agree
-// while being wrong together.
+// Driven over a REAL tabs.Store: a fake would let both halves agree while being wrong.
 
 import (
 	"context"
@@ -67,11 +64,11 @@ func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs,
 // recordingTeardown is the delete path's teardown seam: the escalation cases read
 // back which grade ran and what chain travelled.
 type recordingTeardown struct {
-	// onByChain runs AT teardown time, so a test can observe the world as the teardown
-	// sees it. That is the only way to assert the teardown ran BEFORE the tab close
-	// rather than after it, which is what proves it runs outside the operation lock.
+	// onByChain runs AT teardown time, so a test can prove the teardown ran before the tab close,
+	// outside the operation lock.
 	onByChain      func()
 	deletedByChain map[marotte.ChatID][]string
+	causes         map[marotte.ChatID]RunStopCause
 	deleted        []marotte.ChatID
 	closed         []marotte.ChatID
 	mu             sync.Mutex
@@ -83,10 +80,7 @@ func (r *recordingTeardown) DeleteChatState(_ context.Context, id marotte.ChatID
 	r.deleted = append(r.deleted, id)
 }
 
-func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id marotte.ChatID, chain []string) {
-	// Outside r.mu: the hook reads the REAL tab store, which is a different lock, and
-	// holding this one across it would make the ordering test's own fixture the thing
-	// under suspicion when it deadlocks.
+func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id marotte.ChatID, chain []string, cause RunStopCause) {
 	if r.onByChain != nil {
 		r.onByChain()
 	}
@@ -96,6 +90,10 @@ func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id marotte
 		r.deletedByChain = make(map[marotte.ChatID][]string)
 	}
 	r.deletedByChain[id] = slices.Clone(chain)
+	if r.causes == nil {
+		r.causes = make(map[marotte.ChatID]RunStopCause)
+	}
+	r.causes[id] = cause
 }
 
 func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID) {
@@ -169,7 +167,6 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 	mem, flaky, bus := newFlakyMembership(t, store)
 	flaky.openFails(1)
 
-	// First attempt: the chat lands, the tab does not.
 	_, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		OpID: "op-retry", Init: func(c *marotte.Chat) { c.Name = "Half made" },
 	})
@@ -184,7 +181,6 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 		t.Fatalf("the first attempt left tabs %v, so there is no missing write to finish", got)
 	}
 
-	// The retry carries the same op id.
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		OpID: "op-retry", Init: func(c *marotte.Chat) { c.Name = "Half made" },
 	})
@@ -278,7 +274,6 @@ func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {
 func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
-	// One real chat, so the refusal is the LIMIT rather than the missing-chat gate.
 	opened := createChat(t, mem, "op-seed")
 	seedRecord(t, store, "c-waiting")
 	fillTabs(t, mem, tabs.MaxOpenTabs)
@@ -471,13 +466,157 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 			"the exemption, and nothing else asks the purge to look again", wakes)
 	}
 
-	// A close that committed nothing has cleared no exemption, so it must not wake.
 	if _, _, err := mem.CloseTab(t.Context(), "not-open", "op-close-2"); err != nil {
 		t.Fatalf("CloseTab of an unopened id = %v", err)
 	}
 	if wakes != 1 {
 		t.Errorf("retention was woken %d times, want 1: a close that committed nothing "+
 			"cleared no exemption", wakes)
+	}
+}
+
+// A run tab is the run purge's exemption the way a chat tab is the chat purge's, so
+// closing one wakes retention too, and while it is open the run reads as shown.
+func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	mem := NewMembership(&MembershipDeps{Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
+	wakes := 0
+	mem.SetRetentionWake(func() { wakes++ })
+	opened, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
+	if err != nil {
+		t.Fatalf("OpenTab(run) = %v", err)
+	}
+	if _, ok := mem.AdmitRunPurge(t.Context(), "wf_1", ""); ok {
+		t.Fatal("AdmitRunPurge(wf_1) = true with its tab open, want false")
+	}
+
+	if _, _, err := mem.CloseTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+		t.Fatalf("CloseTab = %v", err)
+	}
+	if wakes != 1 {
+		t.Errorf("retention was woken %d times by a run-tab close, want 1", wakes)
+	}
+	done, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "")
+	if !ok {
+		t.Fatal("AdmitRunPurge(wf_1) = false after its tab closed, want true")
+	}
+	done()
+}
+
+// An admitted purge holds the run until its delete returns: a run-tab open in that
+// window is refused, and the same open succeeds once the purge reports done.
+func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	mem := NewMembership(&MembershipDeps{Chats: testsupport.NewInMemoryChatStore(), Tabs: st, Bus: &tabBus{}})
+	spec := marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}
+	done, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "")
+	if !ok {
+		t.Fatal("AdmitRunPurge(wf_1) = false with no tab open, want true")
+	}
+
+	_, err = mem.OpenTab(t.Context(), spec, "op-during")
+	if !errors.Is(err, errRunPurging) {
+		t.Errorf("OpenTab(run) during its purge = %v, want %v", err, errRunPurging)
+	}
+	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_2"}, "op-other"); err != nil {
+		t.Errorf("OpenTab(another run) during wf_1's purge = %v, want nil", err)
+	}
+
+	done()
+	if _, err := mem.OpenTab(t.Context(), spec, "op-after"); err != nil {
+		t.Errorf("OpenTab(run) after its purge reported done = %v, want nil", err)
+	}
+}
+
+// resumeCreate is resume_session's create: a fresh chat bound to an existing session.
+func resumeCreate(opID, sessionID string) ChatCreate {
+	return ChatCreate{OpID: opID, Init: func(c *marotte.Chat) { c.RecordSession(sessionID) }}
+}
+
+type incompleteClaims struct{}
+
+func (incompleteClaims) SessionClaimed(context.Context, string) (claimed, complete bool) {
+	return false, false
+}
+
+func newClaimsMembership(t *testing.T, claims SessionClaims) *Membership {
+	t.Helper()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	store := testsupport.NewInMemoryChatStore()
+	if claims == nil {
+		claims = store
+	}
+	return NewMembership(&MembershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}, Sessions: claims})
+}
+
+// The purge's earlier claim snapshot cannot decide: a chat that adopted the run's
+// launching session after it was taken still spares the run at admission.
+func TestAdmitRunPurge_ARunWhoseSessionAChatClaimsIsSpared(t *testing.T) {
+	mem := newClaimsMembership(t, nil)
+	if _, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-resume", "sess_run")); err != nil {
+		t.Fatalf("Setup: CreateChatAndOpen(resume sess_run) = %v", err)
+	}
+
+	if _, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run"); ok {
+		t.Error("AdmitRunPurge(wf_1, sess_run) = true while a chat claims sess_run, want false")
+	}
+	done, ok := mem.AdmitRunPurge(t.Context(), "wf_2", "sess_other")
+	if !ok {
+		t.Fatal("AdmitRunPurge(wf_2, sess_other) = false with no chat claiming it, want true")
+	}
+	done()
+}
+
+// A claim that cannot be ruled out keeps the run: an unreadable chat file, or no
+// claim reader wired at all.
+func TestAdmitRunPurge_AnUnverifiableClaimSparesTheRun(t *testing.T) {
+	for name, mem := range map[string]*Membership{
+		"incomplete scan": newClaimsMembership(t, incompleteClaims{}),
+		"no reader": NewMembership(&MembershipDeps{
+			Chats: testsupport.NewInMemoryChatStore(), Bus: &tabBus{},
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run"); ok {
+				t.Error("AdmitRunPurge(wf_1, sess_run) = true, want false: the claim was not ruled out")
+			}
+		})
+	}
+}
+
+// An admitted purge holds the run's launching session too: a create binding it is
+// refused while the delete is in flight and lands once the purge reports done.
+func TestCreateChatAndOpen_BindingAPurgingRunsSessionIsRefusedUntilDone(t *testing.T) {
+	mem := newClaimsMembership(t, nil)
+	done, ok := mem.AdmitRunPurge(t.Context(), "wf_1", "sess_run")
+	if !ok {
+		t.Fatal("AdmitRunPurge(wf_1, sess_run) = false with nothing claiming it, want true")
+	}
+
+	_, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-during", "sess_run"))
+	if !errors.Is(err, errRunPurging) {
+		t.Errorf("CreateChatAndOpen(resume sess_run) during its run's purge = %v, want %v", err, errRunPurging)
+	}
+	if _, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-other", "sess_other")); err != nil {
+		t.Errorf("CreateChatAndOpen(resume sess_other) during wf_1's purge = %v, want nil", err)
+	}
+
+	done()
+	opened, err := mem.CreateChatAndOpen(t.Context(), resumeCreate("op-during", "sess_run"))
+	if err != nil {
+		t.Fatalf("CreateChatAndOpen(resume sess_run) after the purge reported done = %v, want nil", err)
+	}
+	if got := opened.Chat.ACPSessionID; got != "sess_run" {
+		t.Errorf("the retried resume bound %q, want sess_run", got)
 	}
 }
 
@@ -588,8 +727,6 @@ func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	mem, st, bus, _ := newTornDownMembership(t, store)
 	opened := createChat(t, mem, "op-a")
 	chatID := marotte.ChatID(opened.Chat.ID)
-	// The reaper removed the file directly, so the record is already gone when the
-	// hook fires.
 	if err := store.Delete(t.Context(), chatID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -625,11 +762,15 @@ func TestRetentionClose_RunsTheDeleteGradeTeardown(t *testing.T) {
 
 	td.mu.Lock()
 	gotChain, ran := td.deletedByChain[chatID]
+	cause := td.causes[chatID]
 	deleted, closed := slices.Clone(td.deleted), slices.Clone(td.closed)
 	td.mu.Unlock()
 
 	if !ran {
 		t.Fatalf("no by-chain teardown for %q: the purge ran none, which is the gap this closes", chatID)
+	}
+	if cause != RunStopRetention {
+		t.Errorf("teardown cause = %v, want RunStopRetention: a purge stops runs nobody asked to stop", cause)
 	}
 	if !slices.Equal(gotChain, chain) {
 		t.Errorf("teardown chain = %v, want %v: the reap and the run cancel are driven from it", gotChain, chain)
@@ -653,7 +794,6 @@ func TestRetentionClose_TearsDownBeforeClosingTabs(t *testing.T) {
 	if err := store.Delete(t.Context(), chatID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	// Read the REAL tab store from inside the teardown.
 	var openAtTeardown []string
 	td.onByChain = func() { openAtTeardown = tabIDsFor(st, chatID) }
 
@@ -706,7 +846,6 @@ func TestReorderTabs_AcceptedWhileAnUnrelatedPinBumpedTheVersion(t *testing.T) {
 	b := createChat(t, mem, "op-b")
 	c := createChat(t, mem, "op-c")
 
-	// The gesture's own view of the set, taken BEFORE the unrelated mutation.
 	dragged := []string{c.Subject.ID, a.Subject.ID, b.Subject.ID}
 	pinnedVersion, err := mem.SetPinned(t.Context(), b.Subject.ID, true, "op-pin")
 	if err != nil {
@@ -935,8 +1074,6 @@ func TestReparent_RefusesAnAbsentTabANonChatParentAndACycle(t *testing.T) {
 		t.Errorf("refused reparents emitted %d frames, want 0", got)
 	}
 }
-
-// --- fixture helpers ---
 
 // openFails is a method rather than a field write at the call site so the mutex is
 // not somebody else's business.

@@ -1,22 +1,11 @@
-// ---------------------------------------------------------------------------
-// The transcript placeholder and the transcript may never share the container.
-//
-// This is the invariant a tab switch used to break in the other direction: the
-// activation armed a skeleton on every open, so a chat whose messages were
-// already in the store painted the whole conversation and then appended a
-// shimmer under the last turn until the refresh landed. The activation now arms
-// it only over an empty transcript (chat.test.ts covers that half) and drops it
-// here the moment real turns arrive, which is the half that cannot be left to a
-// call order: reconcile inserts the newest turn AFTER any unkeyed sibling, so a
-// skeleton still mounted when content lands ends up ABOVE the conversation.
-// ---------------------------------------------------------------------------
+// The placeholder and the transcript never share the container. Reconcile inserts the newest turn after any unkeyed
+// sibling, so a skeleton still mounted when content lands would sit above the conversation.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
-// The render graph reaches the shared DOM registry, which throws on a missing app
-// root. Every id has to exist before the imports below are evaluated.
+// The render graph reads the DOM registry, which throws on a missing app root, so every id exists before the imports.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -29,8 +18,7 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-// scroll.ts is a self-initialising singleton over a real scroller; the canonical
-// mock is what every other suite in this graph uses.
+// scroll.ts is a self-initialising singleton; the canonical mock is what every suite in this graph uses.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 const { mountChatView, activeTranscriptView, teardownAll } = await import("./messages.js");
@@ -39,9 +27,7 @@ const { setSessions, setActive, bumpMessages } = await import("./store.js");
 
 const messagesEl = document.getElementById("messages") as HTMLElement;
 
-/** A session carrying `turnIDs` as its resident window, seeded into the real store
- *  and activated. One `TurnState` per turn, keyed by turn id, with the ids also in
- *  `turn_order` because that array is what the paint reads for FILE order. */
+/** One `TurnState` per turn, with the ids in `turn_order`, which the paint reads for file order. */
 function activate(turnIDs: readonly string[]): void {
   const turns = new Map<string, TurnState>();
   turnIDs.forEach((id, i) => {
@@ -70,8 +56,7 @@ function activate(turnIDs: readonly string[]): void {
   setActive("c-1");
 }
 
-/** The cheapest DRAWN turn: an agent-initiated `turn_open` at ordinal `n`, one text
- *  entry so the body clause admits it, and its close. */
+/** The cheapest drawn turn: an agent-initiated `turn_open`, one text entry, its close. */
 function drawnTurn(id: string, n: number): Entry[] {
   const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
     ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: seq + 1, payload }) as Entry;
@@ -84,21 +69,17 @@ function drawnTurn(id: string, n: number): Entry[] {
 
 beforeEach(() => {
   mountChatView();
-  // The real teardown, not a bare replaceChildren(): the multiplexer keeps a
-  // per-chat view registry, and ripping the DOM out from under it would leave
-  // the next activation painting into a detached view element.
+  // The real teardown: the multiplexer keeps a view registry, and a bare replaceChildren would leave the next activation
+  // painting into a detached view.
   teardownAll();
   activate([]);
-  // Force the paint that re-creates the view: the store's active id survives
-  // across tests, so setActive alone is a no-op write after the first one.
+  // The active id survives across tests, so setActive alone is a no-op after the first.
   bumpMessages("c-1");
 });
 
 describe("the transcript's loading placeholder", () => {
   it("is dropped by the paint that brings in the first turn", () => {
-    // Into the ACTIVE VIEW, the placeholder's one home: chat.ts mounts it
-    // there during a cold activation. (The boot-time mount into the bare
-    // multiplexer is gone — the splash now covers the boot restore.)
+    // Into the active view, the placeholder's one home (chat.ts mounts it there on a cold activation).
     const view = activeTranscriptView();
     expect(view).not.toBeNull();
     view?.appendChild(chatSkeleton());
@@ -112,11 +93,7 @@ describe("the transcript's loading placeholder", () => {
   });
 
   it("never ends up above the turns, which is where reconcile would leave it", () => {
-    // The failure this rules out is positional, not just co-presence: reconcile
-    // walks the list backwards from `target = null`, so the newest turn is
-    // appended after every unkeyed sibling already in the container. The
-    // container is the ACTIVE VIEW under the multiplexer — the activation
-    // mounts the placeholder there (chat.ts), and the turns land beside it.
+    // Positional, not just co-presence: reconcile appends the newest turn after every unkeyed sibling in the active view.
     const view = activeTranscriptView();
     expect(view).not.toBeNull();
     view?.appendChild(chatSkeleton());
@@ -129,8 +106,7 @@ describe("the transcript's loading placeholder", () => {
   });
 
   it("survives a paint that produces no turns, because that is what it is for", () => {
-    // An empty turn list is a chat still loading. Dropping the placeholder on
-    // that paint would clear the container and show nothing at all.
+    // An empty turn list is a chat still loading; dropping the placeholder then would show nothing.
     activeTranscriptView()?.appendChild(chatSkeleton());
     activate([]);
     bumpMessages("c-1");

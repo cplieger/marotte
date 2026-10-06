@@ -1,20 +1,7 @@
-// The shell paints in the first frame: structural guard over static/index.html
-// and static/manifest.json.
-//
-// Both halves of the reported "5-10 s blank, unresponsive window" were shape
-// rather than compute. An opaque `#app-loading` at `z-index: 400` sat over an
-// `#app` that was `visibility: hidden`, and the ONLY thing that released either
-// was a call at the end of a five-`await` boot chain — measured p50 754 ms, p90
-// 1,947 ms, outliers to 21,026 ms, and three boots in 68 where it was never
-// released at all because whoami timed out and the branch returned early. From
-// the user's seat that is indistinguishable from a blocked main thread. And
-// `launch_handler.client_mode: "navigate-existing"` made a Windows taskbar
-// restore RE-NAVIGATE the window, so the live page and its SSE stream were thrown
-// away: 81 document loads in 48 h, 33 of them to bare `/`.
-//
-// Asserted against the shipped files rather than a built DOM, because what has to
-// hold is a property of the ARTIFACT: nothing may reintroduce the overlay, and no
-// script has to run for the shell to be visible.
+// The shell paints in the first frame, guarded over static/index.html and
+// static/manifest.json: no opaque loading overlay or hidden `#app` released only at the
+// end of the boot chain, and no `navigate-existing` launch handler re-navigating the live
+// page. Asserted on the shipped files, because these are properties of the ARTIFACT.
 
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
@@ -37,8 +24,8 @@ describe("the shell has nothing covering it", () => {
   it("ships no splash overlay and no hidden app root", () => {
     expect(indexHtml).not.toContain("app-loading");
     expect(indexHtml).not.toContain("app-hidden");
-    // The rules that made either of them opaque are gone with them, so a
-    // reintroduced element cannot inherit a working overlay.
+    // No rule may make either of them opaque, so a reintroduced element cannot
+    // inherit a working overlay.
     expect(a11yCss).not.toContain("app-loading");
     expect(a11yCss).not.toContain("app-hidden");
   });
@@ -69,12 +56,8 @@ describe("every region whose content is pending says so", () => {
   });
 
   it("gives the sidebar identity row a pending shimmer", () => {
-    // BOTH markers changed, and changing only the opening one would leave this
-    // case passing VACUOUSLY: the first `</a>` after the address is now
-    // `#st-account`'s, so the fragment would capture the rest of the button plus the
-    // whole card, and a `.skeleton.sidebar-email-skeleton` anywhere in there would
-    // satisfy the assertion. With both changed the first `</span>` closes the
-    // skeleton itself and the fragment is exactly the identity row.
+    // Both markers matter: with only the opening one changed the fragment would run to
+    // `#st-account`'s `</a>` and pass vacuously.
     const footer = slice(indexHtml, '<span id="user-email"', "</span>");
     const pending = footer.querySelector(".skeleton.sidebar-email-skeleton");
     expect(pending, "the identity row is pending until /api/whoami answers").not.toBeNull();

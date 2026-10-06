@@ -133,8 +133,6 @@ func TestRunStatusEnumsMatchBundle(t *testing.T) {
 		got := extractedStatusValues(t, check.name, check.re, src)
 		declared := declaredStatusValues(t, check.typeName)
 		extras := declaredExtras[check.typeName]
-		// Every bundle member is declared, in the bundle's own order, ahead of the
-		// extras — so a rename or a removal upstream still fails.
 		if len(declared) < len(got) || !slices.Equal(got, declared[:min(len(got), len(declared))]) {
 			t.Errorf("%s bundle enum = %v, Go declaration = %v", check.name, got, declared)
 			continue

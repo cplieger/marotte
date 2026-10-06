@@ -1,12 +1,9 @@
 package translate
 
-// Mid-turn steering, the inbound half. KAS multiplexes three steering sub-kinds
-// through session_info_update: steering_queued feeds the dock (EventSteerQueued, or
-// EventAgentNotice when a severity marks an agent's own notice), steering_injected
-// appends the steer entry as read, steering_cleared appends the unread ones as
-// dropped. These carry no sub-block to key off (KAS spreads the update flat into
-// _meta.kiro and legacyFields() returns {} for all three), so this is the one place
-// the cascade dispatches on the kind string.
+// Mid-turn steering, inbound: steering_queued feeds the dock (or an agent notice when a
+// severity is set), steering_injected appends the steer as read, steering_cleared appends the
+// unread ones as dropped. These carry no sub-block (KAS spreads them flat into _meta.kiro), so
+// this is the one place the cascade dispatches on the kind string.
 
 import (
 	"context"
@@ -52,12 +49,9 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID marotte.Ch
 	return false
 }
 
-// steeringQueued broadcasts the queued steer and records it as waiting. KAS
-// multiplexes two authors onto this sub-kind and the severity is what separates
-// them: it is set only when KAS sniffed a `[notification/<sev>]` prefix, which
-// command/steer.go refuses to send, so a severity means a workflow step or a
-// subagent reporting into this chat. A notice goes to the ephemeral stack rather
-// than the chip row, because nobody is waiting on it.
+// steeringQueued broadcasts the queued steer and records it as waiting. A severity (set only
+// when KAS sniffed a `[notification/<sev>]` prefix, which command/steer.go refuses) marks an
+// agent's notice, which goes to the ephemeral stack instead of the chip row.
 func (t *Translator) steeringQueued(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
 	if k.NotificationSeverity != "" {
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventAgentNotice, chatID, marotte.AgentNoticePayload{
@@ -71,8 +65,7 @@ func (t *Translator) steeringQueued(ctx context.Context, chatID marotte.ChatID, 
 		Text:    k.Content,
 		Origin:  t.steerOrigin(chatID, k.MessageID),
 	}
-	// RECORDED as well as broadcast: the buffer is KAS's and nothing can read it
-	// back, so a client that missed this frame is replayed from the same record.
+	// RECORDED as well as broadcast: nothing can read KAS's buffer back, so a reconnect replays this.
 	queued, ok := t.steerBufferWaiting(chatID, &queued)
 	if ok {
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
@@ -81,8 +74,7 @@ func (t *Translator) steeringQueued(ctx context.Context, chatID marotte.ChatID, 
 
 // steeringInjected takes the read steer off the waiting set and appends its entry.
 func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
-	// The bare text: KAS's persisted row and therefore the replay carry it without
-	// the prefix, and the merge would read the two spellings as two steers.
+	// The bare text, as KAS persists it, or the merge would see two steers.
 	text := k.Content
 	if k.NotificationSeverity != "" {
 		text = stripNotificationPrefix(text)
@@ -96,12 +88,9 @@ func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID
 	t.appendSteer(ctx, chatID, k.MessageID, steer)
 }
 
-// steeringCleared appends a dropped entry for every AGENT row the record still held
-// (the ones nothing read; an injected frame removed the others). A user row's entry
-// is the host's, at the row's own terminal transition. An agent-origin note this
-// process never held is recorded TEXT-LESS, and that entry is itself the signal the
-// next session/load's merge reads: the words it lacks are what the merge fills, so
-// nothing beside it has to say so.
+// steeringCleared appends a dropped entry for every AGENT row still held (unread). A user row's
+// entry is the host's. An agent note this process never held is recorded TEXT-LESS: the merge
+// fills the missing words.
 func (t *Translator) steeringCleared(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
 	held := make(map[string]marotte.SteerQueuedPayload)
 	for _, p := range t.steerBufferCleared(chatID, k.MessageIDs) {
@@ -154,11 +143,9 @@ func stripNotificationPrefix(text string) string {
 	return notificationPrefixRe.ReplaceAllString(text, "")
 }
 
-// appendSteer writes a steer's DURABLE entry, read or dropped: lane-less, into the
-// chat's own turn when one is open (every lane seals first), else after the newest
-// turn's close by the between-turns rule. A steer is the chat's fact whatever
-// session consumed it, so the routing ignores attribution. The id is KAS's own
-// steer id, which the replay stamps too, so the merge pairs the two.
+// appendSteer writes a steer's DURABLE entry, lane-less: into the chat's open turn (sealing
+// every lane), else after its newest close. A steer is the chat's whatever session read it.
+// The id is KAS's steer id, which the replay stamps too.
 func (t *Translator) appendSteer(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
 	t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindSteer, steerID, steer,
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
@@ -166,11 +153,9 @@ func (t *Translator) appendSteer(ctx context.Context, chatID marotte.ChatID, ste
 		})
 }
 
-// steerReadByAck records the read a stripped acknowledgement marker evidences: a
-// steer a DELEGATE consumed arrives as the marker alone, since steering_injected
-// reaches only the execution this process owns. The buffer's forget answers and
-// removes under one lock, so an id an injected frame already recorded is not
-// recorded twice and a later clear has nothing left to drop.
+// steerReadByAck records the read a stripped ack marker evidences (a DELEGATE's read gets no
+// steering_injected). The buffer's forget answers and removes under one lock, so nothing is
+// recorded twice.
 func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, lane, steerID string) {
 	held := t.steerBufferForgotten(chatID, []string{steerID})
 	if len(held) == 0 {
@@ -197,9 +182,7 @@ func (t *Translator) appendSteerInLane(
 	ctx = durable.Context(ctx)
 	turn, ok := t.turns.OwnTurn(chatID)
 	if !ok {
-		// A lane exists only inside a turn, so a turn that closed under this frame
-		// leaves no lane to record: the entry files lane-less after that close,
-		// which is the fallback the ack beside it takes too.
+		// A lane exists only inside a turn: after a close, file lane-less like the ack beside it.
 		t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteer, steerID, steer)
 		return
 	}
@@ -210,9 +193,7 @@ func (t *Translator) appendSteerInLane(
 	}
 }
 
-// The buffer writes, each nil-guarded for the same reason steerOrigin is:
-// the role is optional at construction, and a Translator built without it has to
-// translate rather than panic.
+// Nil-guarded: the role is optional at construction.
 
 func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
 	if t.steerBuffer == nil {
@@ -243,13 +224,9 @@ func (t *Translator) steerBufferForgotten(chatID marotte.ChatID, steerIDs []stri
 	return t.steerBuffer.SteerForgotten(chatID, steerIDs)
 }
 
-// steerOrigin answers whose words a steer carries. THE ID LEADS because it is
-// structural where the ledger is a cache: KAS mints `steer-<messageID>` from the id
-// CmdSteer sent, and the agent's own rows take `notify-`, `wf-progress-` or
-// `steering_boundary_`; the ledger is TTL'd, bounded, dropped at teardown, lost on
-// restart, and its write races KAS's own steering_queued frame (measured: a user's
-// correction labelled the agent's and dropped from the boundary resend). The
-// ledger still decides for an id marotte did not derive.
+// steerOrigin answers whose words a steer carries. THE ID LEADS (KAS mints `steer-<messageID>`
+// from CmdSteer's id; agent rows take `notify-`, `wf-progress-` or `steering_boundary_`)
+// because the ledger is a lossy, racing cache. The ledger decides other ids.
 func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin {
 	if strings.HasPrefix(steerID, marotte.SteerIDPrefix) {
 		return marotte.SteerOriginUser

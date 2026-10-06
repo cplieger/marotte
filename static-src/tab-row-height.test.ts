@@ -1,10 +1,8 @@
-// A CHAT TAB AND THE NEW CHAT BUTTON ARE THE SAME BOX, on a phone. A child painting
-// its own `--btn-h` box STACKS on `.tab`'s min-height, padding and border, so the ×
-// grows its TARGET through an absolutely positioned `::after` and its painted box
-// stays small. Two claims that pull against each other: the ROW must not grow, and
-// the × must still be reachable with a finger. Real layout in an IFRAME, because the
-// page viewport is pinned at 1280x720 and every rule sits behind `width <= 48rem`;
-// `data-pointer="coarse"` is set so the 44px tier is a stated premise.
+// On a phone a chat tab and the New chat button are the same box. A child painting its own
+// `--btn-h` box STACKS on `.tab`'s min-height, padding and border (rows reached 62px), so the ×
+// grows its TARGET through an `::after`. Two claims that pull apart: the ROW must not grow and
+// the × must stay finger-reachable. Real layout in an IFRAME (the page viewport is pinned), with
+// `data-pointer="coarse"` stated explicitly.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -22,10 +20,7 @@ let doc: Document;
 function mountSidebar(): { btn: HTMLElement; tab: HTMLElement; close: HTMLElement } {
   const sidebar = doc.createElement("nav");
   sidebar.id = "sidebar";
-  // The drawer, OPEN. Below 48rem the sidebar is `transform: translateX(-100%)`
-  // until `.open` lands (50-mobile.css), which puts every row off-screen — the
-  // rects still measure (shifted equally, so a comparison between two of them
-  // survives) while `elementFromPoint` answers null for all of them.
+  // The drawer OPEN: below 48rem the closed sidebar is off-screen, where `elementFromPoint` is null.
   sidebar.classList.add("open");
 
   const actions = doc.createElement("div");
@@ -133,12 +128,8 @@ describe("a chat tab against the New chat button", () => {
   });
 
   it("puts the VISIBLE BORDER on the button, so it lines up with a tab's too", () => {
-    // THE DEFECT THIS PINS, and the one the width case above could not see: the border
-    // a reader sees used to belong to `.sidebar-actions`, a wrapper 6px wider than the
-    // button inside it, so the two boxes agreed on their edges while the bordered box
-    // overhung every tab by 3px a side. Reported as the New chat button being wider
-    // than the tabs under it. So the assertion is that the WRAPPER paints nothing and
-    // the BUTTON carries the border — a bordered wrapper of any width fails here.
+    // The border belongs to the BUTTON, not the 6px-wider `.sidebar-actions` wrapper, which overhung
+    // every tab by 3px a side.
     const { btn } = mountSidebar();
     const wrap = btn.parentElement as HTMLElement;
     const w = getComputedStyle(wrap);

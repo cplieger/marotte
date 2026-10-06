@@ -10,13 +10,9 @@ import (
 	"testing"
 )
 
-// captureStoreSlog swaps the default logger for a buffer. slog's default is
-// process-global, so any test using this must run serially (no t.Parallel).
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureStoreSlog swaps the default logger for a buffer; tests using it must run serially. The log
+// package's writer and flags are restored too, because slog.SetDefault repoints log and does not
+// point it back for the stock handler.
 func captureStoreSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -30,22 +26,11 @@ func captureStoreSlog(t *testing.T) *bytes.Buffer {
 	return buf
 }
 
-// TestNewStore_VerifiesTheModeItCreated drives the widening the kernel does on
-// its own, with no mocking: on Linux a directory created under a setgid parent
-// inherits the bit whether or not it was asked for, so MkdirAll(dir, 0o700)
-// stores a mode the caller did not request. atomicfile.EnforceMode compares
-// setgid deliberately, so this is a real request-versus-disk difference.
-//
-// The witness makes the test fail as INVALID rather than pass vacuously if the
-// kernel ever stops inheriting the bit. Model: subflux's
-// TestEnsureAdminSocketDir_verifiesTheModeItCreated.
-//
-// Honest limit, worth knowing before trusting this test: the mode ASSERTION here
-// does not distinguish EnforceDir from the bare os.Chmod it replaced —
-// chmod(2) clears setgid either way, and no filesystem a test can create stores a
-// mode other than the one chmod asked for. What the enforcement adds is the
-// read-back, and the observable proof of the read-back is the logged mode plus
-// the refusals pinned in the two tests below.
+// TestNewStore_VerifiesTheModeItCreated asserts that under a setgid parent MkdirAll(dir, 0o700) stores a mode
+// the caller did not request. The witness fails the test as INVALID if the kernel stops inheriting
+// the bit.
+// Limit: the mode assertion cannot tell EnforceDir from a bare os.Chmod; the read-back is proved by
+// the logged mode and the refusals pinned below.
 func TestNewStore_VerifiesTheModeItCreated(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.Chmod(parent, 0o700|os.ModeSetgid); err != nil {
@@ -78,26 +63,14 @@ func TestNewStore_VerifiesTheModeItCreated(t *testing.T) {
 		t.Fatalf("created chat dir mode = %v, want %v: the mode the kernel stored was not corrected",
 			got, os.ModeDir|0o700)
 	}
-	// The breadcrumb must report the mode read off the handle. It used to print
-	// the dirMode CONSTANT, so it claimed 0700 on exactly the filesystems where
-	// that was false. The value carries the chmod-settable bits only (the type
-	// bit is not settable and was never in this line), so setgid WOULD show here
-	// if it had survived.
 	if log := buf.String(); !strings.Contains(log, "mode="+fi.Mode().Perm().String()) {
 		t.Errorf("startup line does not report the stored mode %v; log=%q", fi.Mode().Perm(), log)
 	}
 }
 
-// TestNewStore_EnforcesTheModeOnAHandleNotAPathname pins the difference the mode
-// assertion above cannot see. os.Chmod(dir, dirMode) resolves the name at the
-// instant of the call, and MkdirAll happily returns nil when the name is a
-// symlink to an existing directory — so the old sequence tightened whatever
-// directory the link pointed at, anywhere on the host. O_NOFOLLOW|O_DIRECTORY
-// makes the kernel refuse instead.
-//
-// The store still OPENS, deliberately: aborting boot over persistent-volume state
-// the container neither created nor owns leaves the operator no way in to repair
-// it (marotte invariant 6). The exposure is reported, not enforced.
+// TestNewStore_EnforcesTheModeOnAHandleNotAPathname asserts that a symlink at the chat-dir name is refused
+// (O_NOFOLLOW|O_DIRECTORY) instead of chmod'ing its target. The store still opens: the exposure is
+// reported, not enforced.
 func TestNewStore_EnforcesTheModeOnAHandleNotAPathname(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "elsewhere")
 	if err := os.Mkdir(target, 0o777); err != nil {
@@ -137,16 +110,13 @@ func TestNewStore_EnforcesTheModeOnAHandleNotAPathname(t *testing.T) {
 	if !strings.Contains(log, "could not be made 0700") {
 		t.Errorf("refused enforcement logged no warning; the exposure would be silent. log=%q", log)
 	}
-	// The breadcrumb must not claim a mode on the branch where the open failed:
-	// nothing was observed, so "unverified" is the only honest value.
 	if !strings.Contains(log, "mode=unverified") {
 		t.Errorf("startup line claimed a mode it never read; log=%q", log)
 	}
 }
 
-// TestNewStore_RefusesANonDirectoryAtTheChatDirName pins the O_DIRECTORY half:
-// a regular file planted at the chat-dir name is refused rather than chmod'ed.
-// MkdirAll already fails here, so this asserts the pair stays consistent.
+// TestNewStore_RefusesANonDirectoryAtTheChatDirName pins the O_DIRECTORY half: a regular file at
+// the chat-dir name is refused rather than chmod'ed.
 func TestNewStore_RefusesANonDirectoryAtTheChatDirName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "chats")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {

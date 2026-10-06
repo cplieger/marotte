@@ -1,20 +1,8 @@
 // ---------------------------------------------------------------------------
-// The upload doors OTHER than the composer's.
-//
-// preflightUploads was wired to one of four doors, so the browser drop, the
-// browser's upload dialog and the picker's "Upload here" each transmitted the
-// bytes and then reported the server's bare 413, which names no file. The server
-// cap is real either way, so what these cases pin is the DIAGNOSIS: the offending
-// file is named before anything is sent, and a batch that is partly legal sends
-// the legal part rather than failing whole.
-//
-// The composer's own door is covered by files-drop.test.ts. The two DIALOG doors
-// (the browser toolbar's Upload, and the picker's "Upload here") are deliberately
-// absent: each builds its <input type="file"> on demand, never puts it in the
-// document, and relies on an OS dialog no test runner can open, so a test has no
-// handle on the element and no way to produce a selection. What they screen with
-// is screenUploads, which upload-policy.test.ts drives directly, and the call
-// itself is one statement above the dispatch in each.
+// The upload doors OTHER than the composer's (files-drop.test.ts): the offending file is named
+// before anything is sent, and a partly legal batch sends the legal part. The two DIALOG doors are
+// absent: their <input type="file"> is never in the document and needs an OS dialog; they screen
+// with screenUploads, driven here and in upload-policy.test.ts.
 // ---------------------------------------------------------------------------
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -158,11 +146,9 @@ describe("the file browser's drop door", () => {
   });
 });
 
-// --- The screening step every door now shares ----------------------------
+// --- The screening step every door shares ---------------------------------
 //
-// Here rather than in upload-policy.test.ts because that file is deliberately a
-// node-environment test over pure policy, and rebuilding a shortened FileList
-// needs a DOM. This is also the coverage the two dialog doors rest on.
+// Here rather than in the node-only upload-policy.test.ts: rebuilding a FileList needs a DOM.
 
 describe("screenUploads", () => {
   beforeEach(() => {

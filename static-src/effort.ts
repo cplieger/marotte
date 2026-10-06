@@ -1,16 +1,12 @@
-// ---------------------------------------------------------------------------
-// Reasoning-effort vocabulary: which tiers exist and which one is live. A leaf,
-// because two surfaces read it and have to agree — the model card's tier row and
-// the model pill. The DEFAULT is never a local table: it arrives per model on the
-// catalog as `ModelInfo.default_effort_level`.
-// ---------------------------------------------------------------------------
+// Reasoning-effort vocabulary, a leaf so the model card and the model pill agree. The default always arrives per model
+// on the catalog, never from a local table.
 
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 
-/** Canonical effort levels with display labels: the FALLBACK vocabulary and the
- *  label table, never the authority. The authority is the `effortLevel` config
- *  option's own choices, per session (`Session.effort_levels`) or pre-session (the
- *  template cached below); the wire carries no per-model tier list. */
+/**
+ * The fallback vocabulary and label table, never the authority: that is the `effortLevel` option's own choices, per
+ * session or pre-session.
+ */
 const EFFORT_LEVELS = [
   { id: "low", label: "low" },
   { id: "medium", label: "medium" },
@@ -19,8 +15,7 @@ const EFFORT_LEVELS = [
   { id: "max", label: "max" },
 ] as const;
 
-/** The pre-session vocabulary from GET /api/config-template, written once at boot.
- *  A chat with no bridge has no session catalog, so this is its only evidence. */
+/** Written once at boot: a bridgeless chat's only evidence. */
 let catalogEfforts: readonly SessionEffortLevel[] = [];
 let catalogEffortActive = "";
 
@@ -29,8 +24,7 @@ export function setCatalogEfforts(levels: readonly SessionEffortLevel[], active:
   catalogEffortActive = active;
 }
 
-/** The catalog's own name, else the house table (so `xhigh` stays "x-high"), else
- *  the id verbatim — hiding a tier the model offers is worse than an unstyled name. */
+/** The catalog's name, else the house table (`xhigh` → "x-high"), else the id: hiding an offered tier is worse. */
 export function effortLabel(level: SessionEffortLevel): string {
   if (level.name !== undefined && level.name !== "") {
     return level.name;
@@ -43,20 +37,15 @@ function fallbackEffortLevels(): SessionEffortLevel[] {
   return EFFORT_LEVELS.map((l) => ({ id: l.id, name: l.label }));
 }
 
-/** The current model's OWN default tier, or "" when the catalog does not say. Read
- *  off the catalog, never tabulated here: the value is a property of the model. */
+/** The current model's own default tier, or "" when the catalog does not say. */
 function modelDefaultEffort(session: Session | undefined, models: readonly ModelInfo[]): string {
   return models.find((m) => m.model_id === session?.model)?.default_effort_level ?? "";
 }
 
-/** The tiers to render and the tier that is live, for a chat.
- *
- *  Levels: the session's catalog, else the pre-session template's, else the
- *  canonical five. Live tier, highest first: the chat's own choice, the level the
- *  session reports running at, the level last picked anywhere (`seed`), then the
- *  model's default. `effortPillLabel` and `BridgeCoordinator.effortFor` resolve the
- *  same order, so diverging here makes the pill lie about the session. The choice
- *  and the seed are reconciled against `levels`; the model default already is. */
+/**
+ * Tiers to render and the live tier. Levels: session catalog, else pre-session template, else the canonical five.
+ * Live tier, highest first: the chat's choice, the session's reported level, the remembered pick, the model default.
+ */
 export function effortVocabulary(
   session: Session | undefined,
   models: readonly ModelInfo[],
@@ -74,7 +63,6 @@ export function effortVocabulary(
     session?.effort_active ?? "",
     ifOffered(seed, levels),
     modelDefaultEffort(session, models),
-    // The pre-session template's own active level is the service's answer too.
     catalogEffortActive,
   ];
   const active = candidates.find((level) => level !== "") ?? "";
@@ -95,10 +83,43 @@ export function sameLevels(
   return a.length === b.length && a.every((l, i) => l.id === b[i]?.id && l.name === b[i].name);
 }
 
-/** Whether the CURRENT model advertises reasoning effort (`_meta.kiro.hasEffort`,
- *  plumbed onto the catalog entries). When no entry carries it the server has not
- *  plumbed it at all, and the answer is true: hiding a working control on a missing
- *  field is worse than showing one that does nothing. */
+/** A sentinel id no effort tier can carry, so a tier named "off" cannot collide. */
+export const THINKING_OFF: SessionEffortLevel = { id: "thinking:off", name: "off" };
+
+/**
+ * Whether thinking is or will be off: session report, then the chat's choice, then the model default. Twin of
+ * `marotte.Chat.ThinkingIsOff`; the two must agree.
+ */
+export function thinkingIsOff(session: Session | undefined, models: readonly ModelInfo[]): boolean {
+  const active = session?.thinking_active ?? "";
+  if (active !== "") {
+    return active === "off";
+  }
+  const choice = session?.thinking_choice ?? "";
+  if (choice !== "") {
+    return choice === "off";
+  }
+  const model = session?.model ?? "";
+  return models.some((m) => m.model_id === model && m.thinking_default_off === true);
+}
+
+/** Whether the current model lets thinking be turned off (`thinking_toggleable`). */
+export function modelThinkingToggleable(models: readonly ModelInfo[], modelID: string): boolean {
+  return models.some((m) => m.model_id === modelID && m.thinking_toggleable === true);
+}
+
+/** Whether the slider sits on Off: a toggleable model with thinking off. */
+export function thinkingOffShown(
+  session: Session | undefined,
+  models: readonly ModelInfo[],
+): boolean {
+  return modelThinkingToggleable(models, session?.model ?? "") && thinkingIsOff(session, models);
+}
+
+/**
+ * Whether the current model advertises effort (`_meta.kiro.hasEffort`). True when no entry carries the field: hiding
+ * a working control on a missing field is worse.
+ */
 export function modelHasEffort(models: readonly ModelInfo[], modelID: string): boolean {
   let plumbed = false;
   let current = false;
@@ -113,12 +134,10 @@ export function modelHasEffort(models: readonly ModelInfo[], modelID: string): b
   return plumbed ? current : true;
 }
 
-/** The tier to name on the model pill, a READOUT of the level in force rather than
- *  a marker for an exception. Empty in two cases: the model advertises no effort, so
- *  there is no tier, or nothing resolved at all, so naming one would invent it.
- *
- *  Resolves through `effortVocabulary`, so the pill and the card's mark cannot
- *  disagree about what the session runs at. */
+/**
+ * The tier to name on the model pill, a readout of the level in force. Empty when the model has no effort or nothing
+ * resolved.
+ */
 export function effortPillLabel(
   session: Session | undefined,
   models: readonly ModelInfo[],
@@ -126,6 +145,9 @@ export function effortPillLabel(
 ): string {
   if (!modelHasEffort(models, session?.model ?? "")) {
     return "";
+  }
+  if (thinkingOffShown(session, models)) {
+    return effortLabel(THINKING_OFF);
   }
   const { levels, active } = effortVocabulary(session, models, seed);
   if (active === "") {

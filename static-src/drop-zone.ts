@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// Shared drag-drop zone helper. Handles the boilerplate of dragenter/
-// dragleave counting, overlay show/hide, and dropEffect. Consumers
-// provide the container, overlay element, and drop handler.
-// ---------------------------------------------------------------------------
-
 import { announce } from "@cplieger/ui-primitives/announce";
 
 /** Options for installing a drop zone on a container element. */
@@ -12,8 +6,7 @@ export interface DropZoneOptions {
   container: HTMLElement;
   /** The overlay element to show/hide (must have a "hidden" class toggle). */
   overlay: HTMLElement;
-  /** Called on dragover for custom logic (e.g. folder hover targeting).
-   *  Return value is unused; the default dropEffect="copy" is always set. */
+  /** Called on dragover (e.g. folder targeting); dropEffect is always "copy". */
   onDragOver?: (e: DragEvent) => void;
   /** Called on dragleave when the drag fully exits the container. */
   onDragLeave?: () => void;
@@ -22,18 +15,8 @@ export interface DropZoneOptions {
 }
 
 /**
- * Install drag-drop event listeners on a container with overlay feedback.
- * Handles the dragenter/dragleave counter pattern so nested elements don't
- * cause flicker. The overlay is shown on first enter, hidden on full leave
- * or drop.
- *
- * A11y: announces drop-target activation through the shared
- * @cplieger/ui-primitives announce() live region (assertive) — no per-consumer
- * sr-only element, so multiple drop zones no longer accumulate their own
- * regions on <body>. The old on-leave textContent clear is gone with it:
- * clearing a live region is silent for assistive tech anyway, so the last
- * message simply ages out of the shared region. The deprecated
- * aria-dropeffect attribute (removed in WAI-ARIA 1.2) is NOT used.
+ * Install drag-drop listeners with overlay feedback. A dragenter/dragleave counter stops nested elements flickering
+ * the overlay. Announces drop-target activation through the shared announce() live region.
  */
 export function installDropZone(opts: DropZoneOptions): void {
   let dragCounter = 0;

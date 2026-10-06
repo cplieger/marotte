@@ -7,12 +7,9 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// fetchMetadataGate refuses any /api request a browser marks as coming from
-// another site, the Fetch Metadata resource-isolation policy
-// (https://web.dev/articles/fetch-metadata). A sandboxed preview frame has an
-// opaque origin, so its requests are cross-site: this is what keeps a GET with a
-// side effect, or the shell WebSocket handshake, out of a previewed page's
-// reach. An absent header (curl, health probes) and same-origin pass.
+// fetchMetadataGate refuses any /api request a browser marks as cross-site or same-site
+// (https://web.dev/articles/fetch-metadata), which keeps a sandboxed preview frame's opaque
+// origin away from side-effecting GETs and the shell WebSocket. An absent header passes.
 func fetchMetadataGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, apiPathPrefix) {

@@ -1,10 +1,5 @@
-// The leaf's library question: static-src/textsearch imports nothing from
-// marotte, and nothing from anywhere else either, so the directory can be lifted
-// into cplieger/textsearch unchanged. Read off each module's own AST rather than
-// asserted by the realm, because a module that imported a DOM-free marotte helper
-// would load fine in any project and every other test would stay green.
-//
-// Node placement because the sources are a disk read.
+// static-src/textsearch imports nothing from marotte or anywhere else, so it can be lifted into its
+// own library unchanged. Read off each module's AST: a DOM-free marotte import loads in any realm.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";

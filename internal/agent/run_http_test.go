@@ -1,9 +1,5 @@
 package agent
 
-// Tests for the run read handler's own guards. The passthrough has nothing to assert
-// that is not a restatement, and the step-session seeding is tested where the registry
-// lives, so the assertion can be about the consequence rather than about a map.
-
 import (
 	"bytes"
 	"context"
@@ -22,8 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// TestHandleRun_RejectsNonGET: this surface is read-only at the method level too, so a
-// POST here is not a missing feature to route somewhere.
+// TestHandleRun_RejectsNonGET pins that the surface is read-only.
 func TestHandleRun_RejectsNonGET(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
@@ -36,30 +31,27 @@ func TestHandleRun_RejectsNonGET(t *testing.T) {
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
-	// The route cannot match this, but a hand-built request can: 400 beats calling KAS.
+	// A hand-built request can reach this: 400 before calling KAS.
 	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodGet, "/api/runs/", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET with no id = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
-// runReq builds GET /api/runs/{id} with the path value the handler reads instead of
-// parsing the URL.
+// runReq builds GET /api/runs/{id} with the path value set.
 func runReq(id string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id, nil)
 	req.SetPathValue("id", id)
 	return req
 }
 
-// runReply is what this test reads out of the run endpoint. `state` stays RAW so an
-// assertion about the spliced key cannot pass against a reply that lost KAS's own tree.
+// runReply is the decoded run reply; `state` stays raw so a spliced key cannot hide a lost tree.
 type runReply struct {
 	State    json.RawMessage      `json:"state"`
 	OpenAsks []marotte.RunOpenAsk `json:"open_asks"`
 }
 
-// getRun serves one read and hands back both the decoded reply and the BYTES, because
-// `[]` against `null` and a present-but-empty field are only visible in the bytes.
+// getRun returns the decoded reply and the bytes: `[]` versus `null` shows only in bytes.
 func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -74,9 +66,7 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 	return out, rec.Body.String()
 }
 
-// TestHandleRun_CarriesTheRunsOpenAsks pins the one thing marotte adds to an otherwise
-// verbatim passthrough. It exists so an agent handed a deferral can find the question and
-// the ask id to answer with; before it, both were reachable only off the live SSE frame.
+// TestHandleRun_CarriesTheRunsOpenAsks pins `open_asks`, so an agent handed a deferral can find the question and its ask id.
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	t.Run("an ask carries its id, question and node, and the passthrough survives", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
@@ -158,8 +148,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	t.Run("a reconciled ask serialises an empty question rather than omitting it", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
-		// The shape reconcileNeedInput mints after a restart: the registry is in memory,
-		// so the text is gone while the run stays parked.
+		// The shape reconcileNeedInput mints after a restart.
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_1"),
 			payload: marotte.RunInputNeededPayload{
@@ -185,10 +174,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	})
 }
 
-// TestHandleRun_GradesAFailedReadThreeWays pins the split the CLIENT spends: the run store
-// stops re-reading on a 404 and keeps its bounded retry ladder on anything else, so a
-// transient dressed as a 404 costs a card that never refreshes and a settled 404 dressed as
-// a 5xx costs four reads per event for an answer that cannot change.
+// TestHandleRun_GradesAFailedReadThreeWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
 func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 	tests := []struct {
 		name string
@@ -196,8 +182,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 		want int
 	}{
 		{
-			// KAS resolved the workflow id and refused, so the answer is the same however
-			// often it is asked.
+			// KAS resolved the id and refused: the answer will not change.
 			name: "the engine answered ABOUT the run",
 			arm: func(br *fakeBridge) {
 				br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
@@ -208,8 +193,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			want: http.StatusNotFound,
 		},
 		{
-			// A capability answer: no number of attempts talks an engine with no workflow
-			// verbs into describing a run, which is why the ladder is bounded.
+			// An engine without workflow verbs never will describe a run.
 			name: "the engine has no workflow verb",
 			arm: func(br *fakeBridge) {
 				br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
@@ -217,8 +201,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			want: http.StatusServiceUnavailable,
 		},
 		{
-			// Nothing was answered at all, so nothing was learned about the run. A 404 here
-			// would tell the client to stop asking about a run that may well exist.
+			// Nothing reached the engine, so nothing was learned.
 			name: "the read never reached the engine",
 			arm: func(br *fakeBridge) {
 				br.setCallErr(methodKiroWorkflowInspect, errors.New("bridge exited"))
@@ -269,9 +252,7 @@ func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat is the projection's contract: a
-// chat-parented run carries the chat its `run_start` arrived on, a parentless run carries
-// none, and it is served off marotte-local state with no KAS round trip.
+// TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat pins that chat-parented runs carry their chat, parentless none, served without KAS.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h, _, br := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -304,8 +285,7 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ATerminalRunLeavesTheProjection: the terminal frame releases the
-// lease, so presence stays the non-terminal claim the eviction exemption needs.
+// TestHandleLiveRuns_ATerminalRunLeavesTheProjection pins that the terminal frame releases the lease.
 func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -325,10 +305,7 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	}
 }
 
-// Both surfaces carry a chat-parented run, and what separates them is the answer each is
-// FOR: /api/runs/live projects the run with the chat it belongs to, because its consumer
-// is that chat's eviction exemption, while History attributes the run to the chat so the
-// row's door can nest the run's tab under it.
+// /api/runs/live projects the run for the chat's eviction exemption; History attributes it so the row nests the run's tab.
 func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -363,11 +340,8 @@ func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart: the projection serves a
-// restart-surviving run from the persisted bytes with ZERO frames observed, because a
-// paused run emits nothing until resumed and the client needs the row to paint its dot.
-// Served NOT-EXECUTING: NewStore parks every loaded deadline, and the bridge carrying
-// this run's frames died with the process that set it.
+// TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart pins that a paused run emits nothing, so the persisted lease
+// must paint the dot. Not executing: NewStore parks every loaded deadline.
 func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -381,7 +355,7 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	// The restart: a fresh store over the same directory, and no frame replayed.
+	// The restart: a fresh store over the same directory.
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -398,10 +372,8 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock: the field is the lease's own
-// knowledge rather than a KAS status, armed on start and resume and parked on pause. The
-// pause half is the point — a run parked on a question writes nothing for hours, so the
-// eviction exemption must lapse while the ROW survives for the dot and the tab parent.
+// TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock pins that armed on start and resume, parked on pause, so a
+// parked run's eviction exemption lapses while its row survives.
 func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -413,7 +385,7 @@ func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
 		t.Fatalf("a run that just started is not projected as executing: %+v", out.Runs)
 	}
 
-	// The run-level pause frame, which is what parks the deadline.
+	// The run-level pause frame parks the deadline.
 	h.runs.observePaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})(
 		t.Context(), "c-live", runNotif(methodWFPaused, map[string]any{"workflowId": "wf_agent"}),
 	)
@@ -429,9 +401,7 @@ func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat: a version-1 file written
-// before Lease.ChatID existed still loads (the field is additive), and its rows project
-// with an empty chat_id — "no chat to exempt".
+// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat pins that a version-1 file loads with an empty chat_id.
 func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -456,9 +426,7 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	}
 }
 
-// TestHandleControls serves the affordance route and pins its envelope. The endpoint
-// exists because the CLIENT cannot answer the question: it decided the control row from a
-// map written only by SSE frames, so a reloaded client read every run as parentless.
+// TestHandleControls pins the affordance route's envelope: the client cannot answer this from SSE state alone.
 func TestHandleControls(t *testing.T) {
 	controlsReq := func(id string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
@@ -484,8 +452,7 @@ func TestHandleControls(t *testing.T) {
 		}
 	})
 
-	// Retry is offered and the parent chat travels with it, because the run page's
-	// step-transcript note asks the same question.
+	// Retry is offered with the parent chat, for the step-transcript note too.
 	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
@@ -507,7 +474,7 @@ func TestHandleControls(t *testing.T) {
 	})
 
 	t.Run("a live run whose engine is gone carries the refusal sentence", func(t *testing.T) {
-		// Chat closed, so nothing in this process holds the run.
+		// Chat closed: nothing here holds the run.
 		h, br := seedChatParentedRun(t, false)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		rec := httptest.NewRecorder()
@@ -530,8 +497,7 @@ func TestHandleControls(t *testing.T) {
 
 	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// An engine with no workflow verb: rr.status reports "" rather than an error,
-		// which means "no status to gate on".
+		// rr.status reports "" for an engine without workflow verbs.
 		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
@@ -554,8 +520,7 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 	return req
 }
 
-// TestHandleAnswer pins the guards and the ONE status that is not a fault: a 409 means
-// another surface answered first or the step moved on.
+// TestHandleAnswer pins the guards and the 409: another surface answered or the step moved on.
 func TestHandleAnswer(t *testing.T) {
 	t.Run("it refuses a non-POST", func(t *testing.T) {
 		h, _, _ := newTestHub()
@@ -597,8 +562,7 @@ func TestHandleAnswer(t *testing.T) {
 		}
 	})
 
-	// The second 409 cause, told apart by the server's sentence alone: this one is
-	// RETRYABLE and the card is already back, so it must not reach the 400 arm.
+	// The retryable 409, told apart by its sentence.
 	t.Run("a run between steps is a 409 that says to retry", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -626,8 +590,7 @@ func TestHandleAnswer(t *testing.T) {
 		}
 	})
 
-	// A park drops the process, so "nothing hosts this run" is the ordinary state of
-	// every run an ask is raised on: refusing there makes the card unanswerable.
+	// A park drops the process, so an unhosted run must re-host rather than refuse.
 	t.Run("a run with no bridge is re-hosted and answers 200", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
@@ -644,8 +607,7 @@ func TestHandleAnswer(t *testing.T) {
 		}
 	})
 
-	// With the re-host in place a failed SPAWN reaches this handler, whose default arm
-	// would read it as the caller's mistake and echo an internal path back.
+	// A failed spawn must answer 500, not echo an internal path.
 	t.Run("a failed spawn answers a generic 500", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -672,7 +634,7 @@ func TestHandleAnswer(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "fork/exec") {
 			t.Errorf("the body = %s, want a generic sentinel", rec.Body.String())
 		}
-		// Hosting BEFORE the claim: a spawn that never reached KAS leaves the card.
+		// Hosting precedes the claim, so a failed spawn leaves the card.
 		if !h.runs.asks.HasRun("wf_1") {
 			t.Error("the ask was consumed by a failure that never reached KAS, so the card " +
 				"is gone from every surface with the question still open")
@@ -703,22 +665,16 @@ func pauseReq(id string) *http.Request {
 	return req
 }
 
-// TestControlHandler_ForwardsKASsOwnRefusal: a hosted run whose verb KAS refuses must
-// answer 409 carrying KAS's reason, not a generic failure — otherwise the reason reaches
-// the log alone.
-//
-// The run is HOSTED, so the pause reaches the process that holds it and the refusal
-// is KAS's own.
+// TestControlHandler_ForwardsKASsOwnRefusal pins that a hosted run's refused verb answers 409 with KAS's reason.
 func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
-	// What makes the affordance offer pause: this process holds the run.
+	// This process holds the run, so pause is offered.
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-	// The shape KAS actually refuses in: -32603 with the reason in `error.data`, which
-	// is why the client is handed rpcerr.Text rather than error.Message.
+	// KAS refuses with -32603 and the reason in `error.data`, hence rpcerr.Text.
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowPause: {
 			Code:    -32603,
@@ -741,9 +697,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 	}
 }
 
-// TestHandleResume_AClaimInFlightIsReaderText: KAS refuses a second claim in flight with
-// a sentence about "another process", which here is usually a second verb on the same
-// carrier. The reader gets plain words keyed on the typed refusal instead.
+// TestHandleResume_AClaimInFlightIsReaderText pins that KAS's "another process" refusal becomes plain words.
 func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -780,9 +734,7 @@ func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
 	}
 }
 
-// TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure: the re-host put a
-// SERVER fault on a path that had only ever carried a caller's mistake, so
-// `errRunHostStart` reached the 400 arm. 400 for a KAS refusal here is deliberate.
+// TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure pins that a start failure is 500, a KAS refusal 400.
 func TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure(t *testing.T) {
 	post := func(t *testing.T, h *Runtime, nodeID, status string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -811,8 +763,7 @@ func TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure(t *testing.T
 
 	t.Run("a failed spawn answers a generic 500", func(t *testing.T) {
 		h, _, br := newTestHub()
-		// The pre-send target read has to LAND, or the handler answers its own 409 and
-		// the spawn failure this case is about is never reached.
+		// The pre-send read must land to reach the spawn failure.
 		addressableStep(t, h, br, "wf_1", "review")
 		br.startErr = errors.New("fork/exec: no such file or directory")
 
@@ -827,10 +778,7 @@ func TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure(t *testing.T
 	})
 }
 
-// stepTargetInspect is one run parked at ONE step, so statusUpdateTarget resolves to
-// nodeID and the write goes. Every node carries `type`, because KAS's resolver considers
-// `type: "step"` alone and its tree builder stamps it — a fixture omitting it describes
-// a wire KAS does not send.
+// stepTargetInspect is a run parked at one step. Every node carries `type`: KAS's resolver considers `step` only.
 func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -851,8 +799,7 @@ func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage 
 	return raw
 }
 
-// addressableStep parks the run on nodeID and warms the utility session, so a case
-// exercises the arm it is about rather than the pre-send read's own refusal.
+// addressableStep parks the run on nodeID and warms the utility session.
 func addressableStep(t *testing.T, h *Runtime, br *fakeBridge, workflowID, nodeID string) {
 	t.Helper()
 	br.setCallResult(methodKiroWorkflowInspect, stepTargetInspect(t, workflowID, nodeID))
@@ -878,8 +825,7 @@ func TestSetStepStatus(t *testing.T) {
 		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepRunning); err != nil {
 			t.Fatalf("SetStepStatus(running) = %v, want nil", err)
 		}
-		// `running` clears the completionSignal and re-drives the step with its DEFAULT
-		// continuation, so what it asked is unanswerable and every surface must be told.
+		// `running` re-drives the step with its default continuation, so the ask is moot.
 		if h.runs.asks.HasRun("wf_1") {
 			t.Error("continuing the step left its question live")
 		}
@@ -887,8 +833,7 @@ func TestSetStepStatus(t *testing.T) {
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		// SettledByUser HERE, unlike the node-completion door: only a reader clicking
-		// Continue-without-answering reaches this verb, so it IS their decision.
+		// SettledByUser: only a reader reaches this verb.
 		if got := settled[0]["settled_by"]; got != string(marotte.SettledByUser) {
 			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByUser)
 		}
@@ -904,8 +849,7 @@ func TestSetStepStatus(t *testing.T) {
 
 	t.Run("a chat-parented run resolves the launching chat's bridge", func(t *testing.T) {
 		h, cs, br := newTestHub()
-		// An AGENT-launched run has no bridge of its own — KAS parents it on the calling
-		// chat's session — so resolving that chat's bridge avoids a needless re-host.
+		// An agent-launched run has no bridge of its own; resolving the chat's bridge avoids a re-host.
 		cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_parent") })
 		// A live chat bridge holds the chat's current session.
 		br.sessionID = "sess_parent"
@@ -923,14 +867,10 @@ func TestSetStepStatus(t *testing.T) {
 	})
 }
 
-// TestSetStepStatus_WithholdsAMistargetedWrite guards against KAS's own target resolver:
-// the verb carries no node id, so a client naming node X can have KAS mark node Y. The
-// parallel case is the shape the ask card produces — two paused branches with the
-// SIGNAL-bearing one second, where the resolver takes the FIRST and `completed` publishes
-// that node's capture and stamps it finished.
+// TestSetStepStatus_WithholdsAMistargetedWrite pins that the verb carries no node id, so with two paused branches
+// KAS would mark the first while the card names the signal-bearing second.
 func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
-	// `plan` carries the need-input signal and `verify` is first in document order.
-	// `type` on every node, or the paused PARALLEL is what a naive walk names.
+	// `plan` carries the signal and `verify` comes first; `type` on every node.
 	branched := func(t *testing.T) json.RawMessage {
 		t.Helper()
 		raw, err := json.Marshal(map[string]any{
@@ -959,22 +899,19 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 
 	cases := []struct {
 		name string
-		// reply is the state tree the fake answers with; nil when readErr drives the
-		// case instead, since those are two different arms of stepStatusAddress.
+		// reply is the fake's state tree; nil when readErr drives the case.
 		reply   func(*testing.T) json.RawMessage
 		readErr error
 		nodeID  string
 		wantErr error
 	}{{
-		// The whole defect: the ask card names the signal-bearing branch and KAS
-		// would mark the first paused one instead.
+		// The defect: KAS would mark a different paused branch.
 		name:    "the signal-bearing branch is not the node KAS would mark",
 		reply:   branched,
 		nodeID:  "plan",
 		wantErr: errStepStatusMistargeted,
 	}, {
-		// The other side of the same tree: naming the node the resolver DOES pick
-		// must still go through, or the guard would refuse every parallel run.
+		// Naming the node KAS picks still goes through.
 		name:   "the node KAS would mark is sent",
 		reply:  branched,
 		nodeID: "verify",
@@ -989,8 +926,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 		nodeID:  "review",
 		wantErr: errStepStatusMistargeted,
 	}, {
-		// A RUNNING step outranks every paused one in KAS's resolver, so a reader
-		// marking a parked branch of a run that has moved on is refused.
+		// A running step outranks every paused one in KAS's resolver.
 		name: "a running step outranks the parked node being named",
 		reply: func(t *testing.T) json.RawMessage {
 			t.Helper()
@@ -1002,8 +938,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 		nodeID:  "plan",
 		wantErr: errStepStatusMistargeted,
 	}, {
-		// FAIL CLOSED, the opposite of answerAddress's fallback: a failed read there
-		// costs a prompt, here it would cost a write nothing undoes.
+		// Fail closed, unlike answerAddress: here a wrong guess is an irreversible write.
 		name: "an undecodable state is withheld rather than sent",
 		reply: func(t *testing.T) json.RawMessage {
 			t.Helper()
@@ -1012,8 +947,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 		nodeID:  "review",
 		wantErr: errStepStatusUnreadable,
 	}, {
-		// The OTHER unreadable shape and a separate arm: the inspect CALL fails. Both
-		// must withhold, or the fail-closed direction holds for one of them only.
+		// The failed-call shape must withhold too.
 		name:    "a failed read is withheld rather than sent",
 		readErr: errors.New("bridge exited"),
 		nodeID:  "review",
@@ -1045,8 +979,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("SetStepStatus(%q) = %v, want %v", tc.nodeID, err, tc.wantErr)
 			}
-			// A state-of-the-world refusal, so the REST layer answers 409 rather than
-			// telling the reader they asked wrongly.
+			// A run state, answered 409.
 			if !errors.Is(err, errStepStatusRefused) {
 				t.Errorf("SetStepStatus(%q) = %v, want it to wrap errStepStatusRefused",
 					tc.nodeID, err)
@@ -1060,10 +993,7 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 	}
 }
 
-// TestSetStepStatus_ParamsAreFlat pins the shape `_kiro/workflow/update` accepts: both
-// fields at the TOP level, no `update` object and no node id. The absent keys are
-// asserted too, because either one reappearing is the nested shape returning — and that
-// shape threw on every call.
+// TestSetStepStatus_ParamsAreFlat pins both fields at the top level, no `update` object and no node id; the nested shape threw.
 func TestSetStepStatus_ParamsAreFlat(t *testing.T) {
 	h, _, br := newTestHub()
 	addressableStep(t, h, br, "wf_1", "review")
@@ -1096,12 +1026,9 @@ func TestSetStepStatus_ParamsAreFlat(t *testing.T) {
 	}
 }
 
-// TestSetStepStatus_ReadsTheReply is the half a param fix alone would miss: KAS DECLINES
-// with a 200 rather than throwing, so a caller ignoring the result reports the write as
-// landed and leaves the reader clicking a control that changed nothing.
+// TestSetStepStatus_ReadsTheReply pins that KAS declines with a 200.
 func TestSetStepStatus_ReadsTheReply(t *testing.T) {
-	// `updated` is a *bool for the last row: absent is NO CLAIM and must read as taken,
-	// because an unstated field making a working verb report a refusal is worse.
+	// Absent `updated` is no claim and reads as taken.
 	cases := []struct {
 		name    string
 		reply   string
@@ -1113,8 +1040,7 @@ func TestSetStepStatus_ReadsTheReply(t *testing.T) {
 			reply: `{"workflowId":"wf_1","updated":true,"queued":false,"message":"Step marked completed; the workflow will advance."}`,
 		},
 		{
-			// applyStatusUpdate's queued arm: the signal is recorded and lands at the
-			// current turn's end, so the update was taken.
+			// A queued update lands at turn end, so it was taken.
 			name:  "a queued update",
 			reply: `{"workflowId":"wf_1","updated":true,"queued":true,"message":"Marked completed; the step finalizes when its current turn ends."}`,
 		},
@@ -1154,8 +1080,7 @@ func TestSetStepStatus_ReadsTheReply(t *testing.T) {
 			if !errors.Is(err, errStepStatusRefused) {
 				t.Fatalf("SetStepStatus = %v, want errStepStatusRefused", err)
 			}
-			// KAS's own sentence has to reach the reader: it names which of the two
-			// declines happened, and nothing this server knows can reconstruct it.
+			// KAS's sentence names which decline happened.
 			if !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Errorf("error = %q, want it to carry %q", err, tc.wantMsg)
 			}
@@ -1163,8 +1088,7 @@ func TestSetStepStatus_ReadsTheReply(t *testing.T) {
 	}
 }
 
-// TestHandleStepStatus_DeclineIsAConflict: a state of the world answered 400 tells the
-// reader they asked wrongly, the misattribution the answer route already avoids.
+// TestHandleStepStatus_DeclineIsAConflict pins that a run state is 409, not 400.
 func TestHandleStepStatus_DeclineIsAConflict(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})

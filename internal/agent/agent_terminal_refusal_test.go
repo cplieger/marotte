@@ -1,7 +1,5 @@
 package agent
 
-// What the five terminal responders owe a request they decline to process.
-
 import (
 	"encoding/json"
 	"testing"
@@ -10,34 +8,23 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestTerminalResponders_AnswerAnUndecodableRequest is the red check for the
-// drop class: a frame carrying an id that marotte declines to process gets a
-// well-formed fail-closed ANSWER, never a bare return.
-//
-// The id is already verified non-nil by the router, KAS awaits these with no
-// timeout, and marotte's own Call has no deadline either — so a dropped request
-// does not fail the tool call, it strands the promise and wedges the batch until
-// the process dies. respondCreate has answered through respondErr all along;
-// its four siblings returned in silence, with nothing logged either.
+// TestTerminalResponders_AnswerAnUndecodableRequest pins a fail-closed answer for every
+// declined request: KAS awaits these with no timeout, so a bare return wedges the batch.
 func TestTerminalResponders_AnswerAnUndecodableRequest(t *testing.T) {
 	for _, method := range []string{
 		methodTermOutput,
 		methodTermRelease,
 		methodTermWaitForExit,
 		methodTermKill,
-		// The counter-example that makes the other four an oversight rather than a
-		// decision: identical shape, and it has always answered.
+		// The sibling that has always answered.
 		methodTermCreate,
 	} {
 		t.Run(method, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			id := int64(4711)
 
-			// Valid JSON with the wrong TYPE on the field each verb reads, so the
-			// frame reaches the responder and fails at its decode rather than
-			// earlier. This is the trigger the whole class needs — the fields are
-			// type-stable strings today, so what makes it reachable is an upstream
-			// shape change, not a malformed sender.
+			// Valid JSON with the wrong type, so the frame fails at the responder's decode; an upstream
+			// shape change is what makes this reachable.
 			h.translateACPEvent("c1", &marotte.RPCResponse{
 				Method: method,
 				ID:     &id,
@@ -66,13 +53,8 @@ func TestTerminalResponders_AnswerAnUndecodableRequest(t *testing.T) {
 	}
 }
 
-// TestTerminalResponders_UseTheRequestsOwnChatID pins the half that decides
-// whether the refusal above reaches anyone.
-//
-// respondErr resolves the reply bridge from the manager BY CHAT ID, so a refusal
-// composed with an empty one misses the lookup and is dropped — which reproduces
-// the very wedge it was added to prevent, silently. respondOutput carries that
-// warning in a comment for its not-found path; it binds the decode path too.
+// TestTerminalResponders_UseTheRequestsOwnChatID pins the chat id respondErr resolves the
+// reply bridge by; an empty one drops the refusal.
 func TestTerminalResponders_UseTheRequestsOwnChatID(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(4712)

@@ -1,7 +1,5 @@
-// The subject-to-spec factory. `.node.test.ts` because the factory is DOM-free
-// by design and a test that never touches a document proves it; the two leaf
-// stores it reads for names are mocked, so every assertion here is about the
-// factory's own rules rather than about a store's contents.
+// The subject-to-spec factory, DOM-free by design; its two name stores are mocked, so assertions
+// are about the factory's own rules.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
@@ -20,10 +18,7 @@ import {
   type TabOpeners,
 } from "./tab-materialize.js";
 
-// PARTIAL, so `subagentStatusFor` is the real mapper. Faking it would put a second
-// copy of the ToolStatus-to-dot mapping in this file and the assertion would be about
-// that copy; what the factory owns is routing the invocation's status THROUGH the
-// mapper, so only the store READ is replaced.
+// PARTIAL, so `subagentStatusFor` is the real mapper; only the store READ is replaced.
 vi.mock("./store.js", async (orig) => ({
   ...(await orig<typeof StoreModule>()),
   get: vi.fn(() => undefined),
@@ -35,10 +30,8 @@ vi.mock("./run-store.js", () => ({
   runLabelOf: vi.fn(() => ""),
 }));
 
-// The five singleton loaders are reached through a lazy import, so a mock of each
-// module is what lets a test call `onShow` without pulling a page's worth of DOM
-// in. Each mock deliberately also exports the module's TOGGLE, so "the factory
-// never calls a toggle-style opener" is an assertion rather than a claim.
+// The singleton loaders are lazy imports; each mock also exports the module's TOGGLE, so "never
+// calls a toggle-style opener" is assertable.
 vi.mock("./settings-tabs.js", () => ({
   loadSettingsTabData: vi.fn(),
   refreshSettingsPanel: vi.fn(),
@@ -144,10 +137,7 @@ beforeEach(() => {
 
 // --- Totality ---
 
-// One row per kind: the whole vocabulary, so a kind that stops producing a spec
-// fails here rather than at the first reader who opens that tab. `ref` is what
-// each kind's identity actually is — a chat id, a path, a workflow id, nothing at
-// all for a singleton.
+// One row per kind, so a kind that stops producing a spec fails here. `ref` is each kind's identity.
 const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }[] = [
   { kind: "chat", ref: "c-abc", view: "#chat-view", route: { kind: "chat", id: "c-abc" } },
   {
@@ -207,13 +197,8 @@ describe("materializeTab is total over the eleven kinds", () => {
     expect(spec.route).toEqual(route);
   });
 
-  // `owns` is copied from the SUBJECT for every kind, never inferred from the kind,
-  // which is what stops a future case hardcoding `owns: true` because "a chat always
-  // owns its bridge".
-  //
-  // VIEW_KINDS above are the exceptions and they are hardcoded FALSE on purpose.
-  // Asserting the exception here is what stops it being re-derived as a subject
-  // field — see the run case below.
+  // `owns` is copied from the SUBJECT, never inferred from the kind. VIEW_KINDS are hardcoded FALSE,
+  // asserted so they are not re-derived as a subject field.
   it.each(CASES.filter((c) => !VIEW_KINDS.includes(c.kind)))(
     "$kind takes owns from the subject, not from the kind",
     ({ kind, ref }) => {
@@ -248,11 +233,8 @@ describe("materializeTab is total over the eleven kinds", () => {
 
 // --- The run case ---
 
-// ONE shape, whatever door opened it: the subpage view is universal across a parentless
-// workflow, a chat-triggered workflow and a subagent expansion, and a × that means
-// "close this" on one door and "destroy the work" on another is a gesture a reader
-// cannot learn. So a run tab NEVER carries a teardown, and no door can be given one by
-// setting a subject field.
+// ONE shape whatever door opened it: a run tab NEVER carries a teardown, so no subject field can
+// give one.
 describe("a run tab is always a view", () => {
   it("carries no teardown, whatever the subject says", () => {
     register();
@@ -282,11 +264,8 @@ describe("a subject with a parent", () => {
     expect(spec.parentId).toBe("t-parent");
   });
 
-  // The store says "top level" with an ABSENT field and the wire says it with an
-  // empty string. Setting `parentId: ""` instead would make `insertSpec` look for
-  // a tab whose id is the empty string, miss, and fall through to its orphan
-  // path — the right position for the wrong reason, and a real parent id would
-  // then be indistinguishable from a missing one.
+  // The store says "top level" with an ABSENT field; `parentId: ""` would send `insertSpec` looking
+  // for a tab with an empty id.
   it.each(CASES)("$kind with no parent carries no parentId at all", ({ kind, ref }) => {
     register();
     const spec = materializeTab(subject({ kind, ref, parent: "" }));
@@ -312,10 +291,7 @@ describe("the injection seam", () => {
     expect(() => materializeTab(subject({ kind: "chat", ref: "c-1" }))).toThrow(/"chat"/);
   });
 
-  // The failure this test exists for is the SILENT one: a factory that shipped a
-  // spec whose onShow was undefined would open a chat tab that renders and never
-  // loads its transcript, with nothing in the console. So the assertion is that
-  // no spec is produced at all.
+  // A spec with an undefined onShow would render a chat that never loads, silently, so no spec at all.
   it("produces no spec rather than one with an inert onShow", () => {
     let escaped: TabViewSpec | undefined;
     try {
@@ -421,19 +397,11 @@ describe("the chat dot", () => {
 
 // --- The subagent dot ---
 
-// Seeded from the SAME invocation the row's name comes from, which is the whole point:
-// a row cannot read `wf-workflow-creator` beside an empty dot slot. `subagent-dots.ts`
-// keeps it live afterwards, but on the door that matters — a transcript link, where the
-// invocation is already resident — the effect is a frame late, and 12-tabs.css no
-// longer reserves a slot for this kind to cover that frame.
+// Seeded from the SAME invocation as the name, so the row never shows a name beside an empty dot
+// slot for a frame (`subagent-dots.ts` is a frame late).
 describe("the subagent dot", () => {
-  /** A chat row holding one delegate invocation, stamped with the subtask the refs
-   *  below name. `findSubagentInvocation` matches on that id AND on the title, so both
-   *  have to be real or the factory correctly finds nothing.
-   *
-   *  The invocation is a `tool_call` ENTRY in the issuer's own lane, which is where the
-   *  slice looks for it: it walks `turn_order` newest-first and reads each turn's
-   *  entries, so a row is the two store fields `TurnSource` names and nothing else. */
+  /** A chat row holding one delegate invocation, a `tool_call` ENTRY in the issuer's lane;
+   *  `findSubagentInvocation` matches id AND title. */
   function withDelegate(status: string): void {
     vi.mocked(get).mockReturnValue({
       turn_order: ["t-1"],
@@ -523,10 +491,7 @@ describe("names", () => {
     expect(materializeTab(subject({ kind: "run", ref: "wf-1" })).name).toBe("nightly sweep");
   });
 
-  // The one half of the run's name this module owns. The store answers `""` for a
-  // run nothing has been fetched for, which is the normal state at the instant the
-  // server's own tab offer arrives — so a row built then would be called nothing
-  // at all without this.
+  // The store answers `""` for an unfetched run, the normal state when the server's tab offer arrives.
   it("falls back for a run this client has fetched nothing for", () => {
     register();
     expect(materializeTab(subject({ kind: "run", ref: "wf-1" })).name).toBe("Workflow run");
@@ -581,21 +546,15 @@ describe("names", () => {
 // --- The route inverse ---
 
 describe("subjectForRoute inverts the factory's route", () => {
-  // A real inverse property, not a table read back: the two directions are
-  // written independently in the same file, so a mapping that sends /run/{id} to
-  // the wrong kind fails here. It is also what catches the one place the two
-  // vocabularies differ — the route kind is `file` and the tab kind is `editor`.
+  // A real inverse: both directions are written independently; route kind `file` maps to tab `editor`.
   it.each(CASES)("$kind round-trips through its route", ({ kind, ref }) => {
     register();
     const route = materializeTab(subject({ kind, ref })).route;
     expect(subjectForRoute(route)).toEqual({ kind, ref });
   });
 
-  // The OTHER direction deliberately does not round-trip, for the three kinds whose
-  // route carries a SUB-TAB their subject cannot: that is what makes /settings/tools
-  // and /settings name one tab, the sub-position being corrected after activation by
-  // applyRoute. A files path is NOT one of those — it is the folder a route MINTS a
-  // browser at, so it survives into the ref.
+  // Not round-tripping for the three kinds whose route carries a SUB-TAB (corrected by applyRoute);
+  // a files path is the folder a route mints, so it survives into the ref.
   it.each([
     [{ kind: "settings", tab: "tools" } as Route, "settings"],
     [{ kind: "git", tab: "prs" } as Route, "git"],
@@ -612,21 +571,15 @@ describe("subjectForRoute inverts the factory's route", () => {
     });
   });
 
-  // Same rule one axis along: a run route's `#node=` fragment names a POSITION
-  // inside the tab, not a different tab, so it is dropped exactly like a
-  // singleton's sub-tab. This is what keeps applyRoute's history-origin guard
-  // honest — a Back press onto another node of an OPEN run must resolve to that
-  // tab, not read as a tab nobody has open.
+  // A `#node=` fragment is a POSITION inside the tab, dropped like a sub-tab, so a Back onto another
+  // node of an OPEN run resolves to that tab.
   it("drops a run route's node fragment", () => {
     const subject = { kind: "run", ref: "wf_1" };
     expect(subjectForRoute({ kind: "run", id: "wf_1", node: "wf_1/lint" })).toEqual(subject);
     expect(subjectForRoute({ kind: "run", id: "wf_1" })).toEqual(subject);
   });
 
-  // The default "/" route names no chat, so it resolves to a subject nothing can
-  // match — an empty ref belongs to a singleton. That answer is what makes the
-  // back/forward guard redirect "/" to whatever is on screen rather than looking
-  // for a chat tab with no id.
+  // "/" names no chat, so the back/forward guard redirects it to whatever is on screen.
   it("answers an unmatchable subject for the default chat route", () => {
     expect(subjectForRoute({ kind: "chat", id: "" })).toEqual({ kind: "chat", ref: "" });
   });
@@ -635,21 +588,15 @@ describe("subjectForRoute inverts the factory's route", () => {
 // --- Singleton loaders ---
 
 describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
-  /** Let a lazy import settle. The loader modules are mocked, so the dynamic
-   *  import resolves out of the module registry rather than off the network and
-   *  one macrotask is enough. Cheaper than polling, and it keeps these cases
-   *  under the suite's 100ms slow-test threshold. */
+  /** Let a lazy import settle: mocked loaders resolve from the registry in one macrotask. */
   async function settle(): Promise<void> {
     await new Promise((done) => {
       setTimeout(done, 0);
     });
   }
 
-  // A toggle CLOSES the tab when it is already active, so a factory that reached
-  // one would make materializing a subject destroy the tab it describes.
-  //
-  // `forceDocsTab` is the SECOND thing this pins: the activation must not force the
-  // canonical sub-tab, which is what discarded the reader's own on every switch back.
+  // A toggle CLOSES an active tab, so reaching one would destroy the tab being materialized. Also
+  // pins that activation does not force the canonical sub-tab.
   it("docs", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).onShow?.();
@@ -658,10 +605,8 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(forceDocsTab).not.toHaveBeenCalled();
   });
 
-  // Settings and files have NO activation half left: each one's whole `onShow` was
-  // the data half, so the field is dropped rather than emptied — an `onShow` that
-  // did nothing would read as a door somebody forgot to wire. For files the data
-  // half is also the BIND, which is why it may not be split across the two hooks.
+  // No activation half: settings' and files' `onShow` was the data half (for files, the BIND), so the
+  // field is dropped.
   it("settings has no onShow at all", () => {
     register();
     expect(materializeTab(subject({ kind: "settings" })).onShow).toBeUndefined();
@@ -751,11 +696,8 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   });
 });
 
-// A ref arrives from the persisted set bounded only by MaxRefBytes, so a trailing
-// slash and an interior double slash are both legal spellings of one folder. The
-// factory normalises once and spends that value on the name, the route and the lazy
-// call, so all three name the same folder; without it the label and the URL would
-// carry the spelling while the state loaded the canonical folder.
+// A persisted ref may carry trailing or double slashes; normalised once so name, route and lazy
+// call name the same folder.
 describe("a non-canonical files ref resolves to ONE folder", () => {
   async function settle(): Promise<void> {
     await new Promise((done) => {

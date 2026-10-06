@@ -11,7 +11,7 @@ describe("buildPlanRow / updatePlanRow markup", () => {
   it("renders the status glyph + content as a text node and sets data-status", () => {
     const row = buildPlanRow(entry({ content: "Do <the> thing & stuff", status: "completed" }));
     expect(row.dataset["status"]).toBe("completed");
-    // text node, not HTML — the angle brackets/ampersand survive verbatim.
+    // A text node, not HTML: the angle brackets and ampersand survive verbatim.
     expect(row.textContent).toBe("\u2705 Do <the> thing & stuff");
     expect(row.querySelector(".plan-hi")).toBeNull();
   });

@@ -1,5 +1,3 @@
-// The PR tab's filter box: what it matches and the note it writes.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   applyFilter,
@@ -69,10 +67,7 @@ afterEach(restorePRsTab);
 describe("the PR filter", () => {
   const HOUR_MS = 3_600_000;
 
-  /** Six rows across two repos, between them rendering every string a row can:
-   *  a draft tag, a failing chip with its Re-run, a running chip with its
-   *  Merge-when-green, an armed auto-merge, a closed PR's Reopen, an author, an
-   *  age, and both branches. */
+  /** Six rows across two repos rendering every string a row can carry. */
   const fixture = (): Record<string, unknown>[] => [
     pr(
       1234,
@@ -103,12 +98,11 @@ describe("the PR filter", () => {
     pr(11, 1, { title: "Zebra crossing", source_branch: "fix/zebra", target_branch: "dev" }),
   ];
 
-  /** The row set on screen, by PR number, in DOM order. */
   function shownNumbers(): string[] {
     return [...mount().querySelectorAll(".git-pr-row-number")].map((e) => e.textContent ?? "");
   }
 
-  /** Every non-blank text node under `row`, which is what a reader sees. */
+  /** Every non-blank text node under `row`: what a reader sees. */
   function renderedStrings(row: HTMLElement): string[] {
     const out: string[] = [];
     const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
@@ -122,13 +116,10 @@ describe("the PR filter", () => {
   }
 
   it("reaches every string a row renders, and the census walks them all back in", async () => {
-    // ONE list feeds both the row and the haystack, so a reader typing any string
-    // they can see (the author, the number, a branch) keeps the row; this types
-    // every text node of every row into the box and asserts the row survives.
-    // GitLab, because it is the forge whose rows offer every control.
+    // One list feeds both the row and the haystack, so any string a reader can see keeps the row; this types every text
+    // node into the box. GitLab, whose rows offer every control.
     routeAPI({ forges: [gitlabForge] });
-    // One more row for the states only it renders: a queue position, a neutral
-    // verdict, and Merge waiting on a verdict the forge has not given.
+    // The states only this row renders: a queue position, a neutral verdict, Merge waiting on an undecided verdict.
     const queued = pr(
       12,
       1,
@@ -159,8 +150,7 @@ describe("the PR filter", () => {
       }
     }
     applyFilter("");
-    // The premise: the fixture renders strings only a badge, an author or a branch
-    // carries, so the loop above is a census and not a walk over titles.
+    // The premise: the fixture renders strings only a badge, an author or a branch carries, so the loop is a census.
     for (const literal of [
       "#1234",
       "draft",
@@ -271,8 +261,7 @@ describe("the PR filter", () => {
     expect(notes.at(-1)).toBe("");
 
     applyFilter("check");
-    // `checks running` ×2 (the armed row's chip too) plus `checks passed`, and the
-    // failing row through the sentence under it saying why Merge is disabled.
+    // `checks running` ×2 (the armed row's chip too), `checks passed`, and the failing row through its Merge-disabled sentence.
     expect(notes.at(-1)).toBe("4 pull requests; 6 pull requests scanned");
 
     applyFilter("zebra");
@@ -280,9 +269,7 @@ describe("the PR filter", () => {
   });
 
   it("says No matches when the filter drops every row, and offers no advice", async () => {
-    // Every rendered string is reachable, so a query that drops every row matched
-    // nothing on screen, and the note says what was found rather than advising a
-    // change the reader has no field to make.
+    // Every rendered string is reachable, so the note says what was found instead of advising a change.
     routeAPI();
     serveRows(fixture());
     const { refreshPRs } = await load();
@@ -298,12 +285,8 @@ describe("the PR filter", () => {
   });
 
   it("opens a section the reader had collapsed when it holds a matching row", async () => {
-    // `reconcile` keeps the section ELEMENT across paints and only the body was
-    // repainted, so the mount's open-state decision was the only one a section
-    // ever got: a filter typed after the reader collapsed a section kept its
-    // selected row inside an aria-hidden, inert region. The open state is decided
-    // again on every paint now, a filter outranks the reader's latch while it
-    // stands, and the latch is read again once the box is empty.
+    // The section element survives paints, so the open state is decided again on every paint: a filter outranks the
+    // reader's latch while it stands, or a match sits inside an aria-hidden, inert region.
     routeAPI();
     serveRows(fixture());
     const { refreshPRs } = await load();
@@ -326,8 +309,7 @@ describe("the PR filter", () => {
   });
 
   it("keeps a section the reader collapsed closed across a refresh", async () => {
-    // The re-decision must not undo the reader: a refresh with no filter reads
-    // the latch, so a collapsed section stays collapsed however many entries land.
+    // A refresh with no filter reads the latch, so a collapsed section stays collapsed.
     routeAPI();
     serveRows(fixture());
     const { refreshPRs, initPRsTab } = await load();

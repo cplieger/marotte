@@ -27,10 +27,8 @@ func indexByName(items []kiroConfigItem) map[string]kiroConfigItem {
 	return byName
 }
 
-// TestScanKiroDirFS_AgentsDedupPreferMd verifies a paired foo.json+foo.md
-// collapses to ONE agent pointing at the .md, that a .json-only agent is
-// still listed (the pre-fix scan omitted it), and that a .md-only agent
-// is listed.
+// TestScanKiroDirFS_AgentsDedupPreferMd pins that a .json+.md pair collapses to the .md, and
+// that .json-only and .md-only agents are listed.
 func TestScanKiroDirFS_AgentsDedupPreferMd(t *testing.T) {
 	fsys := fstest.MapFS{
 		"agents/foo.json": {Data: []byte(`{"name":"foo"}`)},
@@ -76,10 +74,7 @@ func TestScanKiroDirFS_SkillsAreSubdirs(t *testing.T) {
 	}
 }
 
-// TestScanKiroDirFS_SteeringInclusion verifies steering docs classify by
-// their front-matter inclusion mode, including a BOM+CRLF-authored file
-// that the old exact-`---\n`-prefix parser would have mis-defaulted to
-// "always".
+// TestScanKiroDirFS_SteeringInclusion pins classification by inclusion mode, BOM+CRLF included.
 func TestScanKiroDirFS_SteeringInclusion(t *testing.T) {
 	fsys := fstest.MapFS{
 		"steering/always.md": {Data: []byte("# no frontmatter")},
@@ -99,10 +94,7 @@ func TestScanKiroDirFS_SteeringInclusion(t *testing.T) {
 	}
 }
 
-// TestScanKiroDirFS_Caps verifies the per-directory scan caps: 20
-// steering docs, 20 skills, 10 agents. Feeding more than each cap and
-// asserting the EXACT capped count distinguishes a > cap boundary from a
-// broken loop that returns everything or nothing.
+// TestScanKiroDirFS_Caps pins the EXACT capped counts (20 steering, 20 skills, 10 agents).
 func TestScanKiroDirFS_Caps(t *testing.T) {
 	fsys := fstest.MapFS{}
 	for i := range 25 {
@@ -124,9 +116,7 @@ func TestScanKiroDirFS_Caps(t *testing.T) {
 	}
 }
 
-// TestScanSteering_CapsOversizeRead verifies a steering file larger than
-// the read cap is still classified from its front-matter head (the read
-// is bounded, not skipped) — the OOM guard must not drop the doc.
+// TestScanSteering_CapsOversizeRead pins that an over-cap file is still classified from its head.
 func TestScanSteering_CapsOversizeRead(t *testing.T) {
 	head := "---\ninclusion: manual\n---\n"
 	big := make([]byte, steeringReadCap+(1<<20)) // > cap

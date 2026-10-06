@@ -9,8 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// plansOf decodes every plan entry in entries, in file order, beside the turn each
-// one landed in.
+// plansOf decodes every plan entry in entries, in file order, with its turn.
 func plansOf(t *testing.T, entries []marotte.Entry) (turns []string, plans []marotte.EntryPlan) {
 	t.Helper()
 	for i := range entries {
@@ -64,11 +63,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 	}
 }
 
-// A plan frame is one plan entry in the open turn, and a repeat of it seals
-// nothing: ACP resends the whole entries array per update, so a frame equal to the
-// turn's newest plan is no new state, while a changed one appends the next state.
-// The client renders a turn's newest plan, so the log carrying every state costs
-// no second card.
+// A repeated plan frame seals nothing (ACP resends the whole array); a changed one appends. The client renders the newest.
 func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -96,9 +91,7 @@ func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T
 	}
 }
 
-// A plan folds into the chat's OWN open turn, so a plan streamed in a later turn
-// lands in that turn and the earlier turn keeps its own. Without the fold every
-// plan in a chat would land in whatever turn came first.
+// A plan folds into the chat's own open turn, so each turn keeps its own.
 func TestHandlePlan_EachTurnKeepsItsOwnPlan(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -135,16 +128,13 @@ func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 
 	before := h.bus.fanout.Position().Head
 
-	// Same mode → no broadcast. KAS's current_mode_update keys the new
-	// mode on currentModeId (not modeId — that is the outbound set_mode
-	// request's field).
+	// Same mode, no broadcast. current_mode_update keys on currentModeId; modeId is the outbound set_mode field.
 	raw := json.RawMessage(`{"currentModeId":"code"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw)
 	if head := h.bus.fanout.Position().Head; head != before {
 		t.Errorf("expected no broadcast for same mode")
 	}
 
-	// Different mode → broadcast.
 	raw2 := json.RawMessage(`{"currentModeId":"chat"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw2)
 	if head := h.bus.fanout.Position().Head; head == before {

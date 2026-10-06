@@ -1,11 +1,5 @@
-// ---------------------------------------------------------------------------
-// Away summary: when the user returns after being away for >15 minutes
-// AND the agent consumed >5K tokens, show a "Welcome back" toast
-// summarizing what happened.
-//
-// v1 uses heuristic summaries (reply/tool counts). v2 could use
-// CheapestModel for AI-generated recaps.
-// ---------------------------------------------------------------------------
+// Away summary: after >15 minutes away with >5K tokens consumed, a "Welcome back" toast
+// summarizes what happened, heuristically (reply and tool counts).
 
 import { getActive } from "./store.js";
 import { payloadOf } from "./turns.js";
@@ -88,11 +82,8 @@ class AwaySummaryController {
       let spoke = false;
       for (const e of t.entries) {
         if (e.kind === "text") {
-          // A REPLY is this agent speaking, so it is the owning lane's alone: a
-          // delegate's prose is read on its own page. Its tool calls and the
-          // paths they changed are counted below, over every lane — for a toast
-          // whose subject is what happened while the reader was away, work a
-          // delegate did is the news.
+          // A REPLY is the owning lane's alone; tool calls and changed paths count over every lane,
+          // since a delegate's work is the news.
           if ((e.lane ?? "") === "") {
             spoke = true;
           }

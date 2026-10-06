@@ -8,7 +8,6 @@ import (
 )
 
 func FuzzSettingsField(f *testing.F) {
-	// Seed corpus: valid JSON with various key types.
 	f.Add([]byte(`{"foo":"bar"}`), "foo")
 	f.Add([]byte(`{"enabled":true}`), "enabled")
 	f.Add([]byte(`{"count":42}`), "count")
@@ -32,14 +31,11 @@ func FuzzSettingsField(f *testing.F) {
 
 		ctx := t.Context()
 
-		// Must not panic regardless of input, across representative target types.
 		Field[bool](ctx, dir, key)
 		Field[int](ctx, dir, key)
 		Field[[]string](ctx, dir, key)
 
-		// Cross-function consistency: Field[string] and FieldInto(&string) read
-		// the same key through the same parse path, so they must agree on both
-		// presence and value for every input.
+		// Field[string] and FieldInto(&string) share one parse path, so they must agree.
 		val, okField := Field[string](ctx, dir, key)
 		var into string
 		okInto := FieldInto(ctx, dir, key, &into)
@@ -53,7 +49,6 @@ func FuzzSettingsField(f *testing.F) {
 }
 
 func FuzzSettingsReadBytes(f *testing.F) {
-	// Seed corpus: edge cases for the read path.
 	f.Add([]byte(``))                                 // empty file
 	f.Add([]byte(`{}`))                               // valid empty JSON
 	f.Add([]byte(`{"key": "value"}`))                 // valid JSON
@@ -67,20 +62,18 @@ func FuzzSettingsReadBytes(f *testing.F) {
 			t.Fatal(err)
 		}
 
-		// Reset cache for this dir.
 		globalCacheMu.Lock()
 		delete(globalCaches, dir)
 		globalCacheMu.Unlock()
 
 		ctx := t.Context()
 
-		// Must not panic regardless of content.
 		got, err := readBytes(ctx, dir)
 		if err != nil {
 			return
 		}
 
-		// If read succeeds, content should round-trip exactly (capped at MaxBytes).
+		// A successful read round-trips exactly, capped at MaxBytes.
 		expected := data
 		if len(expected) > MaxBytes {
 			expected = expected[:MaxBytes]

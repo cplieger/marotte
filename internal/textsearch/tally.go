@@ -3,13 +3,9 @@ package textsearch
 // Tally is what a scan reports beside its matches. Embedded, so each reply
 // spells the three facts once and wiregen flattens them into its TS type.
 type Tally struct {
-	// Scanned is how many units the scan READ, whole or in part: chats, files,
-	// messages; or whose index entry, built from one such read, stood in for it.
-	// A unit it read and found out of scope (a binary) is scanned. A unit whose
-	// name no longer held what the walk classified (vanished, swapped, not a
-	// regular file) is a skip the answer covers, and stays scanned. A unit it
-	// meant to read and could not (a chat over chatFileCap, a permission or I/O
-	// error on the read) is not scanned, and Truncated is what says so.
+	// Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
+	// A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
+	// and could not is not, and Truncated says so.
 	Scanned int `json:"scanned"`
 	// Matched is how many rows Matches would hold had nothing cut it: the same
 	// unit as Matches (hits, matching lines, chats). The list is cut iff

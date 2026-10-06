@@ -19,12 +19,12 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// fakeEngine is the SSE fan-out as this handler uses it: it records what was
-// broadcast so a test can assert the client was told, which is the difference
-// between a profile that changed and one that changed invisibly.
+// fakeEngine records what was broadcast, so a test can assert the client was told.
 type fakeEngine struct {
-	events []marotte.ServerEvent
-	pushes int
+	events         []marotte.ServerEvent
+	pushes         int
+	terminalPushes int
+	ccPushes       int
 }
 
 func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
@@ -34,21 +34,20 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 func (f *fakeEngine) Shutdown(context.Context) error { return nil }
 func (f *fakeEngine) Epoch() string                  { return "fake-epoch" }
 
-// pushes counts the agent-ignore fan-outs so the settings PATCH test can assert
-// KAS was told; this handler never calls it.
+// PushAgentIgnoreFiles counts agent-ignore fan-outs for the settings PATCH test.
 func (f *fakeEngine) PushAgentIgnoreFiles(context.Context) { f.pushes++ }
+
+func (f *fakeEngine) PushTerminalSettings(context.Context) { f.terminalPushes++ }
+
+func (f *fakeEngine) PushContentCollection(context.Context) { f.ccPushes++ }
 
 // fakeReload records whether the profile change asked for a session recycle.
 type fakeReload struct{ restarts int }
 
 func (f *fakeReload) RestartUtilitySession() { f.restarts++ }
 
-// profileFixture stages a HOME and a workspace so the two writable policy paths
-// resolve somewhere disposable, and returns the server plus both paths.
-//
-// t.Setenv rather than an injected home because policyfile.PathFor reads
-// os.UserHomeDir, which is the same resolution KAS performs — faking it would test
-// a path marotte does not use. No t.Parallel in this file as a result.
+// profileFixture stages a HOME and a workspace and returns the server plus both policy paths.
+// t.Setenv because policyfile.PathFor reads os.UserHomeDir, so this file is not parallel.
 func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeEngine, *fakeReload, string, string) {
 	t.Helper()
 	home := t.TempDir()
@@ -101,8 +100,7 @@ func loadRules(t *testing.T, path string) []policyfile.Rule {
 	return f.Rules
 }
 
-// ruleCapabilities is the sorted capability projection of a rule set. A pure
-// projection, so it takes no *testing.T and cannot fail.
+// ruleCapabilities is the sorted capability projection of a rule set.
 func ruleCapabilities(rules []policyfile.Rule) []string {
 	out := make([]string, 0, len(rules))
 	for i := range rules {
@@ -125,11 +123,8 @@ func readBytes(t *testing.T, path string) []byte {
 	return b
 }
 
-// TestPolicyProfile_SelectionWritesNoPolicyFile: a named profile is presets alone and
-// Custom's rules are already in the files, so no selection touches either permissions
-// file. The staged files hold bare `all` and `sandbox_network` allows, which must
-// survive every rung byte for byte, plus a malformed byte the selection must not even
-// read.
+// TestPolicyProfile_SelectionWritesNoPolicyFile pins that no selection touches either
+// permissions file (bare allows survive byte for byte; a malformed byte is never read).
 func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 	staged := []policyfile.Rule{
 		{Capability: "all", Effect: policyfile.EffectAllow},
@@ -200,15 +195,13 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 	})
 }
 
-// TestPolicyProfile_SeedMaterialisesTheProfileInForce is the Customize button. It
-// takes the rules from the live view because no RPC enumerates a preset, keeps the
-// user's own rules beside them, and writes nothing to the workspace file.
+// TestPolicyProfile_SeedMaterialisesTheProfileInForce pins Customize: preset rules from the
+// live view, the user's rules beside them, nothing in the workspace file.
 func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	live := []marotte.PolicyRule{
 		seedRule("fs_read", "read-workspace"),
 		seedRule("shell", "dev-shell"),
-		// Neither of these is the profile's: one is a consent granted for this
-		// session, the other a baseline scope.
+		// Neither is the profile's: a session consent and a baseline scope.
 		{Capability: "mcp", Effect: "allow", Scope: "session", Source: "consent"},
 		{Capability: "fs_write", Effect: "ask", Scope: "kiro", Source: "kiro-scope"},
 	}
@@ -239,8 +232,8 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	}
 }
 
-// blockConfigDir points the server's config dir inside a regular file, so
-// persistProfile's mkdir fails. Fixture-only, and uid-independent unlike a 0500 dir.
+// blockConfigDir points the config dir inside a regular file so persistProfile's mkdir fails
+// (uid-independent, unlike a 0500 dir).
 func blockConfigDir(t *testing.T, s *Server) {
 	t.Helper()
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
@@ -250,9 +243,8 @@ func blockConfigDir(t *testing.T, s *Server) {
 	s.configDir = filepath.Join(blocker, "config")
 }
 
-// TestPolicyProfile_SeedPersistFailureRestoresTheUserFile: Customize writes the user
-// file before config.json, so a failed persist must take the copied preset rules back
-// out, or they would outlive as durable grants the profile config.json still names.
+// TestPolicyProfile_SeedPersistFailureRestoresTheUserFile pins that a failed persist takes
+// the copied preset rules back out.
 func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("all", "allow-all")})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
@@ -363,10 +355,8 @@ func TestPolicyProfile_NamedPersistFailureAnswers500(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem: a user file at the
-// rule cap is the user's to fix from the table, so 400 rather than 500, and the
-// refusal writes nothing. The staged comment, which Save cannot reproduce, is what
-// makes a rewrite visible.
+// TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem pins 400 and no write for a user
+// file at the rule cap (the staged comment makes a rewrite visible).
 func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
 	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 	full := make([]policyfile.Rule, 0, 512)
@@ -423,17 +413,14 @@ func TestPolicyProfile_SeedRefusesAnUnparseableUserFile(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_SeedFailsClosed: a Customize that cannot read the profile must
-// leave everything alone. Switching anyway would land on an empty Custom, which
-// drops every grant the user had — the loudest possible failure dressed as a
-// successful click.
+// TestPolicyProfile_SeedFailsClosed pins that a Customize unable to read the profile leaves
+// everything alone.
 func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		live []marotte.PolicyRule
 	}{
-		// Nothing preset-sourced is indistinguishable from a session that has not
-		// started yet, and the two want opposite outcomes.
+		// Nothing preset-sourced is indistinguishable from a session not yet started.
 		{"no preset rules in force", []marotte.PolicyRule{
 			{Capability: "fs_write", Effect: "ask", Scope: "kiro", Source: "kiro-scope"},
 		}},
@@ -464,10 +451,7 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_Refusals covers the two shapes a caller can get wrong, and both
-// are 400 rather than a tolerated no-op: an unknown id would otherwise persist a
-// profile no session can resolve, and seed on a named profile means the caller has
-// the materialisation running the wrong way.
+// TestPolicyProfile_Refusals pins 400 for an unknown id and for seed on a named profile.
 func TestPolicyProfile_Refusals(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -492,9 +476,7 @@ func TestPolicyProfile_Refusals(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_PersistKeepsSiblingSettings: the profile write merges. Replacing
-// config.json would drop every other preference, and a settings file that silently
-// reverts is the failure the atomic write exists to prevent.
+// TestPolicyProfile_PersistKeepsSiblingSettings pins that the profile write merges.
 func TestPolicyProfile_PersistKeepsSiblingSettings(t *testing.T) {
 	s, _, _, _, _ := profileFixture(t, nil)
 	path := filepath.Join(s.configDir, settings.Filename)
@@ -540,8 +522,7 @@ func TestPolicyView_CarriesTheLadderAndTheActiveProfile(t *testing.T) {
 			t.Errorf("profile %q presets = %v, want %v", want[i].ID, view.Profiles[i].Presets, want[i].Presets)
 		}
 	}
-	// Unset resolves to the default rather than to empty, or the picker would open
-	// on no selection while the sessions run at the default.
+	// Unset resolves to the default, or the picker would open on no selection.
 	if view.Profile != policyfile.DefaultProfile {
 		t.Errorf("active profile = %q, want the default %q", view.Profile, policyfile.DefaultProfile)
 	}

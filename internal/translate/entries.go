@@ -1,7 +1,7 @@
 package translate
 
-// Announcing the entry log's live path: every frame here is an append to the same
-// log the GET reads, a delta into an open entry, or a live-only replace.
+// The entry log's live path: every frame is an append to the log the GET reads, a delta into
+// an open entry, or a live-only replace.
 
 import (
 	"context"
@@ -44,15 +44,9 @@ func (t *Translator) publishSealed(ctx context.Context, sc entryScope, sealed []
 	PublishSealed(ctx, t.bus, sc.chatID, sc.runID, sealed)
 }
 
-// publishSealedRefused is publishSealed carrying the turn's refusal note on the
-// entry_sealed frame, which is the live carrier: markRefusal seals the lane and
-// this is the frame that seal publishes, so the note rides a frame that was going
-// out anyway and arrives in the client's own sequence.
-//
-// The note reaches the wire only for a lane that HAD an open entry (N > 0). A
-// carry-only release travels as entry_appended and an empty lane emits no frame at
-// all, so those two defer to turn_close.refusal, which is where every case landed
-// before this carrier existed.
+// publishSealedRefused is publishSealed carrying the turn's refusal note on the entry_sealed
+// frame markRefusal's seal publishes. Only a lane that HAD an open entry carries it; the rest
+// defer to turn_close.refusal.
 func (t *Translator) publishSealedRefused(ctx context.Context, sc entryScope, sealed []turnlog.Sealed, refusal *marotte.RefusalInfo) {
 	broadcastSealed(ctx, t.bus, sc.chatID, sc.runID, sealed, refusal)
 }
@@ -115,13 +109,8 @@ func PublishAppended(ctx context.Context, bus Broadcaster, chatID marotte.ChatID
 	}
 }
 
-// publishOpen announces a delta that reached lane key's open entry: entry_opened
-// when this delta opened it (N is 1, the text so far is the delta), entry_delta
-// otherwise.
-//
-// Neither payload carries a refusal, and that is the consequence of the refusal
-// chunk never reaching a delta: markRefusal SEALS the lane instead, so the live
-// carrier is that seal's own frame (publishSealedRefused).
+// publishOpen announces a delta that reached lane key's open entry: entry_opened when it
+// opened it (N is 1), else entry_delta. No refusal: markRefusal seals instead.
 func (t *Translator) publishOpen(ctx context.Context, sc entryScope, turn *turnlog.Turn, key, delta string) {
 	open, ok := turn.Open(key)
 	if !ok {

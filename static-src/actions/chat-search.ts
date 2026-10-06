@@ -1,8 +1,5 @@
-// Cross-chat search: the History page's box.
-//
-// Separate from the in-chat search (find-in-chat.ts, scoped to the chat being
-// read) because they answer different questions — this one finds the
-// conversation, that one finds the position within it.
+// Cross-chat search (the History page's box): finds the conversation, where find-in-chat.ts finds
+// the position within one.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { decodeSearchAllResult } from "../wire/decoders.gen.js";

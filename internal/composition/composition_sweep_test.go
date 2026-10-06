@@ -26,10 +26,9 @@ func staleTemp(t *testing.T, dir, name string) string {
 	return full
 }
 
-// TestSweepStaleTemps_reaches_every_config_subdir pins the reason configDir is swept
-// recursively: the previous shape enumerated configDir, chats and chats/<archive> by
-// hand, so any new location that writes atomically kept its orphans forever. The
-// unlisted-subdir case is the regression this guards.
+// TestSweepStaleTemps_reaches_every_config_subdir pins why configDir is swept
+// recursively: a hand-kept list of dirs leaves the orphans of any unlisted location
+// that writes atomically there forever.
 func TestSweepStaleTemps_reaches_every_config_subdir(t *testing.T) {
 	t.Parallel()
 	configDir, workDir := t.TempDir(), t.TempDir()
@@ -38,12 +37,10 @@ func TestSweepStaleTemps_reaches_every_config_subdir(t *testing.T) {
 		staleTemp(t, configDir, ".atomicfile-1111111111.tmp"),
 		staleTemp(t, filepath.Join(configDir, "chats"), ".atomicfile-2222222222.tmp"),
 		staleTemp(t, filepath.Join(configDir, "chats", "archive"), ".atomicfile-3333333333.tmp"),
-		// A location no hand-maintained list mentions.
 		staleTemp(t, filepath.Join(configDir, "checkpoints", "blobs"), ".atomicfile-4444444444.tmp"),
 		staleTemp(t, workDir, ".atomicfile-5555555555.tmp"),
 	}
 
-	// Real state files must survive regardless of age or depth.
 	keep := filepath.Join(configDir, "chats", "c-abc.json")
 	if err := os.WriteFile(keep, []byte(`{"id":"c-abc"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -116,16 +113,8 @@ func TestSweepStaleTemps_missing_dirs_are_not_fatal(t *testing.T) {
 	sweepStaleTemps(t.Context(), filepath.Join(base, "nope"), filepath.Join(base, "also-nope"))
 }
 
-// TestSweepStaleTemps_reclaims_a_leaked_writability_probe closes the loop between
-// the startup writability probe (checkDirWritable) and this sweep. A directory
-// that accepts a write and refuses the unlink leaves the probe file behind;
-// because that file now carries atomicfile's own temp shape, the recursive
-// configDir sweep reclaims it on the next boot instead of leaving it forever, as
-// it did while the probe invented its own ".marotte-probe-*" name.
-//
-// The name comes from the library's exported generator rather than a literal, so
-// this asserts the agreement itself and cannot drift from the shape the probe
-// actually creates.
+// TestSweepStaleTemps_reclaims_a_leaked_writability_probe asserts that a probe leaked by checkDirWritable's
+// teardown is reclaimed by this sweep.
 func TestSweepStaleTemps_reclaims_a_leaked_writability_probe(t *testing.T) {
 	t.Parallel()
 	configDir, workDir := t.TempDir(), t.TempDir()

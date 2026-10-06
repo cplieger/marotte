@@ -1,5 +1,5 @@
-// The chat-actions menu, and the test a sixth row has to pass: a pill earns its
-// prompt-row slot by changing per MESSAGE, which none of these five do. Every row
+// The chat-actions menu, and the test an eighth row has to pass: a pill earns its
+// prompt-row slot by changing per MESSAGE, which none of these seven do. Every row
 // is built here; static/index.html carries an empty card.
 
 import { el, effect } from "@cplieger/reactive";
@@ -7,12 +7,25 @@ import { $ } from "./dom.js";
 import { activeSession, isThinking, isEmptyChat } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { iconEl } from "./icon-el.js";
-import { compactChat, setSupervised } from "./actions/chat.js";
+import {
+  compactChat,
+  downloadKiroSession,
+  MAX_CHAT_NAME_UNITS,
+  renameChat,
+  setInterruptMode,
+  setSupervised,
+} from "./actions/chat.js";
+import { copyClipboard } from "./actions/messages.js";
+import { downloadChatExport } from "./chat-export.js";
+import { buildPath } from "./route-path.js";
+import { ICON_EXPORT, ICON_LINK } from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
 import { submitPrompt } from "./submit.js";
 import * as toast from "./toast.js";
+import { chatNotice } from "./notice-subject.js";
+import type { InterruptMode } from "./types.js";
 
 // Row glyphs. Local constants rather than icons.ts entries: each is used once,
 // by this module, and `icons.ts` is the shared vocabulary.
@@ -22,18 +35,18 @@ const ICON_GOAL =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>';
 const ICON_TANGENT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>';
+const ICON_SESSION =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>';
+const ICON_RENAME =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>';
 const ICON_COMPACT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 19h16"/><path d="M12 9v-3l-3 3"/><path d="M12 9v-3l3 3"/><path d="M12 15v3l-3-3"/><path d="M12 15v3l3-3"/></svg>';
 
-/** KAS's own clamp on the goal loop's iteration budget, mirrored here rather
- *  than invented: `parseGoalCommand` runs
- *  `Math.min(Math.max(parseInt(n, 10), 1), 200)`.
- *
- *  Mirrored so the field can bound its own control and the composed suffix is
- *  always a value the parser keeps. KAS's DEFAULT is deliberately not mirrored:
- *  an unset cap omits the suffix entirely, so the default that applies is
- *  whatever KAS's parser says it is rather than a number marotte restates and
- *  can drift from. */
+/**
+ * KAS's own clamp on the goal loop's budget, mirrored: `parseGoalCommand` runs
+ * `Math.min(Math.max(parseInt(n, 10), 1), 200)`. The default is NOT mirrored: an unset cap
+ * omits the suffix, so KAS's parser decides.
+ */
 const GOAL_MAX_FLOOR = 1;
 const GOAL_MAX_CEILING = 200;
 
@@ -49,16 +62,92 @@ export function initChatOptions(): void {
   const pill = $.chatOptionsBtn;
   const card = $.chatOptionsCard;
 
-  card.append(attachRow(), goalRow(), tangentRow(), compactRow(), supervisedRow());
+  card.append(
+    chatStrip(),
+    attachRow(),
+    goalRow(),
+    tangentRow(),
+    compactRow(),
+    renameRow(),
+    interruptRow(),
+    supervisedRow(),
+  );
 
   makeExpandable(pill, card, { haspopup: "dialog" });
 }
 
-/** A menu row that DOES something: glyph, name, one-line hint.
- *
- *  Returns the row plus its button and hint, because a row whose availability is
- *  a function of chat state needs to reach both after construction: the button to
- *  disable, the hint to say why. */
+/** How long the Link button reads "Copied" after a copy. */
+const COPIED_MS = 1500;
+
+/**
+ * The top strip: four one-shot actions on the whole chat, each a glyph plus a visible
+ * caption (no tooltips on phones), the full action as its accessible name.
+ */
+function chatStrip(): HTMLElement {
+  const strip = el("div", { className: "chat-opt-strip" });
+  const button = (
+    icon: string,
+    caption: string,
+    label: string,
+    onClick: (btn: HTMLButtonElement, chatID: string, name: string) => void,
+  ): HTMLButtonElement => {
+    const cap = el("span", { className: "chat-opt-strip-caption" }, caption);
+    const btn = el(
+      "button",
+      { type: "button", className: "chat-opt-strip-btn", "aria-label": label },
+      el("span", { className: "chat-opt-strip-icon" }, iconEl(icon)),
+      cap,
+    ) as HTMLButtonElement;
+    btn.addEventListener("click", () => {
+      const session = activeSession.peek();
+      if (session === undefined) {
+        return;
+      }
+      onClick(btn, session.id, session.name);
+    });
+    strip.appendChild(btn);
+    return btn;
+  };
+  const link = button(ICON_LINK, "Link", "Copy link to this chat", (btn, chatID) => {
+    const url = location.origin + buildPath({ kind: "chat", id: chatID });
+    void copyClipboard.dispatch(url, {
+      silent: true,
+      onSuccess: () => {
+        const cap = btn.querySelector(".chat-opt-strip-caption");
+        if (cap !== null) {
+          cap.textContent = "Copied";
+          setTimeout(() => {
+            cap.textContent = "Link";
+          }, COPIED_MS);
+        }
+      },
+    });
+  });
+  const md = button(ICON_EXPORT, "Markdown", "Export chat as Markdown", (_b, chatID, name) => {
+    collapseAll();
+    downloadChatExport(chatID, name, "md");
+  });
+  const json = button(ICON_EXPORT, "JSON", "Export chat as JSON", (_b, chatID, name) => {
+    collapseAll();
+    downloadChatExport(chatID, name, "json");
+  });
+  const session = button(ICON_SESSION, "Session", "Download Kiro session", (_b, chatID, name) => {
+    collapseAll();
+    void downloadKiroSession.dispatch({ chatID, name });
+  });
+  effect(() => {
+    const none = activeSession.value === undefined;
+    for (const b of [link, md, json, session]) {
+      b.disabled = none;
+    }
+  });
+  return strip;
+}
+
+/**
+ * A menu row that DOES something: glyph, name, hint. Returns the button and hint too, for
+ * rows whose availability depends on chat state.
+ */
 function actionRow(opts: {
   icon: string;
   name: string;
@@ -84,26 +173,16 @@ function actionRow(opts: {
   return { row, btn, hint };
 }
 
-/** Attach a file. The former paperclip pill, moved here unchanged in behaviour.
- *
- *  Collapse FIRST, then open: `openFilePicker` opens a modal over the composer,
- *  and an expanded card left behind it sits under the modal still carrying
- *  pointer-events.
- *
- *  Both calls are SYNCHRONOUS inside the click handler, and that ordering is a
- *  requirement rather than a preference. The OS file dialog is two clicks deeper
- *  (the picker's own "Upload here" calls `input.click()` inside its handler),
- *  so this door does not itself need a gesture — but putting an `await` anywhere
- *  on this path would move the picker's open off the user's gesture, and the
- *  browser's user-activation window is the one thing a file input cannot ask for
- *  again later. */
+/**
+ * Attach a file. Collapse FIRST, so the card is not left under the picker's modal. Both
+ * calls stay SYNCHRONOUS: an `await` here would move the picker's open off the user's
+ * gesture, whose activation window a file input cannot ask for again.
+ */
 function attachRow(): HTMLElement {
   return actionRow({
     icon: ICON_ATTACH,
     name: "Attach a file",
-    // The cap used to live in the pill's tooltip, which is gone with the pill.
-    // It is stated where the choice is made, because the alternative is
-    // discovering it as a server 413.
+    // The cap is stated where the choice is made, not discovered as a server 413.
     hint: `Pick a workspace file or upload one (${uploadLimitHint().toLowerCase()})`,
     onClick: () => {
       collapseAll();
@@ -112,46 +191,40 @@ function attachRow(): HTMLElement {
   }).row;
 }
 
-/** The hints the tangent row swaps between. The disabled one names what to do
- *  next rather than what went wrong, because the row is unavailable before the
- *  user has done anything, not after a mistake. */
+/** The tangent row's hints; the disabled one names what to do next. */
 const TANGENT_HINT = "Branch this conversation into a sub-chat that keeps its context";
 const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the conversation";
 
-/** Start a tangent off the active chat.
- *
- *  UNAVAILABLE until the chat holds a conversation, and disabled rather than
- *  error-toasting: on a brand-new chat the fork had nothing to branch from, so it
- *  404'd server-side (`errForkParentUnknown` — a chat is client-side only until
- *  its first prompt) AFTER `openTangentChat` had already opened and activated the
- *  sub-tab. The user was left holding a stray empty sub-tab plus a failure
- *  notice, which is exactly the shape the disabled control avoids. */
+/**
+ * Start a tangent off the active chat. Disabled until the chat holds a conversation: a
+ * brand-new chat has nothing to fork server-side (`errForkParentUnknown`), and the failure
+ * would arrive after the sub-tab opened.
+ */
 function tangentRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
     icon: ICON_TANGENT,
     name: "Start a tangent",
     hint: TANGENT_HINT,
     onClick: () => {
-      // Re-read at CLICK time, never captured when the card was built: the card
-      // is built once at init and outlives every chat switch. A disabled button
-      // fires no click, so this is the guard for the window between a signal
-      // write and the effect below, not the user-facing refusal.
+      // Re-read at CLICK time: the card outlives every chat switch. Guards the window between a
+      // signal write and the effect below.
       const session = activeSession.peek();
-      if (session === undefined || isEmptyChat(session)) {
+      if (session === undefined) {
         toast.error("Send a message first, then start a tangent from it");
         return;
       }
+      if (isEmptyChat(session)) {
+        chatNotice(session.id, "Send a message first, then start a tangent from it", "error");
+        return;
+      }
       collapseAll();
-      // DETACHED: the menu has already collapsed and nothing after this reads the
-      // tangent. The fork mints the new chat's id server-side, so it opens its own
-      // sub-tab when the reply lands.
+      // Detached: the fork mints the new chat's id and opens its sub-tab when the reply lands.
       void openTangentChat(session.id);
     },
   });
 
-  // A projection of the ACTIVE chat, like the supervised checkbox below: the menu
-  // remembers nothing, so switching tabs re-reads. Guarded on the value because
-  // `activeSession` re-derives on every streaming chunk.
+  // A projection of the ACTIVE chat, re-read on tab switch; guarded on the value because
+  // `activeSession` re-derives on every chunk.
   effect(() => {
     const empty = isEmptyChat(activeSession.value);
     if (btn.disabled === empty) {
@@ -164,18 +237,16 @@ function tangentRow(): HTMLElement {
   return row;
 }
 
-/** The hints the compact row swaps between, each naming what to do next. Two
- *  disabled variants because the two refusals want different actions of the user,
- *  and `CmdCompact` answers them with different 409s. */
+/** The compact row's hints: two disabled variants for `CmdCompact`'s two different 409s. */
 const COMPACT_HINT = "Summarize the history so far to free up context";
 const COMPACT_HINT_EMPTY = "Send a message first. There is no session to compact yet";
 const COMPACT_HINT_BUSY = "Wait for this turn to finish, or cancel it, then compact";
 
-/** Compact this chat's context, a second door onto the action `/compact` dispatches.
- *  UNAVAILABLE for the two states `CmdCompact` refuses — no live session
- *  (`errNoBridge`) and a turn in flight (`errCompactRefused`) — disabled rather than
- *  toasting, for `tangentRow`'s reason. It reports no COMPLETION: the server already
- *  broadcasts `compaction_started` and persists a `compacted` row. */
+/**
+ * Compact this chat's context (the action `/compact` dispatches). Disabled for the two
+ * states `CmdCompact` refuses, no live session and a turn in flight. Reports no completion:
+ * the server broadcasts `compaction_started` and persists a `compacted` row.
+ */
 function compactRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
     icon: ICON_COMPACT,
@@ -184,12 +255,20 @@ function compactRow(): HTMLElement {
     onClick: () => {
       // Re-read at CLICK time: the card outlives every chat switch.
       const session = activeSession.peek();
-      if (session === undefined || isEmptyChat(session)) {
+      if (session === undefined) {
         toast.error("Send a message first, then compact the conversation");
         return;
       }
+      if (isEmptyChat(session)) {
+        chatNotice(session.id, "Send a message first, then compact the conversation", "error");
+        return;
+      }
       if (isThinking(session.id)) {
-        toast.error("Wait for this turn to finish, then compact the conversation");
+        chatNotice(
+          session.id,
+          "Wait for this turn to finish, then compact the conversation",
+          "error",
+        );
         return;
       }
       collapseAll();
@@ -214,33 +293,13 @@ function compactRow(): HTMLElement {
   return row;
 }
 
-/** Set a goal: send the command KAS's own parser claims.
- *
- *  A typed `/goal` is NOT the `/compact` failure shape, and the difference is the
- *  whole reason this row sends text. `/compact` reached the model because nothing
- *  parsed it. `/goal` is intercepted on the prompt path BEFORE the model is
- *  invoked: with `_meta.kiro.settings.goal` declared (marotte declares it —
- *  `internal/kascap/table.go`), `session/prompt` runs `parseGoalCommand(userText)`
- *  and, on a match, `launchGoal(...)` and returns `end_turn` without ever calling
- *  the model.
- *
- *  Why not the bundled recipe, which this row used to launch: the recipe's own
- *  repeat node is written `maxIterations: 200`, and `launchGoal` applies the
- *  user's bound by MUTATING that node on a clone before handing the inline
- *  workflow to `_kiro/workflow/new`. Loading the recipe by source instead runs the
- *  unmutated node, so every goal launched that way iterated up to 200 whatever
- *  the user asked for. The cap is only reachable through the parser.
- *
- *  The run KAS starts is parented on the CALLING session, so its frames arrive on
- *  this chat's topic and it renders in this chat. That is the right home for a
- *  goal set from this chat's composer, and it is why there is no launcher-owned
- *  run tab here.
- *
- *  There is no clear verb, and its absence is measured rather than an omission:
- *  `parseGoalCommand` returns null only for a bare `/goal` and otherwise takes
- *  the whole body as the objective, so `/goal clear` would launch a goal whose
- *  objective is the word "clear". Stopping a goal is cancelling its run, which
- *  the run surface already does. */
+/**
+ * Set a goal by sending the text KAS's parser claims. With `_meta.kiro.settings.goal`
+ * declared (`internal/kascap/table.go`), `session/prompt` runs `parseGoalCommand` and
+ * `launchGoal` before the model. The recipe cannot be loaded by source: `launchGoal` applies
+ * the cap by mutating its repeat node. The run is parented on this chat. No clear verb:
+ * `/goal clear` would be a goal named "clear"; stopping is cancelling the run.
+ */
 function goalRow(): HTMLElement {
   return actionRow({
     icon: ICON_GOAL,
@@ -260,10 +319,10 @@ function openGoalForm(row: HTMLElement): void {
   row.appendChild(goalForm());
 }
 
-/** The inline form: the objective, and an optional cap on the loop.
- *
- *  Inline rather than a modal, the same idiom the Workflows tab uses for a
- *  recipe's inputs. */
+/**
+ * The inline form: the objective and an optional loop cap, inline like the Workflows tab's
+ * recipe inputs.
+ */
 function goalForm(): HTMLElement {
   const description = el("input", {
     type: "text",
@@ -271,12 +330,8 @@ function goalForm(): HTMLElement {
     placeholder: "Make the test suite pass",
     "aria-label": "Goal",
   }) as HTMLInputElement;
-  // Deliberately a text field with a numeric keypad rather than type="number".
-  // A number input sanitizes a non-numeric value to "" and lets the browser
-  // refuse an out-of-range one before submit, which would put the bounds in the
-  // browser's hands — and they are KAS's bounds, applied to a suffix KAS parses.
-  // Owning them here is what makes the clamp and the drop below real rather than
-  // decorative, on every engine and for a pasted or autofilled value.
+  // A text field with a numeric keypad, not type="number", which would put KAS's bounds in the
+  // browser's hands; owning them makes the clamp and drop real for pasted values too.
   const cap = el("input", {
     type: "text",
     className: "chat-opt-input",
@@ -303,17 +358,13 @@ function goalForm(): HTMLElement {
     }
     const objective = description.value.trim();
     if (objective === "") {
-      // Refused here rather than sent: a bare `/goal` is exactly what
-      // parseGoalCommand returns null for, so it would fall through to the model
-      // as prose — the failure this row exists to avoid.
-      toast.error("Describe the goal before setting it");
+      // A bare `/goal` returns null from parseGoalCommand and would reach the model as prose.
+      chatNotice(id, "Describe the goal before setting it", "error");
       return;
     }
     if (isThinking(id)) {
-      // Send means STEER mid-turn (submit.ts), and `_session/steer` is not the
-      // prompt path: parseGoalCommand has exactly one call site and it is
-      // `session/prompt`, so a steered command reaches the running turn as prose.
-      toast.error("Wait for this turn to finish, then set the goal");
+      // Mid-turn Send means STEER, and `_session/steer` never reaches parseGoalCommand.
+      chatNotice(id, "Wait for this turn to finish, then set the goal", "error");
       return;
     }
     form.remove();
@@ -321,9 +372,7 @@ function goalForm(): HTMLElement {
     void submitPrompt(id, goalCommand(objective, cap.value));
   });
   form.addEventListener("keydown", (e: KeyboardEvent) => {
-    // Escape closes the form without closing the whole card, so a mistyped goal
-    // does not cost the menu. The card's own Escape (createPopup) still fires
-    // once the form is gone.
+    // Escape closes the form, not the card; the card's own Escape fires once the form is gone.
     if (e.key === "Escape") {
       e.stopPropagation();
       form.remove();
@@ -332,14 +381,11 @@ function goalForm(): HTMLElement {
   return form;
 }
 
-/** Compose exactly what `parseGoalCommand` accepts.
- *
- *  Its shape is `/\s+--max\s+(\d+)$/` against the body, so the suffix must be
- *  LAST and must be digits — anything else is read as part of the objective. That
- *  is why a cap that is not a whole number is DROPPED rather than passed through:
- *  `--max soon` would silently become the tail of the goal statement.
- *
- *  An absent cap omits the suffix, so KAS's own default applies. */
+/**
+ * Compose exactly what `parseGoalCommand` accepts: `/\s+--max\s+(\d+)$/` against the body,
+ * so the suffix is LAST and digits only; a non-integer cap is DROPPED, or it would become
+ * part of the goal. An absent cap omits it.
+ */
 function goalCommand(objective: string, cap: string): string {
   const command = `/goal ${objective}`;
   const raw = cap.trim();
@@ -354,6 +400,136 @@ function goalCommand(objective: string, cap: string): string {
   return `${command} --max ${bounded}`;
 }
 
+/** Rename the active chat. The same command as the tab row's in-place field;
+ *  this door exists because on a phone the strip is a closed drawer. */
+function renameRow(): HTMLElement {
+  return actionRow({
+    icon: ICON_RENAME,
+    name: "Rename chat",
+    hint: "Give this chat a name of your own",
+    onClick: (row) => {
+      const existing = row.querySelector(".chat-opt-form");
+      if (existing !== null) {
+        existing.remove();
+        return;
+      }
+      row.appendChild(renameForm());
+    },
+  }).row;
+}
+
+function renameForm(): HTMLElement {
+  const current = activeSession.peek()?.name ?? "";
+  const input = el("input", {
+    type: "text",
+    className: "chat-opt-input",
+    maxLength: MAX_CHAT_NAME_UNITS,
+    value: current,
+    "aria-label": "Chat name",
+  }) as HTMLInputElement;
+  const form = el(
+    "form",
+    { className: "chat-opt-form" },
+    el("label", { className: "chat-opt-input-label" }, "Name", input),
+    el("button", { type: "submit", className: "btn-small" }, "Rename"),
+  );
+  form.addEventListener("submit", (e: Event) => {
+    e.preventDefault();
+    const session = activeSession.peek();
+    if (session === undefined) {
+      toast.error("Open a chat first, then rename it");
+      return;
+    }
+    const name = input.value.trim();
+    if (name === "") {
+      chatNotice(session.id, "Type a name first", "error");
+      return;
+    }
+    form.remove();
+    collapseAll();
+    if (name !== session.name) {
+      void renameChat.dispatch({ chatID: session.id, name });
+    }
+  });
+  form.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      form.remove();
+    }
+  });
+  queueMicrotask(() => {
+    input.select();
+  });
+  return form;
+}
+
+/** What Send means while a turn runs on this chat. A radio group rather than a
+ *  checkbox, so both modes are named and the default is visible as a choice. */
+function interruptRow(): HTMLElement {
+  const choices: readonly { mode: InterruptMode; name: string; hint: string }[] = [
+    { mode: "steer", name: "Steer", hint: "The agent reads it during the current turn" },
+    { mode: "queue", name: "Queue", hint: "It waits for the turn to end cleanly, then runs" },
+  ];
+  const radios = new Map<InterruptMode, HTMLInputElement>();
+  const rows = choices.map(({ mode, name, hint }) => {
+    const id = `chat-opt-interrupt-${mode}`;
+    const radio = el("input", {
+      type: "radio",
+      name: "chat-opt-interrupt",
+      id,
+      value: mode,
+    }) as HTMLInputElement;
+    radio.addEventListener("change", () => {
+      const chatID = activeSession.peek()?.id ?? "";
+      if (chatID === "") {
+        // No chat yet: nothing to record the mode on, and a new chat starts on Steer.
+        radio.checked = false;
+        return;
+      }
+      void setInterruptMode.dispatch({ chatID, mode });
+    });
+    radios.set(mode, radio);
+    return el(
+      "label",
+      { className: "chat-opt-row", for: id },
+      radio,
+      el(
+        "span",
+        { className: "chat-opt-text" },
+        el("span", { className: "chat-opt-name" }, name),
+        el("span", { className: "chat-opt-hint" }, hint),
+      ),
+    );
+  });
+
+  const group = el(
+    "div",
+    {
+      className: "chat-opt-entry",
+      role: "radiogroup",
+      "aria-labelledby": "chat-opt-interrupt-label",
+    },
+    el(
+      "span",
+      { className: "chat-opt-hint chat-opt-group-label", id: "chat-opt-interrupt-label" },
+      "While the agent works, Send\u2026",
+    ),
+    ...rows,
+  );
+
+  // Mirrors the ACTIVE chat's recorded mode, like the supervised switch below; a
+  // chat with none recorded is on Steer.
+  effect(() => {
+    const s = activeSession.value;
+    const mode: InterruptMode = s?.interrupt_mode ?? "steer";
+    for (const [m, radio] of radios) {
+      radio.checked = s !== undefined && m === mode;
+    }
+  });
+
+  return group;
+}
+
 /** The supervised switch: the one resident that is a SWITCH rather than an
  *  action, which is why it sorts last and keeps the label/checkbox shape. */
 function supervisedRow(): HTMLElement {
@@ -364,10 +540,7 @@ function supervisedRow(): HTMLElement {
   supervised.addEventListener("change", () => {
     const id = activeSession.peek()?.id ?? "";
     if (id === "") {
-      // No chat yet: nothing to persist against. Reset the visual; the
-      // supervised DEFAULT for brand-new chats lives in Settings →
-      // Permissions, which is where a "before the first prompt" choice
-      // belongs.
+      // No chat yet: reset the visual. The default for new chats lives in Settings → Permissions.
       supervised.checked = false;
       return;
     }

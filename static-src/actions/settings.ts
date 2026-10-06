@@ -1,29 +1,17 @@
-// ---------------------------------------------------------------------------
-// Settings actions: user-initiated mutations on the settings page.
-//
-// Note on save-indicator wiring: this module does NOT call showSaved()/
-// showError() from the action's `success`/`error` fields, because every
-// callsite dispatches with { silent: true } (the indicator IS the
-// feedback, not a toast) and the action framework's success-toast
-// branch short-circuits on silent. Callsites pair showSaving() before
-// dispatch with showSaved()/showError() based on the dispatch result.
-// ---------------------------------------------------------------------------
+// Settings actions. Callsites dispatch with { silent: true } and pair showSaving() with
+// showSaved()/showError() from the result, so no action sets `success`/`error` for the indicator.
+// Saves set no `retryable`: their args hold DOM refs that go stale, and a save is cheap to redo.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { decodeEffectiveSettings } from "../wire/decoders.gen.js";
 import type { EffectiveSettings } from "../wire/types.gen.js";
 import type { IdentityVerdict } from "../identity.js";
+import { paintSettingLocks, writeSwitch } from "../governance.js";
 
-// --- Steering save ---
-
-/** PUT the whole global-instructions document, guarded by the validator the GET
- *  answered, and answering with the validator the write produced.
- *
- *  The server refuses a write whose `If-Match` does not name the document on disk
- *  (409) and one carrying none at all (428), so an EMPTY etag sends no header
- *  deliberately: that is the answer a server with no validator gives, and
- *  inventing one turns a working save into a permanent 428. `""` back is its
- *  explicit "the token could not be read"; the caller keeps whatever it had. */
+/** PUT the whole global-instructions document, guarded by the GET's validator, answering the
+ *  write's validator. The server refuses a stale `If-Match` (409) and a missing one (428); an EMPTY
+ *  etag sends no header, since inventing one makes a working save a permanent 428. `""` back
+ *  means the token could not be read; the caller keeps its own. */
 export const saveSteering = apiAction<{ content: string; etag: string }, string>({
   name: "settings.save_steering",
   retryable: retryNetwork,
@@ -40,8 +28,6 @@ export const saveSteering = apiAction<{ content: string; etag: string }, string>
   error: "Could not save steering",
 });
 
-// --- Logout ---
-
 export const logout = apiAction<
   { render: (v: IdentityVerdict) => void; prev: IdentityVerdict },
   unknown,
@@ -50,17 +36,13 @@ export const logout = apiAction<
   name: "settings.logout",
   retryable: retryNetwork,
   request: () => ({ method: "POST", path: "/api/logout" }),
-  // The callback is INJECTED rather than imported: settings.ts imports this action,
-  // so importing renderIdentity here would close a cycle. The TYPE has no such
-  // problem — identity.ts is a leaf this module can reach directly.
+  // INJECTED, not imported: settings.ts imports this action, so importing renderIdentity is a cycle.
   optimistic: ({ render, prev }) => {
     render({ state: "signed_out" });
     return prev;
   },
-  // The whole VERDICT rather than the address, so all THREE arms are restorable.
-  // Carrying the address could not distinguish `signed_out` from `unavailable`: a
-  // logout attempted while the verdict was `unavailable` and then refused used to
-  // render "not signed in" where "unknown" had been.
+  // The whole VERDICT, so all three arms are restorable (the address cannot tell `signed_out` from
+  // `unavailable`).
   rollback: ({ render }, op) => {
     if (op === undefined) {
       return;
@@ -69,8 +51,6 @@ export const logout = apiAction<
   },
   error: "Could not log out",
 });
-
-// --- Kiro settings toggle (the experimental flags) ---
 
 interface KiroSettingArgs {
   key: string;
@@ -85,21 +65,13 @@ interface KiroSettingOp {
 export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
   name: "settings.set_kiro_setting",
   scope: "settings",
-  // Not retryable: args contain DOM refs that become stale on retry, and
-  // settings saves are user-initiated (cheap to redo manually).
   request: ({ key, value }) => ({
     method: "PUT",
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  // Checkbox-only, because every kiro-cli setting marotte still exposes is one.
-  // The non-checkbox arm this used to carry took a focus-time snapshot so a
-  // rollback restored the true previous value rather than the rejected one, and
-  // its only two inputs were the compaction number fields — removed once their
-  // ACP counterparts measured as having no reader upstream. Bring the snapshot
-  // back WITH the next number-valued setting, not before: `input.value` is
-  // already the new value by the time a change event fires, so a number field
-  // rolled back without one keeps the value the server refused.
+  // Checkbox-only. A number-valued setting needs a focus-time snapshot for rollback: `input.value`
+  // is already the refused value when a change event fires.
   optimistic: ({ input }) => {
     return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
   },
@@ -107,18 +79,14 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     if (op === undefined) {
       return;
     }
-    input.checked = op.prevChecked;
+    writeSwitch(input, op.prevChecked);
+    paintSettingLocks();
   },
   error: "Could not save setting",
 });
 
-// --- Load settings (deduped fetch for SSE-triggered reconcile) ---
-
-// The generated decoder is what gives the required fields of EffectiveSettings
-// runtime force. Without it every field is a compile-time claim only, and a
-// reader that stops guarding is trusting a cast. A decode failure (including the
-// empty-body 2xx, which arrives as undefined) routes to the error branch, so
-// dispatch resolves null and each caller leaves its UI where it was.
+// The generated decoder gives EffectiveSettings' required fields runtime force; a decode failure
+// (including an empty-body 2xx) resolves null and each caller leaves its UI as it was.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const loadSettings = apiAction<void, EffectiveSettings>({
   name: "settings.load",
@@ -130,13 +98,9 @@ export const loadSettings = apiAction<void, EffectiveSettings>({
   success: false,
 });
 
-// --- Patch app settings (debug_logs, etc.) ---
-
 interface PatchAppArgs {
   body: Record<string, unknown>;
-  /** Optional input(s) for rollback. Multi-key patches can pass an
-   *  array of inputs all of whose checked-state should flip back on
-   *  failure. */
+  /** Input(s) whose checked state flips back on failure. */
   inputs?: readonly HTMLInputElement[];
 }
 
@@ -147,8 +111,6 @@ interface PatchAppOp {
 export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
   name: "settings.patch",
   scope: "settings",
-  // Not retryable: args contain DOM refs that become stale on retry, and
-  // settings saves are user-initiated (cheap to redo manually).
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",
@@ -170,11 +132,12 @@ export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
     }
     for (const { el, prevChecked, prevValue } of op.inputs) {
       if (el.type === "checkbox") {
-        el.checked = prevChecked;
+        writeSwitch(el, prevChecked);
       } else {
         el.value = prevValue;
       }
     }
+    paintSettingLocks();
   },
   error: "Could not save setting",
 });

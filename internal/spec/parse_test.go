@@ -75,11 +75,8 @@ func asJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
-// withoutWaves drops the wave ids before an oracle comparison. Every other
-// field of a node is KAS's parser answering, and the goldens are that parser's
-// own output; a wave is marotte reading a section KAS's task parser never
-// looks at, so the oracle has no value to state for it. Its own tests are
-// TestParseWaves_* and TestParse_AssignsWavesByDottedNumber.
+// withoutWaves drops the wave ids before an oracle comparison: KAS's task parser never reads
+// the dependency-graph section, so the goldens state no wave.
 func withoutWaves(p Parsed) Parsed {
 	p.Tasks = stripWaves(p.Tasks)
 	return p

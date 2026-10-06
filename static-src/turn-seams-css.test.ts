@@ -1,9 +1,8 @@
-// A TURN CARD HAS NO INTERNAL SEAM: each tinted band is separated from the body by
-// its own FILL, never by a 1px rule. `0px` on both borders is also satisfied by a
-// card whose bands stopped painting, so each seam is measured twice: no rule, AND
-// the fills either side differ. The three `border-*: 0` rules that only stopped
-// doubled lines are asserted GONE, since a resurrected one is otherwise invisible.
-// Real layout in a real engine: "does the reader see a line" is a painted question.
+// A TURN CARD HAS NO INTERNAL SEAM: each tinted band is separated from the body by its own FILL,
+// never a 1px rule, as `.turn-face` always was. Each seam is measured twice, no rule AND differing
+// fills, since `0px` alone passes for a band that stopped painting; the three old de-duplicating
+// `border-*: 0` rules are asserted GONE. Real layout: a `var()` background reads `""` in a DOM
+// emulator.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -17,10 +16,8 @@ const SEAMS = [
 let style: HTMLStyleElement;
 const made: HTMLElement[] = [];
 
-/** A settled turn card in `buildTurn`'s own child order. Assembled here rather than
- *  through the builder because the subject is the CASCADE over three class names,
- *  and the builder drags the whole message-rendering graph in to produce the same
- *  three elements. */
+/** A settled turn card in `buildTurn`'s child order, assembled by hand: the subject is the CASCADE
+ *  over three classes, and the builder drags in the whole rendering graph. */
 function turnCard(opts: { readonly folded?: boolean } = {}): HTMLElement {
   const card = document.createElement("div");
   card.className = "turn";
@@ -117,11 +114,7 @@ describe("a turn card's two band seams", () => {
   });
 
   it("leaves the header's rule off a FOLDED card too, with no rule of its own", () => {
-    // `.turn[data-folded] > .turn-header { border-bottom: 0 }` was deleted with the
-    // seam it existed to de-duplicate. This is what says the deletion changed
-    // nothing: a folded header has no line either way, so the rule was dead and not
-    // load-bearing. Fails if the base seam comes back, because then only the folded
-    // card would still be correct.
+    // A folded header has no line either way; fails if the base seam returns.
     const card = turnCard({ folded: true });
     expect(getComputedStyle(el(card, ".turn-header")).borderBottomWidth).toBe("0px");
   });
@@ -135,10 +128,8 @@ describe("a turn card's two band seams", () => {
   });
 
   it("leaves the header's rule off a bodyless card, which keeps its radii", () => {
-    // `.turn.is-bodyless > .turn-header` lost its `border-bottom: 0` and KEPT the two
-    // radii, which are the half that was never about doubling: the header is the
-    // card's last painted band there, so it has to round the corners the body was
-    // covering. Asserting both is what stops the whole rule being read as dead.
+    // `.turn.is-bodyless > .turn-header` KEPT its two radii: the header is the last painted band there
+    // and rounds the corners.
     const card = turnCard();
     card.classList.add("is-bodyless");
     el(card, ".turn-body").replaceChildren();

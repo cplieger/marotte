@@ -1,28 +1,9 @@
-// Package mcp persists and serves the user's configured MCP (Model
-// Context Protocol) servers.
-//
-// # Storage model
-//
-// A single file at <configDir>/mcp.json, mode 0600, written atomically
-// (temp + rename) via atomicfile.WriteFile. The file holds an ordered array of
-// Server records. Order is the display order; no separate index.
-//
-// # Scope
-//
-// One scope only: user-global. Marotte runs one container per user; per-
-// chat or per-workspace MCP sets would add schema churn with no clear
-// benefit. This matches how kiro-cli's mcpServers parameter is scoped
-// to a session (not a chat), and we intentionally use the same set for
-// every bridge spawned within the same container.
-//
-// # Secrets
-//
-// Env values and header values often contain API keys. Store returns
-// them masked ("***") from public reads; Update preserves the
-// stored value when the client sends "***" so the UI can round-trip
-// without re-submitting secrets. On disk the file is plaintext with
-// 0600 perms — the threat model is the same as the chat files that
-// already live in the same directory (user's own container).
+// Package mcp persists and serves the user's configured MCP servers: one ordered array of Server
+// records in <configDir>/mcp.json, mode 0600, written atomically. One user-global scope, shared by
+// every bridge in the container.
+// Env and header values often hold API keys: public reads mask them as "***", and Update keeps the
+// stored value when the client sends "***" back. On disk the file is plaintext 0600, the same
+// threat model as the chat files beside it.
 package mcp
 
 import (
@@ -41,19 +22,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Transport names the MCP transports marotte accepts in mcp.json.
-// "stdio" is universal; "http" is the Streamable HTTP transport
-// (2025-03-26 MCP spec); "sse" is the legacy HTTP+SSE remote transport.
-//
-// SSE is a first-class, stored transport (not normalized to "http"):
-// kiro-cli v3 (KAS) re-advertises mcpCapabilities.sse:true and accepts
-// a distinct {type:"sse", url, headers} entry on session/new
-// (verified against the KAS 2.12 acp-server bundle + a live session/new
-// probe; a bogus transport is rejected, so "sse" is genuinely accepted,
-// not merely tolerated). "sse" and "http" share the same remote wire
-// shape (url + headers) and differ only in the ACP `type` discriminator,
-// so both are validated as remote transports and both round-trip through
-// the store verbatim.
+// Transport names the MCP transports mcp.json accepts: "stdio", "http" (Streamable HTTP, 2025-03-26
+// spec) and "sse" (legacy HTTP+SSE). "sse" is stored as itself: KAS accepts a distinct {type:"sse",
+// url, headers} entry (KAS 2.12). sse and http share the remote wire shape and differ only in the
+// ACP `type`.
 type Transport string
 
 // TransportStdio, TransportHTTP, and TransportSSE define the valid
@@ -62,6 +34,10 @@ const (
 	TransportStdio Transport = "stdio"
 	TransportHTTP  Transport = "http"
 	TransportSSE   Transport = "sse"
+	// TransportRegistry enables a server from the organization's MCP registry by
+	// name; KAS resolves its command or url from the catalog, so the entry carries
+	// neither.
+	TransportRegistry Transport = "registry"
 )
 
 // ParseTransport validates a raw string as a known transport. All three
@@ -70,7 +46,7 @@ const (
 // mcpServers entry over the v3 wire (see the Transport doc).
 func ParseTransport(s string) (Transport, error) {
 	switch Transport(s) {
-	case TransportStdio, TransportHTTP, TransportSSE:
+	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
 		return Transport(s), nil
 	default:
 		return "", fmt.Errorf("unknown transport: %q", s)
@@ -80,7 +56,7 @@ func ParseTransport(s string) (Transport, error) {
 // Valid reports whether t is one of the known transport values.
 func (t Transport) Valid() bool {
 	switch t {
-	case TransportStdio, TransportHTTP, TransportSSE:
+	case TransportStdio, TransportHTTP, TransportSSE, TransportRegistry:
 		return true
 	default:
 		return false
@@ -95,22 +71,30 @@ const SecretMask = marotte.SecretMask
 // Name is the user-visible label that also becomes the kiro-cli
 // mcpServer name (must be unique across the configured set).
 type Server struct {
-	URL               string    `json:"url,omitempty"`
-	Name              string    `json:"name"`
-	Command           string    `json:"command,omitempty"`
-	OAuthClientID     string    `json:"oauth_client_id,omitempty"`
-	OAuthClientSecret string    `json:"oauth_client_secret,omitempty"`
-	ID                ServerID  `json:"id"`
-	Transport         Transport `json:"transport"`
-	Args              []string  `json:"args,omitempty"`
-	Env               []KeyPair `json:"env,omitempty"`
-	Headers           []KeyPair `json:"headers,omitempty"`
-	DisabledTools     []string  `json:"disabled_tools,omitempty"`
-	AutoApprove       []string  `json:"auto_approve,omitempty"`
-	CreatedAt         int64     `json:"created_at"`
-	UpdatedAt         int64     `json:"updated_at"`
-	Prewarm           bool      `json:"prewarm,omitempty"`
-	Enabled           bool      `json:"enabled"`
+	URL           string `json:"url,omitempty"`
+	Name          string `json:"name"`
+	Command       string `json:"command,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+	// OAuthClientMetadataURL and OAuthRedirectURI are KAS's other two oauth
+	// members (client-ID metadata document, pinned loopback redirect); not secrets.
+	OAuthClientMetadataURL string    `json:"oauth_client_metadata_url,omitempty"`
+	OAuthRedirectURI       string    `json:"oauth_redirect_uri,omitempty"`
+	ID                     ServerID  `json:"id"`
+	Transport              Transport `json:"transport"`
+	Args                   []string  `json:"args,omitempty"`
+	Env                    []KeyPair `json:"env,omitempty"`
+	Headers                []KeyPair `json:"headers,omitempty"`
+	DisabledTools          []string  `json:"disabled_tools,omitempty"`
+	CreatedAt              int64     `json:"created_at"`
+	UpdatedAt              int64     `json:"updated_at"`
+	// TimeoutMS is KAS's per-server connect timeout and MCP wait budget, in
+	// milliseconds; 0 leaves KAS's own default (60 s). WaitForReady makes KAS hold
+	// a prompt for this server even with the global wait setting off. Both are
+	// written only by a paste or a raw-JSON edit.
+	TimeoutMS    int  `json:"timeout_ms,omitempty"`
+	Prewarm      bool `json:"prewarm,omitempty"`
+	Enabled      bool `json:"enabled"`
+	WaitForReady bool `json:"wait_for_ready,omitempty"`
 }
 
 // KeyPair is an ordered env-var or header entry. Ordered (vs map) so
@@ -128,25 +112,18 @@ type Store struct {
 	path     string
 	kasPath  string
 	onChange func(context.Context)
-	// honourAutoApprove answers whether the security profile in force lets a
-	// server's `auto_approve` list reach the agent. Read on every WRITE rather than
-	// captured at construction: the profile is a setting the user changes while the
-	// store is alive, and a captured value would render the posture that was in
-	// force at boot for the rest of the process.
-	honourAutoApprove func(context.Context) bool
-	servers           []*Server
-	mu                sync.RWMutex
+	// waitForReady answers the global mcp_wait_for_ready setting. Read on every
+	// write rather than captured at construction, because the user changes it
+	// while the store is alive.
+	waitForReady func(context.Context) bool
+	servers      []*Server
+	mu           sync.RWMutex
 }
 
-// New loads the file (or initialises empty) and returns a ready store.
-// onChange is invoked on a fresh goroutine (without the store mutex
-// held) whenever the persisted set is mutated; nil is valid if no one
-// cares. The ctx is stored for use in fire-and-forget persist paths so
-// writes are cancellable on shutdown.
-//
-// Two files, one source of truth. `<configDir>/mcp.json` is marotte's
-// own record; KAS's `~/.kiro/settings/mcp.json` is RENDERED from it and
-// is what the agent actually reads (see kasfile.go).
+// New loads the file (or initialises empty) and returns a ready store. onChange runs on a fresh
+// goroutine, without the store mutex, on every persisted mutation; nil is valid. ctx bounds the
+// fire-and-forget persists. mcp.json is marotte's record; KAS's ~/.kiro/settings/mcp.json is
+// rendered from it (kasfile.go).
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
 	// Required, not defaulted. ctx IS the store's lifetime, and
 	// notifyChange parents fire-and-forget callback work on it. Refusing
@@ -191,42 +168,16 @@ func WithKASConfigPath(path string) Option {
 	return func(s *Store) { s.kasPath = path }
 }
 
-// WithAutoApprove supplies the resolver for whether the security profile in force
-// lets a server's `auto_approve` list reach the agent.
-//
-// A FUNCTION rather than a value, because the profile is a setting the user
-// changes while the store is alive: the composition root wires a closure that
-// reads the setting, and every render then answers with the rung actually in
-// force. `policyfile.HonoursAutoApprove` owns the rung table and the unknown-id
-// fallback, so this package never holds the ladder's vocabulary.
-//
-// Unwired means SUSPEND — see [Store.honoursAutoApprove].
-func WithAutoApprove(fn func(context.Context) bool) Option {
-	return func(s *Store) { s.honourAutoApprove = fn }
+// WithWaitForReady supplies the resolver for the global MCP wait setting, which
+// renders `waitForReady: true` on every server. Unwired means off, KAS's own
+// default. The resolver must not call back into the store: writeKASConfig runs
+// it with the store's write lock held.
+func WithWaitForReady(fn func(context.Context) bool) Option {
+	return func(s *Store) { s.waitForReady = fn }
 }
 
-// honoursAutoApprove resolves the posture for one render.
-//
-// NO RESOLVER MEANS FALSE, which is the fail-closed direction and is chosen
-// rather than inherited: the ladder's own default rung honours nothing, so a
-// composition that forgot to wire this renders exactly what `guarded` renders. The
-// alternative — defaulting to honour, preserving the behaviour before this option
-// existed — would make a missing wire silently WIDEN every instance, and a
-// widening nobody authored is the defect this whole mechanism removes.
-//
-// It is not a construction refusal like New's nil-ctx check, because that would
-// make every test and every future caller declare a posture to get a store.
-//
-// The field is read WITHOUT the mutex, and must stay that way: it is write-once in
-// New like ctx and kasPath, never swappable like onChange, and this is reached from
-// writeKASConfig — which persist calls with s.mu held for WRITING, so an RLock here
-// would deadlock the one path that matters. The resolver itself must not call back
-// into the store for the same reason.
-func (s *Store) honoursAutoApprove(ctx context.Context) bool {
-	if s.honourAutoApprove == nil {
-		return false
-	}
-	return s.honourAutoApprove(ctx)
+func (s *Store) waitsForReady(ctx context.Context) bool {
+	return s.waitForReady != nil && s.waitForReady(ctx)
 }
 
 // SetOnChange replaces the change callback.
@@ -244,15 +195,9 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("read mcp.json: %w", err)
 	}
-	// mcp.json is plaintext API keys in env and header values, so its
-	// 0600 is the whole of its protection. EnforceFile re-stats the
-	// descriptor it chmod'ed, so a filesystem that stores 0660 is
-	// reported here instead of passing as success, and it refuses a
-	// symlink at the name.
-	//
-	// Warn-and-continue: load's error is fatal to New and therefore to
-	// startup, and a /config the operator reshaped must still boot so it
-	// can be repaired from the UI.
+	// mcp.json holds plaintext API keys, so its 0600 is the whole protection; EnforceFile reports a
+	// filesystem that stores wider and refuses a symlink. Warn-and-continue, so a reshaped /config
+	// still boots and can be repaired.
 	if _, chErr := filemode.EnforceFile(s.path, 0o600); chErr != nil {
 		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
 			"path", s.path, "error", chErr)

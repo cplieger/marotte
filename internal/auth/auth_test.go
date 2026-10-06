@@ -25,8 +25,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// drainOne reads a single message from urlCh with a sensible budget so the
-// test never blocks on a buggy parser.
+// drainOne reads one message from urlCh under a budget so a buggy parser cannot hang the test.
 func drainOne(t *testing.T, ch <-chan map[string]string) map[string]string {
 	t.Helper()
 	select {
@@ -38,17 +37,13 @@ func drainOne(t *testing.T, ch <-chan map[string]string) map[string]string {
 	}
 }
 
-// writeFakeCLI writes an executable /bin/sh script to t.TempDir that
-// emits the given stdout and exits with the given code. Returns the
-// absolute path usable as NewHandler's cliPath. Unix-only; callers
-// must t.Skip on Windows.
+// writeFakeCLI writes an executable /bin/sh script to t.TempDir that emits stdout and exits with code, returning its
+// path for NewHandler. Unix-only.
 func writeFakeCLI(t *testing.T, stdout string, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-kiro-cli")
-	// Write stdout content to a sibling file and cat it from the
-	// script. This avoids all quoting/escaping issues with printf
-	// and special characters in the output.
+	// Cat from a sibling file to avoid printf quoting.
 	dataPath := filepath.Join(dir, "stdout-data")
 	if err := os.WriteFile(dataPath, []byte(stdout), 0o644); err != nil {
 		t.Fatalf("writeFakeCLI data: %v", err)
@@ -68,11 +63,8 @@ func writeExecutable(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o755)
 }
 
-// writeFakeCLIScript writes an executable /bin/sh script with the
-// given body (shebang added automatically) to t.TempDir and returns
-// its absolute path. Prefer writeFakeCLI when the script is just
-// `cat + exit`; use this variant for hang/sleep/multi-line shapes.
-// Unix-only; callers must t.Skip on Windows.
+// writeFakeCLIScript writes an executable /bin/sh script with the given body to t.TempDir and returns its path, for
+// hang, sleep and multi-line shapes. Unix-only.
 func writeFakeCLIScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-kiro-cli")
@@ -83,9 +75,8 @@ func writeFakeCLIScript(t *testing.T, body string) string {
 	return path
 }
 
-// writeCountingCLI writes a fake kiro-cli that records every invocation and
-// prints stdout. calls reports how many times it ran, which is the only way to
-// assert that a request path forks nothing. Unix-only.
+// writeCountingCLI writes a fake kiro-cli that records each invocation and prints stdout; calls proves a path forks
+// nothing. Unix-only.
 func writeCountingCLI(t *testing.T, stdout string) (path string, calls func() int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -108,10 +99,7 @@ func writeCountingCLI(t *testing.T, stdout string) (path string, calls func() in
 	}
 }
 
-// skipIfNotUnix skips the test on Windows. Every subprocess / signal
-// helper in this package is unix-only (process groups, /bin/sh fake
-// CLI, killGroup). Factored so the skip reason doesn't drift across
-// the 14 tests that need this gate.
+// skipIfNotUnix skips on Windows: the subprocess and signal helpers here need process groups and /bin/sh.
 func skipIfNotUnix(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -119,17 +107,12 @@ func skipIfNotUnix(t *testing.T) {
 	}
 }
 
-// --- scanLoginOutput ---
-
-// fakeErrReader returns its canned error on the first Read so
-// bufio.Scanner surfaces it via scanner.Err() without producing
-// any lines.
+// fakeErrReader returns its error on the first Read, so bufio.Scanner reports it with no lines.
 type fakeErrReader struct{ err error }
 
 func (f *fakeErrReader) Read([]byte) (int, error) { return 0, f.err }
 
 func TestScanLoginOutput(t *testing.T) {
-	// buildLineCap generates maxLoginLines+5 lines of noise to trigger the cap.
 	buildLineCap := func() string {
 		var b strings.Builder
 		for i := range maxLoginLines + 5 {
@@ -137,8 +120,7 @@ func TestScanLoginOutput(t *testing.T) {
 		}
 		return b.String()
 	}
-	// buildLongLines generates maxLoginLines+5 lines of 200-byte 'x' runs
-	// to exercise the per-line cap inside lineRing.
+	// maxLoginLines+5 lines of 200 bytes, for lineRing's per-line cap.
 	buildLongLines := func() string {
 		longLine := strings.Repeat("x", 200)
 		var b strings.Builder
@@ -212,9 +194,7 @@ func TestScanLoginOutput(t *testing.T) {
 			wantError:  "CLI produced too much output without auth URL",
 		},
 		{
-			// Boundary: exactly maxLoginLines URL-free lines must trip
-			// the line cap (the cap is `lineCount >= maxLoginLines`),
-			// distinct from the maxLoginLines+5 LineCap case above.
+			// Exactly maxLoginLines URL-free lines trip the cap (`lineCount >= maxLoginLines`).
 			name: "LineCapBoundaryExactlyMax",
 			buildInput: func() string {
 				var b strings.Builder
@@ -273,7 +253,6 @@ func TestScanLoginOutput(t *testing.T) {
 		})
 	}
 
-	// ReaderError requires a custom io.Reader, tested separately.
 	t.Run("ReaderError", func(t *testing.T) {
 		ch := make(chan map[string]string, 1)
 		scanLoginOutput(&fakeErrReader{err: errors.New("pipe exploded")}, ch)
@@ -292,7 +271,6 @@ func TestScanLoginOutput(t *testing.T) {
 		}
 	})
 
-	// AlreadyLoggedIn_CaseInsensitive exercises case-insensitive matching.
 	t.Run("AlreadyLoggedIn_CaseInsensitive", func(t *testing.T) {
 		inputs := []string{
 			"Already Logged In as foo@example.com\n",
@@ -312,8 +290,6 @@ func TestScanLoginOutput(t *testing.T) {
 		}
 	})
 }
-
-// --- humanizeAccountType ---
 
 func TestHumanizeAccountType(t *testing.T) {
 	tests := []struct {
@@ -342,8 +318,6 @@ func TestHumanizeAccountType(t *testing.T) {
 		})
 	}
 }
-
-// --- whoamiInfo ---
 
 func TestWhoamiInfo(t *testing.T) {
 	tests := []struct {
@@ -375,11 +349,7 @@ func TestWhoamiInfo(t *testing.T) {
 		},
 		{
 			name: "IdentityCenter drops extra profile fields",
-			// Per AUTH-01: arbitrary kiro-cli fields not on the
-			// WhoamiResponse struct are dropped at the wire
-			// boundary. profile and account_id were preserved
-			// verbatim under the old map[string]any return; the
-			// typed struct narrows the surface intentionally.
+			// Unknown kiro-cli fields are dropped at the wire boundary; the typed struct narrows it on purpose.
 			in: `{"account_type":"IdentityCenter","email":"u@example.com","profile":"admin","account_id":"123"}`,
 			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "Logged in with IAM Identity Center" {
@@ -391,8 +361,7 @@ func TestWhoamiInfo(t *testing.T) {
 				if got.AccountType != "IdentityCenter" {
 					t.Errorf("AccountType = %q, want preserved verbatim", got.AccountType)
 				}
-				// Marshalled output must not carry profile or
-				// account_id (locked-down wire surface).
+				// No profile or account_id on the wire.
 				b, err := json.Marshal(got)
 				if err != nil {
 					t.Fatal(err)
@@ -437,9 +406,7 @@ func TestWhoamiInfo(t *testing.T) {
 			},
 		},
 		{
-			// A payload marotte RECEIVED with no email in it is kiro-cli saying
-			// nobody is signed in. It must never read as `unavailable`, which is
-			// reserved for not having been able to ask.
+			// A received payload with no email means signed out; unavailable is for not being able to ask.
 			name: "null json object is signed_out",
 			in:   `null`,
 			check: func(t *testing.T, got WhoamiResponse) {
@@ -458,8 +425,7 @@ func TestWhoamiInfo(t *testing.T) {
 			},
 		},
 		{
-			// The account labels are the signed_in arm's, so an emailless payload
-			// carrying them is still signed_out and must carry nothing else.
+			// An emailless payload with account labels is still signed_out and carries nothing else.
 			name: "account_type without an email is still signed_out",
 			in:   `{"account_type":"BuilderId","region":"us-east-1"}`,
 			check: func(t *testing.T, got WhoamiResponse) {
@@ -498,10 +464,7 @@ func TestWhoamiInfo(t *testing.T) {
 		},
 		{
 			name: "kiro-cli 2.0.1: trailing non-JSON footer is ignored",
-			// This is the exact shape the runtime container returned
-			// on 2026-04-23: JSON followed by a Profile: / ARN
-			// banner. Before json.Decoder, the whole buffer was
-			// passed to json.Unmarshal and failed on the `P`.
+			// The shape a real container returned: JSON followed by a Profile:/ARN banner, which json.Unmarshal rejected.
 			in: "{\"accountType\":\"IamIdentityCenter\"," +
 				"\"email\":\"u@example.com\"," +
 				"\"region\":\"us-east-1\"," +
@@ -534,8 +497,6 @@ func TestWhoamiInfo(t *testing.T) {
 		})
 	}
 }
-
-// --- validateProvider / validateRegion ---
 
 func TestValidateProvider(t *testing.T) {
 	tests := []struct {
@@ -600,8 +561,6 @@ func TestValidateRegion(t *testing.T) {
 	}
 }
 
-// --- HandleWhoami, over the fake-CLI harness ---
-
 func TestHandleWhoami_ServesThePrimedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 
@@ -634,9 +593,8 @@ func TestHandleWhoami_ServesThePrimedIdentity(t *testing.T) {
 	}
 }
 
-// TestHandleWhoami_ForksNothing is the whole point of the cache: a page load
-// and every SSE reconnect behind it must reach memory and nothing else. The
-// measured cost of the old shape was p50 457 ms per call with a 5-second tail.
+// TestHandleWhoami_ForksNothing pins that page loads and SSE reconnects must reach memory only; the forking shape measured
+// p50 457 ms with a 5-second tail.
 func TestHandleWhoami_ForksNothing(t *testing.T) {
 	skipIfNotUnix(t)
 
@@ -660,9 +618,8 @@ func TestHandleWhoami_ForksNothing(t *testing.T) {
 	}
 }
 
-// TestHandleWhoami_ColdReadIsUnavailableNotSignedOut is the defect the union
-// exists for: before the first read lands the server does not KNOW, and saying
-// signed_out there is what puts a sign-in prompt over a working app.
+// TestHandleWhoami_ColdReadIsUnavailableNotSignedOut pins that before the first read the server does not know, and
+// signed_out would put a sign-in prompt over a working app.
 func TestHandleWhoami_ColdReadIsUnavailableNotSignedOut(t *testing.T) {
 	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
@@ -725,8 +682,6 @@ func TestHandleWhoami_RejectsNonGET(t *testing.T) {
 		})
 	}
 }
-
-// --- HandleLogin ---
 
 func TestHandleLogin_RejectsNonPOST(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
@@ -866,8 +821,6 @@ func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 	}
 }
 
-// --- HandleLogout ---
-
 func TestHandleLogout_RejectsNonPOST(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
@@ -910,11 +863,6 @@ func TestHandleLogout_Success(t *testing.T) {
 	}
 }
 
-// TestHandleLogout_CLIFails moved to TestHandleLogout_CLIFailsReturnsGenericSentinel
-// (below) with a stricter sentinel + guardrail against err.Error() leakage.
-
-// --- RegisterRoutes ---
-
 func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 	h := NewHandler(fixedPath("/bin/false"))
 	mux := http.NewServeMux()
@@ -927,8 +875,7 @@ func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 		{http.MethodGet, "/api/whoami"},
 		{http.MethodPost, "/api/login"},
 		{http.MethodPost, "/api/logout"},
-		// Non-POST on login/logout is 405, which also proves the
-		// handler was reached (mux found the pattern).
+		// A 405 on non-POST also proves the mux reached the handler.
 		{http.MethodGet, "/api/login"},
 		{http.MethodGet, "/api/logout"},
 	}
@@ -944,11 +891,9 @@ func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 	}
 }
 
-// --- killProcessGroup ---
-
 func TestKillLoginProcess_NilProcess(t *testing.T) {
 	cmd := exec.Command("/bin/true")
-	// Deliberately do NOT call Start; Process stays nil.
+	// Start is never called; Process stays nil.
 	killProcessGroup(cmd)
 	if cmd.Process != nil {
 		t.Errorf("Process = %v, want nil (Start was not called)", cmd.Process)
@@ -965,11 +910,9 @@ func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	// Process has exited and been reaped; must not panic.
+	// Already reaped; must not panic.
 	killProcessGroup(cmd)
 }
-
-// --- NewHandler ---
 
 func TestNewHandler(t *testing.T) {
 	h := NewHandler(fixedPath("/bin/true"))
@@ -980,8 +923,6 @@ func TestNewHandler(t *testing.T) {
 		t.Errorf("cliPath = %q, want %q", h.cliPath(), "/bin/true")
 	}
 }
-
-// --- readIdentity failure classification ---
 
 func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
 	skipIfNotUnix(t)
@@ -1007,12 +948,10 @@ func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
 	}
 }
 
-// TestReadIdentity_BinaryMissingIsUnavailable pins the ErrNotFound branch,
-// which carries its own log line Grafana alerts on. A refactor that let it fall
-// through to the default case would still pass CI without this.
+// TestReadIdentity_BinaryMissingIsUnavailable pins the ErrNotFound branch and its own log line, which an external
+// alert rule matches.
 func TestReadIdentity_BinaryMissingIsUnavailable(t *testing.T) {
-	// A path that does not exist and is not on PATH triggers exec.ErrNotFound
-	// from cmd.Run.
+	// Missing and not on PATH: exec.ErrNotFound.
 	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	got := h.readIdentity(t.Context())
@@ -1023,15 +962,12 @@ func TestReadIdentity_BinaryMissingIsUnavailable(t *testing.T) {
 	if got.Reason != reasonCLIMissing {
 		t.Errorf("Reason = %q, want %q", got.Reason, reasonCLIMissing)
 	}
-	// The reason is a server-authored phrase, never the exec error: it is
-	// rendered in a banner, so a filesystem path or an errno must not reach it.
+	// The reason is rendered in a banner, so no path or errno may reach it.
 	if strings.Contains(got.Reason, "fork/exec") ||
 		strings.Contains(got.Reason, "no-such-kiro-cli") {
 		t.Errorf("Reason = %q, leaks the binary path / exec details", got.Reason)
 	}
 }
-
-// --- handleLogout 504/503 branches ---
 
 func TestHandleLogout_TimesOut(t *testing.T) {
 	skipIfNotUnix(t)
@@ -1062,8 +998,7 @@ func TestHandleLogout_TimesOut(t *testing.T) {
 }
 
 func TestHandleLogout_BinaryMissing(t *testing.T) {
-	// Path that doesn't exist and isn't on PATH — triggers
-	// exec.ErrNotFound from cmd.Run.
+	// Missing and not on PATH: exec.ErrNotFound.
 	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
@@ -1083,8 +1018,7 @@ func TestHandleLogout_BinaryMissing(t *testing.T) {
 	}
 }
 
-// Generic CLI-failure branch must return a sanitised sentinel, not
-// err.Error() (which would leak the binary path or OS message).
+// The generic CLI failure returns a sanitised sentinel, never err.Error().
 func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
 	skipIfNotUnix(t)
 
@@ -1106,24 +1040,18 @@ func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
 		t.Errorf("error = %q, want %q (generic sentinel, not err.Error())",
 			body["error"], "logout failed")
 	}
-	// Guardrail: err.Error() would look like "exit status 2" — make
-	// sure we never emit that shape (path leaks, OS messages).
+	// err.Error() would read "exit status 2".
 	if strings.Contains(body["error"], "exit status") {
 		t.Errorf("error = %q, must not contain raw err.Error() prefix", body["error"])
 	}
-	// Output preservation: the CLI's own stdout/stderr must still
-	// reach the client so operators can diagnose. This was tested
-	// by the older TestHandleLogout_CLIFails; keep coverage here.
+	// The CLI's own output still reaches the client for diagnosis.
 	if !strings.Contains(body["output"], "auth error") {
 		t.Errorf("output = %q, want to contain CLI output", body["output"])
 	}
 }
 
-// --- handleLogin generic-sentinel error paths ---
-
 func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
-	// Path that doesn't exist and isn't on PATH — triggers
-	// exec.ErrNotFound from cmd.Start.
+	// Missing and not on PATH: exec.ErrNotFound from cmd.Start.
 	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
@@ -1143,7 +1071,7 @@ func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 	if body["error"] != "login unavailable" {
 		t.Errorf("error = %q, want %q", body["error"], "login unavailable")
 	}
-	// Must not leak filesystem paths or exec error shape.
+	// No filesystem paths or exec error shapes.
 	if strings.Contains(body["error"], "fork/exec") ||
 		strings.Contains(body["error"], "no-such-kiro-cli") ||
 		strings.Contains(body["error"], "not found") {
@@ -1175,12 +1103,8 @@ func TestHandleLogin_BodyTooLargeReturns413(t *testing.T) {
 
 func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	skipIfNotUnix(t)
-	// Fake CLI that hangs so the first request stays in flight
-	// while we fire the second.
+	// A hanging CLI keeps the first request in flight.
 	path := writeFakeCLIScript(t, "sleep 5\n")
-	// Shrink URL timeout so the first handler returns fast; we
-	// care about the 409 on the second attempt, not the timeout
-	// details of the first.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 100 * time.Millisecond,
 		LoginTimeout:    DefaultConfig.LoginTimeout,
@@ -1188,8 +1112,7 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
 
-	// Seat the semaphore directly to simulate an in-flight login
-	// without racing the first handler.
+	// Seat the semaphore directly to simulate an in-flight login.
 	h.loginSem <- struct{}{}
 	t.Cleanup(func() { <-h.loginSem })
 
@@ -1212,19 +1135,15 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	}
 }
 
-// The first handler emits a URL and returns while the kiro-cli subprocess is still
-// alive pinning a device code, so the semaphore has to be held by the reap
-// goroutine rather than a defer on handler return: a second POST in that window
-// would otherwise spawn a second subprocess and pin a second device code.
+// The first handler returns with the URL while kiro-cli still holds a device code, so the reap goroutine holds the
+// semaphore; a second POST would otherwise pin a second code.
 func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	skipIfNotUnix(t)
-	// Default LoginURLTimeout, so the first request returns via the URL-found
-	// path rather than the timeout path.
+	// Default LoginURLTimeout, so the first request returns on the URL path.
 	path := writeFakeCLIScript(t,
 		"echo 'Open this URL: https://example.com/auth'\n"+
 			"sleep 30\n")
-	// A 500ms hard cap makes the reap goroutine SIGKILL the 30s sleep rather than
-	// the test holding a subprocess for 16 minutes.
+	// A 500ms hard cap kills the 30s sleep.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
 		LoginTimeout:    500 * time.Millisecond,
@@ -1232,7 +1151,6 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
 
-	// First request: should succeed with a URL.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{}`))
 	req1.Header.Set("Content-Type", "application/json")
@@ -1250,7 +1168,7 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		t.Fatalf("first url = %q, want https://example.com/auth", body1["url"])
 	}
 
-	// Arriving after the first handler returned, while the subprocess is alive.
+	// After the first handler returned, while the subprocess is alive.
 	req2 := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{}`))
 	req2.Header.Set("Content-Type", "application/json")
@@ -1269,8 +1187,7 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		t.Errorf("second error = %q, want %q", body2["error"], "login in progress")
 	}
 
-	// A bounded acquire+release fails fast on a regression rather than polling:
-	// the hard cap fires, SIGKILL lands, cmd.Wait returns, the sem is released.
+	// Fails fast on a regression: the cap fires, cmd.Wait returns, the sem is released.
 	select {
 	case h.loginSem <- struct{}{}:
 		<-h.loginSem
@@ -1278,8 +1195,6 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		t.Fatal("semaphore not released within 5s of hard-cap expiry")
 	}
 }
-
-// --- whoamiInfo capital-Email fallback ---
 
 func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 	tests := []struct {
@@ -1311,19 +1226,15 @@ func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 	}
 }
 
-// --- killGroup nil-process early return ---
-
 func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
-	// Never call Start; Process is nil.
+	// Start is never called; Process is nil.
 	err := killGroup(cmd)
 	if !errors.Is(err, syscall.ESRCH) {
 		t.Errorf("killGroup(unstarted) = %v, want syscall.ESRCH", err)
 	}
 }
-
-// --- extractAuthURL ---
 
 func TestExtractAuthURL(t *testing.T) {
 	tests := []struct {
@@ -1349,8 +1260,6 @@ func TestExtractAuthURL(t *testing.T) {
 		})
 	}
 }
-
-// --- buildLoginArgs ---
 
 func TestBuildLoginArgs(t *testing.T) {
 	tests := []struct {
@@ -1406,16 +1315,8 @@ func TestBuildLoginArgs(t *testing.T) {
 	}
 }
 
-// --- classifyLoginStartErr ---
-
-// TestClassifyLoginStartErr pins the ErrNotFound-vs-generic mapping.
-// Current integration coverage only hits the ErrNotFound branch via
-// TestHandleLogin_BinaryMissingReturns503; the generic default branch
-// (500 on non-ENOENT) is uncovered. Without this test, a refactor
-// that extended the ENOENT branch to also swallow EPERM/EACCES would
-// silently downgrade 500 to 503 and pass CI — breaking the
-// "503 = binary missing (redeploy), 500 = transient (retry)"
-// contract Grafana alert rules depend on.
+// TestClassifyLoginStartErr pins 503 for a missing binary and 500 for anything else, so EPERM or EACCES cannot be
+// swallowed into 503; an external alert rule tells redeploy from retry by it.
 func TestClassifyLoginStartErr(t *testing.T) {
 	tests := []struct {
 		err  error
@@ -1459,16 +1360,8 @@ func TestClassifyLoginStartErr(t *testing.T) {
 	}
 }
 
-// --- slog-capture helpers, and the log assertions that use them ---
-
-// syncBuffer is a bytes.Buffer that may be written and read concurrently.
-//
-// The sink captureSlogJSON installs is process-wide, so its writer is reachable
-// from any goroutine still alive anywhere in the package, not only from the fn
-// being captured. slog's handlers require an io.Writer safe for concurrent calls
-// and bytes.Buffer is not one, so an unguarded buffer races with a login reap
-// goroutine that outlives the test which started it: that goroutine logs through
-// whatever default is installed by then, which is a later test's buffer.
+// syncBuffer is a bytes.Buffer safe for concurrent Write and read. captureSlogJSON's sink is process-wide, so a
+// login reap goroutine outliving its test writes into a later test's buffer.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -1480,29 +1373,17 @@ func (b *syncBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// Bytes returns a COPY, because the caller reads it after releasing the lock
-// while a concurrent Write may still grow the underlying array.
+// Bytes returns a copy: a concurrent Write may grow the array after the lock is released.
 func (b *syncBuffer) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return bytes.Clone(b.buf.Bytes())
 }
 
-// captureSlogJSON swaps the default slog logger for a JSON handler writing to an
-// in-memory buffer at the given level, runs fn, and returns the parsed log
-// records. fn must be synchronous (no background goroutines) so every record it
-// causes is flushed before parsing. The default is process-wide, so a test using
-// it must not run in parallel; it is restored through t.Cleanup rather than
-// defer, so a nested capture unwinds in reverse order at test end.
-//
-// A record from an unrelated goroutine may still land in the buffer, which is
-// why every caller looks its record up by msg rather than asserting on a count
-// or an index.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureSlogJSON swaps the default slog logger for a JSON handler on an in-memory buffer at level, runs fn and
+// returns the parsed records. fn must be synchronous. Not for parallel tests; restored via t.Cleanup so nested
+// captures unwind in order. Records from other goroutines may land, so look records up by msg. The log package's
+// writer and flags are restored too: slog.SetDefault redirects log and does not restore it for the stock handler.
 func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any {
 	t.Helper()
 	var buf syncBuffer
@@ -1528,8 +1409,7 @@ func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any
 	return recs
 }
 
-// findLogRec returns the first captured record whose "msg" equals msg, or
-// nil if none.
+// findLogRec returns the first captured record whose "msg" equals msg, or nil.
 func findLogRec(recs []map[string]any, msg string) map[string]any {
 	for _, r := range recs {
 		if m, _ := r["msg"].(string); m == msg {
@@ -1539,10 +1419,7 @@ func findLogRec(recs []map[string]any, msg string) map[string]any {
 	return nil
 }
 
-// drainErrReader yields its canned data on the first reads, then returns a
-// non-EOF error once the data is exhausted. Forces io.Copy in
-// scanLoginOutputWithDrain to return a non-nil error after the URL line has
-// been consumed by scanLoginOutput.
+// drainErrReader yields its data, then a non-EOF error, so scanLoginOutputWithDrain's io.Copy fails after the URL.
 type drainErrReader struct {
 	err  error
 	data []byte
@@ -1560,9 +1437,7 @@ func (r *drainErrReader) Read(p []byte) (int, error) {
 
 func (r *drainErrReader) Close() error { return nil }
 
-// stderrAttr returns nil for empty stderr and a ["stderr", text] attr pair
-// for non-empty stderr, so a failed CLI's diagnostics reach the structured
-// log without emitting an empty attribute on success.
+// stderrAttr returns nil for empty stderr and a ["stderr", text] pair otherwise.
 func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
 	empty := procout.NewBuffer(stderrCap)
 	if got := stderrAttr(empty); got != nil {
@@ -1583,9 +1458,8 @@ func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
 	}
 }
 
-// scanLoginOutputWithDrain logs "login: stdout drain stopped" at Debug when
-// draining the post-URL stdout returns a non-EOF error, while still emitting
-// the extracted URL.
+// scanLoginOutputWithDrain logs "login: stdout drain stopped" at Debug on a non-EOF drain error and still emits the
+// URL.
 func TestScanLoginOutputWithDrain_LogsOnDrainError(t *testing.T) {
 	r := &drainErrReader{
 		data: []byte("Open this URL: https://example.com/auth\n"),
@@ -1606,9 +1480,7 @@ func TestScanLoginOutputWithDrain_LogsOnDrainError(t *testing.T) {
 	}
 }
 
-// scanLoginOutput records has_code = (a Code: line was seen) on its
-// "auth URL extracted" log line: true when a Code: line precedes the URL,
-// false otherwise.
+// scanLoginOutput logs has_code on "auth URL extracted": true when a Code: line preceded the URL.
 func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	withCode := captureSlogJSON(t, slog.LevelInfo, func() {
 		ch := make(chan map[string]string, 1)
@@ -1639,8 +1511,7 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	}
 }
 
-// killProcessGroup logs "auth: kill group no-op (already reaped)" at Debug
-// when the subprocess has already exited (killGroup returns ESRCH).
+// killProcessGroup logs "auth: kill group no-op (already reaped)" at Debug when killGroup returns ESRCH.
 func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
@@ -1660,9 +1531,7 @@ func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 	}
 }
 
-// fixedPath adapts a static path to the resolver NewHandler takes. Production
-// passes the install manager's CLIPath, which changes when the active version
-// does; a test wants one fixed binary for the whole case.
+// fixedPath adapts a static path to NewHandler's resolver; production passes the install manager's CLIPath.
 func fixedPath(p string) func() string {
 	return func() string { return p }
 }

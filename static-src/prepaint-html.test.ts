@@ -1,6 +1,6 @@
-// The pre-paint script only works as a BLOCKING classic script ahead of the
-// stylesheet, and the CSP (script-src 'self') refuses any inline script, so
-// both are properties of the shipped index.html rather than of any module.
+// The pre-paint script only works as a BLOCKING classic script ahead of the stylesheet, and the CSP
+// (script-src 'self') refuses any inline script, so both are properties of the shipped index.html
+// rather than of any module.
 
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";

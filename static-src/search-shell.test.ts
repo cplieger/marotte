@@ -1,12 +1,4 @@
-// The shared search shell: what every box gets for free, and what each consumer
-// still supplies.
-//
-// The mechanical halves are what this pins — the field's attribute set, the
-// debounce, the DOUBLE supersession guard, the `Aa` toggle's forced re-run and
-// its `?case=1` convention — because those are exactly what had drifted across
-// three hand-authored copies. The per-consumer halves (placement, the counter
-// versus the note, the cursor's prev/next) are pinned as ABSENCES: the shell must
-// not decide them.
+// The shared search shell: what every box gets for free, and what each consumer still supplies.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   caseParam,
@@ -33,8 +25,8 @@ const GLYPH =
 
 describe("caseParam", () => {
   it("is empty when insensitive, so an ABSENT parameter is what the server sees", () => {
-    // Every endpoint that takes it reads absent as insensitive. Sending `case=0`
-    // would work today and would be one server change away from not working.
+    // Every endpoint that takes it reads absent as insensitive. Sending `case=0` would work today
+    // and would be one server change away from not working.
     expect(caseParam(false)).toBe("");
     expect(caseParam(true)).toBe("1");
   });
@@ -58,8 +50,8 @@ describe("searchField", () => {
   });
 
   it("defaults to type=text and takes type=search when asked", () => {
-    // A `search` input draws the platform's own clear affordance, which belongs
-    // on a permanent box and not on one that carries its own ×.
+    // A `search` input draws the platform's own clear affordance, which belongs on a permanent box
+    // and not on one that carries its own ×.
     expect(searchField({ id: "a", className: "c", label: "l", placeholder: "p" }).type).toBe(
       "text",
     );
@@ -71,16 +63,15 @@ describe("searchField", () => {
 
 describe("searchIconButton", () => {
   it("holds an SVG, never a text glyph", () => {
-    // THE centring contract. `align-items: center` centres a text item's LINE
-    // BOX, not its ink, and `×`/`↑`/`↓` each sit differently against it in every
-    // font — so the offset was platform-dependent by construction. An SVG is a
-    // replaced element whose box IS its ink box.
+    // THE centring contract. `align-items: center` centres a text item's LINE BOX, not its ink, and
+    // `×`/`↑`/`↓` each sit differently against it in every font — so the offset was
+    // platform-dependent by construction. An SVG is a replaced element whose box IS its ink box.
     const btn = searchIconButton("cls", "Close find", "Close (Esc)", GLYPH, () => undefined);
     expect(btn.querySelector("svg")).not.toBeNull();
     expect(btn.textContent).toBe("");
     expect(btn.getAttribute("aria-label")).toBe("Close find");
-    // The app's own styled tooltip, never a bare `title`: a native one renders
-    // the browser's grey chip beside every other hover in the app.
+    // The app's own styled tooltip, never a bare `title`: a native one renders the browser's grey
+    // chip beside every other hover in the app.
     expect(btn.getAttribute("data-tooltip")).toBe("Close (Esc)");
     expect(btn.getAttribute("title")).toBeNull();
     expect(btn.type).toBe("button");
@@ -96,16 +87,16 @@ describe("searchIconButton", () => {
 
 describe("matchCaseButton", () => {
   it("is a latched toggle carrying aria-pressed, and keeps Aa as TEXT", () => {
-    // The one button whose glyph stays text: the letters ARE the affordance. So
-    // it takes the cap-band trim in CSS rather than the SVG answer.
+    // The one button whose glyph stays text: the letters ARE the affordance. So it takes the
+    // cap-band trim in CSS rather than the SVG answer.
     const onToggle = vi.fn();
     const btn = matchCaseButton("cls case", false, onToggle);
     expect(btn.textContent).toBe("Aa");
     expect(btn.querySelector("svg")).toBeNull();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
     expect(btn.getAttribute("aria-label")).toBe("Match case");
-    // Both hover channels, and neither is the other's substitute: the styled
-    // tooltip is the app's, and the name survives it being dismissed.
+    // Both hover channels, and neither is the other's substitute: the styled tooltip is the app's,
+    // and the name survives it being dismissed.
     expect(btn.getAttribute("data-tooltip")).toBe("Match case");
     expect(btn.getAttribute("title")).toBeNull();
 
@@ -156,9 +147,9 @@ describe("wireSearchKeys", () => {
 });
 
 /** A shell wired to a resolvable query, so a test can control when it answers. */
-// The spec is named with its own result type rather than reached through
-// `Parameters<typeof createSearchShell>[0]`, which resolves the generic to
-// `unknown` and then poisons `query`'s return type at the spread below.
+// The spec is named with its own result type rather than reached through `Parameters<typeof
+// createSearchShell>[0]`, which resolves the generic to `unknown` and then poisons `query`'s return
+// type at the spread below.
 function harness(over: Partial<SearchShellSpec<string>> = {}) {
   const query = vi.fn();
   const render = vi.fn();
@@ -195,8 +186,8 @@ function harness(over: Partial<SearchShellSpec<string>> = {}) {
 
 describe("createSearchShell: the region", () => {
   it("is a role=search landmark with an accessible name", () => {
-    // The History box was a bare <div>, so it was not reachable by landmark
-    // navigation at all while the other two were.
+    // The History box was a bare <div>, so it was not reachable by landmark navigation at all while
+    // the other two were.
     const { shell } = harness();
     expect(shell.region.getAttribute("role")).toBe("search");
     expect(shell.region.getAttribute("aria-label")).toBe("Test search");
@@ -205,8 +196,8 @@ describe("createSearchShell: the region", () => {
   });
 
   it("omits the toggle, the note and the × unless the consumer asks", () => {
-    // FALSE is a real answer, not a default. The cross-chat endpoint is
-    // case-insensitive by decision, so a toggle there would be wired to nothing.
+    // FALSE is a real answer, not a default. The cross-chat endpoint is case-insensitive by
+    // decision, so a toggle there would be wired to nothing.
     const { shell } = harness();
     expect(shell.caseButton).toBeNull();
     expect(shell.note).toBeNull();
@@ -214,8 +205,8 @@ describe("createSearchShell: the region", () => {
   });
 
   it("lets the consumer ARRANGE the parts, so placement stays per-surface", () => {
-    // The shell owns the elements; the consumer owns the layout. That is what
-    // keeps a floating box and an in-flow panel from needing a mode flag.
+    // The shell owns the elements; the consumer owns the layout. That is what keeps a floating box
+    // and an in-flow panel from needing a mode flag.
     const { shell } = harness({
       matchCase: true,
       note: true,
@@ -296,10 +287,9 @@ describe("createSearchShell: the query lifecycle", () => {
   });
 
   it("DROPS a stale reply that lands after newer typing, rather than repainting", async () => {
-    // The second half of the double guard, and it cannot be dropped: a fetch that
-    // already completed cannot be aborted, so the value comparison is what stops
-    // an old answer painting over a newer query. All three hand-written copies
-    // did this by hand, which is the tell that it belonged in one place.
+    // The second half of the double guard, and it cannot be dropped: a fetch that already completed
+    // cannot be aborted, so the value comparison is what stops an old answer painting over a newer
+    // query.
     const { shell, render, resolve } = harness();
     shell.input.value = "old";
     shell.run();
@@ -319,8 +309,8 @@ describe("createSearchShell: the query lifecycle", () => {
   });
 
   it("cancel() drops both halves: the pending debounce AND the open request", async () => {
-    // One call, so a consumer's close path cannot remember one and forget the
-    // other — which is how a closed box kept repainting.
+    // One call, so a consumer's close path cannot remember one and forget the other — which is how
+    // a closed box kept repainting.
     const seen: AbortSignal[] = [];
     const { shell, query } = harness({
       query: (_q: string, ctx: { signal: AbortSignal }) => {
@@ -354,9 +344,9 @@ describe("createSearchShell: the query lifecycle", () => {
 
 describe("createSearchShell: the match-case toggle", () => {
   it("FORCES a re-run, because the query string did not change but the match set did", async () => {
-    // Every guard in the box compares the query STRING, and flipping the toggle
-    // changes neither the string nor fires an input event — so the toggle has to
-    // force the run itself or nothing at all happens.
+    // Every guard in the box compares the query STRING, and flipping the toggle changes neither the
+    // string nor fires an input event — so the toggle has to force the run itself or nothing at all
+    // happens.
     const { shell, query } = harness({ matchCase: true });
     shell.input.value = "todo";
     shell.run();
@@ -378,8 +368,8 @@ describe("createSearchShell: the match-case toggle", () => {
 
 describe("createSearchShell: dismissal is the consumer's", () => {
   it("routes Escape and the × to the SAME onDismiss", () => {
-    // What dismiss MEANS differs per surface (close a popup, close a panel, clear
-    // a permanent box), so the shell shares the contract and not the action.
+    // What dismiss MEANS differs per surface (close a popup, close a panel, clear a permanent box),
+    // so the shell shares the contract and not the action.
     const onDismiss = vi.fn();
     const { shell } = harness({ closeButton: true, onDismiss });
     shell.region
@@ -393,9 +383,9 @@ describe("createSearchShell: dismissal is the consumer's", () => {
   });
 
   it("never hides or reveals the region itself", () => {
-    // Reveal is placement's consequence, and the four surfaces disagree: one is a
-    // popup with a trigger, one a panel whose results live outside it, two are
-    // permanent page furniture. A shell that hid the box would have to know which.
+    // Reveal is placement's consequence, and the four surfaces disagree: one is a popup with a
+    // trigger, one a panel whose results live outside it, two are permanent page furniture. A shell
+    // that hid the box would have to know which.
     const { shell } = harness({ closeButton: true, onDismiss: () => undefined });
     shell.region
       .querySelector<HTMLButtonElement>('[aria-label="Close find"]')

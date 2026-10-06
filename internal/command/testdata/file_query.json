@@ -1,0 +1,14 @@
+{
+  "_comment": "File-mention queries: static-src/context-mentions.ts fileQuery writes `query` from `path` and `range`; internal/command splitFileQuery reads it back. Both tests read this file.",
+  "cases": [
+    { "path": "src/a.go", "range": "", "query": "src/a.go" },
+    { "path": "src/a.go", "range": "2-3", "query": "src/a.go:2-3" },
+    { "path": " report.md", "range": "", "query": " report.md" },
+    { "path": "report.md ", "range": "", "query": "report.md " },
+    { "path": "report:1-2", "range": "", "query": "report:1-2:" },
+    { "path": "report:1-2", "range": "2-2", "query": "report:1-2:2-2" },
+    { "path": "trail:", "range": "", "query": "trail::" },
+    { "path": "trail:", "range": "1-1", "query": "trail::1-1" },
+    { "path": "a:b.txt", "range": "", "query": "a:b.txt" }
+  ]
+}

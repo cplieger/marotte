@@ -5,13 +5,9 @@ import (
 	"testing"
 )
 
-// The permission reply is the ONE wire shape a turn approval shares with an
-// ordinary tool permission, so these tests pin both directions of that overlap:
-// an ordinary reply must not grow a `_meta` it never had, and an approval's
-// decisions must land at exactly `_meta.kiro.fileDecisions` — the path KAS
-// reads. A misspelled key here does not fail: KAS finds no decisions, treats
-// every action as unaccepted, and rolls back the whole turn the user just
-// approved.
+// The permission reply is the one wire shape a turn approval shares with an ordinary tool
+// permission: an ordinary reply must not grow a `_meta`, and an approval's decisions must land in
+// it.
 
 func TestPermissionOutcomeSelected_HasNoMeta(t *testing.T) {
 	got := mustMarshal(t, PermissionOutcomeSelected("allow_once"))
@@ -109,4 +105,37 @@ func mustMarshal(t *testing.T, v any) map[string]any {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	return out
+}
+
+// KAS reads the note at exactly `_meta.kiro.rejectionReason`; a misspelled key
+// is not an error, the agent just never sees why it was refused.
+func TestPermissionOutcomeWithRejectionReason_LandsUnderMetaKiro(t *testing.T) {
+	got := mustMarshal(t, PermissionOutcomeWithRejectionReason("reject", "use the staging bucket"))
+	meta, ok := got["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("_meta is %T, want object: %v", got["_meta"], got)
+	}
+	kiro, ok := meta["kiro"].(map[string]any)
+	if !ok {
+		t.Fatalf("_meta.kiro is %T, want object", meta["kiro"])
+	}
+	if kiro["rejectionReason"] != "use the staging bucket" {
+		t.Errorf("rejectionReason = %v, want the note", kiro["rejectionReason"])
+	}
+	if _, ok := kiro["fileDecisions"]; ok {
+		t.Errorf("a deny note carries fileDecisions: %v", kiro)
+	}
+	outcome, _ := got["outcome"].(map[string]any)
+	if outcome["outcome"] != "selected" || outcome["optionId"] != "reject" {
+		t.Errorf("outcome = %v, want selected/reject", outcome)
+	}
+}
+
+// An empty note is a plain deny: KAS would forward "" as a dangling sentence.
+func TestPermissionOutcomeWithRejectionReason_EmptyOmitsMeta(t *testing.T) {
+	withReason := mustMarshalBytes(t, PermissionOutcomeWithRejectionReason("reject", ""))
+	plain := mustMarshalBytes(t, PermissionOutcomeSelected("reject"))
+	if string(withReason) != string(plain) {
+		t.Errorf("reply = %s, want identical to the plain reply %s", withReason, plain)
+	}
 }

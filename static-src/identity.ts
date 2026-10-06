@@ -1,43 +1,26 @@
-// ---------------------------------------------------------------------------
-// Who is signed in, and the third answer that is neither yes nor no.
-//
-// `GET /api/whoami` answers a three-state union — `signed_in{email}`,
-// `signed_out`, `unavailable{reason}` — and the whole point of the third arm is
-// that it must NOT read as a sign-out. The client used to read only `email` off
-// a `{email, error}` shape, so a whoami hiccup took the not-authenticated branch
-// and returned WITHOUT releasing the splash: measured on 3 of 88 reads, which
-// sat behind an opaque overlay over a hidden app forever.
-//
-// One module because two callers ask the same question — the boot chain and the
-// login modal's success path — and a second transcription of "which arm means
-// come up anyway" is where the two would diverge. It maps and nothing else: what
-// to RENDER for an unavailable identity is the boot chain's decision.
-// ---------------------------------------------------------------------------
+// Who is signed in, as a three-state answer. `unavailable` must not read as a sign-out, or boot stalls behind the
+// splash. One module because the boot chain and the login modal ask the same question; it maps, and what to render
+// for `unavailable` is the boot chain's call.
 
 import { apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 
-/** The three answers, plus the one the transport can produce.
- *
- *  A discriminated union rather than `{email, error}`: the arms are mutually
- *  exclusive and a reader's branch over them is total, which is what makes
- *  "unavailable" impossible to mistake for "signed out" at a call site. */
+/**
+ * The three answers, plus the transport's. A discriminated union, so a branch over it is total and `unavailable`
+ * cannot be mistaken for signed out.
+ */
 export type IdentityVerdict =
   | { state: "signed_in"; email: string }
   | { state: "signed_out" }
   | { state: "unavailable"; reason: string };
 
-/** The reason a request that never reached the union carries.
- *
- *  A null response means the fetch failed or the body did not decode, which is
- *  the same CLAIM as the server's own `unavailable`: marotte does not know who is
- *  signed in. Distinguished only by the reason, because the two have different
- *  remedies and a retry banner should be able to say which happened. */
+/**
+ * A null response (fetch failed or did not decode) makes the same claim as the server's `unavailable`; only the
+ * reason differs, since the remedies differ.
+ */
 const REASON_UNREACHABLE = "marotte could not be reached";
 
-/** Read the current identity. Never throws and never rejects: every failure IS
- *  the `unavailable` arm, so no caller has to re-derive the union from an
- *  exception. */
+/** Read the current identity. Never rejects: every failure is the `unavailable` arm. */
 export async function resolveIdentity(): Promise<IdentityVerdict> {
   const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
   if (d === null) {
@@ -53,6 +36,4 @@ export async function resolveIdentity(): Promise<IdentityVerdict> {
   }
 }
 
-// No email accessor: a caller hands the whole VERDICT to `renderIdentity`, so the
-// row can say "unknown" for `unavailable` rather than inferring a state from an
-// empty string.
+// No email accessor: callers hand the whole verdict to `renderIdentity`, so the row says "unknown" for `unavailable`.

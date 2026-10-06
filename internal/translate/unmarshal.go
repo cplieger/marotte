@@ -7,10 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// unmarshalParams decodes msg.Params into T. Returns the decoded value
-// and true on success. On failure, logs at Debug level and returns the
-// zero value with false. Centralises the repeated decode+log pattern
-// across all translate handlers.
+// unmarshalParams decodes msg.Params into T, logging a failure at Debug and returning
+// the zero value with false.
 func unmarshalParams[T any](msg *marotte.RPCResponse, method string) (T, bool) {
 	p, err := decodeParams[T](msg)
 	if err != nil {
@@ -20,11 +18,8 @@ func unmarshalParams[T any](msg *marotte.RPCResponse, method string) (T, bool) {
 	return p, true
 }
 
-// decodeParams decodes msg.Params into T and hands the decode error back.
-//
-// For the handlers that ANSWER a failed decode rather than dropping the frame:
-// their refusal is logged at Warn and has to carry the reason, where a
-// notification handler's drop is a Debug line the helper above emits for it.
+// decodeParams decodes msg.Params into T and hands the decode error back, for handlers
+// that ANSWER a failed decode: their Warn refusal must carry the reason.
 func decodeParams[T any](msg *marotte.RPCResponse) (T, error) {
 	var p T
 	err := json.Unmarshal(msg.Params, &p)

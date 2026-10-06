@@ -1,6 +1,4 @@
-// File-system read request handlers for kiro-cli ACP bridges.
-//
-// Spec: https://agentclientprotocol.com/protocol/file-system
+// ACP fs read handlers: https://agentclientprotocol.com/protocol/file-system
 
 package agent
 
@@ -16,16 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// handleFSRequest dispatches fs/* incoming requests. Returns true if msg
-// was an fs method (dispatched async); false if not, so the caller can
-// try other dispatch paths. Async so fs reads (up to fsReadCap, on slow
-// disks) don't block concurrent session/update streaming.
-//
-// Every dispatch is wrapped with a deferred recover so a panic in path
-// handling, JSON unmarshal, or the checkpoint snapshot path becomes a logged
-// warn + JSON-RPC error rather than a process-killing crash. Panics were
-// reachable via integer overflow on attacker-influenced line/limit params;
-// the bug is fixed in sliceByLines but this wrapper forecloses the class.
+// handleFSRequest dispatches fs/* requests asynchronously, reporting whether msg was one.
+// Each dispatch recovers a panic into a logged JSON-RPC error.
 func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
 	var handler func(context.Context, marotte.ChatID, *marotte.RPCResponse)
 	switch msg.Method {
@@ -37,12 +27,8 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg
 		return false
 	}
 	in.lifetime.inflight.Go(func() {
-		// Derive a fresh runtime-scoped context: translateACPEvent cancels the
-		// per-event ctx via its defer the instant it returns, which is BEFORE
-		// this async handler runs its Respond, and Bridge.Respond drops a write
-		// on an already-cancelled ctx. The fresh ctx lives until this goroutine
-		// finishes or the runtime shuts down (in.lifetime.done). Shadows the
-		// passed-in ctx.
+		// The per-event ctx is cancelled before this handler responds, and Bridge.Respond drops a
+		// write on a cancelled ctx.
 		ctx, cancel := in.lifetime.derivedContext()
 		defer cancel()
 		defer func() {
@@ -57,12 +43,11 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg
 	return true
 }
 
-// respondFSRead handles fs/read_text_file. Request params:
+// respondFSRead handles fs/read_text_file:
 //
 //	{ sessionId, path, line?: int, limit?: int }
 //
-// Response: { content: "..." }. Per ACP, line/limit are 1-indexed +
-// inclusive; we slice the read content to that window.
+// answering { content }. line/limit are 1-indexed and inclusive per ACP.
 func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Line  *int   `json:"line,omitempty"`
@@ -82,14 +67,8 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	// No agent-ignore filter here: KAS enforces the list itself, ahead of any
-	// rule. marotte's side is the file LIST it sends at the connection door.
-	//
-	// A confined, bounded read: the size bound is taken from the open
-	// DESCRIPTOR rather than a stat-then-open pathname (which could describe a
-	// different file by the time it opens), a named pipe at the name is
-	// refused rather than blocking open(2) forever, and every path component
-	// is re-resolved inside the root.
+	// No ignore filter here: KAS enforces the list. The bound comes from the open descriptor,
+	// a FIFO is refused, and every component resolves inside the root.
 	data, err := atomicfile.ReadBoundedInRoot(ctx, root, rel, fsReadCap)
 	if err != nil {
 		if errors.Is(err, atomicfile.ErrFileTooLarge) {
@@ -102,14 +81,8 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg
 	in.respondBridge(ctx, chatID, msg, map[string]any{"content": content}, nil)
 }
 
-// sliceByLines returns content[line-1 : line-1+limit] (1-indexed,
-// inclusive). Nil pointers mean "from the start" / "to the end".
-//
-// The window is a SUBSTRING of content (every line strings.Lines yields is
-// contiguous), so the two walks below accumulate byte offsets and the result
-// needs no copy. *limit is only ever compared against a running count, never
-// added to an offset, so an attacker-controlled *limit cannot overflow an
-// index the way `end = start + *limit` could.
+// sliceByLines returns lines [line, line+limit) 1-indexed; nil means from the start or to
+// the end. *limit is only compared against a count, never added to an offset, so it cannot overflow.
 func sliceByLines(content string, line, limit *int) string {
 	if line == nil && limit == nil {
 		return content
@@ -118,7 +91,6 @@ func sliceByLines(content string, line, limit *int) string {
 	if line != nil && *line > 0 {
 		skip = *line - 1
 	}
-	// Walk to the first byte of the requested line.
 	lo, n := 0, 0
 	for ln := range strings.Lines(content) {
 		if n == skip {
@@ -134,9 +106,7 @@ func sliceByLines(content string, line, limit *int) string {
 	if limit == nil || *limit <= 0 {
 		return content[lo:]
 	}
-	// Walk limit lines on from there. Stopping on the count rather than on an
-	// offset is what makes an absurd *limit harmless: the loop simply runs out
-	// of lines.
+	// Stopping on the count makes an absurd *limit harmless.
 	hi, taken := lo, 0
 	for ln := range strings.Lines(content[lo:]) {
 		if taken == *limit {

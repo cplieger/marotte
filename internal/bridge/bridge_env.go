@@ -1,92 +1,37 @@
-// Environment screening for the kiro-cli process this package spawns.
-//
-// DIRECTION MATTERS, and this file guards the opposite one from
-// agent/agent_terminal_env.go. That file screens what the AGENT may INJECT into a
-// terminal it asks marotte to run: names that redirect execution (LD_PRELOAD,
-// PATH, GIT_SSH_COMMAND), refused wholesale so a per-command approval cannot be
-// turned into approval of something else. This file screens what the bridge
-// INHERITS from the server's own environment on its way DOWN to kiro-cli and
-// everything kiro-cli runs: names that carry a credential. Neither list belongs
-// in the other, and a name moved between them would guard nothing.
-//
-// It is DEFENCE IN DEPTH, not a boundary. Nothing in the shipped image puts a
-// credential in this environment (forge tokens live in each CLI's own store,
-// KAS's OAuth blobs live in secretstore, SSO lives under $HOME/.aws), and the
-// agent is trusted to run compilers and package managers. What this closes is
-// the operator's compose file growing a `GITHUB_TOKEN:` line for some unrelated
-// reason and thereby handing every agent turn a credential it was never given.
-// So a name it misses is not a failure of the design: the design is that a
-// credential should not be here in the first place, and this makes the common
-// spellings inert if one is.
-//
-// DENYLIST rather than allowlist, deliberately. The agent's children are
-// compilers, package managers, linkers and git, and they read a broad and
-// unenumerable ambient environment (GOFLAGS, GOMODCACHE, CARGO_HOME, npm's
-// several dozen npm_config_*, CC, CFLAGS, LANG, TERM, TZ). An allowlist here
-// would break the work the app exists for on its first unlisted name, and the
-// person who hit it would reach for the override rather than the list.
-//
-// A DROP, not a refusal, and that is the other half of the asymmetry with the
-// agent. There the request has a requester, so refusing it makes the agent's next
-// move a corrected one. Here the input is the operator's own container
-// environment and there is nobody to refuse: refusing would mean refusing to
-// start a chat. So the variable is dropped and the drop is LOGGED by name, which
-// is the only honest form the notice can take when the values are the secret.
+// Credential names the kiro-cli child would inherit are dropped and logged by name. A denylist, because build tools
+// read an unenumerable environment; a drop, because refusing would refuse the chat. Agent terminals are screened
+// elsewhere.
 
 package bridge
 
 import (
-	"strconv"
 	"strings"
 )
 
-// EnvAllowVar is the operator override: a comma-separated list of names to pass
-// through anyway. Exported because composition reads it (this package reads no
-// environment of its own, following ParseACPArgs on the same seam).
-//
-// An override exists for the same reason the runtime's does. A denylist keyed on name
-// shape will eventually catch a name that is not a credential — a build flag
-// spelled `*_SECRET`, a service discovery variable ending `_TOKEN` — and a guard
-// with no way past it becomes a guard people disable.
+// EnvAllowVar is the operator override: comma-separated names to pass through anyway. Composition reads it; this
+// package reads no environment. A name-shape denylist will catch a non-credential, and a guard with no way past it
+// gets disabled.
 const EnvAllowVar = "MAROTTE_ALLOW_BRIDGE_ENV"
 
-// credentialEnvSuffixes catch the two shapes that are a credential by
-// convention across every ecosystem: `*_TOKEN` and `*_SECRET`.
-//
-// The suffix rules are what make this list short enough to be correct. Every
-// forge and registry spelling worth naming ends in one of them —  GH_TOKEN,
-// GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITLAB_TOKEN, CI_JOB_TOKEN,
-// GITEA_SERVER_TOKEN, NPM_TOKEN, NODE_AUTH_TOKEN, AWS_SESSION_TOKEN,
-// AWS_SECURITY_TOKEN, and any `*_CLIENT_SECRET` — so enumerating them as exact
-// entries would be a list to maintain that asserts the same thing twice.
-// TestScreenBridgeEnv_DropsEveryNameTheDecisionNames pins each of those names
-// individually, which is where the enumeration belongs.
-//
-// Matched EXACTLY on case, not folded, for the same reason the runtime's list is:
-// POSIX environments are case-sensitive, so a case variant is a different
-// variable that no consumer reads rather than a bypass, and folding would only
-// drop harmless names.
+// credentialEnvSuffixes catch the two conventional credential shapes, `*_TOKEN` and `*_SECRET`, which cover every
+// forge and registry spelling (TestScreenBridgeEnv_DropsEveryNameTheDecisionNames pins them). Case-sensitive like
+// POSIX: a case variant is a variable nobody reads.
 var credentialEnvSuffixes = []string{"_TOKEN", "_SECRET"}
 
-// credentialEnvNames are the credential-bearing names the suffix rules cannot
-// reach. Both are AWS long-term credentials, whose spellings end in `_ID` and
-// `_KEY`; neither suffix can be a rule of its own without dropping ordinary
-// variables (a build id, a cache key, a public key path).
-//
-// AWS_REGION, AWS_PROFILE and AWS_DEFAULT_REGION are deliberately absent. They
-// are configuration rather than credentials, and an `AWS_` prefix rule would
-// take them along with these two, breaking `aws` for the agent while protecting
-// nothing.
+// KiroAPIKeyVar is kiro-cli's headless API-key credential; composition reports at boot when it is allowlisted.
+const KiroAPIKeyVar = "KIRO_API_KEY" //nolint:gosec // G101: an environment variable NAME, not a credential
+
+// credentialEnvNames are credentials ending in `_ID` or `_KEY`, suffixes too broad for rules. KAS prefers an env API
+// key to the relay's login, so an inherited KiroAPIKeyVar replaces the signed-in identity. AWS_REGION, AWS_PROFILE
+// and AWS_DEFAULT_REGION are configuration, so no `AWS_` prefix rule.
 var credentialEnvNames = map[string]struct{}{
 	"AWS_ACCESS_KEY_ID":     {},
 	"AWS_SECRET_ACCESS_KEY": {},
+	KiroAPIKeyVar:           {},
 }
 
-// ParseEnvAllowlist turns the operator's comma-separated EnvAllowVar value into
-// a set. Nil for a blank or all-blank input.
-//
-// Exported and separate from any reading of the environment so composition owns
-// the read (the ParseACPArgs shape) and the parsing is directly testable.
+// ParseEnvAllowlist turns the operator's comma-separated EnvAllowVar value into a set; nil for blank input.
+// Composition owns the environment read.
 func ParseEnvAllowlist(raw string) map[string]struct{} {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -109,9 +54,7 @@ func isCredentialEnv(name string, allowed map[string]struct{}) bool {
 		return true
 	}
 	for _, suffix := range credentialEnvSuffixes {
-		// The suffix must not be the whole name: a variable literally called
-		// `_TOKEN` is nothing anyone reads, and matching it would be the one
-		// case where the rule fires on no name at all.
+		// A variable named exactly `_TOKEN` is read by nobody.
 		if len(name) > len(suffix) && strings.HasSuffix(name, suffix) {
 			return true
 		}
@@ -119,26 +62,13 @@ func isCredentialEnv(name string, allowed map[string]struct{}) bool {
 	return false
 }
 
-// screenBridgeEnv composes the environment for the kiro-cli spawn: inherited
-// minus credential-shaped names, then extra appended unfiltered. It also
-// returns the dropped NAMES, in inherited order, for the caller to log.
-//
-// extra is exempt on purpose. It is marotte's own overlay (the install
-// manager's active version directory leading PATH), constructed in this process
-// rather than inherited, and os/exec keeps the LAST value for a repeated key —
-// so filtering the concatenation could silently drop an overlay entry this
-// server deliberately set and leave PATH resolving out of the wrong install.
-// The threat this guards is what came IN.
-//
-// A pure function of its inputs, taking the allowlist as a parameter, so every
-// branch is reachable from a test without touching the process environment.
+// screenBridgeEnv composes the kiro-cli spawn environment: inherited minus credential-shaped names, then extra
+// unfiltered, returning the dropped names in order. extra is marotte's own overlay (the active install leading PATH)
+// and os/exec keeps the last value of a key, so filtering it could resolve PATH out of the wrong install.
 func screenBridgeEnv(inherited, extra []string, allowed map[string]struct{}) (env, dropped []string) {
 	env = make([]string, 0, len(inherited)+len(extra))
 	for _, kv := range inherited {
-		// A `KEY=` with an empty value is still an assignment, and an entry with
-		// no `=` at all is not one — os.Environ has been observed to carry such
-		// a thing on exotic platforms, and it is classified by its whole text
-		// rather than skipped.
+		// `KEY=` is an assignment; an entry with no `=` (seen on exotic platforms) is classified by its whole text.
 		name, _, ok := strings.Cut(kv, "=")
 		if !ok {
 			name = kv
@@ -150,34 +80,4 @@ func screenBridgeEnv(inherited, extra []string, allowed map[string]struct{}) (en
 		env = append(env, kv)
 	}
 	return append(env, extra...), dropped
-}
-
-// MemoryEnvVar is kiro-cli's env override for the external memory A/B arm. It is
-// exported so a test can assert on the name the bridge actually sets rather than
-// restating the literal.
-const MemoryEnvVar = "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED"
-
-// memoryEnv is the memory subsystem's half of the switch that does not ride the
-// wire, appended to a bridge's environment AFTER screenBridgeEnv so it wins over
-// anything inherited or overlaid.
-//
-// It is set in BOTH states rather than only when on, and that asymmetry with the
-// other spawn fields is the point: kiro-cli's env provider parses this to a real
-// boolean and the registry comment says it overrides "in both directions", so an
-// explicit "false" holds the external arm shut against a backend ramp of that arm
-// while an absent variable leaves it to the experiment.
-//
-// It is NOT a kill switch on its own and must never be described as one.
-// resolveMemoryEnabled reads AB_MEMORY_INTERNAL first and only consults the
-// external arm when the internal one reads "disabled", and AB_MEMORY_INTERNAL has
-// no entry in ENV_FEATURE_VARIABLES — so a ramp of the internal arm bypasses this
-// variable entirely. The `userMemoryOptIn` row is what closes that case; this is
-// what opens the feature at all. Neither alone is sufficient, which is why one
-// setting drives both.
-//
-// Deliberately not routed through the credential screen: this name is marotte's
-// own, not something inherited from the server environment, so screening it would
-// only give an operator a way to shadow the veto's other half.
-func memoryEnv(on bool) []string {
-	return []string{MemoryEnvVar + "=" + strconv.FormatBool(on)}
 }

@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// PR merge dialog: the confirmation step of Merge and Merge-when-green, offering
-// the merge methods the repository allows, read when the dialog opens. The
-// default is the last method picked (settings `last_merge_method`, so it follows
-// the user across devices) where the repository offers it, else the first one
-// the repository lists; a changed pick is persisted on confirm.
-// ---------------------------------------------------------------------------
+// The confirmation step of Merge and Merge-when-green, offering the repository's merge methods. Default: the last
+// pick (`last_merge_method`, cross-device) where offered, else the first listed; a changed pick persists on confirm.
 
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { el } from "@cplieger/reactive";
@@ -23,8 +18,7 @@ export interface MergeDialogOpts {
   repo_id: string;
 }
 
-/** Each family's spelling, worded. A spelling missing here is shown as the forge
- *  spells it. */
+/** A spelling missing here is shown as the forge spells it. */
 const METHOD_WORDS = new Map<string, { name: string; desc: string }>([
   [
     "merge",
@@ -65,11 +59,8 @@ const METHOD_WORDS = new Map<string, { name: string; desc: string }>([
   ],
 ]);
 
-// Dialog controller, created once per dialog ELEMENT and reused across opens
-// so the backdrop/Escape listeners aren't stacked (same shape as the New PR
-// dialog's controller in git-prs-tab.ts). Keyed to the element rather than a
-// bare module-level slot: a stale controller drives a detached dialog, whose
-// close event then never reaches the live one.
+// One controller per dialog element, so backdrop/Escape listeners do not stack. Keyed to the element: a stale
+// controller drives a detached dialog whose close never reaches the live one.
 const dialogCtls = new WeakMap<HTMLDialogElement, DialogController>();
 
 function controllerFor(dlg: HTMLDialogElement): DialogController {
@@ -81,7 +72,6 @@ function controllerFor(dlg: HTMLDialogElement): DialogController {
   return ctl;
 }
 
-/** What the dialog can offer for this repository, or why it offers nothing. */
 async function readMethods(opts: MergeDialogOpts): Promise<{ methods: string[]; error: string }> {
   const o = await readAffordances.dispatch({ forge_id: opts.forge_id, repo_id: opts.repo_id })
     .outcome;
@@ -121,9 +111,10 @@ function setStatus(status: HTMLElement, text: string, tone: "pending" | "error" 
   status.hidden = text === "";
 }
 
-/** Open the merge dialog. Resolves the chosen method, in the forge's own
- *  spelling, on confirm, and null on cancel / Escape / backdrop. Persists a
- *  changed choice as the next default before resolving. */
+/**
+ * Open the merge dialog. Resolves the chosen method in the forge's spelling, or null on cancel, Escape or backdrop;
+ * persists a changed choice as the next default first.
+ */
 export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<string | null> {
   const dlg = document.getElementById("pr-merge-dialog") as HTMLDialogElement | null;
   if (dlg === null) {
@@ -166,8 +157,7 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
       resolve(value);
     };
 
-    // Drop any prior open's listeners by cloning the buttons (the New PR
-    // dialog's convention for a reused static <dialog>).
+    // Cloning drops a prior open's listeners.
     const freshConfirm = confirmBtn.cloneNode(true) as HTMLButtonElement;
     confirmBtn.replaceWith(freshConfirm);
     freshConfirm.textContent = opts.confirmLabel;
@@ -177,8 +167,7 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
         methods.querySelector<HTMLInputElement>('input[name="pr-merge-method"]:checked')?.value ??
         initial;
       if (picked !== initial) {
-        // Remember the pick as the next default. Fire-and-forget: a failed
-        // save costs the memory, never the merge.
+        // Fire-and-forget: a failed save costs the memory, never the merge.
         void patchAppSettings.dispatch({ body: { last_merge_method: picked } });
       }
       settle(picked);
@@ -191,8 +180,7 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
         ctl.close();
       });
     }
-    // Escape / backdrop / any close path resolves null unless the confirm
-    // already settled.
+    // Any close path resolves null unless the confirm already settled.
     dlg.addEventListener(
       "close",
       () => {
@@ -203,8 +191,7 @@ export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<stri
 
     ctl.open();
 
-    // A read answering after this open closed fills nothing: the element is the
-    // next open's by then.
+    // A read answering after this open closed fills nothing: the element is the next open's.
     void Promise.all([readMethods(opts), loadSettings()]).then(([read, settings]) => {
       if (settled) {
         return;

@@ -1,12 +1,6 @@
 // ---------------------------------------------------------------------------
-// Tests for workspace.ts — the one holder of the workspace root and the one
-// conversion between the client's two path spaces.
-//
-// The bug these close: every path the agent supplies is workspace-RELATIVE
-// (translate.relPath strips the prefix so a turn footer reads "hello.sh"), while
-// /api/file resolves its `path` against an ABSOLUTE granted-roots allow-list.
-// Nothing bridged them, so a click on a changed filename produced
-// GET /api/file?path=hello.sh and was denied 403 as outside every root.
+// workspace.ts: the one holder of the workspace root and the one conversion between the agent's
+// RELATIVE paths and /api/file's ABSOLUTE allow-list (a relative path was denied 403).
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach } from "vitest";

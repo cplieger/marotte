@@ -1,11 +1,7 @@
-// Unit tests for mcp-panels.ts — pure functions only.
 import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
 
-// Mock DOM-dependent modules that mcp-panels.ts imports at module level.
-// `tools.ts` reaches the editor openers, which drag the whole editor graph in
-// behind them. Cut it at that edge rather than widening every partial mock the
-// subgraph would need; no case here opens a file.
+// `tools.ts` reaches the editor openers and their whole graph; cut at that edge, since no case opens a file.
 vi.mock("./editor-openers.js", () => ({
   openFile: vi.fn(),
   openFileDiff: vi.fn(),
@@ -16,62 +12,37 @@ vi.mock("./editor-openers.js", () => ({
   refreshFile: vi.fn(),
   closeEditorFile: vi.fn(),
 }));
-// `tools.ts` also reaches the tab store directly, for its rate-limit notice's
-// Git -> Sources door. Cut there for the same reason; no case here navigates.
+// `tools.ts` also reaches the tab store; cut there too, since no case navigates.
 vi.mock("./tabs.js", async () => (await import("./__test-helpers__/tabs-mock.js")).tabsMock());
 vi.mock("./dom.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking: another module in the graph imports the name.
   byId: undefined,
   $: new Proxy({}, { get: () => document.createElement("div") }),
   el: () => document.createElement("div"),
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert for real-ESM linking; no case calls them.
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./modals.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking.
   RollingOutput: undefined,
   openModal: undefined,
   closeModal: () => {
     /* noop */
   },
 }));
-// Replaced WHOLE, matching the sibling suites that mock this module: the
-// suspended auto-approve list's profile pointer imports `openSetting`, whose real
-// body reads `location.search` at module load and pulls in the tab projection, so
-// the panels' graph now reaches it. No case here navigates.
-vi.mock("./settings-highlight.js", () => ({
-  openSetting: (): void => {
-    /* noop */
-  },
-}));
 vi.mock("./mcp-state.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking.
   discoverySignalFor: undefined,
-  autoApproveHonoured: undefined,
   mcpState: {
     refetchServers: async () => {
       /* noop */
     },
   },
   configured: [],
-  // The registry row asks what is already in mcp.json so it can say "already
-  // configured" instead of demanding credentials the reader has supplied. Nothing
-  // here configures a server, so the honest inert answer is the empty list —
-  // present as a FUNCTION rather than undefined, because a row CALLS it.
+  // A function, not undefined: a registry row calls it, and nothing here configures a server.
   configuredServers: () => [],
   SECRET_MASK: "***",
 }));
@@ -89,10 +60,7 @@ vi.mock(import("./icons.js"), async (importOriginal) => {
   return { ...actual };
 });
 vi.mock("./actions/mcp.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Present-but-undefined for real-ESM linking.
   MCP_API: undefined,
   validationFieldsOf: undefined,
   registryFailureOf: undefined,
@@ -104,10 +72,6 @@ vi.mock("./actions/mcp.js", () => ({
 import { simplifyName } from "./mcp-panels-search.js";
 import { extractNpxPackage } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
-
-// ---------------------------------------------------------------------------
-// simplifyName — table-driven
-// ---------------------------------------------------------------------------
 
 describe("simplifyName", () => {
   const cases: { input: string; expected: string }[] = [
@@ -130,10 +94,6 @@ describe("simplifyName", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// extractNpxPackage — table-driven
-// ---------------------------------------------------------------------------
-
 describe("extractNpxPackage", () => {
   const stub = (args: string[], command = "npx"): Server => ({
     id: "x",
@@ -153,8 +113,7 @@ describe("extractNpxPackage", () => {
     { label: "empty args", args: [], expected: "" },
     { label: "only flags", args: ["-y", "--yes"], expected: "" },
     { label: "whitespace-only arg then package", args: ["  ", "-y", "pkg"], expected: "pkg" },
-    // The three refusals prewarm's own extractor makes, so the two halves of
-    // the app answer "what does this run" the same way.
+    // The three refusals prewarm's extractor makes, so both halves answer "what does this run" alike.
     { label: "an unknown flag past the package", args: ["-y", "--force", "pkg"], expected: "" },
     { label: "a path where a package spec belongs", args: ["-y", "./local/dir"], expected: "" },
     { label: "an uppercase package name", args: ["-y", "MyPkg"], expected: "" },
@@ -177,9 +136,7 @@ describe("extractNpxPackage", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// simplifyName — property-based (tarch-c5-p3)
-// ---------------------------------------------------------------------------
+// Property-based.
 
 describe("simplifyName property", () => {
   const VALID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -200,7 +157,7 @@ describe("simplifyName property", () => {
     fc.assert(
       fc.property(
         fc.string({ minLength: 1 }).filter((s) => {
-          // Must have alphanumeric content AND not simplify to "server" naturally
+          // Alphanumeric content that does not simplify to "server" on its own.
           if (!/[A-Za-z0-9]/.test(s)) {
             return false;
           }

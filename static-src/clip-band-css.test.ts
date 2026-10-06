@@ -1,59 +1,7 @@
-// ---------------------------------------------------------------------------
-// NO CLIP REGION MAY CONTAIN BLOCK-END PADDING.
-//
-// `overflow: hidden` clips at the PADDING box, so block-end padding INSIDE a clip
-// region leaves a band the first overflowing line paints its ascenders and
-// cap-tops into: the box says "N lines" and renders N plus a sliver. This app
-// already knew the rule — 27-run-card.css carries a dated write-up of it for
-// `.run-step-capture`, which fixed it by moving the trailing space from padding
-// to a MARGIN — and two sites had missed it. Both were reproduced in real
-// Chromium, Firefox and WebKit before being fixed (2026-09-18): `.rolling-output`
-// in 14-tools.css and `.uip-tooltip` in 04-uip-skin.css.
-//
-// THE PER-ENGINE CUT FRACTIONS AND INK COUNTS ARE AT THOSE TWO RULES, not here.
-// Each number justifies the declaration it sits beside, so it is maintained where
-// a reader changing the shape will see it; restating it in this header would be a
-// second copy with no way to notice the two disagreeing. What matters HERE is one
-// consequence of the tooltip's reading: WebKit is the one engine that keeps
-// `display: -webkit-box` (the other two compute `flow-root`) and clips the third
-// line's ink entirely, so it cut 0.250 of a line at ZERO ink — a clean pixel read
-// on WebKit is not a pass anywhere, which is why the BAND oracle below is what
-// these cases assert.
-//
-// The two took DIFFERENT remedies, and the difference is the reusable part. The
-// tooltip element is @cplieger/ui-primitives' while the rule is marotte's own
-// skin, so it takes a transparent block-end BORDER: a border is outside the clip
-// region and `background-clip` defaults to `border-box`, so the space survives
-// and the border box does not move. The rolling bar owns its own markup, so it
-// SPLITS the two jobs — chrome on the outer, the clamp on an inner element with
-// no padding at all — which also removes the second half of its defect, a cap
-// that summed the padding but not the border.
-//
-// TWO ORACLES PER SITE, because neither answers the other's question:
-//
-//   BAND — no line band may straddle the clip edge, where a band is the merged
-//     vertical extent of `Range.getClientRects()` per text node. This is the
-//     defect as a reader sees it, over real layout. It cannot say WHY, and it
-//     OVER-REPORTS: `.entry-sub-clamp` (11-page-lists.css) reports a 1px
-//     straddle in Chromium from `2lh` resolving to 31.2px against a
-//     `clientHeight` of 31, with zero ink in all three engines, so a sub-1px
-//     straddle needs a pixel read before it is believed. Both fixes here land
-//     the clip on a line boundary exactly, so a straddle of ANY size is real.
-//   MECHANISM — the element that clips declares no block-end padding. This is
-//     the root cause as a declaration, so it holds for content this file does
-//     not think to render, and it fails on a shape the band walk would pass
-//     (padding restored while the content happens not to overflow).
-//
-// The PIXEL oracle is not here: a `Locator.screenshot` writes a PNG into the
-// repo tree, and with the clip region's padding at zero the band has no area to
-// scan. It lives in the read-only probe that produced the ink counts recorded at
-// `.rolling-output` (14-tools.css) and `.uip-tooltip` (04-uip-skin.css), which
-// screenshots all three engines outside the working tree.
-//
-// `.run-step-capture` is the NEGATIVE CONTROL and is asserted here too: it is the
-// site that got this right, so a case that passes for every clamp in the app
-// would be proving nothing about these two.
-// ---------------------------------------------------------------------------
+// No clip region may contain block-end padding: `overflow: hidden` clips at the padding box, so the next line paints
+// its ascenders into the band. Sites: `.rolling-output` (14-tools.css), `.uip-tooltip` (04-uip-skin.css); the
+// per-engine numbers live at those rules. Two oracles: BAND (no merged line band straddles the clip edge) and
+// MECHANISM (the clipping element declares no block-end padding). `.run-step-capture` is the negative control.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
@@ -68,8 +16,7 @@ let host: HTMLElement;
 beforeAll(() => {
   styleEl = mountAppCSS();
   host = document.createElement("div");
-  // Both subjects wrap, so a definite width is what gives a line box somewhere
-  // to break. 560px is the install banner's measured width in Settings -> Git.
+  // 560px is the install banner's measured width in Settings -> Git; a definite width gives the lines a place to wrap.
   host.style.inlineSize = "560px";
   document.body.appendChild(host);
 });
@@ -84,11 +31,10 @@ interface Band {
   bottom: number;
 }
 
-/** Line bands under `box`: one per rendered line, merged over the fragments a
- *  line is split into. `white-space: pre-wrap` plus `overflow-wrap: anywhere`
- *  yields a rect per fragment rather than per line, and
- *  `selectNodeContents(box)` collapses the lot into one bounding rect — so the
- *  walk is per TEXT NODE and the merge is on overlapping vertical extent. */
+/**
+ * Per text node, merged on vertical overlap: `pre-wrap` + `overflow-wrap: anywhere` yields a rect per fragment, and
+ * `selectNodeContents` collapses them to one.
+ */
 function textBands(box: HTMLElement): Band[] {
   const bands: Band[] = [];
   const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
@@ -122,10 +68,7 @@ function clipEdge(el: HTMLElement): number {
   return el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).borderBottomWidth);
 }
 
-/** The bands that are cut through by `el`'s clip edge, as `top..bottom` offsets
- *  from it, plus how many landed wholly above it. "No band BELOW the edge" is
- *  the wrong claim and fails on a correct fix: leaving whole lines below the cut
- *  is a clamp's entire job. */
+/** Bands cut by `el`'s clip edge, plus how many lie wholly above it. Whole lines below the cut are a clamp's job. */
 function cut(el: HTMLElement, textHost: HTMLElement = el): { straddling: string[]; whole: number } {
   const edge = clipEdge(el);
   const bands = textBands(textHost);
@@ -142,12 +85,7 @@ function mount(node: HTMLElement): HTMLElement {
   return node;
 }
 
-// ---------------------------------------------------------------------------
-// SITE 1 — the tools-engine install-progress bar.
-// ---------------------------------------------------------------------------
-
-/** The bar as `mcp-panels.ts` builds it, inside the column flex container it
- *  puts it in (`.inline-install-banner`, 18-pages.css). */
+/** The bar as `mcp-panels.ts` builds it, inside `.inline-install-banner`. */
 function installBanner(): { banner: HTMLElement; bar: HTMLDivElement } {
   const bar = document.createElement("div");
   bar.className = "rolling-output hidden";
@@ -158,11 +96,10 @@ function installBanner(): { banner: HTMLElement; bar: HTMLDivElement } {
   return { banner, bar };
 }
 
-/** Four SOURCE lines of real install output, the second of which wraps at this
- *  width: a release-download URL is 96 characters against the ~81 that fit, and
- *  `installToolAndWait` streams exactly these. The cut is CONDITIONAL on a wrap,
- *  because `RollingOutput.append` only ever puts `lines.slice(-4)` in the DOM,
- *  so a fifth SOURCE line never exists and four short lines are clean. */
+/**
+ * Four source lines, the second wrapping at this width (96 chars vs ~81). The cut needs a wrap, because
+ * `RollingOutput.append` keeps only the last four.
+ */
 const WRAPPING_OUTPUT = [
   "Resolving gh 2.101.0 from the aqua catalog",
   "Downloading https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_amd64.tar.gz",
@@ -170,9 +107,7 @@ const WRAPPING_OUTPUT = [
   "Linking /config/tools/bin/gh",
 ];
 
-/** Drives the REAL producer, so the wrapper the cap lives on is pinned to the
- *  builder rather than restated here: a bare text node caps nothing, and that is
- *  the one way to break this fix from the TypeScript side. */
+/** Drives the real producer: a bare text node caps nothing. */
 function rollTo(bar: HTMLDivElement, lines: readonly string[]): HTMLElement {
   const roll = new RollingOutput(bar, "git-output-modal");
   for (const line of lines) {
@@ -207,9 +142,6 @@ describe(".rolling-output cuts no line of a job's output", () => {
     mount(banner);
     const inner = rollTo(bar, WRAPPING_OUTPUT);
 
-    // The mechanism, stated where it is decided. The inner element clips and has
-    // no padding; the bar keeps the padding and does NOT clip, so that padding is
-    // outside every clip region rather than merely balanced against it.
     expect(getComputedStyle(inner).paddingBlockEnd).toBe("0px");
     expect(getComputedStyle(inner).overflow).not.toBe("visible");
     expect(getComputedStyle(bar).overflow).toBe("visible");
@@ -217,9 +149,7 @@ describe(".rolling-output cuts no line of a job's output", () => {
   });
 
   it("reserves the four lines before the output fills them", () => {
-    // The bar must not grow as lines arrive, which is what the retired
-    // `min-height` bought and what a bare line clamp does not. One line in, four
-    // lines of box.
+    // The bar must not grow as lines arrive: one line in, four lines of box.
     const { banner, bar } = installBanner();
     mount(banner);
     const inner = rollTo(bar, ["Resolving gh 2.101.0"]);
@@ -230,13 +160,8 @@ describe(".rolling-output cuts no line of a job's output", () => {
   });
 
   it("keeps the visible trailing gap the old padding gave it", () => {
-    // The fix must not tighten the bar. The oracle is the distance from the last
-    // SHOWN line to the bar's own bottom edge, against a second bar carrying the
-    // PRE-FIX declarations inline — arithmetic over the box model would only
-    // restate the fix. The clip element is a PARAMETER because it is what the fix
-    // moved: before, the padded bar clipped; after, the inner text element does,
-    // and filtering the legacy arm against the inner's own edge would count the
-    // half-cut fifth line as shown.
+    // Oracle: gap from the last shown line to the bar's bottom, against a bar carrying the naive declarations inline.
+    // The clip element is a parameter because the two shapes clip on different elements.
     const gap = (bar: HTMLDivElement, inner: HTMLElement, clipEl: HTMLElement): number => {
       const edge = clipEdge(clipEl);
       const shown = textBands(inner)
@@ -261,27 +186,14 @@ describe(".rolling-output cuts no line of a job's output", () => {
     legacyInner.style.display = "block";
     legacyInner.style.overflow = "visible";
 
-    // WITHIN A LINE BOX, not identical, and the residual is the fix: the pre-fix
-    // cap summed the padding but NOT the two 1px borders, so the bar was 2px
-    // short of the four lines it claimed to reserve. Asserting equality would
-    // fail on the correct fix; asserting nothing would let the bar grow by a
-    // whole line unnoticed.
+    // Within a line box, not equal: the naive cap omits the two 1px borders, so it is 2px short.
     const drift = Math.abs(gap(legacy.bar, legacyInner, legacy.bar) - fixedGap);
     expect(drift, `trailing gap moved ${String(drift)}px`).toBeLessThan(line);
   });
 
   it("clamps to the same count the producer slices to", () => {
-    // The bar's four is ONE number in two languages, and the two halves count
-    // different things: `append` keeps the last four SOURCE lines, the stylesheet
-    // shows four VISUAL lines. They agree by design, and a drift is silent — a
-    // slice of six against a clamp of four reserves four lines and hides two of
-    // the six it kept, with no straddle for the cases above to see.
-    //
-    // NOT a row in clamp-line-count.test.ts: that file's contract is the
-    // `[data-clamped]` clamps, whose count pairs a CSS rule with an `attachClamp`
-    // constant, and this pairs a rule with an array slice. Its exhaustiveness
-    // sweep keys on `[data-clamped]`, which this rule deliberately does not carry
-    // (there is no opener — the whole bar clicks through to a modal).
+    // The bar's four is one number in two languages: `append`'s source-line slice and the stylesheet's visual-line
+    // clamp; a drift is silent. Not in clamp-line-count.test.ts, whose contract is the `[data-clamped]` clamps.
     const sliced = /lines\.slice\(-(\d+)\)/.exec(
       modalsSrc.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " "),
     );
@@ -291,18 +203,12 @@ describe(".rolling-output cuts no line of a job's output", () => {
       /\/\*[\s\S]*?\*\//g,
       " ",
     );
-    // Every spelling in the rule, so the prefixed and standard twins cannot
-    // half-move, and the reserve is checked against the same number as the cap.
     const declared = [
       ...body.matchAll(/((?:-webkit-)?line-clamp)\s*:\s*(\d+)/g),
       ...body.matchAll(/(min-block-size)\s*:\s*(\d+)lh/g),
     ].map((m) => ({ prop: m[1] ?? "", n: Number.parseInt(m[2] ?? "", 10) }));
-    // The expected SET rather than a count, because the count that actually matters is
-    // two of three — a half-moved clamp. This suite runs in Chromium only, where the
-    // standard property wins, so dropping the PREFIXED twin breaks Firefox and WebKit
-    // with every band case above still green; dropping the reserve lets the bar grow as
-    // output arrives. Naming which spelling is missing is what makes such a failure
-    // diagnosable.
+    // The expected set, not a count: this suite runs in Chromium only, so a dropped prefixed twin breaks Firefox and
+    // WebKit unseen.
     expect(
       declared.map((d) => d.prop).sort(),
       "css/14-tools.css .rolling-output-text must declare all three: both line-clamp " +
@@ -319,14 +225,9 @@ describe(".rolling-output cuts no line of a job's output", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SITE 2 — every tooltip in the app. ONE size class, so
-// these cases drive `--tooltip-lines` rather than a second class.
-// ---------------------------------------------------------------------------
+// Site 2: every tooltip. One size class, so these cases drive `--tooltip-lines`.
 
-/** Longer than the ~102 characters two lines hold. Real content: a mode-picker
- *  row's agent description is a paragraph and a tool-input file path was
- *  measured to 121 characters. */
+/** Longer than the ~102 characters two lines hold. */
 const LONG_TIP =
   "Open the diff for internal/agent/bridge_coord.go and check whether the projection " +
   "still reads the same field after the cutover lands and the tail run reconciles it.";
@@ -339,8 +240,6 @@ function tooltip(lines?: number): HTMLElement {
   if (lines !== undefined) {
     tip.style.setProperty("--tooltip-lines", String(lines));
   }
-  // The library positions it `fixed`; a definite corner keeps it in view so its
-  // rects are the ones a reader would see.
   tip.style.insetBlockStart = "40px";
   tip.style.insetInlineStart = "40px";
   return tip;
@@ -357,9 +256,7 @@ describe(".uip-tooltip cuts no line of its own text", () => {
   });
 
   it("leaves the third line whole when three lines are allowed", () => {
-    // The control the two-line case needs: it proves the band the clamp used to
-    // cut is EMPTY because the clip moved, not because the text stopped
-    // producing a third line at this width.
+    // Control: the band is empty because the clip moved, not because the text stopped wrapping.
     const tip = mount(tooltip(3));
     expect(textBands(tip).length).toBeGreaterThan(2);
 
@@ -373,15 +270,11 @@ describe(".uip-tooltip cuts no line of its own text", () => {
     const cs = getComputedStyle(tip);
     expect(cs.paddingBlockEnd).toBe("0px");
     expect(parseFloat(cs.borderBlockEndWidth)).toBeGreaterThan(0);
-    // The clip edge IS the content-box bottom, so no band can be half-painted;
-    // the visible space lives between it and the border box.
     expect(clipEdge(tip)).toBeCloseTo(tip.getBoundingClientRect().bottom - 4, 1);
   });
 
   it("does not move the border box, so anchored placement is unaffected", () => {
-    // `placeAnchored` measures the border box, so the fix is only free if that
-    // box is unchanged. The oracle is a second tooltip carrying the pre-fix
-    // declarations inline.
+    // `placeAnchored` measures the border box, so the clip must leave it unchanged.
     const fixed = mount(tooltip()).getBoundingClientRect().height;
 
     const legacy = mount(tooltip());
@@ -391,9 +284,7 @@ describe(".uip-tooltip cuts no line of its own text", () => {
   });
 });
 
-// The border trick's own cost, and the one mode where it is not free. A source
-// read cannot answer this: the defect is the UA's forcing of `border-color`, which
-// no stylesheet read reproduces.
+// Forced colours force `border-color`, which no source read reproduces.
 describe("the tooltip's border-as-spacing under forced colours", () => {
   beforeAll(async () => {
     await emulateA11yMedia({ forcedColors: "active" });
@@ -406,12 +297,8 @@ describe("the tooltip's border-as-spacing under forced colours", () => {
   it("keeps the trailing space invisible instead of painting a rule", () => {
     const tip = mount(tooltip());
     const cs = getComputedStyle(tip);
-    // A COMPARISON, not a literal: the arm names `Canvas`, and what matters is
-    // that it resolves to the same colour the UA forced the background to. Without
-    // the arm this reads rgb(0, 0, 0) against rgb(255, 255, 255) in both engines.
+    // A comparison, not a literal: the border must resolve to the colour the UA forced the background to.
     expect(cs.borderBlockEndColor).toBe(cs.backgroundColor);
-    // And the clip has not moved back onto padding to get there, which is the
-    // remedy that would put the half-line cut back in this one mode.
     expect(cs.paddingBlockEnd).toBe("0px");
     expect(parseFloat(cs.borderBlockEndWidth)).toBeGreaterThan(0);
   });
@@ -423,9 +310,7 @@ describe("the tooltip's border-as-spacing under forced colours", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The site that got it right, so the two above are not passing for free.
-// ---------------------------------------------------------------------------
+// Negative control: the site that already got it right.
 
 describe(".run-step-capture, the negative control", () => {
   it("still carries its trailing space as a margin and cuts nothing", () => {

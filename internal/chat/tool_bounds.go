@@ -301,9 +301,8 @@ func boundDiffs(diffs []marotte.ToolDiff, b toolBudget) ([]marotte.ToolDiff, boo
 // object because the claim line is built from the small members while the bulk is one, so
 // dropping the object wholesale would blank the claim line to save the same bytes.
 func boundInput(raw json.RawMessage, b toolBudget) (json.RawMessage, bool) {
-	// Measured as the ENCODER will write it, because a raw length bounds neither direction: gating
-	// on raw bytes let a 4,010-byte object of `<` through at roughly 24 KiB on the wire. The
-	// conversion is idempotent, so one Marshal serves the gate and the walk.
+	// Measured as the encoder will write it; inputWireBytes says why a raw length bounds nothing.
+	// The conversion is idempotent, so one Marshal serves the gate and the walk.
 	raw = inputWireBytes(raw)
 	if len(raw) <= b.inputMember {
 		return nil, false

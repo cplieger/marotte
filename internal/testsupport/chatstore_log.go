@@ -7,8 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Neither fake holds an entry log, so the log reads answer as an empty log does;
-// a test whose subject is a log read stages its own double.
+// Neither fake holds an entry log, so log reads answer as an empty log does.
 
 // PromptTexts answers no prompts.
 func (s *RecordingChatStore) PromptTexts(context.Context, marotte.ChatID) ([]string, error) {
@@ -29,6 +28,12 @@ func (s *InMemoryChatStore) PromptTexts(context.Context, marotte.ChatID) ([]stri
 func (s *InMemoryChatStore) EmptyCompactions(context.Context, marotte.ChatID) (int, error) {
 	return 0, nil
 }
+
+// DepartedName answers false: neither fake keeps a tombstone.
+func (s *InMemoryChatStore) DepartedName(marotte.ChatID) (string, bool) { return "", false }
+
+// DepartedName answers false: neither fake keeps a tombstone.
+func (s *RecordingChatStore) DepartedName(marotte.ChatID) (string, bool) { return "", false }
 
 // Revert refuses: an empty log holds no turn to revert to.
 func (s *InMemoryChatStore) Revert(_ context.Context, id marotte.ChatID, turn, _ string) (record, opened *marotte.Entry, err error) {

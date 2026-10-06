@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestDeferred_DefaultHoldsASuppressedSend(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 
 	if n := s.heldCount(); n != 1 {
 		t.Errorf("held deliveries with the default switch = %d, want 1", n)
@@ -90,7 +91,7 @@ func TestDeferred_OffHoldsNothing(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 
 	if n := s.heldCount(); n != 0 {
 		t.Errorf("held deliveries with the switch off = %d, want 0", n)
@@ -104,7 +105,7 @@ func TestDeferred_HeldDeliveryLandsWhenTheProfileFlipsToGone(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries = %d, want 1", n)
 	}
@@ -127,7 +128,7 @@ func TestDeferred_HeldDeliveryIsDroppedAtItsTTL(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	// Past the permission TTL the profile also reads gone; the TTL is judged first.
 	clock.Advance(ttlPermission + time.Millisecond)
 	waitFor(t, "the held set to empty", func() bool { return s.heldCount() == 0 })
@@ -144,7 +145,7 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	s.Retract(marotte.ChatSubject("c1"))
 	if n := s.heldCount(); n != 0 {
 		t.Fatalf("held deliveries after the retraction = %d, want 0", n)
@@ -153,6 +154,34 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	time.Sleep(4 * deferPoll)
 	if h.count() != 0 {
 		t.Error("a retracted delivery was sent")
+	}
+}
+
+// The envelope carries the chat's display name, cut to the page's bound, so a page
+// that has dropped the chat's row can still name it.
+func TestSend_TheEnvelopeCarriesTheBoundedChatName(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"Fix the parser", "Fix the parser"},
+		{strings.Repeat("é", 100), strings.Repeat("é", 78) + pushTruncMarker},
+	} {
+		deferredOn(t)
+		h := &payloadHandler{}
+		s, _ := filteredService(t, h)
+		s.Unsubscribe(goneEP)
+		s.presence.Observe(connected(TagOf(presentEP)))
+
+		s.Send(t.Context(), "Marotte", "Agent finished", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), tc.name)
+		key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindAgentFinished, subject: "c1"}
+		s.deferred.mu.Lock()
+		held := s.deferred.held[key]
+		s.deferred.mu.Unlock()
+		var p pushPayload
+		if err := json.Unmarshal(held.payload, &p); err != nil {
+			t.Fatalf("held payload is not the envelope: %v", err)
+		}
+		if p.ChatName != tc.want {
+			t.Errorf("chat_name = %q, want %q", p.ChatName, tc.want)
+		}
 	}
 }
 
@@ -166,9 +195,9 @@ func TestDeferred_ASecondEventReplacesTheHeldPayload(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	resetDebounce(s)
-	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries after two events on one key = %d, want 1", n)
 	}

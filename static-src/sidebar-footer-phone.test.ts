@@ -1,40 +1,12 @@
 // THE FOOTER AT REAL PHONE VIEWPORT SIZES, and the tier no attribute can reach.
-//
-// A deleted 60-line `width <= 48rem` block used to turn the connection dot into a
-// transparent 44px grid with the mark on a `::before`. The target is the merged
-// trigger's own box at every tier now, so there is ONE mark rule — which means the
-// phone tier is exactly where a regression would land, and a media query answers
-// about the VIEWPORT, so no amount of DOM setup can stand in for a resize.
-//
-// FIVE READINGS, and each catches something the others cannot:
-//
-//   360x800 BARE and 360x800 COARSE. A real phone carries `data-pointer="coarse"`,
-//   so narrow-AND-coarse is the shipped configuration; narrow-BARE is what proves
-//   the no-JS fallback still answers. Nothing may differ between them, because
-//   `:root[data-pointer="coarse"]` and the no-JS `:root:not([data-pointer="fine"])`
-//   inside `width <= 48rem` declare the same four values.
-//
-//   900x400 BARE and 900x400 COARSE — the SHORT arm, and it is about ABSENCE. The
-//   footer carries NO height-keyed rule, so at 900x400 with no attribute it renders
-//   the DESKTOP layout at a 24px floor and only the attribute changes anything.
-//
-//   1024x768 as the negative control, where neither phone arm matches.
-//
-// THE EVIDENCE for the absence claim, recorded as a grep over `css/` rather than as
-// a remembered fact: there are TWO `height <= 30rem` queries in the app, not one —
-// `50-mobile.css` (`[id="pointer-mode-btn"] { display: none }`) and `15-input.css`
-// (`.pill-model-effort { display: none }`) — and NEITHER body names a footer
-// selector, so the short arm reaches no footer rule. That grep is asserted below, so
-// a reader who later adds a height arm to the footer fails the first half rather
-// than silently invalidating the second.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
 import { loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 let style: HTMLStyleElement;
-/** The size every later file in this worker expects to measure at. `page.viewport`
- *  has no getter, so it is READ off the frame rather than copied from the config. */
+/** The size every later file in this worker expects to measure at. `page.viewport` has no
+ *  getter, so it is READ off the frame rather than copied from the config. */
 let entry: { readonly width: number; readonly height: number } | null = null;
 
 beforeAll(() => {
@@ -63,11 +35,10 @@ interface Footer {
   logout: HTMLElement;
 }
 
-/** The phone fixture, and `.open` is load-bearing: `50-mobile.css` gives
- *  `[id="sidebar"]` `width: 100vw; transform: translateX(-100%)` under
- *  `width <= 48rem`, and only `[id="sidebar"].open` restores `translateX(0)`. Without
- *  it every `elementFromPoint` probe below answers `null` because the panel is
- *  off-screen. */
+/** The phone fixture, and `.open` is load-bearing: `50-mobile.css` gives `[id="sidebar"]`
+ *  `width: 100vw; transform: translateX(-100%)` under `width <= 48rem`, and only
+ *  `[id="sidebar"].open` restores `translateX(0)`. Without it every `elementFromPoint` probe
+ *  below answers `null` because the panel is off-screen. */
 function mountFooter(email = "someone@example.invalid"): Footer {
   const sidebar = document.createElement("nav");
   sidebar.id = "sidebar";
@@ -104,9 +75,9 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
-  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is the
-  // bare hit floor where production is glyph plus padding, and `assertFooter` compares
-  // the trigger's height against this box.
+  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is the bare hit
+  // floor where production is glyph plus padding, and `assertFooter` compares the trigger's height
+  // against this box.
   const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   glyph.setAttribute("class", "ic-ui");
   glyph.setAttribute("viewBox", "0 0 24 24");
@@ -118,9 +89,9 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   return { footer, btn, dot, addr, logout };
 }
 
-/** Resize AND ASSERT the resize: `page.viewport` has no getter, so a call that
- *  stopped moving the frame would leave every case below reporting about the
- *  project's own 1280px while still naming a phone. */
+/** Resize AND ASSERT the resize: `page.viewport` has no getter, so a call that stopped moving
+ *  the frame would leave every case below reporting about the project's own 1280px while still
+ *  naming a phone. */
 async function viewport(width: number, height: number): Promise<void> {
   await page.viewport(width, height);
   expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
@@ -147,8 +118,8 @@ function assertFooter(label: string, floor: number): Footer {
 
   expect(border, `${label}: the dotted divider survives`).toBeCloseTo(1, 1);
   // The trigger is the LOGOUT button's pill, centred in the band — the same claim
-  // `account-btn-css.test.ts` owns per pointer tier, re-asserted here because a
-  // viewport arm can move `--hit-floor` without moving the attribute.
+  // `account-btn-css.test.ts` owns per pointer tier, re-asserted here because a viewport arm can
+  // move `--hit-floor` without moving the attribute.
   expect(btnBox.height, `${label}: the trigger is the logout button's height`).toBeCloseTo(
     f.logout.getBoundingClientRect().height,
     0,
@@ -198,8 +169,8 @@ describe("360x800 — a phone in portrait", () => {
     if (tier !== undefined) {
       document.documentElement.dataset["pointer"] = tier;
     }
-    // 44px either way: the no-JS arm inside `width <= 48rem` declares the same floor
-    // the coarse attribute does, which is why nothing may differ between the two.
+    // 44px either way: the no-JS arm inside `width <= 48rem` declares the same floor the coarse
+    // attribute does, which is why nothing may differ between the two.
     assertFooter(`360x800 ${tier ?? "bare"}`, 44);
   });
 
@@ -212,11 +183,7 @@ describe("360x800 — a phone in portrait", () => {
     expect(getComputedStyle(addr).textOverflow).toBe("ellipsis");
     expect(getComputedStyle(addr).overflowX).toBe("hidden");
     expect(addr.scrollWidth, "the text is wider than its box").toBeGreaterThan(addr.clientWidth);
-    // The clip is INSIDE the trigger's content box, so nothing spills past it. Read
-    // BEFORE the second mount below, which replaces the document and leaves these
-    // elements detached — a detached box reports zeros and a detached
-    // `getComputedStyle` reports empty strings, so the assertion would compare 0
-    // against NaN and pass or fail for the wrong reason.
+    // The clip is INSIDE the trigger's content box, so nothing spills past it.
     const long = addr.getBoundingClientRect().height;
     const inner =
       btn.getBoundingClientRect().right - parseFloat(getComputedStyle(btn).paddingRight);
@@ -228,8 +195,6 @@ describe("360x800 — a phone in portrait", () => {
 
   it("widens the anchor-to-actions gap to --sp-4, the one phone rule left", async () => {
     // The whole surviving body of the `width <= 48rem` block. The mark-to-address gap
-    // goes the other way (16px -> 12px) because that space belongs to the CONTROL now
-    // at every tier, which is the deliberate on-screen change.
     await viewport(360, 800);
     const { footer } = mountFooter();
     expect(getComputedStyle(footer).columnGap).toBe(`${String(tokenPx("--sp-4"))}px`);
@@ -239,8 +204,8 @@ describe("360x800 — a phone in portrait", () => {
 describe("900x400 — the SHORT arm, which is about absence", () => {
   it("renders the DESKTOP layout with no pointer attribute at all", async () => {
     await viewport(900, 400);
-    // THE PREMISE, asserted: this case measures the NO-attribute tier, so a leaked
-    // attribute from an earlier case would make it report about a different one.
+    // THE PREMISE, asserted: this case measures the NO-attribute tier, so a leaked attribute from
+    // an earlier case would make it report about a different one.
     expect(
       document.documentElement.dataset["pointer"],
       "the short arm measures the NO-attribute tier",
@@ -249,15 +214,15 @@ describe("900x400 — the SHORT arm, which is about absence", () => {
       document.documentElement.dataset["touched"],
       "and no hybrid attribute either",
     ).toBeUndefined();
-    // 900px is past 48rem, so no width arm matches and nothing height-keyed reaches
-    // the footer: the floor is the fine tier's 24px.
+    // 900px is past 48rem, so no width arm matches and nothing height-keyed reaches the footer: the
+    // floor is the fine tier's 24px.
     expect(tokenPx("--hit-floor")).toBeCloseTo(24, 0);
     assertFooter("900x400 bare", 24);
   });
 
   it("takes the coarse floor when the attribute IS present at the same size", async () => {
-    // The other half: only the attribute changes anything here. Without this case the
-    // one above would pass for a footer that had grown a height arm.
+    // The other half: only the attribute changes anything here. Without this case the one above
+    // would pass for a footer that had grown a height arm.
     await viewport(900, 400);
     document.documentElement.dataset["pointer"] = "coarse";
     expect(tokenPx("--hit-floor")).toBeCloseTo(44, 0);
@@ -285,9 +250,9 @@ describe("1024x768 — the negative control", () => {
 
 describe("read as source: the footer carries no height-keyed rule", () => {
   it("finds exactly THREE height <= 30rem queries in css/, none naming the footer", () => {
-    // The EVIDENCE under the short-arm cases, as a grep over every sheet rather than
-    // as a remembered fact. The CONCLUSION holds however many there are, because no
-    // body names a footer selector.
+    // The EVIDENCE under the short-arm cases, as a grep over every sheet rather than as a
+    // remembered fact. The CONCLUSION holds however many there are, because no body names a footer
+    // selector.
     const found: { sheet: string; body: string }[] = [];
     for (const { name, css } of manifestSheets()) {
       // Comments stripped, so a prose mention of the query is not a hit.
@@ -320,8 +285,8 @@ describe("read as source: the footer carries no height-keyed rule", () => {
   });
 
   it("finds no height-keyed rule anywhere near the footer's own sheet", () => {
-    // Narrower and cheaper: the sheet that owns every footer rule declares no
-    // height-keyed query at all, so the sweep above is not the only guard.
+    // Narrower and cheaper: the sheet that owns every footer rule declares no height-keyed query at
+    // all, so the sweep above is not the only guard.
     const bare = loadCSS("10-shell-app.css").replace(/\/\*[\s\S]*?\*\//gu, " ");
     expect(bare, "10-shell-app.css keys on width alone").not.toMatch(/@media[^{]*height\s*<=/u);
   });

@@ -1,11 +1,5 @@
 package command
 
-// The three decision handlers share one rule: claim the request, and answer
-// kiro-cli only if the claim succeeded. What is pinned here is the losing side,
-// because it is the side that used to be silent — the answer went out, kiro-cli
-// dropped it for a request id it had already resolved, and the client was told
-// its choice had landed.
-
 import (
 	"bytes"
 	"context"
@@ -140,11 +134,8 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			if len(bridge.responds) != 1 || bridge.responds[0] != decisionRequestID {
 				t.Errorf("answers = %v, want exactly [%d]", bridge.responds, decisionRequestID)
 			}
-			// The claim names the command's OWN chat. A request id is unique only
-			// within one bridge, and every bridge mints from zero, so a claim that
-			// dropped the chat would retire whichever chat's card happened to be
-			// stored under that id — resolving one chat's dialog from another's
-			// answer and leaving the real request with no answer path at all.
+			// The claim names the command's own chat: a request id is unique only within one
+			// bridge, so a chatless claim would resolve another chat's card.
 			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
 			}
@@ -252,14 +243,9 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 	}
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler for the
-// duration of the test and restores it on cleanup. The default is
-// process-global, so a test using it must not run in parallel.
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in this buffer.
+// captureLogs swaps the slog default to a buffer-backed debug handler for the test; tests using it
+// must not run in parallel. The log package's writer and flags are restored too, because
+// slog.SetDefault repoints log and does not point it back for the stock handler.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}

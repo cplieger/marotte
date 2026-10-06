@@ -1,10 +1,7 @@
-// THE FOOTER BAND'S GEOMETRY, in real layout: the band is the ROW's own height with its
-// controls painting their own smaller box centred in it, the `i` starts on the card's
-// ink gutter (which the button carries, not the row), the trailing gutter equals that
-// leading one whatever the trailing child is, Rewind may not go flush because it paints
-// a resting border, and the panel holds its ink one gutter off the CARD. The `…`
-// collapse and Rewind's word live behind `width <= 40rem`, so the phone cases are
-// measured in an IFRAME and the desktop ones in the page (1280x720).
+// THE FOOTER BAND'S GEOMETRY: the band is the ROW's height with smaller controls centred in it, the
+// `i` starts on the card's ink gutter (carried by the button), the trailing gutter matches the
+// leading one, Rewind is never flush (resting border), and the panel's ink sits one gutter off the
+// CARD. Phone cases run in an IFRAME (`width <= 40rem`), desktop in the 1280x720 page.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -204,22 +201,14 @@ function mountDelegate(doc: Document): MountedDelegate {
   return { footer, ledger, info, headerInk, last: fact };
 }
 
-/** Computed style resolved in the element's OWN realm. `window.getComputedStyle`
- *  hands back an EMPTY declaration for a node in another document in Chromium, so
- *  every read below would be `""` for the iframe cases and every derived number
- *  `NaN` — which reads as a layout finding rather than a cross-realm call. */
+/** Computed style in the element's OWN realm: Chromium's `window.getComputedStyle` returns an EMPTY
+ *  declaration for another document's node, which reads as NaN layout findings. */
 function cs(el: Element, pseudo?: string): CSSStyleDeclaration {
   const view = el.ownerDocument.defaultView ?? window;
   return view.getComputedStyle(el, pseudo ?? null);
 }
 
-/** The band, in CSS px. It IS the footer's box: both helpers here used to subtract
- *  the row's own `border-top`, which was the seam between the body and the ledger
- *  rather than part of the row — and the card draws no internal seam any more
- *  (29-turns.css's file header), so the term was structurally zero and went. The
- *  numbers below are unchanged by that: the border was inside this border box, so
- *  its removal left the box's top edge where it was and took 1px off the height,
- *  which is what the subtraction had been correcting for. */
+/** The band in CSS px: the footer's own box (the card draws no internal seam). */
 function band(footer: HTMLElement): number {
   return +footer.getBoundingClientRect().height.toFixed(2);
 }
@@ -305,11 +294,8 @@ describe("the band and the control in it", () => {
   });
 
   it("keeps the mouse tier's band at the dense height and CENTRES a smaller control", () => {
-    // The tier the two come apart on, and the defect that named this case: the band must
-    // not shrink to the control and the control must not stretch to the band, or the
-    // toggle's hover and press paint a full-height slab where the buttons at the row's
-    // other end paint a pill. The paint is 61-mcp-tools.css's `--ctl-h-sm` lifted by the
-    // same floor, so the two ends cannot diverge.
+    // Neither may the band shrink to the control nor the control
+    // stretch to the band, or the toggle paints a full-height slab beside pill-shaped buttons.
     expect(window.innerWidth).toBeGreaterThan(640);
     const { footer, ledger } = mountFooter(document, "rewind");
     const floor = token(document, "--hit-floor");
@@ -394,13 +380,8 @@ describe("the trailing control", () => {
   });
 
   it("ends on the SAME gutter the `i` starts on, whatever the trailing child is", () => {
-    // The retired `:has()` rule tightened this edge to 4px for a row ending in a
-    // control, which put Rewind's box 4px from the card while the `i`'s ink sat 12px
-    // from the other side — reported as the two insets not matching. Held against
-    // the LEADING declaration rather than a literal, and over both trailing
-    // children, because a value that only matched for the text case is the shape
-    // being removed. The fact slot is not a trailing child at all — it sits inside the
-    // ledger button — so the two controls are the whole population.
+    // Held against the LEADING declaration, over both trailing children (the fact sits inside the ledger
+    // button), so the trailing edge matches whichever control ends the row.
     for (const trailing of ["actions", "rewind"] as const) {
       const { footer, ledger, last } = mountFooter(document, trailing);
       const lead = parseFloat(cs(ledger).paddingInlineStart);
@@ -473,12 +454,8 @@ describe("the panel the ledger opens", () => {
 
 describe("the delegate card mounts this row and gets the same gutters", () => {
   it("lines the `i` up with its own header's ink, on the card's own 12px", () => {
-    // `.subagent-header` is `padding: var(--sp-2) var(--sp-3)`, so a delegate's
-    // identity ink starts on the same gutter every other card's does — which is what
-    // the retired 8px override in 14-tools.css was wrong about: the FOOT was the
-    // outlier inside its own card, not a denser surface. Compared against the header
-    // glyph rather than a literal, the way the turn card's case compares against its
-    // header text.
+    // `.subagent-header` is `padding: var(--sp-2) var(--sp-3)`, so a delegate's footer shares every
+    // card's gutter. Compared against the header glyph, not a literal.
     const { headerInk, info } = mountDelegate(document);
     expect(info.getBoundingClientRect().left).toBeCloseTo(
       headerInk.getBoundingClientRect().left,
@@ -487,11 +464,8 @@ describe("the delegate card mounts this row and gets the same gutters", () => {
   });
 
   it("keeps the row's gutters symmetric, and insets the fact to match the `i`", () => {
-    // With no trailing control there is nothing whose box ends on the trailing gutter:
-    // the fact sits INSIDE the button (29-turns.css), so the flexible track beside it
-    // is the row's slack. The two gutters are still one value, and the button's own
-    // insets are what make its press box symmetric on its content — the `i` and the
-    // fact sit the same distance inside it.
+    // With no trailing control the flexible track is slack; the button's insets keep its press box
+    // symmetric on the `i` and the fact.
     const { footer, ledger, last } = mountDelegate(document);
     const lead = parseFloat(cs(ledger).paddingInlineStart);
     expect(lead).toBeGreaterThan(0);

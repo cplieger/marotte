@@ -23,8 +23,8 @@ type RetentionHeader struct {
 	// UpdatedAt is last activity in Unix milliseconds; zero or negative means the
 	// chat records none and purgeOne falls back to the file mtime.
 	UpdatedAt int64
-	// Drafting reports composer text typed and not sent, which Store.SetDraft
-	// writes WITHOUT stamping UpdatedAt.
+	// Drafting reports words written and not sent: composer text, which
+	// Store.SetDraft writes WITHOUT stamping UpdatedAt, or a queued follow-up.
 	Drafting bool
 }
 
@@ -76,11 +76,9 @@ func WithLiveChats(fn func(chatID marotte.ChatID) bool) Option {
 	return func(s *Service) { s.isLive = fn }
 }
 
-// WithOpenTabs registers the predicate reporting an OPEN TAB, which exempts a
-// chat from purging regardless of age. It covers the reader the draft predicate
-// misses: reading a chat stamps nothing the age test can see. Retention is
-// therefore OPT-OUT for a chat left open forever, which is accepted. Injected
-// because this package cannot see the tab store.
+// WithOpenTabs registers the predicate reporting an OPEN TAB, which exempts a chat from purging
+// regardless of age: reading a chat stamps nothing the age test can see. Injected because this
+// package cannot see the tab store.
 func WithOpenTabs(fn func(chatID marotte.ChatID) bool) Option {
 	return func(s *Service) { s.hasOpenTab = fn }
 }

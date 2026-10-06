@@ -10,45 +10,22 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestTranslateACPEvent_RefusesUnknownRequests is the red check for the wedge
-// class, and it is the test whose absence let the defect ship.
-//
-// KAS calls its ext-methods with `await connection.extMethod(...)` and no
-// timeout; the only rejection is the connection closing. marotte's Bridge.Call
-// has no client-side deadline either, deliberately, because a turn can
-// legitimately run for hours. Those two facts compose into a failure that is
-// worse than an error: an unanswered A→C request means the session/prompt Call
-// never returns, bridgePrompting is never released, and every later prompt on
-// that chat 409s with no turn to steer into, because the turn_closed that would
-// release the slot never fires. The chat is dead with a spinner and no diagnosis.
-//
-// The utility bridge and the run bridge both already had this fallback, each
-// with the rationale in a comment. The chat dispatcher was the one of the three
-// without it, which is the shape worth remembering: a guard present in two of
-// three sibling paths reads as a convention until someone checks.
-//
-// _kiro/workspace/currently_open_files is the reachable case rather than a
-// hypothetical: KAS registers that resolver with NO capability gate and reaches
-// it from processPromptWithContext on any `#[[...]]` reference in a
-// workspace-authored agent prompt, and marotte deliberately does not implement
-// the pull direction.
+// TestTranslateACPEvent_RefusesUnknownRequests is the red check for the wedge class: KAS's extMethod calls have
+// no timeout and Bridge.Call no client deadline (turns can run for hours), so an unanswered A→C request
+// leaves the prompt Call blocked and every later prompt 409ing. `_kiro/workspace/currently_open_files` is
+// the live case: ungated in KAS and deliberately unimplemented here.
 func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 	cases := map[string]string{
-		// The live case: an ungated KAS resolver marotte chose not to implement.
+		// The live case.
 		"ungated workspace pull": "_kiro/workspace/currently_open_files",
-		// A _kiro/* method with no handler and no noop entry.
+		// A `_kiro/*` method with no handler and no noop entry.
 		"unknown kiro extension": "_kiro/some/future/verb",
-		// A terminal verb the prefix router accepts but the switch does not
-		// implement; it must not fall off the end of the switch.
+		// Accepted by the prefix router but not implemented.
 		"unimplemented terminal verb": "terminal/resize",
 		// A core ACP method marotte does not implement.
 		"unknown core method": "session/somethingNew",
-		// A method on the NOOP table, arriving with an id. The table is keyed by
-		// method only and is consulted BEFORE the refusal, so without the id test
-		// on that lookup a request-shaped noop returns early and is never
-		// answered — the same wedge, reached through the one door that logs
-		// nothing on its way past. Every member is a notification today; this
-		// pins the guard so adding a request-shaped one cannot reopen it.
+		// A noop-table method arriving with an id: the table is checked before the refusal, so without its id test
+		// the request returns unanswered and unlogged.
 		"a noop method arriving as a request": methodV3ToolsDidChange,
 	}
 
@@ -79,9 +56,7 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 				t.Fatalf("responded to %s with a success result (%v), want an error: "+
 					"marotte does not implement it and must say so", method, got.result)
 			}
-			// The CODE matters, not just that it errored. -32601 is what JSON-RPC
-			// 2.0 assigns to method-not-found; -32603 would label a deliberate
-			// refusal an internal fault and make these logs blame the wrong side.
+			// -32601 is method-not-found; -32603 would blame us.
 			var rpcErr *marotte.RPCError
 			if !errors.As(got.err, &rpcErr) {
 				t.Fatalf("refusal for %s is not an *marotte.RPCError (%T); the code is not on the wire",
@@ -99,16 +74,9 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 	}
 }
 
-// TestTranslateACPEvent_IgnoresUnknownNotifications is the other half of the
-// contract, and it is what keeps the refusal branch from becoming a bug of its
-// own. A notification carries no id and owes nothing on the wire, so answering
-// one would be a protocol error. The `msg.ID != nil` guard is the whole
-// distinction, so it gets its own assertion rather than riding on the case
-// above.
+// TestTranslateACPEvent_IgnoresUnknownNotifications pins that answering a notification is a protocol error; `msg.ID != nil` is the whole distinction.
 func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
-	// Both an unrecognised method and a NOOP-table member, because the noop
-	// lookup now carries the same id test and must stay silent on the
-	// notification side of it.
+	// An unknown method and a noop-table member: both stay silent.
 	for name, method := range map[string]string{
 		"unknown extension": "_kiro/some/future/notification",
 		"noop table member": methodV3ToolsDidChange,
@@ -129,16 +97,13 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 				t.Fatalf("responded to a notification (id=%d, err=%v): notifications owe no reply",
 					got.id, got.err)
 			case <-time.After(200 * time.Millisecond):
-				// Correct: nothing sent.
+				// Nothing sent.
 			}
 		})
 	}
 }
 
-// hubContextIsLive guards the assumption both tests above rest on: the
-// dispatcher derives its context from the runtime's shutdown context, so a runtime that
-// is already shutting down would refuse to send and the tests would pass for
-// the wrong reason.
+// TestHubContextIsLiveOnAFreshHub guards the tests above: a shutting-down runtime would refuse to send and pass them wrongly.
 func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx, cancel := h.lifecycle.derivedContext()
@@ -148,14 +113,8 @@ func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 	}
 }
 
-// TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver is the failure mode the
-// refusal was added to prevent, arriving anyway.
-//
-// The refusal exists because an unanswered A→C request wedges the turn forever —
-// so a refusal that could not be WRITTEN leaves exactly that wedge, with the one
-// difference that marotte knows about it. The line is the only diagnosis available
-// for a chat stuck on a spinner, which also means a guard flipped here prints it
-// after every successful refusal and makes the log useless for finding the real one.
+// TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver pins that an unwritten refusal is the same wedge, and the line is
+// its only diagnosis, so it must not fire on success.
 func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 	const wantLine = "chat bridge: refusal could not be delivered; the turn may be wedged"
 
@@ -198,15 +157,9 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 	})
 }
 
-// TestTranslateACPEvent_HandlerTableIsIDAware pins the gate on the handler-map
-// LOOKUP, which is the guard the noop line one branch below has always had.
-//
-// The table holds two dozen methods and only three are request-shaped. Ungated,
-// a method the backend later promotes from a notification to a request reaches a
-// notification handler that reads Params and returns — the same wedge the -32601
-// fence exists to prevent, arriving through the one door that answers nothing and
-// logs nothing. The three that ARE request-shaped are dispatched from
-// routeInboundRequest instead, so the two halves are disjoint by construction.
+// TestTranslateACPEvent_HandlerTableIsIDAware pins the id gate on the handler-map lookup: a method KAS promotes
+// to a request would otherwise be swallowed by a notification handler. The three request-shaped ones go
+// through routeInboundRequest, disjoint by construction.
 func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 	const method = "_kiro/mcp/status" // a notification handler in the table
 	params := mustJSON(t, map[string]any{
@@ -247,8 +200,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 		if rpcErr.Code != marotte.RPCCodeMethodNotFound {
 			t.Errorf("refusal code = %d, want %d", rpcErr.Code, marotte.RPCCodeMethodNotFound)
 		}
-		// The handler must not have run: a frame that was both handled AND refused
-		// is the double-dispatch hazard, one id with two answers.
+		// The handler must not have run: handled and refused would be two answers to one id.
 		if snap := h.mcpRegistry.Snapshot(); len(snap) != 0 {
 			t.Errorf("the notification handler also ran (snapshot %+v); the frame was handled "+
 				"and refused, which is two answers on one id", snap)
@@ -256,17 +208,8 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 	})
 }
 
-// TestTranslateACPEvent_AskMethodsDispatchOnce is the other half of the gate: the
-// three request-shaped members of the table are dispatched from the REQUEST side,
-// exactly once.
-//
-// One permission_needed broadcast is what "once" looks like from here, because
-// the permission handler's answer is the card rather than an RPC reply. The
-// failure this catches is ZERO — the whitelist missing while the table lookup is
-// gated, which sends the user's approval to the -32601 fence instead of to them.
-// Measured: two is unreachable rather than merely absent, because the caller
-// returns the moment routeInboundRequest claims a frame, so the table can never
-// see one of these three. Do not read this test as the guard against that.
+// TestTranslateACPEvent_AskMethodsDispatchOnce pins that the three request-shaped members dispatch from the request side
+// exactly once. It catches zero (a missing whitelist sends approvals to -32601); two is unreachable by construction.
 func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	before := h.bus.fanout.Position().Head

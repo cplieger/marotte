@@ -1,9 +1,4 @@
-// Actions for the Forge auth panel: sign-out, probe, owner scopes, device grant
-// start and cancel, forge detection, token connect, a repository page, clone
-// repo, delete local repo. Batch operations (clone_all,
-// delete_all) live in forge-auth.ts — they fan out per-repo
-// action.dispatch() calls with button progress and aggregate toast.
-// ---------------------------------------------------------------------------
+// Forge auth panel actions. The batch operations (clone_all, delete_all) live in forge-auth.ts.
 
 import {
   apiAction,
@@ -28,8 +23,6 @@ import type {
   ProbeResult,
   RepoList,
 } from "../wire/types.gen.js";
-
-// --- Types local to this slice ---
 
 /** The per-connection fields a token connect and a device-grant start carry
  *  beside the credential. An unset field is absent, so the server's default
@@ -73,8 +66,6 @@ interface DeleteLocalArgs {
 interface ConnectionArgs {
   forgeId: string;
 }
-
-// --- Actions ---
 
 /** Start a device grant. Error toast suppressed: the callsite renders the
  *  refusal inline. */
@@ -170,13 +161,9 @@ export const setOwners = apiAction<SetOwnersArgs, OwnerScopes>({
   error: false,
 });
 
-/** How long the clone may go without the server streaming anything before
- *  the client gives up. NOT a bound on the clone itself: the server
- *  streams a progress line whenever git reports one, so a healthy
- *  transfer of any size resets this continuously — the timeout only fires
- *  when the stream has genuinely died. This replaced a wall-clock budget,
- *  whose original 30s cut killed any repo too large to clone in time (the
- *  abort cancels the request, whose context kills the git subprocess). */
+/** How long the clone may go with nothing streamed before the client gives up. NOT a bound on the
+ *  clone: each git progress line resets it, so it fires only on a dead stream (the abort cancels
+ *  the request, whose context kills the git subprocess). */
 const CLONE_STALL_TIMEOUT_MS = 3 * 60_000;
 
 /** One line of the clone's NDJSON stream: progress while git transfers,
@@ -187,24 +174,15 @@ interface CloneStreamLine {
   error?: string;
 }
 
-/** Clone a single repo into the workspace. Error toast suppressed —
- *  callers handle toasting (single-repo toasts directly, batch
- *  aggregates).
- *
- *  Reads the server's NDJSON progress stream (raw fetch — the apiAction
- *  transport expects one JSON body on a fixed 30s timeout, and both
- *  halves are wrong for a transfer that legitimately runs for minutes).
- *  Liveness is measured, not budgeted: each received chunk re-arms the
- *  stall timer. NOT retryable: an interrupted clone may have left a
- *  partial destination server-side, so a retry reports a misleading
- *  "already exists" instead of the real failure. */
+/** Clone a single repo into the workspace; callers toast. A raw fetch over the NDJSON progress
+ *  stream, because apiAction expects one JSON body on a fixed 30s timeout. Each chunk re-arms the
+ *  stall timer. NOT retryable: a partial destination makes a retry report "already exists". */
 export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
   run: async ({ url, onProgress }, signal) => {
     const ctrl = new AbortController();
-    // Aborting the fetch stops the network; cancelling the reader unblocks
-    // a pending read() even when the body stream is not wired to the
-    // signal (a Response handed to us by a test stub, some polyfills).
+    // Cancelling the reader unblocks a pending read() even when the body ignores the signal (test
+    // stubs, some polyfills).
     let cancelStream: (() => void) | null = null;
     const die = (): void => {
       ctrl.abort();
@@ -241,9 +219,7 @@ export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: stri
       const decoder = new TextDecoder();
       let buf = "";
       let final: CloneStreamLine | null = null;
-      // Returns the line when it is the final envelope, null for progress
-      // and noise — the assignment stays in this scope so TypeScript's
-      // narrowing sees it.
+      // The final envelope, or null for progress and noise; assigned in this scope for narrowing.
       const takeLine = (line: string): CloneStreamLine | null => {
         if (line === "") {
           return null;
@@ -293,8 +269,7 @@ export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: stri
   error: false,
 });
 
-/** Remove a locally-cloned repo from the workspace. Error toast
- *  suppressed — callers handle toasting. */
+/** Remove a locally-cloned repo from the workspace; callers toast. */
 export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?: string }>({
   name: "forge.delete_local",
   request: ({ repoName }) => ({
@@ -306,8 +281,6 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
   // Not retryable: a timed-out delete may have succeeded server-side.
 });
 
-// --- PAT connect ---
-
 interface ConnectPATArgs {
   kind: ForgeKind;
   host: string;
@@ -315,8 +288,7 @@ interface ConnectPATArgs {
   options: ConnectionOptions;
 }
 
-/** Connect a forge account via PAT. Error toast suppressed — the
- *  form renders inline error status. */
+/** Connect a forge account via PAT; the form renders the error inline. */
 export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
   name: "forge.connect_pat",
   idempotencyKey: true,

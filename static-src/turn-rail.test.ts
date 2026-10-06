@@ -4,15 +4,9 @@
 // whether the rail is worth showing, and the whole jump pipeline.
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 
-// scroll.ts self-initialises a singleton against #messages at import time, so it is
-// stubbed rather than staged. The scroller fake is deliberately more than a value
-// bag: it records the epoch and the absolute landings the jump produces, and it
-// fires `scrollend` for a programmatic scroll the way Chromium does, so a
-// correction loop settles without waiting out its own timeout.
-//
-// `top: scrollTop` on the scroller's own rect is what makes a card's measured top
-// INVARIANT under the fake scroll, which is the property a real scroller has (the
-// card's viewport rect moves, and here the cards' rects are fixed instead).
+// scroll.ts initialises a #messages singleton at import, so it is stubbed. The fake records the
+// epoch and absolute landings and fires `scrollend` for programmatic scrolls as Chromium does.
+// `top: scrollTop` on its rect keeps a card's measured top INVARIANT under scroll, as a real one is.
 const { scrollable } = vi.hoisted(() => {
   const handlers = new Map<string, Set<() => void>>();
   const el = {
@@ -216,13 +210,8 @@ function prependTurns(s: Session, ids: string[]): void {
   s.turn_order = [...ids, ...s.turn_order];
 }
 
-/** Mount the rail and give it the box the stylesheet would.
- *
- *  Idempotent and a module SINGLETON, so on a whole-file run only the first block's
- *  host holds it — hence the document-wide resolve. Browser Mode serves no CSS and
- *  `.turn-rail` takes its height from `position: absolute; inset-block`, so without
- *  an explicit box the track measures whatever its markers occupy and holds one
- *  marker. The box is the harness standing in for the stylesheet. */
+/** Mount the rail and give it the box the stylesheet would: Browser Mode serves no CSS, and
+ *  without one the track holds a single marker. A module SINGLETON, hence the document-wide resolve. */
 function mountRail(host: HTMLElement): HTMLElement {
   document.body.appendChild(host);
   mountTurnRail(host);
@@ -268,15 +257,9 @@ function frames(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Which chat the rail belongs to.
-//
-// The rail is a module singleton spanning a session while the transcript store
-// holds a paginated window, so the chat it currently points at is state, and
-// both directions of leaving it unset were shipped defects: a rail still holding
-// the previous chat's index rendered that chat's markers over a conversation
-// with no messages in it, and a refresh naming a chat the rail had never been
-// handed was discarded, so the first turn of a chat started from empty got no
-// marker at all.
+// Which chat the rail belongs to: a session-wide singleton over a paginated store, so the pointed
+// chat is state. Left unset either way, it leaves stale markers over an empty chat or discards a
+// first-turn refresh.
 // ---------------------------------------------------------------------------
 
 describe("which chat the rail belongs to", () => {
@@ -351,11 +334,8 @@ describe("which chat the rail belongs to", () => {
     expect(markers()).toEqual([]);
   });
 
-  // The mirror of the stale-markers defect, and the reason pointing cannot be
-  // skipped for an empty chat. `turn_closed` is the only moment the index is
-  // re-read, so a rail that was never handed the chat discards the very refresh
-  // that would have drawn its first marker, and the session stays blank until
-  // the reader switches away and back.
+  // `turn_closed` is the only index re-read, so a rail never pointed at the chat discards the refresh
+  // that would draw its first marker.
   it("drops a refresh for a chat it was never pointed at", async () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
 
@@ -381,10 +361,8 @@ describe("which chat the rail belongs to", () => {
 // When the rail is worth existing
 // ---------------------------------------------------------------------------
 
-// The rail is a NAVIGATOR, so it has nothing to offer a transcript the reader can
-// already see whole — on a one-turn chat it was a column of one digit beside a
-// conversation with nowhere to go. These cases pin the gate in both directions,
-// including the one activation structurally cannot cover.
+// A NAVIGATOR has nothing to offer a transcript seen whole. Both directions, including the one
+// activation cannot cover.
 describe("the rail only appears once the transcript can be scrolled", () => {
   const host = document.createElement("div");
 
@@ -465,13 +443,8 @@ describe("the rail only appears once the transcript can be scrolled", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Which turn the reading line is in.
-//
-// The rule: the active turn is the one whose box contains the reading line, read
-// from the scroll offset against a cached table. The arithmetic is
-// `rail-activation.ts`'s subject; what these cases pin is the wiring — the table is
-// built from the cards the paint hands over, a scroll frame re-reads it without
-// measuring anything, and both end clamps survive.
+// Which turn the reading line is in: the arithmetic is `rail-activation.ts`'s; these pin the
+// wiring (table built from painted cards, scroll frames measure nothing, both end clamps).
 // ---------------------------------------------------------------------------
 
 describe("which turn the reading line is in", () => {
@@ -655,13 +628,9 @@ describe("which turn the reading line is in", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The per-chat record: what makes a switch back to a loaded chat cost zero
-// fetches. The rail keeps each chat's fetched index alongside the sync epoch
-// and the turn count captured BEFORE the request, and an activation fetches
-// only when that record cannot stand in — missing, from before a transport
-// gap, from before the count moved, or overruled by the caller's `force` (the
-// stale-transcript activation, whose verdict the rail cannot re-derive after
-// the transcript heals re-stamps the session fresh).
+// The per-chat record: a switch back to a loaded chat costs zero fetches. Each chat's index is kept
+// with the sync epoch and turn count captured BEFORE the request; an activation fetches only when
+// the record is missing, pre-gap, pre-count, or overruled by `force`.
 // ---------------------------------------------------------------------------
 
 describe("the rail record gates the activation fetch", () => {
@@ -807,12 +776,8 @@ describe("the rail record gates the activation fetch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The set comes from what the transcript HOLDS, extended backwards by the index.
-//
-// The index is refetched at three moments — turn end, chat activation, a transport
-// gap — and none of them is turn START, so a rail assembled from the index alone
-// cannot show the turn running now. The merge is `rail-merge.ts`'s subject; this is
-// the DOM-level property it buys.
+// The set is what the transcript HOLDS, extended backwards by the index, which is never refetched
+// at turn START (`rail-merge.ts`).
 // ---------------------------------------------------------------------------
 
 describe("the newest turn needs no fetch", () => {
@@ -868,14 +833,8 @@ describe("the newest turn needs no fetch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Which CARD a marker jumps to.
-//
-// Two numbering spaces, both spelled `turn-{n}`: the rail's `TurnSummary.n` is
-// session-absolute (the server owns it) while a card's DOM id is window-local
-// (`Turn.n`, an ordinal inside the paginated store). The jump addressed the card by
-// the marker's number, so it landed on whichever card happened to hold that WINDOW
-// ordinal — wrong by exactly the number of turns paged out, which is zero on a
-// short chat and grows with every page, hence "sometimes".
+// Which CARD a marker jumps to: `TurnSummary.n` is session-absolute while a card's `turn-{n}` id is
+// window-local, so addressing by the marker's number missed by the paged-out count.
 // ---------------------------------------------------------------------------
 
 describe("which card a marker jumps to", () => {
@@ -963,7 +922,7 @@ describe("which card a marker jumps to", () => {
   }
 
   it("lands on the clicked turn's own card, not the one holding that window ordinal", async () => {
-    // THE REGRESSION CASE. The session has 10 turns; the store holds absolute 5..10
+    // The session has 10 turns; the store holds absolute 5..10
     // as window ordinals 1..6. So `#turn-6` exists and is absolute turn TEN.
     vi.mocked(apiGet).mockResolvedValue({
       turns: Array.from({ length: 10 }, (_, i) => turn(i + 1)),
@@ -979,8 +938,7 @@ describe("which card a marker jumps to", () => {
 
     expect(mountedBodies).toEqual(["m6"]);
     expect(wanted.dataset["railTarget"]).toBe("");
-    // And the id it does NOT use, spelled out so a reader sees the two spaces:
-    // pre-fix this element was the target.
+    // And the id it does NOT use, spelled out so a reader sees the two spaces.
     expect(view.querySelector("#turn-6")?.getAttribute(KEY_ATTR)).toBe("m10");
   });
 
@@ -1086,11 +1044,8 @@ describe("which card a marker jumps to", () => {
   });
 
   it("does not let a superseded jump close the epoch the second one opened", async () => {
-    // TWO CLICKS INSIDE ONE PAGING BUDGET. The first jump is still waiting on its
-    // paging door when the second starts, and its own exit then runs while the second
-    // is mid-flight. Unguarded, that exit's `endSelfScroll` closed the SECOND's
-    // epoch — after which `autoScrollIfAnchored` re-pins to the live edge and the
-    // reader is taken off the turn they clicked.
+    // TWO CLICKS INSIDE ONE PAGING BUDGET: unguarded, the first jump's exit closed the SECOND's epoch
+    // and `autoScrollIfAnchored` took the reader to the live edge.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-overlap");
     setSessions([paged("c-overlap", ["m2"], true)]);
@@ -1111,11 +1066,8 @@ describe("which card a marker jumps to", () => {
       return false;
     });
 
-    // The SECOND jump's card is measured as MOVING, so its correction loop is still
-    // running when the first one comes back. Releasing the first at the second
-    // measurement is what puts its exit INSIDE the second's flight, and the third
-    // measurement is a point where that exit has provably happened: everything left
-    // of the first jump is microtasks, and a correction waits out a whole task.
+    // The second card measures as MOVING, so the first's release at the second measurement lands its
+    // exit INSIDE the second's flight; by the third it has provably run.
     const epochsWhenFirstExited: string[] = [];
     let measured = 0;
     Object.defineProperty(target, "getBoundingClientRect", {
@@ -1155,10 +1107,8 @@ describe("which card a marker jumps to", () => {
   });
 
   it("lets a second click on a paging marker be the jump already in flight", async () => {
-    // The generation counter's own hazard: an impatient second click on a marker that
-    // is still fetching would otherwise CLAIM the generation, be refused by the
-    // pending gate, and leave the jump it was waiting on superseded — so the page
-    // lands and nothing ever scrolls to it.
+    // A second click on a still-fetching marker must not CLAIM the generation, or the awaited jump is
+    // superseded and never scrolls.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-double-click");
     setSessions([paged("c-double-click", ["m2"], true)]);
@@ -1250,14 +1200,8 @@ describe("which card a marker jumps to", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A click always produces a reaction.
-//
-// `currentN` had one writer — the geometry pick — and a marker click called
-// `jumpToTurn` and nothing else. With the target already at the reader's scroll
-// position `scrollIntoView` is a no-op: no scroll event, no intersection change, no
-// pick, no render. So clicking turn 3 while turns 2 and 3 were both fully visible
-// produced NOTHING observable, and because dominance was by visible pixels the
-// taller turn 2 kept the mark — the rail contradicting the reader's own choice.
+// A click always produces a reaction: with the target already in view `scrollIntoView` is a no-op
+// (no scroll, no pick), so the click itself must move `currentN`.
 // ---------------------------------------------------------------------------
 
 describe("a click always produces a reaction", () => {
@@ -1423,11 +1367,8 @@ describe("a click always produces a reaction", () => {
     await settleJump();
     expect(marker(3).dataset["selected"]).toBe("");
 
-    // Through the real seam: the rail subscribed at mount, and this is the callback
-    // scroll.ts publishes for a reader gesture. The rail cannot tell WHICH gesture
-    // it was and must not care — a scroll and a request for the live edge are both
-    // the reader stating a position — so which writes publish it is pinned in
-    // `scroll.test.ts`, over a real scroller, rather than restated here.
+    // Through the real seam: scroll.ts's reader-gesture callback. Which writes publish it is pinned in
+    // `scroll.test.ts`.
     scrollable.readerGesture?.();
 
     expect(marker(3).dataset["selected"]).toBeUndefined();
@@ -1435,12 +1376,8 @@ describe("a click always produces a reaction", () => {
   });
 
   it("drops a pick the arriving index no longer names", async () => {
-    // THE REWIND. Rewind lives in the turn footer, so picking a marker and then
-    // reverting the session is two clicks apart — and the pick is held by the
-    // turn's opening-message id, which that index no longer carries. Without the
-    // drop the rail marks NO position on any row: `markerNode` withholds
-    // `data-current` while a pick stands, and matches `data-selected` on a turn that
-    // is gone.
+    // THE REWIND: a pick held by an opening-message id the reverted index no longer carries must drop,
+    // or `markerNode` marks no row at all.
     const { two } = await bothVisible();
     marker(3).click();
     await settleJump();
@@ -1459,10 +1396,7 @@ describe("a click always produces a reaction", () => {
   });
 
   it("keeps a pick the arriving index still names", async () => {
-    // The control, and the reason the case above cannot pass for the wrong reason: a
-    // refresh must not revoke the reader's pick just for arriving. The index is
-    // refetched at every turn end, so a rail that dropped the pick per index would
-    // lose it on the next turn of the very conversation being read.
+    // The control: a refresh alone must not revoke the pick, since the index refetches every turn end.
     await bothVisible();
     marker(3).click();
     await settleJump();
@@ -1526,11 +1460,8 @@ describe("a click always produces a reaction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// What a rail row SAYS. The composition is `rail-labels.test.ts`'s subject; these
-// cases pin that the renderer publishes it, on both channels, and that the native
-// `title` is gone — as a UA tooltip it missed the styled treatment every other
-// hover in the app uses AND published no `aria-describedby`, so it reached mouse
-// users only.
+// What a rail row SAYS (composed in `rail-labels.test.ts`): published on both channels, with no
+// native `title`, which skipped the styled tooltip and `aria-describedby`.
 // ---------------------------------------------------------------------------
 
 describe("what a rail row says", () => {
@@ -1567,9 +1498,8 @@ describe("what a rail row says", () => {
   });
 
   it("names an agent-initiated turn in the accessible NAME, not only in a border style", async () => {
-    // The defect: `data-trigger="system"` rendered as a dashed italic border and
-    // nothing else, and the server leaves `first_line` empty for a non-user turn, so
-    // the hover fell back to `Turn 4` and said nothing either.
+    // The server leaves `first_line` empty for a non-user turn, so a dashed italic border
+    // alone would leave the hover saying only `Turn 4`.
     vi.mocked(apiGet).mockResolvedValue({
       turns: [turn(1, { first_line: "do it" }), turn(2, { agent_initiated: true })],
     });
@@ -1620,11 +1550,9 @@ describe("what a rail row says", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE TURN'S DURATION on the rail, shown in the turn's own box on hover. The rail's feed
-// (`GET /api/chats/{id}/turns`) carries no duration, and the footer's number is
-// `turn_elapsed_ms` summed across the body, so the rail derives it from the transcript
-// STORE — a paginated window, so a turn outside it gets no slot rather than a guessed
-// one. These cases pin the derivation and the gap; the reveal is `rail-mark-css.test.ts`'s.
+// THE TURN'S DURATION on the rail. The rail's feed carries none, so it derives from the transcript
+// STORE (`turn_elapsed_ms` summed), and a turn outside that window gets no slot rather than a guess.
+// The reveal is `rail-mark-css.test.ts`'s.
 // ---------------------------------------------------------------------------
 
 describe("the duration a rail marker can show", () => {
@@ -1640,10 +1568,8 @@ describe("the duration a rail marker can show", () => {
     resetTurnRail();
   });
 
-  /** A turn as the STORE holds it: the `turn_open` whose id the rail's index joins on
-   *  plus the `turn_close` carrying the stamps. The prompt text is a parameter because
-   *  the merge takes the RESIDENT turn's label over the index's, which is the whole
-   *  point of the merge. */
+  /** A turn as the STORE holds it: the `turn_open` the index joins on plus the stamped `turn_close`.
+   *  The prompt is a parameter: the merge takes the RESIDENT label. */
   function storedTurn(n: number, opts: ResidentOpts = {}): Resident {
     return residentTurns([`m${String(n)}`], opts);
   }
@@ -1748,11 +1674,8 @@ describe("the duration a rail marker can show", () => {
   });
 
   it("puts the duration in the DESCRIPTION channel and keeps the name short", async () => {
-    // `aria-label` wins over a button's own text, so the slot's words never reach a
-    // screen reader; the tooltip is republished as `aria-describedby`, which is the
-    // channel the footer's own hover-revealed slot uses for the same reason. The NAME
-    // is read on every focus and stays what it was, and the two channels stay
-    // different.
+    // `aria-label` beats the button's text, so the slot's words reach a screen reader only through
+    // `aria-describedby`, as the footer's slot does; the NAME stays unchanged.
     seed(
       "c-channels",
       storedTurn(1, { elapsedMs: 92_000, prompt: "do the thing", outcome: "failed" }),
@@ -1778,11 +1701,8 @@ describe("the duration a rail marker can show", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Where the markers SIT. A position is a function of the marker's slot in the shown
-// set, so `k` markers are `k - 1` equal gaps apart whatever turns the rank dropped
-// between them. The arithmetic is `rail-select.node.test.ts`'s and the rendered
-// pixels are `rail-position-css.test.ts`'s; this pins that the renderer publishes
-// the slot's fraction rather than the turn's.
+// Markers sit at ONE pitch: `k` markers are `k - 1` equal gaps apart. This pins that the renderer
+// publishes the slot's fraction (`rail-select.node.test.ts`, `rail-position-css.test.ts`).
 // ---------------------------------------------------------------------------
 
 describe("markers sit at one pitch", () => {
@@ -1823,11 +1743,8 @@ describe("markers sit at one pitch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The mark is STICKY. A downsampled rail has a marker for one turn in two or three,
-// so the reading line spends most of its time in a turn with no marker of its own,
-// and the mark then belongs to the nearest shown marker at or below it. Once a turn
-// has been placed, exactly one marker is marked: a re-render, a refresh, an emptied
-// table or an id the index does not carry can move the mark, never clear it.
+// The mark is STICKY: it belongs to the nearest shown marker at or below the reading line, and once
+// a turn is placed exactly one marker is marked; nothing may clear it.
 // ---------------------------------------------------------------------------
 
 describe("the mark is sticky", () => {

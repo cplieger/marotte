@@ -1,9 +1,5 @@
 package durable
 
-// The one property this package exists for, from both sides: what Context keeps
-// and what it drops. The siblings it mirrors are agent's TurnContext cases,
-// which pin the same pair for a context that stays cancellable.
-
 import (
 	"context"
 	"testing"
@@ -51,8 +47,6 @@ func TestContext_CarriesNoDeadline(t *testing.T) {
 	if deadline, ok := dctx.Deadline(); ok {
 		t.Errorf("Deadline = %v (ok=%t), want none: an expired one refuses the write", deadline, ok)
 	}
-	// And it stays refusal-free once the parent's own deadline has passed, which
-	// is the state a slow shutdown actually reaches.
 	<-parent.Done()
 	if err := dctx.Err(); err != nil {
 		t.Errorf("Err after the parent's deadline passed = %v, want nil", err)

@@ -1,53 +1,42 @@
-// HOW THE APP SPENDS `env(safe-area-inset-*)`, measured. Chromium reports every
-// inset as 0, so the instrument is the assembled bundle with the iPhone values
-// SUBSTITUTED (top 47, bottom 34), each case paired with the unsubstituted sheet as
-// its control so a rule that stopped reading the inset fails. Two rules: THE INSET
-// IS A CLEARANCE FOR THE NEAREST CONTROL (the composer's last pill sits on the 34pt
-// boundary, the band below it is card material), AND IT IS PAID ONCE (`.page-header`
-// must not add the top inset again under a title bar that already paid it).
+// HOW THE APP SPENDS `env(safe-area-inset-*)`, measured.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 const INSET_TOP = 47;
 const INSET_BOTTOM = 34;
-/** A notched iPhone in LANDSCAPE, where the notch inset lands on an inline edge
- *  rather than on the top. This is the orientation the inline rules exist for, and
- *  the one where the `(width <= 48rem)` phone block stops matching (844px on an
- *  iPhone 15), so the base `.bottom-bar` rule governs alone. */
+/** A notched iPhone in LANDSCAPE, where the notch inset lands on an inline edge rather than on
+ *  the top. This is the orientation the inline rules exist for, and the one where the `(width <=
+ *  48rem)` phone block stops matching (844px on an iPhone 15), so the base `.bottom-bar` rule
+ *  governs alone. */
 const INSET_SIDE = 59;
-/** An iPad's own home-indicator band. Chosen against two BOUNDS rather than a
- *  datasheet, because every assertion below reads the constant and a retune moves
- *  the whole block: above `--sp-2` (8px), or a case cannot tell an inset-reading
- *  rule from its house value, and under `--composer-inset-cap` (24px), so no case
- *  is accidentally measuring the cap. The exact device figure is a real-device
- *  fact this suite cannot produce. */
+/** An iPad's own home-indicator band. Chosen against two BOUNDS rather than a datasheet, because
+ *  every assertion below reads the constant and a retune moves the whole block: above `--sp-2`
+ *  (8px), or a case cannot tell an inset-reading rule from its house value, and under
+ *  `--composer-inset-cap` (24px), so no case is accidentally measuring the cap. */
 const INSET_BOTTOM_IPAD = 20;
 
 let style: HTMLStyleElement;
 let frame: HTMLIFrameElement;
 let doc: Document;
 let sheet: HTMLStyleElement;
-/** A second frame in landscape, for the two rules whose behaviour depends on
- *  whether `50-mobile.css`'s `(width <= 48rem)` arm matches. */
+/** A second frame in landscape, for the two rules whose behaviour depends on whether
+ *  `50-mobile.css`'s `(width <= 48rem)` arm matches. */
 let wide: HTMLIFrameElement;
 let wideDoc: Document;
 let wideSheet: HTMLStyleElement;
-/** A third frame at an installed iPad's window geometry, 1106 x 829 CSS px, which
- *  is the DESKTOP branch — 1106px is past `(width <= 48rem)`, so every rule the
- *  phone block carries is inert and only the unconditional ones answer. A coarse
- *  pointer like its siblings, because the tier is the pointer rather than the
- *  width (01-tokens.css). */
+/** A third frame at an installed iPad's window geometry, 1106 x 829 CSS px, which is the DESKTOP
+ *  branch — 1106px is past `(width <= 48rem)`, so every rule the phone block carries is inert
+ *  and only the unconditional ones answer. A coarse pointer like its siblings, because the tier
+ *  is the pointer rather than the width (01-tokens.css). */
 let ipad: HTMLIFrameElement;
 let ipadDoc: Document;
 let ipadSheet: HTMLStyleElement;
 
-/** The shipped bundle with the device's values substituted for its `env()` reads,
- *  or unchanged when `on` is false. `side` is the inline inset: it defaults to 0 so
- *  every existing case keeps neutralizing left/right exactly as it did. `bottom` is
- *  a PARAMETER rather than a second pass over the substituted text, because the
- *  iPad's own band differs from the iPhone's and a `34px` -> `20px` rewrite would
- *  also hit any authored literal that happens to read 34px. */
+/** The shipped bundle with the device's values substituted for its `env()` reads, or unchanged
+ *  when `on` is false. `side` is the inline inset: it defaults to 0 so every existing case keeps
+ *  neutralizing left/right exactly as it did. `bottom` is a PARAMETER rather than a second pass
+ *  over the substituted text, because the */
 function substituted(on: boolean, side: number, bottom: number = INSET_BOTTOM): string {
   const css = style.textContent ?? "";
   return on
@@ -58,8 +47,8 @@ function substituted(on: boolean, side: number, bottom: number = INSET_BOTTOM): 
     : css;
 }
 
-/** Swap the sheet in the phone frame for one with the iPhone values substituted,
- *  or (`false`) for the shipped one, where every inset resolves to 0. */
+/** Swap the sheet in the phone frame for one with the iPhone values substituted, or (`false`)
+ *  for the shipped one, where every inset resolves to 0. */
 function withInsets(on: boolean, side = 0): void {
   sheet.textContent = substituted(on, side);
 }
@@ -74,8 +63,8 @@ function withIpadInsets(on: boolean, side = 0): void {
   ipadSheet.textContent = substituted(on, side, INSET_BOTTOM_IPAD);
 }
 
-/** `getComputedStyle` from the element's OWN view, which is what a fixture inside
- *  an iframe needs. */
+/** `getComputedStyle` from the element's OWN view, which is what a fixture inside an iframe
+ *  needs. */
 function styleOf(el: Element): CSSStyleDeclaration {
   const view = el.ownerDocument.defaultView;
   if (view === null) {
@@ -84,10 +73,10 @@ function styleOf(el: Element): CSSStyleDeclaration {
   return view.getComputedStyle(el);
 }
 
-/** The composer as `static/index.html` authors it, down to the one pill the
- *  measurement is about. `#prompt-form` is `#chat-area`'s last flex child, so in
- *  production its block-end border edge IS the viewport's bottom — which is what
- *  makes a gap measured against this element a gap to the screen edge. */
+/** The composer as `static/index.html` authors it, down to the one pill the measurement is
+ *  about. `#prompt-form` is `#chat-area`'s last flex child, so in production its block-end
+ *  border edge IS the viewport's bottom — which is what makes a gap measured against this
+ *  element a gap to the screen edge. */
 function mountComposer(d: Document = doc): {
   form: HTMLElement;
   box: HTMLElement;
@@ -119,11 +108,10 @@ function mountComposer(d: Document = doc): {
   return { form, box, pill };
 }
 
-/** The sidebar as `static/index.html` authors it, down to the three children the
- *  measurement needs: the header, the `flex: 1` tab list that pushes the footer
- *  down, and the footer itself. Without that middle element the footer sits at the
- *  TOP of the panel and the gap to the panel's own bottom edge measures the panel's
- *  leftover space rather than its inset. */
+/** The sidebar as `static/index.html` authors it, down to the three children the measurement
+ *  needs: the header, the `flex: 1` tab list that pushes the footer down, and the footer itself.
+ *  Without that middle element the footer sits at the TOP of the panel and the gap to the
+ *  panel's own bottom edge measures the panel's leftover space rather than its inset. */
 function mountSidebar(d: Document): { panel: HTMLElement; footer: HTMLElement } {
   const panel = d.createElement("nav");
   panel.id = "sidebar";
@@ -149,8 +137,8 @@ function mountSidebar(d: Document): { panel: HTMLElement; footer: HTMLElement } 
   return { panel, footer };
 }
 
-/** The settings shell as all three tabbed pages author it: a title bar above, then
- *  the scroller holding the sticky header that carries the tab bar. */
+/** The settings shell as all three tabbed pages author it: a title bar above, then the scroller
+ *  holding the sticky header that carries the tab bar. */
 function mountTabbedPage(): { bar: HTMLElement; header: HTMLElement; titlebar: HTMLElement } {
   const area = doc.createElement("main");
   area.id = "chat-area";
@@ -238,10 +226,7 @@ afterAll(() => {
 });
 
 describe("the composer's bottom clearance", () => {
-  // THE BAND IS PAGE BELOW THE CARD, AND IT IS CAPPED. The whole inset below the
-  // card read as an oversized safety area, and inside the card it left 21px of card
-  // under the buttons, so the band sits outside the card at `--composer-inset-cap`
-  // rather than Apple's full 34pt.
+  // The band is page below the card, and it is capped.
   it("spends the band as page BELOW the card, capped under the device's inset", () => {
     withInsets(true);
     const { form, box } = mountComposer();
@@ -249,16 +234,13 @@ describe("the composer's bottom clearance", () => {
     const cap =
       parseFloat(getComputedStyle(form).getPropertyValue("--composer-inset-cap")) * 16 || 24;
     expect(page, `${page}px of page below the card`).toBeCloseTo(cap, 0);
-    // The cap is the whole point, so pin that it BINDS here: an uncapped rule would
-    // put the device's own 34px in this gap and this case would pass for the uncapped
-    // shape.
+    // Pin that the cap BINDS here: an uncapped rule would put the device's own 34px in this gap
+    // and the case above would still pass.
     expect(page, "the cap binds rather than the device's own inset").toBeLessThan(INSET_BOTTOM);
   });
 
   it("leaves the card's own material uniform, so the box reads symmetric", () => {
-    // With the band outside the card, the pill row's two insets are its uniform
-    // `--composer-pill-pad`, so the row sits centred about the 1px divider that
-    // separates it from the textarea.
+    // The other half of the same rule.
     withInsets(true);
     const { pill } = mountComposer();
     const row = pill.closest(".prompt-pills") as HTMLElement;
@@ -272,34 +254,29 @@ describe("the composer's bottom clearance", () => {
   });
 
   it("keeps every control clear of the indicator band", () => {
-    // What the clearance is actually FOR: no control may sit in the home-indicator
-    // band. Measured from the last control's painted edge to the bar's own, which is
-    // the viewport's bottom in production (mountComposer's doc comment).
+    // What the clearance is actually FOR: no control may sit in the home-indicator band. Measured
+    // from the last control's painted edge to the bar's own, which is the viewport's bottom in
+    // production (mountComposer's doc comment).
     withInsets(true);
     const { form, pill } = mountComposer();
     const gap = form.getBoundingClientRect().bottom - pill.getBoundingClientRect().bottom;
-    // Comfortably past the visible indicator while staying under Apple's reserve,
-    // which is the trade the cap makes. A lower bound rather than an equality, so a
-    // retune of the cap or of the row's inset moves this without a test edit.
+    // Comfortably past the visible indicator while staying under Apple's reserve, which is the
+    // trade the cap makes. A lower bound rather than an equality, so a retune of the cap or of the
+    // row's inset moves this without a test edit.
     expect(gap, `the last control sits ${gap}px above the screen edge`).toBeGreaterThan(24);
     expect(gap).toBeLessThan(INSET_BOTTOM);
   });
 
   it("leaves an inset-less device exactly as it was", () => {
-    // The control, and it is what stops the three cases above passing for a
-    // stylesheet that reads the inset nowhere: with `env()` at 0 the pill row keeps
-    // its uniform inset and the bar keeps the house gap, so the whole mechanism is
-    // invisible.
+    // The control, and it is what stops the three cases above passing for a stylesheet that reads
+    // the inset nowhere: with `env()` at 0 the pill row keeps its uniform inset and the bar keeps
+    // the house gap, so the whole mechanism is invisible.
     withInsets(false);
     const { form, box, pill } = mountComposer();
     const row = pill.closest(".prompt-pills") as HTMLElement;
     const inset = parseFloat(getComputedStyle(row).paddingBlockEnd);
-    // Read off the row's own TOP inset rather than restated, so a retune of
-    // `--composer-pill-pad` moves both sides of the comparison together. That term
-    // is `max(--pill-inset, (--hit-floor - --composer-ctl-h) / 2)`, and the coarse
-    // tier's box grew to 36px on 2026-09-12, so the second arm no longer wins and
-    // it resolves to `--pill-inset` on both tiers. A custom property's computed
-    // value is its token stream, so it cannot be read as a length.
+    // Read off the row's own TOP inset rather than restated, so a retune of `--composer-pill-pad`
+    // moves both sides of the comparison together.
     const top = parseFloat(getComputedStyle(row).paddingBlockStart);
     expect(top, "the row's own inset term, resolved").toBeCloseTo(4, 0);
     expect(inset).toBeCloseTo(top, 0);
@@ -312,20 +289,18 @@ describe("the tabbed pages' sticky header", () => {
   it("adds no second top inset under a title bar that already paid it", () => {
     withInsets(true);
     const { bar, header, titlebar } = mountTabbedPage();
-    // The premise: the title bar IS paying it, so a second payment here is a
-    // double charge rather than the only one.
+    // The premise: the title bar IS paying it, so a second payment here is a double charge rather
+    // than the only one.
     expect(parseFloat(getComputedStyle(titlebar).paddingBlockStart)).toBeCloseTo(INSET_TOP, 0);
     const pad = parseFloat(getComputedStyle(header).paddingBlockStart);
     expect(pad, `the header reserves ${pad}px above its tab bar`).toBeLessThan(INSET_TOP);
-    // And the visible consequence: the gap from the title bar's bottom to the tab
-    // bar's top. It measured 68px with the second payment, 21px without it.
+    // And the visible consequence: the gap from the title bar's bottom to the tab bar's top. It
+    // measured 68px with the second payment, 21px without it.
     const gap = bar.getBoundingClientRect().top - titlebar.getBoundingClientRect().bottom;
     expect(gap, `${gap}px between the title bar and the tab bar`).toBeLessThan(INSET_TOP);
   });
 
   it("reserves the same room whether the device has a top inset or not", () => {
-    // The sharpest form of the rule: this header's own padding is not a function of
-    // the inset at all any more, so the two sheets have to agree about it.
     withInsets(true);
     const on = getComputedStyle(mountTabbedPage().header).paddingBlockStart;
     withInsets(false);
@@ -334,17 +309,8 @@ describe("the tabbed pages' sticky header", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// THE INLINE EDGES (item 13). Same instrument, same pairing rule, one more axis:
-// four surfaces reach a screen edge sideways, and in LANDSCAPE that is where a
-// notch inset actually lands. Chromium reports 0 for every one of these, so
-// "0, so unused" is not a finding — each case measures the SUBSTITUTED sheet and
-// is paired with the unsubstituted one as its control, or a rule that stopped
-// reading the inset would pass by resolving to the house value it also has to keep.
-//
-// The house value is what makes `max()` the right shape: the inset wins only where
-// the device reports one, so a desktop's measure does not move.
-// ---------------------------------------------------------------------------
+// The inline edges. Same instrument, same pairing rule, one more axis: four surfaces
+// reach a screen edge sideways, and in LANDSCAPE that is where a notch inset actually lands.
 
 /** `padding-inline` as the engine resolved it, from the element's own view. */
 function inlinePadding(el: Element): { start: number; end: number } {
@@ -362,10 +328,7 @@ function mountBare(d: Document, html: string, selector: string): Element {
   return el;
 }
 
-/** The four edge surfaces, with the house value each keeps where there is no
- *  inset. `#sidebar` is the one with NO house value — it declared no inline
- *  padding at all before this, which is why it takes the bare `env()` rather than
- *  the `max()` the other three use. */
+/** The four edge surfaces, with the house value each keeps where there is no inset. */
 const EDGE_SURFACES = {
   "#sidebar, a full-width drawer on a phone": {
     html: `<nav id="sidebar"></nav>`,
@@ -407,8 +370,8 @@ describe("the inline safe-area insets", () => {
   it.each(Object.entries(EDGE_SURFACES))(
     "%s keeps its house value with no inset",
     (_name, surface) => {
-      // The control. Without it every case above passes for a sheet that reads no
-      // inset at all, since 59px is also a value a hand-written literal could carry.
+      // The control. Without it every case above passes for a sheet that reads no inset at all,
+      // since 59px is also a value a hand-written literal could carry.
       withInsets(false);
       const el = mountBare(doc, surface.html, surface.selector);
       const pad = inlinePadding(el);
@@ -418,11 +381,9 @@ describe("the inline safe-area insets", () => {
   );
 
   it("keeps #messages-wrap's scrollbar subtraction and its 0 clamp", () => {
-    // The one surface whose trailing edge is not a plain `max(house, inset)`: it
-    // gives the scrollbar's width back out of its own padding, clamped at 0px, so
-    // the inset joins as a THIRD term rather than replacing that arithmetic. With
-    // the gutter measured at 20px the house term goes NEGATIVE and the clamp is
-    // what answers, and the inset still outranks both.
+    // The one surface whose trailing edge is not a plain `max(house, inset)`: it gives the
+    // scrollbar's width back out of its own padding, clamped at 0px, so the inset joins as a THIRD
+    // term rather than replacing that arithmetic.
     withInsets(true, INSET_SIDE);
     const el = mountBare(
       doc,
@@ -443,11 +404,9 @@ describe("the inline safe-area insets", () => {
   });
 
   it("folds the inset into the BASE .bottom-bar rule, which is what governs landscape", () => {
-    // The rule that matters most, and the reason the fold is written twice: at
-    // 844px the `(width <= 48rem)` phone block stops matching, so this base rule is
-    // the only one in force — and landscape is exactly the orientation where the
-    // notch inset lands on an inline edge. The block-axis padding identifies WHICH
-    // rule answered: --sp-2 here against the phone rule's --sp-3.
+    // The rule that matters most, and the reason the fold is written twice: at 844px the `(width <=
+    // 48rem)` phone block stops matching, so this base rule is the only one in force — and
+    // landscape is exactly the orientation where the notch inset lands on an inline edge.
     withWideInsets(true, INSET_SIDE);
     const el = mountBare(wideDoc, `<div class="bottom-bar"></div>`, ".bottom-bar");
     const view = wideDoc.defaultView;
@@ -473,9 +432,9 @@ describe("the inline safe-area insets", () => {
   });
 
   it("is the PHONE rule that answers at phone width, so both rules need the fold", () => {
-    // The pair to the case above, and together they are why the same fold is
-    // written in two files: this rule replaces the whole `padding` shorthand, so a
-    // side inset restored only in the base rule would be discarded here.
+    // The pair to the case above, and together they are why the same fold is written in two files:
+    // this rule replaces the whole `padding` shorthand, so a side inset restored only in the base
+    // rule would be discarded here.
     withInsets(true, INSET_SIDE);
     const el = mountBare(doc, `<div class="bottom-bar"></div>`, ".bottom-bar");
     const view = doc.defaultView;
@@ -490,21 +449,7 @@ describe("the inline safe-area insets", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // THE iPAD'S BOTTOM CLEARANCE, ON THE DESKTOP BRANCH.
-//
-// An installed iPad reports a real bottom inset at a width past `(width <= 48rem)`,
-// so every rule `50-mobile.css` carries is inert there and only the unconditional
-// spends answer. These cases PASS on the tree as it stands, and that is the finding
-// they exist to record: the reservation the composer and the sidebar make is not
-// width-gated, so a bottom clip on that device is not the inset going unspent. What
-// IS trapped in the phone block is the composer's CAP, which makes the reservation
-// SMALLER, so its absence here cannot clip anything.
-//
-// Same pairing rule as the rest of this file: every case reads the SUBSTITUTED
-// sheet and the control below reads the shipped one, or a rule that stopped reading
-// the inset would pass by resolving to the house value it also has to keep.
-// ---------------------------------------------------------------------------
 
 describe("the iPad's bottom clearance, on the desktop branch", () => {
   it("reserves the device's bottom inset on the composer bar", () => {
@@ -516,10 +461,9 @@ describe("the iPad's bottom clearance, on the desktop branch", () => {
       INSET_BOTTOM_IPAD,
       0,
     );
-    // WHICH rule answered, which is the whole point of measuring at this width: the
-    // base `.bottom-bar` spends `--sp-2` on the block-start edge where the phone
-    // rule spends `--sp-3`. Without this the case passes for a phone rule that
-    // reached a viewport it does not govern.
+    // WHICH rule answered, which is the whole point of measuring at this width: the base
+    // `.bottom-bar` spends `--sp-2` on the block-start edge where the phone rule spends `--sp-3`.
+    // Without this the case passes for a phone rule that reached a viewport it does not govern.
     expect(
       parseFloat(cs.paddingBlockStart),
       "the base rule is the one in force at this width",
@@ -531,11 +475,11 @@ describe("the iPad's bottom clearance, on the desktop branch", () => {
     const { panel, footer } = mountSidebar(ipadDoc);
     const paid = parseFloat(styleOf(panel).paddingBlockEnd);
     expect(paid, `the panel reserves ${paid}px`).toBeCloseTo(INSET_BOTTOM_IPAD, 0);
-    // The paid-once half: the footer is this panel's last child, so a term of its
-    // own would charge the band twice (10-shell-app.css states that at the rule).
+    // The paid-once half: the footer is this panel's last child, so a term of its own would charge
+    // the band twice (10-shell-app.css states that at the rule).
     expect(parseFloat(styleOf(footer).paddingBlockEnd), "the footer adds none").toBe(0);
-    // And the rendered consequence, which is the fact a reader sees: the footer's
-    // painted edge sits that far above the panel's own.
+    // And the rendered consequence, which is the fact a reader sees: the footer's painted edge sits
+    // that far above the panel's own.
     const gap = panel.getBoundingClientRect().bottom - footer.getBoundingClientRect().bottom;
     expect(gap, `${gap}px between the footer and the panel's bottom edge`).toBeCloseTo(
       INSET_BOTTOM_IPAD,
@@ -547,17 +491,17 @@ describe("the iPad's bottom clearance, on the desktop branch", () => {
     withIpadInsets(true);
     const { form, pill } = mountComposer(ipadDoc);
     const gap = form.getBoundingClientRect().bottom - pill.getBoundingClientRect().bottom;
-    // A lower bound, matching this file's own style for the phone case: the card's
-    // border and the pill row's inset add to the bar's reservation, so a retune of
-    // either moves this without a test edit.
+    // A lower bound, matching this file's own style for the phone case: the card's border and the
+    // pill row's inset add to the bar's reservation, so a retune of either moves this without a
+    // test edit.
     expect(gap, `the last control sits ${gap}px above the bar's edge`).toBeGreaterThan(
       INSET_BOTTOM_IPAD,
     );
   });
 
   it("leaves an inset-less device at this width exactly as it was", () => {
-    // The control. Without it the three cases above pass for a stylesheet that
-    // reads the inset nowhere, since 20px is also a value a literal could carry.
+    // The control. Without it the three cases above pass for a stylesheet that reads the inset
+    // nowhere, since 20px is also a value a literal could carry.
     withIpadInsets(false);
     const { form } = mountComposer(ipadDoc);
     const bar = parseFloat(styleOf(form).paddingBlockEnd);
@@ -569,12 +513,10 @@ describe("the iPad's bottom clearance, on the desktop branch", () => {
   });
 
   it("zeroes the composer's spend only while the shell panel is OPEN", () => {
-    // `19-files.css`'s `[id="app"]:has(.shell-panel:not(.shell-closed)) .bottom-bar`
-    // is the ONE rule that can take the reservation away, at (0,4,0) against the
-    // base rule's (0,1,0) — correctly, because with the terminal open the composer
-    // is not the bottom-most surface and there is no indicator under it. This pins
-    // that the authored boot state does not trip it, which is what rules it out as
-    // an explanation for a clip on a freshly-opened app.
+    // `19-files.css`'s `[id="app"]:has(.shell-panel:not(.shell-closed)) .bottom-bar` is the ONE
+    // rule that can take the reservation away, at (0,4,0) against the base rule's (0,1,0) —
+    // correctly, because with the terminal open the composer is not the bottom-most surface and
+    // there is no indicator under it.
     withIpadInsets(true);
     const app = ipadDoc.createElement("div");
     app.id = "app";

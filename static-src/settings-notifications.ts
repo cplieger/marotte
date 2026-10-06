@@ -1,23 +1,5 @@
-// ---------------------------------------------------------------------------
-// Notification toggles: iOS detection, permission requests, sub-option
-// visibility, push/unregister lifecycle. Extracted from settings.ts.
-//
-// ONE ROW PER KEYED KIND, and "keyed" is the load-bearing word. The decision asked
-// for one row per push kind; the code cannot give that literally, because the
-// permission ask is a FLOOR with no settings key — push.validateKindRegistry
-// refuses any other keyless kind, and no value in config.json can turn that one
-// off. So the rows are derived from the kinds that HAVE a key (agent_finished,
-// pr_status) and the floor keeps its non-row explanation beneath them.
-//
-// Two rules follow from there being more than one keyed kind, and both replaced a
-// rule written for exactly one:
-//
-//   - Switching a sub-toggle off no longer implies switching notifications off.
-//     It did when there was one, because there was no second channel left for the
-//     master to keep alive. Now the master goes off only when EVERY keyed kind is.
-//   - Switching the master on enables the DEFAULT-ON kinds, not just the one and
-//     not all of them: the polarities in KEYED_PUSH_DEFAULTS are not uniform.
-// ---------------------------------------------------------------------------
+// Notification toggles: iOS detection, permission requests, sub-option visibility, push/unregister
+// lifecycle. Extracted from settings.ts.
 
 import {
   requestPermission,
@@ -37,13 +19,9 @@ import { $, byId } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
-/** The DOM input holding each keyed kind's toggle. Separate from
- *  KEYED_PUSH_KINDS (which pairs a kind with its SETTINGS key) because the two
- *  answer different questions and only one of them is the server's.
- *
- *  Exported for the key-set guard in `push-kinds.test.ts`: `kindRows` SKIPS a kind
- *  with no entry here, which is the right degradation for a kind whose markup is
- *  late and a silent one for a kind nobody ever gave a row. */
+/** The DOM input holding each keyed kind's toggle. Separate from KEYED_PUSH_KINDS (which pairs a
+ *  kind with its SETTINGS key) because the two answer different questions and only one of them
+ *  is the server's. */
 export const KIND_INPUT_IDS: Readonly<Record<string, string>> = {
   agent_finished: "notify-finished-toggle",
   pr_status: "notify-pr-status-toggle",
@@ -57,10 +35,9 @@ interface KindRow {
   input: HTMLInputElement;
 }
 
-/** The rows to drive, derived from the keyed kinds. A kind with no markup yet is
- *  skipped rather than throwing: the server's registry is the source of truth for
- *  which kinds exist, and a kind that has not grown its row is a missing row, not a
- *  broken settings page. */
+/** The rows to drive, derived from the keyed kinds. A kind with no markup yet is skipped rather
+ *  than throwing: the server's registry is the source of truth for which kinds exist, and a kind
+ *  that has not grown its row is a missing row, not a broken settings page. */
 function kindRows(): KindRow[] {
   const rows: KindRow[] = [];
   for (const [kind, settingsKey] of Object.entries(KEYED_PUSH_KINDS)) {
@@ -79,9 +56,9 @@ export function initNotificationToggles(): void {
   const notifySubOptions = $.notifySubOptions;
   const rows = kindRows();
 
-  // iOS Safari (non-PWA): Web Push is only available when the app is
-  // added to the home screen. Disable the toggle and show a permanent
-  // hint so users don't wonder why notifications don't work.
+  // iOS Safari (non-PWA): Web Push is only available when the app is added to the home screen.
+  // Disable the toggle and show a permanent hint so users don't wonder why notifications don't
+  // work.
   if (isIOS && !isStandalone) {
     notifyToggle.checked = false;
     notifyToggle.disabled = true;
@@ -97,8 +74,8 @@ export function initNotificationToggles(): void {
   const unbindPatch = bindLoadingState("settings.patch", notifyToggle, { preserveDisabled: true });
   registerCleanup(unbindPatch);
 
-  // Listen for registration-failed events from the action layer to
-  // roll back the toggle without coupling the action to this DOM element.
+  // Listen for registration-failed events from the action layer to roll back the toggle without
+  // coupling the action to this DOM element.
   const notifyAC = new AbortController();
   document.addEventListener(
     "notify:registration-failed",
@@ -111,10 +88,9 @@ export function initNotificationToggles(): void {
     notifyAC.abort();
   });
 
-  // Region-only disclosure (trigger: null) — the documented shape for a
-  // checkbox-revealed section: the checkbox's checked state conveys the
-  // collapse (no aria-expanded belongs on it), the primitive drives the
-  // animated height + aria-hidden/inert. Normalize the authored hidden class.
+  // Region-only disclosure (trigger: null) — the documented shape for a checkbox-revealed section:
+  // the checkbox's checked state conveys the collapse (no aria-expanded belongs on it), the
+  // primitive drives the animated height + aria-hidden/inert. Normalize the authored hidden class.
   notifySubOptions.classList.remove("hidden");
   const subCtl = createDisclosure(null, notifySubOptions, { open: notifyToggle.checked });
   const updateSub = (): void => {
@@ -152,9 +128,9 @@ export function initNotificationToggles(): void {
         return;
       }
       setNotificationsEnabled(false);
-      // A refusal, and the only place the client can tell one from "never opted in":
-      // both reach it as `notifications_enabled: false`. Spending the ask is what
-      // stops a later automatic grant reversing this switch — see `notify-ask.ts`.
+      // A refusal, and the only place the client can tell one from "never opted in": both reach it
+      // as `notifications_enabled: false`. Spending the ask is what stops a later automatic grant
+      // reversing this switch — see `notify-ask.ts`.
       spendNotifyAsk();
       unregisterPush();
       updateSub();
@@ -175,29 +151,21 @@ function syncRowInputs(rows: readonly KindRow[]): void {
   }
 }
 
-/** Master ON: enable the DEFAULT-ON kinds, not just one and not all of them.
- *
- *  Leaving every kind off would turn notifications "on" and deliver nothing, which
- *  is the state the master switch exists to prevent — and two kinds plus the
- *  unsilenceable permission floor is not nothing. `pr_status` is excluded because
- *  a fresh reader switching push on would otherwise immediately receive the PR
- *  notices its OFF default exists to withhold. */
+/** Master ON: enable the DEFAULT-ON kinds, not just one and not all of them. */
 async function enableEverything(
   rows: readonly KindRow[],
   notifyToggle: HTMLInputElement,
   notifyHint: HTMLElement,
   updateSub: () => void,
 ): Promise<void> {
-  // Capture which inputs actually changed so only mutated ones are registered
-  // for rollback.
+  // Capture which inputs actually changed so only mutated ones are registered for rollback.
   const mutated: HTMLInputElement[] = [notifyToggle];
   const patch: Record<string, boolean> = { notifications_enabled: true };
   for (const row of rows) {
     const want = KEYED_PUSH_DEFAULTS[row.kind] ?? true;
     patch[row.settingsKey] = want;
-    // `!==` rather than `!`: the rollback set must hold exactly the inputs this call
-    // MOVED, in either direction, or the action framework restores a value the
-    // reader never saw.
+    // `!==` rather than `!`: the rollback set must hold exactly the inputs this call MOVED, in
+    // either direction, or the action framework restores a value the reader never saw.
     if (row.input.checked !== want) {
       row.input.checked = want;
       mutated.push(row.input);
@@ -206,8 +174,8 @@ async function enableEverything(
   updateSub(); // show the sub-options optimistically
   const r = await patchSettings(patch, ...mutated);
   if (r === null) {
-    // Action framework handles input rollback; tear down any push subscription
-    // requestPermission may have started.
+    // Action framework handles input rollback; tear down any push subscription requestPermission
+    // may have started.
     setNotificationsEnabled(false);
     for (const row of rows) {
       setKindEnabled(row.kind, false);
@@ -235,12 +203,7 @@ async function enableEverything(
   }
 }
 
-/** One sub-toggle changed.
- *
- *  The master follows only when EVERY keyed kind ends up off — that is the rule the
- *  single-sub-option version could state as "this one off IS notifications off",
- *  and generalising it is what stops turning pr_status off from silencing
- *  agent_finished too. */
+/** One sub-toggle changed. */
 async function applyKindChange(
   rows: readonly KindRow[],
   changed: KindRow,

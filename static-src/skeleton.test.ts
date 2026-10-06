@@ -103,9 +103,9 @@ describe("paintPlaceholder", () => {
   });
 
   it("refuses on ANY element child under a `*` selector", () => {
-    // The editor pane cannot use it for that reason: a highlighted file leaves 157
-    // `span.hl-*` children, so the door would refuse every placeholder the pane
-    // could paint. That site clears the pane instead.
+    // The editor pane cannot use it for that reason: a highlighted file leaves 157 `span.hl-*`
+    // children, so the door would refuse every placeholder the pane could paint. That site clears
+    // the pane instead.
     const h = host();
     h.appendChild(document.createElement("span"));
     paintPlaceholder(h, placeholder, { content: "*" });

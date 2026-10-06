@@ -1,13 +1,6 @@
-// The toolbar's find control: when it is drawn, which glyph it draws, and how it
-// leaves. A stylesheet reader plus a DOM half, because the two halves fail
-// separately — the collapse is CSS the app cannot observe, and the glyph swap is
-// DOM the stylesheet knows nothing about.
-//
-// WHY IT COLLAPSES RATHER THAN HIDING. `#find-btn` was painted unconditionally
-// with a fixed magnifier, so on `/settings`, on a run view, on the git view's
-// Sources tab and on an editor tab showing a diff, an image or rendered markdown
-// it was a control that did nothing — and on `/docs` and the git panels it
-// promised a search over a box that only filters. Both halves are audited here.
+// The toolbar's find control: when it is drawn, which glyph, and how it leaves. CSS and DOM halves
+// fail separately. It COLLAPSES where there is nothing to search, and draws a filter glyph where the
+// box only filters.
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { findGlyph } from "./icons.js";
@@ -30,10 +23,8 @@ describe("the collapse is animated, not a display swap", () => {
   });
 
   it("takes the box, the ink AND the gap to zero", () => {
-    // Three, not one. `min-inline-size` because the toolbar sets a floor of
-    // `--btn-h` that would otherwise hold the width open, and the negative margin
-    // because `gap` is drawn between flex items whatever their width — so a
-    // zero-width button still costs the row 2px.
+    // Three, not one: `min-inline-size` beats the toolbar's `--btn-h` floor, and the negative margin
+    // cancels the `gap` a zero-width item still costs.
     expect(collapsed, "the box").toMatch(/inline-size:\s*0/);
     expect(collapsed, "the floor the toolbar sets").toMatch(/min-inline-size:\s*0/);
     expect(collapsed, "the ink").toMatch(/opacity:\s*0/);
@@ -50,10 +41,8 @@ describe("the collapse is animated, not a display swap", () => {
   });
 
   it("leaves the accessibility tree and the tab order, at the END of the fade", () => {
-    // `visibility` holds `visible` for the whole transition when either endpoint
-    // is visible, flipping only at the finish — so the fade plays out and THEN the
-    // control stops existing for a keyboard or a screen reader. A zero-width
-    // transparent button that still took focus would be the worst of both.
+    // `visibility` flips only at the transition's end, so the fade plays and THEN the control leaves
+    // focus and the accessibility tree.
     expect(collapsed).toMatch(/visibility:\s*hidden/);
     expect(collapsed).toMatch(/pointer-events:\s*none/);
     expect(base, "visibility must be in the transition or it flips at once").toMatch(
@@ -68,10 +57,8 @@ describe("the collapse is animated, not a display swap", () => {
   });
 
   it("keeps the press and hover transitions it would otherwise steal", () => {
-    // The trap 03-base.css documents: `:where(…):active` scores (0,1,0) and is
-    // unlayered, so a more specific unlayered rule TAKES the whole `transition`
-    // property from it. Dropping these three would leave the press scale and the
-    // hover wash snapping on every toolbar button, not just the collapsible one.
+    // 03-base.css's trap: an unlayered `:where(…):active` (0,1,0) loses the whole `transition` to a
+    // more specific rule, so these three must be restated.
     expect(base, "the press scale").toMatch(/transform var\(--dur-micro\)/);
     expect(base, "the hover wash").toMatch(/background var\(--dur-micro\)/);
     expect(base, "the hover ink").toMatch(/color var\(--dur-micro\)/);
@@ -87,10 +74,7 @@ describe("the glyph says which of the two a page has", () => {
   });
 
   it("draws them at one size tier, so the toolbar and the box agree by construction", () => {
-    // One producer for both consumers — the toolbar button and the field's
-    // leading glyph — is what stops a page promising a search and opening a
-    // filter. They used to pass 18 and 14; the size is a TIER now, so the
-    // agreement is structural rather than something two callers must remember.
+    // One producer for the toolbar button and the field's glyph, sized by TIER, so they cannot disagree.
     expect(findGlyph("search")).toContain('class="ic-ui"');
     expect(findGlyph("filter")).toContain('class="ic-ui"');
     expect(findGlyph("search")).not.toContain("width=");

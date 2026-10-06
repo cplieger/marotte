@@ -1,12 +1,5 @@
 package translate
 
-// The `user_message_id_assigned` frame: the id KAS's own log holds a prompt under is
-// what makes that turn addressable, and there is no correlation key on the frame — the
-// prompt it belongs to is the chat's one prompt-class turn awaiting or holding its
-// bracket. So what is pinned here is WHICH turn takes the turn_bind, what the entry
-// carries, that a frame with no prompt turn appends nothing, and that a frame
-// belonging to something other than this chat binds nothing.
-
 import (
 	"context"
 	"testing"
@@ -14,8 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// commitCountingStore records how many Mutate calls actually committed, which is the
-// only way to tell a bind that stayed an entry from one that reached the header.
+// commitCountingStore counts committed Mutate calls: the only way to tell a bind that
+// stayed an entry from one that reached the header.
 type commitCountingStore struct {
 	ChatRecords
 	commits int
@@ -31,8 +24,8 @@ func (s *commitCountingStore) Mutate(ctx context.Context, id marotte.ChatID, fn 
 	})
 }
 
-// userMessageIDFrame is the update-level object KAS sends. `_meta` sits at its top,
-// which is one level in from `params` — the standing nesting trap on this wire.
+// userMessageIDFrame is the update-level object KAS sends; `_meta` sits one level in
+// from `params`, the standing nesting trap on this wire.
 func userMessageIDFrame(t *testing.T, kasID string) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -93,9 +86,8 @@ func TestHandleSessionInfoUpdate_BindsThePromptTurnToTheSession(t *testing.T) {
 	}
 }
 
-// The empty-turn retry re-sends the SAME prompt, so KAS mints a SECOND record for it and
-// the newer id is the one revertMultiple will accept: both binds land, in order, and
-// the merge reads the last.
+// The empty-turn retry re-sends the SAME prompt, so KAS mints a second record and the
+// newer id is the one revertMultiple accepts: both binds land, and the merge reads the last.
 func TestHandleSessionInfoUpdate_ADifferentIDAppendsASecondBind(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	stagePromptTurn(deps)
@@ -110,9 +102,7 @@ func TestHandleSessionInfoUpdate_ADifferentIDAppendsASecondBind(t *testing.T) {
 	}
 }
 
-// A bind is an entry in the turn's log and never a header write, so the chat file is
-// not rewritten for it — a reconnect can redeliver the frame, and a repeat costs an
-// append rather than a rewrite.
+// A bind is an entry and never a header write, so a redelivered frame costs an append.
 func TestHandleSessionInfoUpdate_ABindWritesNoHeader(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	stagePromptTurn(deps)
@@ -128,8 +118,7 @@ func TestHandleSessionInfoUpdate_ABindWritesNoHeader(t *testing.T) {
 	}
 }
 
-// Nothing to bind is a normal state, not an error: the chat KAS's own auto-wake prompts
-// reaches here with no prompt-class turn, and no turn is opened for the frame.
+// Nothing to bind is normal (KAS's auto-wake prompts), and no turn is opened for it.
 func TestHandleSessionInfoUpdate_NoPromptTurnAppendsNothing(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 
@@ -144,9 +133,8 @@ func TestHandleSessionInfoUpdate_NoPromptTurnAppendsNothing(t *testing.T) {
 	}
 }
 
-// The bind is positional, so an id belonging to something OTHER than this chat's own
-// prompt would land on the reader's prompt turn and make rewind revert the wrong thing.
-// A workflow step's answer prompts on the step's session, and a subagent has its own.
+// The bind is positional, so a foreign id (a workflow step's or a subagent's) landing on
+// the reader's prompt turn would make rewind revert the wrong thing.
 func TestHandleSessionInfoUpdate_AForeignFrameBindsNothing(t *testing.T) {
 	for name, attr := range map[string]FrameAttribution{
 		"a workflow step's own session": {Step: true},

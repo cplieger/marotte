@@ -1,20 +1,7 @@
-// Official registry proxy.
-//
-// Queries registry.modelcontextprotocol.io on behalf of the browser,
-// normalising the response to a compact shape the UI can render. Primary
-// reason for proxying is CORS; secondarily results are cached briefly to
-// shield the registry from a burst of identical queries as the user
-// types.
-//
-// The upstream v0.1 API shape:
-//
-//	GET /v0.1/servers?search=<q>&limit=<n>
-//	{ "servers": [{ "server": {...}, "_meta": {...} }], "metadata": { "nextCursor": ..., "count": n } }
-//
-// Each server has one "version" and carries either `packages[]` (stdio
-// via npm/docker/etc) or `remotes[]` (http/sse), with declared
-// `environmentVariables` / `headers` telling the user what secrets are
-// needed. testdata/registry_search_upstream.json is one real reply.
+// Official registry proxy: queries registry.modelcontextprotocol.io for the browser (CORS) via GET
+// /v0.1/servers?search=<q>&limit=<n>, normalising each server (its `packages[]` or `remotes[]` and
+// declared env and headers) to a compact shape and caching briefly against typing bursts.
+// testdata/registry_search_upstream.json is a real reply.
 
 package mcp
 
@@ -274,17 +261,9 @@ func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (r
 	})
 }
 
-// searchCacheKey composes the upstream-response cache key over the search
-// query and the clamped result limit.
-//
-// `q` is the ONLY field that can carry a separator, filtered for control
-// characters and length but not for ':' or '\'; `limit` is a clamped
-// decimal and can never contain either. keyenc.Join escapes each
-// component, so the encoding stays injective regardless of field order.
-//
-// A collision would serve one browser's search the cached upstream body
-// of a DIFFERENT query, poisoning that result for every client until it
-// expires.
+// searchCacheKey composes the upstream-response cache key from the query and the clamped limit via
+// keyenc.Join, so a ':' or '\' in `q` cannot collide two queries and serve one search another's
+// cached body.
 func searchCacheKey(q string, limit int) string {
 	return keyenc.Join(q, strconv.Itoa(limit))
 }
@@ -369,8 +348,7 @@ func drainRegistryBody(r io.Reader) {
 // --- Cache ---
 
 // registryCache is a TTL-bounded, singleflight-protected cache of decoded
-// registry replies. It encapsulates the map, TTL, max-entries cap, and
-// request coalescing that were previously inline on RegistryProxy.
+// registry replies: the map, TTL, max-entries cap, and request coalescing.
 type registryCache struct {
 	sf      singleflight.Group
 	entries map[string]registryCacheEntry
@@ -555,9 +533,9 @@ var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 // supportedRemoteTypes maps upstream remote type strings to the local
 // Transport enum. Only these remote types are surfaced to the UI.
 var supportedRemoteTypes = map[string]Transport{
-	"streamable-http": TransportHTTP,
-	"http":            TransportHTTP,
-	"sse":             TransportSSE,
+	"streamable-http":     TransportHTTP,
+	string(TransportHTTP): TransportHTTP,
+	string(TransportSSE):  TransportSSE,
 }
 
 // registryWireResponse mirrors the upstream registry v0.1 search

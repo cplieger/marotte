@@ -17,15 +17,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chatStoreUnion is the union of what the real consumers declare, spelled out
-// here rather than named, so a consumer that grows a method fails to compile
-// against these fakes instead of silently outgrowing them. It is
-// ChatStoreContract's 5 plus the two composer writers, which internal/command
-// needs and the contract suite does not exercise.
-//
-// RegisterRoutes is NOT here, and each fake dropped its no-op: only
-// internal/server mounts the chat routes and it does so on the concrete store,
-// so both fakes carried a method no test could reach.
+// chatStoreUnion is the union of what the real consumers declare, spelled out so a consumer
+// that grows a method fails to compile against these fakes.
 type chatStoreUnion interface {
 	ChatStoreContract
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
@@ -38,20 +31,14 @@ type chatStoreUnion interface {
 // map and fires broadcasts via an attached Broadcaster. Suitable for
 // integration-style tests that need a ChatStore that actually stores things.
 type RecordingChatStore struct {
-	// Bus is the fan-out lifecycle events go to. The type is spelled out
-	// rather than named because there is no shared Broadcaster interface any
-	// more: internal/chat and internal/forges each declare their own 1-method
-	// copy, and this is the union of the two.
+	// Bus is the fan-out lifecycle events go to: the union of internal/chat's and
+	// internal/forges' 1-method broadcasters.
 	Bus interface {
 		Broadcast(ctx context.Context, evt marotte.ServerEvent)
 	}
 	Chats    map[marotte.ChatID]*marotte.Chat
 	versions chatVersions
-	// Gets counts Get calls, for a test whose subject is how OFTEN the store is
-	// read rather than what it answers. The real store's Get is a per-chat mutex,
-	// a whole-file read and a json.Unmarshal of the entire history, so a caller
-	// that makes one per streamed frame is a defect no assertion on the ANSWER can
-	// see.
+	// Gets counts Get calls, for a test whose subject is how OFTEN the store is read.
 	Gets atomic.Int64
 	mu   sync.Mutex
 }
@@ -126,16 +113,9 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate
 	return version, nil
 }
 
-// SetDraft stores the chat's draft without touching UpdatedAt and without
-// broadcasting, which is the contract (*chat.Store).SetDraft holds and the three
-// interfaces naming it — agent/deps.go, command/deps.go and chatStoreUnion above —
-// depend on. A fake that went through Mutate would stamp activity and make a
-// test unable to observe the one property the real method exists to hold.
-// Absent chat: no-op, like the real store's load-then-write.
-//
-// It reports the state that landed, nil-for-nothing, because the draft_changed
-// broadcast keys on exactly that: a fake that always reported a write would make
-// a test unable to see the no-op cases the real method has.
+// SetDraft stores the chat's draft without touching UpdatedAt and without broadcasting, as
+// (*chat.Store).SetDraft does. A no-op on an absent chat; it reports the state that landed,
+// nil for nothing.
 func (s *RecordingChatStore) SetDraft(_ context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

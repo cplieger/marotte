@@ -10,14 +10,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// The round-trip property `toolProgress` claims: apply the frame to the value the
-// fold started from and you get the value the fold produced.
-
-// applyDelta is the wire contract: every omitted field means unchanged, output
-// appends unless replaced, diffs append, everything else is assigned. It is a
-// SPECIFICATION, not a copy of production code — nothing in the server applies a
-// delta, so it mirrors the client fold in static-src/store.ts, the only consumer a
-// delta has.
+// applyDelta is the wire contract as a SPECIFICATION: omitted means unchanged, output
+// appends unless replaced, diffs append, everything else is assigned. It mirrors the
+// client fold in static-src/store.ts, the only consumer a delta has.
 func applyDelta(before marotte.ToolCall, d *marotte.ToolProgressPayload) marotte.ToolCall {
 	out := before
 	if d.Title != "" {
@@ -65,17 +60,18 @@ func applyDelta(before marotte.ToolCall, d *marotte.ToolProgressPayload) marotte
 	if d.Denial != nil {
 		out.Denial = d.Denial
 	}
+	if d.Offload != nil {
+		out.Offload = d.Offload
+	}
 	if d.Declined {
 		out.Declined = true
 	}
 	return out
 }
 
-// Each step's frame must reconstruct that step's result. LEGAL folds are the
-// property's precondition: `omitempty` means no field can express a reset to its
-// zero, so a generator free to blank a field would falsify the property by asking
-// the wire for something the fold never does. Hence every step below is one of the
-// folds applyToolCallUpdate performs and nothing else.
+// Each step's frame must reconstruct that step's result. Steps are only folds
+// applyToolCallUpdate performs: `omitempty` cannot express a reset to zero, so a
+// generator that blanks a field would falsify the property spuriously.
 func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		tc := marotte.ToolCall{
@@ -106,7 +102,7 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 	switch rapid.IntRange(0, 9).Draw(rt, "step") {
 	case 0:
-		// The commonest frame by far: a status transition and nothing else.
+		// The commonest frame: a status transition and nothing else.
 		tc.Status = rapid.SampledFrom([]marotte.ToolStatus{
 			marotte.ToolPending, marotte.ToolInProgress,
 			marotte.ToolCompleted, marotte.ToolFailed,
@@ -114,8 +110,7 @@ func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 	case 1:
 		tc.Output += rapid.StringN(1, 40, 40).Draw(rt, "chunk")
 	case 2:
-		// adoptTerminalOutput replaces the accumulated ACP fragments wholesale:
-		// the one fold a pure-append wire cannot express.
+		// adoptTerminalOutput replaces the fragments wholesale: the one non-append fold.
 		tc.Output = rapid.StringN(0, 40, 40).Draw(rt, "terminalOutput")
 	case 3:
 		tc.Diffs = append(tc.Diffs, marotte.ToolDiff{
@@ -134,8 +129,7 @@ func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 			Attrs: uint16(rapid.IntRange(1, 8).Draw(rt, "spanAttrs")),
 		}}
 	case 6:
-		// Adopted once, never overwritten, so a step finding one already set
-		// changes nothing — itself a case worth generating.
+		// Adopted once, so a step finding one already set changes nothing; worth generating.
 		id := rapid.StringMatching(`[a-z]{4,8}`).Draw(rt, "attachID")
 		switch rapid.IntRange(0, 2).Draw(rt, "which") {
 		case 0:
@@ -162,14 +156,12 @@ func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 			tc.DurationMs = rapid.IntRange(1, 100_000).Draw(rt, "durationMs")
 		}
 	case 9:
-		// One-way, like the attachments above: a step finding it already set changes
-		// nothing, which is the case that proves the fold never carries a clear.
+		// One-way: a step finding it already set proves the fold never carries a clear.
 		tc.Declined = true
 	}
 }
 
-// Comparing by JSON is what the contract is about, and it treats nil and an empty
-// slice as equal, as the wire does.
+// sameToolCall compares by JSON, treating nil and an empty slice as equal like the wire.
 func sameToolCall(a, b *marotte.ToolCall) bool {
 	ja, errA := json.Marshal(a)
 	jb, errB := json.Marshal(b)
@@ -185,9 +177,8 @@ type deltaFixture struct {
 	After  marotte.ToolCall            `json:"after"`
 }
 
-// The BUILDER is pinned against the same cases static-src/tool-call-delta.node.
-// test.ts drives the client fold with: the fixture is the contract, so neither
-// language owns a private table the other's fold could diverge from.
+// The builder is pinned against the cases static-src/tool-call-delta.node.test.ts drives
+// the client fold with, so neither language owns a private table.
 func TestToolCallDelta_SharedFixture(t *testing.T) {
 	path := filepath.Join("testdata", "tool_call_delta.json")
 	raw, err := os.ReadFile(path)

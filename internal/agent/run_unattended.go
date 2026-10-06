@@ -1,12 +1,8 @@
 package agent
 
-// The unattended floor: a permission request raised by a SCHEDULED run has nobody to
-// answer it, so it is refused on a short budget instead of parking the run forever — a
-// parked run blocks every later run of its recipe. Manually launched and agent-launched
-// runs are attended, so they are never marked and never auto-refused.
-//
-// DENY by default; `scheduled_auto_approve` (Settings → Permissions, off by default) opts
-// out, because approving while watching and approving unattended are different consents.
+// The unattended floor: a scheduled run's permission request has nobody to answer, so it is refused on a
+// short budget rather than parking the run (and, through the single-run rule, its whole schedule).
+// Scheduled runs only. Deny by default; `scheduled_auto_approve` opts in.
 
 import (
 	"context"
@@ -20,74 +16,53 @@ import (
 	"github.com/cplieger/runesafe/v2"
 )
 
-// unattendedApprovalBudget is how long a scheduled run's permission request
-// waits before it is refused.
-//
-// 180 seconds, copied from KiroCrew's `_BACKGROUND_APPROVAL_TIMEOUT_SECS`:
-// background sources have no human responder, so waiting the full interactive
-// window burns hours on every unattended approval. Not zero because the user
-// may have the run's page open and can still answer.
+// unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's
+// `_BACKGROUND_APPROVAL_TIMEOUT_SECS`. Nonzero: the user may be watching.
 const unattendedApprovalBudget = 180 * time.Second
 
-// maxToolNameBytes bounds the tool name on its two human surfaces, the log
-// attribute and the schedule row's sentence. Deliberately not the permission
-// card's 512: this value is CONCATENATED into a one-line sentence an operator
-// reads and is persisted into schedules.json on every fire.
+// maxToolNameBytes bounds the tool name in the log attribute and the schedule row, both one-line and persisted on every fire.
 const maxToolNameBytes = 128
+
+// unattendedRejectionReason is the deny note, so the step's agent does not retry.
+const unattendedRejectionReason = "This is a scheduled run and no one is watching it, " +
+	"so the permission was refused automatically. Finish the task without it, " +
+	"or stop and name the permission the task needs."
 
 // approvalTypeTurn is the `_meta.kiro.type` marking a TURN APPROVAL.
 const approvalTypeTurn = "turn_approval"
 
-// turnApprovalName is marotte's own name for a turn approval, which carries no
-// tool name and titles itself the literal "Review changes".
+// turnApprovalName names a turn approval, which carries no tool name and titles itself "Review changes".
 const turnApprovalName = "this turn's file changes"
 
-// The two option kinds an unattended answer may select. Both are one-shot: the
-// `_always` twins persist a rule, which is what optionIDByKind refuses to reach.
+// The two one-shot option kinds; the `_always` twins persist a rule.
 const (
 	optionKindAllowOnce  = "allow_once"
 	optionKindRejectOnce = "reject_once"
 )
 
-// logMsgUnattendedPermission is the message the unattended answer logs under.
-//
-// A CONSTANT because a deployment's Loki rule alerts on it: a scheduled run refused a
-// permission is the app's one genuinely unattended failure, and the schedule row
-// only tells the user once they look. Changing this string breaks that rule
-// silently, so change both together.
+// logMsgUnattendedPermission is a constant because an external alert rule keys on it; change both together.
 const logMsgUnattendedPermission = "unattended permission answered with no user present"
 
-// The two outcomes, as they appear in the log's `outcome` field. A deployment's Loki
-// rule matches outcomeRefused, so these are values with a consumer, not labels.
+// The log's `outcome` values; an alert rule matches outcomeRefused.
 const (
 	outcomeRefused  = "refused"
 	outcomeApproved = "approved"
 )
 
-// logMsgRunOverran is the message a run cancelled at its own repeat interval logs
-// under. A CONSTANT for the same reason as logMsgUnattendedPermission: a deployment's
-// Loki rule matches this string, and it is the ONLY signal that a schedule stopped
-// producing rather than merely running long. Changing it breaks that rule
-// silently, so change both together.
+// logMsgRunOverran is a constant an alert rule matches: the one signal a schedule stopped producing. Change both together.
 const logMsgRunOverran = "scheduled run still going when its next slot came due; cancelling"
 
-// reasonOverran is what the schedule's row reads afterwards, as a failure. Written for the
-// person looking at the Workflows tab, not for a matcher: it has to say what
-// happened AND what to do, because the row is where they will look first.
+// reasonOverran is the schedule row's failure text, written for the person: what happened and what to do.
 const reasonOverran = "still running when its next slot came due, so it was cancelled. " +
 	"Give the schedule a longer interval, or make the workflow finish inside it"
 
-// permissionWithUnattendedFloor wraps the ordinary permission handler.
-//
-// The request still reaches the client exactly as it would otherwise; what the
-// wrapper adds is a deadline after which marotte answers for them.
+// permissionWithUnattendedFloor wraps the permission handler: the request reaches the client unchanged, plus
+// a deadline after which marotte answers.
 func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		inner(ctx, chatID, msg)
 
-		// The lease's own mark, which is why the floor now survives a restart.
-		// The lookup key strips the `run:` prefix and yields "" for any other
-		// chat id, so the floor reaches only a parentless run on its own bridge.
+		// The lease's mark, so the floor survives a restart. The key yields "" for anything but a `run:` chat id.
 		l, held := rs.lease(workflowIDOf(chatID))
 		if !held || !l.Unattended || msg.ID == nil {
 			return
@@ -95,9 +70,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		scheduleID := l.ScheduleID
 		requestID := *msg.ID
 		tool := permissionToolName(msg.Params)
-		// AfterFunc parks no goroutine while waiting, and it is a no-op once the
-		// request has been answered: answerUnattended claims the request from
-		// the tracker, and the ordinary response path has already claimed it.
+		// AfterFunc parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
 			rs.answerUnattended(chatID, requestID, scheduleID, tool, params)
@@ -105,8 +78,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	}
 }
 
-// answerUnattended settles a still-pending request for an absent
-// user: refuse by default, or approve when the operator opted in.
+// answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
 func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
@@ -116,19 +88,23 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, schedul
 		return
 	}
 	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
-	// Refuse with the reject option the request ADVERTISED — answer with a
-	// choice the request offered, same rule the approve side below follows.
-	// Cancelled is the FALL-BACK for a request advertising none.
+	// An administrator `ask` needs a person; KAS would count any allow_once, so the switch must not answer it.
+	adminAsk := adminConsentAsk(msgParams)
+	if approve && adminAsk {
+		slog.Warn("unattended auto-approve: refusing, an administrator rule requires a person to approve",
+			"chat_id", chatID, "tool", tool)
+		approve = false
+	}
+	// Refuse with the advertised reject option; Cancelled only when none is offered.
 	outcome := marotte.PermissionOutcomeCancelled()
 	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
-		outcome = marotte.PermissionOutcomeSelected(opt)
+		outcome = marotte.PermissionOutcomeWithRejectionReason(opt, unattendedRejectionReason)
 	}
 	verb := outcomeRefused
 	if approve {
 		opt := optionIDByKind(msgParams, optionKindAllowOnce)
 		if opt == "" {
-			// Nothing to select: inventing an id would answer with a choice the
-			// request never offered. Fall back to the refusal.
+			// Never invent an id; fall back to refusal.
 			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
 				"chat_id", chatID, "tool", tool)
 		} else {
@@ -136,21 +112,12 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, schedul
 			verb = outcomeApproved
 		}
 	}
-	// Claim the request, and give up when the claim fails. This is
-	// load-bearing: the floor races a human who has the run's page open, and
-	// the budget expires at a moment nobody chose. Before the claim was atomic,
-	// both answers went out and kiro-cli kept whichever arrived first, so the
-	// user's decision could be overruled by a timer with no trace of it.
-	//
-	// Taking it also retires the entry, and announces the answer as the
-	// MACHINE's: a card collapsing under a reader who was deciding must say
-	// that a deadline answered it, and which way.
+	// The claim decides the race with a human on the page; losing it gives up. It retires the entry and
+	// announces the answer as the machine's.
 	if !rs.perms.TakePendingPerm(chatID, requestID, marotte.SettledByUnattended) {
 		return
 	}
-	// A FIXED message with the outcome as a field, not a message built from the
-	// verb: a Loki rule matches on the message, and a concatenated one cannot
-	// be matched reliably.
+	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", tool,
 		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
@@ -159,28 +126,27 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, schedul
 		return
 	}
 	if verb == outcomeApproved {
-		// An approval is not a failure: the run continues, so the schedule's
-		// outcome stays whatever the run itself reports.
+		// An approval is not a failure.
 		return
 	}
 
-	// Surface it. Without this the schedule row still reads "started" while the
-	// run fails the same way every night, which is exactly the silent-repeat
-	// failure this floor exists to make visible.
+	// Surface it on the schedule row, or the run fails silently every night.
 	reason := "needed approval for " + tool + " with nobody watching. Add a permission rule to allow it"
 	if tool == "" {
 		reason = "needed an approval with nobody watching. Add a permission rule to allow it"
 	}
+	if adminAsk {
+		// No workspace or user rule outranks an administrator one, so the usual remedy would be false.
+		reason = "your organization requires a person to approve " + tool + ", and nobody was watching"
+		if tool == "" {
+			reason = "your organization requires a person to approve this, and nobody was watching"
+		}
+	}
 	rs.recordScheduleOutcome(ctx, scheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
 }
 
-// permissionToolName names what a request is asking about, for the log line and
-// the schedule row. Best-effort: an unnamed request still gets denied.
-//
-// Machine-authored names first, the model's prose last. A PRECEDENCE rather
-// than a gate on toolId: only the ordinary tool approval carries one, three of
-// the backend's six ask kinds carry no `_meta` at all, and a hook approval
-// carries a different shape.
+// permissionToolName names what a request asks about, machine-authored names first, the model's prose last.
+// Best-effort: an unnamed request is still denied.
 func permissionToolName(params json.RawMessage) string {
 	var p struct {
 		ToolCall struct {
@@ -188,15 +154,11 @@ func permissionToolName(params json.RawMessage) string {
 			Kind  string `json:"kind"`
 		} `json:"toolCall"`
 		Meta struct {
-			// Decoded here rather than through translate.ACPPermissionKiroBlock:
-			// that block carries the turn-approval discriminator and the file
-			// list, not these two names.
+			// Decoded here: translate.ACPPermissionKiroBlock carries neither name.
 			Kiro struct {
-				// ToolID is KAS's own tool id (`execute_bash`, `fs_write`) and is
-				// unconditional on an ordinary tool approval.
+				// ToolID is KAS's own tool id, always present on a tool approval.
 				ToolID string `json:"toolId"`
-				// HookName comes from a hook file on disk, so it is
-				// user-authored rather than the model's.
+				// HookName comes from a hook file on disk.
 				HookName string `json:"hookName"`
 				Type     string `json:"type"`
 			} `json:"kiro"`
@@ -220,18 +182,30 @@ func permissionToolName(params json.RawMessage) string {
 	return safeToolName(p.ToolCall.Kind)
 }
 
-// safeToolName defuses one wire-supplied name for a single-line human surface.
-//
-// The title is composed upstream by the MODEL, so an agent that read a poisoned
-// file can reach both the log line and the schedule row through it. The
-// sanitizer replaces rather than deletes, so a legitimate name is byte-identical
-// and a bidi reversal becomes visible whitespace.
+// safeToolName defuses a wire name for a one-line surface: the model composes titles. Replacing rather than
+// deleting keeps legitimate names byte-identical and makes bidi reversal visible.
 func safeToolName(s string) string {
 	return runesafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
 }
 
-// scheduledAutoApprove reads the opt-out. Absent or unreadable means OFF, so a
-// missing settings file can never widen what an unattended run may do.
+// consentScopeAdministration is the `_meta.kiro.consent.scope` KAS stamps on an administrator ask.
+const consentScopeAdministration = "administration"
+
+// adminConsentAsk reports whether a permission request is an administrator ask.
+func adminConsentAsk(params json.RawMessage) bool {
+	var p struct {
+		Meta struct {
+			Kiro struct {
+				Consent struct {
+					Scope string `json:"scope"`
+				} `json:"consent"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.Consent.Scope == consentScopeAdministration
+}
+
+// scheduledAutoApprove reads the opt-out; absent or unreadable is off.
 func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, &b) {
@@ -240,12 +214,8 @@ func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	return b
 }
 
-// optionIDByKind picks the request's advertised option of one EXACT kind.
-//
-// Exact, never a prefix: `allow_always`/`reject_always` are advertised whenever
-// consent is persistable, and selecting either makes the backend PERSIST a
-// rule — turning one automated answer into a standing grant nobody wrote. A
-// one-shot answer expires with the turn.
+// optionIDByKind picks the advertised option of one exact kind: a prefix would reach the `_always` kinds,
+// which persist a standing rule.
 func optionIDByKind(params json.RawMessage, kind string) string {
 	var p struct {
 		Options []struct {

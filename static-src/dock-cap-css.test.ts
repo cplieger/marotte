@@ -1,45 +1,20 @@
-// ---------------------------------------------------------------------------
-// The dock's prose regions give up height first, and on a phone they give up
-// more: `26-dock.css` caps them at 14rem and steps that down to 10rem under
-// `@media (width <= 40rem)`.
-//
-// Its own file rather than a section of `decision-dock.test.ts`: that suite mounts
-// cards and drives the queue, while this one mounts the SHIPPED stylesheet and
-// resizes the real viewport — and a resize block has to sit last in its file and
-// restore the size it found.
-//
-// Two halves, because neither answers the other's question. The source read says
-// both scopes cap the SAME set of regions (a computed style is one element at one
-// viewport, so it cannot see a region the override forgot), and the measurement
-// says the override applies at the width it claims and not above it (a source read
-// cannot evaluate a media query).
-// ---------------------------------------------------------------------------
+// The dock's prose regions cap at 14rem, 10rem under `@media (width <= 40rem)` (26-dock.css). Its own file because a
+// resize block must sit last and restore its size. Source half: both scopes cap the same regions. Measurement half:
+// the override applies at the boundary.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-// The viewport control, for the gate that can only be measured by resizing.
-// `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub
-// that throws.
+// `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub that throws.
 import { page } from "vitest/browser";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
-/** The member used to LOCATE each capping rule, and it is the one member of the
- *  four that can be.
- *
- *  `ruleContaining` splits the whole prelude on commas and compares each trimmed
- *  piece for equality, so the FIRST name inside the `:where(` is glued to the
- *  `.dock-card > :where(` in front of it and the LAST one to the `)` behind it —
- *  neither trims to itself. That leaves the two middle names, and `.dock-ask-body`
- *  carries four rules of its own further down the file (its own layout, its
- *  `strong`, and the two yellow faces), while `ruleContaining` demands exactly one
- *  match. */
+/**
+ * The one member that can locate each rule: `ruleContaining` splits on commas, gluing the first and last names to the
+ * `:where(` parentheses, and `.dock-ask-body` has other rules of its own.
+ */
 const ANCHOR = ".elicitation-body";
 
-/** The regions named inside a capping rule's `:where(...)`.
- *
- *  Parsed here rather than through `ruleContaining`'s own member split, which
- *  splits the whole prelude on commas and so cannot say which names came from
- *  inside the `:where()` and which are siblings of it. */
+/** Parsed here: `ruleContaining`'s split cannot tell names inside `:where()` from siblings. */
 function cappedRegions(prelude: string): string[] {
   const open = prelude.indexOf(":where(");
   expect(open, `no :where() in ${prelude}`).toBeGreaterThan(-1);
@@ -51,7 +26,6 @@ function cappedRegions(prelude: string): string[] {
     .filter((s) => s !== "");
 }
 
-/** The rem figure a capping rule declares, so no literal lives in this file. */
 function declaredRem(body: string): number {
   const m = /max-block-size:\s*([\d.]+)rem/.exec(body);
   expect(m, `no rem max-block-size in ${body}`).not.toBeNull();
@@ -64,27 +38,18 @@ const phone = ruleContaining(css, ANCHOR, "40rem");
 
 describe("the set of regions the phone override reaches", () => {
   it("is the same set the base rule caps", () => {
-    // The drift this is here for: a region added to the base list and forgotten in
-    // the override keeps the desktop cap on a phone, which is silent — the card
-    // still bounds itself, just 4rem higher than the step-down was sized for. No
-    // measurement can see it, because a computed style answers for the one element
-    // it is given.
+    // A region forgotten in the override keeps the desktop cap on a phone, invisible to a computed style.
     expect(cappedRegions(phone.selector)).toEqual(cappedRegions(base.selector));
   });
 
   it("steps the cap DOWN rather than up", () => {
-    // A reversed override reads as correct in a diff and is the other way to get
-    // this wrong: the phone, which has the least room, would get the larger cap.
+    // A reversed override would give the phone the larger cap.
     expect(declaredRem(phone.body)).toBeLessThan(declaredRem(base.body));
   });
 });
 
 describe("the phone step-down, measured at real viewport sizes", () => {
-  // A media query answers about the VIEWPORT, so the only honest test of this
-  // override resizes one. The block sits LAST in the file and restores the size in
-  // `afterAll`. `page.viewport` has no getter, so the size is READ off the frame on
-  // entry rather than copied from `vitest.config.ts`: a hand-copied pair would
-  // silently leave every later file measuring at the old size if that config moved.
+  // Sits last and restores the size, read off the frame (`page.viewport` has no getter).
   let entry: { readonly width: number; readonly height: number } | null = null;
   let styleEl: HTMLStyleElement | null = null;
 
@@ -104,13 +69,7 @@ describe("the phone step-down, measured at real viewport sizes", () => {
     }
   });
 
-  /** The cap in force on a dock prose region at one viewport size, in rem.
-   *
-   *  Returned in rem against the live root size rather than in px, so a change to
-   *  the root font size moves with the stylesheet instead of failing here. The
-   *  resize is asserted, or a `page.viewport` that stopped moving the frame would
-   *  make every case below report about the project's own size while still naming
-   *  a phone. */
+  /** In rem against the live root size. The resize is asserted, or a stuck viewport makes every case vacuous. */
   async function capAt(width: number, height: number): Promise<number> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
@@ -132,8 +91,7 @@ describe("the phone step-down, measured at real viewport sizes", () => {
   });
 
   it("still caps it at the phone figure at the boundary width itself", async () => {
-    // `width <= 40rem` includes 640, so the boundary belongs to the phone arm. A
-    // `<` written where `<=` was meant passes every other case in this file.
+    // `width <= 40rem` includes 640; a `<` would pass every other case.
     expect(await capAt(640, 900)).toBeCloseTo(declaredRem(phone.body), 2);
   });
 

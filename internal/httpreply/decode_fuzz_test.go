@@ -8,16 +8,8 @@ import (
 	"testing"
 )
 
-// FuzzDecodeJSONContentType targets the DecodeJSON Content-Type gate.
-// Bug class: content-type bypass where a crafted Content-Type header
-// passes the HasPrefix check but carries an incompatible charset or
-// boundary that causes silent data corruption during JSON decode —
-// or blocks legitimate requests with empty Content-Type (which SHOULD
-// be allowed per the implementation).
-//
-// This absorbed a second target that fuzzed the same gate over the
-// Content-Type alone; two targets asserting one invariant only looked like
-// coverage. Its four distinct media types are kept as seeds here.
+// FuzzDecodeJSONContentType targets the DecodeJSON Content-Type gate: no crafted Content-Type
+// header may pass the prefix check without being application/json.
 func FuzzDecodeJSONContentType(f *testing.F) {
 	f.Add("application/json", `{"key":"value"}`)
 	f.Add("application/json; charset=utf-8", `{"key":"value"}`)
@@ -26,9 +18,6 @@ func FuzzDecodeJSONContentType(f *testing.F) {
 	f.Add("application/json\x00extra", `{"key":"value"}`)
 	f.Add("APPLICATION/JSON", `{"key":"value"}`)
 	f.Add("application/jsonl", `{"key":"value"}`)
-	// Promoted from the FuzzDecodeJSON_ContentType target this absorbed: four
-	// media types whose prefix is close enough to application/json to be worth
-	// keeping in the committed corpus.
 	f.Add("application/json-patch+json", `{"key":"value"}`)
 	f.Add("application/xml", `{"key":"value"}`)
 	f.Add("text/html", `{"key":"value"}`)
@@ -44,8 +33,6 @@ func FuzzDecodeJSONContentType(f *testing.F) {
 		var dst map[string]any
 		ok := DecodeJSON(rec, req, &dst)
 
-		// Invariant 1: if Content-Type is non-empty and doesn't start with
-		// "application/json", DecodeJSON must reject (return false).
 		if contentType != "" && !strings.HasPrefix(contentType, MIMETypeJSON) {
 			if ok {
 				t.Fatalf("DecodeJSON accepted non-JSON content-type %q", contentType)
@@ -53,21 +40,16 @@ func FuzzDecodeJSONContentType(f *testing.F) {
 			return
 		}
 
-		// Invariant 2: if DecodeJSON returns true, the destination must be populated
-		// with the body's JSON content.
 		if ok && dst == nil {
 			t.Fatalf("DecodeJSON returned true but dst is nil for body %q", body)
 		}
 
-		// Invariant 3: the HTTP status must be 4xx on failure, not 5xx.
 		if !ok && rec.Code >= 500 {
 			t.Fatalf("DecodeJSON wrote 5xx status %d for input ct=%q body=%q",
 				rec.Code, contentType, body)
 		}
 	})
 }
-
-// --- FuzzDecodeJSON ---
 
 func FuzzDecodeJSON(f *testing.F) {
 	f.Add("application/json", []byte(`{"key":"value"}`))

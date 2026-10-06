@@ -1,24 +1,13 @@
-// THE SCOPE CHIP HOLDS THE ROW'S FINAL SLOT, so the word "workspace" sits on one
-// x down the whole card and a reader can compare it without reading each row.
-//
-// It used to take `margin-inline-start: auto` and come LAST, so on a row that also
-// carried a shadow badge the auto margin was spent by the scope chip and the badge
-// took the final slot — moving the scope chip left by the badge's own width on
-// exactly the rows that have one. The name grows instead, and the badge is built
-// ahead of the scope chip.
-//
-// Driven through the real render path (seed the catalog, expand the pill) rather
-// than by a hand-built row, because a fixture in production's own order cannot
-// fail when production reorders.
+// THE SCOPE CHIP HOLDS THE ROW'S FINAL SLOT, so the word "workspace" sits on one x down the whole
+// card and a reader can compare it without reading each row.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./chat.js", () => ({ createSession: vi.fn() }));
 vi.mock("./actions/chat.js", () => ({ setMode: { dispatch: vi.fn() } }));
-// Two workspace agents, one of which collides with the global entry seeded below,
-// so the card renders a marked row and an unmarked one — the two the alignment is
-// measured across.
+// Two workspace agents, one of which collides with the global entry seeded below, so the card
+// renders a marked row and an unmarked one — the two the alignment is measured across.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async () => ({
     items: [
@@ -74,9 +63,9 @@ afterAll(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** The pill and its card as `static/index.html` mounts them: a `.pill-slot`
- *  holding the trigger and, as its SIBLING, the card that IS `#role-list`.
- *  `is-open` is the reveal class, and the async re-render is gated on it. */
+/** The pill and its card as `static/index.html` mounts them: a `.pill-slot` holding the trigger
+ *  and, as its SIBLING, the card that IS `#role-list`. `is-open` is the reveal class, and the
+ *  async re-render is gated on it. */
 function mountPill(): HTMLElement {
   document.body.innerHTML = `
     <span class="pill-slot">
@@ -100,8 +89,6 @@ async function openList(): Promise<HTMLElement> {
   return list;
 }
 
-/** By the LABEL a row renders: nothing on the row carries the mode id, and
- *  `displayModeName` title-cases it (`reviewer` renders as `Reviewer`). */
 function rowFor(list: HTMLElement, label: string): HTMLElement {
   const row = Array.from(list.querySelectorAll<HTMLElement>(".pill-role-item")).find(
     (r) => r.querySelector(".pill-role-name")?.textContent === label,
@@ -111,13 +98,12 @@ function rowFor(list: HTMLElement, label: string): HTMLElement {
 }
 
 beforeEach(() => {
-  // A same-named GLOBAL entry is what makes `reviewer` a shadowing row.
   setCatalogModes([
     { id: "vibe", name: "Default", description: "General", source: "bundled" },
     { id: "reviewer", name: "reviewer", description: "The global one", source: "global" },
-    // A row long enough to size the card past its 14rem floor, so the two rows
-    // measured below have real free space in them. Without it the widest row IS a
-    // measured row, every auto margin resolves to 0, and both placements agree.
+    // A row long enough to size the card past its 14rem floor, so the two rows measured below have
+    // real free space in them. Without it the widest row IS a measured row, every auto margin
+    // resolves to 0, and both placements agree.
     { id: "an-agent-whose-name-runs-past-the-floor-on-its-own", name: "", source: "bundled" },
   ]);
 });
@@ -150,10 +136,9 @@ describe("the mode card's trailing chips", () => {
   });
 
   it("keeps the badge beside the scope chip, not beside the name", async () => {
-    // What the name's `flex-grow` buys that the reorder alone does not: an auto
-    // margin on the scope chip would put the row's whole free space BETWEEN the
-    // two chips, stranding the badge against the name. Adjacent flex siblings sit
-    // exactly one `gap` apart, so the row's own gap is the expectation.
+    // What the name's `flex-grow` buys that the reorder alone does not: an auto margin on the scope
+    // chip would put the row's whole free space BETWEEN the two chips, stranding the badge against
+    // the name.
     const list = await openList();
     const row = rowFor(list, "Reviewer");
     const badge = row.querySelector<HTMLElement>(".pill-role-shadow");

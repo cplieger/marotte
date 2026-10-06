@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chatSpec is the shorthand every test needs: the smallest legal spec, with the
-// ref carrying the case's own label so a failure message says which tab it was.
+// chatSpec is the smallest legal spec, its ref carrying the case's label.
 func chatSpec(ref string) marotte.OpenTab {
 	return marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref}
 }
@@ -47,9 +46,7 @@ func mustOpen(t *testing.T, s *Store, spec marotte.OpenTab) marotte.TabSubject {
 	return sub
 }
 
-// onDisk decodes the document the store wrote. It reads the file rather than the
-// store because "not lost from memory OR disk" is two claims, and the second one
-// is the durable half.
+// onDisk decodes the document the store wrote: the durable half of "not lost from memory OR disk".
 func onDisk(t *testing.T, dir string) file {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, FileName))
@@ -108,10 +105,8 @@ func TestNewStore_FirstRunIsEmptyAndSilent(t *testing.T) {
 	}
 }
 
-// TestStore_RoundTripsAcrossProcesses is the durability claim: the version is
-// persisted WITH the tabs, so a restart does not restart the version at 0 — a
-// client that reconnects and re-lists would otherwise be handed a version it had
-// already seen describing a different set.
+// TestStore_RoundTripsAcrossProcesses pins the version persisting WITH the tabs, so a restart
+// does not reuse a seen version for a different set.
 func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 	first, dir := newTestStore(t)
 	a := mustOpen(t, first, chatSpec("c-a"))
@@ -140,12 +135,8 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 	}
 }
 
-// TestNewStore_WarnsAndStartsEmpty covers every way the document can be
-// unreadable. Each case asserts three things, because "starts empty" alone would
-// pass for a store that is broken: the error is REPORTED (the caller's warn), the
-// set is empty, and the store still WORKS afterwards — the arrangement is
-// re-derivable by opening the tabs again, which is the whole reason this is not a
-// boot failure (marotte invariant 6).
+// TestNewStore_WarnsAndStartsEmpty pins, for every unreadable shape, a reported error, an empty
+// set, and a store that still works (invariant 6).
 func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
 	oversized := append([]byte(`{"tabs":[{"id":"a","kind":"chat","ref":"`), []byte(strings.Repeat("x", MaxBytes))...)
 
@@ -182,8 +173,6 @@ func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
 }
 
 // TestNewStore_OversizedIsRefusedBeforeItIsParsed pins the bound to the READ.
-// A length check after os.ReadFile would already have allocated the hostile file,
-// and the boot path is where that matters.
 func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 	dir := t.TempDir()
 	// Valid JSON, so a parse error cannot be what refuses it.
@@ -199,10 +188,7 @@ func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 	}
 }
 
-// TestNewStore_TightensAWideMode is why the load path enforces at all when the
-// WRITE already verifies its own mode: a file widened between two writes — a hand
-// edit, a restored backup, a filesystem that stored something wider than 0600 was
-// asked for — is out of a write's reach.
+// TestNewStore_TightensAWideMode pins the load-time enforcement for a file widened between writes.
 func TestNewStore_TightensAWideMode(t *testing.T) {
 	dir := t.TempDir()
 	writeDoc(t, dir, file{Version: 2, Tabs: []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindGit}}})
@@ -227,10 +213,7 @@ func TestNewStore_TightensAWideMode(t *testing.T) {
 	}
 }
 
-// TestNewStore_RefusesASymlinkAtTheName pins the ordering the load path's comment
-// calls load-bearing. The mode verdict comes first, and it comes from a
-// descriptor opened with O_NOFOLLOW, so a symlink planted at the name is refused
-// rather than having its target read and parsed as the arrangement.
+// TestNewStore_RefusesASymlinkAtTheName pins that the O_NOFOLLOW mode verdict comes first.
 func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "elsewhere.json")
@@ -259,10 +242,7 @@ func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 	}
 }
 
-// TestSanitize_DropsWhatOpenCouldNotHaveWritten walks the load-time validation.
-// The file is written by a previous build or by hand, so every rule Open enforces
-// at the door has to hold on the way in too — a subject with an unknown kind
-// reaches a client's per-kind factory as a switch with no case for it.
+// TestSanitize_DropsWhatOpenCouldNotHaveWritten pins every Open rule on the way in too.
 func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 	cases := []struct {
 		desc     string
@@ -346,15 +326,9 @@ func TestSanitize_TruncatesAtTheDecodeBound(t *testing.T) {
 	}
 }
 
-// TestStore_PersistFailureLeavesNothingBehind is the no-rollback claim. The clone
-// is what a mutation mutates, so a failed write leaves the published state and the
-// version exactly where they were — and the NEXT successful mutation therefore
-// commits version 1, not 2. internal/uistate has to decrement its revision by
-// hand for this case because it mutates before it writes.
-//
-// The failure is staged as a regular FILE where the config directory belongs, so
-// atomicfile's mkdir fails with ENOTDIR. That matters because these tests run as
-// root in the container, where a read-only mode is not a refusal at all.
+// TestStore_PersistFailureLeavesNothingBehind pins no-rollback: the next successful mutation
+// commits version 1. The failure is a FILE where the config directory belongs (ENOTDIR), since
+// tests run as root.
 func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "config")
@@ -397,15 +371,8 @@ func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestBounds_AreConsistentWithEachOther is arithmetic, not behaviour, and it is
-// here because getting it wrong is silent in the worst way: a store that writes a
-// file its own load path truncates loses part of the arrangement on the next boot
-// with no error anywhere.
-//
-// Two claims. The biggest document MaxTabs and MaxRefBytes permit still fits under
-// MaxBytes, so the decode bound can hold the set the decode bound allows. And the
-// product limit sits under the decode bound, so a full strip is never a file that
-// reloads short.
+// TestBounds_AreConsistentWithEachOther pins the arithmetic: the largest document the bounds
+// permit fits MaxBytes, and MaxOpenTabs sits under MaxTabs.
 func TestBounds_AreConsistentWithEachOther(t *testing.T) {
 	if MaxOpenTabs > MaxTabs {
 		t.Errorf("MaxOpenTabs (%d) is over MaxTabs (%d): a full strip would reload truncated", MaxOpenTabs, MaxTabs)
@@ -447,10 +414,7 @@ func TestNewStore_AdoptsTheVersionEvenWhenSanitizeDropped(t *testing.T) {
 	}
 }
 
-// TestNewID_IsOpaqueHexAndUnique pins the mint's shape: 32 lowercase hex
-// characters, drawn from crypto/rand. The alphabet is asserted rather than the
-// length alone, because a mint that fell back to another encoding could still be
-// 32 characters and still look fine.
+// TestNewID_IsOpaqueHexAndUnique pins 32 lowercase hex characters (the alphabet, not only the length).
 func TestNewID_IsOpaqueHexAndUnique(t *testing.T) {
 	const draws = 4096
 	seen := make(map[string]struct{}, draws)

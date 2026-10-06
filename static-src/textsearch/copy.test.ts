@@ -1,8 +1,5 @@
-// The empty-answer vocabulary and the copy over it: classify decides the ORDER
-// once, so a surface only maps its own inputs onto EmptyFacts as data, and the
-// three renderers spell each state and each count exactly once for every
-// surface. Pure string functions, no DOM, so this runs unchanged in the default
-// project.
+// The empty-answer vocabulary and its copy: classify decides the ORDER once, and the renderers spell
+// each state and count once for every surface. Pure strings, so the default project.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -75,10 +72,8 @@ describe("classify", () => {
   });
 
   it("orders failed > unreadable > tooShort > withheld > partial > none", () => {
-    // The inputs are not exclusive (a registry reply can be truncated with every
-    // row filtered; the editor can hold an error beside a short query), so the
-    // order is decided here and nowhere else. Each row drops the previous winner
-    // and expects the next one.
+    // The inputs are not exclusive, so the order is decided here alone; each row drops the previous
+    // winner and expects the next.
     const everything: EmptyFacts = {
       failed: { retryAfterS: 1 },
       unreadable: true,
@@ -167,11 +162,8 @@ describe("cursorCount", () => {
   });
 
   it("adds the whole-chat count whenever it is passed, equal or not", () => {
-    // `3 of 12 · 347 in chat` when the list is the marks or the stepped hits and
-    // the server counted more. The function does not suppress an equal figure or
-    // a smaller one: the DOM holding more marks than the server counted is a
-    // discrepancy worth seeing, and whether an equal pair is worth two figures is
-    // the caller's decision, made by passing the third argument or not.
+    // Never suppressed: more DOM marks than the server counted is a discrepancy worth seeing, and an
+    // equal pair is the caller's call.
     expect(cursorCount(3, 12, 347)).toBe("3 of 12 · 347 in chat");
     expect(cursorCount(1, 200, 347)).toBe("1 of 200 · 347 in chat");
     expect(cursorCount(3, 12, 12)).toBe("3 of 12 · 12 in chat");

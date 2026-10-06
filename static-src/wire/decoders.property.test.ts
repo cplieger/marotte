@@ -1,12 +1,6 @@
-// Property tests over the generated wire surface, iterated from the generator's
-// own table rather than from a list maintained here: a hand-written registry
-// stated a coverage number nobody could check, and hid 129 decoders that had no
-// arbitrary and no assertion at all.
-//
-// 14a: ARBITRARY_BY_TYPE and the exported decoder set are equal as sets, both
-//      directions, so a wire type cannot reach the wire unasserted.
-// 14b: every pair round-trips through JSON and its decoder without loss.
-// 14c: an enum vocabulary draws a finite set of strings.
+// Property tests over the generated wire surface, from the generator's own table: 14a arbitraries
+// and exported decoders are equal sets; 14b every pair round-trips through JSON losslessly; 14c an
+// enum vocabulary draws a finite set of strings.
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";

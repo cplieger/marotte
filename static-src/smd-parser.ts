@@ -85,8 +85,6 @@ import {
 
 const MAYBE_URL = 102 as Token; // local-only token, not in TOKENS
 
-// --- Parser constructor ---
-
 export function parser<T>(renderer: Renderer<T>): Parser {
   const tokens = new Uint32Array(TOKEN_ARRAY_CAP);
   tokens[0] = DOCUMENT;
@@ -119,10 +117,9 @@ export function parser_end(p: Parser): void {
   if (p.pending.length > 0) {
     p.at_end = true;
     parser_write(p, "\n");
-    // Whatever a handler is still holding was held for a character that never
-    // arrived, so it is literal text — `<` held as a possible `<br>` is the case
-    // this recovers. Drop out of any MAYBE_* token first, and strip the
-    // synthetic newline above, which is not input.
+    // Whatever a handler is still holding was held for a character that never arrived, so it is
+    // literal text — `<` held as a possible `<br>` is the case this recovers. Drop out of any
+    // MAYBE_* token first, and strip the synthetic newline above, which is not input.
     const held = p.pending.endsWith("\n") ? p.pending.slice(0, -1) : p.pending;
     if (held !== "") {
       p.token = p.tokens[p.len] as Token;
@@ -131,36 +128,20 @@ export function parser_end(p: Parser): void {
       add_text(p);
     }
   }
-  // Trailing inline tokens never closed. Stop at the first block token: an open
-  // paragraph or fence is the streaming tail, and the code-block decoration
-  // sweeps rely on a fence staying open.
+  // Trailing inline tokens never closed. Stop at the first block token: an open paragraph or fence
+  // is the streaming tail, and the code-block decoration sweeps rely on a fence staying open.
   while (is_inline_token(p.tokens[p.len] as Token)) {
     end_token_unresolved(p);
   }
 }
 
-// ---------------------------------------------------------------------------
-// parser_write — the state machine. Consumes a chunk of markdown text
-// one codepoint at a time, emitting add_token/end_token/add_text calls
-// to the renderer as syntax is recognised. Faithful port of the
-// reference implementation; inline `case` labels match character
-// branches in the original so bug reports tagged to smd v0.2.15 map
-// directly.
-// ---------------------------------------------------------------------------
-
-// tokenAction is the result of a token-specific handler.
 const actionContinue = 0;
 const actionBreak = 1;
 const actionAlwaysContinue = 2;
 type TokenAction = typeof actionContinue | typeof actionBreak | typeof actionAlwaysContinue;
 
-// tokenHandler is a per-token dispatch function. Returns the action to take.
 type TokenHandler = (p: Parser, char: string, pending: string) => TokenAction;
 
-// TOKEN_HANDLERS maps token types to their specific handler logic.
-// Handlers that always consume (code blocks, raw URLs, equation blocks)
-// return actionAlwaysContinue. Handlers that conditionally consume return
-// actionContinue on match, actionBreak on fall-through.
 const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
   [LINE_BREAK]: (p, char, pending) =>
     handleRootContext(p, char, pending) ? actionContinue : actionBreak,
@@ -225,10 +206,8 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     return actionAlwaysContinue;
   },
   [EQUATION_BLOCK]: (p, _char, pending) => {
-    // `$$` as well as `$`: a block opened with `$$\n` is closed with `$$`, and
-    // the bare `$` only matched when the previous character left `pending`
-    // empty — which the newline before a closing fence never does. See the
-    // equation guard in handleCommon's `$` case for the other half.
+    // `$$` closes a block opened with `$$\n`: the newline before a closing fence leaves `pending`
+    // non-empty, so a bare `$` cannot match. handleCommon's `$` equation guard is the other half.
     if (pending === "\\]" || pending === "$" || pending === "$$") {
       add_text(p);
       end_token(p);
@@ -266,9 +245,7 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
 
 export function parser_write(p: Parser, chunk: string): void {
   for (const char of chunk) {
-    // Handle newlines — once a newline was pending, consume leading
-    // whitespace so we can decide whether to extend the previous block
-    // or start a new one.
+    // The indent after a newline decides whether the previous block extends or a new one starts.
     if (p.token === NEWLINE) {
       switch (char) {
         case " ":
@@ -290,24 +267,19 @@ export function parser_write(p: Parser, chunk: string): void {
 
     const pending_with_char = p.pending + char;
 
-    // Token-specific dispatch via lookup table.
     const handler = TOKEN_HANDLERS[p.token];
     if (handler !== undefined) {
       const action = handler(p, char, pending_with_char);
       if (action === actionContinue || action === actionAlwaysContinue) {
         continue;
       }
-      // actionBreak: fall through to common checks below.
     }
 
-    // Common inline checks — apply regardless of block context unless
-    // the guards above kicked in.
     if (handleCommon(p, char, pending_with_char)) {
       continue;
     }
 
-    // Raw URL detection: "foo http://..." can start anywhere a space
-    // or line boundary ends a word.
+    // Raw URL detection: "foo http://..." can start anywhere a space or line boundary ends a word.
     if (
       p.token !== IMAGE &&
       p.token !== LINK &&
@@ -322,7 +294,6 @@ export function parser_write(p: Parser, chunk: string): void {
       continue;
     }
 
-    // No check hit — shift pending forward and keep going.
     p.textBuf += p.pending;
     p.pending = char;
   }

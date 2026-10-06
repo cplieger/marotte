@@ -25,8 +25,14 @@ func TestValidatePromptPayload(t *testing.T) {
 		{"valid minimal", valid("hello", "msg-1", ""), 0, false},
 		{"valid with model", valid("hi", "msg-2", "claude"), 0, false},
 		{"empty text", valid("", "msg-1", ""), http.StatusBadRequest, true},
-		{"text at exact cap", valid(strings.Repeat("a", maxPromptBytes), "msg-1", ""), 0, false},
-		{"oversized text", valid(strings.Repeat("x", maxPromptBytes+1), "msg-1", ""), http.StatusRequestEntityTooLarge, true},
+		{"empty text with an attachment", attachmentOnly(t), 0, false},
+		{"empty text with an empty attachment path", withAttachments(t, "", []string{""}), http.StatusBadRequest, true},
+		{"empty text with an oversized attachment path", withAttachments(t, "", []string{strings.Repeat("x", marotte.MaxAttachmentPathBytes+1)}), http.StatusBadRequest, true},
+		{"empty text with attachments over the cap", withAttachments(t, "", manyReqPaths(marotte.MaxAttachments+1)), http.StatusRequestEntityTooLarge, true},
+		{"attachments at exactly the cap", withAttachments(t, "", manyReqPaths(marotte.MaxAttachments)), 0, false},
+		{"text beside an empty attachment path", withAttachments(t, "hi", []string{""}), http.StatusBadRequest, true},
+		{"text at exact cap", valid(strings.Repeat("a", MaxPromptBytes), "msg-1", ""), 0, false},
+		{"oversized text", valid(strings.Repeat("x", MaxPromptBytes+1), "msg-1", ""), http.StatusRequestEntityTooLarge, true},
 		{"missing message_id", valid("hi", "", ""), http.StatusBadRequest, true},
 		{"invalid message_id", valid("hi", "msg id/bad", ""), http.StatusBadRequest, true},
 		{"invalid model", valid("hi", "msg-1", "bad model!"), http.StatusBadRequest, true},
@@ -50,6 +56,39 @@ func TestValidatePromptPayload(t *testing.T) {
 	}
 }
 
+func attachmentOnly(t *testing.T) []byte {
+	t.Helper()
+	b, err := json.Marshal(marotte.PromptCommand{MessageID: "msg-1", Attachments: []marotte.Attachment{{Path: "/workspace/shot.png"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func withAttachments(t *testing.T, text string, paths []string) []byte {
+	t.Helper()
+	atts := make([]marotte.Attachment, len(paths))
+	for i, p := range paths {
+		atts[i] = marotte.Attachment{Path: p}
+	}
+	b, err := json.Marshal(marotte.PromptCommand{Text: text, MessageID: "msg-1", Attachments: atts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestPromptLabel_AnAttachmentOnlyPromptIsNamedForItsFile(t *testing.T) {
+	p := &marotte.PromptCommand{Attachments: []marotte.Attachment{{Path: "/workspace/docs/shot.png"}}}
+	if got := promptLabel(p); got != "shot.png" {
+		t.Errorf("promptLabel(attachment-only) = %q, want %q", got, "shot.png")
+	}
+	p.Text = "look"
+	if got := promptLabel(p); got != "look" {
+		t.Errorf("promptLabel(text) = %q, want %q", got, "look")
+	}
+}
+
 // seedDefaultNamedChat seeds the record OpenTurn's header fallback leaves behind:
 // a chat still carrying the default name, which the first prompt may rename.
 func seedDefaultNamedChat(t *testing.T, store ChatStore, id marotte.ChatID) {
@@ -70,7 +109,7 @@ func TestSettleComposerOnPrompt_DerivesTheChatNameFromTheFirstMessage(t *testing
 	const eighty = "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
 	cases := []struct {
 		name     string
-		named    bool // the chat already carries a name of its own
+		named    bool
 		text     string
 		wantName string
 	}{

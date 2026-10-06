@@ -41,8 +41,6 @@ export function applyFilter(q: string): void {
 /** What each suite's `vi.mock` factory lays over the real module. */
 export const mocks = {
   apiClient: () => ({ apiGet: H.apiGet, apiGetTyped: H.apiGetTyped, apiPost: H.apiPost }),
-  // The tab reads the forge list through the shared store, for each connection's
-  // kind and host.
   forgeStore: () => ({ ensureForges: H.ensureForges }),
   bus: () => ({
     BUS_RECONCILE: "transport:reconcile",
@@ -62,7 +60,6 @@ export const mocks = {
     registerCleanup: vi.fn(),
     bindLoadingState: vi.fn(() => vi.fn()),
   }),
-  // Each PR mutation has its own stub so a case can read what one of them was asked.
   gitPRs: () => {
     const stub = (): { dispatch: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> } => ({
       dispatch: vi.fn(),
@@ -85,9 +82,7 @@ export const mocks = {
   },
   searchPopup: () => ({
     createSearchPopup: vi.fn((spec: unknown) => {
-      // The filter is module state written by the popup's `query` callback and
-      // published by its `render` callback. Capturing the spec lets a test drive
-      // that exact seam instead of reaching into the module.
+      // Capturing the popup's spec lets a test drive the `query`/`render` seam, not module state.
       filterSeam = spec as FilterSeam;
       return {
         open: vi.fn(),
@@ -102,8 +97,7 @@ export const mocks = {
     }),
   }),
   dialog: () => ({ createDialog: vi.fn(() => ({ open: vi.fn(), close: vi.fn() })) }),
-  // The scroll preserver is a pass-through here; its own behaviour is not the
-  // subject and it reads layout these suites do not stage.
+  // Pass-through: it reads layout these suites do not stage.
   gitScroll: () => ({
     preserveGitScroll: (fn: () => void) => {
       fn();
@@ -267,10 +261,8 @@ export function frame(e: Record<string, unknown>): void {
   fn("", { entry: e as unknown as InventoryEntry });
 }
 
-// Cache-buster for `load`: `vi.resetModules()` does not re-evaluate a module in
-// Browser Mode (the module map is URL-keyed), and these suites need fresh module
-// state (`refreshGen` and the abort controller are module-level). Only the module
-// under test is busted, so its dependencies stay interceptable by `vi.mock`.
+// Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (the module
+// map is URL-keyed). Only the module under test is busted, so its imports stay `vi.mock`-able.
 let bootSeq = 0;
 
 export async function load(): Promise<typeof ModPRs> {

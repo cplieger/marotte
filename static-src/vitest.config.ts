@@ -1,34 +1,10 @@
-// Vitest 5 configuration for marotte TypeScript unit tests.
-//
-// Two projects, and the DEFAULT is the browser. A test file runs in a real
-// headless Chromium unless its name opts out, because the browser is the
-// environment this client actually ships into and a DOM emulator got several of
-// these assertions wrong for free. There is no `environment` option on the
+// Vitest 5 configuration. Two projects, and the DEFAULT is the browser: a file runs in real
+// headless Chromium unless named `.node.test.ts`. No `environment` option on the
 // browser side and no per-file `@vitest-environment` pragma: Browser Mode is not
-// an environment, it is a runner.
-//
-// The opt-out is the `.node.test.ts` suffix, and it is load-bearing rather than
-// decorative: placement has to be readable off the filename because one of the
-// two reasons a file needs Node fails SILENTLY when it is misplaced.
-//
-//   - A test that needs Node capabilities (spawning a process, walking a
-//     directory) throws on the import when it lands in the browser. Loud,
-//     self-correcting.
-//   - A test that needs the DOM to be ABSENT does not. It passes vacuously,
-//     having exercised nothing. `attention-no-dom.node.test.ts` is that case:
-//     its subject is an architectural invariant enforced by module-load failure,
-//     so the reason lives in the stem (`no-dom`) and the placement in the suffix
-//     (`.node`). It asserts its own premise for the same reason.
-//
-// Fuzz keeps its own axis: `*.fuzz.test.ts` is how ts-ci selects fuzz targets,
-// and a DOM fuzz test needs no marker here at all.
-//
-// `channel: "chromium"` opts into Chromium's newer headless mode, the real
-// browser rather than the separate headless-shell build. CI installs it with
-// `npx playwright install --with-deps chromium`; locally it is a one-time
-// `npx --no-install playwright install chromium`.
-//
-// Run: vitest --run (single pass) or vitest (watch mode)
+// an environment but a runner. The suffix is load-bearing: a misplaced Node-needing test throws on
+// import, but one needing the DOM ABSENT passes vacuously (`attention-no-dom.node.test.ts`
+// asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
+// browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
@@ -37,14 +13,9 @@ import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
 
-// Exclude compiled output and node_modules symlink. `**/.stryker-tmp/**`
-// keeps Stryker's `inPlace: true` backup copy of the suite (and a leftover
-// sandbox from an interrupted run) from being collected a SECOND time: the
-// backup holds every .ts file and none of the fixtures beside them, so a
-// duplicate test file resolves `../css/x.css` inside the backup and fails.
-// Spreading configDefaults.exclude also widens the previous top-level-only
-// `node_modules/**`. Both projects need the whole list: a project's `exclude`
-// REPLACES the root one rather than adding to it.
+// Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
+// copy from being collected twice (its fixtures are missing, so it fails). Both projects need the
+// whole list: a project's `exclude` REPLACES the root one.
 const sharedExclude = [
   ...configDefaults.exclude,
   "../static/**",
@@ -54,19 +25,11 @@ const sharedExclude = [
   "e2e-sse/**",
 ];
 
-// Trace view records a DOM snapshot per browser interaction, and the recording is
-// only readable through a reporter that serves it. VITEST_TRACE=1 turns on both
-// halves together, so one variable produces something openable:
-//
+// VITEST_TRACE=1 turns on trace view (a DOM snapshot per browser interaction) and the html reporter
+// that serves it, single-file:
 //   VITEST_TRACE=1 npx vitest run --project browser turn-residency.test.ts
 //   then open .vitest/index.html
-//
-// Off by default because the snapshots cost time on every one of the ~233 browser
-// test files and CI has nowhere to publish them. `singleFile` inlines the UI
-// assets so the report is one file to open or attach to an issue, rather than a
-// directory that needs `vite preview` to serve it. This adds no devDependency:
-// the html reporter's @vitest/ui is a hard dependency of @vitest/browser, which is
-// already declared.
+// Off by default: the snapshots cost time on every browser file and CI has nowhere to publish them.
 const traceView = process.env["VITEST_TRACE"] === "1";
 
 export default defineConfig({
@@ -97,11 +60,8 @@ export default defineConfig({
   },
   server: {
     fs: {
-      // The `?raw` reads that cross the package boundary: the shipped page and
-      // its assets (../static), the Go sources three cross-language contract
-      // tests pin (../internal), and the two scripts a CSS guard reads
-      // (../scripts). Vite's dev-server file guard refuses these otherwise.
-      // Narrowest set that serves them; NOT the repo root.
+      // The `?raw` reads across the package boundary (the shipped page, Go sources the cross-language
+      // tests pin, the scripts a CSS guard reads). Narrowest set; NOT the repo root.
       allow: ["../static", "../internal", "../scripts"],
     },
   },
@@ -109,11 +69,8 @@ export default defineConfig({
     ...(traceView ? { reporters: ["default", ["html", { singleFile: true }]] as const } : {}),
     projects: [
       {
-        // `extends` is a key of the PROJECT, not of its `test` block. Written
-        // inside `test` it is silently ignored and every root option is lost
-        // while the suite stays green, because losing a strictness option never
-        // fails a test. Verified with a zero-assertion probe: inside `test` the
-        // probe PASSED (requireAssertions gone); here it FAILS.
+        // `extends` is a PROJECT key: inside `test` it is silently ignored and every root option is lost
+        // with the suite still green (verified with a zero-assertion probe).
         extends: true,
         test: {
           name: "node",
@@ -121,13 +78,8 @@ export default defineConfig({
           // threads pool: faster than forks for pure Node.js tests with no
           // native modules (no Prisma, bcrypt, canvas).
           pool: "threads",
-          // Test isolation: each test file runs with its own module graph.
-          // We previously had isolate:false for speed, but action test files
-          // use vi.mock() which pollutes other files in the same worker
-          // (e.g. chat-delete.test.ts mocks ../transport.js, leaking into
-          // transport.test.ts). The performance delta is ~0.5s; correctness
-          // wins. Browser Mode isolates per test FILE, so the browser project
-          // needs neither option.
+          // Each test file gets its own module graph: an action file's vi.mock() otherwise leaks into other
+          // files in the worker. Browser Mode isolates per file, so the browser project needs neither option.
           isolate: true,
           // Package-root-relative, because the tests sit at the package root.
           include: ["**/*.node.test.ts"],
@@ -135,13 +87,9 @@ export default defineConfig({
         },
       },
       {
-        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a marotte
-        // binary built with `-tags marotte_test`, the globalSetup starts it on a
-        // scratch config dir and a free port, and every file skips itself when the
-        // variable is unset (the same belt the library's own fixture suite wears).
-        // Node rather than the browser: the fixture answers a cross-site POST with
-        // 403 and sets no CORS header, so a page on vite's origin could neither
-        // command it nor read its stream.
+        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a `-tags marotte_test` binary the
+        // globalSetup starts on a scratch dir and free port; every file skips when it is unset. Node, not
+        // the browser: the fixture refuses cross-site POSTs and sends no CORS header.
         extends: true,
         test: {
           name: "e2e-sse",
@@ -162,18 +110,13 @@ export default defineConfig({
           name: "browser",
           include: ["**/*.test.ts"],
           exclude: [...sharedExclude, "**/*.node.test.ts"],
-          // Merged with the root list, not replacing it: `extends: true` merges
-          // array options. Browser-only on purpose — the gate reads `window`,
-          // which the node project does not have, and a `ResizeObserver` loop is
-          // an engine verdict only a real engine can produce.
+          // Merged with the root list (`extends: true` merges arrays). Browser-only: the gate reads `window`,
+          // and a `ResizeObserver` loop is a real engine's verdict.
           setupFiles: ["./ro-loop-gate.ts"],
-          // One test file at a time. The browser mocker's interception routes
-          // live on the shared playwright CONTEXT and are unrouted at every file
-          // end, so the route count crosses zero there and Playwright
-          // auto-continues any mock still resolving (`route.fulfill: Route is
-          // already handled!`, https://github.com/vitest-dev/vitest/issues/8339);
-          // parallel pages make that likelier. The anchor route below closes the
-          // zero-crossing; dropping this needs a parallel run measured clean first.
+          // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
+          // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
+          // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). The anchor route below
+          // closes the zero-crossing; drop this only after a parallel run measures clean.
           fileParallelism: false,
           browser: {
             enabled: true,
@@ -198,18 +141,10 @@ export default defineConfig({
             // `commands` is a `test.browser` option and NOT a `test` option; the
             // two nest one line apart and the wrong one type-checks nowhere.
             commands: {
-              /** Emulate the two accessibility media features this app declares
-               *  arms for. Page-level, so the test iframe inherits it, and
-               *  per-test rather than through the provider's `contextOptions` —
-               *  that option is global to the project and would put every
-               *  browser file under the emulation, silently inverting the
-               *  `tab-dot.test.ts` family. `cdp()` reaches the same feature and
-               *  is declined: vitest 5 types its `CDPSession` as an empty
-               *  interface, so `Emulation.setEmulatedMedia` would need an
-               *  untyped cast, where this reaches a fully-typed Playwright
-               *  `page`. One command for both features because they are one
-               *  mechanism, and `emulateMedia` takes both in a single call, so a
-               *  test can hold all four combinations. */
+              /** Emulate the two accessibility media features this app has arms for, per page and per test:
+               *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
+               *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
+               *  call takes both, so a test can hold all four combinations. */
               async emulateA11yMedia(
                 { page },
                 features: {
@@ -240,11 +175,7 @@ export default defineConfig({
       requireAssertions: true,
     },
 
-    // Auto-clean/reset/restore all mocks and stubs before each test.
-    // clearMocks: clears call history only.
-    // mockReset: clears history + resets implementations.
-    // restoreMocks: restores vi.spyOn originals.
-    // unstubEnvs/unstubGlobals: restores vi.stubEnv/vi.stubGlobal.
+    // Reset mocks, spies, env and global stubs before each test.
     clearMocks: true,
     mockReset: true,
     restoreMocks: true,
@@ -254,32 +185,14 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // ONE retry in CI, for a single test that misses a timing window on a loaded
-    // 4-CPU runner. It cannot recover a file-level failure (a hoisted `vi.mock`
-    // that never applied fails both attempts in the same hook). vitest reports a
-    // test that only passed on the retry as `flaky`, so the signal survives.
+    // ONE CI retry, for a timing miss on a loaded runner; it cannot recover a file-level failure, and
+    // vitest reports a retry-only pass as `flaky`.
     retry: process.env["CI"] ? 1 : 0,
 
-    // The per-test default may not sit BELOW a bound this suite has already
-    // widened, or it preempts that bound and the failure reads as a bare
-    // deadline naming no assertion. Two are at 10s and this was at 5s, so it
-    // preempted both: fast-check's `interruptAfterTimeLimit` (fc-strict-setup.ts)
-    // and `vi.waitFor`'s patched default (waitfor-budget-setup.ts) — the comment
-    // this replaces claimed alignment with the first while undercutting it.
-    //
-    // `frame-budget.ts` explains why 10s is the floor for anything frame-driven:
-    // past ~49 files this browser delivers animation frames at 1Hz, so a poll on a
-    // ResizeObserver delivery, a focus move or a transitioned opacity cannot settle
-    // inside 5s however correct the code is. Measured: `rail-mark-css.test.ts` runs
-    // in 394ms alone and blew the 5s cap at file 96 of 381.
-    //
-    // Setting the default from the same helper is what makes every consumer of
-    // that budget correct by construction, rather than leaving ~30 browser files
-    // one throttle away from a false red and the next author to rediscover it. A
-    // FAILURE bound only: every consumer polls on the product's own output, so a
-    // working test returns on its first satisfied check and pays nothing. A file
-    // needing MORE still states its own (`messages-send-pin.test.ts` contests the
-    // pin for the scroller and sizes its waits at 16 frames).
+    // The per-test default may not sit BELOW a bound the suite already widened (fast-check's
+    // `interruptAfterTimeLimit`, `vi.waitFor`'s patched default), or it preempts it with a bare
+    // deadline. `frame-budget.ts` owns why 10s is the floor: deep into the run this browser delivers
+    // frames at 1Hz. A FAILURE bound only; a file needing more states its own.
     testTimeout: testTimeoutFor(FRAME_BUDGET_MS),
     hookTimeout: 5000,
 
@@ -314,15 +227,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
 
-      // Report all TS source files, not just those imported by tests. The `**/`
-      // is load-bearing on vitest 5: it matches include/exclude against the
-      // root-relative path without picomatch's `contains`, so a bare `*.ts`
-      // reaches only the top level and silently stops measuring every nested
-      // directory (actions/, exec-view/, fundamentals/, lib/, wire/).
-      //
-      // `node_modules/**` is equally load-bearing and must not be dropped: this
-      // list feeds tinyglobby's `ignore` for untested-file discovery, and `**/*.ts`
-      // without it walks the dependency tree (measured: 4439 extra files).
+      // Report every TS source file. `**/` is load-bearing on vitest 5: a bare `*.ts` matches only the
+      // top level. `node_modules/**` is too: this list feeds tinyglobby's `ignore` for untested-file
+      // discovery, which otherwise walks dependencies (4439 extra files).
       include: ["**/*.ts"],
       exclude: [
         "node_modules/**",
@@ -340,10 +247,8 @@ export default defineConfig({
         // real server to upload to. Chromium can back these — a genuine
         // follow-up, not a permanent exclusion.
         "upload.ts",
-        // shell.ts: the terminal itself is @cplieger/web-terminal-ui's
-        // createTerminal (canvas 2d text measurement + a live WebSocket).
-        // shell.test.ts covers the panel wiring with createTerminal mocked;
-        // the meaningful paths live in the UI package + engine, not here.
+        // shell.ts: the terminal is web-terminal-ui's createTerminal (canvas + WebSocket); shell.test.ts
+        // covers the panel wiring with it mocked.
         "shell.ts",
       ],
 

@@ -1,5 +1,3 @@
-// The forge connect dialog: each kind's credential paths and their outcomes.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", async (importOriginal) => ({
@@ -34,8 +32,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// The forge list is the shared store's; routed through the mocked client so each
-// case answers it with mockResolvedValueOnce, the forge list first.
+// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -94,7 +91,6 @@ describe("forge-auth: the connect dialog", () => {
     )!;
   }
 
-  /** A fetch whose answer the test hands over, so a pending state is observable. */
   function deferredFetch(): {
     spy: ReturnType<typeof vi.fn<typeof fetch>>;
     answer: (r: Response) => void;
@@ -338,7 +334,6 @@ describe("forge-auth: the connect dialog", () => {
   });
 
   describe("Another server", () => {
-    /** A fetch answering each call in order when the test hands over its response. */
     function queuedFetch(): {
       spy: ReturnType<typeof vi.fn<typeof fetch>>;
       answer: (call: number, r: Response) => void;
@@ -547,7 +542,7 @@ describe("forge-auth: the connect dialog", () => {
         "true",
       );
       expect(slot.childElementCount).toBe(0);
-      // The background re-probe after the repaint settles inside this case.
+      // Lets the background re-probe after the repaint settle inside this case.
       await new Promise((r) => setTimeout(r, 0));
     });
   });

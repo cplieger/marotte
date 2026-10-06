@@ -20,40 +20,44 @@ const (
 	bridgePrompting                    // prompt in flight
 )
 
-// sharedBridge wraps an ACP bridge with the runtime's per-chat state.
-// The mu mutex protects field access; the state field encodes the
-// lifecycle phase so callers can check "busy" via a readable state
-// comparison rather than relying on TryLock as a signal.
+// sharedBridge wraps an ACP bridge with the runtime's per-chat state; mu guards the fields
+// and state encodes the lifecycle phase.
 type sharedBridge struct {
 	bridge ACPBridge
 
-	// promptCancel is the in-flight prompt context's cancel func. session/cancel
-	// is a NOTIFICATION nothing acks, so a KAS that never answers the pending
-	// session/prompt would block the Call forever; tripping this lets the existing
-	// prompt-failure path finalize the turn. turnGen keeps an expired grace from
-	// tripping a LATER turn, and a CancelCauseFunc is what lets the failure site
-	// tell an expired grace from any other cancellation (ctx.Err() reads
-	// context.Canceled for all of them).
+	// promptCancel trips the in-flight prompt: session/cancel is an unacked notification, so a
+	// silent KAS would block the Call forever. turnGen keeps an expired grace off a later turn;
+	// the cause tells an expired grace from other cancellations.
 	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
 
 	turnGen uint64
 	mu      sync.Mutex
 	state   bridgeState
-	// effortHealed latches the one reactive reasoning-effort repair this bridge
-	// allows (BridgeCoordinator.healEffort). The repair asserts a level and KAS
-	// answers with another config_option_update, so an unbounded reactive repair
-	// is a loop; one bool removes it, and the prompt-time repairEffort stays the
-	// checkpoint for a level that keeps moving back.
+	// effortHealed latches the one reactive effort repair (BridgeCoordinator.healEffort).
 	effortHealed bool
 	retire       bool
-	// runVerbs counts the run verbs that have ever held this carrier (carrierUse.enter),
-	// so a failed verb can tell a carrier it alone used from one another verb shares.
+	// runVerbs counts the run verbs that ever held this carrier, so a failed verb can tell a sole carrier from a shared one.
 	runVerbs atomic.Int32
 }
 
-// tryAcquireForPrompt attempts to transition from idle to prompting.
-// Returns true if the transition succeeded (caller owns the prompt slot).
+// current is the bridge sb holds now, read under the lock: a failed session/load swaps it.
+func (sb *sharedBridge) current() ACPBridge {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.bridge
+}
+
+// swapBridge installs next and returns the bridge it replaced.
+func (sb *sharedBridge) swapBridge(next ACPBridge) ACPBridge {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	old := sb.bridge
+	sb.bridge = next
+	return old
+}
+
+// tryAcquireForPrompt moves idle to prompting, reporting whether the caller owns the slot.
 func (sb *sharedBridge) tryAcquireForPrompt() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -73,19 +77,15 @@ func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Unlock()
 }
 
-// startedPastSpawn reports whether the bridge has finished starting. The
-// admission arm's "live bridge" is this, not map presence: the manager
-// registers the record before Start so concurrent opens coalesce.
+// startedPastSpawn reports whether Start finished; the manager registers the record before
+// Start, so map presence is not liveness.
 func (sb *sharedBridge) startedPastSpawn() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	return sb.state != bridgeStarting
 }
 
-// setIdle publishes the idle transition. The spawn used to write the field
-// bare — safe while nothing could hold the bridge before OpenBridge returned —
-// but the admission arm reads liveness DURING the spawn, so the write takes
-// the lock like every other state transition.
+// setIdle publishes the idle transition under the lock: admission reads liveness during the spawn.
 func (sb *sharedBridge) setIdle() {
 	sb.mu.Lock()
 	sb.state = bridgeIdle
@@ -100,13 +100,8 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 	}
 }
 
-// --- command.Bridge implementation on sharedBridge ---
-//
-// Four explicit forwards, and NOT `ACPBridge` embedded, which would supply all
-// four for free. The narrowing is the point: ACPBridge also carries Start,
-// Stop, NotifCh and SetModel, which only sharedBridge's state machine may
-// drive. Embedding would hand every holder of a command.Bridge the ability to
-// Stop the bridge behind that state machine's back.
+// Four explicit forwards rather than an embedded ACPBridge, so a command.Bridge holder can
+// never Start, Stop or SetModel behind the state machine.
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)
@@ -161,10 +156,7 @@ func (sb *sharedBridge) PromptGeneration() uint64 {
 	return sb.turnGen
 }
 
-// ArmCancelGrace starts the unresponsive-cancel budget for the turn named by
-// gen. time.AfterFunc parks no goroutine while waiting, and the timer is
-// disarmed by EndPromptCall/releaseAfterPrompt on the ordinary path, so a
-// cancel that IS acked costs one stopped timer and nothing else.
+// ArmCancelGrace starts the unresponsive-cancel budget for turn gen; an acked cancel costs one stopped timer.
 func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -173,9 +165,7 @@ func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 	}
 	sb.stopCancelTimerLocked()
 	sb.cancelTimer = time.AfterFunc(d, func() {
-		// Timer.Stop does not halt a func that is already running, so the
-		// decision is re-taken under the lock rather than trusted from the
-		// arming moment.
+		// Timer.Stop does not halt a running func, so decide again under the lock.
 		cancel, ok := sb.shouldTripCancelGrace(gen)
 		if !ok {
 			return
@@ -187,13 +177,9 @@ func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 	return true
 }
 
-// shouldTripCancelGrace reports whether an expired grace budget still applies
-// to the turn it was armed for, returning that turn's prompt-cancel func.
-//
-// It refuses in three cases, each a turn the budget must not touch: the chat is
-// no longer prompting (the turn ended), the generation moved on (this turn
-// ended and ANOTHER began, so cancelling would kill work the user just
-// started), or no prompt context is registered.
+// shouldTripCancelGrace reports whether an expired grace still applies to its turn, returning
+// that turn's cancel func. It refuses when the chat is no longer prompting, the generation
+// moved on, or no prompt context is registered.
 func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFunc, bool) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -203,13 +189,8 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFu
 	return sb.promptCancel, true
 }
 
-// cancelPromptCall trips the in-flight prompt's context so the blocked Call
-// returns and the ordinary failure path finalizes the turn. Reports whether
-// there was a call to trip.
-//
-// It records no WHY: the cause lives on the turn record, scoped to the turn and
-// first-wins, so this answers only the bridge's half of an interruption. Refuses
-// when the chat is not prompting or no prompt context is registered.
+// cancelPromptCall trips the in-flight prompt so the failure path finalizes the turn, and
+// reports whether there was one. It records no cause; that lives on the turn record.
 func (sb *sharedBridge) cancelPromptCall() bool {
 	sb.mu.Lock()
 	if sb.state != bridgePrompting || sb.promptCancel == nil {
@@ -218,18 +199,12 @@ func (sb *sharedBridge) cancelPromptCall() bool {
 	}
 	cancel := sb.promptCancel
 	sb.mu.Unlock()
-	// Outside the lock: cancel runs arbitrary registered funcs, and holding a
-	// bridge's mutex across them would put this goroutine's ordering inside
-	// someone else's callback.
-	//
-	// No cause: an interrupt deliberately leaves the cause at context.Canceled,
-	// which is what makes the turn conclude `interrupted`.
+	// Outside the lock: cancel runs arbitrary callbacks. No cause, so the turn concludes `interrupted`.
 	cancel(nil)
 	return true
 }
 
-// claimEffortHeal reports whether the caller won the one reactive reasoning-effort
-// repair this bridge allows, setting the latch if so.
+// claimEffortHeal reports whether the caller won the one reactive effort repair, latching it.
 func (sb *sharedBridge) claimEffortHeal() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()

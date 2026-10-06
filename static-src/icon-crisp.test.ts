@@ -11,10 +11,10 @@ interface IconOpts {
   readonly fillOnly?: boolean;
 }
 
-/** An `ic-ui` icon by default: the 24-unit grid at 16px, stroke 1, so a multiple-of-3
- *  coordinate wants phase 0.5. Sized and stroked inline because `03-base.css` is not loaded
- *  here — the tier's SCALE and STROKE are the inputs. `fill`/`stroke` on the root are what
- *  `icons.ts`'s `svg()` writes, so the shapes classify as production's do. */
+/**
+ * An `ic-ui` icon by default (24-unit grid at 16px, stroke 1, so phase 0.5). Sized inline because `03-base.css` is not
+ * loaded; root `fill`/`stroke` as `icons.ts`'s `svg()` writes them.
+ */
 function icon(opts: IconOpts = {}): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("class", opts.cls ?? "ic-ui");
@@ -38,15 +38,13 @@ function icon(opts: IconOpts = {}): SVGSVGElement {
   return svg;
 }
 
-/** Places the icon at a deliberately fractional offset, optionally inside a rotated box. */
 function mount(
   rotateDeg: number | null,
   opts: IconOpts = {},
 ): { host: HTMLElement; svg: SVGSVGElement } {
   const host = document.createElement("div");
   host.style.position = "absolute";
-  // Fractional on BOTH axes and different per axis, so a correction applied to the wrong
-  // one cannot accidentally satisfy the assertion.
+  // Fractional and different per axis, so a correction on the wrong axis cannot pass.
   host.style.left = "10.3px";
   host.style.top = "20.7px";
   const svg = icon(opts);
@@ -67,7 +65,7 @@ function mount(
 
 const frac = (v: number): number => ((v % 1) + 1) % 1;
 
-/** Distance of `phase` from `target`, on the shorter way round. 0 is crisp. */
+/** Distance on the shorter way round; 0 is crisp. */
 function phaseOff(phase: number, target: number): number {
   const d = Math.abs(phase - target);
   return d > 0.5 ? 1 - d : d;
@@ -84,8 +82,7 @@ function offTarget(svg: SVGSVGElement): number {
   return boxOff(svg, 0.5);
 }
 
-/** Worst axis of the DRAWING's coordinate 3, read through the screen CTM rather than the
- *  box, so a glyph centred in a wider slot is measured where it paints. */
+/** Read through the screen CTM, so a glyph centred in a wider slot is measured where it paints. */
 function drawingOff(svg: SVGSVGElement, target: number): number {
   const m = svg.getScreenCTM();
   expect(m).not.toBeNull();
@@ -118,9 +115,8 @@ describe("snapIcons", () => {
   });
 
   it("snaps an icon a rotated ancestor holds, measured in SCREEN space", () => {
-    // The whole defect: `translate` composes INSIDE the wrapper's rotation, so a screen-space
-    // correction written straight onto the box lands on the other axis. Only a screen-space
-    // assertion can see it — the inline value looks plausible either way.
+    // `translate` composes inside the wrapper's rotation, so a screen-space correction written onto the box lands on the
+    // other axis; only a screen-space assertion sees it.
     const svg = place(-90);
     snapIcons();
     expect(offTarget(svg)).toBeLessThan(0.02);
@@ -135,20 +131,15 @@ describe("snapIcons", () => {
   });
 
   it("declines an icon no translate could make crisp", () => {
-    // At 30deg the strokes cross the grid diagonally, so there is no phase that helps, and
-    // the box's screen AABB is not its box — the phase read itself would be meaningless.
+    // At 30deg no phase helps, and the screen AABB is not the box.
     const svg = place(30);
     snapIcons();
     expect(svg.style.translate).toBe("");
   });
 
   it("declines an icon an ancestor is mid-SCALE on, rather than snapping a doomed reading", () => {
-    // THE DEFECT: `.pill-expand-content` opens on `scale(0.4) -> scale(1)`, and a pass
-    // taken during that flight measures the SCALED box — so both the phase it reads and
-    // the target `targetPhase` derives from its scale describe geometry that is about
-    // to change, and the settle pass then moves every icon at once. Reported as the
-    // role menu's icons jumping right every time it opened. The layout size cannot be
-    // scaled by an ancestor, so disagreeing with the painted size IS the signal.
+    // `.pill-expand-content` opens on `scale(0.4) -> scale(1)`; a pass mid-flight measures the scaled box, and the settle
+    // pass then moves every icon at once. Layout size disagreeing with painted size is the signal.
     const svg = place(null);
     const host = svg.closest("div");
     expect(host).not.toBeNull();
@@ -158,7 +149,7 @@ describe("snapIcons", () => {
     expect(snapIcons(), "nothing is written while the ancestor scales").toBe(0);
     expect(svg.style.translate).toBe("");
 
-    // And the reading it declined is taken as soon as that transform lands.
+    // The declined reading is taken as soon as that transform lands.
     if (host instanceof HTMLElement) {
       host.style.transform = "";
     }
@@ -167,8 +158,8 @@ describe("snapIcons", () => {
   });
 
   it("converges rather than chasing its own offset when a snapped icon moves", () => {
-    // The offset in force is a SCREEN delta while the value written is a LOCAL one; reading
-    // the box back means subtracting the screen one, or every later pass compounds the error.
+    // The offset in force is a screen delta and the value written a local one; reading back subtracts the screen one, or
+    // passes compound.
     const svg = place(-90);
     snapIcons();
     const host = svg.closest("div");
@@ -178,13 +169,12 @@ describe("snapIcons", () => {
     }
     snapIcons();
     expect(offTarget(svg)).toBeLessThan(0.02);
-    // A second pass over an already-converged icon must move nothing at all.
+    // A second pass over a converged icon moves nothing.
     expect(snapIcons()).toBe(0);
   });
 
   it("puts a stroke-2 tier on phase 0, where an even device stroke is crisp", () => {
-    // `.ic-lg` strokes 2 CSS px, so at DPR 1 the stroke's centre wants a pixel BOUNDARY;
-    // the 0.5 that is right for a 1px stroke splits a 2px one across three columns.
+    // `.ic-lg` strokes 2px, so at DPR 1 its centre wants a pixel boundary, not 0.5.
     const svg = place(null, { cls: "ic-lg", size: 24, strokeWidth: 2 });
     expect(boxOff(svg, 0)).toBeGreaterThan(0.1);
     snapIcons();
@@ -201,9 +191,8 @@ describe("snapIcons", () => {
   it("targets the DEVICE phase at DPR 2, where a 1px stroke is two device pixels wide", () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const svg = place(null);
-    // Device phase 0 is CSS phase 0 OR 0.5, so the box's phase alone cannot tell a DPR-aware
-    // snap from one assuming DPR 1; what does is the MOVE, at most a quarter CSS px at DPR 2.
-    // These offsets are the ones where the two disagree (DPR 1 would move 0.35 to reach 0.5).
+    // Device phase 0 is CSS phase 0 or 0.5, so the move (at most a quarter CSS px at DPR 2) is what tells a DPR-aware
+    // snap from a DPR 1 one.
     const host = svg.closest("div");
     expect(host).not.toBeNull();
     if (host instanceof HTMLElement) {
@@ -220,8 +209,7 @@ describe("snapIcons", () => {
   });
 
   it("scales by the rendered drawing, not the box, when a flex slot is wider than the glyph", () => {
-    // The rail form's `[id="scroll-bottom"] > svg` takes `flex: 0 0 42px` against a 16px
-    // block size, and `preserveAspectRatio` centres a 16px drawing inside it.
+    // The rail form's `[id="scroll-bottom"] > svg` is a 42px flex slot centring a 16px drawing.
     const svg = place(null);
     const host = svg.closest("div");
     expect(host).not.toBeNull();

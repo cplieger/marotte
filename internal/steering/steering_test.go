@@ -15,10 +15,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// ---------------------------------------------------------------------------
-// writeTools
-// ---------------------------------------------------------------------------
-
 func TestWriteTools(t *testing.T) {
 	data := []byte(`{
 		"tools": {
@@ -51,8 +47,7 @@ func TestWriteTools(t *testing.T) {
 }
 
 func TestWriteTools_EmptyEmitsNothing(t *testing.T) {
-	// No installed tools = no section at all (an empty header would
-	// just waste agent context).
+	// No installed tools means no section at all.
 	var b strings.Builder
 	writeTools(&b, []byte(`{}`))
 	if b.Len() != 0 {
@@ -87,8 +82,7 @@ func TestWriteTools_Sorted(t *testing.T) {
 }
 
 func TestWriteTools_NotInstalledSkipped(t *testing.T) {
-	// A state entry without installed_version (failed install: only
-	// last_error recorded) must not be listed as installed.
+	// A failed install (no installed_version) is not listed.
 	data := []byte(`{"tools": {
 		"ok": {"installed_version": "1.0.0"},
 		"broken": {"last_error": "download failed"}
@@ -105,8 +99,7 @@ func TestWriteTools_NotInstalledSkipped(t *testing.T) {
 }
 
 func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
-	// bins absent (older state / manual entry) falls back to the
-	// tool name.
+	// No bins falls back to the tool name.
 	data := []byte(`{"tools": {"jq": {"installed_version": "1.8.1"}}}`)
 	var b strings.Builder
 	writeTools(&b, data)
@@ -116,8 +109,7 @@ func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
 }
 
 func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
-	// Two tools shipping the same bin name list it once — the agent
-	// cares about what's on PATH, not ownership.
+	// A bin two tools ship is listed once: PATH, not ownership.
 	data := []byte(`{"tools": {
 		"typescript": {"installed_version": "5.9.0", "pm_bins": ["tsc", "tsserver"]},
 		"tsc-wrapper": {"installed_version": "1.0.0", "bins": ["tsc"]}
@@ -129,10 +121,6 @@ func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
 		t.Errorf("duplicate bin not deduped; output:\n%s", out)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// writeMCP
-// ---------------------------------------------------------------------------
 
 func TestWriteMCP_EmptyServersEmitsNothing(t *testing.T) {
 	var b strings.Builder
@@ -180,10 +168,6 @@ func TestWriteMCP_InputSnapshotNotMutated(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// writeForges
-// ---------------------------------------------------------------------------
-
 // TestWriteForges_PerProviderFields verifies a populated provider renders
 // its email and accessible-repositories block, while a bare provider (no
 // email, no repos) omits both.
@@ -223,10 +207,6 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Generate
-// ---------------------------------------------------------------------------
 
 // TestGenerate_WritesCompleteSteeringFile drives the full Generate
 // flow: reads tools-state.json, inspects workDir, uses the wired MCP
@@ -269,25 +249,19 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		"**github**",
 		"## Workspace",
 		"myrepo",
-		"## Git panel",
-		"## UI guide",
-		"## Images and attachments",
 		"## Limitations",
 		"## Capabilities",
-		"no resume or retry tool",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
 			t.Errorf("steering file missing %q", w)
 		}
 	}
-	// Sections in the order the doc is meant to read: what the container IS,
-	// then what is connected, then what the agent can do with it.
+	// The intended section order.
 	last := -1
 	for _, h := range []string{
 		"## Installed tools", "## Container runtime", "## Tools engine",
-		"## Connected integrations", "## Workspace", "## Git panel", "## UI guide",
-		"## Images and attachments", "## Limitations", "## Capabilities",
+		"## Connected integrations", "## Workspace", "## Limitations", "## Capabilities",
 	} {
 		i := strings.Index(got, h)
 		if i < 0 {
@@ -298,8 +272,16 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		}
 		last = i
 	}
-	// Retired claims: one told the agent it could not see an image it was
-	// shown, the other promised a per-file undo nothing provides.
+	// Chat-user sections ride the session door; in the file they would reach steps and the TUI.
+	for _, chatOnly := range []string{
+		"## Git panel", "## UI guide", "## Images and attachments", "## Chat capabilities", "Rewind",
+	} {
+		if strings.Contains(got, chatOnly) {
+			t.Errorf("steering file carries the chat-only %q", chatOnly)
+		}
+	}
+	// Both sentences are false: the agent sees an attached image, and nothing
+	// provides a per-file undo.
 	for _, retired := range []string{
 		"every other attached file arrives as a workspace path",
 		"checkpointed server-side",
@@ -309,13 +291,56 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		}
 	}
 
-	// File mode must be 0o600 (narrow-by-default).
 	info, statErr := os.Stat(steeringPath)
 	if statErr != nil {
 		t.Fatalf("stat: %v", statErr)
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("steering file mode = %o, want 0o600", mode)
+	}
+}
+
+// TestChatDocs_CarriesTheChatSections pins the one always-included client doc:
+// a fileMatch or manual doc would never load, and a section dropped in the move
+// would reach no session at all.
+func TestChatDocs_CarriesTheChatSections(t *testing.T) {
+	g := New("/ws", "/cfg")
+	g.SetForgeSnapshot(func() ForgeSnapshot {
+		return ForgeSnapshot{Providers: []ForgeProvider{{Kind: "github", Host: "github.com", User: "alice"}}}
+	})
+	docs := g.ChatDocs(t.Context())
+	if len(docs) != 1 {
+		t.Fatalf("ChatDocs() returned %d docs, want 1", len(docs))
+	}
+	doc := docs[0]
+	if doc.Name != "marotte" || doc.Inclusion != inclusionAlways {
+		t.Errorf("ChatDocs()[0] = {Name: %q, Inclusion: %q}, want {marotte, always}", doc.Name, doc.Inclusion)
+	}
+	for _, want := range []string{
+		"## Git panel", "## UI guide", "## Images and attachments", "## Chat capabilities",
+		"the account the Sources tab holds",
+	} {
+		if !strings.Contains(doc.Content, want) {
+			t.Errorf("ChatDocs content missing %q", want)
+		}
+	}
+	for _, fileOnly := range []string{"## Container runtime", "## Tools engine", "## Limitations"} {
+		if strings.Contains(doc.Content, fileOnly) {
+			t.Errorf("ChatDocs content carries the container-wide %q", fileOnly)
+		}
+	}
+}
+
+// TestChatDocs_WritesNothing pins that the chat doc never touches the Kiro home:
+// a file there is read by every session on this HOME, which is the audience the
+// split exists to exclude.
+func TestChatDocs_WritesNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	New(t.TempDir(), t.TempDir()).ChatDocs(t.Context())
+	entries, err := os.ReadDir(filepath.Join(home, ".kiro", "steering"))
+	if err == nil && len(entries) > 0 {
+		t.Errorf("ChatDocs wrote %d steering file(s); want none", len(entries))
 	}
 }
 
@@ -384,10 +409,9 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 	}
 }
 
-// TestGenerate_GitPanelFollowsTheForgeSnapshot pins which closing paragraph the
-// git panel gets: the connected-account one with a provider in the snapshot,
-// the Sources pointer with none.
-func TestGenerate_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
+// TestChatDocs_GitPanelFollowsTheForgeSnapshot pins the git panel's closing paragraph: the
+// connected-account one with a provider, the Sources pointer without.
+func TestChatDocs_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
 	const connected, none = "the account the Sources tab holds", "No forge account is connected"
 	for _, tc := range []struct {
 		name      string
@@ -398,26 +422,21 @@ func TestGenerate_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
 		{"no provider", nil, none, connected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			steeringPath := setupKiroHome(t)
 			g := New(t.TempDir(), t.TempDir())
 			g.SetForgeSnapshot(func() ForgeSnapshot { return ForgeSnapshot{Providers: tc.providers} })
-			g.Generate(t.Context())
-			out, err := os.ReadFile(steeringPath)
-			if err != nil {
-				t.Fatalf("steering file not written: %v", err)
+			docs := g.ChatDocs(t.Context())
+			if len(docs) != 1 {
+				t.Fatalf("ChatDocs(%s) returned %d docs, want 1", tc.name, len(docs))
 			}
-			if got := string(out); !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) {
-				t.Errorf("Generate(%s) git panel: want %q and not %q\n--- output ---\n%s", tc.name, tc.want, tc.not, got)
+			if got := docs[0].Content; !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) {
+				t.Errorf("ChatDocs(%s) git panel: want %q and not %q\n--- output ---\n%s", tc.name, tc.want, tc.not, got)
 			}
 		})
 	}
 }
 
-// TestGenerate_IdempotentSkipsRewrite verifies a second Generate with
-// identical inputs does not rewrite the file. A far-past mtime is stamped
-// first so the assertion is robust against coarse filesystem mtime
-// granularity: a skipped write leaves the mtime in the past, while any
-// rewrite bumps it to ~now.
+// TestGenerate_IdempotentSkipsRewrite pins that identical inputs do not rewrite the file. A
+// far-past mtime is stamped first so coarse mtime granularity cannot hide a rewrite.
 func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -433,8 +452,6 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	// Second Generate must be a no-op — content is identical, so the
-	// file is never rewritten and the stamped mtime survives.
 	g.Generate(t.Context())
 
 	info, err := os.Stat(steeringPath)
@@ -455,9 +472,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	configDir := t.TempDir()
 
 	var buf bytes.Buffer
-	// slog.SetDefault also points the log package at the new handler, and it skips
-	// pointing it back when the restored handler is the stock one (which reaches
-	// log.Output), so log's writer and flags are restored too.
+	// Restore log's writer and flags too: slog.SetDefault redirects them.
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	t.Cleanup(func() {
 		slog.SetDefault(prevLogger)
@@ -478,10 +493,8 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	}
 }
 
-// TestGenerate_ConcurrentCallsSerialise fans out concurrent Generate and
-// SetMCPSnapshot calls; under -race it fails if the mutex is weakened or
-// the snapshot pointer is accessed without the lock. The final file must
-// be a single coherent document, not truncated or interleaved.
+// TestGenerate_ConcurrentCallsSerialise fans out Generate and SetMCPSnapshot calls; under -race
+// it fails if the locking is weakened, and the file must be one coherent document.
 func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -494,8 +507,6 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	})
 
 	const n = 16
-	// wg.Go rather than Add(2*n) plus a defer Done per closure. waitgroupgo does
-	// not report this shape — it keys on Add(1) — so it is a manual sweep.
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() { g.Generate(t.Context()) })
@@ -520,10 +531,6 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CustomPath
-// ---------------------------------------------------------------------------
-
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -541,21 +548,14 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	os.Unsetenv("HOME")
 	os.Unsetenv("KIRO_HOME")
 	g := New("/some/work", "/some/config")
-	// With both KIRO_HOME and HOME unset, KiroHome() falls back to a
-	// relative ".kiro" — same fallback kiro-cli uses internally so the
-	// two stay aligned even on stripped local-dev shells.
+	// With KIRO_HOME and HOME unset, KiroHome() falls back to ".kiro", as kiro-cli does.
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)
 	}
 }
 
-// TestWriteForges_RepoListTruncatesAtTwenty pins the "… and N more"
-// overflow line on the accessible-repositories block. A provider with
-// exactly 20 repos lists them all with no overflow line; 21 repos lists
-// the first 20 and a single "… and 1 more" line. This guards the
-// `len(p.Repos) > 20` boundary: a `>=` slip would print "… and 0 more"
-// at exactly 20, and a flipped `<=` would drop the overflow line for
-// genuinely-overflowing lists.
+// TestWriteForges_RepoListTruncatesAtTwenty pins the `len(p.Repos) > 20` boundary: 20 repos
+// list with no overflow line, 21 list 20 plus "… and 1 more".
 func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 	mkRepos := func(n int) []string {
 		repos := make([]string, n)

@@ -1,10 +1,5 @@
-// The cross-language line-delta contract, read from the fixture the Go
-// implementation reads (internal/buffer/linediff_test.go). The turn footer's
-// numbers come from Go and the delegate footer's from diff.ts, and both render
-// the same component — so the two must agree on every case or one footer lies
-// about the same file. Add a case to the fixture, never to one side's table.
-//
-// `.node` because it reads the filesystem. The path is relative to this file.
+// The cross-language line-delta contract, from the fixture the Go side reads (internal/buffer/linediff_test.go).
+// Both footers render the same component, so Go and diff.ts must agree. Add cases to the fixture, never one side.
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { lineDelta } from "./diff.js";

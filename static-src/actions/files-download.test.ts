@@ -23,10 +23,7 @@ afterEach(() => {
 
 describe("downloadFiles action", () => {
   it("makes a single fetch attempt on network error (no retry config, no auto-retry)", async () => {
-    // downloadFiles is `retryable: retryNetwork` but has NO `retry` config,
-    // so a network error is classified retryable yet never auto-retried
-    // (contrast createFile/cloneRepo, which carry RETRY_STANDARD and fire
-    // multiple attempts). One attempt, then null.
+    // `retryable: retryNetwork` with NO `retry` config: one attempt, then null.
     const fetchSpy = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")));
     vi.stubGlobal("fetch", fetchSpy);
     const result = await downloadFiles.dispatch({ paths: ["a.txt"] });
@@ -43,10 +40,8 @@ describe("downloadFiles action", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    // Spy on the two statics; never replace the global URL. `{ ...URL }` copies
-    // no static method (they are non-enumerable) and yields a non-constructible
-    // object, which hangs `@vitest/coverage-v8` in Browser Mode forever — the
-    // run reports its tests green and then never exits.
+    // Spy on the statics; never replace the global URL. `{ ...URL }` is non-constructible and hangs
+    // `@vitest/coverage-v8` in Browser Mode after the tests report green.
     const createURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake-url");
     const revokeURL = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
 
@@ -83,7 +78,6 @@ describe("downloadFiles action", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
 
     const result = await downloadFiles.dispatch({ paths: ["x.txt"] });
-    // dispatch returns null on error (action framework catches and toasts)
     expect(result).toBeNull();
     const log = recentLog();
     expect(log[0]?.status).toBe("error");
@@ -114,15 +108,13 @@ describe("downloadFiles action", () => {
     });
     vi.spyOn(document.body, "appendChild").mockImplementation((el) => el);
 
-    // Start dispatch then cancel immediately — the blob() resolves but
-    // signal should be aborted before the anchor click.
+    // Cancel immediately: blob() resolves, but the signal is aborted before the anchor click.
     const promise = downloadFiles.dispatch({ paths: ["a.txt"] });
     downloadFiles.cancel();
     const result = await promise;
 
     expect(result).toBeNull();
     expect(clickSpy).not.toHaveBeenCalled();
-    // revokeObjectURL should still be called if createObjectURL was called
     if (createURL.mock.calls.length > 0) {
       expect(revokeURL).toHaveBeenCalledWith("blob:fake-url");
     }

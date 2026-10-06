@@ -5,10 +5,7 @@ import (
 	"unicode/utf8"
 )
 
-// FuzzTruncateUTF8 verifies truncateUTF8 never splits multi-byte runes and
-// always returns valid UTF-8 for valid UTF-8 input.
-//
-// Bug class: off-by-one in continuation byte walk producing invalid UTF-8.
+// FuzzTruncateUTF8 verifies truncateUTF8 never splits a rune and keeps valid UTF-8 valid.
 func FuzzTruncateUTF8(f *testing.F) {
 	f.Add("hello", 3)
 	f.Add("日本語テスト", 6)
@@ -23,32 +20,25 @@ func FuzzTruncateUTF8(f *testing.F) {
 		}
 		result := truncateUTF8(s, n)
 
-		// Invariant 1: length never exceeds n.
 		if len(result) > n {
 			t.Fatalf("truncateUTF8(%q, %d) = %q; len %d > %d", s, n, result, len(result), n)
 		}
 
-		// Invariant 2: if input is valid UTF-8, output must be valid UTF-8.
 		if utf8.ValidString(s) && !utf8.ValidString(result) {
 			t.Fatalf("truncateUTF8(%q, %d) = %q; invalid UTF-8 from valid input", s, n, result)
 		}
 
-		// Invariant 3: result is a prefix of s.
 		if len(result) > 0 && s[:len(result)] != result {
 			t.Fatalf("truncateUTF8(%q, %d) = %q; not a byte prefix", s, n, result)
 		}
 
-		// Invariant 4: if len(s) <= n, return s unchanged.
 		if len(s) <= n && result != s {
 			t.Fatalf("truncateUTF8(%q, %d) = %q; should be unchanged", s, n, result)
 		}
 	})
 }
 
-// FuzzIsMarkdownHeading verifies isMarkdownHeading never panics and returns
-// true only for valid ATX headings (1-6 # followed by space/tab/EOL).
-//
-// Bug class: index out of range on multi-byte first rune, false positives.
+// FuzzIsMarkdownHeading verifies isMarkdownHeading never panics and accepts only ATX headings.
 func FuzzIsMarkdownHeading(f *testing.F) {
 	f.Add("# Heading")
 	f.Add("## Sub")
@@ -62,12 +52,10 @@ func FuzzIsMarkdownHeading(f *testing.F) {
 	f.Fuzz(func(t *testing.T, line string) {
 		result := isMarkdownHeading(line)
 
-		// Invariant 1: empty string is always false.
 		if line == "" && result {
 			t.Fatal("isMarkdownHeading(\"\") should be false")
 		}
 
-		// Invariant 2: if true, must start with # and have 1-6 # chars.
 		if result {
 			if line[0] != '#' {
 				t.Fatalf("isMarkdownHeading(%q) = true but doesn't start with #", line)

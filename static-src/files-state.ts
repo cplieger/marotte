@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// File browser state: pure state management for the file browser.
-// No DOM dependencies — independently unit-testable.
-// ---------------------------------------------------------------------------
+// File browser state, DOM-free.
 
 import { FB_ROOT, type FileEntry } from "./files-shared.js";
 
@@ -12,27 +9,21 @@ export class FileBrowserState {
   selected = new Set<string>();
   lastClickedName = "";
   entries: FileEntry[] = [];
-  /** Whether the browse route has ANSWERED for this directory. `entries` initialises
-   *  to `[]`, so an empty directory and one this client has never read are otherwise
-   *  the same state, and the rows placeholder must arm only for the second. */
+  /** `entries` starts as `[]`, so an empty directory and an unread one look alike; the placeholder arms only for the latter. */
   answered = false;
   entryMap = new Map<string, FileEntry>();
   dirWritable = true;
   sortedNames: string[] = [];
-  /** Where the reader left this browser's list. Every files tab paints into one
-   *  shared scroller, so the offset has to live here or B's carries into A. It
-   *  belongs to the folder shown, so every directory change starts it at 0. */
+  /** Every files tab paints into one shared scroller, so the offset lives here; a directory change resets it. */
   scrollTop = 0;
 
-  /** True until this browser's ORIGIN folder loads, so an unreachable one falls back
-   *  to the mounts listing ONCE and a later failure keeps the error row. Per browser
-   *  rather than per module: N browsers share one fetch holder, so a shared arm would
-   *  be spent by another tab's first transient error. */
+  /**
+   * True until the origin folder loads, so an unreachable origin falls back to the mounts listing once. Per browser:
+   * N browsers share one fetch holder.
+   */
   pendingRestore = true;
 
-  /** A browser opened at `at`, with both nav buttons DISABLED by construction. The
-   *  alternative is `navigate`, which PUSHES, so a fresh tab would render with Back
-   *  enabled and walk to a mounts listing it was never at. */
+  /** A browser opened at `at` with both nav buttons disabled (`navigate` would push and enable Back). */
   constructor(at: string = FB_ROOT) {
     this.currentPath = at;
     this.history = [at];
@@ -73,12 +64,10 @@ export class FileBrowserState {
     return true;
   }
 
-  /** Point this browser at a directory named from OUTSIDE its own trail: a document
-   *  history entry, or a pasted deep link.
-   *
-   *  Adjacent-first, because while the browser is active the two trails are one: a
-   *  document Back steps `historyIdx` back rather than pushing, so repeated presses
-   *  cannot grow `history` without bound. Anything else pushes. */
+  /**
+   * Point at a directory from outside the trail (history entry, deep link). Adjacent-first: while active, the document
+   * trail and this trail are one, so a move onto a neighbour steps rather than pushes.
+   */
   pointTo(dir: string): void {
     if (dir === this.currentPath) {
       return;
@@ -94,8 +83,7 @@ export class FileBrowserState {
     this.navigate(dir);
   }
 
-  /** Back to the mounts listing, NOT to the tab's origin: the one caller is the
-   *  auto-heal, and a heal back to an unreachable origin would loop. */
+  /** Back to the mounts listing, not the origin: the auto-heal is the one caller, and healing to an unreachable origin loops. */
   reset(): void {
     this.currentPath = FB_ROOT;
     this.history.length = 0;

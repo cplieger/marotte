@@ -19,6 +19,7 @@ import type * as ChatExport from "./chat-export.js";
 import type * as Toast from "./toast.js";
 import type * as Transport from "./transport.js";
 import type * as ApiClient from "./api-client.js";
+import type * as TurnRail from "./turn-rail.js";
 
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
@@ -148,6 +149,10 @@ vi.mock("./transport.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Transport>()),
   ...(await import("./__test-helpers__/tabs-server.js")).tabTransportMock(),
 }));
+vi.mock("./turn-rail.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TurnRail>()),
+  jumpToTurn: vi.fn(() => Promise.resolve(true)),
+}));
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
@@ -155,6 +160,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 import { closeTab, tabIdFor, _resetForTest } from "./tabs.js";
+import { get, getActiveId } from "./store.js";
+import { switchSession } from "./chat.js";
+import { jumpToTurn as jumpToTurnFn } from "./turn-rail.js";
+
+const jumpToTurn = vi.mocked(jumpToTurnFn);
 import { applyRoute } from "./route-apply.js";
 import { replaceRoute } from "./router.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
@@ -231,5 +241,27 @@ describe("applyRoute for a web preview", () => {
     });
     expect(tabIdFor("web", page)).toBe("");
     expect(replaceRoute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("applyRoute for a turn permalink", () => {
+  it("lands a #turn-<n> through the rail's jump once the chat is active", async () => {
+    vi.mocked(get).mockReturnValue({ id: "c1" } as ReturnType<typeof get>);
+    vi.mocked(getActiveId).mockReturnValue("c1");
+    vi.mocked(switchSession).mockResolvedValue("activated");
+    jumpToTurn.mockClear();
+    await applyRoute({ kind: "chat", id: "c1", turn: 7 }, "deeplink");
+    await settled(() => jumpToTurn.mock.calls.length > 0, "the jump ran");
+    expect(jumpToTurn).toHaveBeenCalledWith("c1", 7);
+  });
+
+  it("does not jump for a plain chat route", async () => {
+    vi.mocked(get).mockReturnValue({ id: "c1" } as ReturnType<typeof get>);
+    vi.mocked(getActiveId).mockReturnValue("c1");
+    vi.mocked(switchSession).mockResolvedValue("activated");
+    jumpToTurn.mockClear();
+    await applyRoute({ kind: "chat", id: "c1" }, "deeplink");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(jumpToTurn).not.toHaveBeenCalled();
   });
 });

@@ -12,12 +12,8 @@ export function fireSSE(event: string, chatID: string, payload: unknown): void {
 
 export function createBusMock(extras: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    // bus.ts's full named surface. Browser Mode links ESM for real, so a name
-    // another module in the graph imports has to EXIST on the mock or the whole
-    // import fails; a namespace-object property read (which is what the node
-    // runner did) tolerated its absence. `undefined` is what that read produced,
-    // so nothing a caller exercises changes — a path that reaches one of these
-    // failed before and fails now.
+    // bus.ts's full named surface: Browser Mode links ESM for real, so every imported name must
+    // EXIST. `undefined` is what a namespace read yields, so no exercised path changes.
     dispatch: undefined,
     registerSSEDecoder: undefined,
     lookupSSEDecoder: undefined,

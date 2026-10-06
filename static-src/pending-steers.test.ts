@@ -1,25 +1,36 @@
-// The steer stack is a pure projection of `session.steers`, so these cases drive the store
-// the way the submit path and the SSE handlers do and read the DOM the way a person does.
-// A row leaves on its own `steer` entry or its `removed` frame; nothing client-side drops one.
+// The steer stack is a pure projection of `session.steers`, so these cases drive the store the way
+// the submit path and the SSE handlers do and read the DOM the way a person does. A row leaves on
+// its own `steer` entry or its `removed` frame; nothing client-side drops one.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import type * as Toast from "./toast.js";
 
-// vi.hoisted because pending-steers.js is a STATIC import below: the mock factories run
-// during that import's resolution, before a plain top-level const is initialized.
-const mocks = vi.hoisted(() => ({
-  clearDispatch: vi.fn(() => Promise.resolve(true)),
-  cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
-    outcome: Promise.resolve<{ status: string }>({ status: "success" }),
-  })),
-  removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
-    outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
-  })),
-  confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
-  setComposerValueMock: vi.fn(),
-  composerDraftMock: vi.fn((_chatID: string) => ""),
-  restoreRefusedEditMock: vi.fn(),
-  errorToastMock: vi.fn(),
-}));
+// vi.hoisted because pending-steers.js is a STATIC import below: the mock factories run during that
+// import's resolution, before a plain top-level const is initialized.
+const mocks = vi.hoisted(() => {
+  const errorToastMock = vi.fn();
+  return {
+    clearDispatch: vi.fn(() => Promise.resolve(true)),
+    cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
+      outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+    })),
+    removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
+    confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
+    setComposerValueMock: vi.fn(),
+    composerDraftMock: vi.fn((_chatID: string) => ""),
+    restoreRefusedEditMock: vi.fn(),
+    errorToastMock,
+    chatNoticeMock: vi.fn((_chatID: string, message: string, _level?: string, _name?: string) => {
+      errorToastMock(message);
+      return () => undefined;
+    }),
+    unqueueDispatch: vi.fn((_args: { chatID: string; messageID: string }) => ({
+      outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+    })),
+    addAttachmentMock: vi.fn((_chatID: string, _path: string) => true),
+    removeAttachmentMock: vi.fn(),
+  };
+});
 
 type RemoveOutcome =
   { status: "success" } | { status: "error"; error: { status?: number; message: string } };
@@ -28,6 +39,23 @@ vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
   removeSteer: { dispatch: mocks.removeDispatch },
+  unqueuePrompt: { dispatch: mocks.unqueueDispatch },
+}));
+// Every export is present so real-ESM linking succeeds; only the restore is observed.
+vi.mock("./attachments.js", () => ({
+  addAttachmentTo: mocks.addAttachmentMock,
+  removeAttachmentFrom: mocks.removeAttachmentMock,
+  attachmentGeneration: vi.fn(() => 0),
+  addAttachment: vi.fn(),
+  takeAttachments: vi.fn(() => []),
+  hasAttachments: vi.fn(() => false),
+  stashAttachments: vi.fn(),
+  flushAttachments: vi.fn(),
+  restoreAttachments: vi.fn(),
+  dropAttachments: vi.fn(),
+  seedAttachments: vi.fn(),
+  adoptRemoteAttachments: vi.fn(),
+  _resetAttachmentsForTest: vi.fn(),
 }));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirmMock }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValueMock }));
@@ -37,10 +65,14 @@ vi.mock("./composer-state.js", () => ({
   composerDraft: mocks.composerDraftMock,
   restoreRefusedEdit: mocks.restoreRefusedEditMock,
 }));
-vi.mock("./toast.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Toast>()),
-  error: mocks.errorToastMock,
-}));
+// The refusal is a chat notice; the message is what these cases read.
+vi.mock("./notice-subject.js", async () => {
+  const store = await import("./store.js");
+  return {
+    chatNotice: mocks.chatNoticeMock,
+    subjectName: (id: string) => store.get(id)?.name ?? "",
+  };
+});
 
 const {
   clearDispatch,
@@ -51,6 +83,9 @@ const {
   composerDraftMock,
   restoreRefusedEditMock,
   errorToastMock,
+  unqueueDispatch,
+  addAttachmentMock,
+  removeAttachmentMock,
 } = mocks;
 
 import {
@@ -62,7 +97,7 @@ import {
   appendEntry,
 } from "./store.js";
 import { initPendingSteers } from "./pending-steers.js";
-import type { Entry, Session } from "./types.js";
+import type { Entry, QueuedPrompt, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 function makeSession(chatID: string): Session {
@@ -222,9 +257,11 @@ describe("the steer stack", () => {
     composerDraftMock.mockReturnValue("");
     restoreRefusedEditMock.mockClear();
     errorToastMock.mockClear();
+    unqueueDispatch.mockReset();
+    unqueueDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
+    addAttachmentMock.mockClear();
+    removeAttachmentMock.mockClear();
   });
-
-  // --- Placement and stacking ---------------------------------------------
 
   it("renders into the bottom-bar stack rather than inside the composer", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
@@ -245,8 +282,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
     expect(rows().map(textOf)).toEqual(["first", "second", "third"]);
   });
-
-  // --- The three states ----------------------------------------------------
 
   it("says a message has been sent and is waiting", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
@@ -269,9 +304,9 @@ describe("the steer stack", () => {
     );
   });
 
-  // The server holds the row and no turn can read it (a bridge death, a reload); it goes
-  // with the next prompt. Send-now has no turn to stop, so the row offers Edit and Delete.
-  it("says Not sent for a row the server could not deliver, and offers no send-now", () => {
+  // The server holds the row and no turn can read it (a bridge death, a turn end); it goes out as
+  // the next prompt. Send-now has no turn to stop, so the row offers Edit and Delete.
+  it("says an undelivered row sends next, and offers no send-now", () => {
     recordSteerQueued("chat-1", {
       id: "steer-1",
       text: "use tabs instead",
@@ -281,19 +316,19 @@ describe("the steer stack", () => {
 
     const row = firstRow();
     expect(row.dataset["state"]).toBe("unsent");
-    expect(labelOf(row)).toBe("Not sent");
-    expect(row.getAttribute("aria-label")).toBe("Not sent: use tabs instead");
+    expect(labelOf(row)).toBe("Unread \u00b7 sends next");
+    expect(row.getAttribute("aria-label")).toBe("Unread \u00b7 sends next: use tabs instead");
     expect(actions(row)).toEqual(["Edit this message", 'Delete "use tabs instead"']);
   });
 
-  it("turns a sent row into Not sent in place, keeping its element", () => {
+  it("turns a sent row into an unsent one in place, keeping its element", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     const before = firstRow();
 
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user", state: "unsent" });
 
     expect(firstRow()).toBe(before);
-    expect(labelOf(before)).toBe("Not sent");
+    expect(labelOf(before)).toBe("Unread \u00b7 sends next");
   });
 
   it("takes a message the agent has read out of the stack entirely", () => {
@@ -331,10 +366,8 @@ describe("the steer stack", () => {
     expect(rows()).toHaveLength(0);
   });
 
-  // --- A delete is invisible to the rows it keeps ---------------------------
-
-  // The server deletes by clearing KAS's buffer and resending the kept rows as one steer.
-  // The kept rows must not be rebuilt by that, or they would fade out and back in.
+  // The server deletes by clearing KAS's buffer and resending the kept rows as one steer. The kept
+  // rows must not be rebuilt by that, or they would fade out and back in.
   it("keeps the kept rows' elements when the deleted row leaves on its removed frame", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
@@ -381,8 +414,6 @@ describe("the steer stack", () => {
     expect(rows()).toHaveLength(0);
   });
 
-  // --- Repaint keys ---------------------------------------------------------
-
   it("repaints when only the sending state changed", () => {
     recordSteerSent("chat-1", "m-1", "one");
     expect(labelOf(firstRow())).toBe("Sending");
@@ -393,8 +424,8 @@ describe("the steer stack", () => {
     expect(actions(firstRow())).toEqual(PER_ROW("one"));
   });
 
-  // A row is confirmed twice, by the POST reply and by the SSE frame, and the second can
-  // change origin alone; both the computed key and the per-row key have to see it.
+  // A row is confirmed twice, by the POST reply and by the SSE frame, and the second can change
+  // origin alone; both the computed key and the per-row key have to see it.
   it("adds the arrow when only the origin changed", () => {
     recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "agent" });
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
@@ -410,8 +441,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "agent" });
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
-
-  // --- The message gets the room -------------------------------------------
 
   it("puts the whole message in the DOM and leaves the clamping to CSS", () => {
     const long =
@@ -432,8 +461,6 @@ describe("the steer stack", () => {
       "Sent, waiting for the agent: first line second line",
     );
   });
-
-  // --- Controls -------------------------------------------------------------
 
   it("offers no controls on a message that is still sending", () => {
     recordSteerSent("chat-1", "m-1", "one");
@@ -460,8 +487,8 @@ describe("the steer stack", () => {
     expect(actions(rowAt(1))).toEqual([]);
   });
 
-  // The server cannot resend an agent row, so it refuses a one-row delete beside one;
-  // the dock offers the only removal that exists then, the whole buffer.
+  // The server cannot resend an agent row, so it refuses a one-row delete beside one; the dock
+  // offers the only removal that exists then, the whole buffer.
   it("falls back to discard-all while a workflow result waits beside the rows", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
     recordSteerQueued("chat-1", { id: "notify-1", text: "workflow done", origin: "agent" });
@@ -471,8 +498,6 @@ describe("the steer stack", () => {
     landSteerEntry("chat-1", "notify-1", "workflow done");
     expect(actions(firstRow())).toEqual(PER_ROW("mine"));
   });
-
-  // --- Send now ---------------------------------------------------------------
 
   it("stops the turn naming its row as the lead when send-now is pressed", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
@@ -509,8 +534,6 @@ describe("the steer stack", () => {
       "Stops the turn",
     );
   });
-
-  // --- Edit -------------------------------------------------------------------
 
   it("takes the row back into the composer and deletes that row alone", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "keep me", origin: "user" });
@@ -585,8 +608,6 @@ describe("the steer stack", () => {
     expect(removeDispatch).not.toHaveBeenCalled();
   });
 
-  // --- Delete and discard -----------------------------------------------------
-
   it("deletes only the pressed row, without asking", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
@@ -612,6 +633,21 @@ describe("the steer stack", () => {
 
     await vi.waitFor(() => {
       expect(errorToastMock).toHaveBeenCalledWith("A turn is starting; try again in a moment");
+    });
+  });
+
+  it("names the chat a refused delete was about as it was named when the delete began", async () => {
+    removeDispatch.mockImplementation(() => {
+      setSessions([{ ...makeSession("chat-1"), name: "renamed meanwhile" }]);
+      return {
+        outcome: Promise.resolve({ status: "error", error: { status: 404, message: "gone" } }),
+      };
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    clickAction(firstRow(), "Delete");
+
+    await vi.waitFor(() => {
+      expect(mocks.chatNoticeMock).toHaveBeenCalledWith("chat-1", "gone", "error", "test");
     });
   });
 
@@ -644,23 +680,150 @@ describe("the steer stack", () => {
     });
     expect(clearDispatch).not.toHaveBeenCalled();
   });
+
+  // FOLLOW-UPS. The rows the server holds for the end of the turn, drawn from the header's list
+  // below the steers. Each is addressed by its own id, so its controls reach `unqueue_prompt` and
+  // never the steer buffer.
+
+  function withQueued(queued: QueuedPrompt[]): void {
+    setSessions([{ ...makeSession("chat-1"), queued }]);
+    setActive("chat-1");
+  }
+
+  it("draws a queued follow-up below the waiting steers", () => {
+    withQueued([{ id: "m-q1", text: "then add tests" }]);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["use tabs", "then add tests"]);
+    expect(labelOf(rows()[1] as HTMLElement)).toBe("After this turn");
+  });
+
+  it("labels a carried row and a held row by what will happen to them", () => {
+    withQueued([
+      { id: "m-c", text: "unread one", resends: ["steer-1"] },
+      { id: "m-h", text: "from before", held: true },
+      { id: "m-ch", text: "both", resends: ["steer-2"], held: true },
+    ]);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "Not sent \u00b7 the server restarted",
+      "Not sent \u00b7 the server restarted",
+    ]);
+  });
+
+  it("says what discarding loses: a user row was never sent, a carried row will not be sent again", () => {
+    withQueued([
+      { id: "m-u", text: "follow-up" },
+      { id: "m-c", text: "unread one", resends: ["steer-1"] },
+    ]);
+    const hint = (row: HTMLElement): string =>
+      row.querySelector(".steer-act-danger")?.getAttribute("data-tooltip") ?? "";
+
+    expect(hint(rows()[0] as HTMLElement)).toContain("It has not been sent");
+    expect(hint(rows()[1] as HTMLElement)).toContain("It will not be sent again");
+  });
+
+  it("updates a carried row's text in place when it absorbs a later carry", () => {
+    withQueued([{ id: "m-c", text: "use tabs", resends: ["steer-1"] }]);
+    const before = firstRow();
+    withQueued([{ id: "m-c", text: "use tabs\n\nand rename it", resends: ["steer-1", "steer-2"] }]);
+
+    expect(firstRow()).toBe(before);
+    expect(textOf(firstRow())).toBe("use tabs and rename it");
+  });
+
+  it("discards one follow-up by its own id, leaving the steer buffer alone", async () => {
+    withQueued([
+      { id: "m-q1", text: "first" },
+      { id: "m-q2", text: "second" },
+    ]);
+    clickAction(rows()[1] as HTMLElement, "Discard");
+
+    await vi.waitFor(() => {
+      expect(unqueueDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q2" });
+    });
+    expect(clearDispatch).not.toHaveBeenCalled();
+    expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  it("fills the composer with the follow-up and its attachments before the removal is sent", () => {
+    withQueued([
+      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+    ]);
+    unqueueDispatch.mockImplementation(() => ({
+      outcome: new Promise<{ status: string }>(() => undefined),
+    }));
+    clickAction(firstRow(), "Edit");
+
+    expect(setComposerValueMock).toHaveBeenCalledWith("look at this");
+    expect(addAttachmentMock).toHaveBeenCalledWith("chat-1", "src/a.ts");
+    expect(unqueueDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q1" });
+  });
+
+  it("keeps the follow-up in the composer when the removal's reply is lost", async () => {
+    withQueued([
+      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+    ]);
+    unqueueDispatch.mockReturnValue({
+      outcome: Promise.resolve({ status: "error", error: { message: "network" } }),
+    });
+    clickAction(firstRow(), "Edit");
+
+    await vi.waitFor(() => {
+      expect(errorToastMock).toHaveBeenCalledWith("Couldn't confirm the follow-up was taken back");
+    });
+    expect(setComposerValueMock).toHaveBeenCalledWith("look at this");
+    expect(restoreRefusedEditMock).not.toHaveBeenCalled();
+    expect(removeAttachmentMock).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 404, 409, 502])(
+    "puts the replaced draft back and drops the staged files on a %i refusal",
+    async (status) => {
+      withQueued([
+        { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+      ]);
+      composerDraftMock.mockReturnValue("half a sentence");
+      unqueueDispatch.mockReturnValue({
+        outcome: Promise.resolve({
+          status: "error",
+          error: { status, message: "already sending" },
+        }),
+      });
+      clickAction(firstRow(), "Edit");
+
+      await vi.waitFor(() => {
+        expect(restoreRefusedEditMock).toHaveBeenCalledWith(
+          "chat-1",
+          "look at this",
+          "half a sentence",
+        );
+      });
+      expect(removeAttachmentMock).toHaveBeenCalledWith("chat-1", "src/a.ts");
+      expect(errorToastMock).toHaveBeenCalledWith("already sending");
+    },
+  );
+
+  it("leaves a file the composer already held when a refusal undoes the Edit", async () => {
+    withQueued([
+      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+    ]);
+    addAttachmentMock.mockReturnValueOnce(false);
+    unqueueDispatch.mockReturnValue({
+      outcome: Promise.resolve({ status: "error", error: { status: 409, message: "sending" } }),
+    });
+    clickAction(firstRow(), "Edit");
+
+    await vi.waitFor(() => {
+      expect(restoreRefusedEditMock).toHaveBeenCalled();
+    });
+    expect(removeAttachmentMock).not.toHaveBeenCalled();
+  });
 });
 
-// THE ROW SURVIVES ITS OWN CONFIRMATION, measured against real layout under the
-// shipped stylesheet, because the defect was invisible to every assertion about
-// what a row SAYS.
-//
-// One Send produces two renders a round trip apart — `recordSteerSent` draws the
-// pending row, `recordSteerQueued` confirms it off the POST's own reply — and
-// `.steer-row` enters through `@starting-style` (26-dock.css), which supplies a
-// before-change style to any element being rendered for the first time. A render
-// that rebuilt the row therefore replayed that entry fade over a row already on
-// screen, interrupting the first fade mid-flight: the row appeared, dropped back
-// to invisible and appeared again, which is what a reader reported as a flicker.
-//
-// So the subject here is the NODE rather than its content, and the stack element
-// is the module's own (captured at init), re-parented into a host with the
-// stylesheet mounted the way the clamp block below does it.
+// THE ROW SURVIVES ITS OWN CONFIRMATION, measured against real layout under the shipped stylesheet,
+// because the defect was invisible to every assertion about what a row SAYS.
 describe("the row across its own confirmation", () => {
   let styleEl: HTMLStyleElement;
   let host: HTMLElement;
@@ -685,12 +848,11 @@ describe("the row across its own confirmation", () => {
 
   afterAll(() => {
     styleEl.remove();
-    // The tier cases below write this, and it changes `--hit-floor` and every
-    // control height for the whole document, so it must not reach the clamp block.
+    // The tier cases below write this, and it changes `--hit-floor` and every control height for
+    // the whole document, so it must not reach the clamp block.
     delete document.documentElement.dataset["pointer"];
-    // Back to the body rather than removed with the host: the module renders into
-    // this element for the rest of the file, and the clamp block below looks it up
-    // by id.
+    // Back to the body rather than removed with the host: the module renders into this element for
+    // the rest of the file, and the clamp block below looks it up by id.
     const stack = document.getElementById("steer-stack");
     if (stack !== null) {
       document.body.appendChild(stack);
@@ -709,10 +871,10 @@ describe("the row across its own confirmation", () => {
     });
   }
 
-  /** The row's own ENTRY transitions, which are the two `@starting-style` declares.
-   *  Filtered rather than the whole list, because a confirmation deliberately
-   *  animates the row's ink — so "nothing is running" would forbid the settle as
-   *  well as the re-entry, and `border-color` alone reports one per side. */
+  /** The row's own ENTRY transitions, which are the two `@starting-style` declares. Filtered
+   *  rather than the whole list, because a confirmation deliberately animates the row's ink — so
+   *  "nothing is running" would forbid the settle as well as the re-entry, and `border-color`
+   *  alone reports one per side. */
   function entryAnimations(row: HTMLElement): Animation[] {
     return row
       .getAnimations()
@@ -729,9 +891,9 @@ describe("the row across its own confirmation", () => {
     return entryAnimations(row);
   }
 
-  // The premise, asserted rather than assumed: without an entry transition on the
-  // row there is nothing for a rebuild to replay, and the two cases below would
-  // pass over a stylesheet that had lost it.
+  // The premise, asserted rather than assumed: without an entry transition on the row there is
+  // nothing for a rebuild to replay, and the two cases below would pass over a stylesheet that had
+  // lost it.
   it("enters through a starting style, so a replacement would re-animate", async () => {
     expect(ruleBody(loadCSS("26-dock.css"), ".steer-row")).toContain("@starting-style");
 
@@ -766,9 +928,6 @@ describe("the row across its own confirmation", () => {
     expect(getComputedStyle(row).opacity, "and it stays fully painted").toBe("1");
   });
 
-  // A steer arriving beside one already on screen is the other render that used to
-  // rebuild every row: the new one is entitled to its entry fade, the settled one
-  // is not.
   it("leaves an established row alone when a second message arrives", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
     const first = firstRow();
@@ -781,15 +940,9 @@ describe("the row across its own confirmation", () => {
     expect(entryAnimations(first), "and it does not re-enter").toEqual([]);
   });
 
-  // THE ROW MUST NOT CHANGE HEIGHT WHEN IT CONFIRMS, and this is measured at both
-  // pointer tiers because the size of the jump was the hit-target floor: the
-  // controls arrive with the confirmation and each is floored to `--hit-floor`, so
-  // the row went 34px -> 42px on a mouse and 34px -> 62px on a phone. The bar grows
-  // UPWARD, so that reached the reader as the transcript jumping by the same amount
-  // in the same frame the row was still fading in.
-  //
-  // `.steer-actions` reserves that height while it is empty, so what the
-  // confirmation changes is the buttons' opacity and the row's ink.
+  // THE ROW MUST NOT CHANGE HEIGHT WHEN IT CONFIRMS, and this is measured at both pointer tiers
+  // because the size of the jump was the hit-target floor: the controls arrive with the
+  // confirmation and each is floored to `--hit-floor`, so
   for (const tier of ["fine", "coarse"] as const) {
     it(`keeps its height across the confirmation on a ${tier} pointer`, async () => {
       document.documentElement.dataset["pointer"] = tier;
@@ -797,8 +950,8 @@ describe("the row across its own confirmation", () => {
       const row = firstRow();
       await settles();
       const before = row.getBoundingClientRect().height;
-      // The floor is what makes the two tiers different measurements rather than
-      // one measurement run twice, so the premise is asserted.
+      // The floor is what makes the two tiers different measurements rather than one measurement
+      // run twice, so the premise is asserted.
       expect(
         getComputedStyle(document.documentElement).getPropertyValue("--hit-floor").trim(),
         "the tier is in force",
@@ -816,10 +969,9 @@ describe("the row across its own confirmation", () => {
   }
 });
 
-// The clamp is CSS-only and has no opener, so what real layout answers here is
-// whether the row is clipped to four lines with no control to open it. The stack
-// element is the module's own (captured at init), so these cases re-parent it into
-// a narrow host rather than building a second one.
+// The clamp is CSS-only and has no opener, so what real layout answers here is whether the row is
+// clipped to four lines with no control to open it. The stack element is the module's own (captured
+// at init), so these cases re-parent it into a narrow host rather than building a second one.
 describe("the row's clamp", () => {
   let styleEl: HTMLStyleElement;
   let host: HTMLElement;
@@ -837,9 +989,9 @@ describe("the row's clamp", () => {
   });
 
   beforeEach(() => {
-    // Same one-line reset as the suite above: a fresh session has no steers, so
-    // the render empties the stack. Repeated rather than hoisted because these
-    // cases are a sibling describe with their own layout host.
+    // Same one-line reset as the suite above: a fresh session has no steers, so the render empties
+    // the stack. Repeated rather than hoisted because these cases are a sibling describe with their
+    // own layout host.
     seq = 0;
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
@@ -865,16 +1017,16 @@ describe("the row's clamp", () => {
     const row = firstRow();
     expect(textEl(row).textContent).toContain("bundles first");
     expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
-    // The count is a stylesheet fact now, with no TypeScript constant to pair it
-    // against, so this is where four is pinned.
+    // The count is a stylesheet fact now, with no TypeScript constant to pair it against, so this
+    // is where four is pinned.
     expect(
       getComputedStyle(textEl(row)).getPropertyValue("-webkit-line-clamp").trim(),
       "clipped to four lines",
     ).toBe("4");
   });
 
-  // Fails if the opener comes back under any class name: a reader who wants the
-  // whole message clicks Edit.
+  // Fails if the opener comes back under any class name: a reader who wants the whole message
+  // clicks Edit.
   it("offers no control to expand a clamped message", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
@@ -884,8 +1036,8 @@ describe("the row's clamp", () => {
     }
   });
 
-  // The two channels differ by one trim: `data-tooltip` carries the raw text and
-  // the accessible name runs it through `oneLine`.
+  // The two channels differ by one trim: `data-tooltip` carries the raw text and the accessible
+  // name runs it through `oneLine`.
   it("keeps the whole message reachable in the tooltip and the accessible name", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
@@ -893,9 +1045,8 @@ describe("the row's clamp", () => {
     expect(row.getAttribute("aria-label")).toBe(`Sent, waiting for the agent: ${LONG.trim()}`);
   });
 
-  // The row is a grid whose middle track is `minmax(0, 1fr)`, and that is what
-  // keeps the actions on the row: an `auto` middle track sizes to the text and
-  // pushes them off.
+  // The row is a grid whose middle track is `minmax(0, 1fr)`, and that is what keeps the actions on
+  // the row: an `auto` middle track sizes to the text and pushes them off.
   it("keeps every control on the row at the clamped height", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();

@@ -1,45 +1,8 @@
-// ---------------------------------------------------------------------------
-// The workflow mark on a CHAT's tab row.
-//
-// Five properties carry the feature, and each one is the reason it exists rather
-// than a detail of it:
-//
-//  1. THE FOLD. N live runs land on ONE mark, by the dot vocabulary's own
-//     precedence minus the outcome states: input > waiting > working > nothing.
-//     Get the order wrong and a run blocked on a decision is masked by a sibling
-//     that needs nothing from anyone — the same masking `tabStatusFor`'s own
-//     precedence exists to prevent, one element over.
-//
-//  2. PER-CHAT SCOPING, and it is the whole point of putting the mark on the strip.
-//     `run-bar.ts` already renders the ACTIVE chat's live runs, so it can say runs
-//     exist and cannot say WHICH chat. A mark that leaked across rows would answer
-//     the bar's question instead of this one.
-//
-//  3. IT IS NOT GATED ON THE READER. A run launched from chat A must show on A's
-//     row while the reader sits in chat B — that is the reported defect verbatim,
-//     and the reason the producer reads a GLOBAL inventory rather than the active
-//     session.
-//
-//  4. NO FOOTPRINT WITHOUT A RUN. The mark takes space only while it is painting
-//     one, so a quiet row is charged nothing and the strip keeps one text origin
-//     with no compensating indent anywhere. It used to reserve its box in every
-//     state, which put 16px of empty space on every chat row for the mark's sake;
-//     the title moving when a run starts is the accepted cost of taking that back.
-//     Asserted against real layout with the shipped stylesheet mounted, because it
-//     is a geometry claim and nothing about the markup implies it.
-//
-//  5. WITHDRAWAL ON SETTLE. The live inventory deletes a run's row at its terminal
-//     status, so an OUTCOME is not available to paint. The mark has to disappear
-//     rather than turn green, and a `done` leaking through would be a claim this
-//     producer cannot support.
-//
-// The projection is REAL here — rows arrive through an `open_tab` round trip
-// against the fake collection and `createTabEl` builds them — because three of the
-// five properties are about the row's DOM rather than about the fold. The run store
-// and the dock are the two mocks, so a case can drive an inventory and an ask
-// directly; both are signal-backed, or the effect under test loses the dependency
-// that makes it repaint.
-// ---------------------------------------------------------------------------
+// The workflow mark on a CHAT's tab row: the fold (input > waiting > working > nothing, so
+// a blocked run is never masked), per-chat scoping, no gating on the reader, no footprint
+// without a run (measured on real layout), and withdrawal on settle. The projection is
+// REAL (rows via `open_tab` and `createTabEl`); the run store and dock are signal-backed
+// mocks.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
@@ -71,9 +34,7 @@ function dockChanged(): void {
 }
 
 vi.mock("./run-store.js", () => ({
-  // TRACKED like production's: the inventory's version is what repaints a row when
-  // a run starts or settles with no tab mutation behind it. Whole ROWS, because the
-  // fold reads `executing` as its floor while a run's cell is still absent.
+  // TRACKED like production's; whole ROWS, because the fold reads `executing` as its floor.
   liveRunsForChat: vi.fn((chatID: string) => {
     void runsVersion.value;
     if (chatID === "") {
@@ -97,9 +58,7 @@ vi.mock("./run-store.js", () => ({
     void runsVersion.value;
     return m.states.get(id);
   }),
-  // The REAL rule, not a stub answering false: the mark's `input` arm is decided by
-  // it, so a stub would leave a run parked on a person reading as an ordinary wait.
-  // BOTH arms, because a park inside a parallel branch reaches only the second.
+  // The REAL park rule, both arms (a parallel branch's park reaches only the second).
   isNeedInputPark: (state: RunState | undefined): boolean => {
     if (state?.status !== "paused") {
       return false;
@@ -128,9 +87,8 @@ vi.mock("./run-store.js", () => ({
 }));
 
 vi.mock("./decision-dock.js", () => ({
-  // The RUN-scoped reader, joined by run id: a chat-parented run's ask is filed
-  // under the LAUNCHING chat with the run stamped on the payload, so only a scan
-  // over that field finds it.
+  // Joined by run id: a chat-parented run's ask is filed under the launching chat with the run
+  // on the payload.
   runPendingAsks: vi.fn((workflowID: string) => {
     void queueVersion.value;
     return {
@@ -238,9 +196,7 @@ async function resetProjection(): Promise<void> {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
-    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
-    // type-check. Inert here: no case opens a spec tab, and closing the member is not
-    // this suite taking a position on the kind.
+    // `TabOpeners` requires `spec`; inert here.
     spec: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
@@ -276,10 +232,10 @@ function markState(id: string): string {
   return markOf(id).dataset["status"] ?? "";
 }
 
-/** A CSS length RESOLVED by the page, so a geometry expectation is derived from
- *  the token the rule names instead of restating its value. The tokens are authored
- *  in rem and one of them changes on a coarse pointer, so reading them off `:root`
- *  and converting here would put a second unit rule in the test. */
+/**
+ * A CSS length RESOLVED by the page, so expectations derive from the token the rule names
+ * (rem tokens, one changing on a coarse pointer).
+ */
 function probe(value: string): number {
   const p = document.createElement("div");
   p.style.inlineSize = value;
@@ -295,22 +251,11 @@ function gap(): number {
   return probe("var(--sp-2)");
 }
 
-/** Wait out everything moving in a row, which is the precondition for comparing two
- *  geometry reads taken in different frames.
- *
- *  TWO animations live here, and missing either one costs 12px or 16px of nonsense.
- *  The mark's footprint is a TRANSITION (12-tabs.css), so a read in the tick of the
- *  state write lands mid-flight at the tucked value. And a freshly rendered row runs
- *  `vk-slide-in-x` (10-shell-app.css `.tab.entering`), a `translateX(-0.75rem)` over
- *  the whole ROW — so a baseline taken right after `paint()` is 12px left of where
- *  the row settles, and the shift it is subtracted from reads 28 instead of 16. The
- *  subtree covers both, which is why this takes the row rather than the mark.
- *
- *  Event-driven rather than a timeout, so it is not a load-sensitive assertion: the
- *  rect read forces the style recalc that CREATES the transitions, and `finished` is
- *  what says they are over. Infinite animations are excluded or the wait never
- *  returns; a cancelled one rejects, which is a settle for this purpose (a second
- *  state landed and the caller waits on its own settle). */
+/**
+ * Wait out everything moving in a row before comparing geometry: the mark's footprint is a
+ * TRANSITION, and a fresh row runs `vk-slide-in-x` over the whole row. Event-driven via
+ * `finished`; infinite animations are excluded and a cancelled one counts as settled.
+ */
 async function settle(id: string): Promise<void> {
   const row = rowOf(id);
   row.getBoundingClientRect();
@@ -339,9 +284,7 @@ function liveRun(runID: string, chatID: string, state: Partial<RunState> = {}): 
   runsChanged();
 }
 
-/** A run the inventory holds and nothing has been fetched for: the state a
- *  lifecycle frame or the boot rebuild leaves for the round trip before `inspect`
- *  answers. `executing` is the only thing the client has been told about it. */
+/** A run the inventory holds with nothing fetched yet: `executing` is all the client knows. */
 function unfetchedRun(runID: string, chatID: string, executing: boolean): void {
   m.live.set(runID, { chat: chatID, executing });
   runsChanged();
@@ -370,9 +313,7 @@ beforeEach(async () => {
   runsChanged();
 });
 
-// ---------------------------------------------------------------------------
-// 1. The mark exists, on chat rows and nowhere else.
-// ---------------------------------------------------------------------------
+// 1. The mark exists, on chat rows only.
 
 describe("the workflow mark rides a chat row's leading cluster", () => {
   it("sits immediately after the activity dot and before the name", async () => {
@@ -420,9 +361,7 @@ describe("the workflow mark rides a chat row's leading cluster", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 2. The fold.
-// ---------------------------------------------------------------------------
 
 describe("N live runs fold onto one mark", () => {
   let chat = "";
@@ -482,18 +421,14 @@ describe("N live runs fold onto one mark", () => {
   });
 
   it("works from the inventory's own flag before the run's cell resolves", () => {
-    // The row lands with the lifecycle frame; the `inspect` that fills the cell is a
-    // round trip behind it. `executing` is what the client has been told in that
-    // window, so the mark paints from it rather than waiting — which is what makes
-    // the square appear from the first answer instead of the second.
+    // The mark paints from `executing` before `inspect` fills the cell.
     unfetchedRun("wf_unknown", "c1", true);
     expect(markState(chat)).toBe("working");
   });
 
   it("says nothing for an unfetched run this process holds no deadline for", () => {
-    // `executing === false` is where the flag stops being an answer: a parked lease
-    // and one read back from disk report it identically, so claiming a state would
-    // be guessing. `run-bar.ts` withholds in the same case.
+    // `executing === false` is no answer (a parked lease and a disk read look alike), as in
+    // `run-bar.ts`.
     unfetchedRun("wf_unknown", "c1", false);
     expect(markState(chat)).toBe("");
   });
@@ -505,11 +440,8 @@ describe("N live runs fold onto one mark", () => {
   });
 
   it("takes the cell over the flag once the cell arrives", () => {
-    // `executing` reports whether THIS PROCESS holds a deadline for the run, so it is
-    // a FLOOR for the window before the cell lands and nothing afterwards: a run read
-    // back from disk answers `false` while genuinely running, which is the state a
-    // boot rebuild lands in. Gating the fold on the flag rather than only the floor
-    // would withhold for exactly that run.
+    // `executing` is a FLOOR before the cell lands: a disk-read run answers `false` while
+    // running.
     m.live.set("wf_disk", { chat: "c1", executing: false });
     m.states.set("wf_disk", { workflowId: "wf_disk", status: "running" } as RunState);
     runsChanged();
@@ -517,10 +449,7 @@ describe("N live runs fold onto one mark", () => {
   });
 
   it("lets an unanswered ask outrank the floor's withholding", () => {
-    // The ask is joined by RUN id and short-circuits ahead of any status, so it
-    // reaches the run whose cell has not arrived AND whose flag withholds — which is
-    // the run a reader most needs marked, because nothing else on screen says it is
-    // blocked on them.
+    // The ask short-circuits ahead of any status, reaching the unfetched, withheld run.
     unfetchedRun("wf_unknown", "c1", false);
     m.asks.push("wf_unknown");
     dockChanged();
@@ -528,9 +457,7 @@ describe("N live runs fold onto one mark", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 3. Scoping, and the reader's own position.
-// ---------------------------------------------------------------------------
 
 describe("the mark is scoped to the chat that launched the run", () => {
   it("leaves another chat's row alone", async () => {
@@ -544,8 +471,8 @@ describe("the mark is scoped to the chat that launched the run", () => {
 
   it("shows chat A's run on A's row while the reader sits in chat B", async () => {
     const a = await openSubject("chat", "cA");
-    // Opening B activates it, so the reader is looking at B — the reported defect
-    // verbatim: from another tab there was no way to see that A had a run going.
+    // Opening B activates it, so the reader is looking at B and must still see that A
+    // has a run going.
     const b = await openSubject("chat", "cB");
     await paint();
     const { getActiveTabId } = await import("./tabs.js");
@@ -556,9 +483,7 @@ describe("the mark is scoped to the chat that launched the run", () => {
   });
 
   it("marks a row for a run that started before that chat's tab was rendered", async () => {
-    // The inventory is GLOBAL and rebuilt from GET /api/runs/live, so a run can
-    // predate the row. The state is parked on the row and repainted by
-    // createTabEl, which is what makes a boot restore correct.
+    // The inventory is GLOBAL, so a run can predate the row; createTabEl repaints parked state.
     liveRun("wf_1", "cA", { status: "running" });
     const a = await openSubject("chat", "cA");
     await paint();
@@ -566,9 +491,7 @@ describe("the mark is scoped to the chat that launched the run", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 4. Withdrawal on settle.
-// ---------------------------------------------------------------------------
 
 describe("the mark withdraws when a run ends", () => {
   let chat = "";
@@ -606,9 +529,7 @@ describe("the mark withdraws when a run ends", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 5. The count and its breakdown.
-// ---------------------------------------------------------------------------
 
 describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
   let chat = "";
@@ -641,9 +562,7 @@ describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
       status: "paused",
       pauseReason: "Step requested user input via send_message.",
     });
-    // The fold shows ONE mark, so this string is the only place the count and the
-    // split survive. Without it "three runs, one wanting a decision" is
-    // indistinguishable from "one run".
+    // One mark, so the count and split survive only in this string.
     expect(markOf(chat).dataset["tooltip"]).toBe("3 workflow runs, 1 needs a decision");
   });
 
@@ -655,17 +574,8 @@ describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 6. The mark's footprint, against real layout.
-//
-// The mark takes space only while a run is live, so a row with no run is charged
-// nothing for it. That replaced a reserved box (`visibility: hidden`) which bought
-// a title that never moved and charged every chat row 16px of empty space to do
-// it — reported as a large permanent gap between the activity dot and the title.
-// The cost of withdrawing it is a title that moves when a run starts, so BOTH the
-// zero footprint and the size of that move are measured here with the shipped
-// stylesheet mounted: nothing about the markup implies either.
-// ---------------------------------------------------------------------------
+// 6. The mark takes space only while a run is live; both the zero footprint and the size
+// of the title's move are measured with the shipped stylesheet.
 
 describe("the mark takes space only while a run is live", () => {
   let style: HTMLStyleElement;
@@ -679,10 +589,8 @@ describe("the mark takes space only while a run is live", () => {
   });
 
   it("puts nothing between the activity dot and the title while no run is going", async () => {
-    // THE DEFECT, measured: the whole distance from the dot's ink to the title is the
-    // dot's own trailing half-slot plus the row's gap, and no third term. With the
-    // mark's box reserved it was that plus a gap plus a mark — 27px against 12 on a
-    // fine pointer — on every chat row in the strip, permanently.
+    // From the dot's ink to the title is the dot's trailing half-slot plus the row's gap, and
+    // no third term.
     const chat = await openSubject("chat", "c1");
     await paint();
     await settle(chat);
@@ -700,11 +608,8 @@ describe("the mark takes space only while a run is live", () => {
     const chat = await openSubject("chat", "c1");
     await paint();
     const mark = markOf(chat);
-    // The mark keeps its BOX so it has something to animate into layout from, and
-    // pays for that box with a negative leading margin: one mark plus one gap, which
-    // is the pair of terms the row's own `gap` charges on either side of it. Not
-    // `visibility: hidden`, whose box is charged in full, and not `display: none`,
-    // which cannot animate.
+    // The mark keeps its BOX to animate from, paid for by a negative leading margin (one mark
+    // plus one gap); `visibility: hidden` charges the box, `display: none` cannot animate.
     expect(getComputedStyle(mark).opacity).toBe("0");
     expect(mark.getBoundingClientRect().width).toBeGreaterThan(0);
     expect(Number.parseFloat(getComputedStyle(mark).marginInlineStart)).toBeCloseTo(
@@ -719,10 +624,7 @@ describe("the mark takes space only while a run is live", () => {
   });
 
   it("opens the space BEFORE the mark fades into it, and closes it after", async () => {
-    // The spawn's ORDER, which is the whole of what a reader sees: the title makes
-    // room, then the mark arrives in the room it made. Read off the resolved cascade
-    // rather than the source, because the two directions are two separate lists and
-    // what matters is which property carries the delay in each.
+    // The spawn's ORDER: the title makes room, then the mark arrives, read off the cascade.
     const chat = await openSubject("chat", "c1");
     await paint();
     const mark = markOf(chat);
@@ -745,9 +647,7 @@ describe("the mark takes space only while a run is live", () => {
   });
 
   it("moves the title by exactly one gap and one mark when a run starts, and back", async () => {
-    // The accepted cost of withdrawing the reservation, pinned so it cannot grow: the
-    // shift is the mark plus the one gap it is charged, and it is fully reversed on
-    // settle. A reader can see what moved it, which the permanent gap never showed.
+    // The accepted cost: the shift is the mark plus its gap, fully reversed on settle.
     const chat = await openSubject("chat", "c1");
     const { renameTab } = await import("./tabs.js");
     renameTab(chat, "Fix the parser");
@@ -774,14 +674,10 @@ describe("the mark takes space only while a run is live", () => {
     const row = rowOf(chat);
     const dot = row.querySelector<HTMLElement>(".tab-status-dot");
     const mark = markOf(chat);
-    // The arithmetic 12-tabs.css states, DERIVED rather than restated as numbers, so
-    // a token retune moves the expectation instead of failing it. Probes resolve the
-    // tokens; nothing here is a literal.
+    // 12-tabs.css's arithmetic, derived from probed tokens rather than literals.
     const slot = probe("var(--icon-ui)");
     const size = probe("var(--dot-size)");
-    // The mark is charged the row's own gap and nothing else, and the dot keeps the
-    // trailing half of the glyph slot it holds: that is the whole of the pair's extra
-    // chrome, so the cluster is one glyph slot plus one gap plus one mark.
+    // The cluster is one glyph slot plus one gap plus one mark.
     const dotToMark = mark.getBoundingClientRect().left - (dot?.getBoundingClientRect().right ?? 0);
     expect(dotToMark).toBeCloseTo((slot - size) / 2 + gap(), 1);
     // And the name follows the mark on that same gap.
@@ -793,9 +689,7 @@ describe("the mark takes space only while a run is live", () => {
     const a = await openSubject("chat", "cA");
     const b = await openSubject("chat", "cB");
     await paint();
-    // The common case is every row: a chat with no run in flight is what the strip
-    // mostly holds, and those rows share an origin with each other and with every
-    // other kind (section 7 below).
+    // Quiet rows share one origin with each other and every other kind (section 7).
     await settle(a);
     await settle(b);
     expect(titleLeft(a)).toBe(titleLeft(b));
@@ -809,9 +703,7 @@ describe("the mark takes space only while a run is live", () => {
       status: "paused",
       pauseReason: "Step requested user input via send_message.",
     });
-    // `input` is the state that also carries a halo, which is a box-shadow and so
-    // takes no layout — the widest state must still cost exactly the mark and its
-    // gap, or the divergence between a running row and a quiet one grows with state.
+    // `input`'s halo is a box-shadow, so the widest state still costs only mark and gap.
     expect(markState(a)).toBe("input");
     await settle(a);
     await settle(b);
@@ -819,11 +711,8 @@ describe("the mark takes space only while a run is live", () => {
   });
 
   it("moves a chat SUB-TAB's name by that same shift, and no other", async () => {
-    // A sub-tab's cluster is a different rule from a top-level row's — the nesting
-    // arrow holds the glyph slot and `.tab-nest + .tab-status-dot` zeroes the dot's
-    // own margin — so the shift has to be measured on that shape too. The dot's
-    // reservation for the two kinds that NEST is also a separate rule from the
-    // mark's, and this is the row where the two meet.
+    // A sub-tab's cluster is its own rule (`.tab-nest + .tab-status-dot`), so it is measured
+    // too.
     const { openTab, tabIdFor, renameTab } = await import("./tabs.js");
     const parent = await openSubject("chat", "c1");
     await openTab({ kind: "chat", ref: "c2", parent });
@@ -845,16 +734,8 @@ describe("the mark takes space only while a run is live", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 7. The strip's shared text origin, which this feature must not disturb.
-//
-// `.tab-status-dot:first-child` puts a chat row's leading dot in the KIND GLYPH'S
-// slot for one reason: so a chat row's title lines up with a settings or files
-// row's. That is now the whole mechanism — the mark costs a quiet row nothing, so
-// the two compensating `.tab-name` indents that used to pay for its reserved box
-// are gone. It is a claim about nine kinds this producer never writes to, which is
-// why it is measured here rather than reasoned about.
-// ---------------------------------------------------------------------------
+// 7. The strip's shared text origin: `.tab-status-dot:first-child` puts a chat row's dot in
+// the kind glyph's slot so titles line up across nine kinds, measured here.
 
 describe("a mixed strip keeps one text origin", () => {
   let style: HTMLStyleElement;
@@ -875,12 +756,8 @@ describe("a mixed strip keeps one text origin", () => {
       ids.push(await openSubject(kind));
     }
     await paint();
-    // EVERY row settles before ANY of them is read, because `vk-slide-in-x` moves the
-    // whole ROW by -0.75rem and a row rendered later is at an earlier phase of it: the
-    // rows disagree by whatever the frame caught while each one's own leading cluster
-    // is identical (measured: `name.left - row.left` is 37.0px on all six, against a
-    // row origin of -11.626 at 5.19ms and -12 at 0ms of the same 100ms translate). So
-    // an unsettled comparison reads a per-row animation phase as a misaligned title.
+    // EVERY row settles before any is read: `vk-slide-in-x` would make animation phase read as
+    // misalignment.
     for (const id of [chat, ...ids]) {
       await settle(id);
     }
@@ -890,11 +767,7 @@ describe("a mixed strip keeps one text origin", () => {
         origin,
       );
     }
-    // And the shared origin is ONE glyph slot plus one gap, with no term for the
-    // mark: the dot's slot IS the glyph's width, so the two shapes agree by
-    // construction rather than through a corrective indent. Derived from the tokens,
-    // so a retune moves it — and on a coarse pointer --icon-ui changes while a
-    // literal would not, which is how the old 0.875rem hid a 4px misalignment.
+    // One glyph slot plus one gap, derived from tokens (--icon-ui changes on a coarse pointer).
     const row = rowOf(chat).getBoundingClientRect();
     const border = probe("1px");
     const pad = probe("var(--sp-3)");
@@ -902,10 +775,7 @@ describe("a mixed strip keeps one text origin", () => {
   });
 
   it("lines a chat SUB-TAB's title up with the other kinds that nest", async () => {
-    // A run sub-tab and a subagent sub-tab are the two kinds that sit here and cannot
-    // carry a mark, and their arrow is --icon-ui exactly like a chat sub-tab's — so
-    // with the mark costing a quiet row nothing, all three shapes are arrow, gap,
-    // reserved dot slot, gap, title, and they agree with no indent anywhere.
+    // Run and subagent sub-tabs carry no mark, and all three sub-tab shapes agree with no indent.
     const { openTab, tabIdFor } = await import("./tabs.js");
     const parent = await openSubject("chat", "c1");
     await openTab({ kind: "chat", ref: "c2", parent });
@@ -925,10 +795,8 @@ describe("a mixed strip keeps one text origin", () => {
     const chatChild = titleLeft(tabIdFor("chat", "c2"));
     expect(titleLeft(tabIdFor("run", "wf_1"))).toBe(chatChild);
     expect(titleLeft(tabIdFor("subagent", "c1/task-1"))).toBe(chatChild);
-    // The two SHAPES do not share an origin with each other, and that is by design
-    // rather than a gap in the derivation: a sub-tab's whole ROW is indented 1rem
-    // and its nesting arrow holds the glyph slot, so its title is further right by
-    // both. What the rule buys is one origin per shape, which is what a reader scans.
+    // The two SHAPES have different origins by design: a sub-tab row is indented 1rem and its
+    // arrow holds the glyph slot. One origin per shape.
     expect(chatChild).toBeGreaterThan(titleLeft(parent));
     expect(
       rowOf(tabIdFor("chat", "c2")).getBoundingClientRect().left -
@@ -937,18 +805,9 @@ describe("a mixed strip keeps one text origin", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 6. The fold's DEMAND on a run's state cell.
-//
-// The store's cache has one bound, `forgetRun`, reached when the transcript's run
-// card unmounts — and this module is a reader that card knows nothing about, which
-// is the seam that played the mark's 350ms withdraw over a run that was still
-// going. The predicate is what the store asks instead of enumerating its readers.
-//
-// The PARKED case is the half a floor cannot carry: an `executing === false` row
-// contributes nothing without its cell, and a parked run emits no frame that would
-// refill one, so the mark stays withdrawn until that chat is next activated.
-// ---------------------------------------------------------------------------
+// The fold's DEMAND on a run's state cell: `forgetRun` fires when the run card unmounts,
+// unaware of this reader, so the store asks the predicate. A parked `executing === false`
+// run emits no frame to refill its cell.
 
 describe("the fold's demand on a run's state cell", () => {
   it("claims a PARKED run whose launching chat has an open tab", async () => {

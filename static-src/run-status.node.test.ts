@@ -41,11 +41,9 @@ describe("the run-status contract shared with Go", () => {
     expect(status === undefined ? undefined : runStatusTerminal(status)).toBe(false);
   });
 
-  // The one status the shared fixture cannot carry: `cancelled` is a declared EXTRA
-  // (KAS never emits it, but the cancel verb writes `targetStatus` verbatim with no
-  // enum check), and the Go census asserts that fixture equals KAS's enum exactly.
-  // So it is pinned here and in internal/marotte's own contract test, which is what
-  // keeps the two languages agreeing that it reads as over.
+  // The one status the shared fixture cannot carry: `cancelled` is a declared EXTRA (KAS never
+  // emits it, but the cancel verb writes `targetStatus` verbatim with no enum check), and the Go
+  // census asserts that fixture equals KAS's enum exactly.
   it("reads a cancelled run as over, matching the Go predicate", () => {
     const status = classifyRunStatus("cancelled");
     expect(status).toBe("cancelled");

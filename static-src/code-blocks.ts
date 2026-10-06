@@ -1,22 +1,7 @@
-// ---------------------------------------------------------------------------
-// Code-block decoration: a title bar carrying the language and the block's
-// actions, syntax highlighting, and a Run button for short shell snippets that
-// dispatches to the shell via a callback (avoids a static cycle with shell.ts).
-//
-// TWO STATES, ONE PATH. A fenced block is decorated PROVISIONALLY while it is
-// still streaming — wrapper, language label, Copy — and FINALLY once the fence
-// closes, which is when the text stops growing and highlighting becomes
-// meaningful. Both go through `decorateBlock`, which is idempotent and upgrades
-// in place, because the alternative (a separate streaming builder) is two
-// definitions of one piece of chrome.
-//
-// The provisional pass exists because the renderer's per-block callback only
-// fires when a block CLOSES. An unterminated fence at the tail of a live turn
-// therefore had no highlight, no language and no Copy button — and, since
-// `parser_end` does not close open tokens either, it kept none of them after the
-// turn ended. So the sweep is not cosmetic: it is the only thing that decorates
-// a block the model never closed.
-// ---------------------------------------------------------------------------
+// Code-block decoration: title bar (language + actions), highlighting, and Run for short shell snippets (a callback,
+// to avoid a static cycle with shell.ts). One idempotent path, `decorateBlock`, decorates a still-streaming fence
+// provisionally and upgrades it on close. The provisional sweep is the only thing that decorates a fence the model
+// never closed: the renderer's per-block callback fires only on close, and `parser_end` closes no open token.
 
 import { el } from "@cplieger/reactive";
 import { highlightByLang, normalizeLang } from "./highlight.js";
@@ -26,15 +11,13 @@ import { CHROME_ATTR } from "./chrome-attr.js";
 
 const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
 
-/** Decoration state, held on the wrapper so a second pass knows what is left to
- *  do. `streaming` has chrome but no highlighting; `final` has both. */
+/** On the wrapper so a second pass knows what is left: `streaming` has chrome, `final` adds highlighting. */
 const STATE_ATTR = "data-code-state";
 
 type ShellRunCb = (cmd: string) => void;
 let shellRunCb: ShellRunCb | null = null;
 
-/** Wire the shell panel's run handler. Called once at startup by the
- *  shell module. */
+/** Wire the shell panel's run handler; called once at startup by the shell module. */
 export function setShellRunCallback(cb: ShellRunCb): void {
   shellRunCb = cb;
 }
@@ -42,27 +25,22 @@ export function setShellRunCallback(cb: ShellRunCb): void {
 type CopyCb = (text: string) => void;
 let copyCb: CopyCb | null = null;
 
-/** Wire the clipboard copy handler. Called once at startup alongside
- *  setShellRunCallback to avoid a dynamic import cycle. */
+/** Wire the clipboard copy handler; a callback to avoid a dynamic import cycle. */
 export function setCopyCallback(cb: CopyCb): void {
   copyCb = cb;
 }
 
-/** Decorate every code block under `root` as FINAL. Called from the renderer's
- *  per-block-complete hook, and again when a markdown stream ends so a fence the
- *  model never closed still gets its highlighting and its buttons. */
+/** Decorate every code block under `root` as final. Also run when a stream ends, so an unclosed fence is finished. */
 export function decorateCodeBlocks(root: HTMLElement): void {
   for (const pre of root.querySelectorAll("pre")) {
     decorateBlock(pre, false);
   }
 }
 
-/** Decorate the block currently streaming in, if there is one.
- *
- *  The open block is the LAST `<pre>` under the host: the parser is append-only,
- *  so nothing can arrive after it while it is open. A `final` wrapper is left
- *  alone, which is what keeps this safe to call after every parse slice — the
- *  block that just closed is finished business. */
+/**
+ * Decorate the block currently streaming in, if any: the last `<pre>` (the parser is append-only). A `final`
+ * wrapper is left alone, so this is safe after every parse slice.
+ */
 export function decorateStreamingCodeTail(root: HTMLElement): void {
   const pres = root.querySelectorAll("pre");
   const last = pres[pres.length - 1];
@@ -72,12 +50,10 @@ export function decorateStreamingCodeTail(root: HTMLElement): void {
   decorateBlock(last, true);
 }
 
-/** Build or upgrade one block's decoration.
- *
- *  `provisional` means the text is still arriving: chrome yes, highlighting no
- *  (a highlight pass over a half-written statement is wrong more often than it
- *  is right), and no Run button (an incomplete command is exactly the one that
- *  must not be offered to a shell). */
+/**
+ * `provisional`: chrome only. No highlight (a half-written statement highlights wrong) and no Run (an incomplete
+ * command must not reach a shell).
+ */
 function decorateBlock(pre: HTMLElement, provisional: boolean): void {
   const existing = pre.parentElement;
   const wrapped = existing?.classList.contains("code-wrap") === true ? existing : null;
@@ -92,9 +68,7 @@ function decorateBlock(pre: HTMLElement, provisional: boolean): void {
   finalizeBlock(wrap, pre);
 }
 
-/** Wrap a bare `<pre>` and give it its title bar: the language on the left, the
- *  actions on the right. Copy reads the text at CLICK time so the same button
- *  serves a streaming block and a finished one. */
+/** Copy reads the text at click time, so one button serves a streaming block and a finished one. */
 function wrapBlock(pre: HTMLElement): HTMLElement {
   const wrap = el("div", { className: "code-wrap" });
   pre.parentElement?.insertBefore(wrap, pre);
@@ -115,8 +89,6 @@ function wrapBlock(pre: HTMLElement): HTMLElement {
   return wrap;
 }
 
-/** Promote a block to its finished form: highlight in place, offer Run when the
- *  snippet qualifies. */
 function finalizeBlock(wrap: HTMLElement, pre: HTMLElement): void {
   wrap.setAttribute(STATE_ATTR, "final");
   const codeEl = pre.querySelector("code");
@@ -128,9 +100,7 @@ function finalizeBlock(wrap: HTMLElement, pre: HTMLElement): void {
     label.textContent = lang;
   }
 
-  // Highlight in place. Unknown languages pass through as plain escaped
-  // text (renderMarkdown already escaped it; we only swap innerHTML if
-  // we can highlight).
+  // Unknown languages keep the already-escaped text; innerHTML is swapped only when highlighting succeeds.
   const hlLang = normalizeLang(lang);
   if (codeEl !== null && hlLang !== "") {
     codeEl.innerHTML = highlightByLang(text, hlLang);
@@ -142,16 +112,12 @@ function finalizeBlock(wrap: HTMLElement, pre: HTMLElement): void {
   }
 }
 
-/** The block's plain text, read live so a copy during streaming copies what is
- *  on screen rather than what was there when the button was built. */
 function blockText(pre: HTMLElement): string {
   const codeEl = pre.querySelector("code");
   return (codeEl ?? pre).textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
-/** The fence tag as written, lowercased. Two channels: the `<pre>`'s own class
- *  (dormant on the markdown path, which sets a bare `code`) and the `<code>`'s
- *  `language-*` class, which is what smd-renderer writes. */
+/** The fence tag as written, lowercased: the `<pre>`'s class, else the `<code>`'s `language-*` (what smd-renderer writes). */
 export function extractLang(pre: HTMLElement, code: HTMLElement | null): string {
   const preMatch = /(?:^|\s)code\s+(\S+)/.exec(pre.className);
   if (preMatch?.[1] !== undefined && preMatch[1] !== "") {
@@ -166,11 +132,10 @@ export function extractLang(pre: HTMLElement, code: HTMLElement | null): string 
   return "";
 }
 
-/** Whether a finished fence earns the Run button. ONE command per click: a
- *  terminator inside the text would run every command it separates, so a block
- *  carrying one is refused. A terminator test rather than a line count, because
- *  a count ignores blank lines and a trailing newline; `\r` is Enter to a PTY as
- *  much as `\n`. */
+/**
+ * Whether a finished fence earns Run: one command per click, so any `\n` or `\r` terminator refuses it
+ * (a terminator test rather than a line count, which ignores blank lines and a trailing newline).
+ */
 export function isRunnableShell(lang: string, text: string): boolean {
   if (!SHELL_LANGS.has(lang)) {
     return false;

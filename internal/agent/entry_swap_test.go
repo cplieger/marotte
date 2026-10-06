@@ -13,16 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// Properties 7, 10 and 11 of the design's test strategy, against the REAL phase-2 store:
-// the merge runs only on evidence of loss, a stale projection is discarded by
-// provenance, and a rewrite preserves every id it was given.
-//
-// Scenarios rather than generated properties, because each one names an exact sequence
-// of store operations (a rewind between the projection's open and its settle, an
-// orphaned turn closed by the next process) rather than a space of inputs.
+// Properties 7, 10 and 11 against the real store: the merge runs only on evidence of loss, a
+// stale projection is discarded by provenance, and a rewrite keeps every id. Scenarios,
+// since each is an exact operation sequence.
 
-// swapFixture is one chat root: the entry log, the header beside it, and the readers a
-// scenario asserts through.
+// swapFixture is one chat root: the entry log, its header and the readers a scenario asserts through.
 type swapFixture struct {
 	t      *testing.T
 	log    *chat.EntryLog
@@ -40,9 +35,7 @@ func newSwapFixture(t *testing.T) *swapFixture {
 	}
 	t.Cleanup(func() { _ = lg.Close() })
 	f := &swapFixture{t: t, log: lg, header: h, root: root}
-	// The record beside the log, as CreateChatAndOpen writes it before any prompt: every
-	// chat the UI opens is created first, so a root with a log and no chat.json is a
-	// state the store does not produce.
+	// The record CreateChatAndOpen writes before any prompt.
 	if _, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.ID, c.Name, c.Model = "c-abcdef01", "a chat", "opus"
 		return true
@@ -52,9 +45,7 @@ func newSwapFixture(t *testing.T) *swapFixture {
 	return f
 }
 
-// reopen closes and reopens the log, which is what runs the scan and the store-open
-// closer again — the only way a test raises the reconcile signal NeedsReconcile()
-// derives, without synthesizing the closer itself.
+// reopen reruns the scan and the store-open closer, the only honest way to raise the reconcile signal.
 func (f *swapFixture) reopen() {
 	f.t.Helper()
 	if err := f.log.Close(); err != nil {
@@ -95,16 +86,14 @@ func (f *swapFixture) closeTurn(turn string, outcome marotte.TurnOutcome, raw ma
 		marotte.EntryTurnClose{Outcome: outcome, StopReasonRaw: string(raw), Model: "opus"})
 }
 
-// record is the log's own account, grouped the way the merge's spine needs it: the
-// WHOLE file plus the reverted set, which is the read the production swap performs.
+// record is the log's account as the merge spine: the whole file plus the reverted set.
 func (f *swapFixture) record() []RecordTurn {
 	f.t.Helper()
 	entries, reverted := f.everything()
 	return RecordTurnsOf(entries, reverted)
 }
 
-// revert appends the record a rewind writes, which is what marks a turn's window
-// reverted for every reader that asks for the surviving view.
+// revert appends the record a rewind writes.
 func (f *swapFixture) revert(turn string) *marotte.Entry {
 	f.t.Helper()
 	record, _, err := f.log.Revert(f.t.Context(), turn, marotte.TurnRevertCauseRewind, "")
@@ -114,10 +103,7 @@ func (f *swapFixture) revert(turn string) *marotte.Entry {
 	return record
 }
 
-// everything is the merge's own read — the whole file plus the reverted set — beside
-// `record`, which is that read grouped. A test asserting the rewrite preserved the
-// reverted material reads it here rather than through the surviving view, which by
-// definition cannot see what it is asserting about.
+// everything is the merge's own read: the whole file plus the reverted set, which the surviving view cannot show.
 func (f *swapFixture) everything() ([]marotte.Entry, map[string]struct{}) {
 	f.t.Helper()
 	entries, reverted, err := f.log.AllWithReverted()
@@ -127,8 +113,7 @@ func (f *swapFixture) everything() ([]marotte.Entry, map[string]struct{}) {
 	return entries, reverted
 }
 
-// entriesOfTurn is one turn's entries out of a flat log read, in the order the read
-// held them.
+// entriesOfTurn is one turn's entries from a flat read, in read order.
 func entriesOfTurn(entries []marotte.Entry, turn string) []marotte.Entry {
 	var out []marotte.Entry
 	for i := range entries {
@@ -149,9 +134,7 @@ func (f *swapFixture) bytes() []byte {
 	return data
 }
 
-// snapshot is the provenance a projection opening NOW would carry: the log's newest
-// turn_revert, empty when it holds none. Read off the log rather than the header,
-// because that is where the gate reads it from.
+// snapshot is the provenance a projection opening now would carry, read off the log as the gate reads it.
 func (f *swapFixture) snapshot() string {
 	f.t.Helper()
 	id, _ := f.log.NewestRevert()
@@ -167,8 +150,7 @@ func (f *swapFixture) chat() *marotte.Chat {
 	return c
 }
 
-// oneClosedTurn is the shape every scenario below starts from: one prompt turn holding
-// one say, closed by a process.
+// oneClosedTurn is one prompt turn holding one say, closed by a process.
 func (f *swapFixture) oneClosedTurn(say string) string {
 	f.t.Helper()
 	turn := f.promptTurn("go")
@@ -177,9 +159,8 @@ func (f *swapFixture) oneClosedTurn(say string) string {
 	return turn
 }
 
-// armReconcileSignal appends the empty-text steer entry a reconcile records for a steer
-// KAS persisted that this process never received. It is one of the three conditions
-// EntryLog.NeedsReconcile reads off the log.
+// armReconcileSignal appends the empty-text steer entry a lost read leaves, one of the three
+// conditions EntryLog.NeedsReconcile reads.
 func (f *swapFixture) armReconcileSignal(turn string) {
 	f.t.Helper()
 	f.append(turn, marotte.EntryKindSteer, "steer-unread", marotte.EntrySteer{
@@ -187,9 +168,7 @@ func (f *swapFixture) armReconcileSignal(turn string) {
 	})
 }
 
-// differingReplay is a projection that pairs with the fixture's turn by rule two and
-// carries a longer say plus a steer the record never held, so a merge that RUNS is
-// unmistakable.
+// differingReplay pairs by rule two and carries a longer say plus an unseen steer, so a merge that runs is unmistakable.
 func differingReplay(t *testing.T, say string) []translate.ProjectedTurn {
 	t.Helper()
 	return []translate.ProjectedTurn{projTurn(t, "P1",
@@ -200,10 +179,8 @@ func differingReplay(t *testing.T, say string) []translate.ProjectedTurn {
 	)}
 }
 
-// TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten is property 11's first half: a
-// normal resume builds the projection because KAS pushes the replay whatever marotte
-// wants, and DISCARDS it unless the header says the record is missing something. Without
-// that gate every resume would cost a whole-file rewrite.
+// TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten pins that a normal
+// resume discards the projection.
 func TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten(t *testing.T) {
 	f := newSwapFixture(t)
 	f.oneClosedTurn("S")
@@ -231,17 +208,14 @@ func TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_AnOrphanedTurnMakesTheMergeRun is property 11's second half. The
-// signal is written by the STORE's own open closer rather than by the test, because the
-// closer IS the signal: a turn left open by a process that died is closed
-// `unterminated` by the next one, and the predicate reads that closer.
+// TestSwapMerged_AnOrphanedTurnMakesTheMergeRun pins the merge running on loss; the store's own
+// open closer raises the signal.
 func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 	f := newSwapFixture(t)
 	f.oneClosedTurn("S0")
 	orphan := f.promptTurn("and again")
 	f.append(orphan, marotte.EntryKindText, "S1", marotte.EntryText{Text: "half an answer"})
-	// No closer: the process died here. Reopening is the next process, which appends the
-	// placeholder closer whose "unterminated" stop reason IS the signal.
+	// No closer: the process died. Reopening appends the `unterminated` placeholder, the signal.
 	f.reopen()
 
 	if !f.log.NeedsReconcile() {
@@ -264,13 +238,11 @@ func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 		t.Fatalf("changed = false, want true — the replay holds the tail the record lost")
 	}
 	after := f.chat()
-	// The signal self-clears in the swap's own output: the union rewrote the placeholder
-	// closer into KAS's own account, so no surviving turn is closed "unterminated".
+	// The union rewrote the placeholder, so the signal clears itself.
 	if f.log.NeedsReconcile() {
 		t.Errorf("the reconcile signal survived a completed swap that replaced the placeholder closer")
 	}
-	// The header's two caches are the LOG's, so they must agree with what the rewrite
-	// wrote rather than with what the merge was handed.
+	// The header caches are the log's and must match what the rewrite wrote.
 	count, last := f.log.Counters()
 	if uint64(after.TurnCount) != count {
 		t.Errorf("header turn_count = %d, want the log's %d", after.TurnCount, count)
@@ -281,8 +253,7 @@ func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 	if last != marotte.TurnOutcomeCancelled {
 		t.Errorf("last_turn_outcome = %q, want KAS's own account of the crashed turn", last)
 	}
-	// The placeholder the store-open closer wrote keeps its POSITION and its id — those
-	// are the record's — and loses its conclusion to KAS's own account of the turn.
+	// The placeholder keeps its position and id and loses its conclusion to KAS's account.
 	merged := f.record()
 	closer := merged[len(merged)-1].Entries[len(merged[len(merged)-1].Entries)-1]
 	if closer.Kind != marotte.EntryKindTurnClose {
@@ -298,11 +269,8 @@ func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_AStaleProvenanceDiscardsTheProjection is property 10: a rewind between
-// the projection's open and its settle APPENDS a turn_revert, so a projection built from
-// the PRE-revert replay can never hand the reverted turns back. The gate is the record
-// itself — the newest turn_revert's id, read off the log on both sides — rather than a
-// header counter, so nothing has to be stamped for the refusal to work.
+// TestSwapMerged_AStaleProvenanceDiscardsTheProjection pins the provenance gate: a rewind between the
+// projection's open and settle appends a turn_revert, and the gate reads that id off the log.
 func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 	logs := captureLogs(t)
 	f := newSwapFixture(t)
@@ -310,14 +278,14 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 	second := f.promptTurn("and again")
 	f.append(second, marotte.EntryKindText, "S1", marotte.EntryText{Text: "the turn the reader reverts"})
 	f.closeTurn(second, marotte.TurnOutcomeCompleted, "end_turn")
-	// The log's own signal leads, so the provenance gate is what the scenario reaches.
+	// The log's signal leads, so the provenance gate is reached.
 	f.armReconcileSignal(first)
 	snapshot := f.snapshot()
 	if snapshot != "" {
 		t.Fatalf("the fixture's log already holds a revert (%q), so the gate cannot be shown to move", snapshot)
 	}
 
-	// The rewind: it records the revert and moves the provenance the gate reads.
+	// The rewind moves the provenance the gate reads.
 	if _, _, err := f.log.Revert(t.Context(), second, marotte.TurnRevertCauseRewind, ""); err != nil {
 		t.Fatalf("revert: %v", err)
 	}
@@ -327,7 +295,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 	}
 	before := f.bytes()
 
-	// The projection settles now, still holding the turn the rewind removed.
+	// The projection still holds the turn the rewind removed.
 	projected := []translate.ProjectedTurn{
 		projTurn(t, "P0", openRow("P0", 0, nil), textRow("S0", "", "half an answer"),
 			closeRow("P0:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"})),
@@ -357,20 +325,13 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 	if got := strings.Count(warned, "a revert landed while the replay was in flight"); got != 1 {
 		t.Errorf("logged the discard %d times, want exactly one Warn:\n%s", got, warned)
 	}
-	// Both sides by NAME plus the newest revert's own id, so the line says which record
-	// refused the projection rather than only that one did. Matched without the
-	// key/value separator, because the handler's format is the caller's choice.
+	// Both sides by name plus the newest revert id, without the key/value separator.
 	if !strings.Contains(warned, "snapshot_revert") || !strings.Contains(warned, "newest_revert") ||
 		!strings.Contains(warned, afterRewind) {
 		t.Errorf("the Warn does not name both revert ids (want an empty snapshot and %q):\n%s", afterRewind, warned)
 	}
 
-	// A LATER load with a fresh snapshot merges as usual: the discard postpones the
-	// reconciliation rather than abandoning it. KAS's replay is POST-revert now, so the
-	// projection holds the surviving turn alone, carrying the tail the record lost; the
-	// reverted turn stays out of the SURVIVING view, which is the sense in which it is
-	// gone (RE-KEYED: the arm below counted the merge's own input, which is the whole
-	// file now, so it was asserting the compaction decision 2 forbids).
+	// A later load with a fresh snapshot merges as usual: the discard postpones reconciliation.
 	fresh := f.snapshot()
 	postRevert := []translate.ProjectedTurn{
 		projTurn(t, "P0", openRow("P0", 0, nil), textRow("S0", "", "half an answer and the tail a crash lost"),
@@ -424,10 +385,8 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder is property 7: after a rewrite
-// every id present before is present after, in the same relative order within its turn,
-// with the turns contiguous in n order — and a SECOND load of the same replay with the
-// flag set again reports no change and rewrites nothing but the flag.
+// TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder pins every id and the turn order, and a second load of
+// the same replay changes nothing.
 func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 	f := newSwapFixture(t)
 	turn := f.oneClosedTurn("S")
@@ -466,8 +425,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 			t.Errorf("turn %s: ids %v do not hold %v in order", after[i].Entries[0].Turn, got, want)
 		}
 	}
-	// Turns are written contiguously in n order, so the window read gives them back in
-	// that order with the ordinals renumbered from 1.
+	// Turns are written contiguously in n order, renumbered from 1.
 	for i := range after {
 		var open marotte.EntryTurnOpen
 		decodePayload(t, after[i].Entries[0], &open)
@@ -479,11 +437,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 		t.Errorf("the paired turn is %q, want the record's own id %q", after[0].Entries[0].Turn, turn)
 	}
 
-	// RE-KEYED when the rewrite branch gained its own records: the first swap now CLEARS
-	// the steer signal it could not settle, so the second load needs a signal of its own
-	// to run on. Condition (i) is the cheapest one to arm without touching the turns this
-	// test's first half asserted on — the header names a session no turn_bind and no
-	// reconciled record names.
+	// The first swap cleared the steer signal, so the second load arms condition (i): a session no bind names.
 	if f.log.NeedsReconcile() {
 		t.Fatalf("the rewrite left the signal armed, so it did not record what it could not fix")
 	}
@@ -507,11 +461,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 	if changed {
 		t.Errorf("changed = true on the second load, want false")
 	}
-	// The second load REWRITES nothing — every byte the first swap settled is still
-	// there, in order — and it APPENDS the record that says it looked and had nothing to
-	// add, which is what stops a third load asking the same question. Before that record
-	// existed this branch wrote nothing at all, so the merge re-ran on every resume for
-	// the life of the chat.
+	// The second load rewrites nothing and appends the record that stops a third load asking.
 	if got := string(f.bytes()); !strings.HasPrefix(got, string(settled)) {
 		t.Errorf("the second load rewrote the log:\nbefore:\n%s\nafter:\n%s", settled, got)
 	}
@@ -528,9 +478,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_AnInsertedCompactionMovesTheWatermark is rule 3's other half: the
-// context bar counts up to the watermark, so a compaction only the replay holds has to
-// move it or the reader's own bar never learns the summary happened.
+// TestSwapMerged_AnInsertedCompactionMovesTheWatermark is rule 3: a replay-only compaction moves the context bar's watermark.
 func TestSwapMerged_AnInsertedCompactionMovesTheWatermark(t *testing.T) {
 	f := newSwapFixture(t)
 	f.armReconcileSignal(f.oneClosedTurn("S"))
@@ -557,11 +505,8 @@ func TestSwapMerged_AnInsertedCompactionMovesTheWatermark(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked is the other half of the
-// reconcile loop: gate 1 reads the evidence off the log, so a merge that ran and found
-// nothing to add leaves that evidence exactly where it was — and the next resume asks
-// the same question, rebuilds the same projection and rewrites nothing, for the life of
-// the chat. The records that say "this was looked at" are that swap's whole write.
+// TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked pins the "looked" records as the
+// whole write, or every resume repeats the merge.
 func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
@@ -576,8 +521,7 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 		t.Fatal("the fixture holds no evidence of loss, so the branch under test is unreachable")
 	}
 
-	// No projected turns at all: KAS replayed nothing this record lacks, which is the
-	// case the reconcile signal exists for.
+	// No projected turns: the case reconciliation exists for.
 	changed, err := SwapMerged(t.Context(), &Swap{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: nil, SessionID: "sid-1", Snapshot: f.snapshot(),
@@ -601,10 +545,8 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_ARewriteRecordsWhatItCouldNotFix is the REWRITE branch's half of the
-// reconcile rule: a merge that changed the log still records the signals its own output
-// left standing, in the SAME write. A rewrite that clears nothing leaves a chat whose
-// every later resume re-runs a whole-file merge over an orphan KAS has no account of.
+// TestSwapMerged_ARewriteRecordsWhatItCouldNotFix pins the rewrite branch recording, in the same
+// write, the signals its output left standing.
 func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
@@ -613,17 +555,15 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bind the header's session: %v", err)
 	}
-	// The orphan the store-open closer left: closed `unterminated`, and the replay
-	// carries nothing that pairs with it, so the merge cannot settle it.
+	// The orphan the store-open closer left; nothing in the replay pairs with it.
 	orphan := f.promptTurn("go")
 	f.append(orphan, marotte.EntryKindText, "S-orphan", marotte.EntryText{Text: "half an answer"})
 	f.closeTurn(orphan, marotte.TurnOutcomeInterrupted, marotte.StopReasonUnterminated)
-	// A second turn that lost nothing, so the two forms land in two different turns and
-	// each assertion names one fact.
+	// A second, lossless turn, so the two forms land in different turns.
 	newest := f.promptTurn("again")
 	f.append(newest, marotte.EntryKindText, "S-newest", marotte.EntryText{Text: "a whole answer"})
 	f.closeTurn(newest, marotte.TurnOutcomeCompleted, "end_turn")
-	// A projected turn no rule pairs, so the merge INSERTS it and the swap rewrites.
+	// A projected turn no rule pairs, so the swap rewrites.
 	projected := []translate.ProjectedTurn{projTurn(t, "P2",
 		openRow("P2", 0, nil),
 		textRow("S-kas", "", "a turn the record never held"),
@@ -646,8 +586,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 	if got := swapReconciled(t, f, orphan); len(got) != 1 || got[0].Turn != orphan {
 		t.Errorf("the orphan's records = %+v, want exactly one naming %q", got, orphan)
 	}
-	// The record files AFTER the turn's closer, which is where a reader of a reconciled
-	// turn's body finds it: turn_open, …, turn_close, reconciled.
+	// The record files after the turn's closer.
 	entries, err := f.log.TurnRange(orphan, 0)
 	if err != nil {
 		t.Fatalf("turn range %q: %v", orphan, err)
@@ -657,8 +596,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 		t.Errorf("the orphan's body ends %s, want turn_close then reconciled",
 			swapKinds(entries))
 	}
-	// The session form is lane-less, so it lands in the newest turn of the REWRITTEN
-	// order — never in the turn whose own signal it says nothing about.
+	// The lane-less session form lands in the newest turn of the rewritten order.
 	if got := swapReconciled(t, f, newest); len(got) != 1 || got[0].Session != "sid-1" {
 		t.Errorf("the newest turn's records = %+v, want one adopting session sid-1", got)
 	}
@@ -667,11 +605,8 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 		t.Error("the reopened log re-raises the signal, so the rewrite's records are not on disk")
 	}
 
-	// A LATER resume, raised by a NEW signal, files no SECOND record for the orphan.
-	// insertReconciled's clearer set is read off the MERGED entries, which carry the
-	// first swap's own record, so the orphan is skipped even though its unterminated
-	// closer is still the evidence that raised it — an orphan no merge can ever settle
-	// would otherwise collect one record per resume for the life of the chat.
+	// A later resume files no second record for the orphan: clearers read the merged entries,
+	// which carry the first record.
 	f.armReconcileSignal(newest)
 	later := []translate.ProjectedTurn{projTurn(t, "P3",
 		openRow("P3", 0, nil),
@@ -694,18 +629,14 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 			"naming %q: the merge re-files a record for a turn an earlier swap already "+
 			"answered", len(got), got, orphan)
 	}
-	// The new signal IS answered, so the second swap did the work the guard let through.
+	// The new signal is answered.
 	if got := swapReconciled(t, f, newest); len(got) != 2 {
 		t.Errorf("the newest turn's records = %+v, want two (the first swap's session form "+
 			"and this swap's answer to the steer it could not fill)", got)
 	}
 }
 
-// TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED is why the clearers are
-// computed over the MERGED entries rather than over the predicate the gate read: the
-// union rewrote this turn's placeholder closer into KAS's own account, so the signal is
-// gone and a record saying "looked, nothing to add" would state the opposite of what
-// happened — and it would claim a turn the merge DID add to.
+// TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED pins that a signal the union settled gets no record.
 func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
 	f := newSwapFixture(t)
 	turn := f.promptTurn("go")
@@ -715,7 +646,7 @@ func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
 	if len(before) != 1 || before[0] != turn {
 		t.Fatalf("pre-merge targets = %v, want the placeholder-closed turn %q", before, turn)
 	}
-	// Pairs with the record turn by rule two (the say id), and carries KAS's own closer.
+	// Pairs by rule two and carries KAS's closer.
 	projected := []translate.ProjectedTurn{projTurn(t, "P1",
 		openRow("P1", 0, nil),
 		textRow("S", "", "half an answer and the tail a crash lost"),
@@ -740,15 +671,9 @@ func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun is property 11's
-// condition-(i) arm on the SWAP side, and its whole point is the ORDER the fixture is
-// built in. `resume_session` binds the chat to a KAS session it copied no messages from,
-// then the first prompt appends the log's own first line (`openPromptTurn`) BEFORE
-// `OpenBridge` drives the session/load and this swap — so the gate is asked about a log
-// that exists and holds a closed turn, and the only evidence of loss is the session the
-// record has never adopted. A file-existence condition clears on that first append, so
-// the merge never runs and the resumed history is silently lost; the chat-side half of
-// this arm is TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile.
+// TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun pins condition (i) in
+// fixture order: the first prompt's append precedes the session/load, so only the unadopted
+// session is evidence. Chat side: TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile.
 func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *testing.T) {
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
@@ -760,16 +685,12 @@ func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *test
 	turn := f.promptTurn("first")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted, "end_turn")
 
-	// The fixture's own honesty check, and it asks about the TURNS alone: no turn here
-	// carries a signal, so whatever the gate reads it reads from condition (i) — and the
-	// session half stays unasserted on purpose, because `changed` below is what observes
-	// it and a guard on the predicate would fire before the consequence could.
+	// No turn carries a signal, so the gate reads condition (i); `changed` observes it.
 	if turns, _ := f.log.ReconcileTargets(); len(turns) != 0 {
 		t.Fatalf("pre-merge turn targets = %q, want none: a turn signal would make this "+
 			"scenario pass for a reason that is not (i)", turns)
 	}
-	// The history KAS holds: one turn no pairing rule can reach, so the merge INSERTS it
-	// and the swap rewrites.
+	// One turn no pairing rule reaches, so the swap rewrites.
 	projected := []translate.ProjectedTurn{projTurn(t, "P1",
 		openRow("P1", 0, nil),
 		textRow("S-kas", "", "the history the resumed session holds"),
@@ -790,8 +711,7 @@ func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *test
 	if got := textsOf(t, f.everythingEntries()); !strings.Contains(strings.Join(got, "|"), "the history the resumed session holds") {
 		t.Errorf("the merged log holds texts %q, want the replayed history", got)
 	}
-	// The session form is the clearer, so a chat that just adopted its session does not
-	// re-merge on the next resume.
+	// The session form clears it, so the next resume does not re-merge.
 	if f.log.NeedsReconcile() {
 		t.Error("the signal survived the swap, so every later resume rewrites this whole file again")
 	}
@@ -801,8 +721,7 @@ func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *test
 	}
 }
 
-// everythingEntries is the merge's read with the reverted set dropped, for an assertion
-// whose subject is the entries alone.
+// everythingEntries is the merge's read without the reverted set.
 func (f *swapFixture) everythingEntries() []marotte.Entry {
 	f.t.Helper()
 	entries, _ := f.everything()
@@ -818,7 +737,7 @@ func swapKinds(entries []marotte.Entry) string {
 	return strings.Join(kinds, ", ")
 }
 
-// swapReconciled decodes the reconciled payloads of one turn, in seq order.
+// swapReconciled decodes one turn's reconciled payloads, in seq order.
 func swapReconciled(t *testing.T, f *swapFixture, turn string) []marotte.EntryReconciled {
 	t.Helper()
 	entries, err := f.log.TurnRange(turn, 0)
@@ -839,18 +758,13 @@ func swapReconciled(t *testing.T, f *swapFixture, turn string) []marotte.EntryRe
 	return out
 }
 
-// TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged: a rewind is a RECORD, so the
-// rewrite a merge ends with carries the reverted material through untouched. The merge is
-// fed the whole file plus the reverted set, never the surviving view, which would make
-// Rewrite an irreversible compaction. The reverted turn keeps its n, since renumbering
-// every turn would put a hidden one in a survivor's slot; and the surviving view is the
-// same across a reopen, so the skip rule survives the rewrite's rescan.
+// TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged pins that the
+// rewrite carries reverted material untouched (compaction is out of scope). A reverted turn
+// keeps its n, and the surviving view is unchanged across a reopen.
 func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 	f := newSwapFixture(t)
 	survivor := f.oneClosedTurn("S0")
-	// TWO turns in the rewind's window, so the surviving count at the hidden turns'
-	// position and their own stored n disagree: with one hidden turn the two happen to
-	// coincide and a renumber that ignored the flag would be unobservable.
+	// Two hidden turns, so their stored n and the surviving count disagree.
 	hiddenA := f.promptTurn("and again")
 	f.append(hiddenA, marotte.EntryKindText, "S1", marotte.EntryText{Text: "a turn the rewind took"})
 	f.closeTurn(hiddenA, marotte.TurnOutcomeCompleted, "end_turn")
@@ -877,12 +791,9 @@ func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 		}
 	}
 
-	// Two projected turns: one pairs the survivor by rule two and carries a longer say, so
-	// the merge RUNS; the second is keyed on the HIDDEN turn's say and would pair with it
-	// if a reverted turn were a pairing candidate, which is what the zero keys forbid. A
-	// real replay cannot carry reverted content (KAS pops its own log through the
-	// tombstone), so this second turn is the defensive half — what it pins is that the
-	// record's hidden turn is not UNIONED, never what becomes of the surplus.
+	// One pairs the survivor and carries a longer say, so the merge runs; the other is keyed on the
+	// hidden turn's say, which the zero keys must refuse. A real replay cannot carry reverted content,
+	// so this half is defensive: it pins that a hidden turn is never unioned.
 	projected := append(differingReplay(t, "S0"),
 		projTurn(t, "P2", openRow("P2", 0, nil),
 			textRow("S1", "", "a turn the rewind took, with a tail the record lacks"),
@@ -933,8 +844,7 @@ func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 			"window on the next open\n%s", f.bytes())
 	}
 
-	// The surviving view is what every other reader asks for, and it must answer the same
-	// across the rescan the rewrite ends with.
+	// The surviving view must answer the same across the rescan.
 	survived := surviving(t, f)
 	f.reopen()
 	reopened := surviving(t, f)

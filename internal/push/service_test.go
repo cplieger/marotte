@@ -1,9 +1,5 @@
 package push
 
-// Tests for service.go: New (key generation, client timeout),
-// Subscribe/Unsubscribe (including host logging), SetPreferences,
-// loadPreferences, and the Close contract.
-
 import (
 	"encoding/base64"
 	"os"
@@ -91,11 +87,8 @@ func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	}
 }
 
-// TestSubscribe_HostLogging verifies the host Subscribe logs: a
-// parseable endpoint with a non-empty host logs that host; a parseable
-// endpoint with an empty host (e.g. a mailto/opaque URL) keeps the
-// "unknown" placeholder. The logged host is the only observable of this
-// branch (Subscribe has no return value or exported state for it).
+// TestSubscribe_HostLogging verifies the logged host: the endpoint's host when it has
+// one, else "unknown". The log is this branch's only observable.
 func TestSubscribe_HostLogging(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -135,10 +128,8 @@ func TestSubscribe_HostLogging(t *testing.T) {
 	}
 }
 
-// TestService_WantsNeedsKindEnabledAndASubscription pins the arm of the PR-status
-// poller's gate that is about notifications: a send of the kind would reach
-// someone. A subscription alone is not enough while the kind is off, which is the
-// default for pull-request checks, and neither is the kind alone.
+// TestService_WantsNeedsKindEnabledAndASubscription pins that a subscription alone is not
+// enough while the kind is off (the PR-checks default), and neither is the kind alone.
 func TestService_WantsNeedsKindEnabledAndASubscription(t *testing.T) {
 	sub := marotte.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/1"}
 	cases := []struct {
@@ -196,7 +187,6 @@ func TestSetPreferences(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, "mailto:test@example.com")
 
-	// Defaults: both true.
 	s.mu.Lock()
 	if !s.prefs[marotte.PushKindAgentFinished] || !s.prefs[marotte.PushKindPermission] {
 		t.Error("default preferences should be true")
@@ -231,10 +221,7 @@ func TestLoadPreferences(t *testing.T) {
 		{"MalformedJSONFallsBackToDefaults", `{not json`, true, true},
 		{"PartialJSONOnlyAgentFinished", `{"notify_agent_finished":false}`, false, true},
 		{"EmptyObjectKeepsDefaults", `{}`, true, true},
-		// The permission ask has no settings key, so a stale or hand-written
-		// notify_permission is read by nothing: the kind stays on even when
-		// the file explicitly asks for it off. See the "no notify_permission
-		// key" note in internal/settings/defaults.go.
+		// The permission kind has no settings key, so a notify_permission value is read by nothing.
 		{"StaleNotifyPermissionIsIgnored", `{"notify_permission":false}`, true, true},
 		{"StaleKeyDoesNotBleedIntoAgentFinished", `{"notify_agent_finished":false,"notify_permission":false}`, false, true},
 	}
@@ -277,18 +264,15 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 
 	select {
 	case <-s.lifetime.Done():
-		// expected
 	case <-time.After(100 * time.Millisecond):
 		t.Error("context not Done after Close")
 	}
 }
 
-// TestClose_IsIdempotent — context.CancelFunc is safe to call multiple
-// times. Runtime shutdown paths can race parent cancels; Close must
-// tolerate that without panic.
+// TestClose_IsIdempotent verifies a second Close does not panic.
 func TestClose_IsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	s.Close()
-	s.Close() // must not panic
+	s.Close()
 }

@@ -142,7 +142,7 @@ type PRSource interface {
 // PRNotifier is the one push-service method the poller uses; *push.Service
 // satisfies it directly. Whether a sweep runs at all is the gate's question.
 type PRNotifier interface {
-	Send(ctx context.Context, title, body string, kind marotte.PushKind, subject marotte.PushSubject)
+	Send(ctx context.Context, title, body string, kind marotte.PushKind, subject marotte.PushSubject, chatName string)
 }
 
 // trackedPR is the poller's state for one subject: the last verdict, and the
@@ -547,7 +547,7 @@ func (p *PRStatusPoller) observe(ctx context.Context, subject marotte.PushSubjec
 		// INTO pending is the run starting, which the user caused by pushing.
 		return
 	}
-	p.push.Send(ctx, push.DefaultTitle, prStatusBody(pr), marotte.PushKindPRStatus, subject)
+	p.push.Send(ctx, push.DefaultTitle, prStatusBody(pr), marotte.PushKindPRStatus, subject, "")
 }
 
 // endWalk prunes, for the authored walk, the subjects of its connection it never

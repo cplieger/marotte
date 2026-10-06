@@ -3,6 +3,7 @@ package rpcerr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,10 +19,8 @@ func rpcErr(message, data string) error {
 	return e
 }
 
-// TestDetails pins that the `error.data` half is read at all, which is the
-// whole reason RPCError grew a Data member: 127 measured -32603 errors put their
-// text in data and set message to the literal "Internal error", so a reader of
-// message alone discards the cause of every internal error KAS reports.
+// TestDetails pins that `error.data` is read at all: a -32603 puts its cause there and sets
+// message to the literal "Internal error".
 func TestDetails(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -34,26 +33,25 @@ func TestDetails(t *testing.T) {
 		{"a non-RPC error", errors.New("boom"), ""},
 		{"the details shape", rpcErr("Internal error", `{"details":"the real cause"}`), "the real cause"},
 		{
-			// The other measured shape: a Zod issue array. Its messages are what a
-			// caller wants; the paths are noise.
+			// A Zod issue array: its messages are what a caller wants.
 			"a Zod issue array",
 			rpcErr("Internal error", `[{"message":"workspacePaths is required","path":["workspacePaths"]},{"message":"inputs must be an object","path":["inputs"]}]`),
 			"workspacePaths is required; inputs must be an object",
 		},
 		{
-			// Neither shape: the raw JSON still beats "" because it is what KAS said.
 			"an unrecognised shape falls back to the raw JSON",
 			rpcErr("Internal error", `{"weird":true}`),
 			`{"weird":true}`,
 		},
 		{"an empty details string falls through rather than winning", rpcErr("Internal error", `{"details":""}`), `{"details":""}`},
 		{
-			// A Zod array that parses but carries no message text: the join has
-			// nothing to say, so what KAS actually sent is still better than "".
+			// A Zod array with no message text: the raw JSON still beats "".
 			"a Zod issue array with no messages falls back to the raw JSON",
 			rpcErr("Internal error", `[{"path":["workspacePaths"]},{"message":""}]`),
 			`[{"path":["workspacePaths"]},{"message":""}]`,
 		},
+		{"a typed-error envelope carries no text", rpcErr("Your network proxy refused the connection.", `{"errorType":"ProxyAuthenticationRequiredError","retryErrorType":"TRANSIENT","requestId":"r"}`), ""},
+		{"an envelope with extra members carries no text", rpcErr("m", `{"errorType":"SessionOwnsLiveWorkflowsError","sessionId":"s","workflowIds":["w"]}`), ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -65,10 +63,8 @@ func TestDetails(t *testing.T) {
 	}
 }
 
-// TestText pins the composition, which is the part that was missing and
-// the reason a chat user saw "ACP error -32603: Internal error" while the cause
-// sat on the wire. Both directions matter: data wins when present, and the error
-// string is the fallback rather than an empty result.
+// TestText pins the composition: data wins when present, and the error string is the
+// fallback rather than an empty result.
 func TestText(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -78,20 +74,22 @@ func TestText(t *testing.T) {
 	}{
 		{"nil is empty rather than a literal", nil, ""},
 		{
-			// The 127-of-137 case. Before this function existed, this rendered as
-			// the message: "Internal error".
 			"data wins over a boilerplate message",
 			rpcErr("Internal error", `{"details":"The monthly usage limit has been reached"}`),
 			"The monthly usage limit has been reached",
 		},
 		{
-			// The 10-of-137 case, and the reason Details alone is the wrong
-			// helper for a caller: it answers "" here.
+			// The case where Details alone answers "".
 			"a message-only error falls back to the message",
 			rpcErr("workspacePaths is not iterable", ""),
 			"workspacePaths is not iterable",
 		},
 		{"an ordinary Go error passes through", errors.New("boom"), "boom"},
+		{
+			"a typed error renders its message, not the envelope",
+			fmt.Errorf("ACP error -32000: %w", rpcErr("Your network proxy refused the connection.", `{"errorType":"ProxyAuthenticationRequiredError","retryErrorType":"TRANSIENT","requestId":"r"}`)),
+			"Your network proxy refused the connection.",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -103,11 +101,8 @@ func TestText(t *testing.T) {
 	}
 }
 
-// TestTextBoundsAndSanitizes pins the two properties that make this text
-// safe to put in a log line, an SSE payload and a banner. Both are reachable from
-// the wire: the cap covers Details' raw-JSON fallback, which is unbounded on a
-// Zod failure over a large params object, and the control-character stripping
-// covers a provider message marotte did not author.
+// TestTextBoundsAndSanitizes pins the cap (covering Details' unbounded raw-JSON fallback)
+// and the control-character stripping of provider text.
 func TestTextBoundsAndSanitizes(t *testing.T) {
 	t.Parallel()
 
@@ -117,8 +112,7 @@ func TestTextBoundsAndSanitizes(t *testing.T) {
 		t.Errorf("Text() returned %d bytes, want <= %d", len(got), maxTextBytes)
 	}
 
-	// A newline would let upstream text forge a second log record, and U+202E
-	// reorders the rest of a line in a viewer. Neither may survive.
+	// A newline would forge a second log record and U+202E reorders a line; neither survives.
 	dirty := rpcErr("Internal error", `{"details":"first\nSECOND\u202ereordered"}`)
 	got = Text(dirty)
 	if strings.ContainsAny(got, "\n\r") {
@@ -149,18 +143,13 @@ func FuzzDetails(f *testing.F) {
 		if data == "" && got != "" {
 			t.Fatalf("Details() = %q for absent data, want \"\"", got)
 		}
-		// The fallback returns the raw bytes, so the result is either derived from
-		// the JSON or exactly it — never longer than the input plus the joiner
-		// budget an issue array can add.
 		if len(got) > len(data)+2*len(data) {
 			t.Fatalf("Details() grew %d bytes of data into %d", len(data), len(got))
 		}
 	})
 }
 
-// FuzzText pins the bound on the value that actually reaches a user
-// surface. Details may return the raw blob; this function is what promises a
-// caller it is safe to interpolate, so the cap is its invariant, not that one's.
+// FuzzText pins the bound on the value that reaches a user surface; Text owns the cap.
 func FuzzText(f *testing.F) {
 	f.Add(`{"details":"x"}`, "Internal error")
 	f.Add(`[{"message":"a"}]`, "Internal error")
@@ -175,4 +164,73 @@ func FuzzText(f *testing.F) {
 			t.Fatalf("Text() = %q, want no line break", got)
 		}
 	})
+}
+
+func TestMappedOf(t *testing.T) {
+	t.Parallel()
+	env := `{"errorType":"ProxyAuthenticationRequiredError","retryErrorType":"TRANSIENT","requestId":"req-407"}`
+	want := Mapped{ErrorType: "ProxyAuthenticationRequiredError", RetryErrorType: "TRANSIENT", RequestID: "req-407"}
+	if got, ok := MappedOf(fmt.Errorf("a: %w", fmt.Errorf("b: %w", rpcErr("m", env)))); !ok || got != want {
+		t.Errorf("MappedOf(envelope wrapped twice) = (%+v, %v), want (%+v, true)", got, ok, want)
+	}
+	for name, err := range map[string]error{
+		"details shape":     rpcErr("m", `{"details":"x"}`),
+		"no data":           rpcErr("m", ""),
+		"unrelated object":  rpcErr("m", `{"weird":true}`),
+		"a non-RPC error":   errors.New("boom"),
+		"a Zod issue array": rpcErr("m", `[{"message":"x"}]`),
+	} {
+		if got, ok := MappedOf(err); ok {
+			t.Errorf("MappedOf(%s) = (%+v, true), want not found", name, got)
+		}
+	}
+}
+
+func TestAccount(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		m       Mapped
+		message string
+		want    string
+	}{
+		{
+			"a context overflow names the compact remedy",
+			Mapped{ErrorType: ContextWindowExceededError, RequestID: "r1"},
+			"Context limit exceeded unexpectedly. Please try again.",
+			"This chat reached the model's context limit. Compact the context, then send the prompt again. (request r1)",
+		},
+		{
+			"a throttle says kiro-cli already retried",
+			Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling},
+			"Too many requests.",
+			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model.",
+		},
+		{
+			"an unreachable model registry names the login remedy",
+			Mapped{ErrorType: "ModelRegistryUnavailableError", RetryErrorType: "SERVER_ERROR"},
+			"Kiro could not load the available models.",
+			"Kiro could not load the available models. Run `kiro-cli login`, then send the prompt again.",
+		},
+		{
+			"a transient class keeps KAS's prose alone",
+			Mapped{ErrorType: "ProxyAuthenticationRequiredError", RetryErrorType: "TRANSIENT", RequestID: "req-407"},
+			"Your network proxy refused the connection.",
+			"Your network proxy refused the connection. (request req-407)",
+		},
+		{
+			"a minified class name gets the message alone",
+			Mapped{ErrorType: "ge"},
+			"Your connection was interrupted.",
+			"Your connection was interrupted.",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Account(c.m, c.message); got != c.want {
+				t.Errorf("Account(%+v, %q) = %q, want %q", c.m, c.message, got, c.want)
+			}
+		})
+	}
 }

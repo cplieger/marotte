@@ -1,15 +1,11 @@
 package command
 
-// The steer ledger: which mid-turn steers are the USER's own words.
-//
-// Nothing on the wire separates them from a workflow's report (see
-// marotte.SteerOrigin), so the server records the id of every steer it sends.
-// In-memory, TTL'd and bounded like createLedger next door, because a steer's
-// whole lifetime is one turn.
+// The steer ledger records the id of every steer this server sends, because nothing on the wire
+// separates the user's words from a workflow's report (marotte.SteerOrigin). In memory, TTL'd and
+// bounded, since a steer lives one turn.
 
-// ACCEPTED COST: a restart mid-turn loses the set, so a steer sent before it and
-// read after labels as the agent's — unreachable in practice, since the restart
-// kills the turn that would have read it.
+// A restart mid-turn loses the set; accepted, because the restart also kills the turn that would
+// read it.
 
 import (
 	"sync"
@@ -18,16 +14,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerTTL is how long a recorded steer id answers "the user's".
-//
-// A steer is consumed at the next node boundary, so minutes is already
-// generous; it is deliberately not the turn's own length, because nothing tells
-// this ledger when a turn ended and a turn can legitimately run for hours.
+// steerTTL is how long a recorded steer id answers "the user's". Not the turn's length: nothing
+// tells the ledger when a turn ends, and turns can run for hours.
 const steerTTL = 30 * time.Minute
 
-// maxSteerOps bounds the map. A steer is a deliberate human gesture typed into
-// a running turn, so the live population inside one TTL is single digits; the
-// bound exists so a pathological producer cannot grow it without limit.
+// maxSteerOps bounds the map against a pathological producer; the live population is single digits.
 const maxSteerOps = 512
 
 // steerKey addresses one steer. A STRUCT key rather than a joined string: a
@@ -65,12 +56,9 @@ func NewSteerLedger() *SteerLedger {
 	}
 }
 
-// RecordUserSteer records that this server sent steerID for chatID, re-sending
-// the dropped steers resends names (nil for an ordinary steer).
-//
-// steerID is the id the caller chose before the RPC (marotte.SteerIDFor). It
-// matches every later frame because KAS builds its own steer id from the
-// messageId it is sent.
+// RecordUserSteer records that this server sent steerID for chatID, re-sending the dropped steers
+// resends names (nil for an ordinary steer). KAS builds its own steer id from the messageId, so
+// steerID matches every later frame.
 func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string) {
 	if l == nil || steerID == "" {
 		return
@@ -97,12 +85,8 @@ func (l *SteerLedger) SteerResends(chatID marotte.ChatID, steerID string) []stri
 	return nil
 }
 
-// SteerOrigin answers whose words the steer is. A recorded, unexpired id is the
-// user's; everything else is the agent's.
-//
-// Deliberately NOT a lookup that can fail: absence is a real answer here, and
-// returning "unknown" would push a decision the client has no vocabulary for
-// onto every consumer.
+// SteerOrigin answers whose words the steer is: a recorded, unexpired id is the user's, everything
+// else the agent's. Absence is a real answer, not a failed lookup.
 func (l *SteerLedger) SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin {
 	if l == nil || steerID == "" {
 		return marotte.SteerOriginAgent
@@ -115,11 +99,8 @@ func (l *SteerLedger) SteerOrigin(chatID marotte.ChatID, steerID string) marotte
 	return marotte.SteerOriginAgent
 }
 
-// ForgetChat drops every steer recorded for one chat, at its teardown.
-//
-// A linear scan over a map the bound above keeps in the low hundreds, because
-// the alternative — a second index by chat — is a second thing to keep in step
-// with the first for a sweep that runs once per chat close.
+// ForgetChat drops every steer recorded for one chat, at its teardown. A linear scan over the
+// bounded map rather than a second index.
 func (l *SteerLedger) ForgetChat(chatID marotte.ChatID) {
 	if l == nil {
 		return
@@ -133,9 +114,8 @@ func (l *SteerLedger) ForgetChat(chatID marotte.ChatID) {
 	}
 }
 
-// sweep drops expired entries and, if the map is still full, the entry closest
-// to expiry — createLedger's own shape, so losing one record costs one
-// mislabelled note rather than every later one. Caller holds l.mu.
+// sweep drops expired entries and, if still full, the entry closest to expiry, so a full map costs
+// one mislabelled note. Caller holds l.mu.
 func (l *SteerLedger) sweep(now time.Time) {
 	for k, s := range l.sent {
 		if !now.Before(s.expires) {

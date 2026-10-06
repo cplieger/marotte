@@ -6,8 +6,8 @@ import (
 )
 
 func FuzzNew(f *testing.F) {
-	f.Add(6, 0) // StdLower
-	f.Add(6, 1) // HexUpper (actually 0 is HexUpper, 1 is StdLower)
+	f.Add(6, 0)
+	f.Add(6, 1)
 	f.Add(1, 0)
 	f.Add(16, 0)
 	f.Add(32, 1)
@@ -23,13 +23,11 @@ func FuzzNew(f *testing.F) {
 
 		result := New(byteLen, enc)
 
-		// Output length: ceil(byteLen*8/5) for base32.
 		expectedLen := (byteLen*8 + 4) / 5
 		if len(result) != expectedLen {
 			t.Errorf("New(%d, %d) len = %d, want %d", byteLen, enc, len(result), expectedLen)
 		}
 
-		// Charset validation.
 		switch enc {
 		case HexUpper:
 			for _, c := range result {

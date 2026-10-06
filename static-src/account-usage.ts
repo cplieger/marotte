@@ -1,17 +1,6 @@
-// ---------------------------------------------------------------------------
-// Account/subscription usage in the sidebar status-dot popup.
-//
-// This is ACCOUNT-level usage (plan, credits, quota) from the KAS
-// _kiro/account/getUsage request — distinct from the per-chat context ring
-// (which reads the session usage_update notification). It is surfaced ONLY
-// here, in the status footer popup, per the product decision.
-//
-// Fetched LAZILY when the status popup opens (wired via makeExpandable's
-// onExpand in app.ts) with a short client-side throttle on top of the
-// server's own cache, since account usage changes slowly and the upstream
-// call may be rate-limited. Failure degrades gracefully to "Usage
-// unavailable" (the server also serves a last-known snapshot when it can).
-// ---------------------------------------------------------------------------
+// Account usage (plan, credits, quota from KAS _kiro/account/getUsage) in the sidebar
+// status popup, distinct from the per-chat context ring. Fetched lazily on popup open,
+// throttled on top of the server's cache; a failure reads "Usage unavailable".
 
 import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
@@ -22,9 +11,10 @@ const CLIENT_TTL_MS = 30_000;
 let lastFetch = 0;
 let inflight = false;
 
-/** Fetch + render account usage. Throttled to CLIENT_TTL_MS unless forced.
- *  Safe to call on every popup open; the throttle + server cache keep it
- *  cheap. */
+/**
+ * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
+ * popup open.
+ */
 export function loadAccountUsage(force = false): void {
   const now = Date.now();
   if (inflight || (!force && now - lastFetch < CLIENT_TTL_MS)) {
@@ -74,16 +64,9 @@ function renderAccountUsage(u: AccountUsage | null): void {
     return;
   }
 
-  // Whether overage billing is on. READ-ONLY: nothing in kiro-cli sets it, so the
-  // row's own link is the way to change it — this line is what tells the reader
-  // there is something there to change.
-  //
-  // Written HERE rather than in the arms below, because every arm past this point
-  // returns and the state is a property of the ACCOUNT rather than of a breakdown
-  // line. The branch is TOTAL because the wire field carries no `omitempty`
-  // (internal/marotte/account.go), so a payload always states the value; blank is
-  // reserved for the null arm above, where an absent snapshot says nothing about
-  // the account and "Overages off" would be a claim.
+  // Overage billing is read-only, so this line tells the reader the row's link can change
+  // it. Written here because every arm below returns. Total because the wire field has no
+  // `omitempty`; blank is reserved for the null arm above, where nothing is known.
   overageEl.textContent = u.overages_enabled ? "Overages on" : "Overages off";
 
   const plan =

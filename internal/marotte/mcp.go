@@ -5,42 +5,47 @@ package marotte
 //
 // The persisted config types live in internal/mcp.
 
-// There is no MCPConfig interface here. The name census the runtime reads is
-// declared at that consumer (internal/agent's mcpNameSets); *mcp.Store implements
-// it and the composition root's agent.WithMCPConfig call forces the check.
-//
-// Two members it never had are worth recording. No ACPServers: marotte no longer
-// sends servers inline on session/new — it renders KAS's own hot-reloading
-// config file, and KAS merges `client > file-based`, so an inline copy would
-// silently outrank the file. No SetKnownTools: a connected server's tool names
-// are runtime state that arrives with its prompts and resources, so they live in
-// the runtime's registry rather than being written back into a user-config file on
-// every notification.
+// No MCPConfig interface: internal/agent declares mcpNameSets at its consumer. No inline ACP
+// servers (KAS merges `client > file-based`, so an inline copy would outrank the rendered config
+// file) and no SetKnownTools (tool names are runtime state, held in the runtime's registry).
 
-// Origin records where an MCP server came from, so a runtime status row can say
-// so and the UI can withhold the edit affordances for one marotte does not own.
-//
-// The three values partition the name sets MCPConfig exposes: OriginUser is
-// ConfiguredNames, OriginPower is AllNames minus ConfiguredNames, and
-// OriginUnknown is everything KAS reports that neither set names.
+// Origin records where a running MCP server came from, read off KAS's stamp on
+// each _kiro/mcp/status entry (_meta.kiro.resource.source). It attributes live
+// status to a row and grants nothing: whether a definition is editable is
+// decided by marotte's own store, never by the wire.
 type Origin string
 
-// OriginUser, OriginPower, and OriginUnknown are the provenance values a
-// runtime MCP status row can carry.
+// The provenance values a runtime MCP status row can carry. An OriginUser
+// status belongs to marotte's config row for the name; every other value is a
+// read-only row of its own.
 const (
-	// OriginUser is a server from marotte's own config — the MCP page owns its
-	// row and every edit affordance on it.
+	// OriginUser is a server from marotte's own config, enabled or disabled.
 	OriginUser Origin = "user"
-	// OriginPower is a server an installed Power contributed via the
-	// `powers.mcpServers` block of the config file marotte renders. marotte
-	// cannot edit or delete it; the row is read-only.
+	// OriginWorkspace is a server from a workspace's .kiro/settings/mcp.json,
+	// which KAS lets override a same-named server in the user file.
+	OriginWorkspace Origin = "workspace"
+	// OriginPower is a server an installed Power contributed.
 	OriginPower Origin = "power"
-	// OriginUnknown is a server KAS reports that marotte cannot attribute: a
-	// workspace-level config it does not read, a block a future KAS adds, or a
-	// powers block that failed to parse. Read-only, same as OriginPower — the
-	// distinction is what the row TELLS the user, not what it lets them do.
+	// OriginBundled is a server Kiro itself ships.
+	OriginBundled Origin = "bundled"
+	// OriginUnknown is a server marotte cannot attribute: a user-level agent's
+	// server, a powers entry KAS could not tie to a Power, a client or cloud
+	// origin, or a value a later KAS adds.
 	OriginUnknown Origin = "unknown"
 )
+
+// MCPSource is the provenance KAS stamps on one MCP status entry. An empty
+// Origin means the entry carried no _meta (an agent-declared server whose
+// agent has no stamped origin).
+type MCPSource struct {
+	// Origin is the wire value verbatim: user, workspace, power, bundled,
+	// client, cloud, or one KAS adds later.
+	Origin string
+	// Root is the workspace folder, set when Origin is "workspace".
+	Root string
+	// Power is the Power's name, set when Origin is "power".
+	Power string
+}
 
 // --- SSE payloads ---
 //
@@ -93,15 +98,9 @@ type MCPSnapshotServer struct {
 	Name string `json:"name"`
 }
 
-// --- Discovery (prompts + resources advertised by a connected server) ---
-//
-// On v3 (KAS) a connected MCP server's prompts and resources arrive in
-// the _kiro/mcp/status notification (alongside its tools). The registry
-// caches them per server and the /api/mcp/status endpoint surfaces them so
-// the Settings → Tools UI can list what a server exposes and fetch a
-// specific prompt/resource on demand via _kiro/mcp/getPrompt /
-// _kiro/mcp/getResource. Shapes verified against the KAS 2.12 acp-server
-// bundle + a live probe.
+// Discovery: on v3 a connected server's prompts and resources arrive in _kiro/mcp/status beside its
+// tools; the registry caches them per server and /api/mcp/status surfaces them, fetched via
+// _kiro/mcp/getPrompt and getResource (KAS 2.12).
 
 // MCPPromptArg describes one argument of an MCP prompt.
 type MCPPromptArg struct {
@@ -130,18 +129,17 @@ type MCPResourceInfo struct {
 	MimeType    string `json:"mime_type,omitempty"`
 }
 
-// MCPServerState is the lifecycle status of one MCP server KAS reported.
-// Exported so the runtime's mcpRegistry and the /api/mcp/status endpoint
-// share a single typed enum with compile-time safety.
-//
-// The five values are "idle" (configured but no bridge running), "connected"
-// (KAS reported the server initialised), "needs_auth" (KAS sent an
-// authorization URL), "failed" (KAS reported an init failure) and "disabled"
-// (KAS reports the server as off). They are declared as constants where they
-// are produced — the runtime's mcpRegistry, which serves /api/mcp/status.
-//
-// "disabled" is only ever recorded for a server marotte did NOT configure. A
-// configured server's off state is its config row's own `enabled: false`, which
-// the UI already renders, so recording a second copy of it would put a runtime
-// row beside a config row that disagrees with nothing.
+// MCPResourceTemplateInfo is one resource template a connected MCP server
+// advertises; URITemplate is RFC 6570.
+type MCPResourceTemplateInfo struct {
+	Name        string `json:"name"`
+	URITemplate string `json:"uri_template"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mime_type,omitempty"`
+}
+
+// MCPServerState is the lifecycle status of one MCP server KAS reported: "idle", "connected",
+// "needs_auth", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
+// "disabled" is recorded only for a server marotte did NOT configure; a configured one's off state
+// is its config row's `enabled: false`.
 type MCPServerState string

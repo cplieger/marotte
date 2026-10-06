@@ -1,31 +1,6 @@
-// The registry-search panel's render states and what it asks the registry for.
-//
-// Three behaviours, each of which shipped wrong and each of which reads as "the
-// search is broken" from the box:
-//
-//   1. An in-flight search painted NOTHING. The registry answers in about a
-//      second when healthy and can take ten when it is not, so the box sat empty
-//      for the whole wait and then printed a failure. Empty-then-error reads as a
-//      dead control rather than a slow one.
-//   2. Every typed PREFIX was its own query. Each is a distinct cache key and a
-//      distinct dedupe key, so nothing collapsed them, and the upstream refuses
-//      connections after a burst of them.
-//   3. A late answer for an abandoned prefix overwrote the current one. The
-//      dispatches are not scoped, so "gith" arriving after "github" put results
-//      for a query the user had typed past on screen.
-//
-// And three more of one class: an answer that is not what it looks like.
-//
-//   4. A query under the floor CLEARED the box, so one typed character read
-//      exactly like an answered query with no matches. It renders a hint now.
-//   5. The reply said nothing about rows it did not carry: a cut at the limit
-//      and a row the install filter dropped both went unreported, so "no
-//      results" could mean "matched, but nothing you can install here".
-//   6. A rate-limited registry's Retry-After was dropped, so the Retry button
-//      offered a click guaranteed to fail again. It waits the interval out.
-//
-// The subscription callback is the seam: the panel reads action lifecycle
-// instances, so the test hands it synthetic ones instead of dispatching.
+// The panel's render states and what it asks the registry for: an in-flight row, one query per pause rather than per
+// prefix, no late answer for an abandoned prefix, a too-short hint, a note for rows the reply did not carry, and a
+// Retry that waits out a Retry-After. The subscription callback is the seam.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -45,10 +20,8 @@ const scheduled: { q: string }[] = [];
 const flushed: { q: string }[] = [];
 const dispatched: { q: string }[] = [];
 
-// Both mocks spread the real module: the panel's subscription and debounce
-// seams are stubbed, while `bindLoadingState`, `registryFailureOf` and the
-// action definitions stay real, so the 502 classification and the Retry
-// button's hold are tested as shipped.
+// Both mocks spread the real module: only the subscription and debounce seams are stubbed, so the 502 classification
+// and the Retry hold run as shipped.
 vi.mock("./actions/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ActionsIndex>()),
   subscribeToActions: (cb: (inst: Inst) => void) => {
@@ -161,11 +134,7 @@ describe("what the panel asks the registry for", () => {
     expect(scheduled).toEqual([{ q: "gi" }]);
   });
 
-  // An empty box after one typed character is indistinguishable from an
-  // answered query with no matches, the same laundering of a non-answer into an
-  // empty success as a malformed upstream reply decoding to zero servers. The
-  // floor stays (a single letter matches most of the index) and the box says so
-  // in the shared vocabulary's sentence, which carries no terminal punctuation.
+  // An empty box after one character reads as no matches; the floor stays and the box says so in the shared sentence.
   it("renders the too-short hint when the query drops back below the floor", () => {
     const { input, results } = mountPanel();
     type(input, "github");
@@ -216,9 +185,7 @@ describe("what the panel renders", () => {
     const { input, results } = mountPanel();
     type(input, "linear");
 
-    // The server used to answer a slow upstream with a bare 200 and no body,
-    // which decodes to nothing here (internal/mcp/registry_proxy.go returns 502
-    // now). Either way an absent result is not an empty result.
+    // An absent result is not an empty result (internal/mcp/registry_proxy.go returns 502 for a slow upstream).
     captured?.({
       name: "mcp.search_registry",
       status: "success",
@@ -358,8 +325,7 @@ describe("what a classified failure changes", () => {
   it("ignores a classification the server did not shape", () => {
     const { input, results } = mountPanel();
     type(input, "github");
-    // A string where the wire says integer seconds, and a reason outside the
-    // three the server can send: neither may hold the button.
+    // A string where the wire says integer seconds, and an unknown reason: neither may hold the button.
     failed("github", {
       message: "Bad Gateway",
       status: 502,
@@ -375,9 +341,7 @@ describe("what a classified failure changes", () => {
     expect(results.textContent).not.toContain("37s");
   });
 
-  // The real action, dispatched against a stubbed 502: the body the server
-  // writes has to come back off the error's `cause`, or everything above is
-  // wired to a field nothing fills.
+  // The body the server writes must come back off the error's `cause`.
   it("carries the 502 body onto the dispatch error", async () => {
     const real = await vi.importActual<typeof McpActions>("./actions/mcp.js");
     const body = { error: "registry unavailable", reason: "rate_limited", retry_after: 37 };
@@ -400,9 +364,7 @@ describe("what a classified failure changes", () => {
     }
   });
 
-  // The loading-state binding restores a button's idle `disabled` when a
-  // dispatch of the bound action settles, and an abandoned prefix's dispatch
-  // can settle while the held button is on screen. The hold has to survive it.
+  // An abandoned prefix's dispatch can settle while the held button is on screen; the hold survives it.
   it("keeps the hold when an abandoned prefix's dispatch settles", async () => {
     const { input, results } = mountPanel();
     type(input, "github");
@@ -443,8 +405,7 @@ describe("what a classified failure changes", () => {
     failed("github", rateLimited);
     const held = results.querySelector("button") as HTMLButtonElement;
 
-    // A new answer replaces the box before the interval elapses; the old
-    // button's timer must not fire against a node that is off screen.
+    // The old button's timer must not fire against a node that is off screen.
     answered("github", HIT);
     expect(results.contains(held)).toBe(false);
     vi.advanceTimersByTime(60_000);
@@ -453,9 +414,7 @@ describe("what a classified failure changes", () => {
 });
 
 describe("what a row's install button says", () => {
-  // The server surfaces npm alone today, so the label is read off the row
-  // rather than hard-coded: a registry type the server starts surfacing later
-  // must never render as "Use npm" over an install the npm form cannot run.
+  // Read off the row, not hard-coded: a later registry type must not render as "Use npm".
   it("names the package's own registry type", () => {
     const row = renderRegistryResult({
       name: "io.example/thing",

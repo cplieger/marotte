@@ -68,10 +68,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 			}
 		}
 
-		// Invariant: no panics reached here.
-		// Invariant: ONE entry_opened per open entry. The first frame carrying
-		// content opens the entry and every later one folds into it, so a second
-		// open under one id is two entries for one run of prose.
+		// ONE entry_opened per open entry: a second open under one id is two entries for one prose run.
 		opened := map[string]int{}
 		for _, evt := range *events {
 			p, ok := evt.Payload.(marotte.EntryOpenedPayload)

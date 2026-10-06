@@ -1,13 +1,5 @@
-// ---------------------------------------------------------------------------
-// The sync half of the tab projection: which frames reach the strip, in what
-// order, and when a frame means "ask again".
-//
-// Every test here is against a FAKE target that is little more than a Set, which
-// is the point of the split: the three version rules, the arrival-order queue and
-// the stale-snapshot guard are decidable without a row, a spec or a document. What
-// they defend is not decidable by inspection — each one has a defect behind it
-// that shipped, or that an adversarial review reached before it could.
-// ---------------------------------------------------------------------------
+// The sync half against a FAKE Set target: the three version rules, the arrival-order queue and the
+// stale-snapshot guard, each defending a real defect.
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import type { TabList, TabSubject, TabsChangedPayload } from "./types.js";
@@ -59,10 +51,7 @@ interface Applied {
   local: boolean;
 }
 
-/** A projection reduced to what the rules actually consult: a set of ids, plus a
- *  log of everything it was told. Membership is maintained by hand from the
- *  frames, exactly as tabs.ts does, so the overlay rules are exercised against a
- *  real transition rather than a stub. */
+/** A projection reduced to a set of ids plus a log, maintained from the frames as tabs.ts does. */
 class FakeTarget {
   ids: string[] = [];
   applied: Applied[] = [];
@@ -168,10 +157,8 @@ describe("the version rules", () => {
   });
 
   it("does not advance the version when the projection is told nothing", async () => {
-    // A frame the rules discard must leave the watermark alone AND must not reach
-    // the projection. Asserting only on the watermark is not enough: an
-    // implementation that advances first and tests afterwards leaves the number
-    // right and applies the frame anyway, so the apply log is what pins it.
+    // A discarded frame must leave the watermark alone AND not reach the projection; the apply log pins
+    // the second.
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     ingestTabsChanged({ changed: subject("b"), order: ["a", "b"], version: 1 });
@@ -196,10 +183,8 @@ describe("the apply queue", () => {
   });
 
   it("re-tests a second gap frame after the first re-list instead of listing twice", async () => {
-    // Both frames are past local+1 on arrival, but the drain is SERIALIZED: the
-    // first gap's re-list completes before the second frame is dequeued, so the
-    // second falls out through rule 1. This pins the serialization, not the
-    // coalescing — see the test below for that.
+    // The drain is SERIALIZED: the first gap's re-list completes before the second frame dequeues, so
+    // it falls out through rule 1.
     listing.answers.push(list(9, "a"));
     listing.answers.push(list(9, "a"));
     ingestTabsChanged({ changed: subject("x"), version: 5 });
@@ -210,10 +195,7 @@ describe("the apply queue", () => {
   });
 
   it("joins a re-list already in flight rather than issuing a second GET", async () => {
-    // Boot's read and a gap-driven re-list are the pair that genuinely overlap:
-    // the strip is assembled over several awaits, and an event arriving mid-boot
-    // detects a gap because boot has not established a version yet. Two GETs would
-    // put two snapshots in a race to reset the same projection.
+    // Boot's read and a gap re-list genuinely overlap; two GETs would race two snapshots.
     let release = (): void => {
       /* replaced by the promise below */
     };
@@ -316,10 +298,7 @@ describe("order is a permutation, never a membership statement", () => {
   });
 
   it("never puts an unnamed tab at position 0", () => {
-    // The failure this pins: an implementation that seeds `next` with the
-    // leftovers, or that appends the named ids to the existing array, lands the
-    // unnamed one first — which puts a tab the server has said nothing about
-    // ahead of the strip the reader arranged.
+    // Seeding with the leftovers would put a tab the server said nothing about ahead of the reader's order.
     const out = permute(["unnamed", "a", "b"], (id) => id, ["b", "a"]);
     expect(out[0]).not.toBe("unnamed");
     expect(out).toEqual(["b", "a", "unnamed"]);
@@ -375,7 +354,7 @@ describe("pending adopt: the transition table, both orders", () => {
     expect(t.applied.at(-1)?.local).toBe(true);
     expect(tabsVersion()).toBe(2);
 
-    // Retired: a stale-but-adoptable snapshot no longer merges the subject back,
+    // Once settled, a stale-but-adoptable snapshot does not merge the subject back,
     // which is the observable difference between pending and settled.
     listing.answers.push(list(2, "a"));
     await listTabs();
@@ -427,11 +406,8 @@ describe("pending adopt: the transition table, both orders", () => {
   });
 
   it("absorbs an uncorrelated frame that reaches the committed version (transition 4)", async () => {
-    // The echo lost its correlation (its op_id claimed by a duplicate, or the
-    // dispatch deduped onto another caller's), but the watermark reaches the
-    // committed version anyway: the mutation is part of what the projection now
-    // holds, so the op is absorbed — and for a remove that is OBSERVABLE, because
-    // absorption is what releases the deferred teardown.
+    // The echo lost its correlation, but the watermark reaches the committed version, so the op is
+    // absorbed; for a remove that releases the deferred teardown.
     const { onConfirm, rollback } = removeSpies();
     beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
     removeCommitted("op-close", ["a"], 2);
@@ -529,10 +505,7 @@ describe("pending remove: the transition table, both orders", () => {
   });
 
   it("reads closed:[] as SEMANTIC confirmation of absence, however far behind the client is", async () => {
-    // The client-behind no-frame close: another device closed the tab; the
-    // server sits at v+1 while this client sits at v. The close commits nothing,
-    // so no frame is coming — and the empty list is the whole answer, whatever
-    // any version comparison says.
+    // Another device closed the tab: the close commits nothing, so the empty list is the whole answer.
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
@@ -552,7 +525,7 @@ describe("pending remove: the transition table, both orders", () => {
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
     expect(removesPending()).toBe(false);
-    // Retired: a repeat failure signal does nothing.
+    // Once the op is settled, a repeat failure signal does nothing.
     opFailed("op-close");
     expect(rollback).toHaveBeenCalledTimes(1);
   });
@@ -883,10 +856,8 @@ describe("op correlation", () => {
   });
 });
 
-// --- The pending reorder ---
-//
-// A drop shows its order at once, so every frame and snapshot that can predate the
-// commit must not overwrite it, and a refusal must put the order back exactly once.
+// A drop shows its order at once: older frames and snapshots must not overwrite it, and a refusal
+// restores the order exactly once.
 
 describe("pending reorder: the transition table", () => {
   /** The projection holding a, b, c at v1, with a drop to c, a, b in flight. */
@@ -911,7 +882,7 @@ describe("pending reorder: the transition table", () => {
     const rollback = await droppedCAB();
     ingestTabsChanged({ order: ["c", "a", "b"], version: 2, op_id: "op-r" });
     await settle();
-    // Retired: a later frame's order is no longer rewritten, and a late failure
+    // Once the op is settled, a later frame's order is not rewritten, and a late failure
     // does not roll back a reorder the collection holds.
     ingestTabsChanged({ order: ["b", "c", "a"], version: 3 });
     await settle();

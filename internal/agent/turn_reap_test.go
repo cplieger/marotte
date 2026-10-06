@@ -10,8 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// newCompactionReapFixture stages a prompt turn whose bridge holds a cancellable
-// prompt call, the state the reap's interrupt reaches into.
+// newCompactionReapFixture stages a prompt turn whose bridge holds a cancellable prompt call.
 func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, context.Context) {
 	t.Helper()
 	h, cs, _ := newTestHub()
@@ -29,8 +28,7 @@ func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, co
 	return h, turnID, log, pctx
 }
 
-// startTool records an unsettled tool call on the turn. Inside a synctest bubble
-// its stamp is the fake clock's, which is what the reap compares against.
+// startTool records an unsettled tool call; inside a synctest bubble its stamp is the fake clock's.
 func startTool(t *testing.T, log *turnlog.Turn, id string) {
 	t.Helper()
 	_, err := log.ToolCall(t.Context(), "", &marotte.EntryToolCall{
@@ -87,9 +85,7 @@ func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) 
 	h, _, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		// Inside the bubble, and before the arm: synctest's clock starts at
-		// 2000-01-01, so a start recorded outside it lands in the real present
-		// and would read as newer than the arm rather than older.
+		// Inside the bubble and before the arm: synctest's clock starts at 2000-01-01, so an outside stamp reads as newer.
 		startTool(t, log, "tool")
 		time.Sleep(time.Millisecond)
 

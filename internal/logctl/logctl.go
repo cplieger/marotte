@@ -1,22 +1,7 @@
-// Package logctl owns the process-wide slog handler so settings
-// toggles can flip the log level at runtime without restarting the
-// container. Install() must be called once at startup; SetDebug
-// adjusts the level on a shared slog.LevelVar that the handler
-// follows.
-//
-// Level choices:
-//   - debug=false → slog.LevelInfo (default; production chatty-ish
-//     but not noisy)
-//   - debug=true  → slog.LevelDebug (surfaces the unhandled-extension
-//     and dropped-replayed-frame lines in the ACP dispatcher, the
-//     fs-request-denied line, and the bridge's per-notification method
-//     name and initialize timing)
-//
-// The setting reads from <configDir>/config.json `debug_logs`
-// (bool). Install reads it once to pick the boot level; the handler
-// writes Info or Debug based on whatever the LevelVar says at log
-// time, so the PATCH endpoint that flips the bool also flips the
-// level for subsequent calls.
+// Package logctl owns the process-wide slog handler so the debug_logs setting
+// (<configDir>/config.json) flips the level at runtime: Install once at startup picks the boot
+// level, and SetDebug moves a shared slog.LevelVar the handler reads at log time (Info by default,
+// Debug when set).
 package logctl
 
 import (
@@ -27,29 +12,14 @@ import (
 	"github.com/cplieger/slogx"
 )
 
-// levelVar is the shared LevelVar the installed handler follows: slogx.Setup
-// wires it into the default logger (in Install) and SetDebug flips it at
-// runtime, so a PATCH to debug_logs re-levels subsequent log calls in place.
-//
-// Pre-initialized rather than left nil so no exported call can panic before
-// Install runs: every accessor here dereferences it unconditionally, and a nil
-// deref in SetDebug takes the process down. Startup ordering makes that
-// unreachable today (Install runs in composition, before the settings endpoint
-// exists), but the nil window is one refactor away from a crash and
-// FuzzSetDebug trips it directly. A pre-Install Set lands on this throwaway
-// var, which no handler follows; Install then swaps in slogx's and applies the
-// configured level, so post-Install behavior is unchanged.
+// levelVar is the shared LevelVar the installed handler follows. Pre-initialized so no exported
+// call can nil-deref before Install (FuzzSetDebug trips that directly); a pre-Install Set lands on
+// this throwaway, and Install swaps in slogx's.
 var levelVar = new(slog.LevelVar)
 
-// Install wires the shared LevelVar into slog's default logger and
-// reads the initial level from configDir/config.json. Call exactly
-// once at startup, before any other slog calls that matter.
-//
-// The handler is installed at info first (via slogx.Setup, which returns the
-// LevelVar the handler follows), then promoted to debug only when debug_logs
-// is present and true. Parse failures (corrupt JSON, wrong type on debug_logs)
-// or a legitimately-missing config.json (first boot) leave it at info, so a
-// broken settings file never accidentally drops the user into debug mode.
+// Install wires the shared LevelVar into slog's default logger and reads the initial level from
+// configDir/config.json; call once at startup, before any slog call that matters. Anything but a
+// readable true debug_logs leaves it at info, so a broken settings file never drops into debug.
 func Install(ctx context.Context, configDir string) {
 	levelVar = slogx.Setup(slogx.Options{})
 	if on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs); on && ok {

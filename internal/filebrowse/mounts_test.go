@@ -1,10 +1,5 @@
 package filebrowse
 
-// Tests for the allow-list mount machinery itself: grant parsing,
-// mount opening, longest-prefix matching for nested grants, and
-// cross-mount operation semantics. The conversion of the handler from
-// deny-list-over-/ to per-mount os.Root is P3 (ws-file-allowlist-roots).
-
 import (
 	"encoding/json"
 	"net/http"
@@ -48,8 +43,6 @@ func TestParseBrowseRoots(t *testing.T) {
 
 func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 	good := t.TempDir()
-	// A missing dir and a "/" grant are both skipped with a warning;
-	// the good mount survives.
 	h, err := New(Sensitive{}, "/does-not-exist-marotte-test", "/", good)
 	if err != nil {
 		t.Fatalf("New with one good root: %v", err)
@@ -57,7 +50,6 @@ func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 	if len(h.mounts) != 1 || h.mounts[0].dir != good {
 		t.Fatalf("mounts = %+v, want exactly the good root", h.mounts)
 	}
-	// Zero usable roots is a hard error.
 	if _, err := New(Sensitive{}, "/does-not-exist-marotte-test"); err == nil {
 		t.Fatal("New with zero usable roots = nil error, want failure")
 	}
@@ -92,7 +84,6 @@ func TestMountFor_NestedGrantWins(t *testing.T) {
 	if m := h.mountFor(outer + "/other"); m == nil || m.dir != outer {
 		t.Errorf("mountFor(outer/other) = %+v, want the outer mount %q", m, outer)
 	}
-	// A sibling whose name merely PREFIXES the mount name is outside.
 	if m := h.mountFor(inner + "extra/x"); m != nil && m.dir == inner {
 		t.Errorf("mountFor(%q) matched the %q mount; prefix match must be segment-aware", inner+"extra/x", inner)
 	}
@@ -106,7 +97,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 	if err := os.Mkdir(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Sensitive{}, inner) // grant ONLY the nested dir
+	h, err := New(Sensitive{}, inner)
 	if err != nil {
 		t.Fatal(err)
 	}

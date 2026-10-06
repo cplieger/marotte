@@ -1,21 +1,11 @@
-// chip.ts — removable chip/tag builder (label + optional badge + keyboard-
-// accessible remove). Eliminates duplicated DOM construction patterns across
-// permissions-ui.ts, mcp-panels.ts, and future modules. (Formerly named
-// ui-primitives.ts; renamed to stop colliding with @cplieger/ui-primitives.)
-
 import { el } from "@cplieger/reactive";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-
-// ---------------------------------------------------------------------------
-// Chip — removable tag with optional badge and code styling.
-// ---------------------------------------------------------------------------
 
 export interface ChipOptions {
   label: string;
   /** Render label inside <code> (monospace). */
   code?: boolean;
-  /** Optional leading badge (e.g. "allow"/"deny" indicator). */
   badge?: { text: string; className: string };
   /** CSS class for the chip container. Default: "chip". */
   chipClass?: string;
@@ -42,9 +32,7 @@ export function buildChip(opts: ChipOptions): HTMLSpanElement {
     chip.appendChild(labelEl);
   }
 
-  // The aria-label is load-bearing, not a duplicate of the tooltip: this
-  // button's only child is an SVG, so without it the button has no accessible
-  // name at all (axe `button-name`, serious).
+  // The aria-label is the button's only accessible name: its sole child is an SVG (axe `button-name`).
   const removeLabel = opts.removeTitle ?? "Remove";
   const removeBtn = el(
     "button",

@@ -1,16 +1,11 @@
-// ---------------------------------------------------------------------------
-// Tests for knowledge.ts: list render (contexts + live indexing progress),
-// merge-by-name dedup, empty/error states, the inline add form, destructive
-// remove, background re-index, the enable hint, and the SSE-driven refetch.
-// api-client, the knowledge actions, confirm, toast, and bus are mocked so we
-// control the fetched payload + dispatch results and assert the rendered DOM.
-// ---------------------------------------------------------------------------
+// api-client, the knowledge actions, confirm, toast and bus are mocked to control payloads and assert the DOM.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 vi.mock("./toast.js", () => ({ showToast: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn() }));
 vi.mock("./icons.js", () => ({
+  ICON_CLOSE_UI: "<svg data-close></svg>",
   ICON_PLUS_UI: "<svg data-plus></svg>",
   ICON_TRASH_UI: "<svg data-trash></svg>",
   ICON_REFRESH: "<svg data-refresh></svg>",
@@ -24,6 +19,8 @@ vi.mock("./actions/knowledge.js", () => ({
   addKnowledge: { dispatch: vi.fn() },
   removeKnowledge: { dispatch: vi.fn() },
   reindexKnowledge: { dispatch: vi.fn() },
+  cancelKnowledgeIndexing: { dispatch: vi.fn() },
+  clearKnowledge: { dispatch: vi.fn() },
 }));
 vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
@@ -35,9 +32,7 @@ vi.mock("./api-client.js", () => ({
       /* noop */
     }
   },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert for real-ESM linking; no case calls them.
   apiGet: vi.fn(),
 }));
 vi.mock("./dom.js", () => ({ byId: (id: string) => document.getElementById(id) }));
@@ -46,7 +41,13 @@ import { apiGetTyped } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { addKnowledge, reindexKnowledge, removeKnowledge } from "./actions/knowledge.js";
+import {
+  addKnowledge,
+  cancelKnowledgeIndexing,
+  clearKnowledge,
+  reindexKnowledge,
+  removeKnowledge,
+} from "./actions/knowledge.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 
@@ -55,10 +56,10 @@ const mockConfirm = vi.mocked(confirmDialog);
 const mockAdd = vi.mocked(addKnowledge.dispatch);
 const mockRemove = vi.mocked(removeKnowledge.dispatch);
 const mockReindex = vi.mocked(reindexKnowledge.dispatch);
+const mockCancel = vi.mocked(cancelKnowledgeIndexing.dispatch);
+const mockClear = vi.mocked(clearKnowledge.dispatch);
 
-/** Flush the fetch().then(render) + refreshHint microtask chains without
- *  advancing the 1500ms poll timer (fake timers keep it pending; afterEach
- *  discards it). */
+/** Flushes the fetch().then(render) and refreshHint chains without advancing the 1500ms poll timer. */
 async function flush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
@@ -67,6 +68,7 @@ function seedDom(): void {
   document.body.innerHTML = `
     <div id="knowledge-section">
       <button id="knowledge-add-btn"></button>
+      <button id="knowledge-clear-btn" class="hidden"></button>
       <p id="knowledge-hint" hidden></p>
       <div id="knowledge-list"><div class="list-empty">No knowledge bases yet.</div></div>
     </div>`;
@@ -76,9 +78,7 @@ const list = (): HTMLElement => document.getElementById("knowledge-list") as HTM
 
 const hint = (): HTMLElement => document.getElementById("knowledge-hint") as HTMLElement;
 
-/** The module makes two GETs through one apiGetTyped, so route by path: the hint
- *  reads /api/settings, everything else is the knowledge list. `settings` is the
- *  whole answer, so `null` models a network/decode failure. */
+/** Two GETs through one apiGetTyped, routed by path; `settings` null models a network or decode failure. */
 function routeGets(listAnswer: unknown, settings: unknown): void {
   mockGet.mockImplementation((path: string) =>
     Promise.resolve(path === "/api/settings" ? settings : listAnswer),
@@ -89,12 +89,12 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   seedDom();
-  // knowledge enabled by default; tests override the list payload
+  // Knowledge enabled by default; tests override the list payload.
   routeGets({ contexts: [] }, settingsPayload());
 });
 
 afterEach(() => {
-  // Discards any pending 1500ms poll timer scheduled by an indexing render.
+  // Discards any pending poll timer.
   vi.useRealTimers();
 });
 
@@ -105,10 +105,7 @@ describe("initKnowledge", () => {
     expect(document.getElementById("knowledge-add-form")).not.toBeNull();
   });
 
-  // The inverse of the deleted subscription IS the contract now: the indexing
-  // notification fired only for a non-builtin mode's declared bases, whose
-  // per-agent store is disjoint from the default store this list reads, so its
-  // one action — refetching — could never show the base it announced.
+  // knowledge_indexing names a per-agent store this list cannot read.
   it("subscribes to no SSE at all", () => {
     initKnowledge();
     expect(vi.mocked(onSSE)).not.toHaveBeenCalled();
@@ -142,23 +139,17 @@ describe("loadKnowledge render", () => {
     loadKnowledge();
     await flush();
     expect(list().textContent).toContain("Indexing… 42%");
-    // A native <progress>, so the value is the element's own and the UA reports
-    // it. `position` rather than `value` alone, because it is the pair with `max`
-    // that decides what is drawn — a value of 42 against a max of 1 is full.
+    // A native <progress>; `position` because value with `max` decides what is drawn.
     const bar = list().querySelector<HTMLProgressElement>("progress.knowledge-bar");
     expect(bar).not.toBeNull();
     expect(bar?.max).toBe(100);
     expect(bar?.value).toBe(42);
     expect(bar?.position).toBeCloseTo(0.42, 5);
-    // The one ARIA it authors. Native <progress> reports its own value, so a name
-    // is all it needs — and the bare `role="progressbar"` this replaced had none.
+    // Native <progress> reports its value, so a name is all it needs.
     expect(bar?.getAttribute("aria-label")).toBe("Indexing");
   });
 
-  // The indeterminate case, and the reason the `pct !== null` guard survived the
-  // conversion: a valueless <progress> renders an ANIMATED indeterminate bar, so
-  // emitting one beside the word "Cancelled" would claim work that has stopped.
-  // Rendering no bar at all is the honest answer.
+  // A valueless <progress> renders an animated indeterminate bar, which beside "Cancelled" claims stopped work; no bar.
   for (const display of ["Cancelled", "Failed", undefined]) {
     it(`renders no bar at all while indexing reports ${display ?? "nothing"}`, async () => {
       mockGet.mockResolvedValue({
@@ -169,7 +160,7 @@ describe("loadKnowledge render", () => {
       loadKnowledge();
       await flush();
       expect(list().querySelector("progress")).toBeNull();
-      // The text still says what happened, which is what the row is for.
+      // The text still says what happened.
       expect(list().textContent).toContain(display === undefined ? "Indexing…" : display);
     });
   }
@@ -216,8 +207,7 @@ describe("loadKnowledge render", () => {
     expect(hint().hidden).toBe(true);
   });
 
-  // A null answer is a network, abort or decode failure — NOT "knowledge is off",
-  // so the hint keeps whatever it was showing rather than asserting either state.
+  // A null answer is a failure, not "knowledge is off", so the hint keeps its state.
   it("leaves a visible hint visible when /api/settings answers null", async () => {
     routeGets({ contexts: [] }, null);
     hint().hidden = false;
@@ -236,9 +226,7 @@ describe("loadKnowledge render", () => {
 });
 
 describe("add flow", () => {
-  /** What the dispatch answers. Only `.outcome` is read, because `error: false`
-   *  keeps the failure off the toast stack and the typed outcome is the only
-   *  thing carrying the server's message. */
+  /** Only `.outcome` is read: `error: false` keeps the failure off the toasts and the outcome carries the message. */
   function addAnswers(outcome: { status: string; value?: unknown; error?: { message: string } }) {
     mockAdd.mockReturnValue(
       Object.assign(
@@ -275,9 +263,7 @@ describe("add flow", () => {
     expect((document.getElementById("knowledge-add-form") as HTMLFormElement).hidden).toBe(true);
   });
 
-  // The action carries `error: false`, so nothing else in the app reports this:
-  // before the field existed, a bad path or a 502 cleared the spinner and said
-  // nothing at all.
+  // `error: false`, so nothing else reports this failure.
   it("writes the server's own message beside the field when the add fails", async () => {
     initKnowledge();
     addAnswers({ status: "error", error: { message: "path does not exist: bad/path" } });
@@ -349,15 +335,12 @@ describe("reindex flow", () => {
     await renderSettledRow();
     control().click();
     await flush();
-    // Not destructive: the base survives and only its index is rebuilt, so there
-    // is nothing to undo and nothing to ask about.
+    // Not destructive: only the index is rebuilt.
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockReindex).toHaveBeenCalledWith({ name: "docs" }, expect.any(Object));
   });
 
-  // The row's own signature does not move when a re-index starts, so the refetch
-  // is the only thing that turns this row into an indexing one and restarts the
-  // progress poll.
+  // The row's signature does not move when a re-index starts, so the refetch turns it into an indexing row.
   it("says so and refetches on success", async () => {
     await renderSettledRow();
     const before = mockGet.mock.calls.length;
@@ -375,9 +358,7 @@ describe("reindex flow", () => {
     expect(mockGet.mock.calls.length).toBeGreaterThan(before);
   });
 
-  // A base already indexing is the progress readout, and the server refuses a
-  // name no SETTLED base holds — so the control is withheld rather than offered
-  // and then refused.
+  // A base already indexing shows progress, and the server refuses a name no settled base holds.
   it("offers no control while the base is still indexing", async () => {
     mockGet.mockResolvedValue({
       contexts: [{ name: "docs", id: "a", item_count: 0, items_display: "12%", indexing: true }],
@@ -388,14 +369,7 @@ describe("reindex flow", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The poll's stall budget.
-//
-// It used to be a flat cap of 200 ticks at 1500ms — a ~5-minute ceiling past
-// which the UI silently stopped updating while KAS carried on indexing, so a
-// large base appeared to hang forever. The budget is stall-based now, and these
-// pin the distinction: slow is not wedged.
-// ---------------------------------------------------------------------------
+// The poll's stall budget: slow is not wedged.
 
 describe("indexing poll", () => {
   function indexing(items: number) {
@@ -413,8 +387,7 @@ describe("indexing poll", () => {
       loadKnowledge();
       await flush();
 
-      // 400 ticks is twice the old cap. Every one advances, so every one must be
-      // followed by another.
+      // 400 ticks, every one advancing, so every one is followed by another.
       for (let i = 0; i < 400; i++) {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
@@ -423,15 +396,13 @@ describe("indexing poll", () => {
     } finally {
       vi.useRealTimers();
     }
-    // 400 real fetch-shaped turns in a real browser do not fit the 5s default:
-    // each poll settles a promise chain rather than a synchronous stub. The
-    // budget moved; the assertion did not.
+    // 400 real fetch-shaped turns do not fit the 5s default.
   }, 30_000);
 
   it("gives up once progress stalls", async () => {
     vi.useFakeTimers();
     try {
-      // Same item_count every time: indexing is running but not moving.
+      // Same item_count every time: running but not moving.
       mockGet.mockImplementation(() => Promise.resolve(indexing(42)));
       loadKnowledge();
       await flush();
@@ -440,18 +411,14 @@ describe("indexing poll", () => {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }
-      // Bounded well below the tick count, so a wedged index does not poll on
-      // forever.
+      // Bounded well below the tick count, so a wedged index stops polling.
       expect(mockGet.mock.calls.length).toBeLessThan(60);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  // The row's last paint reads `Indexing… 42%` and nothing is going to move it,
-  // so leaving it there claims the client is still watching an index it has given
-  // up on. Re-activating the tab re-fires the load, which is the recovery the copy
-  // has to name because it is the only one there is.
+  // Nothing will move the last `Indexing… 42%`, so the row says it gave up and names the recovery (re-activating the tab).
   it("says so on the row when it abandons a stalled index", async () => {
     vi.useFakeTimers();
     try {
@@ -466,20 +433,17 @@ describe("indexing poll", () => {
       const text = list().querySelector(".knowledge-progress-text")?.textContent ?? "";
       expect(text).toContain("stalled");
       expect(text).toContain("Reopen this tab");
-      // And no bar: a value nothing will advance is worse than no bar at all.
+      // No bar: a value nothing will advance is worse than none.
       expect(list().querySelector(".knowledge-bar")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  // The STALL signature, which is a different one from the row's above and was
-  // the last template-literal join in this file. A base NAME is free text from the
-  // add form, so two genuinely different progress states can produce one
-  // "${name}:${count}:${display}" joined by "|" — and then the counter advances
-  // while indexing is moving and abandons a healthy index inside 45 seconds.
+  // A base name is free text, so a "|"-joined stall signature can collapse two progress states and abandon a healthy
+  // index.
   it("keeps polling across two states the old '|'-joined progress signature collapsed", async () => {
-    /** The progress expression as it was before the keyenc adoption. */
+    /** The progress expression before the keyenc adoption. */
     function oldProgressSig(ctxs: readonly { name: string; item_count: number }[]): string {
       return ctxs
         .map((c) => `${c.name}:${String(c.item_count)}:`)
@@ -491,7 +455,7 @@ describe("indexing poll", () => {
       { name: "refs", id: "2", item_count: 2, indexing: true },
     ];
     const one = [{ name: "docs:1:|refs", id: "3", item_count: 2, indexing: true }];
-    // Precondition: the pre-adoption expression really did collapse these.
+    // Precondition: the old expression really collapsed these.
     expect(oldProgressSig(two)).toBe(oldProgressSig(one));
 
     vi.useFakeTimers();
@@ -507,8 +471,7 @@ describe("indexing poll", () => {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }
-      // Under the old join every tick read as a stall, so the poll gave up inside
-      // MAX_STALLED_POLLS ticks.
+      // Under the old join every tick read as a stall.
       expect(mockGet.mock.calls.length).toBeGreaterThan(60);
     } finally {
       vi.useRealTimers();
@@ -531,17 +494,11 @@ describe("indexing poll", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Row signature (keyenc `join`).
-//
-// The signature only gates whether a row's children are rebuilt — row identity
-// is `kb:${name}`, so a collision leaves a STALE ROW, not a missing or wrong
-// one. `items_display` and `path` are adjacent free-form fields (a path may
-// contain "|"), which is what made the old "|"-joined template forgeable.
-// ---------------------------------------------------------------------------
+// The signature gates only a row's rebuild (identity is `kb:${name}`), so a collision leaves a stale row.
+// `items_display` and `path` are adjacent free-form fields.
 
 describe("loadKnowledge row signature", () => {
-  /** The signature expression as it was before the keyenc adoption. */
+  /** The signature expression before the keyenc adoption. */
   function oldSig(c: {
     indexing?: boolean;
     item_count: number;
@@ -561,29 +518,161 @@ describe("loadKnowledge row signature", () => {
   }
 
   it("distinguishes two states the old '|'-joined signature collapsed", async () => {
-    // Both fields are free-form and ADJACENT, so a "|" inside items_display
-    // could impersonate the boundary before `path`.
+    // Free-form and adjacent, so a "|" in items_display could impersonate the boundary.
     const a = { item_count: 3, items_display: "42%|eta", path: "docs" };
     const b = { item_count: 3, items_display: "42%", path: "eta|docs" };
-    // Precondition: the pre-adoption expression really did collapse these.
+    // Precondition: the old expression really collapsed these.
     expect(oldSig(a)).toBe(oldSig(b));
 
-    // The row key is the same for both loads ("kb:kb"), so the second load
-    // reuses the row and rewrites data-sig only if the signature changed.
+    // Same row key for both loads, so data-sig changes only with the signature.
     const sigA = await sigFor(a.items_display, a.path);
     const sigB = await sigFor(b.items_display, b.path);
     expect(sigA).not.toBe(sigB);
   });
 
   it("emits verbatim components for ordinary input", async () => {
-    // No reserved character in any field, so each component is emitted as-is
-    // and the signature is just the five fields separated by ":". The last is
-    // the stall flag, which is what makes the abandoned-poll repaint reach a row
-    // whose other four fields have stopped moving.
-    expect(await sigFor("42%", "internal/api")).toBe("0:3:42%:internal/api:0");
+    // A settled row renders count and path only, so those are the whole signature.
+    expect(await sigFor("42%", "internal/api")).toBe("0:3:internal/api");
   });
 
   it("escapes a reserved character instead of emitting a bare separator", async () => {
-    expect(await sigFor("a:b", "")).toBe("0:3:a\\:b::0");
+    expect(await sigFor("", "a:b")).toBe("0:3:a\\:b");
+  });
+});
+
+describe("stop indexing", () => {
+  function indexingAt(display: string, items = 0) {
+    return {
+      contexts: [
+        { name: "big", id: "op1", item_count: items, items_display: display, indexing: true },
+      ],
+    };
+  }
+
+  const stop = (): HTMLButtonElement | null =>
+    list().querySelector<HTMLButtonElement>(".knowledge-cancel");
+
+  it("offers Stop on an indexing row only", async () => {
+    mockGet.mockResolvedValue({
+      contexts: [
+        { name: "big", id: "op1", item_count: 0, items_display: "5%", indexing: true },
+        { name: "docs", id: "a", item_count: 3 },
+      ],
+    });
+    loadKnowledge();
+    await flush();
+    expect(list().querySelectorAll(".knowledge-cancel").length).toBe(1);
+    expect(stop()?.getAttribute("aria-label")).toBe("Stop indexing knowledge base big");
+  });
+
+  it("posts the cancel for the row's name, confirms nothing, and refetches", async () => {
+    mockGet.mockResolvedValue(indexingAt("5%"));
+    mockCancel.mockReturnValue(
+      Object.assign(Promise.resolve(null), {
+        abort: () => undefined,
+        outcome: Promise.resolve({ status: "error", error: { message: "gone" } }),
+      }) as never,
+    );
+    loadKnowledge();
+    await flush();
+    const before = mockGet.mock.calls.length;
+    stop()?.click();
+    await flush();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockCancel).toHaveBeenCalledWith({ name: "big" });
+    // A refused stop still refetches: the index usually finished first.
+    expect(mockGet.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  // The poll repaints every 1.5s; rebuilding the row would blur a keyboard reader on Stop.
+  it("keeps the same focused Stop button across a progress tick", async () => {
+    let display = "5%";
+    let items = 1;
+    mockGet.mockImplementation((path: string) =>
+      Promise.resolve(path === "/api/settings" ? settingsPayload() : indexingAt(display, items)),
+    );
+    loadKnowledge();
+    await flush();
+    const first = stop();
+    first?.focus();
+    expect(document.activeElement).toBe(first);
+
+    display = "60%";
+    items = 9;
+    await vi.advanceTimersByTimeAsync(1500);
+    await flush();
+
+    expect(list().textContent).toContain("Indexing… 60%");
+    expect(stop()).toBe(first);
+    expect(document.activeElement).toBe(first);
+  });
+});
+
+describe("remove all", () => {
+  const clearBtn = (): HTMLButtonElement =>
+    document.getElementById("knowledge-clear-btn") as HTMLButtonElement;
+
+  it("hides the control while there is nothing to remove", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue({ contexts: [] });
+    loadKnowledge();
+    await flush();
+    expect(clearBtn().classList.contains("hidden")).toBe(true);
+
+    mockGet.mockResolvedValue({ contexts: [{ name: "docs", id: "a", item_count: 3 }] });
+    loadKnowledge();
+    await flush();
+    expect(clearBtn().classList.contains("hidden")).toBe(false);
+  });
+
+  it("names the count and the shared list in a destructive confirm before clearing", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue({
+      contexts: [
+        { name: "docs", id: "a", item_count: 3 },
+        { name: "refs", id: "b", item_count: 4 },
+      ],
+    });
+    loadKnowledge();
+    await flush();
+    mockConfirm.mockResolvedValue(true);
+    clearBtn().click();
+    await flush();
+    expect(mockConfirm).toHaveBeenCalledWith(
+      "Remove all 2 knowledge bases? kiro-cli on this machine uses the same list.",
+      "Remove all",
+      "destructive",
+    );
+    expect(mockClear).toHaveBeenCalledWith(undefined, expect.any(Object));
+  });
+
+  it("refetches the list once the clear succeeds", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue({ contexts: [{ name: "docs", id: "a", item_count: 3 }] });
+    loadKnowledge();
+    await flush();
+    mockConfirm.mockResolvedValue(true);
+    mockClear.mockImplementation((_args, opts) => {
+      opts?.onSuccess?.(undefined as never, undefined);
+      return Object.assign(Promise.resolve(null), {
+        abort: () => undefined,
+        outcome: Promise.resolve({ status: "success", data: undefined }),
+      }) as never;
+    });
+    const before = mockGet.mock.calls.length;
+    clearBtn().click();
+    await flush();
+    expect(mockGet.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("clears nothing when the confirm is cancelled", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue({ contexts: [{ name: "docs", id: "a", item_count: 3 }] });
+    loadKnowledge();
+    await flush();
+    mockConfirm.mockResolvedValue(false);
+    clearBtn().click();
+    await flush();
+    expect(mockClear).not.toHaveBeenCalled();
   });
 });

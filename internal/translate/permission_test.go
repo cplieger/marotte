@@ -23,13 +23,8 @@ func findPermissionNeeded(t *testing.T, events *[]marotte.ServerEvent) (marotte.
 	return marotte.PermissionNeededPayload{}, false
 }
 
-// TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID pins the v3 decode
-// contract: session/request_permission params are FLAT ({sessionId, toolCall,
-// options}) and the correlation id is on the JSON-RPC envelope (msg.ID), not in
-// params. The prior code wrapped the fields under a `params` object and read the
-// id from params, so unmarshalParams (which decodes msg.Params directly) yielded
-// all-zero — an empty dialog with request_id=0. This test fails against that bug
-// and passes with the flat decode.
+// TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID pins the v3 decode: FLAT params
+// and the correlation id on the envelope (a params-wrapped decode reads all zeros).
 func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -90,15 +85,8 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 	}
 }
 
-// --- Turn approval ---------------------------------------------------------
-//
-// A turn approval is not a separate method: KAS raises it as an ordinary
-// session/request_permission and puts the file list in `_meta.kiro`. These
-// tests pin the three things the client depends on — the discriminator, the
-// path normalisation, and the action id — because every one of them is
-// silently recoverable-looking when wrong. A missed discriminator renders a
-// bare "Allow / Reject" with no file list, and the user approves a turn they
-// were never shown.
+// Turn approval: an ordinary session/request_permission with the file list in `_meta.kiro`.
+// A missed discriminator renders a bare Allow/Reject, approving a turn the user never saw.
 
 // turnApprovalParams builds a session/request_permission whose _meta marks it a
 // turn approval carrying `files`.
@@ -125,12 +113,8 @@ func turnApprovalParams(t *testing.T, files []map[string]any) []byte {
 	})
 }
 
-// TestHandlePermissionRequest_TurnApprovalCarriesFiles pins the decode of
-// `_meta.kiro.files`: KAS sends ABSOLUTE paths and names the action id
-// `toolCallId`, and marotte puts workspace-relative paths on the wire under
-// `action_id`. A client that received the absolute path would render the
-// operator's whole home directory in a file row, and one that lost the action
-// id could not answer at all — the decision map is keyed by it.
+// TestHandlePermissionRequest_TurnApprovalCarriesFiles pins that KAS's ABSOLUTE paths go on the
+// wire workspace-relative and its `toolCallId` as `action_id`, the decision map's key.
 func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &workDirDeps{baseDeps: base, workDir: "/work"}
@@ -164,12 +148,8 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequest_SharedActionIDPreserved pins that a multi-file
-// semantic rename keeps BOTH entries under their one shared action id rather
-// than being deduped. The client groups on that id to render one undividable
-// row; collapsing the pair here would hide the second path from review, and
-// re-keying them apart would offer a choice the wire cannot express (the
-// decision map is per action).
+// TestHandlePermissionRequest_SharedActionIDPreserved pins that a multi-file rename keeps both
+// entries under one action id, so the client renders one undividable row.
 func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &workDirDeps{baseDeps: base, workDir: "/work"}
@@ -194,18 +174,14 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles is the inverse, and
-// it is the half that keeps the discriminator honest: without the
-// `_meta.kiro.type == "turn_approval"` check, any permission request could
-// arrive carrying a files list and the client would render a turn-approval card
-// for a bash command.
+// TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles pins that only the turn_approval
+// type carries files.
 func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 
 	id := int64(79)
-	// _meta present but a DIFFERENT type, with files attached: the type is what
-	// decides, not the presence of the array.
+	// A DIFFERENT type with files attached: the type decides, not the array.
 	msg := &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
@@ -231,12 +207,8 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 	}
 }
 
-// --- Always-allow persistability (kiro-cli 2.19.1 _meta.kiro.consent) -------
-//
-// The polarity is ABSENT-MEANS-YES, so the three cases below are the tri-state
-// a *bool has and a plain bool does not. Case (a) is the one that matters most:
-// it is the 2.19.0 wire, and a plain bool would decode it as "not persistable"
-// and suppress the Always-allow row on every command of every request.
+// Always-allow persistability is ABSENT-MEANS-YES: a plain bool would suppress the row on
+// every pre-2.19.1 request.
 
 // consentParams builds a shell permission request whose `_meta.kiro` carries
 // whatever `consent` object the case wants — or none at all when nil.
@@ -261,15 +233,8 @@ func consentParams(t *testing.T, consent map[string]any) []byte {
 	})
 }
 
-// TestHandlePermissionRequest_AbsentConsentIsNotBlocked is the REGRESSION TEST
-// for the whole feature. Every kiro-cli through 2.19.0 sends no `consent` object
-// at all, and KAS on 2.19.1 omits it whenever a rule WOULD match — so absent is
-// both the old wire and the common new case, and it must mean "the offer
-// stands".
-//
-// Red-check it by making ACPConsentMeta.PersistableConsent a plain bool: the
-// zero value is false, the derivation reads that as not-persistable, and this
-// case fails while (b) still passes.
+// TestHandlePermissionRequest_AbsentConsentIsNotBlocked pins absent consent (older KAS wires and
+// the common case) as "the offer stands"; red-check by making PersistableConsent a plain bool.
 func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -291,9 +256,8 @@ func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow is the case the
-// field exists for: KAS probed its three candidate patterns and none would
-// match, so the card must not offer to write a rule that could never fire.
+// TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow pins the block when no
+// candidate pattern would match.
 func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -317,10 +281,7 @@ func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T)
 	}
 }
 
-// TestHandlePermissionRequest_PersistableTrueIsNotBlocked is the tri-state's
-// third leg. KAS is not documented to send an explicit true, but the wire type
-// can carry one, and present-and-true must read the same as absent — otherwise
-// the day upstream starts sending it, every row disappears.
+// TestHandlePermissionRequest_PersistableTrueIsNotBlocked pins present-and-true as absent.
 func TestHandlePermissionRequest_PersistableTrueIsNotBlocked(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -385,5 +346,95 @@ func TestHandlePermissionRequest_CarriesVerifiedMCPIdentity(t *testing.T) {
 	}
 	if mcp["server_name"] != "issues" || mcp["tool_name"] != "create_issue" {
 		t.Errorf("mcp_tool = %+v, want issues/create_issue", mcp)
+	}
+}
+
+// An ask the administrator's managed-settings rules raised carries
+// consent.scope "administration", and the card has to say a person must answer it.
+func TestHandlePermissionRequest_MarksAnAdministratorAsk(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope string
+		want  bool
+	}{
+		{name: "administration", scope: "administration", want: true},
+		{name: "user_scope", scope: "user"},
+		{name: "no_consent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			id := int64(7)
+			params := map[string]any{
+				"sessionId": "sess_x",
+				"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "rm x", "kind": "execute"},
+				"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			}
+			if tc.scope != "" {
+				params["_meta"] = map[string]any{"kiro": map[string]any{"consent": map[string]any{"scope": tc.scope, "askType": "explicit"}}}
+			}
+			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, params)})
+			got, ok := findPermissionNeeded(t, events)
+			if !ok {
+				t.Fatal("no permission_needed event broadcast")
+			}
+			if got.AdminRequired != tc.want {
+				t.Errorf("AdminRequired = %v for consent scope %q, want %v", got.AdminRequired, tc.scope, tc.want)
+			}
+		})
+	}
+}
+
+// KAS reads a deny note only on the ordinary tool approval (the ask carrying
+// `_meta.kiro.toolId`) and only through its reject_once option, so the card
+// offers the note box exactly there.
+func TestHandlePermissionRequest_AcceptsRejectionReason(t *testing.T) {
+	ordinary := []map[string]any{
+		{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+		{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
+	}
+	for name, tc := range map[string]struct {
+		kiro    map[string]any
+		options []map[string]any
+		want    bool
+	}{
+		"a tool approval with a reject option": {
+			kiro: map[string]any{"toolId": "execute_bash"}, options: ordinary, want: true,
+		},
+		"a turn approval": {
+			kiro: map[string]any{"toolId": "x", "type": "turn_approval"}, options: ordinary,
+		},
+		"a hook approval carries no toolId": {
+			kiro: map[string]any{"hookName": "pre-commit"}, options: ordinary,
+		},
+		"no reject_once option": {
+			kiro: map[string]any{"toolId": "execute_bash"},
+			options: []map[string]any{
+				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+				{"optionId": "never", "name": "Always deny", "kind": "reject_always"},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps, events := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			id := int64(5)
+			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+				ID: &id,
+				Params: mustJSON(t, map[string]any{
+					"sessionId": "sess_x",
+					"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Run", "kind": "execute"},
+					"options":   tc.options,
+					"_meta":     map[string]any{"kiro": tc.kiro},
+				}),
+			})
+			got, ok := findPermissionNeeded(t, events)
+			if !ok {
+				t.Fatal("no permission_needed event broadcast")
+			}
+			if got.AcceptsRejectionReason != tc.want {
+				t.Errorf("AcceptsRejectionReason = %v, want %v", got.AcceptsRejectionReason, tc.want)
+			}
+		})
 	}
 }

@@ -20,9 +20,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fakeBroadcaster captures broadcasts for assertions. Access is guarded
-// by mu so concurrent appends from parallel Append goroutines don't race
-// the slice header.
+// fakeBroadcaster captures broadcasts for assertions, guarded by mu against parallel Append
+// goroutines.
 type fakeBroadcaster struct {
 	events []marotte.ServerEvent
 	count  atomic.Int32
@@ -39,17 +38,13 @@ func (f *fakeBroadcaster) Broadcast(_ context.Context, e marotte.ServerEvent) {
 }
 
 // snapshot returns a copy of the captured events under the mutex.
-// Tests should use this instead of reading f.events directly so a
-// future asynchronous broadcaster doesn't race a bare slice read.
 func (f *fakeBroadcaster) snapshot() []marotte.ServerEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.events)
 }
 
-// reset clears the event log under the mutex. Tests that want to
-// observe only post-setup broadcasts should use this instead of a
-// bare `f.events = nil` assignment.
+// reset clears the event log under the mutex.
 func (f *fakeBroadcaster) reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -67,10 +62,8 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
-// ageChat backdates a chat so it is eligible for purge, writing BOTH its
-// UpdatedAt and its mtime. Purge ages from the chat's own UpdatedAt — its last
-// activity — so aging the mtime alone does not make an entry purgeable; mtime is
-// written too because it is the fallback for a chat that cannot be read.
+// ageChat backdates a chat so it is eligible for purge, writing BOTH UpdatedAt (what purge ages
+// from) and the mtime (the fallback for an unreadable chat).
 func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	t.Helper()
 	path := filepath.Join(s.dir, id, headerFileName)
@@ -96,14 +89,10 @@ func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	}
 }
 
-// badChatIDs is the canonical set of invalid chat identifiers used
-// across all RejectsBadChatID / InvalidChatIDRejected tests. Adding a
-// new invalid pattern here automatically covers every method.
+// badChatIDs is the canonical set of invalid chat identifiers for every RejectsBadChatID test.
 var badChatIDs = []marotte.ChatID{"", "a/b", "..", "a\x00b", "a b", marotte.ChatID(strings.Repeat("x", 200))}
 
-// assertRejectsBadChatIDs iterates badChatIDs and asserts that fn
-// returns a non-nil error for each. Use in table-driven subtests to
-// eliminate duplicated bad-id slices across store method tests.
+// assertRejectsBadChatIDs asserts fn returns a non-nil error for every id in badChatIDs.
 func assertRejectsBadChatIDs(t *testing.T, fn func(id marotte.ChatID) error) {
 	t.Helper()
 	for _, bad := range badChatIDs {
@@ -112,8 +101,6 @@ func assertRejectsBadChatIDs(t *testing.T, fn func(id marotte.ChatID) error) {
 		}
 	}
 }
-
-// --- Create + Get ---
 
 func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
@@ -146,7 +133,6 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	// Second Mutate should broadcast chat_updated.
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			t.Error("exists = false on existing chat")
@@ -185,8 +171,6 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 	})
 }
 
-// --- Broadcaster contract ---
-
 // BroadcasterContractTest holds any Broadcaster implementation to two semantics
 // under concurrent Broadcast calls: a single writer's events stay in submission
 // order, and Broadcast never blocks indefinitely.
@@ -212,7 +196,6 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 		}()
 		select {
 		case <-done:
-			// All N concurrent broadcasts completed without blocking.
 		case <-time.After(5 * time.Second):
 			t.Fatal("Broadcast blocked: N concurrent calls did not complete within 5s")
 		}
@@ -227,7 +210,6 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 				ChatID: marotte.ChatID(fmt.Sprintf("%d", i)),
 			})
 		}
-		// Verify ordering via the concrete type's snapshot if available.
 		type snapshotter interface {
 			snapshot() []marotte.ServerEvent
 		}
@@ -253,18 +235,16 @@ func TestFakeBroadcaster_ContractCompliance(t *testing.T) {
 	})
 }
 
-// --- chatIDPattern ---
-
 func TestChatIDPattern(t *testing.T) {
 	valid := []string{
 		"abc",
 		"ABC",
-		"01HXYZ",                               // ULID-like
-		"550e8400-e29b-41d4-a716-446655440000", // UUID
-		"chat-1716000000000",                   // legacy chat-<ms>
-		"a_b",                                  // underscore
-		"a-b",                                  // hyphen
-		strings.Repeat("x", 128),               // max length
+		"01HXYZ",
+		"550e8400-e29b-41d4-a716-446655440000",
+		"chat-1716000000000",
+		"a_b",
+		"a-b",
+		strings.Repeat("x", 128),
 	}
 	for _, id := range valid {
 		if !chatIDPattern(marotte.ChatID(id)) {
@@ -273,14 +253,14 @@ func TestChatIDPattern(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                       // empty
-		"a/b",                    // slash
-		"..",                     // traversal
-		"a.b",                    // dot
-		"a b",                    // space
-		"a\x00b",                 // null byte
-		"a\nb",                   // newline
-		strings.Repeat("x", 129), // over max length
+		"",
+		"a/b",
+		"..",
+		"a.b",
+		"a b",
+		"a\x00b",
+		"a\nb",
+		strings.Repeat("x", 129),
 	}
 	for _, id := range invalid {
 		if chatIDPattern(marotte.ChatID(id)) {
@@ -296,15 +276,8 @@ func TestGet_MissingChat(t *testing.T) {
 	}
 }
 
-// --- List ---
-
-// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, so the gap between the
-// two timestamps is exact rather than a real-clock nudge that can collide on a
-// fast machine.
-//
-// The store's real filesystem work is fine in here: TRANSIENT file I/O reaches a
-// durably-blocked state afterwards so the clock still advances, and only a
-// goroutine parked indefinitely on an external FD defeats a bubble.
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble so the gap between the two timestamps is
+// exact; transient file I/O does not defeat the bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _ := newTestStore(t)
@@ -312,19 +285,16 @@ func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 		synctest.Sleep(2 * time.Millisecond)
 		_, _ = s.Mutate(t.Context(), "b", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
 		synctest.Sleep(2 * time.Millisecond)
-		_, _ = s.Mutate(t.Context(), "a", func(c *marotte.Chat, _ bool) bool { return true }) // bump updated_at
+		_, _ = s.Mutate(t.Context(), "a", func(c *marotte.Chat, _ bool) bool { return true })
 		headers := s.List(t.Context())
-		// Fatal: every assertion below indexes headers.
 		if len(headers) != 2 {
 			t.Fatalf("len = %d, want 2", len(headers))
 		}
 		if headers[0].ID != "a" {
 			t.Errorf("first = %q, want a (most recently updated)", headers[0].ID)
 		}
-		// Exactly 4ms of synthetic time separates a's second mutation from b's
-		// only one. On a real clock this could only ever be asserted as `> 0`,
-		// which a save that stamped the wrong field, or stamped once and reused
-		// the value, would satisfy.
+		// A real clock could only assert `> 0`, which a save stamping the wrong field, or reusing
+		// one stamp, would satisfy.
 		if gap := headers[0].UpdatedAt - headers[1].UpdatedAt; gap != 2 {
 			t.Errorf("UpdatedAt gap = %dms, want exactly 2 (b at +2ms, a re-stamped at +4ms)", gap)
 		}
@@ -334,12 +304,9 @@ func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 func TestList_IgnoresNonChatFiles(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "a", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	// Non-.json file → skipped by the suffix filter.
 	if err := os.WriteFile(filepath.Join(s.dir, "random.txt"), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Valid .json suffix but invalid chat id (contains a '.') → skipped
-	// by the chatIDPattern filter in List.
 	if err := os.WriteFile(filepath.Join(s.dir, "bad.id.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -352,9 +319,6 @@ func TestList_IgnoresNonChatFiles(t *testing.T) {
 func TestList_SkipsMalformedChatFile(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "good", func(c *marotte.Chat, _ bool) bool { c.Name = "ok"; return true })
-	// Drop a file that matches chatIDPattern but isn't valid JSON.
-	// List must log and skip it, not panic or return a zero-value
-	// header that confuses clients.
 	badPath := filepath.Join(s.dir, "bad.json")
 	if err := os.WriteFile(badPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -364,8 +328,6 @@ func TestList_SkipsMalformedChatFile(t *testing.T) {
 		t.Errorf("List() = %+v, want only the good chat", headers)
 	}
 }
-
-// --- Delete ---
 
 func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
@@ -388,13 +350,10 @@ func TestDelete_MissingChatIsNoOp(t *testing.T) {
 	if err := s.Delete(t.Context(), "nonexistent"); err != nil {
 		t.Errorf("error on missing chat: %v", err)
 	}
-	// Still broadcasts (so multi-device sees the delete even if stale).
 	if len(b.events) != 1 {
 		t.Errorf("events: %+v", b.events)
 	}
 }
-
-// --- Tombstone (delete-during-turn race guard) ---
 
 func TestDelete_TombstonesChatID(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -411,10 +370,6 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
-	// Simulate a late handler racing the delete — it tries to Mutate
-	// the just-deleted id. Nothing is written and nothing is broadcast,
-	// and the refusal is reported so the caller can tell it apart from
-	// a persisted write.
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
 		c.Name = "resurrected"
 		return true
@@ -425,7 +380,6 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat was resurrected despite tombstone")
 	}
-	// No chat_created / chat_updated event should have been emitted.
 	for _, e := range b.snapshot() {
 		if e.Type == "chat_created" || e.Type == "chat_updated" {
 			t.Errorf("unexpected event after tombstoned mutate: %+v", e)
@@ -433,9 +387,8 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	}
 }
 
-// The three outcomes of the single write path, pinned apart in one test
-// because the defect was that two of them were indistinguishable: applied and
-// no-op are both nil, and refused is ErrTombstoned. A regression that reports
+// The three outcomes of the single write path, pinned apart in one test:
+// applied and no-op are both nil, and refused is ErrTombstoned. A regression that reports
 // a refusal as nil passes every other test in this file.
 func TestMutate_PinsAppliedNoOpAndRefusedApart(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -456,16 +409,9 @@ func TestMutate_PinsAppliedNoOpAndRefusedApart(t *testing.T) {
 }
 
 func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
-	// Tombstone only blocks the "create if missing" path. An existing
-	// chat whose id happens to share a string with a tombstoned id
-	// would be vanishingly rare (chat IDs are client-random), but
-	// verify the code path: once the chat exists, tombstone is
-	// irrelevant because we never consult it.
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
-	// Tombstone is now live for c1. Re-Create via a different id
-	// shouldn't be affected.
 	_, err := s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
 	if err != nil {
 		t.Fatalf("unrelated chat blocked by unrelated tombstone: %v", err)
@@ -481,8 +427,6 @@ func TestAppend_OnTombstonedChatIsRefused(t *testing.T) {
 	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
-	// A late handler racing the delete appends nothing, emits nothing, and gets
-	// the refusal back, so it cannot read the dropped entry as persisted.
 	err := s.Append(t.Context(), "c1", entryOf("t-ghost", "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "ghost"}))
 	if !errors.Is(err, ErrTombstoned) {
 		t.Fatalf("Append error = %v, want ErrTombstoned", err)
@@ -494,8 +438,6 @@ func TestAppend_OnTombstonedChatIsRefused(t *testing.T) {
 		t.Errorf("events after a refused append = %d, want 0: %+v", n, b.snapshot())
 	}
 }
-
-// --- HTTP endpoints ---
 
 func TestHandleList_ReturnsHeaders(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -515,7 +457,6 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 	if !strings.Contains(body, `"turn_count":1`) {
 		t.Errorf("body = %q, want the header's turn_count", body)
 	}
-	// The list carries headers alone, never the log.
 	if strings.Contains(body, `"entries"`) || strings.Contains(body, `"payload"`) {
 		t.Errorf("entries leaked into list response: %q", body)
 	}
@@ -532,10 +473,6 @@ func TestHandleOne_NotFound(t *testing.T) {
 }
 
 func TestHandleOne_RejectsUnknownSubResource(t *testing.T) {
-	// With sub-resource routing, /api/chats/a/b treats "b" as a sub-
-	// resource name. Unknown sub-resources return 404. Historically this
-	// was a 400 "slash in id" — the new behaviour is correct because
-	// export and archive are valid sub-resources.
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/a/b", nil)
 	rec := httptest.NewRecorder()
@@ -544,8 +481,6 @@ func TestHandleOne_RejectsUnknownSubResource(t *testing.T) {
 		t.Errorf("code = %d, want 404", rec.Code)
 	}
 }
-
-// --- Persistence ---
 
 func TestStoreSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
@@ -565,7 +500,6 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	}
 	closeTurn(t, s1, "c1", turn, marotte.TurnOutcomeCompleted)
 
-	// Reopen: the header and the log both come back off disk.
 	s2, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore reopen: %v", err)
@@ -586,16 +520,9 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	}
 }
 
-// --- Plan drafts ---
-
-// --- Extended HTTP handler coverage ---
-
 func TestHandleList_EmptyStoreReturnsEmptyArrayNotNull(t *testing.T) {
-	// Regression: Go's json.Marshal of a nil slice emits `null`. The
-	// frontend wire decoder rejects null for fields typed as array
-	// ("$.chat_list.chats: expected array, got null") and the chat
-	// list quietly stops working after a fresh container init.
-	// List() must always return a non-nil slice so JSON encodes `[]`.
+	// List must return a non-nil slice: a nil slice encodes as null, which the wire decoder
+	// rejects.
 	s, _ := newTestStore(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
@@ -692,7 +619,6 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
 
-	// /api/chats reaches handleList
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -703,7 +629,6 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 		t.Errorf("GET /api/chats body missing c1: %s", rec.Body.String())
 	}
 
-	// /api/chats/c1 reaches handleOne
 	req = httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -711,8 +636,6 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 		t.Errorf("GET /api/chats/c1 code = %d, want 200", rec.Code)
 	}
 }
-
-// --- Concurrency ---
 
 func TestAppend_SerializesSameChatConcurrentAppends(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -742,8 +665,6 @@ func TestAppend_SerializesSameChatConcurrentAppends(t *testing.T) {
 }
 
 func TestAppend_DifferentChatsAreIndependent(t *testing.T) {
-	// Two chats must not block each other: N appends on each run to completion
-	// with no deadlock and each log holds its own N.
 	s, _ := newTestStore(t)
 	ta := openPromptTurn(t, s, "a", "m-a")
 	tb := openPromptTurn(t, s, "b", "m-b")
@@ -773,19 +694,15 @@ func TestAppend_DifferentChatsAreIndependent(t *testing.T) {
 	}
 }
 
-// --- Tombstone prune paths ---
-
 func TestIsTombstoned_ExpiredEntryIsPrunedAndReturnsFalse(t *testing.T) {
 	s, _ := newTestStore(t)
-	// Inject an expired tombstone (older than tombstoneTTL).
 	s.tombMu.Lock()
-	s.tombstone["c1"] = time.Now().Add(-2 * tombstoneTTL)
+	s.tombstone["c1"] = tombstone{at: time.Now().Add(-2 * tombstoneTTL)}
 	s.tombMu.Unlock()
 
 	if s.isTombstoned("c1") {
 		t.Error("isTombstoned returned true for expired tombstone")
 	}
-	// And the expired entry is now pruned.
 	s.tombMu.Lock()
 	_, still := s.tombstone["c1"]
 	s.tombMu.Unlock()
@@ -799,9 +716,8 @@ func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 
-	// Age the tombstone past its TTL.
 	s.tombMu.Lock()
-	s.tombstone["c1"] = time.Now().Add(-2 * tombstoneTTL)
+	s.tombstone["c1"] = tombstone{at: time.Now().Add(-2 * tombstoneTTL)}
 	s.tombMu.Unlock()
 
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
@@ -822,17 +738,15 @@ func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 
 func TestMarkDeleted_PrunesExpiredEntries(t *testing.T) {
 	s, _ := newTestStore(t)
-	// Seed 3 expired + 1 fresh tombstone.
 	now := time.Now()
 	s.tombMu.Lock()
-	s.tombstone["expired-1"] = now.Add(-2 * tombstoneTTL)
-	s.tombstone["expired-2"] = now.Add(-3 * tombstoneTTL)
-	s.tombstone["expired-3"] = now.Add(-5 * tombstoneTTL)
-	s.tombstone["fresh"] = now.Add(-time.Second)
+	s.tombstone["expired-1"] = tombstone{at: now.Add(-2 * tombstoneTTL)}
+	s.tombstone["expired-2"] = tombstone{at: now.Add(-3 * tombstoneTTL)}
+	s.tombstone["expired-3"] = tombstone{at: now.Add(-5 * tombstoneTTL)}
+	s.tombstone["fresh"] = tombstone{at: now.Add(-time.Second)}
 	s.tombMu.Unlock()
 
-	// markDeleted runs prune on every call.
-	s.markDeleted("new-delete")
+	s.markDeleted("new-delete", "")
 
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
@@ -849,20 +763,33 @@ func TestMarkDeleted_PrunesExpiredEntries(t *testing.T) {
 	}
 }
 
-// --- Delete on missing chat: phantom tombstone guard ---
+func TestDepartedName_IsTheNameTheChatHadWhenDeleted(t *testing.T) {
+	s, _ := newTestStore(t)
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "Release notes"; return true }); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if name, ok := s.DepartedName("c1"); ok {
+		t.Fatalf("DepartedName(c1) before delete = %q, true; want false", name)
+	}
+	if err := s.Delete(t.Context(), "c1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if name, ok := s.DepartedName("c1"); !ok || name != "Release notes" {
+		t.Errorf("DepartedName(c1) = %q, %v; want %q, true", name, ok, "Release notes")
+	}
+	if name, ok := s.DepartedName("never"); ok {
+		t.Errorf("DepartedName(never) = %q, true; want false", name)
+	}
+}
 
 func TestDelete_MissingChatDoesNotTombstone(t *testing.T) {
-	// A stale DELETE from a second device (or a client-driven retry)
-	// can hit a chat id the server never knew about. Broadcasting the
-	// delete is intentional (multi-device UI consistency) but
-	// tombstoning a phantom id would block a future legitimate
-	// create on that id for 10 minutes.
+	// A stale DELETE for an id the server never knew still broadcasts, but must not tombstone the
+	// id and block a legitimate create for 10 minutes.
 	s, _ := newTestStore(t)
 	_ = s.Delete(t.Context(), "never-existed")
 	if s.isTombstoned("never-existed") {
 		t.Error("phantom delete tombstoned a chat that never existed")
 	}
-	// Creating a new chat with that id must succeed.
 	_, err := s.Mutate(t.Context(), "never-existed", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err != nil {
 		t.Fatalf("Mutate after phantom delete: %v", err)
@@ -872,21 +799,14 @@ func TestDelete_MissingChatDoesNotTombstone(t *testing.T) {
 	}
 }
 
-// --- NewStore error propagation ---
-
 func TestNewStore_MkdirFailurePropagatesError(t *testing.T) {
-	// MkdirAll fails when a path component is a regular file — a
-	// real-world misconfiguration users can hit by bind-mounting a file
-	// onto the chats directory. The constructor must surface the error
-	// so the process fails startup instead of silently running with a
-	// broken store.
+	// A regular file in the path makes MkdirAll fail; the constructor must surface it so startup
+	// fails.
 	base := t.TempDir()
 	blocker := filepath.Join(base, "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// "blocker" is a file; asking for "<base>/blocker/chats" forces
-	// MkdirAll to error because it can't descend through a file.
 	_, err := NewStore(filepath.Join(blocker, "chats"))
 	if err == nil {
 		t.Fatal("NewStore(path-through-file) = nil error, want non-nil")
@@ -897,14 +817,8 @@ func TestNewStore_MkdirFailurePropagatesError(t *testing.T) {
 	}
 }
 
-// --- Parse error must not silently overwrite ---
-
 func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
-	// A corrupted chat file (manual edit, partial write from a prior
-	// crash) must not be silently overwritten by Mutate's auto-create
-	// path. Mutate must surface the parse error so callers fail loudly
-	// instead of losing the user's history to an implicit "rewrite from
-	// empty" operation.
+	// A corrupted chat file must not be silently overwritten by Mutate's auto-create path.
 	s, _ := newTestStore(t)
 	badPath := filepath.Join(s.dir, "c1", headerFileName)
 	const garbage = "{not json"
@@ -931,16 +845,10 @@ func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
 	}
 }
 
-// --- Mutator must not reassign c.ID ---
-
 func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
-	// Defensive invariant: a mutator that retargets c.ID would save
-	// the chat to a different file under a different per-chat mutex,
-	// allowing concurrent writes under mismatched locks. Mutate must
-	// refuse and surface the error so the broken caller is visible.
 	s, _ := newTestStore(t)
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.ID = "c2" // broken mutator
+		c.ID = "c2"
 		c.Name = "stolen"
 		return true
 	})
@@ -950,7 +858,6 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 	if !strings.Contains(err.Error(), "reassigned id") {
 		t.Errorf("error = %q, want mention of reassigned id", err.Error())
 	}
-	// Neither chat should have been written.
 	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("c1 was written despite mutator reassigning id")
 	}
@@ -959,14 +866,7 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 	}
 }
 
-// --- handleOne pre-validation of chat id ---
-
 func TestHandleOne_RejectsInvalidChatID(t *testing.T) {
-	// The chat id pre-validation ensures malformed ids (bot probes,
-	// typos) return 400 without emitting an slog.Error from load's
-	// pathFor rejection. We stick to ids that httptest.NewRequest accepts literally —
-	// characters like ' ' or '%00' fail at URL parsing before reaching
-	// the handler.
 	s, _ := newTestStore(t)
 	for _, bad := range []string{"bad.id", "with@sign", "plus+sign"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/"+bad, nil)
@@ -978,13 +878,7 @@ func TestHandleOne_RejectsInvalidChatID(t *testing.T) {
 	}
 }
 
-// --- Additional coverage for chat-id guards and error-path plumbing ---
-
-// skipIfRoot skips the current test when the effective UID is 0.
-// Root bypasses POSIX file permissions, so chmod-to-readonly tests
-// designed to trip EACCES on os.Remove produce false negatives
-// (remove succeeds, branch never executes). CI runs as non-root
-// ubuntu; local WSL is also non-root. Docker-as-root skips.
+// skipIfRoot skips the test under euid 0, where chmod-to-readonly cannot trip EACCES.
 func skipIfRoot(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -993,18 +887,12 @@ func skipIfRoot(t *testing.T) {
 }
 
 func TestDelete_RejectsBadChatID(t *testing.T) {
-	// Parallel to TestMutate_RejectsBadChatID; pathFor in Delete
-	// guards against directory-traversal ids before any filesystem op.
-	// A refactor that moves the check after os.Remove would silently
-	// lose the pre-validation contract, so lock the current behaviour:
-	// every invalid id produces an error AND zero broadcasts.
+	// Delete validates the id before any filesystem op: every invalid id errors AND broadcasts
+	// nothing.
 	s, b := newTestStore(t)
 	assertRejectsBadChatIDs(t, func(id marotte.ChatID) error {
 		return s.Delete(t.Context(), id)
 	})
-	// Defensive assertion: rejected ids never emit chat_deleted.
-	// A broken refactor that moves pathFor after os.Remove would
-	// pass the error tests but still broadcast — catch it here.
 	if evs := b.snapshot(); len(evs) != 0 {
 		t.Errorf("invalid chat id deletes broadcast events: %+v", evs)
 	}
@@ -1012,10 +900,6 @@ func TestDelete_RejectsBadChatID(t *testing.T) {
 
 func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 	skipIfRoot(t)
-	// Delete must return the rmErr
-	// verbatim when it's neither ENOENT nor nil so upstream handlers
-	// can distinguish "chat gone" (no-op) from "filesystem broken"
-	// (surface to operator).
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err := os.Chmod(s.dir, 0o500); err != nil {
@@ -1031,11 +915,6 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 		t.Errorf("err = %v, unexpectedly ENOENT (file should still exist)", err)
 	}
 }
-
-// --- handleExport ---
-// Ported from main's pre-rewrite store_test.go: the export handler and
-// its filename sanitiser survived the conversational-surface rewrite
-// unchanged, so their handler-level battery comes along.
 
 func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -1061,7 +940,6 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 	s, _ := newTestStore(t)
 	exportSeed(t, s, "c1", "Named Chat")
 
-	// No ?format= param — Markdown is the default.
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
 	NewRouter(s).handleOne(rec, req)
@@ -1146,9 +1024,6 @@ func TestHandleExport_RejectsInvalidChatID(t *testing.T) {
 }
 
 func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
-	// Regression: chat names with quotes, CR/LF, or path chars used to
-	// break the Content-Disposition header via string concatenation.
-	// mime.FormatMediaType + safeExportName now handle all of these.
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "evil\"; filename=\"spoof"
@@ -1166,14 +1041,10 @@ func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
 	if strings.Contains(disp, `filename="spoof`) && !strings.Contains(disp, `filename=`) {
 		t.Errorf("header leaked injected filename= param: %q", disp)
 	}
-	// The sanitiser must have replaced the embedded double-quote with
-	// an underscore so the header stays well-formed.
 	if strings.Count(disp, `"`)%2 != 0 {
 		t.Errorf("Content-Disposition has unbalanced quotes: %q", disp)
 	}
 }
-
-// --- exportFilename ---
 
 func TestExportFilename(t *testing.T) {
 	tests := []struct {
@@ -1195,14 +1066,11 @@ func TestExportFilename(t *testing.T) {
 				tc.name, tc.id, tc.ext, got, tc.want)
 		}
 	}
-	// Rune cap on the name stem (id and ext are appended after the cap).
 	got := exportFilename(strings.Repeat("x", 200), "c1", ".md")
 	if len([]rune(got)) > 80+len("-c1.md") {
 		t.Errorf("len(%q) = %d runes, want stem capped at 80", got, len([]rune(got)))
 	}
 }
-
-// --- UTF-8 write gate ---
 
 // TestMutate_RejectsInvalidUTF8 pins the store's write-side UTF-8 gate:
 // a mutation producing invalid UTF-8 anywhere in the chat must abort
@@ -1263,14 +1131,9 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 	}
 }
 
-// TestMutate_RefusesACancelledContext pins the guard at Mutate's entry, untested
-// until now, and it is the negative that keeps the durable-write decision
-// enforceable from this side.
-//
-// Deleting the guard is the cheap way to stop a shutdown discarding an assistant
-// turn, and it opens nine request-context sites at once: a rewind truncation, a
-// user message, a membership change would all persist for a POST the client
-// abandoned. The caller detaches instead — only it can tell the two apart.
+// TestMutate_RefusesACancelledContext pins the guard at Mutate's entry: deleting it would let every
+// request-context write persist for a POST the client abandoned. A caller that needs the write
+// detaches instead.
 func TestMutate_RefusesACancelledContext(t *testing.T) {
 	s, b := newTestStore(t)
 	ctx, cancel := context.WithCancel(t.Context())

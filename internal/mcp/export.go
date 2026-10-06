@@ -22,11 +22,7 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 	c := *s
 	c.Args = append([]string(nil), s.Args...)
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
-	c.AutoApprove = append([]string(nil), s.AutoApprove...)
 	if maskSecrets {
-		if c.OAuthClientSecret != "" {
-			c.OAuthClientSecret = SecretMask
-		}
 		c.Env = make([]KeyPair, len(s.Env))
 		for i, kv := range s.Env {
 			c.Env[i] = KeyPair{Name: kv.Name, Value: SecretMask}
@@ -70,16 +66,6 @@ func preserveNilSlice(patch, existing []string) []string {
 	return append([]string(nil), patch...)
 }
 
-// mergeSecret preserves the stored secret when the client re-submits the
-// SecretMask sentinel; otherwise the patch value wins. Scalar counterpart
-// to mergeSecrets (which operates on KeyPair slices).
-func mergeSecret(patch, existing string) string {
-	if patch == SecretMask {
-		return existing
-	}
-	return patch
-}
-
 // mergeSecrets returns a new slice that mirrors `patch` in order and
 // key-set, but substitutes the previously-stored value wherever the
 // client sent SecretMask. Preserves the user's intended ordering while
@@ -103,21 +89,18 @@ func mergeSecrets(patch, existing []KeyPair) []KeyPair {
 	return out
 }
 
-// sameSpec reports whether two records describe the same CONNECTION, which
-// is what makes a re-paste of an already-configured server a no-op
-// instead of a conflict. Deliberately excluded: ID/CreatedAt/UpdatedAt
-// (store-owned), secret VALUES (a pasted README carries a placeholder),
-// and Enabled/Prewarm/DisabledTools/AutoApprove (the user's own policy).
-//
-// Env and header NAMES are compared as sets, not sequences: they are
-// records on KAS's wire, so a user who dragged two env rows around has
-// not changed the connection. Args stay order-sensitive, since argv order
-// is.
+// sameSpec reports whether two records describe the same CONNECTION, so a
+// re-paste of a configured server is a no-op rather than a conflict. It ignores
+// store-owned fields, secret VALUES (a pasted README carries a placeholder) and
+// the user's own policy (Enabled, Prewarm, DisabledTools). Env and header NAMES
+// compare as sets because they are records on KAS's wire; args stay ordered.
 func sameSpec(a, b *Server) bool {
 	if a.Transport != b.Transport ||
 		strings.TrimSpace(a.Command) != strings.TrimSpace(b.Command) ||
 		strings.TrimSpace(a.URL) != strings.TrimSpace(b.URL) ||
-		a.OAuthClientID != b.OAuthClientID {
+		a.OAuthClientID != b.OAuthClientID ||
+		a.OAuthClientMetadataURL != b.OAuthClientMetadataURL ||
+		a.OAuthRedirectURI != b.OAuthRedirectURI {
 		return false
 	}
 	if !slices.Equal(a.Args, b.Args) {
@@ -145,18 +128,10 @@ func sortedPairNames(pairs []KeyPair, fold bool) []string {
 	return out
 }
 
-// guardOriginChange refuses to re-attach a preserved secret to a new origin.
-//
-// A PUT may change `url` while masked header rows survive, and mergeSecrets
-// keys its index on the header NAME alone. So a bearer issued for the old
-// origin was silently re-attached, persisted, and rendered into KAS's
-// config file, whose watcher hands it to the new origin.
-//
-// It refuses rather than silently dropping the value to "": a silent drop
-// is indistinguishable from a successful save.
-//
-// The comparison is scheme+host, not the whole string: a path edit on the
-// same origin is not a new party.
+// guardOriginChange refuses to re-attach a preserved secret to a new origin: mergeSecrets keys
+// masked headers by NAME, so a PUT changing `url` would hand the old origin's bearer to the new
+// one. It refuses rather than silently dropping the value; scheme+host is the comparison, so a
+// same-origin path edit passes.
 func guardOriginChange(in, existing *Server) error {
 	if !changesOrigin(existing.URL, in.URL) {
 		return nil
@@ -175,12 +150,6 @@ func guardOriginChange(in, existing *Server) error {
 				kv.Name, originLabel(in.URL),
 			)
 		}
-	}
-	if in.OAuthClientSecret == SecretMask && existing.OAuthClientSecret != "" {
-		return fmt.Errorf(
-			"url points at a new origin, so the stored oauth_client_secret was not carried over: re-enter it for %s",
-			originLabel(in.URL),
-		)
 	}
 	return nil
 }
@@ -215,36 +184,16 @@ var errImportDuplicate = errors.New("names the same server twice")
 // now renders KAS's own config file instead (kasfile.go) and sends
 // nothing — KAS merges `client > file-based`, so an inline entry would
 // win over the file and make every file edit look like a no-op.
-//
-// EnabledNames stays: the runtime still filters status notifications
-// against the set of servers the user has enabled.
 
-// EnabledNames returns the set of enabled server names, for the runtime's
-// defensive filtering of init notifications.
+// EnabledNames returns the set of enabled server names.
 func (s *Store) EnabledNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(sv *Server) bool { return sv.Enabled })
 }
 
 // ConfiguredNames returns every server name this store holds regardless of
-// its enabled flag. The runtime subtracts EnabledNames
-// from it to identify the one case that still drops a status frame: a server
-// marotte configured and the user switched off.
+// its enabled flag: the set of definitions marotte owns.
 func (s *Store) ConfiguredNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(*Server) bool { return true })
-}
-
-// AllNames returns every name reachable through the config file marotte renders, which is its own servers plus the `powers.mcpServers` block
-// KAS reads out of the same file. A name in here that ConfiguredNames does not
-// hold came from an installed Power.
-//
-// The powers read happens outside the store lock — it is file I/O, and holding
-// the lock across it would let a slow disk block every CRUD call.
-func (s *Store) AllNames(ctx context.Context) map[string]struct{} {
-	out := s.powerNames()
-	for name := range s.ConfiguredNames(ctx) {
-		out[name] = struct{}{}
-	}
-	return out
 }
 
 // namesWhere collects the names of the stored servers matching keep. One helper

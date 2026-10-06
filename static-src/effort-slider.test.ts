@@ -1,20 +1,5 @@
-// ---------------------------------------------------------------------------
-// The reasoning-effort slider's own geometry and gestures, measured against the
-// SHIPPED cascade: every claim here is about a real box in a real card, so the
-// stylesheet is mounted rather than reasoned about.
-//
-// The handle is driven directly (`buildEffortSlider` plus a spy `onPick`), which
-// is what keeps `model-switcher.ts`'s ten-mock graph out of this file — the state
-// and dispatch behaviours live there, in `model-switcher.test.ts`.
-//
-// The card fixture is the real one, because the track's width is what every travel
-// figure below is derived from and the card's `overflow: hidden` is what would clip
-// the control.
-//
-// A pointer target is aimed at the knob's own rendered centre per tier: CSS places
-// that and `fracAt` resolves the gesture, so the oracle is independent of the
-// arithmetic under test.
-// ---------------------------------------------------------------------------
+// The effort slider's geometry and gestures against the shipped cascade, driven through `buildEffortSlider` with a
+// spy `onPick` to keep model-switcher.ts's mocks out.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
@@ -24,10 +9,7 @@ import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rul
 import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
 import type { SessionEffortLevel } from "./types.js";
 
-/** Not 1, which is the mouse's own id: a real Playwright gesture in an earlier
- *  case leaves pointer 1 ACTIVE, so `setPointerCapture(1)` would succeed by
- *  accident and a synthetic gesture would pass without the stub below doing any
- *  work. A id no real pointer holds is what keeps the stub load-bearing. */
+/** Not 1 (the mouse's id): a real gesture earlier leaves pointer 1 active, so the capture stub would do no work. */
 const POINTER_ID = 7;
 
 /** What KAS 2.21.2 sends for a real model in this account. */
@@ -39,13 +21,10 @@ const FIVE: SessionEffortLevel[] = [
   { id: "max", name: "Max" },
 ];
 
-/** The geometry per pointer tier, all of it derived in 15-input.css from ONE token:
- *  the BAR is `--ctl-h-sm` (01-tokens.css, 1.5rem fine / 2.25rem coarse), the KNOB is
- *  the bar's own height on both axes, and the LINE the bar sits in is floored at
- *  `--hit-floor` because the whole track answers a tap. The knob used to clear the bar
- *  by a 2px inset on all four edges; it fills the bar now, so on the fine tier — where
- *  the bar and the floor are both 1.5rem — the handle is exactly the line's height and
- *  only the coarse tier still has the bar sitting inside a taller line. */
+/**
+ * Per-tier geometry, all derived in 15-input.css from `--ctl-h-sm`: the knob is the bar's height on both axes, and the
+ * line is floored at `--hit-floor` because the whole track answers a tap.
+ */
 const TIER = {
   fine: { line: 24, bar: 24, knob: 24 },
   coarse: { line: 44, bar: 36, knob: 36 },
@@ -61,10 +40,8 @@ beforeAll(() => {
   style = mountAppCSS();
   document.body.style.margin = "0";
   host = document.createElement("div");
-  // A definite width, so the card's shrink-to-fit width is decided by its own
-  // `min-inline-size` floor and its content the way it is above the composer — and
-  // 400px down the page, because the card is anchored ABOVE its slot and a real
-  // pointer gesture is refused for an element outside the viewport.
+  // A definite width so the card sizes as above the composer; 400px down because the card anchors above its slot and
+  // a pointer gesture is refused outside the viewport.
   host.style.cssText = "position:fixed;top:400px;left:0;width:600px;";
   document.body.appendChild(host);
 });
@@ -74,7 +51,6 @@ afterAll(() => {
   host.remove();
 });
 
-/** Mount a slider in the real card and put its knob on `active`. */
 function mount(levels: readonly SessionEffortLevel[], active: string): EffortSliderHandle {
   picks = [];
   mounted = levels;
@@ -87,8 +63,7 @@ function mount(levels: readonly SessionEffortLevel[], active: string): EffortSli
   scroll.className = "pill-model-scroll";
   const card = document.createElement("span");
   card.className = "pill-expand-content pill-model-list is-open";
-  // The resting state is `opacity: 0; transform: scale(0.4)`, and a transformed box
-  // reports scaled rects against unscaled computed values.
+  // The resting state is scaled, and a transformed box reports scaled rects.
   card.style.cssText = "opacity:1;transform:none;animation:none;transition:none;";
   card.append(scroll, slider.el);
   const slot = document.createElement("span");
@@ -97,9 +72,7 @@ function mount(levels: readonly SessionEffortLevel[], active: string): EffortSli
   host.replaceChildren(slot);
   slider.setLevels(levels);
   slider.setActive(active);
-  // The snap transition is the one thing a geometry reading cannot tolerate: a rect
-  // taken mid-flight is the interpolated position, and Playwright refuses to click
-  // an element whose box is still moving. The declaration itself is asserted below.
+  // A rect mid-transition is interpolated, and Playwright refuses a moving box. The declaration is asserted below.
   knob().style.transition = "none";
   return slider;
 }
@@ -120,20 +93,18 @@ function knob(): HTMLElement {
   return el as HTMLElement;
 }
 
-/** The word the caption names the live tier with. */
 function caption(): string {
   return slider.el.querySelector<HTMLElement>(".effort-value")?.textContent ?? "";
 }
 
-/** The bar's own box, off the `::before` that paints it. */
 function barHeight(): number {
   return parseFloat(getComputedStyle(track(), "::before").blockSize);
 }
 
-/** The fill's colour-stop POSITIONS, in order, off the bar's computed gradient. The
- *  first item of that list is the direction and is dropped; every other is
- *  `<colour> <position>`, and each colour computes to a space-separated `oklch(...)`,
- *  so a comma in the string only ever separates two stops. */
+/**
+ * Stop positions off the computed gradient; the first item is the direction. Colours compute to `oklch(...)` with
+ * no commas.
+ */
 function fillStops(): readonly string[] {
   const img = getComputedStyle(track(), "::before").backgroundImage;
   const inner = img.slice(img.indexOf("(") + 1, img.lastIndexOf(")"));
@@ -143,11 +114,7 @@ function fillStops(): readonly string[] {
     .map((stop) => stop.slice(stop.indexOf(")") + 1).trim());
 }
 
-/** A stop's position in px from the bar's start. Chromium serializes these as `50%`
- *  or `calc(25% + 6px)`, so Typed OM resolves the two terms and this file carries no
- *  calc parser of its own. The bar's border box is the track's content box
- *  (`inset-inline: 0`) and `background-origin: border-box` puts the gradient line on
- *  it, so `clientWidth` is what a percentage there resolves against. */
+/** Typed OM resolves `50%` / `calc(25% + 6px)`; the bar's border box is the gradient line, so `clientWidth` is the base. */
 function stopPx(position: string): number {
   const sum = CSSNumericValue.parse(position).toSum("percent", "px");
   const pct = (sum.values[0] as CSSUnitValue).value;
@@ -155,8 +122,7 @@ function stopPx(position: string): number {
   return (pct / 100) * track().clientWidth + px;
 }
 
-/** Any CSS colour string as 8-bit sRGB. Chromium computes `color-mix(in oklch, …)`
- *  to an `oklab()` form, so a paint through the CSS colour parser is what reads it. */
+/** Chromium computes `color-mix(in oklch, …)` to `oklab()`, so the colour parser reads it. */
 function rgbOf(colour: string): readonly [number, number, number] {
   const canvas = document.createElement("canvas");
   canvas.width = 1;
@@ -170,7 +136,6 @@ function rgbOf(colour: string): readonly [number, number, number] {
   return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0] as const;
 }
 
-/** Plain sRGB distance, for "is this step nearer the accent than the last one". */
 function distance(
   a: readonly [number, number, number],
   b: readonly [number, number, number],
@@ -178,7 +143,6 @@ function distance(
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-/** WCAG relative-luminance contrast. */
 function contrast(
   a: readonly [number, number, number],
   b: readonly [number, number, number],
@@ -194,15 +158,11 @@ function contrast(
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** The knob's continuous position along its travel, 0..1 — the value the drag
- *  writes and the release snaps. */
 function frac(): number {
   return Number(track().style.getPropertyValue("--effort-frac"));
 }
 
-/** The index the knob reports, cross-checked against the tier it paints. The
- *  vocabulary comes from the fixture rather than from the DOM: nothing draws the
- *  tiers now, so the mounted list is the only independent statement of them. */
+/** The vocabulary comes from the fixture: nothing draws the tiers any more. */
 function shown(): number {
   const k = knob();
   const now = Number(k.getAttribute("aria-valuenow"));
@@ -219,9 +179,7 @@ async function press(...keys: readonly string[]): Promise<void> {
   }
 }
 
-/** The x a finger would be at to aim the knob at each tier, read off the knob's own
- *  rendered position. Gathered up front, and it leaves the knob on the last tier, so
- *  callers re-seat it. */
+/** Read off the knob's rendered position; leaves the knob on the last tier. */
 function tierCentres(levels: readonly SessionEffortLevel[]): number[] {
   return levels.map((level) => {
     slider.setActive(level.id);
@@ -230,12 +188,10 @@ function tierCentres(levels: readonly SessionEffortLevel[]): number[] {
   });
 }
 
-/** Back the three pointer-capture methods with a Set so the capture-gated
- *  move/up paths run under a synthetic gesture. Required rather than tidy:
- *  `setPointerCapture` throws `NotFoundError` for a pointerId that is not a real
- *  active pointer, so a synthetic `PointerEvent` cannot use the real method — the
- *  HARNESS adapts, never the control, which must not grow a try/catch to
- *  accommodate a test. `shell.test.ts` is the precedent, for the same reason. */
+/**
+ * `setPointerCapture` throws `NotFoundError` for a synthetic pointerId, so the harness backs capture with a Set;
+ * the control must not grow a test path.
+ */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
   el.setPointerCapture = (id: number): void => {
@@ -247,7 +203,6 @@ function stubPointerCapture(el: HTMLElement): void {
   el.hasPointerCapture = (id: number): boolean => captured.has(id);
 }
 
-/** A synthetic pointer event carrying the two fields the handlers read. */
 function ptr(type: string, clientX: number): PointerEvent {
   return new PointerEvent(type, { bubbles: true, clientX, pointerId: POINTER_ID });
 }
@@ -262,10 +217,7 @@ afterEach(() => {
 
 describe("the knob's size", () => {
   it("is ONE derived square, whatever words the vocabulary carries", () => {
-    // The whole point of moving the tier's name into the caption: the knob stopped
-    // being sized from foreign text, so its box is a constant of the pointer tier
-    // rather than a measurement anything can move. A re-introduced measure step
-    // fails here on the first tier whose label is not "Medium"-shaped.
+    // The knob is sized by the pointer tier, not by foreign text.
     mount(FIVE, "low");
     const boxes = new Set<string>();
     for (const level of FIVE) {
@@ -276,34 +228,27 @@ describe("the knob's size", () => {
       `${String(TIER.fine.knob)}x${String(TIER.fine.knob)}`,
     ]);
 
-    // And it is the same box for a vocabulary of one very long foreign name.
     mount([{ id: "max", name: "M".repeat(120) }], "max");
     expect(knob().offsetWidth).toBe(TIER.fine.knob);
     expect(knob().offsetHeight).toBe(TIER.fine.knob);
   });
 
   it("takes the BAR's height rather than the hit floor's, and the track carries the target", () => {
-    // The floor is physical on purpose and 15-input.css precedes it in MANIFEST
-    // order, so a logical `min-inline-size` override would lose on source order.
-    // Overriding it is what keeps the handle the size of the box it slides in: on the
-    // coarse tier the floor is 44px against a 36px bar, so an inherited floor would
-    // make the handle outgrow the bar (the case the coarse block below measures).
+    // The floor is physical and 15-input.css precedes it in MANIFEST order, so a logical override would lose; inherited,
+    // the coarse 44px floor would outgrow the 36px bar.
     mount(FIVE, "high");
     const k = getComputedStyle(knob());
     expect(parseFloat(k.minWidth), "the floor is overridden, not inherited").toBe(0);
     expect(parseFloat(k.minHeight)).toBe(0);
     expect(knob().offsetHeight, "the bar's height, not the line's").toBe(TIER.fine.bar);
     expect(knob().offsetHeight).toBeLessThanOrEqual(TIER.fine.line);
-    // The tap target is the whole track, which carries the one pointerdown handler,
-    // and it is what meets the floor.
+    // The whole track carries the pointerdown handler and meets the floor.
     expect(track().offsetHeight).toBe(TIER.fine.line);
     expect(track().clientWidth).toBeGreaterThan(TIER.fine.line);
   });
 
   it("takes no width from the card it happens to be in", () => {
-    // The knob's size is a property of the pointer tier, so a card the model list
-    // widened must not change it — nor may the width the card had once carry into
-    // the next open, which is what a published measurement did.
+    // A widened card must not change the knob, nor carry its width into the next open.
     mount(FIVE, "high");
     const before = knob().offsetWidth;
     const wide = document.createElement("div");
@@ -319,8 +264,7 @@ describe("the knob's size", () => {
   });
 
   it("FILLS the bar's height: the handle is the groove, not a dot inside it", () => {
-    // The handle's band and the bar's band are the same band at every tier, which is
-    // what makes it read as the thing filling the groove, with no clearance on any edge.
+    // Handle band and bar band coincide at every tier.
     mount(FIVE, "high");
     const bar = barHeight();
     expect(bar).toBe(TIER.fine.bar);
@@ -331,21 +275,17 @@ describe("the knob's size", () => {
       const k = knob().getBoundingClientRect();
       const c = card().getBoundingClientRect();
       const t = track().getBoundingClientRect();
-      // The BAR's own band, centred in the line the track reserves.
       const barTop = (t.top + t.bottom) / 2 - bar / 2;
       const barBottom = barTop + bar;
       expect(k.top, `${level.id}: flush with the bar's top`).toBeCloseTo(barTop, 1);
       expect(k.bottom, `${level.id}: flush with the bar's bottom`).toBeCloseTo(barBottom, 1);
-      // And nothing leaves the card's clip box.
       expect(k.top, `${level.id}: inside the card's clip box`).toBeGreaterThanOrEqual(c.top);
       expect(k.bottom, `${level.id}: inside the card's clip box`).toBeLessThanOrEqual(c.bottom);
     }
   });
 
   it("draws both of its edges with a border and carries no shadow", () => {
-    // The groove and the handle are edged with borders, not shadows: no surface in
-    // the interface uses a shadow, so the control is edged the way every other
-    // surface is.
+    // Both are borders, not shadows: no other surface in the interface uses a shadow.
     mount(FIVE, "high");
     const bar = getComputedStyle(track(), "::before");
     const k = getComputedStyle(knob());
@@ -368,9 +308,7 @@ describe("the knob's size", () => {
         -0.5,
       );
     }
-    // The two ends really are the ends: with the handle flush to the bar there is no
-    // inset left to spend, so the low tier sits on the start edge and the top tier on
-    // the end one, and the travel is the bar's whole width minus the handle.
+    // Flush handle: the low tier sits on the start edge, the top tier on the end.
     slider.setActive("low");
     expect(knob().getBoundingClientRect().left - track().getBoundingClientRect().left).toBeCloseTo(
       0,
@@ -387,10 +325,7 @@ describe("the knob's size", () => {
     const handle = rgbOf(getComputedStyle(knob()).backgroundColor);
     const accent = rgbOf(getComputedStyle(document.documentElement).getPropertyValue("--c-accent"));
 
-    // THE RAMP IS THREE DECLARED COLOURS, so the read is of the mix each one names
-    // rather than of one flat `background-color` that no longer exists. Resolved
-    // through a probe element because a gradient's own stops are not separately
-    // readable off `getComputedStyle`.
+    // Three declared colours, read through a probe (a gradient's stops are not readable off `getComputedStyle`).
     const mix = (pct: number): readonly [number, number, number] => {
       const probe = document.createElement("div");
       probe.style.backgroundColor = `color-mix(in oklch, var(--c-accent) ${String(pct)}%, var(--c-bg-tertiary))`;
@@ -403,8 +338,6 @@ describe("the knob's size", () => {
     const warm = mix(22);
     const hot = mix(70);
 
-    // The ramp runs one way: idle track, warmer at the bar's left edge, hottest under
-    // the knob. A reader SEES it — the two ends are far apart in sRGB.
     expect(distance(warm, accent), "warm is nearer the accent than the idle track").toBeLessThan(
       distance(idle, accent),
     );
@@ -413,21 +346,17 @@ describe("the knob's size", () => {
     );
     expect(distance(idle, hot), "the two ends are visibly different").toBeGreaterThan(90);
 
-    // THE BOUND, and the reason it is stated over the whole 6..70 range rather than
-    // over five tiers: every pixel of the bar is one of these mixes, so clearing 3:1
-    // across the range clears WCAG 1.4.11 at every position the handle can sit.
-    // Widening `--effort-fill-max` past 70% is the one edit that has to re-run this.
+    // Every pixel of the bar is one of these mixes, so 3:1 across 6..70% clears WCAG 1.4.11 everywhere. Widening
+    // `--effort-fill-max` past 70% must re-run this.
     for (let pct = 6; pct <= 70; pct += 8) {
       expect(
         contrast(handle, mix(pct)),
         `the handle clears 3:1 on a ${String(pct)}% fill`,
       ).toBeGreaterThan(3);
     }
-    // NOT the accent: the fill closes on the accent's own lightness as it rises.
     expect(distance(handle, accent), "the handle is not accent-coloured").toBeGreaterThan(40);
 
-    // AND THE FILL MOVES: the boundary is `--effort-frac`, so each tier paints a
-    // different gradient. A flat fill would answer with five identical strings.
+    // The boundary is `--effort-frac`, so each tier paints a different gradient.
     track().dataset["dragging"] = "";
     const images = FIVE.map((level) => {
       slider.setActive(level.id);
@@ -438,11 +367,7 @@ describe("the knob's size", () => {
   });
 
   it("ENDS the fill at the handle's centre, with nothing leaking past it", () => {
-    // The boundary is the handle's own centre, so the seam sits under the handle and
-    // never shows. It replaced a `--effort-pos + 8%` shoulder that ran PAST the handle
-    // at every tier — colour leaking out on the trailing side — and past 100% at the
-    // top one. The oracle is LAYOUT, the handle's rendered centre, against the
-    // gradient's own computed stop, so neither side is derived from the other.
+    // The boundary is the handle's centre, so the seam never shows. Layout against the computed stop.
     mount(FIVE, "low");
     for (const level of FIVE) {
       slider.setActive(level.id);
@@ -459,9 +384,7 @@ describe("the knob's size", () => {
   });
 
   it("marks each tier where the knob actually lands", () => {
-    // The bar carries one mark per tier, because the RELEASE snaps to a tier. They
-    // take the knob's own travel arithmetic, so a dot cannot sit where the handle
-    // would not — which is what this measures rather than the count alone.
+    // The release snaps to a tier, so tier marks show where it ends; they share the knob's travel arithmetic.
     mount(FIVE, "low");
     const dots = [...slider.el.querySelectorAll<HTMLElement>(".effort-stop")];
     expect(dots).toHaveLength(FIVE.length);
@@ -475,7 +398,7 @@ describe("the knob's size", () => {
         1,
       );
     }
-    // They never take the gesture: the track is the one pointerdown target.
+    // The track is the one pointerdown target.
     expect(getComputedStyle(dots[0] as HTMLElement).pointerEvents).toBe("none");
   });
 
@@ -485,12 +408,8 @@ describe("the knob's size", () => {
   });
 
   it("leaves a foreign tier name to the caption, which WRAPS rather than widening the card", () => {
-    // A tier label is KAS's text, so its length is not marotte's to bound. The row of
-    // five buttons this replaced spent that budget on the RAIL's width, which is what
-    // made the card grow; the caption spends it on its own lines. Both halves matter:
-    // the card must not grow sideways, and the name must not be clipped — the card
-    // declares `overflow: hidden`, so a nowrap caption would lose characters with no
-    // ellipsis and no scroll.
+    // A tier label is KAS's text of unbounded length: the card must not grow sideways and the name must not be clipped
+    // (the card is `overflow: hidden`).
     mount(FIVE, "high");
     const narrow = card().clientWidth;
 
@@ -518,8 +437,7 @@ describe("the knob's size", () => {
       expect(kr.left, `${id} starts inside the track`).toBeGreaterThanOrEqual(tr.left);
       expect(kr.right, `${id} ends inside the track`).toBeLessThanOrEqual(tr.right);
     }
-    // The mechanism: the track's floor is the knob itself, so the travel can never
-    // invert.
+    // The track's floor is the knob itself, so the travel cannot invert.
     expect(parseFloat(getComputedStyle(t).minInlineSize)).toBe(k.offsetWidth);
     expect(t.clientWidth).toBeGreaterThan(k.offsetWidth);
   });
@@ -527,14 +445,12 @@ describe("the knob's size", () => {
   it("grows every part of itself on the coarse tier", () => {
     document.documentElement.dataset["pointer"] = "coarse";
     mount(FIVE, "high");
-    // The TRACK meets the 44px target, so the knob is free to stay a handle.
     expect(track().offsetHeight).toBe(TIER.coarse.line);
     expect(barHeight()).toBe(TIER.coarse.bar);
     expect(knob().offsetHeight).toBe(TIER.coarse.knob);
     expect(knob().offsetWidth).toBe(TIER.coarse.knob);
-    // Still under the line: 44px of knob under a finger was the reported complaint.
+    // Under the line: a 44px knob under a finger was the reported complaint.
     expect(knob().offsetHeight).toBeLessThan(TIER.coarse.line);
-    // And nothing is clipped by the card at the bigger size.
     const k = knob().getBoundingClientRect();
     const c = card().getBoundingClientRect();
     expect(k.top).toBeGreaterThanOrEqual(c.top);
@@ -547,15 +463,13 @@ describe("one tier", () => {
     mount([{ id: "high", name: "High" }], "high");
     const t = track();
     const k = knob();
-    // The bar is exactly as wide as the knob: one tier is not a choice, so drawing
-    // travel would claim a range the vocabulary does not offer.
+    // One tier is not a choice, so there is no travel.
     expect(t.clientWidth).toBe(k.offsetWidth);
     expect(k.offsetWidth).toBe(TIER.fine.knob);
     expect(caption(), "the caption still names the tier in force").toBe("High");
     expect(k.getAttribute("aria-valuemin")).toBe("0");
     expect(k.getAttribute("aria-valuemax")).toBe("0");
     expect(shown()).toBe(0);
-    // And the knob cannot drift, because the travel is zero.
     const kr = k.getBoundingClientRect();
     const tr = t.getBoundingClientRect();
     expect(kr.left - tr.left).toBeCloseTo(0, 1);
@@ -590,10 +504,7 @@ describe("the keyboard", () => {
   });
 
   it("keeps the card's roving focus out of its own arrow keys", async () => {
-    // `model-switcher.ts` wires `rovingFocus` over the whole card, and that handler
-    // reads no target: ArrowUp/ArrowDown/Home/End reaching the card would move focus
-    // into the model list. So the six keys the knob acts on are STOPPED, not merely
-    // defaulted, and this is the only place that can see it.
+    // `model-switcher.ts`'s `rovingFocus` reads no target, so the knob's keys must be stopped, not just defaulted.
     mount(FIVE, "medium");
     const scroll = card().querySelector<HTMLElement>(".pill-model-scroll") as HTMLElement;
     for (const id of ["a-model", "b-model"]) {
@@ -613,8 +524,7 @@ describe("the keyboard", () => {
   });
 
   it("leaves every other key to the app", async () => {
-    // Escape has to keep reaching the popup's own document handler, so nothing here
-    // stops a key it does not act on.
+    // Escape must reach the popup's own document handler.
     mount(FIVE, "medium");
     await press("{Escape}", "a", "{PageDown}", "{Enter}", " ");
     expect(shown()).toBe(1);
@@ -630,8 +540,7 @@ describe("the pointer", () => {
     const centres = tierCentres(FIVE);
     slider.setActive("low");
 
-    // A tap 40% of the way from tier 3 to tier 4 is nearest tier 3, so that is where
-    // the release has to land — the press itself paints the finger's own position.
+    // 40% of the way from tier 3 to 4 is nearest tier 3.
     const between =
       (centres[3] as number) + 0.4 * ((centres[4] as number) - (centres[3] as number));
     t.dispatchEvent(ptr("pointerdown", between));
@@ -647,7 +556,6 @@ describe("the pointer", () => {
   });
 
   it("moves smoothly between two tiers and snaps to the nearer one on release", () => {
-    // The knob tracks the pointer continuously; only the release lands on a tier.
     mount(FIVE, "low");
     const t = track();
     stubPointerCapture(t);
@@ -670,16 +578,13 @@ describe("the pointer", () => {
     ).toBe(true);
     expect(picks, "not one move is a pick").toEqual([]);
 
-    // Released past the midpoint, so it snaps UP.
     t.dispatchEvent(ptr("pointerup", low + 0.7 * (medium - low)));
     expect(frac()).toBeCloseTo(1 / 4, 5);
     expect(picks).toEqual(["medium"]);
   });
 
   it("still dispatches when the tap lands where the knob already sits", async () => {
-    // The tier is MARKED rather than chosen — the chat's own choice is
-    // `model-switcher.setEffort`'s guard, and a chat marked at the model default has
-    // chosen nothing, so a tap that pins it has to reach the server.
+    // The tier is marked, not chosen (`model-switcher.setEffort` guards the chat's choice), so pinning it must dispatch.
     mount(FIVE, "high");
 
     await userEvent.click(knob());
@@ -689,20 +594,15 @@ describe("the pointer", () => {
   });
 
   it("follows a drag across the whole track and reports where it was released", () => {
-    // Driven with synthetic pointer events against a stubbed-capture track rather
-    // than `userEvent.dragAndDrop`, which is the wrong instrument for this control:
-    // it maps to Playwright's `frame.dragAndDrop`, whose actionability wait is on
-    // the TARGET — an empty 2px `<span>` the knob travels over — so the gesture
-    // stalls under load, and HTML5 drag semantics do not compose with
-    // `setPointerCapture` at all. `tabs-drag.test.ts` is the other precedent.
+    // Synthetic events, not `userEvent.dragAndDrop`: Playwright's actionability wait is on the 2px target span, so the
+    // gesture stalls under load.
     mount(FIVE, "low");
     const t = track();
     stubPointerCapture(t);
     const centres = tierCentres(FIVE);
     slider.setActive("low");
 
-    // A release reports where the knob IS (`pointerup` reads no coordinate), so the
-    // gesture ends with a move at the far tier exactly as a real one does.
+    // `pointerup` reads no coordinate, so the gesture ends with a move at the far tier.
     t.dispatchEvent(ptr("pointerdown", centres[0] as number));
     const painted = [shown()];
     const named = [caption()];
@@ -723,7 +623,7 @@ describe("the pointer", () => {
     t.dispatchEvent(ptr("pointerup", centres[4] as number));
 
     expect(shown()).toBe(4);
-    // ONE dispatch, on the release.
+    // One dispatch, on the release.
     expect(picks).toEqual(["max"]);
   });
 
@@ -731,19 +631,13 @@ describe("the pointer", () => {
     mount(FIVE, "low");
     const t = track();
     const k = knob();
-    // The fixture suppresses the transition for its geometry readings, so this is
-    // the one case that reads the shipped declaration.
+    // The fixture suppresses the transition; this case reads the shipped declaration.
     k.style.removeProperty("transition");
     const rest = getComputedStyle(k);
     expect(rest.transitionProperty, "a settled knob eases to its tier").toContain("transform");
     expect(parseFloat(rest.transitionDuration)).toBeGreaterThan(0);
-    // THE PRESS SCALE IS A FUNCTION IN THE `transform` LIST, NOT THE `scale` PROPERTY,
-    // and the difference is the mouse jitter's root cause: the individual properties
-    // compose as `translate . rotate . scale . transform`, so the `scale` property
-    // MULTIPLIES this element's own translate and a hover displaced the knob by 12% of
-    // its travel — out from under the pointer that caused it, which then un-hovered it
-    // back. Inside the list, `translate()` is applied last and its distance is
-    // unscaled. So `scale` must stay `none` in every state and carry no transition.
+    // The press scale is a `transform` function, not the `scale` property: the individual properties compose so `scale`
+    // multiplies the element's translate and displaced the knob under the pointer.
     expect(rest.scale, "the resting handle sets no `scale` property").toBe("none");
     expect(rest.transitionProperty, "and has nothing to transition on it").not.toContain("scale");
     const sheet = loadCSS("15-input.css");
@@ -796,9 +690,7 @@ describe("the single writer", () => {
   });
 
   it("keeps the caption's value following the knob through a real gesture", async () => {
-    // The caption is the control's visible label AND its readout, so it has to track
-    // the knob however the knob moved — not only through `setActive`, which is the
-    // store's own path. One writer means a keyboard step and a tap both move it.
+    // The caption is the visible label and readout; one writer, so every input path moves it.
     mount(FIVE, "low");
     expect(caption()).toBe("Low");
 
@@ -818,25 +710,20 @@ describe("the single writer", () => {
   });
 
   it("names the dimension beside the value, so the control has a visible label", () => {
-    // A value alone names no dimension, and an input with no visible label is a
-    // WCAG 3.3.2 (Level A) exposure. The static half is not the value's element, so
-    // one writer replaces the word and never the sentence.
+    // A value alone names no dimension (WCAG 3.3.2), so one writer replaces the word, never the sentence.
     mount(FIVE, "high");
     const label = slider.el.querySelector<HTMLElement>(".effort-label") as HTMLElement;
     expect(label.textContent).toBe("Effort: High");
     slider.setActive("max");
     expect(label.textContent).toBe("Effort: Max");
-    // The knob's own name is STABLE across the same steps: a name carrying the live
-    // value would be re-announced on every step, which is the anti-pattern this repo
-    // records for its `aria-pressed` toggles.
+    // A stable name: one carrying the value is re-announced on every step.
     expect(knob().getAttribute("aria-label")).toBe("Reasoning effort");
     expect(label.getAttribute("aria-live"), "the caption is visual, not a live region").toBeNull();
     expect(knob().getAttribute("aria-labelledby")).toBeNull();
   });
 
   it("puts an unoffered tier on the lowest one", () => {
-    // `effortVocabulary` answers "" when nothing resolved, and a slider is always
-    // somewhere; `effort.test.ts` is where that resolution stays pinned.
+    // `effortVocabulary` answers "" when nothing resolved; a slider is always somewhere.
     mount(FIVE, "");
     expect(shown()).toBe(0);
     mount(FIVE, "not-a-tier");
@@ -861,11 +748,7 @@ describe("the vocabulary", () => {
   });
 
   it("needs no layout to build, so a detached or hidden card is not a special case", () => {
-    // What replaced the measure step. The knob used to be sized from a live
-    // `offsetWidth`, so the handle had to be told when the card was laid out and had
-    // to refuse to publish a width while it was not. Every position and every
-    // announcement is CSS arithmetic over `--effort-frac` now, so building the whole
-    // control detached and attaching it afterwards is the same control.
+    // Position and announcements are CSS arithmetic over `--effort-frac`, so building detached is the same control.
     const detached = buildEffortSlider({ onPick: () => undefined });
     detached.setLevels(FIVE);
     detached.setActive("xhigh");
@@ -890,8 +773,7 @@ describe("the row keeps its place in the card", () => {
   it("bleeds to both edges below the scroller", () => {
     mount(FIVE, "low");
     expect(card().lastElementChild, "the section is the card's last child").toBe(slider.el);
-    // The card gave its padding to the scroller, so its own border is the only thing
-    // between this section and the card's edge.
+    // The card gave its padding to the scroller, so its border is the only thing at its edge.
     const border = parseFloat(getComputedStyle(card()).borderLeftWidth);
     const c = card().getBoundingClientRect();
     const r = slider.el.getBoundingClientRect();
@@ -900,8 +782,6 @@ describe("the row keeps its place in the card", () => {
   });
 
   it("stacks the caption over the bar rather than beside it", () => {
-    // The two-line shape is the whole change: the caption on its own line is what
-    // frees the knob from carrying the tier's name.
     mount(FIVE, "high");
     const label = (
       slider.el.querySelector<HTMLElement>(".effort-label") as HTMLElement
@@ -931,7 +811,7 @@ describe("nothing about it is a range input", () => {
   });
 });
 
-// A spy is not part of the subject: this guards the fixture rather than the code.
+// Guards the fixture, not the code.
 it("reports every pick through the callback it was given", () => {
   const onPick = vi.fn();
   const handle = buildEffortSlider({ onPick });

@@ -1,7 +1,7 @@
 package translate
 
-// v3 (KAS) Infrastructure-Safety notification handlers. These fire only when the client declares
-// the infrastructureSafety capability AND an AWS governance flag is on, so never on Builder-ID.
+// Infrastructure-Safety notifications: they fire once KAS installs the gate (the client
+// declares infrastructureSafety and the setting or experiment is on).
 
 import (
 	"context"
@@ -41,12 +41,8 @@ type v3SafetyPropertiesChanged struct {
 }
 
 // HandleSafetyStatusChanged translates _kiro/safety/statusChanged into a chat-scoped
-// safety_status SSE. status="idle" is forwarded too, so the client can clear a stale banner.
-//
-// This handler surfaces a refusal, it does not GATE a write: the gate is a PreToolUse hook, so
-// in enforce mode KAS intercepts the tool before execution and never issues the write request
-// here. The block is not tool-scoped either — the notification's toolId is a tool NAME, not a
-// per-call id, so it cannot be correlated to a rendered tool card.
+// safety_status SSE ("idle" clears a stale banner). It surfaces a refusal and gates nothing:
+// the gate is a PreToolUse hook, and toolId is a tool NAME, not a call id.
 func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3SafetyStatusChanged](msg, "safety/statusChanged")
 	if !ok {
@@ -62,9 +58,7 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID marot
 		ToolID:            p.ToolID,
 		BlockedProperties: p.BlockedProperties,
 	}))
-	// The SSE above is a transient banner that clears on idle. A blocked status is the
-	// ENFORCE-mode terminal outcome — a change was refused — so it must outlive the banner and
-	// is persisted, the way compaction persists `compacted` beside `compaction_started`.
+	// A blocked status is ENFORCE mode's terminal outcome, so it is persisted beyond the banner.
 	if status == marotte.SafetyStatusBlocked {
 		t.persistSafetyBlock(ctx, chatID, p)
 	}

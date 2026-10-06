@@ -6,14 +6,7 @@ import (
 	"testing"
 )
 
-// TestScreenAgentEnv_RefusesExecutionRedirection is the security property: a
-// variable that changes what a program EXECUTES is refused, whatever the command
-// was approved as.
-//
-// One case per mechanism rather than one per name, because the mechanisms are what
-// a reader has to understand to maintain the list — a name added to the wrong
-// group is the mistake that matters, and enumerating all 38 would assert the map
-// against itself.
+// TestScreenAgentEnv_RefusesExecutionRedirection covers one case per mechanism, not per name.
 func TestScreenAgentEnv_RefusesExecutionRedirection(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -61,26 +54,18 @@ func TestScreenAgentEnv_RefusesExecutionRedirection(t *testing.T) {
 	}
 }
 
-// TestScreenAgentEnv_AllowsOrdinaryAndInertValues is the usability half, and it is
-// not a formality: a guard that refuses the common case gets switched off.
-//
-// The inert-value carve-out is the load-bearing part. `GIT_PAGER=cat` and `PAGER=`
-// are how anything non-interactive stops git paging, so an agent running git hits
-// those constantly — a name-only denylist would refuse them and teach the operator
-// to set MAROTTE_ALLOW_AGENT_ENV to everything.
+// TestScreenAgentEnv_AllowsOrdinaryAndInertValues is the usability half: `GIT_PAGER=cat`
+// and `PAGER=` must pass, or operators disable the guard.
 func TestScreenAgentEnv_AllowsOrdinaryAndInertValues(t *testing.T) {
 	ok := []termEnvVar{
-		// Ordinary build/config variables: not on the list at all.
 		{Name: "CGO_ENABLED", Value: "0"},
 		{Name: "GOFLAGS", Value: "-mod=readonly"},
 		{Name: "TERM", Value: "dumb"},
 		{Name: "LANG", Value: "C.UTF-8"},
-		// Dangerous NAMES neutralised by their value.
 		{Name: "GIT_PAGER", Value: "cat"},
 		{Name: "PAGER", Value: ""},
 		{Name: "GIT_ASKPASS", Value: "true"},
-		// Case variants are inert on a case-sensitive platform: the loader reads
-		// LD_PRELOAD and nothing else, so refusing this would only annoy.
+		// Case variants are inert: the loader reads LD_PRELOAD only.
 		{Name: "ld_preload", Value: "/tmp/evil.so"},
 	}
 	if got := screenAgentEnv(ok, nil); len(got) != 0 {
@@ -88,10 +73,7 @@ func TestScreenAgentEnv_AllowsOrdinaryAndInertValues(t *testing.T) {
 	}
 }
 
-// TestScreenAgentEnv_ReportsEveryOffenderInOrder pins that the refusal names ALL
-// of them, in the order asked. Reporting only the first would send the agent
-// through one round trip per variable, and the error text is the only thing that
-// tells it what to drop.
+// TestScreenAgentEnv_ReportsEveryOffenderInOrder pins that the refusal names all of them, in request order.
 func TestScreenAgentEnv_ReportsEveryOffenderInOrder(t *testing.T) {
 	got := screenAgentEnv([]termEnvVar{
 		{Name: "LD_PRELOAD", Value: "/tmp/a.so"},
@@ -104,28 +86,21 @@ func TestScreenAgentEnv_ReportsEveryOffenderInOrder(t *testing.T) {
 	}
 }
 
-// TestScreenAgentEnv_OperatorAllowlist covers the escape hatch. A dev box has
-// legitimate uses (a preload-based profiler, a vendored NODE_PATH), and a guard
-// with no way past it gets worked around rather than tuned.
-//
-// Deterministic because the allowlist is a parameter: an earlier version drove it
-// through the environment, and sync.OnceValue resolves at most once per process, so
-// it passed or skipped depending on which sibling test ran first — gating nothing
-// either way.
+// TestScreenAgentEnv_OperatorAllowlist covers the escape hatch. The allowlist is a
+// parameter because sync.OnceValue resolves once per process.
 func TestScreenAgentEnv_OperatorAllowlist(t *testing.T) {
 	allowed := parseAllowedEnv(" LD_PRELOAD , NODE_PATH ")
 
 	if got := screenAgentEnv([]termEnvVar{{Name: "LD_PRELOAD", Value: "/opt/profiler.so"}}, allowed); len(got) != 0 {
 		t.Errorf("an allowed name was still refused: %v", got)
 	}
-	// Per NAME, never a blanket off switch.
+	// Per name, never a blanket off switch.
 	if got := screenAgentEnv([]termEnvVar{{Name: "BASH_ENV", Value: "/tmp/evil.sh"}}, allowed); len(got) != 1 {
 		t.Errorf("allowing LD_PRELOAD also allowed BASH_ENV: %v", got)
 	}
 }
 
-// TestParseAllowedEnv covers the operator-facing parse, including the shapes a
-// hand-edited compose file actually produces.
+// TestParseAllowedEnv covers the shapes a hand-edited compose file produces.
 func TestParseAllowedEnv(t *testing.T) {
 	if got := parseAllowedEnv(""); got != nil {
 		t.Errorf("empty = %v, want nil (no allowlist at all)", got)
@@ -144,14 +119,8 @@ func TestParseAllowedEnv(t *testing.T) {
 	}
 }
 
-// TestDangerousAgentEnv_MatchesUpstream pins the list against kiro-cli's own
-// `dangerous_env_vars`, which is where it came from.
-//
-// The point is DIVERGENCE, not the contents: the same agent should behave the same
-// through the TUI and through marotte, so a name upstream adds (2.18.1 added two
-// tar FLAGS to the sibling list, so this one moves too) should show up here as a
-// deliberate edit rather than drift nobody noticed. Hardcoded rather than read off
-// the binary because the binary is not present in CI.
+// TestDangerousAgentEnv_MatchesUpstream pins the list against kiro-cli's
+// `dangerous_env_vars`, so upstream drift becomes a deliberate edit. Hardcoded: CI has no binary.
 func TestDangerousAgentEnv_MatchesUpstream(t *testing.T) {
 	upstream := strings.Fields(`
 		PAGER EDITOR VISUAL BROWSER MANPAGER GIT_PAGER LESS LESSOPEN LESSCLOSE
@@ -171,7 +140,6 @@ func TestDangerousAgentEnv_MatchesUpstream(t *testing.T) {
 		t.Errorf("list has %d names, upstream has %d: reconcile the difference deliberately",
 			len(dangerousAgentEnv), len(upstream))
 	}
-	// The inert values are upstream's too, and the guard's usability rests on them.
 	for _, v := range []string{"", "true", "cat"} {
 		if _, ok := safeAgentEnvValues[v]; !ok {
 			t.Errorf("upstream treats %q as an inert value and this does not", v)
@@ -179,8 +147,7 @@ func TestDangerousAgentEnv_MatchesUpstream(t *testing.T) {
 	}
 }
 
-// lastValueFor answers what the CHILD would see for name: os/exec keeps the last
-// value for a repeated key, so any earlier entry is dead.
+// lastValueFor answers what the child sees for name: os/exec keeps the last value.
 func lastValueFor(env []string, name string) string {
 	prefix := name + "="
 	value := ""
@@ -192,13 +159,8 @@ func lastValueFor(env []string, name string) string {
 	return value
 }
 
-// TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale is the composition half of this
-// file: the screen above decides WHICH variables an agent may set, and this
-// decides who wins when both sides set the same one.
-//
-// Ordering, not membership. LANG is deliberately absent from dangerousAgentEnv —
-// that list is upstream's verbatim, and refusing a locale would also refuse
-// LC_ALL=C, the ordinary idiom for deterministic sort output.
+// TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale pins ordering, not membership: LANG is
+// absent from dangerousAgentEnv, which stays upstream's verbatim.
 func TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale(t *testing.T) {
 	env := termEnv([]termEnvVar{{Name: termLocaleEnvVar, Value: "hostile"}})
 

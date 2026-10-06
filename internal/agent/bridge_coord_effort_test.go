@@ -1,9 +1,3 @@
-// Tests for the reactive reasoning-effort repair (BridgeCoordinator.healEffort).
-//
-// Its own file rather than an addition to bridge_coord_test.go, which is already
-// past the length at which a test file is split by behavior. The prompt-time
-// repairEffort and effortFor tests still live there.
-
 package agent
 
 import (
@@ -12,12 +6,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// configOptionFrame builds a config_option_update carrying one effortLevel
-// option, which is the frame KAS sends when the session's tier changes.
-//
-// sessionID and workflow are the two facts ClassifyFrame reads: an empty
-// sessionID is the chat's own frame, and a non-empty one plus a workflow marker
-// is a run STEP's.
+// configOptionFrame builds a config_option_update with one effortLevel option. An empty
+// sessionID is the chat's own frame; a sessionID plus workflow marker is a step's.
 func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *marotte.RPCResponse {
 	t.Helper()
 	update := map[string]any{
@@ -60,26 +50,14 @@ func healEffortFixture(t *testing.T, chose string) (*Runtime, *fakeBridge) {
 	return h, br
 }
 
-// settleHeals joins the repair goroutine, so an assertion that nothing was
-// applied is a fact rather than a race the test happened to win.
-//
-// The repair runs on its own goroutine — the frame arrives on the forward
-// goroutine and a bridge Call issued inline would block the drain the reply
-// arrives on — and it is registered on the runtime's in-flight group, so the
-// runtime's own shutdown is the join point. A sleep here would let every negative
-// case below pass for the wrong reason.
+// settleHeals joins the repair goroutine through the runtime's shutdown, so "nothing was
+// applied" is a fact rather than a race the test won.
 func settleHeals(t *testing.T, h *Runtime) {
 	t.Helper()
 	shutdownHub(t, h)
 }
 
-// A config_option_update reporting a level the chat did not choose is repaired.
-//
-// This is the hole repairEffort cannot reach: it runs on OpenBridge's
-// already-open path, so the turn that SPAWNS the bridge — the one KAS's own
-// first-prompt model pin moves the level during — never gets it. A chat whose
-// whole life is a single turn kept the wrong level, which is what was measured on
-// the live volume.
+// TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn covers the spawning turn, which repairEffort cannot reach.
 func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
 	h, br := healEffortFixture(t, "max")
 
@@ -94,13 +72,7 @@ func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
 	}
 }
 
-// The repair is LATCHED once per bridge: it asserts a level, KAS answers with
-// another config_option_update, and an unbounded reactive repair is a loop. Past
-// the latch the prompt-time repairEffort owns it.
-//
-// The latch is claimed SYNCHRONOUSLY, before the goroutine starts, so spending it
-// in the fixture is what makes "the second frame did nothing" provable rather
-// than merely unobserved.
+// TestHealEffort_RepairsOncePerBridge pins the latch; it is claimed synchronously, so spending it in the fixture proves the second frame did nothing.
 func TestHealEffort_RepairsOncePerBridge(t *testing.T) {
 	h, br := healEffortFixture(t, "max")
 	sb := h.coord.Bridge("c1")
@@ -119,8 +91,7 @@ func TestHealEffort_RepairsOncePerBridge(t *testing.T) {
 	}
 }
 
-// Nothing is repaired when there is nothing to repair, and each of the three
-// "nothing" cases means something different.
+// TestHealEffort_SendsNothingWhenThereIsNothingToRepair covers the three distinct "nothing" cases.
 func TestHealEffort_SendsNothingWhenThereIsNothingToRepair(t *testing.T) {
 	tests := map[string]struct {
 		chose   string
@@ -144,9 +115,7 @@ func TestHealEffort_SendsNothingWhenThereIsNothingToRepair(t *testing.T) {
 	}
 }
 
-// A workflow STEP's frame reports the level THAT session runs at, which says
-// nothing about the level this chat chose. Repairing from it would assert the
-// chat's tier because a step happened to run at another one.
+// TestHealEffort_IgnoresAWorkflowStepsFrame pins that a step's level never repairs the chat's.
 func TestHealEffort_IgnoresAWorkflowStepsFrame(t *testing.T) {
 	h, br := healEffortFixture(t, "max")
 

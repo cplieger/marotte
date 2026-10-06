@@ -1,7 +1,6 @@
 package agent
 
-// Tests for the run host: the synthetic-id plumbing, the dispatch split, and the
-// teardown rules. What is pinned is marotte's sequencing, not KAS's behaviour.
+// Run host tests: the synthetic-id plumbing, the dispatch split and the teardown rules.
 
 import (
 	"encoding/json"
@@ -15,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// bufferedEvent is one decoded SSE envelope. Payload stays RAW: the two cases that
-// read a field decode it themselves rather than making every case carry a shape.
+// bufferedEvent is one decoded SSE envelope with a raw payload.
 type bufferedEvent struct {
 	Type    string          `json:"type"`
 	ChatID  string          `json:"chat_id"`
@@ -52,8 +50,7 @@ func runNotif(method string, params map[string]any) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: method, Params: raw}
 }
 
-// TestRunChatID_Namespace pins the synthetic id shape and that a real chat id
-// can never read as a run's.
+// TestRunChatID_Namespace pins the synthetic id shape; a real chat id never reads as a run's.
 func TestRunChatID_Namespace(t *testing.T) {
 	if got := runChatID("wf_1"); got != "run:wf_1" {
 		t.Errorf("runChatID = %q, want run:wf_1", got)
@@ -68,9 +65,7 @@ func TestRunChatID_Namespace(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_LifecycleGoesWorkspaceGlobal pins the topic rule: a parentless
-// run's lifecycle events carry an EMPTY chat id, never the synthetic one, which is
-// bridge-map plumbing and must not leak onto the wire as a topic.
+// TestRunDispatch_LifecycleGoesWorkspaceGlobal pins that a parentless run's lifecycle events carry an empty chat id, never the synthetic one.
 func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -89,12 +84,8 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_StepContentIsProjected pins the run bridge's content door, both halves.
-// A step's first chunk OPENS the run's turn for its node path and streams into it
-// under the run scope, workspace-global with the workflow id on every frame, which
-// is what makes a run whose only surface is the run tab watchable. And it opens NO
-// chat turn for the synthetic chat id, because that is the phantom chat invariant 3
-// exists to prevent; the content goes to the run's record, not a transcript.
+// TestRunDispatch_StepContentIsProjected pins that a step's first chunk opens the run's turn for its node path,
+// workspace-global with the workflow id, and opens no chat turn for the synthetic id.
 func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h := newBudgetRuntime(t)
@@ -121,8 +112,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		t.Errorf("types = [%s %s], want [turn_opened entry_opened]", events[0].Type, events[1].Type)
 	}
 	for i, e := range events {
-		// Workspace-global, like the lifecycle frames beside it: a parentless run is
-		// owned by no chat, and the client routes by workflow id.
+		// Workspace-global: the client routes by workflow id.
 		if e.ChatID != "" {
 			t.Errorf("event %d chat_id = %q, want empty (workspace-global)", i, e.ChatID)
 		}
@@ -140,27 +130,22 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	if opened.Open.Text != "step says" || opened.Open.N != 1 {
 		t.Errorf("entry_opened = %+v, want the chunk's text as delta 1", opened.Open)
 	}
-	// The NODE PATH keys the run turn, not the node id: a repeat's iterations share
-	// an id, so an id cannot address one execution of a step.
+	// The node path keys the run turn: a repeat's iterations share a node id.
 	if h.runs.log.Turn("wf_1", "seq/coder") == nil {
 		t.Error("the step chunk opened no run turn for its node path")
 	}
-	// No chat turn, which is the half the drop got right.
+	// No chat turn.
 	if h.liveTurn("run:wf_1") != nil {
 		t.Error("a step chunk opened a chat turn for the synthetic chat id")
 	}
-	// Still silent on the unhandled-notification line: that line is how a frame
-	// marotte genuinely does not recognise gets noticed, and a step's content
-	// arriving on it would drown that out on every run.
+	// The unhandled-notification line stays quiet, so it still flags genuinely unknown frames.
 	const unhandled = "run bridge: unhandled notification"
 	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
 		t.Errorf("a step's session/update was reported as %q: %s", unhandled, out)
 	}
 }
 
-// TestRunDispatch_UnmarkedStepContentIsDropped pins the one frame this door still
-// refuses: a `session/update` with no `_meta.kiro.workflow` block names no node, so
-// there is no step row to render it in.
+// TestRunDispatch_UnmarkedStepContentIsDropped pins that a `session/update` without `_meta.kiro.workflow` names no node.
 func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -177,9 +162,7 @@ func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_PermissionKeyedToRunChat pins the ask path: a step's permission
-// on a run bridge broadcasts keyed to the synthetic chat id, which is what the dock
-// renders in the run tab and what the reply's chat_id routes back through.
+// TestRunDispatch_PermissionKeyedToRunChat pins that a step's permission broadcasts under the synthetic chat id, the run tab's dock key and reply route.
 func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -206,8 +189,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_UnknownRequestIsRefused pins that an unmatched A→C request is
-// ANSWERED with an error rather than dropped: an unanswered request wedges the step.
+// TestRunDispatch_UnknownRequestIsRefused pins that an unanswered A→C request wedges the step.
 func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -222,8 +204,7 @@ func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_SequencesNewRegisterInvoke pins the launch ordering: created,
-// REGISTERED, and only then invoked, so a frame following invoke finds the bridge.
+// TestLaunchRun_SequencesNewRegisterInvoke pins created, registered, then invoked.
 func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -243,7 +224,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	if h.bridge.mgr.get("run:wf_9") == nil {
 		t.Error("the run bridge is not registered under its synthetic id")
 	}
-	// invoke came after new, on the same bridge.
+	// invoke after new, on the same bridge.
 	calls := br.callLog()
 	newIdx, invokeIdx := -1, -1
 	for i, m := range calls {
@@ -259,9 +240,29 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_RefusesAnUnknownSource pins the validation posture: the launch
-// source is re-checked against a fresh listRecipes reply, so this endpoint cannot
-// be pointed at an arbitrary file.
+// A run step's workspace hooks autofire only when its bridge declares the v2 hook
+// engine at initialize, as a chat bridge does.
+func TestLaunchRun_RunBridgeDeclaresHooks(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
+	}
+	if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	opts := br.lastStartOpts()
+	if opts == nil {
+		t.Fatal("the run bridge was never started")
+	}
+	if !opts.EnableHooks {
+		t.Error("Launch started the run bridge with EnableHooks=false, so workspace hooks never fire during its steps")
+	}
+}
+
+// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against a fresh listRecipes, so no arbitrary file can be launched.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -275,23 +276,65 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_SingleRunRule pins the 409 shape: one live run per recipe,
-// globally, whoever launched it.
+// TestLaunchRun_AnAgentSourceGoesStraightToNew pins that agent:// skips listRecipes.
+func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
+	}
+	_, name, err := h.runs.Launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"})
+	if err != nil {
+		t.Fatalf("Launch(agent://wf-coder) = %v, want nil", err)
+	}
+	if name != "agent-wf-coder" {
+		t.Errorf("Launch(agent://wf-coder) name = %q, want agent-wf-coder", name)
+	}
+	if got := br.paramsFor(methodKiroWorkflowNew)["workflowPath"]; got != "agent://wf-coder" {
+		t.Errorf("new workflowPath = %v, want agent://wf-coder", got)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowListRecipes) {
+		t.Errorf("calls = %v, want no listRecipes for an agent source", br.callLog())
+	}
+}
+
+func TestLaunchRun_AnAgentSourceIsValidatedBeforeAnyCall(t *testing.T) {
+	cases := map[string]struct {
+		source string
+		inputs map[string]string
+	}{
+		"no prompt":          {source: "agent://wf-coder"},
+		"a blank prompt":     {source: "agent://wf-coder", inputs: map[string]string{"prompt": "  "}},
+		"a path in the name": {source: "agent://../x", inputs: map[string]string{"prompt": "go"}},
+		"an empty name":      {source: "agent://", inputs: map[string]string{"prompt": "go"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			if _, _, err := h.runs.Launch(t.Context(), tc.source, tc.inputs); err == nil {
+				t.Errorf("Launch(%q, %v) = nil, want an error", tc.source, tc.inputs)
+			}
+			if calls := br.callLog(); slices.Contains(calls, methodKiroWorkflowNew) {
+				t.Errorf("Launch(%q) reached new, calls %v", tc.source, calls)
+			}
+		})
+	}
+}
+
+// TestLaunchRun_SingleRunRule pins the 409: one live run per recipe, globally.
 func TestLaunchRun_SingleRunRule(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
-		// Both name fields, as the real wire sends them: the row's `name` is
-		// `runLabel ?? workflowName`, so they agree only while unlabelled.
+		// Both name fields as the wire sends them; they agree only while unlabelled.
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`),
 	}
 	_, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil)
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
-	// A TERMINAL run of the same recipe does not block a relaunch. It carries
-	// `workflowName` too, or the row misses the recipe match and the case would pass
-	// without ever reaching the status half of the guard.
+	// A terminal run of the same recipe does not block; it carries `workflowName` so the status half is reached.
 	br.callResults[methodKiroWorkflowList] = json.RawMessage(
 		`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"completed"}]}`,
 	)
@@ -302,8 +345,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	}
 }
 
-// TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live
-// entry fails rather than orphaning the process the entry holds.
+// TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its process.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
 	first := &sharedBridge{bridge: br, state: bridgeIdle}
@@ -318,10 +360,7 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	}
 }
 
-// TestRetry_SuccessClearsTheOldTerminalReason: retry reuses the workflow id, so
-// a run stopped as `overran` carried that reason into its retry — and the client
-// lets a recognised end_reason outrank live status, so the running retry rendered
-// as aborted and stayed that way after it succeeded.
+// TestRetry_SuccessClearsTheOldTerminalReason pins that retry reuses the id, and a stale end_reason outranks live status on the client.
 func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -332,10 +371,7 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	// The zero affordance is what the route's gate resolves for a PARENTLESS run,
-	// which is what every fixture in this file stages: no launching chat to thread,
-	// so the verb finds its host through the run's own bridge. A chat-parented run
-	// threading its real parent is run_retry_test.go's subject.
+	// The zero affordance is a parentless run's gate result; run_retry_test.go covers the chat-parented one.
 	if _, err := h.runs.Retry(t.Context(), id, &runAffordance{}); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
@@ -345,15 +381,13 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	if !h.runs.bounded(id) {
 		t.Error("the retried run holds no deadline, so nothing bounds it")
 	}
-	// The claim went with the reason, or no bound could ever stop the retry.
+	// The claim went with the reason.
 	if !h.runs.claimTermination(id) {
 		t.Error("the retried run kept its termination claim")
 	}
 }
 
-// TestRetry_FailureKeepsTheOldTerminalReason is the other half, and the reason
-// the clear happens AFTER the RPC: a retry KAS refused re-drove nothing, so the
-// previous terminal reason is still the truth about that run.
+// TestRetry_FailureKeepsTheOldTerminalReason pins that the clear follows the RPC, since a refused retry re-drove nothing.
 func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -374,19 +408,14 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable forces the
-// interleaving that shipped the defect: a re-hosted PARENTLESS run's first frame can
-// arrive before the retry call returns, and with the lease granted after that call,
-// `run_start` found none and the observer stamped OriginAgent on a run no chat owns
-// — which made it permanently unsweepable and blocked every later launch of the
-// recipe. The fake bridge's blockOn seam holds the call open, so the frame lands
-// strictly INSIDE the window.
+// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable pins that a re-hosted parentless run's first frame
+// can beat the retry reply; blockOn holds the call open so the frame lands inside the window.
 func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		// The run list is where a re-hosted run's recipe comes from.
+		// The run list supplies a re-hosted run's recipe.
 		methodKiroWorkflowList: json.RawMessage(
 			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
 				`"parentSessionId":"` + testLaunchSession + `"}]}`,
@@ -395,9 +424,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	// The route's gate, resolved for real: it is the affordance that now carries the
-	// recipe off KAS's run list, so a hand-built stand-in would keep this green after
-	// the thread broke and the lease went back to being nameless.
+	// The real gate, which carries the recipe off KAS's run list.
 	aff := h.runs.affordance(t.Context(), id, "aborted")
 	if aff.origin.recipe != "nightly" {
 		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
@@ -409,8 +436,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 		done <- rErr
 	}()
 
-	// Wait until the retry is genuinely in flight, then deliver the frame the way
-	// dispatch does: a run bridge's workflow frames carry an EMPTY chat id.
+	// Wait for the retry to be in flight, then deliver the frame with an empty chat id as dispatch does.
 	stop := time.Now().Add(5 * time.Second)
 	for !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		if time.Now().After(stop) {
@@ -446,13 +472,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 }
 
-// TestRetry_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch — the
-// one retry's legality window implies, since `closeStoppedBridge` tears the bridge
-// down on every stop.
-//
-// The recipe is knowable here: KAS's own run list reports it, and it is the same
-// string the single-run rule compares against, so a nameless lease could not be
-// recognised as the run holding its own recipe.
+// TestRetry_ReHostedRunTakesItsRecipeFromTheRunList pins that the lease needs the recipe the single-run rule compares.
 func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -463,12 +483,11 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 				`"parentSessionId":"` + testLaunchSession + `"}]}`,
 		),
 	}
-	// Deliberately NO bridge in the manager: that is what makes this the re-hosting
-	// path rather than the already-hosted one.
+	// No bridge in the manager: the re-hosting path.
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
-	// The gate's own answer, which is what carries the name to the lease.
+	// The gate's answer carries the name to the lease.
 	aff := h.runs.affordance(t.Context(), id, "aborted")
 	if aff.origin.recipe != "nightly" {
 		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
@@ -493,9 +512,7 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 }
 
-// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is
-// granted BEFORE the verb, so a refusal has to put it back, or the recipe reads as
-// busy to the admission backstop and a wall clock is handed to an idle run.
+// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused pins that the lease granted before the verb goes back on refusal.
 func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -520,9 +537,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	}
 }
 
-// TestCancelRun_LostClaimIssuesNoSecondCancel pins the loser's half of the
-// termination claim: something is already ending the run, so Cancel must not send a
-// second one or overwrite the winner's reason. It reports success regardless.
+// TestCancelRun_LostClaimIssuesNoSecondCancel pins that the loser sends nothing and overwrites nothing, reporting success.
 func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -545,8 +560,7 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	}
 }
 
-// TestCancelRun_WinsTheClaimAndRecordsNothing: the user's cancel records NO reason,
-// because its absence is what tells the two bounds from a person on the History row.
+// TestCancelRun_WinsTheClaimAndRecordsNothing pins that a user cancel records no reason.
 func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -567,15 +581,13 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	if h.runs.bounded(id) {
 		t.Error("the cancelled run kept its wall clock running")
 	}
-	// The claim is held, so a bound firing behind the cancel cannot relabel it.
+	// The claim is held, so a later bound cannot relabel it.
 	if h.runs.claimTermination(id) {
 		t.Error("the cancelled run's claim was not held, so a late bound can still record over it")
 	}
 }
 
-// TestCancelRun_FailedRPCHandsTheClaimBack: the claim means a termination is in
-// flight or landed. A cancel KAS refused is neither, so holding the claim would
-// make every later Cancel on a still-executing run silently do nothing.
+// TestCancelRun_FailedRPCHandsTheClaimBack pins that a held claim after a refusal mutes every later Cancel.
 func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -590,11 +602,8 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask population: a step
-// can raise an elicitation or a plain question, not only a permission. Both are BLOCKING
-// requests — KAS holds the step until an answer comes back — so a dispatch falling through
-// to the refusal ladder would answer "unsupported" and strand the step with no way to
-// unblock it. The synthetic chat id is the route in both directions.
+// TestRunDispatch_TheOtherAskKindsReachTheRunTab pins that elicitations and questions block the step too, so they
+// must route through the synthetic chat id, not the refusal ladder.
 func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -664,11 +673,8 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the FRAME the close hangs off
-// — run_complete specifically — where its sibling pins only the predicate; a run bridge
-// outliving its terminal run holds a kiro-cli subprocess for the life of the process. The
-// close runs on its own goroutine, because it is called from the forward loop and closing
-// that bridge closes the channel the loop ranges over, so the wait is a bounded poll.
+// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the close on run_complete; it runs on its own
+// goroutine (it closes the forward loop's channel), hence the bounded poll.
 func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -687,11 +693,7 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure channels a
-// launch believes. KAS refuses a launch IN BAND: the transport succeeds and the reply
-// carries a JSON-RPC error, which is where the reason lives. A launch reading only the
-// transport error falls through to the decode and reports the generic "reply carried no
-// workflowId" — the same message a malformed reply produces, so the reason is lost.
+// TestLaunchRun_ReportsTheReplysOwnError pins that KAS refuses a launch in band, and the reply's error carries the reason.
 func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -712,12 +714,8 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_CancelsARunWhoseRecordIsGone: the record was deleted inside the
-// close commit, so the cancel is driven from the CAPTURED session chain. The record-reading
-// form (CancelForChat) is the control — on a deleted chat it must no-op, which is why the
-// chain-shaped seam exists. Two chains, because the membership layer captures one per doomed
-// chat: a root chat whose run hangs off a RETIRED session (the chain's whole point, since
-// the current id alone would miss it), and a tangent child's single-session chain.
+// TestCancelForSessions_CancelsARunWhoseRecordIsGone pins cancels from captured chains (a retired session
+// included); CancelForChat on the deleted chat is the control.
 func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -739,14 +737,14 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 			}
 			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
-			// No chat record exists — the escalation deleted it before this runs.
+			// No chat record exists.
 
-			h.runs.CancelForChat(t.Context(), "c-doomed")
+			h.runs.CancelForChat(t.Context(), "c-doomed", userStop(stopWhyTabClosed))
 			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 				t.Fatal("the record-reading CancelForChat cancelled a run for a chat with no record; the control is broken")
 			}
 
-			h.runs.CancelForSessions(t.Context(), "c-doomed", tc.chain)
+			h.runs.CancelForSessions(t.Context(), "c-doomed", tc.chain, userStop(stopWhyTabClosed))
 			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 				t.Errorf("the captured-chain cancel never went out; calls were %v", br.callLog())
 			}
@@ -754,13 +752,7 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	}
 }
 
-// TestCancelForChat_ReportsARunListItCouldNotRead pins the one thing a tab close
-// can do when it cannot find out what to cancel.
-//
-// The close proceeds either way, deliberately — the user said stop, not wait — so
-// the runs this chat launched are left executing with their owning process gone,
-// and the line is the only record that it happened. A guard flipped here says that
-// on every ordinary close instead, which buries it.
+// TestCancelForChat_ReportsARunListItCouldNotRead pins that the close proceeds regardless, so the line is the only record.
 func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	seed := func(t *testing.T, cs *testChatStore) {
@@ -781,7 +773,7 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 		seed(t, cs)
 		br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
 
-		h.runs.CancelForChat(t.Context(), chatID)
+		h.runs.CancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
 
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that could not read the run list said nothing; want a line reading "+
@@ -797,7 +789,7 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 		}
 
-		h.runs.CancelForChat(t.Context(), chatID)
+		h.runs.CancelForChat(t.Context(), chatID, userStop(stopWhyTabClosed))
 
 		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)
@@ -805,21 +797,15 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 	})
 }
 
-// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts: discarding the WHOLE frame on
-// any unmarshal error breaks the heal for EVERY pause rather than only the branch ones, and
-// breaks it silently, because an empty workflow id makes `healPaused` return before the line
-// that reports a decline. `encoding/json` finishes the object on a type mismatch and reports
-// the earliest one, so keeping what decoded is not a guess. What is NOT kept is a syntax
-// error's leftovers: there the bytes are not JSON and nothing may be read off them.
+// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts pins that dropping the whole frame on a type mismatch
+// blinds the heal for every pause; a syntax error's leftovers are not kept.
 func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	frame := func(t *testing.T, params string) pauseFrame {
 		t.Helper()
 		return decodePauseFrame(&marotte.RPCResponse{Params: json.RawMessage(params)})
 	}
 
-	// Every shape a `pauseDetail` change can arrive as, against a reason the heal
-	// DOES act on. `workflowId` and `pauseReason` must survive all of them, or the
-	// heal has gone blind rather than degraded.
+	// Every shape a `pauseDetail` change can take; workflowId and pauseReason must survive all.
 	for name, params := range map[string]string{
 		"the detail became a string": `{"workflowId":"wf_1","pauseReason":"` +
 			interruptedPauseReason + `","pauseDetail":"transient-error"}`,
@@ -829,8 +815,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 			interruptedPauseReason + `","pauseDetail":["transient-error"]}`,
 		"class became an object": `{"workflowId":"wf_1","pauseReason":"` +
 			interruptedPauseReason + `","pauseDetail":{"class":{"kind":"transient-error"}}}`,
-		// Key order matters to a streaming decoder, so the drifted key is placed
-		// BEFORE the two fields that must survive it as well as after.
+		// The drifted key also comes first, for a streaming decoder.
 		"the drifted detail comes first": `{"pauseDetail":"transient-error","workflowId":"wf_1",` +
 			`"pauseReason":"` + interruptedPauseReason + `"}`,
 	} {
@@ -846,7 +831,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 					"TO, so losing the reason is what turns a degradation into blindness",
 					f.PauseReason, interruptedPauseReason)
 			}
-			// The whole point of keeping the frame: the reason arm still decides.
+			// The reason arm still decides.
 			if !resumablePause(f.PauseReason, f.PauseDetail) {
 				t.Error("resumablePause = false for an interrupted step whose detail drifted; " +
 					"the reason arm must still answer")
@@ -854,14 +839,8 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 		})
 	}
 
-	// The OTHER half of the fix, and the one the tolerance above cannot substitute
-	// for: `occurredAt` came OFF this type, so its wire shape cannot reach this
-	// decode at all and a numeric one is not even a drift to be tolerated.
-	//
-	// Asserted as behaviour rather than as a field list — a raw `json.Unmarshal`
-	// against `pauseFrame` must return NO error — because that is the property
-	// declaring the field would take away. Tolerance is a GUARD; this is the shrink,
-	// and a shape KAS controls is better off unable to arrive than caught on arrival.
+	// `occurredAt` is not declared on this type, so its wire shape cannot reach this decode: a raw
+	// json.Unmarshal must return no error.
 	t.Run("occurredAt's wire type cannot reach the predicate path", func(t *testing.T) {
 		var f pauseFrame
 		body := []byte(`{"workflowId":"wf_1","pauseReason":"` + interruptedPauseReason +
@@ -877,9 +856,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 		}
 	})
 
-	// A CLASS the predicate does not accept is not a drift and must not be read as
-	// one: the frame decodes cleanly and the detail arm declines, which is the
-	// ordinary negative case rather than a degradation.
+	// An unaccepted class is decoded cleanly and declined, not treated as drift.
 	t.Run("an unknown class is decoded, not tolerated", func(t *testing.T) {
 		f := frame(t, `{"workflowId":"wf_1","pauseReason":"Paused by user request",`+
 			`"pauseDetail":{"class":"permanent","code":"ENOTFOUND"}}`)
@@ -891,13 +868,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 		}
 	})
 
-	// The line the tolerance may not cross, asserted at the HELPER because the frame
-	// cannot show it: `json.Unmarshal` validates the whole document before it decodes
-	// anything, so a syntax error leaves the destination untouched and the frame is the
-	// zero value either way — a frame-level assertion here survives a mutant that
-	// tolerates everything, which makes it a test that cannot fail. The helper's verdict
-	// is observable, and `rs.inspect` hands it an unguarded RPC payload, so the empty
-	// document is a reachable input rather than a hypothetical.
+	// Asserted at the helper: a syntax error leaves the frame zero either way, and `rs.inspect` can hand it an empty document.
 	for name, body := range map[string]string{
 		"a truncated object": `{"workflowId":"wf_1","pauseReason":"x"`,
 		"not JSON at all":    `wf_1`,
@@ -916,18 +887,9 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent is the live-break guard.
-// `@kiro/agent` 0.63.3 (kiro-cli 2.21.4, the pinned version) made
-// `parentSessionId` REQUIRED on `_kiro/workflow/new` and removed 0.60.10's
-// `workspacePaths` escape, so a launch omitting it fails outright — every manual
-// and every scheduled run.
-//
-// The value must be the RUN BRIDGE'S OWN session, because upstream routes all nine
-// lifecycle notifications through the parent's outbound connection: naming a chat's
-// session or the utility session would send run_start / node_* / run_complete to a
-// connection the executing process does not hold, so no deadline would arm, no
-// bridge would close on completion, and no run_started SSE would reach the client —
-// with no error anywhere.
+// TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent pins that `parentSessionId` is required on `_kiro/workflow/new`
+// since kiro-cli 2.21.4. It must be the run bridge's own session: lifecycle frames route to the parent's
+// connection, and any other would silently lose them.
 func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -953,17 +915,13 @@ func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
 	if want := string(br.SessionID()); got != want {
 		t.Errorf("parentSessionId = %q, want %q (the bridge the call travels on)", got, want)
 	}
-	// workspacePaths STAYS: 0.63.3 only shape-validates it, but a pre-0.63.3 engine
-	// reads it for the roots and both resolve to the same [workDir].
+	// workspacePaths stays for pre-0.63.3 engines.
 	if _, ok := params[keyWorkspacePaths]; !ok {
 		t.Error("workspacePaths was dropped; a pre-0.63.3 engine reads it for the run's roots")
 	}
 }
 
-// TestLaunchRun_RefusesABridgeWithNoSession: a started bridge with no ACP session is
-// a broken handshake, so the launch refuses BEFORE the RPC. Sending an empty value
-// would buy KAS's own param complaint at the cost of a round trip and an error naming
-// the wrong layer.
+// TestLaunchRun_RefusesABridgeWithNoSession pins that a session-less started bridge is refused before the RPC.
 func TestLaunchRun_RefusesABridgeWithNoSession(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{

@@ -1,11 +1,5 @@
-// The client half of the shared delegate DOT oracle (testdata/delegate_dot.json; the Go
-// reader is TestDelegateDotContract). One wire value, three words, deliberately: the
-// wire spells `aborted`, the delegate CARD says "cancelled" like its turn footer, and the
-// subagent PAGE says "stopped". The ROW's word is not compared (outcomeWord is unexported).
-//
-// Browser placement because `stateWord` is reachable only through the card's DOM. Every
-// production import is DYNAMIC so the three elements scroll.ts reads at import can be
-// seeded first, which drives the real scroll controller without a vi.mock.
+// Client half of the delegate DOT oracle: testdata/delegate_dot.json is the contract, TestDelegateDotContract the Go
+// reader. Three surfaces render one status differently on purpose (wire `aborted`, card "cancelled").
 
 import { describe, it, expect, beforeAll } from "vitest";
 import goldenRaw from "../internal/chat/testdata/delegate_dot.json?raw";
@@ -47,11 +41,9 @@ interface DotFixture {
 
 const fixture = JSON.parse(goldenRaw) as DotFixture;
 
-/** The delegate's own subtask id. One is enough: every row is the same delegate at a
- *  different status, which is what the three surfaces disagree about. */
+/** One delegate at different statuses is enough. */
 const SUBTASK = "sa-1";
 
-/** The production functions, resolved once the transcript host exists. */
 let subagentStatusFor: (status: ToolStatus | undefined, turnLive?: boolean) => string;
 let delegateStatusFor: (status: ToolStatus, turnLive: boolean) => ToolStatus;
 let buildSubagentCard: (name: string, status: ToolStatus) => SubagentCard;
@@ -80,8 +72,6 @@ beforeAll(async () => {
   ({ isToolActive, isToolDone } = await import("./tool-schema.js"));
 });
 
-/** The invocation tool call that dispatched the delegate, stated at the row's status.
- *  A typed literal rather than a cast, which is this phase's own rule. */
 function invocationAt(status: ToolStatus): ToolCall {
   return {
     id: "tc-1",
@@ -93,10 +83,7 @@ function invocationAt(status: ToolStatus): ToolCall {
   };
 }
 
-/** The projection the page is built from: one delegate, no pipeline, so `subagentToExec`
- *  takes its single-delegate shape and `nodes[0]` is the delegate itself. Built as a value
- *  rather than through `sliceSubagentGroup`, because what is under test is the STATUS fold
- *  and not the walk that finds the lane. */
+/** Built as a value: under test is the status fold, not the lane walk. */
 function projectionAt(status: ToolStatus): SubagentProjection {
   return {
     group: { pipeline: "", driver: undefined, members: [] },
@@ -115,8 +102,7 @@ function projectionAt(status: ToolStatus): SubagentProjection {
   };
 }
 
-/** The word the card announces, off the card's own state element — the channel
- *  `refreshName` writes when the head is not a link. */
+/** Read off the card's state element, which `refreshName` writes when the head is not a link. */
 function cardWordAt(status: ToolStatus): string {
   const card = buildSubagentCard("introspect", status);
   const state = card.root.querySelector<HTMLElement>(".subagent-header > .sr-only");
@@ -128,7 +114,7 @@ function cardWordAt(status: ToolStatus): string {
 
 describe("the delegate dot contract", () => {
   it("names a row for every status the fixture declares", () => {
-    // A fixture the Go half truncated would otherwise pass every row below vacuously.
+    // A truncated fixture would pass every row vacuously.
     expect(fixture.rows.map((r) => r.status).sort()).toEqual([...fixture.statuses].sort());
     expect(fixture.rows.length).toBeGreaterThan(0);
   });
@@ -161,15 +147,12 @@ describe("the delegate dot contract", () => {
     });
 
     it(`${row.status}: the fold is the identity while the chat's turn is live`, () => {
-      // The second input may only narrow, so a live chat's answer has to be the status
-      // itself for every row — otherwise the fold changes what a working delegate says.
+      // The second input may only narrow: a live chat's answer must be the status itself.
       expect(delegateStatusFor(status, true)).toBe(row.status);
     });
 
     it(`${row.status}: settled is ${row.terminal} on both sides`, () => {
-      // The one DERIVED column: Go answers with ToolStatus.Terminal(), the predicate the
-      // close paths settle a turn's calls by, and this side answers with its own pair. A
-      // status only one language reads as over is how a card spins forever.
+      // Go answers with ToolStatus.Terminal(); a status only one language reads as over spins a card forever.
       expect(isToolDone(status)).toBe(row.terminal);
       expect(isToolActive(status)).toBe(!row.terminal);
     });
@@ -191,8 +174,7 @@ describe("the delegate dot contract", () => {
     it(`${row.status} with turnLive=${String(row.turn_live)}: the three surfaces say what ${row.folds_to} says`, () => {
       expect(subagentStatusFor(status, row.turn_live)).toBe(row.dot);
       expect(cardWordAt(folded)).toBe(row.card_word);
-      // The RAW status and the turn's liveness, as `subagent-view.ts` hands them over:
-      // the page has to make the fold itself, not be given its answer.
+      // Raw status and liveness, as `subagent-view.ts` passes them: the page makes the fold.
       const run = subagentToExec(SUBTASK, projectionAt(status), row.turn_live);
       const leaf = run.nodes[0];
       if (leaf === undefined) {

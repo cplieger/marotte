@@ -1,12 +1,4 @@
-// ---------------------------------------------------------------------------
-// File picker: modal for attaching workspace files to the chat.
-//
-// Supports multi-select via checkboxes. The "Attach" button sends all
-// selected paths to the active chat's input. Folders navigate on name
-// click but can also be selected (attaches the folder path). The
-// "Upload here" button uploads from the local OS into the current
-// folder, then auto-attaches the uploaded paths.
-// ---------------------------------------------------------------------------
+// File picker modal: multi-select workspace files and attach their paths to the active chat.
 
 import { closeModal, openModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
@@ -42,7 +34,7 @@ let currentPath = FB_ROOT;
 const selected = new Set<string>();
 let onUploadComplete: (() => void) | null = null;
 
-/** Per-picker abort holder — prevents browser from aborting picker fetches. */
+/** Per-picker, so the browser's fetches and the picker's cannot abort each other. */
 const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 registerCleanup(() => pickerFetchHolder.controllerHolder.current?.abort());
 
@@ -66,7 +58,6 @@ export function initFilePicker(): void {
     closeModal(byId<HTMLDivElement>("filepicker-modal"));
   });
 
-  // "Upload here" button: OS file dialog → upload → auto-attach.
   byId("filepicker-upload").addEventListener("click", () => {
     const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
     input.addEventListener("change", () => {
@@ -82,12 +73,11 @@ export function initFilePicker(): void {
     preserveDisabled: true,
   });
 
-  // "Attach" button: attach all selected paths to the chat.
   byId("filepicker-attach").addEventListener("click", () => {
     if (selected.size === 0) {
       return;
     }
-    // DETACHED: the modal closes on this click and nothing after reads the chat.
+    // Detached: the modal closes and nothing after reads the chat.
     void attachPathsToActiveChat([...selected].map((name) => joinPath(currentPath, name)));
     selected.clear();
     closeModal(byId<HTMLDivElement>("filepicker-modal"));
@@ -107,9 +97,7 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = byId<HTMLDivElement>("filepicker-modal");
-  // The fourth upload door, screened like the other three: the modal stays open
-  // on a refusal so the user can pick again, which is only useful if the message
-  // names what was wrong.
+  // Screened like the other upload doors; the modal stays open so the user can pick again.
   const screened = screenUploads(files);
   if (screened.skipped !== "") {
     toast.error(screened.skipped);
@@ -122,8 +110,7 @@ function performUpload(files: FileList): void {
     {
       onSuccess: (paths) => {
         onUploadComplete?.();
-        // DETACHED: an upload callback; the modal close below is independent of
-        // whether the chat exists yet.
+        // Detached: the modal close is independent of the chat existing yet.
         void attachPathsToActiveChat(paths);
         closeModal(modal);
       },
@@ -147,8 +134,7 @@ function loadDir(): void {
   pathEl.readOnly = true;
 
   void fetchDir(currentPath, pickerFetchHolder).then((d) => {
-    // Drop any prior non-keyed siblings (error row, empty placeholder)
-    // before reconciling.
+    // Drop non-keyed siblings (error row, placeholder) before reconciling.
     for (const child of [...list.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
         child.remove();
@@ -159,7 +145,6 @@ function loadDir(): void {
       if (d.error === "stale") {
         return;
       }
-      // Wipe keyed children + show error row.
       reconcile(list, [], { key: () => "", mount: () => el("div") });
       list.appendChild(
         errorRow(d.error, () => {
@@ -183,7 +168,6 @@ function loadDir(): void {
       mount: (e: DirEntry) => (e.kind === "up" ? upRow() : entryRow(e.name, e.isDir)),
       update: (row, e: DirEntry) => {
         if (e.kind === "file") {
-          // Sync checkbox state to the live `selected` set.
           const check = row.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
           if (check !== null) {
             check.checked = selected.has(e.name);
@@ -215,7 +199,6 @@ function upRow(): HTMLDivElement {
 }
 
 function entryRow(name: string, isDir: boolean): HTMLDivElement {
-  // Checkbox for multi-select.
   const check = el("input", {
     type: "checkbox",
     className: FB_CHECK,
@@ -245,7 +228,6 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
       loadDir();
       syncAttachBtn();
     } else {
-      // Toggle checkbox on name click for files.
       check.checked = !check.checked;
       if (check.checked) {
         selected.add(name);

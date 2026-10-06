@@ -32,12 +32,10 @@ export function anchorInterception(instance: AnchorableProvider): void {
   };
 }
 
-// Keeps every Chromium context's route count above zero between test files. Unrouting
-// the last mock route makes Playwright remove its request interceptor and auto-continue
-// in-flight routes, so a mock still resolving throws `route.fulfill: Route is already
-// handled!` and a request in that gap gets the real module
-// (https://github.com/vitest-dev/vitest/issues/8339). Fixed upstream by
-// https://github.com/vitest-dev/vitest/pull/11083, merged but not in 5.0.3.
+// Keeps every Chromium context's route count above zero. Unrouting the last mock route removes
+// Playwright's interceptor, so a mock still resolving throws `Route is already handled!` and a
+// request in the gap gets the real module (https://github.com/vitest-dev/vitest/issues/8339;
+// fixed by https://github.com/vitest-dev/vitest/pull/11083, not in 5.0.3).
 export function alwaysOnInterception(
   ...args: Parameters<typeof playwright>
 ): ReturnType<typeof playwright> {

@@ -6,8 +6,8 @@ import { attachSplitter } from "./splitter.js";
 interface Limits {
   readonly min: number;
   readonly max: number;
-  /** The token's own max, which is below `min` wherever the window is too narrow
-   *  to widen anything. */
+  /** The token's own max, which is below `min` wherever the window is too narrow to widen
+   *  anything. */
   readonly rawMax: number;
 }
 
@@ -58,20 +58,20 @@ export function initSidebarResize(): void {
     },
     commit: () => {
       const { min, rawMax } = readLimits();
-      // The RENDERED width, not the pointer's: a drag past the max and back must not
-      // store a width the reader never saw.
+      // The RENDERED width, not the pointer's: a drag past the max and back must not store a width
+      // the reader never saw.
       const w = Math.round(measure());
-      // A release that renders what the stored preference already renders chose
-      // nothing: a press that never moved, or an endpoint the window's clamp forced.
-      // Storing it would turn a temporary clamp into the preference.
+      // A release that renders what the stored preference already renders chose nothing: a press
+      // that never moved, or an endpoint the window's clamp forced. Storing it would turn a
+      // temporary clamp into the preference.
       const stored = sidebarWidth();
       const storedRenders = clampToLimits(stored > 0 ? stored : min);
       if (Math.abs(w - storedRenders) <= 0.5 || rawMax <= min || !handle.checkVisibility()) {
         restoreStored();
         return;
       }
-      // At the minimum the token is the answer, so a reader who never widened keeps
-      // no stored px copy of it.
+      // At the minimum the token is the answer, so a reader who never widened keeps no stored px
+      // copy of it.
       if (w - min <= 0.5) {
         setSidebarWidth(0);
         writeSidebarPref(null);

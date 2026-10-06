@@ -1,10 +1,6 @@
-// Tests for turns.ts, the TURN PROJECTION over the entry log.
-//
-// The store already performed the partition: every entry names its own turn, so
-// nothing here infers a boundary, an ordinal or a verdict. An ordinal is
-// `turn_open.n`, a verdict is `turn_close.outcome`, and a turn with no close IS
-// running — exact rather than derived, because the store's open closes every
-// crash-orphaned turn before the log is served. Pure and DOM-free, hence `.node`.
+// turns.ts, the TURN PROJECTION over the entry log. The store already partitioned it: ordinal is
+// `turn_open.n`, verdict `turn_close.outcome`, and a turn with no close IS running (the store closes
+// crash-orphaned turns before serving). Pure, hence `.node`.
 
 import { describe, it, expect } from "vitest";
 import { toolResultID } from "./entry-ids.js";
@@ -27,15 +23,13 @@ import {
   type Turn,
   type TurnSource,
 } from "./turns.js";
-import type { OpenEntry, TurnState } from "./types.js";
+import type { OpenEntry, ToolInteraction, TurnState } from "./types.js";
 import type { Entry, EntryToolCall, EntryTurnClose } from "./wire/types.gen.js";
 
 // --- Fixtures ---------------------------------------------------------------
 //
-// One builder per shape the log really holds, matching store.test.ts's so a turn
-// means the same thing in both files. `Object.assign` rather than a spread for the
-// optional members: under `exactOptionalPropertyTypes` a spread of a `Partial`
-// widens every required field to include `undefined`.
+// One builder per real log shape, matching store.test.ts's. `Object.assign` for optional members:
+// under `exactOptionalPropertyTypes` a `Partial` spread widens required fields to `undefined`.
 
 /** The `turn_open` that opens `turnID` at session-absolute ordinal `n`. A prompt
  *  makes it reader-opened, which is the first clause of `turnIsDrawn`. */
@@ -115,7 +109,7 @@ function resultEntry(
   turnID: string,
   seq: number,
   callID: string,
-  over: { readonly duration_ms?: number } = {},
+  over: { readonly duration_ms?: number; readonly interaction?: ToolInteraction } = {},
 ): Entry {
   return sealed(turnID, seq, "tool_result", Object.assign({ status: "completed" }, over), {
     id: toolResultID(callID),
@@ -367,7 +361,7 @@ describe("projectTurns", () => {
   });
 
   it("carries each lane's open entry BESIDE the body, never in it", () => {
-    // An open entry has no `seq` and no position (section 3.4), so nothing can render
+    // An open entry has no `seq` and no position, so nothing can render
     // it above a sealed entry that arrived later.
     const t = projectTurns(
       src(["t1", state([turnOpen("t1", 1, { prompt: "m-1" })], { open: [openTail("t1")] })]),
@@ -630,6 +624,44 @@ describe("turnLedger", () => {
     expect(led.changedFiles).toEqual(files);
   });
 
+  it("tallies each settled call's answered ask by its class", () => {
+    const allow = { type: "tool_approval", outcome: "selected", choice: "allow_once" };
+    const led = turnLedger(
+      oneTurn([
+        callEntry("t1", 1, "c1"),
+        resultEntry("t1", 2, "c1", { interaction: allow }),
+        callEntry("t1", 3, "c2"),
+        resultEntry("t1", 4, "c2", { interaction: allow }),
+        callEntry("t1", 5, "c3"),
+        resultEntry("t1", 6, "c3", {
+          interaction: { type: "user_input", outcome: "dismissed" },
+        }),
+        callEntry("t1", 7, "c4"),
+        resultEntry("t1", 8, "c4"),
+      ]),
+    );
+    expect(led.asks).toEqual({ allowed: 2, skipped: 1 });
+  });
+
+  it("carries the close's KAS facts verbatim", () => {
+    const led = turnLedger(
+      oneTurn([
+        closeEntry("t1", 1, {
+          request_ids: ["r1"],
+          throughput: { estimated_tokens: 10, active_streaming_ms: 5 },
+          recoveries: ["empty"],
+          steering: ["file:///a.md"],
+          engine_error_class: "ModelOverloaded",
+        }),
+      ]),
+    );
+    expect(led.requestIds).toEqual(["r1"]);
+    expect(led.throughput).toEqual({ estimated_tokens: 10, active_streaming_ms: 5 });
+    expect(led.recoveries).toEqual(["empty"]);
+    expect(led.steering).toEqual(["file:///a.md"]);
+    expect(led.engineErrorClass).toBe("ModelOverloaded");
+  });
+
   it("reports a zeroed ledger for a turn that stamped nothing", () => {
     const led = turnLedger(oneTurn([textEntry("t1", 1)]));
     expect(led.credits).toBe(0);
@@ -886,10 +918,8 @@ describe("turnFoldHides", () => {
   });
 
   it("hides a delegate's output, and the LANE is what reports it", () => {
-    // A delegate's nested tool result is not a kind the switch counts, so the lane
-    // clause is the only thing that can answer for it — which is what makes this case
-    // able to fail. A delegate's TEXT would be counted as intermediate prose by the
-    // `text` arm and answer true with the lane clause deleted (measured).
+    // A delegate's nested tool result is no counted kind, so only the lane clause answers for it (a
+    // delegate TEXT passes with the clause deleted, measured).
     const t = oneTurn([
       sealed("t1", 1, "tool_result", { status: "completed" }, { id: "c1:result", lane: "sub-A" }),
       textEntry("t1", 2, "the answer"),

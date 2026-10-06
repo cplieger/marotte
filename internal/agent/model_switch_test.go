@@ -9,8 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// --- switch_model ---
-
 // switchesOf decodes every model_switched entry in entries, in file order.
 func switchesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryModelSwitched {
 	t.Helper()
@@ -28,8 +26,7 @@ func switchesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryModelSwitc
 	return out
 }
 
-// awaitModel polls the record until it carries model with no pending pick, the
-// shape the closer's dispatched apply leaves; the deadline fails closed.
+// awaitModel polls until the record carries model with nothing pending, failing closed.
 func awaitModel(t *testing.T, cs *testChatStore, chatID marotte.ChatID, model string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -62,9 +59,7 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 	}
 }
 
-// An idle chat with no live bridge takes the pick on the record alone: model set,
-// nothing pending, no entry (there is no session to switch), no bridge spawned, and
-// the session id kept for the next OpenBridge to carry the model onto.
+// An idle chat with no bridge takes the pick on the record alone: no entry, no spawn, session id kept.
 func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -115,15 +110,12 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 	}
 
 	c, _ := cs.Get(t.Context(), "c1")
-	// The model on the chat should have changed from the override.
 	if c.Model == "claude-opus" {
 		t.Errorf("chat.Model = %q, want it to change from claude-opus", c.Model)
 	}
 }
 
-// A switch on an idle chat with a live bridge lands in the session at once and is
-// recorded between turns as one model_switched entry; the usage counters reset for
-// the new model while the context_size, a property of the window, is preserved.
+// An idle live chat switches at once, records one model_switched entry and resets usage; context_size is kept.
 func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -137,8 +129,7 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", "m-old"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// The spawn records the fake session's own model; the switch under test starts
-	// from m-old, so the record is re-seeded after the spawn.
+	// The spawn records the fake's model, so re-seed m-old after it.
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Model = "m-old"; return true })
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -161,9 +152,7 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	}
 }
 
-// A pick resolving to the model already set is not a switch: it answers ok and
-// writes nothing, so the usage counters stand, no entry lands and no bridge spawns.
-// There is no bare restart; a wedged session is a fault to report, not to hide.
+// The same model answers ok and writes nothing; there is no bare restart.
 func TestSwitchModel_TheSameModelAnswersOKAndWritesNothing(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -198,8 +187,7 @@ func TestSwitchModel_TheSameModelAnswersOKAndWritesNothing(t *testing.T) {
 	}
 }
 
-// The model field is validated at the command boundary: a bad value returns 400
-// without mutating chat state.
+// A bad model is a 400 with no state change.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -225,7 +213,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	}
 }
 
-// Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
+// The in-session switch (set_config_option) succeeds and the bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -233,7 +221,6 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		c.Model = "old-model"
 		return true
 	})
-	// Create a bridge first so the fast path has something to call.
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
@@ -249,7 +236,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	// The bridge should still be the same instance (no restart).
+	// Same instance: no restart.
 	sb2 := h.coord.Bridge("c1")
 	if sb2 == nil {
 		t.Fatal("bridge gone after fast-path switch")
@@ -259,8 +246,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		t.Errorf("session id changed: %q → %q (bridge was restarted, fast path failed)",
 			origSessionID, fb2.SessionID())
 	}
-	// The fake bridge should have received an in-session model switch
-	// (v3 session/set_config_option, configId "model").
+	// The fake received set_config_option with configId "model".
 	fb2.mu.Lock()
 	calls := append([]string(nil), fb2.calls...)
 	fb2.mu.Unlock()
@@ -273,16 +259,13 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	if !found {
 		t.Errorf("session/set_config_option not called on bridge; calls = %v", calls)
 	}
-	// Chat model should be updated.
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "new-model" {
 		t.Errorf("chat.Model = %q, want new-model", c.Model)
 	}
 }
 
-// kiro-cli accepts a model id it cannot serve — set_config_option succeeds and only
-// the SERVICE rejects it, mid-prompt, on every later turn — so the gate has to refuse
-// before the id reaches the wire.
+// kiro-cli accepts an unserved id and only the service rejects it mid-prompt, so the gate refuses first.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -300,8 +283,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 		t.Fatalf("code = %d, want 409; body = %s", rec.Code, rec.Body.String())
 	}
 
-	// Nothing changed: the refusal must not persist the model, and must not tear
-	// down or spawn a bridge on the way to failing.
+	// Nothing changed, and no bridge was torn down or spawned.
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
@@ -311,8 +293,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	}
 }
 
-// Both fail-open cases, which are the ones that would turn this gate into an outage:
-// a backend advertising no catalog must behave as it did before the gate existed.
+// Both fail-open cases: no advertised catalog behaves as before the gate.
 func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -341,16 +322,13 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	}
 }
 
-// The picker's display list drops [Deprecated] and [Legacy] entries, so validating
-// against it would refuse a model the account can still run — worse than the defect
-// the gate prevents. The gate reads the unfiltered served set.
+// The gate reads the unfiltered served set: the display list drops [Deprecated] and [Legacy].
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
-		// The display catalog omits it; the served set does not. That divergence is
-		// exactly what applyModelConfigOptionLocked produces.
+		// The display catalog omits it and the served set does not (applyModelConfigOptionLocked).
 		c.ServedModelIDs = []string{"m-old", "m-deprecated"}
 		return true
 	})
@@ -365,9 +343,7 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	}
 }
 
-// Which evidence the entitlement gate believes, in both directions:
-// config_option_update refreshes the chat's recorded set after the session result,
-// so the bridge's snapshot can only be older.
+// The chat's recorded set outranks the bridge's older snapshot.
 func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -413,9 +389,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 	}
 }
 
-// A swap the session refuses is reported and dropped: pending_model clears, model
-// stands, the reader hears switch_failed, and the bridge is left alone. There is no
-// restart fallback, which would cost the conversation's context to retry a pick.
+// A refused swap clears pending_model, keeps model, reports switch_failed and leaves the bridge alone.
 func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -426,8 +400,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// The spawn records the fake session's own model; the refusal under test must
-	// leave m-old standing, so the record is re-seeded after the spawn.
+	// The spawn records the fake's model, so re-seed m-old after it.
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Model = "m-old"; return true })
 	origSessionID := br.SessionID()
 	br.mu.Lock()
@@ -463,8 +436,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 	}
 }
 
-// A pick on a busy chat is parked as pending_model and applied by the close that
-// makes the chat idle, so a switch never touches the running turn.
+// A busy chat's pick is parked and applied by the close that idles it.
 func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -490,16 +462,13 @@ func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 	awaitModel(t, cs, "c1", "m-new")
 }
 
-// A pick on a chat that has never run is a PREFERENCE: it persists on the record with
-// no bridge, no session and no event row, so a later set_effort auto-persist cannot
-// clobber it back.
+// A pick on a never-run chat is a preference persisted on the record alone, so a later set_effort auto-persist cannot clobber it.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
-		// A tier chosen before the model pick was chosen under m-old; the pick
-		// clears it so resolution falls to the new model's own default.
+		// The tier was chosen under m-old; the pick clears it.
 		c.Effort = "max"
 		return true
 	})
@@ -530,9 +499,7 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	}
 }
 
-// A pick parked while the chat had no bridge (a process that restarted with it set, or
-// a pick made under a prompt's reserved slot before the spawn) lands on the record at
-// the next spawn, so the session opens on the pick with nothing left pending.
+// A pick parked with no bridge lands at the next spawn, so the session opens on it.
 func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -554,8 +521,7 @@ func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
 	if opts.Model != "m-new" {
 		t.Errorf("StartOpts.Model = %q, want m-new: the session must open on the parked pick", opts.Model)
 	}
-	// The record's model is the session's own report once it opens (the fake says
-	// fake-model), so the pick's landing is read off the cleared pending field.
+	// The record's model is then the session's report, so the landing is read off the cleared pending field.
 	c, _ := cs.Get(t.Context(), "c1")
 	if c.PendingModel != "" {
 		t.Errorf("pending_model = %q, want cleared by the spawn", c.PendingModel)

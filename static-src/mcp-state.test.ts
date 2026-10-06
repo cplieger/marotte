@@ -1,16 +1,76 @@
-// Unit tests for mcp-state.ts: adaptStatus wire-to-domain mapping plus
-// characterization of the optimistic mutation helpers (insert/remove/update)
-// over the shared `servers` collection.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { effect } from "@cplieger/reactive";
 import {
   adaptStatus,
   servers,
   insertConfiguredEntry,
   removeConfiguredEntry,
+  mcpState,
   updateConfiguredEntry,
 } from "./mcp-state.js";
 import type { Server } from "./mcp-state.js";
+
+// Only the network edge is mocked: the decoder is real, so the fixture decodes as a GET /api/mcp body.
+const wire = vi.hoisted(() => ({ body: {} as unknown }));
+vi.mock(import("./api-client.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    apiGetTyped: <T>(_path: string, decode: (v: unknown) => T) =>
+      Promise.resolve(decode(wire.body)),
+  } as unknown as typeof actual;
+});
+
+describe("the server list decoder", () => {
+  it("keeps a record's wait_for_ready and timeout_ms", async () => {
+    wire.body = {
+      servers: [
+        {
+          id: "srv-w",
+          name: "slow",
+          transport: "stdio",
+          enabled: true,
+          created_at: 1,
+          updated_at: 2,
+          command: "uvx",
+          wait_for_ready: true,
+          timeout_ms: 120000,
+        },
+      ],
+    };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(servers.get("srv-w")).toBeDefined();
+    });
+    expect(servers.get("srv-w")?.wait_for_ready).toBe(true);
+    expect(servers.get("srv-w")?.timeout_ms).toBe(120000);
+  });
+
+  it("keeps a record's oauth metadata URL and redirect", async () => {
+    // The raw-JSON box shows the decoded record, so a dropped field would also be cleared by a raw-edit save.
+    wire.body = {
+      servers: [
+        {
+          id: "srv-o",
+          name: "cimd",
+          transport: "http",
+          enabled: true,
+          created_at: 1,
+          updated_at: 2,
+          url: "https://mcp.example/mcp",
+          oauth_client_metadata_url: "https://example.com/c.json",
+          oauth_redirect_uri: ":7778",
+        },
+      ],
+    };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(servers.get("srv-o")).toBeDefined();
+    });
+    expect(servers.get("srv-o")?.oauth_client_metadata_url).toBe("https://example.com/c.json");
+    expect(servers.get("srv-o")?.oauth_redirect_uri).toBe(":7778");
+  });
+});
 
 describe("adaptStatus", () => {
   const cases = [
@@ -42,9 +102,7 @@ describe("adaptStatus", () => {
       },
     },
     {
-      // An absent `relayed` must read as false, not as "unknown": the flag gates
-      // whether the loopback-relay paste box is offered, and defaulting it true
-      // would hide the only recovery path for a callback never delivered.
+      // An absent `relayed` reads false: true would hide the only recovery path for an undelivered callback.
       name: "needs_auth without relayed defaults to not-yet-relayed",
       input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example" },
       expected: {
@@ -91,16 +149,13 @@ describe("adaptStatus", () => {
       input: { name: "", state: "connected" },
       expected: { name: "", origin: "user", state: "connected" },
     },
-    // A server KAS reports as off. Only ever sent for one marotte did not
-    // configure, so it must survive adaptation rather than degrading to idle:
-    // "off" and "no chat is running" are different rows.
+    // Sent only for a server marotte did not configure; "off" and "no chat is running" are different rows.
     {
       name: "disabled state is a state of its own, not idle",
       input: { name: "off-server", state: "disabled", origin: "power" },
       expected: { name: "off-server", origin: "power", state: "disabled" },
     },
-    // The origin drives whether the row gets edit affordances, so each value is
-    // pinned separately.
+    // The origin drives edit affordances, so each value is pinned.
     {
       name: "a power's origin is carried through",
       input: { name: "from-power", state: "connected", origin: "power" },
@@ -111,8 +166,7 @@ describe("adaptStatus", () => {
       input: { name: "mystery", state: "connected", origin: "unknown" },
       expected: { name: "mystery", origin: "unknown", state: "connected" },
     },
-    // Both fall back to "user", which is the safe direction: it cannot invent a
-    // read-only row for a server the config list owns and offers edits for.
+    // Both fall back to "user", keeping the status on the config row it names.
     {
       name: "an absent origin falls back to user",
       input: { name: "old-server", state: "connected" },
@@ -123,6 +177,36 @@ describe("adaptStatus", () => {
       input: { name: "weird", state: "connected", origin: "sideloaded" },
       expected: { name: "weird", origin: "user", state: "connected" },
     },
+    {
+      name: "a workspace origin carries the root that defines it",
+      input: {
+        name: "ws",
+        state: "connected",
+        origin: "workspace",
+        origin_root: "/workspace/app",
+      },
+      expected: {
+        name: "ws",
+        origin: "workspace",
+        originRoot: "/workspace/app",
+        state: "connected",
+      },
+    },
+    {
+      name: "a bundled origin is carried through",
+      input: { name: "kiro-docs", state: "connected", origin: "bundled" },
+      expected: { name: "kiro-docs", origin: "bundled", state: "connected" },
+    },
+    {
+      name: "a power origin carries the Power's name",
+      input: { name: "aws", state: "connected", origin: "power", origin_power: "aws-infra" },
+      expected: { name: "aws", origin: "power", originPower: "aws-infra", state: "connected" },
+    },
+    {
+      name: "a shadowing server says so",
+      input: { name: "mine", state: "connected", origin: "workspace", shadows: true },
+      expected: { name: "mine", origin: "workspace", shadows: true, state: "connected" },
+    },
   ] as const;
 
   for (const { name, input, expected } of cases) {
@@ -132,9 +216,7 @@ describe("adaptStatus", () => {
   }
 });
 
-// Shared `servers` collection is a module singleton; reset before each test so
-// each mutation helper runs against a known starting order. These exercise the
-// REAL splice/fallback/dedup logic — actions/mcp.test.ts only mocks it.
+// A module singleton, reset per test; these exercise the real splice/fallback/dedup logic.
 describe("configured-server mutation helpers", () => {
   beforeEach(() => {
     servers.clear();
@@ -167,18 +249,18 @@ describe("configured-server mutation helpers", () => {
     const b = makeServer("b");
     const c = makeServer("c");
 
-    // omitted → lexicographic id position (b sorts between a and c)
+    // Omitted: id position (b sorts between a and c).
     servers.setAll([a, c]);
     insertConfiguredEntry(b);
     expect(orderedIds()).toEqual(["a", "b", "c"]);
 
-    // atIndex past the end → fall back to id ordering
+    // atIndex past the end falls back to id ordering.
     servers.clear();
     servers.setAll([a, c]);
     insertConfiguredEntry(b, 99);
     expect(orderedIds()).toEqual(["a", "b", "c"]);
 
-    // negative atIndex → fall back to id ordering
+    // Negative atIndex falls back to id ordering.
     servers.clear();
     servers.setAll([a, c]);
     insertConfiguredEntry(b, -1);
@@ -191,10 +273,10 @@ describe("configured-server mutation helpers", () => {
     const c = makeServer("c");
     servers.setAll([a, b, c]);
 
-    // Same id, different name + a positional hint that would otherwise move it.
+    // Same id, different name, and a hint that would otherwise move it.
     insertConfiguredEntry(makeServer("b", "CHANGED"), 0);
 
-    // has(id) early-return: order unchanged AND the stored value is untouched.
+    // has(id) early-return: order and stored value unchanged.
     expect(orderedIds()).toEqual(["a", "b", "c"]);
     expect(servers.size).toBe(3);
     expect(servers.get("b")).toEqual(b);
@@ -215,16 +297,14 @@ describe("configured-server mutation helpers", () => {
       void sigA.value;
       aRuns++;
     });
-    expect(aRuns).toBe(1); // initial run
+    expect(aRuns).toBe(1); // Initial run.
 
-    // Insert b at the front: only the order (structure tier) changes. setAll
-    // writes a's value back as the SAME object reference, so Object.is dedup on
-    // a's per-entity signal means it never fires.
+    // Only the order changes; setAll writes a's value back as the same reference, so its per-entity signal does not fire.
     insertConfiguredEntry(b, 0);
 
-    expect(aRuns).toBe(1); // a's effect did NOT re-fire
-    expect(orderedIds()).toEqual(["b", "a"]); // structure did change
-    expect(servers.signalFor("a")).toBe(sigA); // same signal object, reused
+    expect(aRuns).toBe(1); // a's effect did not re-fire.
+    expect(orderedIds()).toEqual(["b", "a"]); // Structure did change.
+    expect(servers.signalFor("a")).toBe(sigA); // Same signal object, reused.
 
     dispose();
   });

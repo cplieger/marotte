@@ -1,7 +1,5 @@
-// `clearTurnState`, against the REAL store: the outcome-independent half of "a turn is no
-// longer running", reached by three doors that each apply whatever else they know. Only the
-// two surfaces it reaches OUT to are replaced, because they carry the two facts the store
-// cannot: which TAB a chat's subject is open in, and whether a question is waiting.
+// `clearTurnState` against the REAL store: the outcome-independent half of "no longer running".
+// Only the two surfaces it reaches OUT to (tab, waiting question) are replaced.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({

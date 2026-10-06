@@ -1,32 +1,15 @@
-// THE CHAT AREA MAY NOT OUTRANK APP CHROME.
-//
-// `[id="chat-area"]` is `isolation: isolate` (12-chat.css) so every z-index inside it
-// lands in ONE layer, below `[id="sidebar"]`'s own `z-index: 2` (10-shell-app.css).
-// Without it the composer — `[id="prompt-form"]`, `z-index: 10` (15-input.css) —
-// competes directly with the sidebar in the ROOT stacking context and wins, because
-// `container-type: inline-size` does NOT make this element a stacking context in
-// Chromium. Reported on an iPad: the sidebar footer's status card is wider than the
-// 260px panel, so it overflows, and the composer painted over the overflowing sliver —
-// which reads as the card being cut off at the panel's edge.
-//
-// A HIT TEST IS THE ONLY THING THAT SEES THIS. Every box, every computed z-index and
-// every declaration is identical either way; only paint order moves, and
-// `elementFromPoint` is the one reader of paint order a test page has. A style read of
-// `isolation` would pass with the declaration present and the sidebar's z-index broken,
-// which is the pair that has to hold.
-//
-// Both cases carry their own PREMISE assertions — the card really overflows the panel,
-// and the point really sits inside both boxes — because a fixture where the two do not
-// overlap would pass with the isolation deleted.
+// `[id="chat-area"]` is `isolation: isolate` so the composer's `z-index: 10` cannot beat the
+// sidebar's in the root context (`container-type` makes none in Chromium). Only a hit test
+// sees paint order; both cases assert their overlap premise.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { makeExpandable } from "./pill-expand.js";
 
-/** The widest row the status card really holds is the credit meter, whose width is the
- *  platform's monospace metrics rather than anything this app declares. A declared width
- *  stands in for it so the overflow is deterministic instead of font-dependent; that it
- *  overflows AT ALL is asserted rather than assumed. */
+/**
+ * A declared width stands in for the credit meter's font-dependent width, so the overflow
+ * is deterministic; that it overflows is asserted.
+ */
 const WIDE_ROW_PX = 300;
 
 /** Tall enough that the composer's band reaches up into the opened card. Production gets
@@ -55,9 +38,10 @@ interface Shell {
   composer: HTMLElement;
 }
 
-/** The real two-column shell: a fixed sidebar whose footer holds the status card, and
- *  the chat area beside it holding the composer. Every class is production's, so the
- *  z-indexes under test come from the shipped stylesheet. */
+/**
+ * The real two-column shell, every class production's, so the z-indexes come from the
+ * shipped stylesheet.
+ */
 function mountShell(): Shell {
   const app = document.createElement("div");
   app.id = "app";
@@ -110,9 +94,10 @@ function mountShell(): Shell {
   return { sidebar, card, btn, composer };
 }
 
-/** Open the popup the way the app does, then settle the entry transition —
- *  `getBoundingClientRect` reports the SCALED box, and the card rests at `scale(0.4)`
- *  until the animation finishes. */
+/**
+ * Open the popup the way the app does, then settle the entry transition: the rect is the
+ * SCALED box until it finishes.
+ */
 function open(btn: HTMLButtonElement, card: HTMLElement): void {
   makeExpandable(btn, card);
   btn.click();
@@ -155,14 +140,12 @@ describe("the sidebar's overflowing popup against the chat area", () => {
 });
 
 describe("the phone drawer against the chat area", () => {
-  // The drawer's `z-index: 100` lives in `@media (width <= 48rem)`, which the browser
-  // project's fixed 1280px viewport never matches — so its body is mounted unwrapped
-  // after the bundle, which is what a phone gives it: the last word.
+  // The drawer's `z-index: 100` lives in `@media (width <= 48rem)`, which the fixed 1280px
+  // viewport never matches, so its body is mounted unwrapped after the bundle.
   it("still paints over the chat area once the whole layer is isolated", () => {
     const mobile = loadCSS("50-mobile.css");
-    // The two rules the claim rests on, by selector rather than by mounting the whole
-    // block: that file carries TWO `width <= 48rem` at-rules and the first prelude is a
-    // prefix of the second, so no substring names one of them.
+    // By selector: that file has TWO `width <= 48rem` at-rules, one prelude a prefix of the
+    // other.
     const rules = ['[id="sidebar"]', '[id="sidebar"].open'].map((sel) =>
       ruleContaining(mobile, sel, "width <= 48rem"),
     );

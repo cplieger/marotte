@@ -1,6 +1,3 @@
-// Tests for the live MCP control actions: reconnect_server, get_prompt,
-// get_resource — request shaping (method/path/body) + result passthrough.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -106,9 +103,7 @@ describe("relayOAuthCallback", () => {
     expect(res?.status).toBe(200);
   });
 
-  // An authorization code is single-use. A retried relay can only replay a
-  // request that may already have spent it, so the definition carries no retry
-  // and this pins that: one dispatch, one request, whatever the failure.
+  // An authorization code is single-use, so a retried relay could spend it twice.
   it("never retries — a replayed callback would spend the code twice", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ error: "the local sign-in listener did not answer" }), {
@@ -124,9 +119,7 @@ describe("relayOAuthCallback", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  // The refusal is shown inline beside the field, so the action must not also
-  // raise a toast: the server's reason names which part of the pasted address
-  // was wrong and belongs next to the box it was pasted into.
+  // The server's reason names the wrong part of the pasted address, shown beside the box.
   it("raises no error toast, so the panel can show the reason inline", async () => {
     const toast = await import("../toast.js");
     mockFetch.mockResolvedValue(

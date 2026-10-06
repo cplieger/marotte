@@ -1,10 +1,5 @@
-// ---------------------------------------------------------------------------
-// Universal file upload with progress indicator.
-//
-// Uses XMLHttpRequest (not fetch) because fetch doesn't expose upload
-// progress. This is one of two places in the app that legitimately
-// doesn't go through api-client.ts; the other is transport.ts's SSE.
-// ---------------------------------------------------------------------------
+// Universal file upload with progress. XMLHttpRequest, because fetch exposes no upload progress; one
+// of two places that bypass api-client.ts (the other is transport.ts's SSE).
 
 import { $ } from "./dom.js";
 import { hasErrorString } from "./actions/index.js";
@@ -16,31 +11,18 @@ export interface UploadOptions {
   /** Called on successful upload. Receives the resolved workspace paths
    *  (targetDir + filename) for each uploaded file. */
   onComplete?: (paths: string[]) => void;
-  /** Called on failure. `uploaded` carries the paths that DID land before the
-   *  batch stopped, because a partially-failed batch is not rolled back: the
-   *  server reports what it wrote (see respondUploadError in
-   *  internal/filebrowse/upload.go) and the caller can still use
-   *  those files. Empty on a transport failure, where nothing is known. */
+  /** Called on failure. `uploaded` holds the paths that DID land: a partial batch is not rolled back
+   *  (respondUploadError, internal/filebrowse/upload.go). Empty on a transport failure. */
   onError?: (msg: string, uploaded: string[]) => void;
   /** Optional signal for programmatic cancellation (e.g. chat delete, navigation). */
   signal?: AbortSignal;
 }
 
-// The three functions below are this module's pure core: response shaping with
-// no DOM and no XHR. They are exported so they can be tested directly, the same
-// split strings.ts uses for windowOutput; the surrounding uploadFiles is the
-// untestable shell (a singleton progress bar plus a live request).
+// The pure core: response shaping with no DOM or XHR, exported for tests; uploadFiles is the shell.
 
-/** Server-returned filenames mapped onto container-absolute paths under the
- *  target directory. Shared by the success and failure paths so a partial batch's
- *  paths are spelled exactly like a whole one's.
- *
- *  Through `joinPath`, not a local separator rule. It carried a third copy of the
- *  join, whose root case (`""` or `"."`) returned the BARE FILENAME — and these
- *  paths become chat ATTACHMENTS, which the server resolves against the workspace
- *  root, so a bare name named a file that was never there. Every target is
- *  absolute now (`UPLOADS_DIR`, or the browser's own listing path), so there is
- *  no root case to have. */
+/** Server filenames mapped onto container-absolute paths under the target, through `joinPath`, so a
+ *  partial batch spells paths exactly as a whole one. Every target is absolute, so there is no root
+ *  case: a bare name would resolve under the workspace. */
 export function resolvePaths(targetDir: string, names: string[]): string[] {
   return names.map((name) => joinPath(targetDir, name));
 }
@@ -59,9 +41,7 @@ export function uploadedNames(responseText: string): string[] {
   return [];
 }
 
-/** The failure sentence for a batch that got part of the way through.
- *  The server's message says WHY but deliberately names no file (its 413 and
- *  500 bodies are generic sentinels), and the client knows the order it sent,
+/** The failure sentence for a partial batch. The server's message names no file (generic 413/500),
  *  so the first file after the last success is the one that failed. */
 export function batchFailureMessage(
   files: FileList,
@@ -76,11 +56,8 @@ export function batchFailureMessage(
   return `${String(uploadedCount)} of ${String(files.length)} uploaded, then ${which} failed: ${serverMsg}`;
 }
 
-// NOTE: Only one upload at a time is supported. The progress bar is a
-// singleton DOM element shared across browser upload and chat drop.
-// Concurrent uploads would corrupt the progress display. Serialization
-// is enforced by scope: "upload" on the action definition, which queues
-// subsequent dispatches until the current upload completes.
+// One upload at a time: the progress bar is a singleton shared by browser upload and chat drop.
+// The action's `scope: "upload"` queues later dispatches.
 
 export function uploadFiles(opts: UploadOptions): void {
   // If already cancelled, bail out before showing any progress UI.
@@ -100,14 +77,9 @@ export function uploadFiles(opts: UploadOptions): void {
   const label = $.uploadProgressLabel;
   const cancelBtn = $.uploadProgressCancel;
 
-  // The container is a plain layout div. It used to carry `role="progressbar"`
-  // plus every `aria-*`, which flattened its children out of the accessibility
-  // tree — and one of them is the Cancel button, so the only way to stop an
-  // upload was unreachable to a screen reader. The native <progress> reports its
-  // own value, so the ARIA it needs is a NAME and nothing else; `aria-label`
-  // rather than `aria-labelledby` at the label span, because that span's text
-  // becomes the percentage and then the outcome, and a name that restates the
-  // value churns on every tick.
+  // A plain layout div, not `role="progressbar"` (which would hide the Cancel child). The native
+  // <progress> reports its value, so it needs only a NAME: `aria-label`, since the label span's text
+  // churns with the percentage.
   progress.classList.remove("upload-closed");
   bar.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
   bar.value = 0;

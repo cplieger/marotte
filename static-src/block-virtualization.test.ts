@@ -1,20 +1,8 @@
-// ---------------------------------------------------------------------------
-// Residency measured in ENTRIES: what a paint mounts inside ONE long turn.
-//
-// A turn-id set cannot refuse part of one turn, so a cold load of a 700-entry turn
-// built all 700. The plan names an `EntryRange` now, and the ordinals outside it are
-// ABSENT from the DOM rather than unpainted. The real `scroll.ts` is attached, not the
-// shared mock, whose scroller has no geometry to read.
-//
-// THE FIXTURE IS `thinking` ENTRIES, and that is what the entry model forces rather
-// than a preference: `sliceTurn` snaps a window down to a prose run's first entry and
-// up past its last, so a body of N sealed `text` entries is ONE `.msg-row` and every
-// mounted-ordinal assertion below would read 1. A `thinking` entry renders at its own
-// position and joins no run, so the body has N ordinals a window can sit inside. Two
-// other fixtures appear where the case needs them: `tool_call` entries where the
-// narrower TOOL budget binds, and text stretches separated by a rendering entry where
-// the case is about prose RUNS.
-// ---------------------------------------------------------------------------
+// Residency in ENTRIES: what a paint mounts inside ONE long turn. Ordinals outside the
+// plan's `EntryRange` are ABSENT from the DOM, and the real `scroll.ts` is attached. The
+// fixture is `thinking` entries, because `sliceTurn` snaps to whole prose runs and N text
+// entries would be ONE row; tool-call and multi-run fixtures appear where a case needs
+// the tool budget or prose runs.
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -22,18 +10,12 @@ import type { TurnState } from "./types.js";
 import type { Turn } from "./turns.js";
 import type { Entry, Hit } from "./wire/types.gen.js";
 
-// The SERVER's search answer is the only thing stubbed for the navigation case:
-// `chat-search.ts`, the reveal it injects, the renderer and the scroller all run for
-// real, which is the point — a hit inside an unmounted entry needs a real build, and
-// a mocked reveal would pass with none having happened. Spy-wrapped rather than
-// replaced, because this module has a dozen other exports the graph links.
+// Only the server's search ANSWER is stubbed: a hit in an unmounted entry needs a real
+// build. Spy-wrapped, since the graph links the module's other exports.
 vi.mock("./api-client.js", { spy: true });
 
-// NESTED as the shipped page nests them (static/index.html): `#messages-wrap` is
-// `position: absolute; inset: 0` inside the outer wrapper, so it is the
-// `offsetParent` of the whole transcript AND the scroller. Flat siblings give the
-// anchor ladder a scroller with no content in it and card offsets measured against
-// the body, which is every coordinate in the wrong space.
+// NESTED as static/index.html nests them: `#messages-wrap` is the transcript's
+// `offsetParent` AND the scroller, so flat siblings put every coordinate in the wrong space.
 for (const id of [
   "messages-wrap-outer",
   "chat-view",
@@ -112,11 +94,10 @@ function turnClose(turnID: string, at: number): Entry {
   return sealed(turnID, at, "turn_close", { outcome: "completed" });
 }
 
-/** FIXTURE (1), the general shape: one turn of `count` sealed `thinking` entries.
- *  `entryRenders` answers true for `thinking` through its default arm and `inProseRun`
- *  answers false, so each is its own mounted element charged against the entry budget
- *  alone — the exact analogue of the retired 700 text BLOCKS, and the only shape under
- *  which the overscan floor is falsifiable at all. */
+/**
+ * FIXTURE (1): one turn of `count` sealed `thinking` entries, each its own element charged
+ * to the entry budget alone, the only shape where the overscan floor is falsifiable.
+ */
 function hugeTurn(turnID: string, count: number, close = true): Entry[] {
   const out: Entry[] = [turnOpen(turnID)];
   for (let at = 1; at <= count; at++) {
@@ -128,10 +109,10 @@ function hugeTurn(turnID: string, count: number, close = true): Entry[] {
   return out;
 }
 
-/** FIXTURE (2): `count` consecutive settled TOOL cards, the shape the tool budget binds
- *  on, where the window is at its narrowest. WRONG as the general fixture —
- *  `RESIDENT_TOOL_CALLS` (96) binds before `RESIDENT_ENTRIES` (320), so a 320-ordinal
- *  assertion over one would fail for a reason the case is not about. */
+/**
+ * FIXTURE (2): `count` consecutive settled TOOL cards, where the tool budget binds and the
+ * window is narrowest. Not the general fixture: `RESIDENT_TOOL_CALLS` binds first.
+ */
 function toolTurn(turnID: string, count: number): Entry[] {
   const out: Entry[] = [turnOpen(turnID)];
   for (let at = 1; at <= count; at++) {
@@ -149,10 +130,10 @@ function toolTurn(turnID: string, count: number): Entry[] {
   return out;
 }
 
-/** FIXTURE (3): `runs` stretches of `per` sealed `text` entries, each stretch separated
- *  by a `thinking` entry. A prose RUN boundary is only reachable this way —
- *  `recordRowHeight`'s one production caller is a run LEAVING a body — and a single
- *  stretch would be one row whatever its length. */
+/**
+ * FIXTURE (3): `runs` stretches of `per` sealed `text` entries split by a `thinking`
+ * entry: a prose RUN boundary is only reachable this way.
+ */
 function runsTurn(turnID: string, runs: number, per: number): Entry[] {
   const out: Entry[] = [turnOpen(turnID)];
   let at = 1;
@@ -161,9 +142,7 @@ function runsTurn(turnID: string, runs: number, per: number): Entry[] {
       out.push(sealed(turnID, at++, "thinking", { text: `between ${String(r)}` }));
     }
     for (let i = 0; i < per; i++) {
-      // Long enough to WRAP, so a real row measures well past the per-entry estimate
-      // and the height a departing run records is worth something the document can be
-      // short by.
+      // Long enough to WRAP, so a departing run's recorded height is worth something.
       out.push(
         sealed(turnID, at++, "text", {
           text: `run ${String(r)} chunk ${String(i)}: ${"the quick brown fox jumps over the lazy dog and keeps going ".repeat(6)}`,
@@ -175,26 +154,26 @@ function runsTurn(turnID: string, runs: number, per: number): Entry[] {
   return out;
 }
 
-/** The ordinal the two tool-bearing fixtures put their card at: HEAD-ward of the cold
- *  window and inside the one the reader's own drag reaches, so the card is mounted, then
- *  dropped, then mounted again — the sequence both cases are about. The turn's own head
- *  is deliberately NOT used: the window converges one budget head-ward and stops there
- *  (`dragUpAWindow` carries the measurement), so a card at ordinal 1 is unreachable and
- *  the case would be testing the ladder rather than the drop. */
+/**
+ * The ordinal the tool-bearing fixtures put their card at: head-ward of the cold window
+ * and inside the one a drag reaches, so it mounts, drops and mounts again. Not the turn's
+ * head, which the window cannot reach (see `dragUpAWindow`).
+ */
 const TOOL_AT = 250;
 
-/** `hugeTurn` with a todo list at `TOOL_AT`: the entry kind whose mount arms an effect
- *  of its own, so a drop that fails to drain it leaves a signal subscribed to a detached
- *  list. */
-function todoHeadTurn(turnID: string, count: number): Entry[] {
+/**
+ * `hugeTurn` with a delegate invocation at `TOOL_AT`, whose card arms its own effect: a
+ * drop that fails to drain it leaves a signal subscribed to a detached card.
+ */
+function delegateHeadTurn(turnID: string, count: number): Entry[] {
   const out = hugeTurn(turnID, count);
   out[TOOL_AT] = sealed(turnID, TOOL_AT, "tool_call", {
-    id: `${turnID}-todo`,
-    title: "todo_list",
+    id: `${turnID}-inv`,
+    title: "Sub-agent: helper",
     kind: "other",
     status: "completed",
     ts: TOOL_AT,
-    input: { todos: [{ content: "first", status: "completed" }] },
+    agent_subtask_id: `${turnID}-sub`,
   });
   return out;
 }
@@ -216,9 +195,10 @@ function outputHeadTurn(turnID: string, count: number): Entry[] {
 
 const SENTINEL = "chartreuse";
 
-/** `hugeTurn` with one entry carrying a needle no other entry holds, so a query for it
- *  marks NOTHING while that entry is unmounted — which is what routes stepping to the
- *  server hits instead of to the resident marks. */
+/**
+ * `hugeTurn` with one entry holding a unique needle, so an unmounted hit routes stepping
+ * to the server hits.
+ */
 function sentinelTurn(turnID: string, count: number, at: number): Entry[] {
   const out = hugeTurn(turnID, count);
   out[at] = sealed(turnID, at, "thinking", { text: sentinelText(at) });
@@ -296,15 +276,13 @@ function spacer(turnID: string, side: "head" | "tail"): HTMLElement | null {
   return card(turnID).querySelector<HTMLElement>(`:scope > .turn-space[data-space="${side}"]`);
 }
 
-// ---------------------------------------------------------------------------
-// Search navigation onto an entry that is not in the DOM. The overlay, the server
-// pre-pass, the injected reveal and the walker all run for real; only the server's
-// ANSWER is staged.
-// ---------------------------------------------------------------------------
+// Search navigation onto an entry not in the DOM: everything runs for real except the
+// server's staged ANSWER.
 
-/** The server's search reply, for any search these cases run, run through the caller's
- *  own decoder so the staged bytes are held to the wire shape. Everything else
- *  `api-client.js` serves keeps its real behaviour. */
+/**
+ * The server's search reply, run through the caller's decoder so it is held to the wire
+ * shape.
+ */
 function stageServerHits(hits: Hit[]): void {
   vi.mocked(api.apiGetTyped).mockImplementation(((path: string, decode: (v: unknown) => unknown) =>
     Promise.resolve(
@@ -400,9 +378,8 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
   it("takes at most ONE slice on the paint frame, even where the window is one turn", async () => {
     const id = chatID();
     activate(id, [hugeTurn("big", HUGE)]);
-    // The window is 320 ordinals of ONE turn, so a builder that could only cut between
-    // turns would mount all of them in the paint that created the card — the frame the
-    // yielded builder exists to protect.
+    // The window is 320 ordinals of ONE turn, so a builder cutting only between turns would
+    // mount them all in one paint.
     expect(mountedSeqs("big").length).toBeLessThanOrEqual(BUILD_BATCH_ENTRIES);
     // Nothing is lost: the drain finishes the window off the frame.
     await vi.waitFor(() => {
@@ -429,11 +406,8 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
     await vi.waitFor(() => {
       expect(mountedSeqs("big").length).toBeGreaterThan(RESIDENT_ENTRIES / 2);
     });
-    // A rail jump calls this on a turn that already HAS a body, and a caller that named
-    // no ordinal asks for the turn's head — which no slice can mount until positional
-    // insertion lands. The build has to give up rather than spin: a wedged loop holds
-    // `hasPendingBuild` true for the turn's lifetime, and its yields starve the timer
-    // queue, so a spin takes the whole run down instead of reporting here.
+    // A rail jump on a bodied turn with no ordinal asks for the head, which no slice can mount
+    // yet: the build must give up rather than spin and starve the timer queue.
     const settled = await Promise.race([
       mountTurnBody(id, "big").then(() => "settled"),
       new Promise((resolve) => {
@@ -450,9 +424,7 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
       expect(mountedSeqs("big").length).toBeGreaterThan(RESIDENT_ENTRIES / 2);
     });
     stageServerHits([hitOn("big", 200)]);
-    // The case's premise, and the whole difficulty: the hit's entry is ABSENT, so there
-    // is nothing for the walker to mark and no node for `jumpTo` to reach. One rendered
-    // frame cannot fix that, which is why the build is awaited.
+    // The premise: the hit's entry is ABSENT, so the build is awaited.
     expect(seqEl("big", 200)).toBeNull();
 
     await findAndStep(SENTINEL);
@@ -461,9 +433,7 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
       expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
     });
     const current = document.querySelector("mark.find-hit-current");
-    // ON the entry the hit named — not the notice, and not a neighbouring entry.
-    // `find-in-chat.ts` resolves a hit's host by `[data-entry-id]`, which is the
-    // coordinate that replaced the block index.
+    // ON the hit's entry, resolved by `[data-entry-id]`.
     expect(current?.closest("[data-entry-id]")?.getAttribute("data-entry-id")).toBe("big-e200");
     // The position in the server's one-row list, with no whole-chat figure beside it:
     // the list holds every occurrence, so there is nothing more to say.
@@ -472,12 +442,8 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Scrolling moves the window, and every case below needs REAL geometry: the
-// shipped stylesheet, a sized scrollport, and the real `scroll.ts` listener the
-// window pass hangs off. The shared mock cannot serve any of it — its scroller is
-// a detached div and its `onViewportChange` never fires.
-// ---------------------------------------------------------------------------
+// Window moves need REAL geometry: the stylesheet, a sized scrollport, the real
+// `scroll.ts` listener. The shared mock has none.
 
 describe("scrolling moves the window", () => {
   let style: HTMLStyleElement;
@@ -487,9 +453,7 @@ describe("scrolling moves the window", () => {
 
   beforeAll(() => {
     style = mountAppCSS();
-    // `#messages-wrap-outer` is `flex: 1` of a column this fixture does not build,
-    // so without a height the absolutely-positioned scroller inside it is 0 tall
-    // and the ladder answers the live edge for every position.
+    // Without a height the absolutely-positioned scroller is 0 tall.
     const outer = document.getElementById("messages-wrap-outer");
     if (outer !== null) {
       outer.style.height = `${String(VIEWPORT_PX)}px`;
@@ -510,9 +474,10 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** Wait until the cold build has FINISHED: two consecutive polls agreeing on the
-   *  mounted count. The window pass refuses to move a body that is still filling, so
-   *  a case that scrolls has to let the builder finish first. */
+  /**
+   * Wait until the cold build FINISHED (two polls agree): the window pass refuses to move a
+   * filling body.
+   */
   async function settled(turnID: string, least = 2 * OVERSCAN_ENTRIES): Promise<void> {
     let last = -1;
     await vi.waitFor(() => {
@@ -524,9 +489,10 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** Put the reader back on the live edge and wait out the bottom pin's own settle
-   *  window: a gesture inside it is undone before any pass sees it. The pin is
-   *  armed short and the real window is back in force before the case acts. */
+  /**
+   * Put the reader back on the live edge and wait out the bottom pin's settle window, which
+   * would undo a gesture inside it.
+   */
   async function atLiveEdge(): Promise<void> {
     const real = setPinSettleMs(20);
     try {
@@ -539,14 +505,11 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** Drag the scrollbar to `top`, and report how far the reader actually moved.
-   *
-   *  The wheel's DIRECTION is load-bearing, not decoration: the controller enters
-   *  Reading from the aim of the reader's input, so a bare positional write is the
-   *  shape of the platform's own clamp and stays Following on purpose.
-   *  `behavior: "instant"`, not `scrollTop =`: the scroller declares
-   *  `scroll-behavior: smooth` (css/13-messages.css), so an assignment only starts an
-   *  animation. Measured immediately, so the number excludes later compensation. */
+  /**
+   * Drag the scrollbar to `top` and report how far the reader moved. The wheel's DIRECTION
+   * matters: Reading is entered from the input's aim. `behavior: "instant"`, because the
+   * scroller is `scroll-behavior: smooth`. Measured before any compensation.
+   */
   async function dragTo(top: number): Promise<number> {
     const scrollEl = scroller();
     const was = scrollEl.scrollTop;
@@ -559,20 +522,12 @@ describe("scrolling moves the window", () => {
     return moved;
   }
 
-  /** Drag to the top, wait for the window to move HEAD-ward, and report the ordinal it
-   *  reached.
-   *
-   *  It converges in ONE pass on the per-ENTRY fixture and cannot be walked further from
-   *  here, which is production's own arithmetic rather than a flake: the anchor ladder
-   *  resolves its position from MOUNTED elements, so at `scrollTop` 0 the anchor is the
-   *  window's own first ordinal, the plan seeds there, and the compensation leaves the
-   *  reader at 0 again — where a second `scrollTo({top: 0})` moves nothing and emits no
-   *  scroll event, so no later pass is armed. Measured on this fixture: `[381, 700]`
-   *  becomes `[221, 541]` and stays, and a 40-iteration drag loop reaches the same 221.
-   *  So every case below is written about the window having MOVED and the tail having
-   *  been DROPPED — which is the oracle — rather than about reaching ordinal 1. The
-   *  prose-RUN fixture is cheap enough per box that the same drag does reach its first
-   *  run, which is what `dragToHead` is for. */
+  /**
+   * Drag to the top, wait for the window to move HEAD-ward, and report the ordinal reached.
+   * It converges in ONE pass on this fixture (the ladder anchors on mounted elements, so
+   * scrollTop 0 re-seeds at the window's own head), so cases assert that the window MOVED
+   * and the tail DROPPED, not that ordinal 1 was reached. `dragToHead` serves prose runs.
+   */
   async function dragUpAWindow(turnID: string): Promise<number> {
     const was = mountedSeqs(turnID)[0] ?? 0;
     await dragTo(0);
@@ -592,9 +547,7 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** Wait until the window stops MOVING: two consecutive polls agreeing on the
-   *  ordinals mounted. Distinct from `settled`, which waits for a cold build to
-   *  finish filling one window. */
+  /** Wait until the window stops MOVING (two polls agree); `settled` waits for a cold fill. */
   async function windowSettled(turnID: string): Promise<void> {
     // Seeded with a reading no window can produce, or an EMPTY window satisfies the
     // agreement on the first poll and the helper reports settled having seen nothing.
@@ -638,10 +591,10 @@ describe("scrolling moves the window", () => {
     return px;
   }
 
-  /** `least` is the mounted-ordinal floor the cold build has to clear before the case
-   *  scrolls. It is a parameter rather than a constant because a PROSE fixture stamps
-   *  one ordinal per RUN — five runs of 120 text entries mount five rows — so a floor
-   *  written for the per-entry shape times out on the row axis. */
+  /**
+   * `least` is the mounted-ordinal floor the cold build must clear before scrolling; a
+   * parameter because a prose fixture stamps one ordinal per RUN.
+   */
   async function coldLoad(
     turnID: string,
     entries: readonly Entry[],
@@ -665,7 +618,6 @@ describe("scrolling moves the window", () => {
 
     const head = await dragUpAWindow("big");
 
-    // Previously absent ordinals are present…
     expect(head).toBeLessThan(before[0] ?? 0);
     expect(seqEl("big", head)).not.toBeNull();
     const after = mountedSeqs("big");
@@ -689,11 +641,8 @@ describe("scrolling moves the window", () => {
     await coldLoad("big", hugeTurn("big", HUGE));
     await dragUpAWindow("big");
 
-    // The OVERLAP is the subject, not one chosen ordinal, and that is what makes this
-    // clamp-proof: `content-visibility: auto` re-measures with no mutation, the browser
-    // clamps `scrollTop` itself, and the listener reads that clamp as a gesture — so
-    // however many passes run and however far the window ends up, every ordinal present
-    // both before and after has to be the identical node.
+    // The OVERLAP is the subject, which makes it clamp-proof: however far the window ends up,
+    // every ordinal present before and after must be the identical node.
     const before = mountedSnapshot("big");
     const wasTop = scroller().scrollTop;
     const to = mountedSeqs("big").at(-1) ?? 0;
@@ -711,19 +660,13 @@ describe("scrolling moves the window", () => {
     // about rebuilding. The plan's own overscan floor guarantees this much overlap.
     expect(kept.length).toBeGreaterThanOrEqual(OVERSCAN_ENTRIES);
     for (const i of kept) {
-      // An element the window still wants is neither rebuilt nor re-created, which is
-      // what positional insertion buys and what keeps a selection and a reader-set
-      // disclosure inside it. Per-element `toBe`, never a `toEqual` over the two node
-      // lists: that compares structurally and passes for a rebuilt element holding the
-      // same markup, which is the one thing this case exists to detect.
+      // Per-element `toBe`, never `toEqual` (which passes for a rebuilt element with the same
+      // markup): a kept element keeps its selection and disclosure.
       expect(after.get(i)?.el, `ordinal ${String(i)}`).toBe(before.get(i)?.el);
     }
 
-    // And the reader followed their own travel rather than the window's height change.
-    // Measured against the TOTAL `scrollTop` delta rather than one drag's, so every
-    // compensation the convergence wrote is accounted for. A BOUND on the residue, not
-    // zero — the head batch also grows the body's tail, so a pass's `scrollHeight` delta
-    // is not purely above the reader.
+    // The reader followed their own travel, against the TOTAL `scrollTop` delta. A bound, not
+    // zero: the head batch also grows the tail.
     const travelled = scroller().scrollTop - wasTop;
     const mid = kept[Math.floor(kept.length / 2)] ?? 0;
     const drift = (after.get(mid)?.top ?? 0) - (before.get(mid)?.top ?? 0) + travelled;
@@ -749,9 +692,8 @@ describe("scrolling moves the window", () => {
 
     const first = mountedSeqs("big").join(",");
     const landed = scroller().scrollTop;
-    // Eight frames with no further gesture. The compensation WRITES scrollTop, which
-    // emits a scroll of its own, so without the re-entrancy latch and the
-    // plan-equality exit the window would keep chasing its own correction.
+    // Eight idle frames: the compensation's own scroll must not re-arm the window, thanks to
+    // the re-entrancy latch and the plan-equality exit.
     for (let i = 0; i < 8; i++) {
       await frame();
     }
@@ -761,13 +703,9 @@ describe("scrolling moves the window", () => {
 
   for (const shape of ["reasoning", "tool_call"] as const) {
     it(`keeps one overscan mounted each side of the anchor, ${shape}`, async () => {
-      // TWO fixtures, because the two budgets bind on different shapes: the reasoning
-      // turn is the general case that motivates the feature, and a run of consecutive
-      // tool cards is where the TOOL budget binds and the window is narrowest.
+      // TWO fixtures: the reasoning turn, and consecutive tool cards where the tool budget binds.
       await coldLoad("big", shape === "reasoning" ? hugeTurn("big", HUGE) : toolTurn("big", HUGE));
-      // To the head, then back down past what it mounted, which is what puts the
-      // anchor MID-turn: at either end of the sequence one side latches and the other
-      // takes the whole budget.
+      // To the head and back down past it, which puts the anchor MID-turn.
       await dragUpAWindow("big");
       const to = mountedSeqs("big").at(-1) ?? 0;
       await dragTo(mountedBottom("big"));
@@ -775,18 +713,11 @@ describe("scrolling moves the window", () => {
         expect(mountedSeqs("big").at(-1)).toBeGreaterThan(to);
       });
       await windowSettled("big");
-      // INTO the region the move produced, or there is no anchor to measure: a tail-ward
-      // move seats the new window BELOW the reader, so `anchorSeq` answers -1 — every
-      // mounted element sits past `scrollTop` — and the floor is unreadable rather than
-      // absent. A reader who scrolled down to read what arrived is inside it.
+      // INTO the moved region, or `anchorSeq` answers -1 and the floor is unreadable.
       await dragTo(Math.round((mountedTop("big") + mountedBottom("big")) / 2));
 
-      // Anchor and window read TOGETHER and re-read until they agree, because the pair
-      // is what the floor is a property of. `windowSettled` alone is not enough: the
-      // compensation writes `scrollTop`, and `content-visibility: auto` re-measuring
-      // with no mutation makes the browser clamp it again, which the listener reads as
-      // a gesture — so a window can start moving after two polls agreed. A retry cannot
-      // rescue a MISSING floor: no settled pair would satisfy it and this times out red.
+      // Anchor and window read TOGETHER until they agree: a clamp after the compensation can
+      // move the window after two polls agreed. A MISSING floor still times out red.
       await vi.waitFor(
         () => {
           const mounted = mountedSeqs("big");
@@ -800,18 +731,17 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** The prose runs a body holds, keyed by the run's first `seq`. A run is stamped for
-   *  that entry alone and carries the rest in `data-entries`, so the ROW cases read the
-   *  rows rather than `mountedSeqs`. */
+  /**
+   * The prose runs a body holds, keyed by first `seq`; a run carries the rest in
+   * `data-entries`, so ROW cases read rows.
+   */
   function runRows(turnID: string): Map<number, HTMLElement> {
     return new Map(bodyRows(turnID).map((r) => [Number(r.dataset["entrySeq"]), r] as const));
   }
 
   it("drops a whole prose RUN when the window moves off it, and keeps the rest in order", async () => {
-    // 5 runs of 120 text entries, separated by a rendering entry, so the 320-ordinal
-    // window covers about two runs and a move to the head has to take whole rows OUT of
-    // the body. The row axis has no other fixture: `recordRowHeight`'s one production
-    // caller is a run LEAVING a body, and a turn whose body is one run has no boundary.
+    // 5 runs of 120 text entries: the window covers about two, so a head move takes whole rows
+    // OUT. The only row-axis fixture.
     const id = await coldLoad("multi", runsTurn("multi", 5, 120), 2);
     expect(id).not.toBe("");
     const heads = (): number[] => [...runRows("multi").keys()].sort((a, b) => a - b);
@@ -826,9 +756,7 @@ describe("scrolling moves the window", () => {
 
     // A run LEFT the body, which is the only production caller `recordRowHeight` has.
     expect(runRows("multi").has(wasLast)).toBe(false);
-    // And the runs that stayed read in the turn's own order — the reconcile's OUTCOME,
-    // whichever arm produced it. The length floor is what makes "in order" expressible:
-    // a one-row survivor set satisfies any sort.
+    // The kept runs stay in turn order; the length floor makes "in order" meaningful.
     const order = heads();
     expect(order.length).toBeGreaterThanOrEqual(2);
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -849,25 +777,15 @@ describe("scrolling moves the window", () => {
     await dragToHead("keep");
 
     const before = runRows("keep");
-    // THE SIMPLIFICATION, with its reason at the site: the old suite needed a
-    // `shape()` helper pairing each row key with how many of ITS blocks were mounted,
-    // because a block index was per MESSAGE and two rows of 200 blocks both numbered
-    // theirs 0..199. An entry `seq` is per TURN and unique, so the mounted-seq set IS
-    // the shape and the helper goes.
     const was = mountedSeqs("keep").join(",");
 
-    // All the way back down, which is the shortest gesture that moves this window at
-    // all: measured, a drag to three fifths of the document leaves the plan unchanged,
-    // because five runs of 120 entries put that position inside the mounted region and
-    // the anchor never leaves it. The tail is what drops the first run.
+    // All the way down, the shortest gesture that moves this window; the tail drops the first run.
     await dragTo(scroller().scrollHeight);
     await vi.waitFor(() => {
       expect(mountedSeqs("keep").join(",")).not.toBe(was);
     });
 
-    // A run the move KEPT is neither rebuilt nor re-created: the row key is what the
-    // reconcile matches on, so a key carrying the window would re-create every row on
-    // every move.
+    // A kept run is not re-created: the reconcile matches on the row key.
     const after = runRows("keep");
     const kept = [...after.keys()].filter((k) => before.has(k));
     expect(kept.length).toBeGreaterThan(0);
@@ -887,12 +805,8 @@ describe("scrolling moves the window", () => {
       expect(seqEl("big", 20)).not.toBeNull();
     });
 
-    // THE FLIGHT the jump produces: ~50 scroll events in quick succession, which is what
-    // a smooth `scrollIntoView` emits, and clearing the pin on any of them cancels the
-    // navigation the reader asked for. NOT three settled drags with frames between them
-    // — measured, each of those lets a whole window pass run to completion, and a grant
-    // released after the reader has settled somewhere else is a different claim that this
-    // case would fail for the wrong reason.
+    // THE FLIGHT: ~50 scroll events from a smooth `scrollIntoView`; clearing the pin on any
+    // cancels the navigation. Settled drags would test a different claim.
     const from = scroller().scrollTop;
     for (let i = 1; i <= 50; i++) {
       scroller().scrollTo({
@@ -906,21 +820,21 @@ describe("scrolling moves the window", () => {
   });
 
   it("drains a dropped entry's own effect, not just its element", async () => {
-    const id = await coldLoad("todo", todoHeadTurn("todo", HUGE));
-    const key = toolCallSigKey(id, "todo-todo");
+    const id = await coldLoad("dlg", delegateHeadTurn("dlg", HUGE));
+    const key = toolCallSigKey(id, "dlg-inv");
     // Mounted first: the head is outside the cold window, so the reader has to reach
     // it before there is anything to release.
-    await dragUpAWindow("todo");
-    expect(seqEl("todo", TOOL_AT)).not.toBeNull();
+    await dragUpAWindow("dlg");
+    expect(seqEl("dlg", TOOL_AT)).not.toBeNull();
     expect(toolCallSigs.get(key)).toBeDefined();
 
     // Back to the live edge, which retracts the head the reader left.
     await dragTo(scroller().scrollHeight);
     await vi.waitFor(() => {
-      expect(seqEl("todo", TOOL_AT)).toBeNull();
+      expect(seqEl("dlg", TOOL_AT)).toBeNull();
     });
     // The ELEMENT going is half of it. Its effect is subscribed to the store, so a
-    // drop that leaves it armed writes into a detached list for the rest of the page.
+    // drop that leaves it armed writes into a detached card for the rest of the page.
     expect(toolCallSigs.get(key)).toBeUndefined();
   });
 
@@ -937,9 +851,7 @@ describe("scrolling moves the window", () => {
     toggle()?.click();
     expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
 
-    // Away, so the card is dropped, and back. `aria-expanded` is the ONLY record a
-    // reader opened a tool card — the boxes have registry keys and this has nothing —
-    // so a drop that does not carry it hands back a collapsed card.
+    // Away and back: `aria-expanded` is the only record a reader opened a tool card.
     await dragTo(scroller().scrollHeight);
     await vi.waitFor(() => {
       expect(toggle()).toBeNull();
@@ -958,10 +870,8 @@ describe("scrolling moves the window", () => {
     const id = await coldLoad("big", hugeTurn("big", HUGE));
     expect(seqEl("big", 20)).toBeNull();
 
-    // The rail jump's exact shape: scroll first, then build, and nothing after it. No
-    // `bumpMessages` here on purpose — the grant is head-ward of everything mounted, so
-    // the build itself can insert nothing and the pass that does has to come from the
-    // build's own settle. A flight of zero distance emits no scroll event at all.
+    // The rail jump's exact shape: scroll, then build. The grant is head-ward of everything
+    // mounted, so the build's own settle must insert it.
     await mountTurnBody(id, "big", 20);
     await vi.waitFor(() => {
       expect(seqEl("big", 20)).not.toBeNull();
@@ -975,10 +885,8 @@ describe("scrolling moves the window", () => {
     const id = await coldLoad("big", hugeTurn("big", HUGE));
     expect(seqEl("big", 20)).toBeNull();
 
-    // The store bump lands while the build is in FLIGHT, which is the common case
-    // during streaming. That paint refuses the building turn and must not record its
-    // plan as applied — the build's own settle pass is the only thing left to insert
-    // the grant, and it exits on a plan already recorded.
+    // A store bump during the build refuses the building turn and must not record its plan as
+    // applied, or the settle pass exits early.
     const built = mountTurnBody(id, "big", 20);
     bumpMessages(id, "shape");
     await built;
@@ -999,17 +907,11 @@ describe("scrolling moves the window", () => {
     await dragTo(card("t2").offsetTop + Math.floor(card("t2").offsetHeight / 2));
     expect(card("t2").hasAttribute("data-folded")).toBe(false);
 
-    // The reader folds it from the rail's side of the store and stays put. Reading is
-    // what makes `deferWhileReading` hold `setCardFolded` and the unmount, so the card
-    // is still unfolded and bodied on screen while the store has already stopped
-    // calling it openable.
+    // Folded from the rail while Reading: `deferWhileReading` keeps the card bodied on screen.
     setTurnOpen(id, "t2", false);
     bumpMessages(id, "shape");
 
-    // The card the reader is on is not openable now, so the ladder steps FORWARD to
-    // t3 and seeds at its HEAD. Testing `data-folded` instead would pick t2's own
-    // ordinals, which `planResidency` cannot place, take its absent-turn fallback,
-    // and window t3's TAIL — the live edge, hundreds of ordinals from the reader.
+    // The ladder steps FORWARD to t3's HEAD; testing `data-folded` would window t3's TAIL.
     await vi.waitFor(() => {
       expect(mountedSeqs("t3")[0]).toBe(1);
     });
@@ -1024,9 +926,7 @@ describe("scrolling moves the window", () => {
     expect(t2.querySelector(":scope > .turn-body")).not.toBeNull();
   });
 
-  // -------------------------------------------------------------------------
-  // The running turn: what the reader watching a live run sees.
-  // -------------------------------------------------------------------------
+  // The running turn: what a reader watching a live run sees.
 
   /** One paint's worth of settling: the store coalesces a delta on a microtask and the
    *  paint runs inside the store effect, so one macrotask turn covers both. */
@@ -1046,11 +946,8 @@ describe("scrolling moves the window", () => {
     });
     await atLiveEdge();
 
-    // THE FIXTURE DECISION, recorded where it is made: the arrivals are SEALED
-    // `thinking` entries, so each mounts its own element and "every arrival is mounted"
-    // stays a per-element claim. A run of `text` deltas coalesces into one growing prose
-    // run, where the same oracle would only be observable as that row's text plus a
-    // bounded mounted-seq count — a weaker reading of the same case.
+    // Arrivals are SEALED `thinking` entries, so "every arrival is mounted" is a per-element
+    // claim (text deltas would coalesce into one row).
     const total = RESIDENT_ENTRIES + 2 * OVERSCAN_ENTRIES;
     for (let at = 7; at <= total; at++) {
       appendEntry(id, sealed("live", at, "thinking", { text: `step ${String(at)}` }));
@@ -1062,9 +959,7 @@ describe("scrolling moves the window", () => {
     // Bounded means the HEAD left, by query: the turn is past the budget.
     expect(seqEl("live", 1)).toBeNull();
     expect(mountedSeqs("live").at(-1)).toBe(total);
-    // The premise, ASSERTED rather than enforced: every arrival above was in window
-    // because the reader never left the live edge, and nothing here touched the
-    // scroller.
+    // The premise, asserted: the reader never left the live edge.
     expect(readingState()).toBe("following");
   }, 30_000);
 
@@ -1089,20 +984,10 @@ describe("scrolling moves the window", () => {
       expect(liveRow()).not.toBeNull();
     });
 
-    // THE ORACLE THIS CASE INHERITED IS UNREACHABLE, and the measurement is why it is
-    // this case instead. It was "re-mounts a live tail from the STORE, still streaming,
-    // when the reader comes back": the reader scrolls away, the live BLOCK is dropped by
-    // the window, the run keeps writing, and coming back re-mounts it from the store with
-    // nothing lost. Under the entry model an open entry is a separate type with no `seq`
-    // at all — `syncOpenTail` mounts it at the TAIL of its lane's view whenever the turn
-    // has an open entry and no `turn_close`, with no window gate anywhere in that path —
-    // so no window move can drop it and the premise cannot be arranged. What IS still
-    // true is asserted here: the surface survives a window move that drops the ordinals
-    // around it, and the text a delta writes while the reader is elsewhere is on screen
-    // when they return, because it comes from the store rather than from the DOM. The
-    // half that genuinely needs a re-mount belongs to the PARK path, where the whole body
-    // is disposed and rebuilt (`messages-parked-views.test.ts`); the reopening condition
-    // for a scroll-driven version is `syncOpenTail` gaining a window gate.
+    // An open entry has no `seq`, and `syncOpenTail` mounts it at its lane's tail with no window
+    // gate, so no window move can drop it. Asserted: the surface survives a move that drops
+    // its neighbours, and text written while away comes from the store. The re-mount case is
+    // the PARK path's (`messages-parked-views.test.ts`).
     await dragUpAWindow("live");
     expect(liveRow()).not.toBeNull();
     expect(seqEl("live", HUGE)).toBeNull();
@@ -1122,9 +1007,7 @@ describe("scrolling moves the window", () => {
 describe("unmounted ordinals hold the height their rows occupied", () => {
   let style: HTMLStyleElement;
 
-  // The shipped stylesheet, so the gap `.turn-body` declares is MEASURED here
-  // rather than restated. Scoped to this block: the cases above assert DOM
-  // presence and want no cascade at all.
+  // The shipped stylesheet, so `.turn-body`'s gap is MEASURED; scoped to this block.
   beforeAll(() => {
     style = mountAppCSS();
   });
@@ -1135,9 +1018,7 @@ describe("unmounted ordinals hold the height their rows occupied", () => {
 
   it("prices a spacer at the run its rows occupy, the parent's gaps included", async () => {
     const id = chatID();
-    // Four one-entry prose runs, each separated by a rendering entry, so `.turn-body`'s
-    // own flex `gap` sits between seven boxes and a spacer standing in for the lot has
-    // to carry those gaps.
+    // Four one-entry runs split by rendering entries: seven boxes whose gaps a spacer carries.
     const entries = runsTurn("gaps", 4, 1);
     forgetHeights(["gaps"]);
     activate(id, [entries]);
@@ -1166,9 +1047,7 @@ describe("unmounted ordinals hold the height their rows occupied", () => {
       turn_order: ["gaps"],
     }).find((x: Turn) => x.id === "gaps");
     expect(t).not.toBeUndefined();
-    // Nothing mounted, so the tail spacer stands for every box: their own measured
-    // heights plus one gap per box — the boundary gap the parent no longer supplies
-    // beside the gaps between them.
+    // Nothing mounted: the tail spacer is the boxes' heights plus one gap per box.
     expect(spacerHeight(t as Turn, { from: 0, to: 0 }, "tail", "")).toBe(
       measured + boxes.length * gap,
     );

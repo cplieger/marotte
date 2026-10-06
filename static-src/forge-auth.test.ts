@@ -32,8 +32,7 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// The forge list is the shared store's; routed through the mocked client so each
-// case answers it with mockResolvedValueOnce, the forge list first.
+// Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
@@ -73,14 +72,13 @@ describe("forge-auth: race condition guards", () => {
   });
 
   it("concurrent renderForgesPanel calls: only the latest render paints", async () => {
-    // First call: slow — resolves after the second call starts.
+    // The first call resolves after the second; the panel must show the second's answer, not the stale one.
     let resolveFirst!: (v: unknown) => void;
     const firstPromise = new Promise((r) => {
       resolveFirst = r;
     });
     mockedApiGet.mockReturnValueOnce(firstPromise);
 
-    // Second call: fast — resolves immediately.
     mockedApiGet.mockResolvedValueOnce({
       forges: [
         {
@@ -98,10 +96,8 @@ describe("forge-auth: race condition guards", () => {
     const p1 = renderForgesPanel({ revalidate: false });
     const p2 = renderForgesPanel({ revalidate: false });
 
-    // Let the second call finish first.
     await p2;
 
-    // Now resolve the first (stale) call.
     resolveFirst({
       forges: [
         {
@@ -117,7 +113,6 @@ describe("forge-auth: race condition guards", () => {
     });
     await p1;
 
-    // The panel should show the FAST result, not the stale one.
     const rows = panel().querySelectorAll(".forge-account-row");
     expect(rows.length).toBe(1);
     expect(panel().querySelector(".forge-account-primary")?.textContent).toBe("fast");
@@ -149,8 +144,7 @@ describe("forge-auth: 4-section layout", () => {
     });
     await renderForgesPanel();
     for (const s of panel().querySelectorAll<HTMLElement>(".forge-kind-section")) {
-      // Empty sections render NO "no accounts connected" filler;
-      // the section is just header + the + button.
+      // An empty section is just its header and the + button: no "no accounts" filler.
       expect(s.querySelector(".forge-account-empty")).toBeNull();
       expect(s.querySelector("[data-forge-add]")).not.toBeNull();
     }
@@ -179,8 +173,6 @@ describe("forge-auth: 4-section layout", () => {
     const header = kids.indexOf(section.querySelector(".forge-kind-header")!);
     const slot = kids.indexOf(section.querySelector("[data-forge-slot]")!);
     const list = kids.indexOf(section.querySelector(".forge-account-list")!);
-    // Below the list, the pane opened past an account row (and its expanded
-    // repo list), so the + read as doing nothing on a populated section.
     expect(section.querySelector("form.forge-pat-form")).not.toBeNull();
     expect(header).toBeLessThan(slot);
     expect(slot).toBeLessThan(list);
@@ -192,7 +184,6 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    // No section should expose a separate Add-a-PAT trigger any more.
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const pat = panel().querySelector(
         `.forge-kind-section[data-kind='${k}'] [data-forge-add-pat]`,
@@ -308,7 +299,6 @@ describe("forge-auth: 4-section layout", () => {
       const svg = badge!.querySelector("svg");
       expect(svg, `${k} badge should contain an svg`).not.toBeNull();
       expect(svg!.getAttribute("viewBox")).toBe("0 0 24 24");
-      // No leftover letter text inside the badge.
       expect(badge!.textContent?.trim() ?? "").toBe("");
     }
   });
@@ -358,7 +348,7 @@ describe("forge-auth: 4-section layout", () => {
   it("does not duplicate @username in meta when the primary line is already the username", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        // Account with no email — primary should be the username, meta should NOT add @cplieger.
+        // No email: the primary line is the username, and the meta line adds no @username.
         {
           id: "github:github.com",
           kind: "github",
@@ -396,7 +386,6 @@ describe("forge-auth: 4-section layout", () => {
   });
 
   it("re-probes connected accounts in the background on page open", async () => {
-    // Initial: two connected accounts.
     mockedApiGet.mockResolvedValueOnce({
       forges: [
         {
@@ -418,19 +407,17 @@ describe("forge-auth: 4-section layout", () => {
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    // Post-probe re-fetch — only need to return so the re-paint is reachable.
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    // Allow the void revalidateInBackground microtasks to flush.
+    // Flushes the void revalidateInBackground microtasks.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    // Two probes fired (one per connected account), pointed at the right URLs.
     const probeCalls = mockedApiPost.mock.calls.filter(
       ([path]) => typeof path === "string" && path.includes("/probe"),
     );
@@ -479,7 +466,6 @@ describe("forge-auth: 4-section layout", () => {
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    // Empty re-fetch after delete; every other read answers nothing.
     mockedApiGet.mockImplementation(((url: string) =>
       Promise.resolve(
         url === "/api/forges"
@@ -487,7 +473,6 @@ describe("forge-auth: 4-section layout", () => {
           : null,
       )) as typeof apiGetTyped);
     mockedConfirm.mockResolvedValueOnce(true);
-    // Mock fetch for the action framework's DELETE call.
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -496,7 +481,6 @@ describe("forge-auth: 4-section layout", () => {
       ...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button"),
     ].find((b) => b.textContent === "Sign out")!;
     signOutBtn.click();
-    // Allow handler microtasks to run.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -531,7 +515,7 @@ describe("forge-auth: 4-section layout", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
-    fetchSpy.mockClear(); // clear any fetch calls from render
+    fetchSpy.mockClear();
     const signOutBtn = [
       ...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button"),
     ].find((b) => b.textContent === "Sign out")!;

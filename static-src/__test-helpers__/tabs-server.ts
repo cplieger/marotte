@@ -1,47 +1,21 @@
-// ---------------------------------------------------------------------------
-// A fake tab server, for every suite that drives the tab PROJECTION.
-//
-// The tab set is server-owned, so a test cannot put a row on the strip by
-// calling a store mutator any more: it dispatches a mutation and the
-// `tabs_changed` frame that follows is what paints. This module is the other end
-// of that round trip — it holds the collection, mints the opaque ids, bumps the
-// version and emits the frames, so a suite exercises the REAL `tabs.ts`,
-// `tabs-sync.ts` and `actions/tabs.ts` rather than a stub of any of them.
-//
-// WHY A SHARED HELPER RATHER THAN ONE PER SUITE: five suites need it (the store,
-// the dot, the attention fold, the editor's close, the projection's own cases),
-// and the part they must agree on is the INTERLEAVING — whether the frame lands
-// before or after the command's response resolves. A per-suite copy of that
-// would be five chances to test one ordering and believe both were covered.
-//
-// `mode` is the whole of that:
-//
-//   - "event-first" (the default): the frame is emitted BEFORE the response
-//     resolves, so the response's adoption finds the row already there and
-//     upserts idempotently. The cheapest seeding path, and a real interleaving.
-//   - "response-first": the response resolves first and the frame is emitted one
-//     macrotask later, which is the COMMON case in production — the adoption
-//     paints the row and the late frame must change nothing.
-//   - "manual": nothing is emitted until a test calls `flushFrames()`. For the
-//     cases whose subject IS the gap between the two.
-// ---------------------------------------------------------------------------
+// A fake tab server: holds the collection, mints opaque ids, bumps the version and emits the
+// `tabs_changed` frames, so suites exercise the REAL `tabs.ts`, `tabs-sync.ts` and
+// `actions/tabs.ts`. Shared so every suite agrees on the INTERLEAVING, which `mode` sets:
+//   - "event-first" (default): the frame lands BEFORE the response resolves.
+//   - "response-first": the response resolves first, the frame a macrotask later (the
+//     common production order).
+//   - "manual": nothing is emitted until `flushFrames()`, for cases about the gap itself.
 
 import { vi } from "vitest";
 
 import type { TabKind, TabList, TabSubject, TabsChangedPayload } from "../types.js";
 
-/** The two entry points of the sync layer this harness drives.
- *
- *  Handed in by the test rather than imported here, and that is not a style
- *  choice: the `api-client.js` mock's factory imports THIS module, so a static
- *  `../tabs-sync.js` import would make resolving that mock require loading the
- *  module the mock replaces. The mocker deadlocks on it, with no error — the run
- *  simply never starts. */
+/** The two entry points of the sync layer this harness drives. Handed in, not imported: the
+ *  `api-client.js` mock's factory imports THIS module, so a static `../tabs-sync.js` import
+ *  deadlocks the mocker silently and the run never starts. */
 export interface SyncSeam {
   ingest: (frame: TabsChangedPayload) => void;
-  /** The answer is deliberately `unknown`: the harness awaits the read and never
-   *  reads its verdict, so declaring `Promise<void>` would only stop it accepting
-   *  the real `listTabs`, which reports whether it adopted a snapshot. */
+  /** `unknown`, so the real `listTabs` (which reports whether it adopted) is accepted. */
   list: () => Promise<unknown>;
 }
 
@@ -98,8 +72,6 @@ const state: State = {
   held: null,
 };
 
-// --- What a test reads and writes ---
-
 export const tabServer = {
   /** Drop every trace of a previous case. Call FIRST in a beforeEach, before
    *  `_resetForTest()` re-registers the projection. */
@@ -130,16 +102,14 @@ export const tabServer = {
     }
   },
 
-  /** How many committed frames have not reached the sync layer yet. Zero after an
-   *  event-first open means the row landed BEFORE the response resolved, which is
-   *  the whole difference between the two interleavings. */
+  /** Committed frames not yet handed to the sync layer. Zero after an event-first open means the
+   *  row landed BEFORE the response resolved. */
   pendingCount(): number {
     return state.pending.length;
   },
 
-  /** Hold every response until `releaseResponses`, so two dispatches can be IN
-   *  FLIGHT at once — the only window the framework's `dedupe` covers, since it
-   *  evicts its slot in the result's `finally`. */
+  /** Hold every response until `releaseResponses`, so two dispatches are IN FLIGHT at once: the
+   *  only window the framework's `dedupe` covers (it evicts its slot in the result's `finally`). */
   holdResponses(): void {
     state.held = [];
   },
@@ -213,12 +183,8 @@ export const tabServer = {
     await sync.list();
   },
 
-  /** Open a tab the way ANOTHER DEVICE does, and DO NOT deliver its frame.
-   *
-   *  The collection moves ahead of the projection, which is the state a `reorder`
-   *  refuses on: the arrangement a drag committed describes a set that no longer
-   *  exists, so the exact-set check answers 409 and the caller re-lists. Call
-   *  `flushFrames` to let the projection catch up the ordinary way instead. */
+  /** Open a tab the way ANOTHER DEVICE does and withhold its frame, so a `reorder` sees a moved
+   *  set and answers 409. `flushFrames` lets the projection catch up instead. */
   openElsewhere(spec: SeedSpec): TabSubject {
     return commitOpen(spec);
   },
@@ -244,12 +210,9 @@ export interface SeedSpec {
   pinned?: boolean;
 }
 
-// --- The collection's own rules, as the server states them ---
-
 function mint(): string {
   state.nextID++;
-  // Opaque on purpose: nothing about a tab's identity is recoverable from its
-  // id, so a case that wants one has to read it back through `tabIdFor`.
+  // Opaque: a case reads an id back through `tabIdFor`.
   return `tb_${String(state.nextID).padStart(3, "0")}`;
 }
 
@@ -266,8 +229,7 @@ function commitOpen(spec: SeedSpec): TabSubject {
     id: mint(),
     kind: spec.kind,
     ref,
-    // A parent that is not open promotes the tab to top level, which is the
-    // server's rule and the strip's.
+    // A parent that is not open promotes the tab to top level (the server's rule).
     parent: parent !== "" && state.subjects.some((s) => s.id === parent) ? parent : "",
     pinned: spec.pinned ?? false,
     owns: spec.owns ?? true,
@@ -303,8 +265,6 @@ function descendants(id: string): string[] {
   return out;
 }
 
-// --- The two module mocks ---
-
 interface SendResultLike {
   ok: boolean;
   status: number;
@@ -328,9 +288,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       const ref = (payload["ref"] as string | undefined) ?? "";
       const existing = subjectFor(kind, ref);
       if (existing !== undefined) {
-        // Commits nothing, so it emits NOTHING. `created: false` is the only
-        // signal the caller gets, which is why it is load-bearing. The version
-        // is the collection's CURRENT one, exactly as the real handler answers.
+        // Commits nothing, so it emits NOTHING: `created: false` is the caller's only signal.
         return {
           ok: true,
           status: 200,
@@ -353,9 +311,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
     case "close_tab": {
       const removed = descendants(payload["id"] as string);
       if (removed.length === 0) {
-        // Closing an id that is not open is not an error: two devices can close
-        // one tab. The EMPTY list is the client's semantic confirmation of
-        // absence, so the shape matters more than usual here.
+        // Two devices can close one tab: the EMPTY list is the client's confirmation of absence.
         return { ok: true, status: 200, body: { closed: [], version: state.version } };
       }
       state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
@@ -369,8 +325,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       const pinned = payload["pinned"] === true;
       const at = state.subjects.findIndex((s) => s.id === id);
       if (at < 0) {
-        // A pin is a statement ABOUT a tab, so naming one that is not open is a
-        // mistake rather than a race.
+        // A pin is a statement ABOUT a tab, so an unknown id is a mistake, not a race.
         return { ok: false, status: 404, error: "no such tab" };
       }
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
@@ -390,30 +345,24 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       const parent = payload["parent"] as string;
       const at = state.subjects.findIndex((s) => s.id === id);
       if (at < 0) {
-        // Same reading as a pin: a reparent is a statement ABOUT a tab, so an id
-        // that is not open is a mistake rather than a race.
+        // Same as a pin: an unknown id is a mistake, not a race.
         return { ok: false, status: 404, error: "no such tab" };
       }
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
       const before = state.subjects[at]!;
       if (before.parent === parent) {
-        // Commits nothing, so it emits NOTHING — which is why the response
-        // carries the subject: there is no frame for the caller to adopt from.
+        // Commits nothing and emits no frame, so the response carries the subject.
         return { ok: true, status: 200, body: { subject: before, version: state.version } };
       }
       const host = state.subjects.find((s) => s.id === parent);
       if (host === undefined || host.kind !== "chat") {
-        // The parent must be an OPEN chat tab, which is the coordinator's rule.
         return { ok: false, status: 409, error: "the parent must be an open chat tab" };
       }
       if (descendants(id).includes(parent)) {
-        // The cycle refusal: a tab may not hang under itself or its own subtree.
         return { ok: false, status: 409, error: "that would make a cycle" };
       }
       const after: TabSubject = { ...before, parent };
-      // The row MOVES, so it is removed and re-inserted at the child-insert
-      // position rather than edited in place — the store's own rule, and the
-      // reason the frame carries an `order` beside the changed subject.
+      // The row MOVES to the child-insert position (the store's rule), hence the frame's `order`.
       state.subjects.splice(at, 1);
       let to = state.subjects.findIndex((s) => s.id === parent) + 1;
       while (to < state.subjects.length && state.subjects[to]?.parent === parent) {
@@ -437,8 +386,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
         new Set(order).size === order.length &&
         order.every((id) => held.includes(id));
       if (!exact) {
-        // The exact-set check IS the whole precondition, so a mismatch is 409 and
-        // means re-list, never re-send.
+        // The exact-set check is the whole precondition: 409 means re-list, never re-send.
         return { ok: false, status: 409, error: "set moved" };
       }
       state.subjects = order.map(
@@ -465,12 +413,8 @@ function stamp(payload: Record<string, unknown>): void {
   }
 }
 
-/** The `transport.js` mock: `send` answers tab commands off the collection, and
- *  `newOpID` mints the correlation id the projection stamps its dispatches with.
- *
- *  Every other command answers a bare success rather than throwing, because a
- *  suite mocking transport for the tab set usually has one or two other
- *  commands in its graph and none of them is the subject. */
+/** The `transport.js` mock: `send` answers tab commands off the collection, `newOpID` mints the
+ *  correlation id. Other commands answer a bare success, since none is the subject. */
 export function tabTransportMock(): {
   send: (cmd: { type: string; payload?: unknown }) => Promise<SendResultLike>;
   newOpID: () => string;
@@ -494,12 +438,8 @@ export function tabTransportMock(): {
         }
       };
       if (committed.length > 0 && state.mode === "event-first") {
-        // The frame lands BEFORE the response resolves, so the adoption finds
-        // the row already there and upserts idempotently.
         deliver();
       } else if (committed.length > 0 && state.mode === "response-first") {
-        // The response resolves first — the common production order — so the
-        // ADOPTION is what paints, and the frame lands on a row that exists.
         setTimeout(deliver, 0);
       }
       const answer = answerWith(result);

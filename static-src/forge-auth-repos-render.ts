@@ -1,10 +1,4 @@
-// ---------------------------------------------------------------------------
-// Account-repos detail panel rendering. Extracted from forge-auth.ts.
-//
-// Pure DOM factory: takes account + repos data and returns/mutates
-// elements. No dependency on reactive state (signal, effect) or
-// reconcile specs — those are injected via the RenderDeps interface.
-// ---------------------------------------------------------------------------
+// Pure DOM factory: reactive state and reconcile specs are injected via RenderDeps.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
@@ -39,8 +33,10 @@ export interface ReposRenderDeps {
 
 const disclosures = new WeakMap<HTMLElement, DisclosureController>();
 
-/** The list's toggle and its batch buttons are siblings in one header row: a
- *  button inside a `<summary>` is flattened or dropped by a screen reader. */
+/**
+ * The toggle and batch buttons are siblings in one header row: a button inside a `<summary>` is flattened or
+ * dropped by a screen reader.
+ */
 export function buildAccountReposDetails(
   a: ConfiguredForge,
   l: RepoListing,
@@ -98,8 +94,7 @@ export function updateAccountReposDetails(
     return;
   }
 
-  // The empty state is a whole list's answer: one still paging, cut short or
-  // never read says something else, in the footer.
+  // The empty state is a whole list's answer; a list still paging, cut short or never read says so in the footer.
   const emptyEl = body.querySelector<HTMLElement>(":scope > .forge-account-repos-empty");
   let list = body.querySelector<HTMLElement>(":scope > .forge-account-repos-list");
   if (repos.length === 0) {
@@ -127,10 +122,10 @@ export function updateAccountReposDetails(
   refreshFooter(foot, a, l, deps);
 }
 
-/** What the list says beneath its rows: that it was never read, why it stopped
- *  short, the Load more that reads its next page, and why its last list-wide
- *  press fell short. The status line and a Load more still reading are kept
- *  across paints. */
+/**
+ * The footer beneath the rows: never read, why it stopped short, Load more, and why the last list-wide press fell
+ * short. The status line and a Load more still reading are kept across paints.
+ */
 function refreshFooter(
   foot: HTMLElement,
   a: ConfiguredForge,
@@ -211,10 +206,7 @@ function makeLoadMoreButton(
 }
 
 function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
-  // Cloned first, then alpha by full_name. Stable for surgical
-  // updates: a single repo flipping cloned-state moves between
-  // groups, but the rest stay put. Reconcile preserves identity
-  // during the move.
+  // Cloned first, then by full_name. Reconcile preserves identity when one repo moves between groups.
   return [...repos].sort((x, y) => {
     const xc = deps.lastLocalNames.has(x.name);
     const yc = deps.lastLocalNames.has(y.name);
@@ -245,10 +237,10 @@ function setAccountSummaryLabel(
   label.textContent = `${String(total)} repo${total === 1 ? "" : "s"}${sofar}, ${String(cloned)} cloned locally`;
 }
 
-/** Rebuild cloneAll/deleteAll buttons in the header row's group. Skips a
- *  button that is currently mid-async (`aria-busy="true"`) so a
- *  withAsyncFeedback loop's textContent updates don't get clobbered;
- *  the next bumpState after the action completes will refresh it. */
+/**
+ * Skips a button mid-async (`aria-busy="true"`) so withAsyncFeedback's textContent updates are not clobbered; the
+ * next bumpState after it completes refreshes it.
+ */
 function refreshAccountSummaryButtons(
   actions: HTMLElement,
   a: ConfiguredForge,

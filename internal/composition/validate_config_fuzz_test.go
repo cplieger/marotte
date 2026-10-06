@@ -7,13 +7,7 @@ import (
 	"testing"
 )
 
-// FuzzCheckDirWritable asserts checkDirWritable never panics and that
-// every rejection names the env var -- the operator-facing contract
-// (validateConfig's doc) that lets a bad KIRO_CONFIG_DIR be fixed from
-// `docker logs` without guessing which variable was wrong. Inputs that
-// would resolve outside the per-call scratch dir are skipped (harness
-// safety): the probe creates and removes a temp file, so it must only ever
-// touch this fresh TempDir, never a path a ".." segment collapsed onto.
+// FuzzCheckDirWritable asserts checkDirWritable never panics and every rejection names the env var.
 func FuzzCheckDirWritable(f *testing.F) {
 	f.Add("subdir")
 	f.Add("")
@@ -24,7 +18,7 @@ func FuzzCheckDirWritable(f *testing.F) {
 		tmp := t.TempDir()
 		target := filepath.Join(tmp, subpath)
 		if target != tmp && !strings.HasPrefix(target, tmp+string(os.PathSeparator)) {
-			t.Skip() // escapes the scratch dir
+			t.Skip()
 		}
 		_ = os.MkdirAll(target, 0o755)
 

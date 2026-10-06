@@ -1,30 +1,15 @@
 package mcp
 
-// KAS's own MCP config file is the source of truth for what the agent connects
-// to. marotte RENDERS it from its store and sends nothing inline.
-//
-// Why the file and not the `mcpServers` session parameter:
-//
-//   - It HOT-RELOADS. KAS watches `~/.kiro/settings/mcp.json` and re-merges
-//     on change, so adding a server connects it mid-session. The inline
-//     list was read once at session/new.
-//   - It carries MORE. The inline path funnelled through KAS's
-//     `acpServerToWire`, which drops `oauth`, `oauthScopes`, `autoApprove`,
-//     `cwd` and `timeout`. The file delivers them.
-//
-// PRECEDENCE IS WHY THIS IS ATOMIC. KAS merges `client > file-based`, so as
-// long as marotte still sends an inline entry, the inline copy wins and
-// edits to the file appear to do nothing.
-//
-// The file is shared: KAS also reads `powers.mcpServers` out of it, so a
-// write re-reads the file and replaces ONLY the `mcpServers` key.
-//
-// Two losses, both real: `env`/`headers` are RECORDS on the wire (order not
-// preserved, dup names collapse — the store keeps the ordered form for the
-// editor), and `transport` stops being a wire distinction (KAS infers it
-// from which fields are present, so this writer emits no `type`).
+// marotte RENDERS KAS's own MCP config file from its store and sends nothing
+// inline: the file hot-reloads and keeps the `oauth`, `cwd` and `timeout` fields
+// the inline path drops, and KAS merges `client > file-based`, so any inline entry
+// would shadow the file. The file is shared: KAS also reads `powers.mcpServers`,
+// which WritePowersServers renders, so each writer replaces only its own key. `env`/`headers` are records on the
+// wire, so the store keeps the ordered form, and `type` is emitted only for a
+// registry entry, since KAS infers every other transport from the fields present.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,10 +24,9 @@ import (
 // kasServerKey is the top-level key marotte owns in KAS's config file.
 const kasServerKey = "mcpServers"
 
-// kasPowersKey is the top-level key KAS fills from installed Powers. marotte
-// never writes it (readKASConfig preserves it verbatim) and reads it for one
-// reason: to tell a Power's server apart from a server marotte cannot see at
-// all, so a runtime status row can say which.
+// kasPowersKey is the top-level key KAS READS for installed legacy Powers'
+// servers (`powers.mcpServers`); KAS never writes it. WritePowersServers owns it,
+// and writeKASConfig preserves it verbatim.
 const kasPowersKey = "powers"
 
 // kasFileMaxBytes bounds the re-read of the existing file. The file is a handful
@@ -54,9 +38,10 @@ const kasFileMaxBytes = 4 << 20
 // emitted: every one is `omitempty`, because an explicit null or zero is
 // a different declaration than an absent field.
 //
-// Deliberately absent: `type` (an ignored hint), `cwd`, `timeout` and
-// `waitForReady` (no field for them; reachable by hand-editing the file).
+// Deliberately absent: `cwd` (no field for it; reachable by hand-editing the file).
 type kasServer struct {
+	// Type is emitted for a registry entry only, where it is the declaration.
+	Type          string            `json:"type,omitempty"`
 	Command       string            `json:"command,omitempty"`
 	Args          []string          `json:"args,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
@@ -64,38 +49,32 @@ type kasServer struct {
 	Headers       map[string]string `json:"headers,omitempty"`
 	OAuth         *kasOAuth         `json:"oauth,omitempty"`
 	DisabledTools []string          `json:"disabledTools,omitempty"`
-	AutoApprove   []string          `json:"autoApprove,omitempty"`
+	// Timeout is milliseconds, and it is both KAS's connect timeout and the
+	// budget a waitForReady server gets inside a prompt. Zero is KAS's default.
+	Timeout int `json:"timeout,omitempty"`
+	// WaitForReady makes KAS hold a prompt until this server's connection
+	// attempt settles; a server still connecting past Timeout fails the turn.
+	WaitForReady bool `json:"waitForReady,omitempty"`
 	// Disabled keeps a switched-off server IN the file rather than omitting it.
 	// KAS then reports it with status "disabled" instead of not knowing about it,
 	// which is the difference between "off" and "gone" in the UI.
 	Disabled bool `json:"disabled,omitempty"`
 }
 
-// kasOAuth carries a pre-registered OAuth client for a server that cannot do
-// dynamic client registration.
+// kasOAuth mirrors KAS's closed oauth schema {clientId, redirectUri,
+// clientMetadataUrl}.
 type kasOAuth struct {
-	ClientID     string `json:"clientId,omitempty"`
-	ClientSecret string `json:"clientSecret,omitempty"`
+	ClientID          string `json:"clientId,omitempty"`
+	RedirectURI       string `json:"redirectUri,omitempty"`
+	ClientMetadataURL string `json:"clientMetadataUrl,omitempty"`
 }
 
 // renderKASServers maps the store's servers onto KAS's map shape. Secrets are
 // included, so the result must not be logged.
 //
-// EVERY server is rendered, enabled or not — a disabled one carries
-// `disabled: true`. Filtering them out would make a disabled server
-// indistinguishable from a deleted one to KAS, and its status would go missing
-// rather than reading "disabled".
-//
-// honourAutoApprove is a RESOLVED DECISION, not a policy id: when false, no entry
-// carries `autoApprove` at all, whatever the store holds. The security-profile
-// rung is what decides it (`policyfile.HonoursAutoApprove`), and taking the answer
-// rather than the vocabulary is deliberate — this package renders a file and has
-// no business holding the ladder's names.
-//
-// `DisabledTools` is UNAFFECTED in both directions. It NARROWS what a server may
-// do, so a rung that suspends a widening has no reason to drop a restriction, and
-// dropping one would re-enable every tool the user had turned off.
-func renderKASServers(servers []*Server, honourAutoApprove bool) map[string]kasServer {
+// Every server is rendered, enabled or not: a disabled one carries
+// `disabled: true`, so KAS reports it disabled rather than not knowing it.
+func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasServer {
 	out := make(map[string]kasServer, len(servers))
 	for _, s := range servers {
 		if s == nil || s.Name == "" {
@@ -103,10 +82,9 @@ func renderKASServers(servers []*Server, honourAutoApprove bool) map[string]kasS
 		}
 		entry := kasServer{
 			DisabledTools: s.DisabledTools,
+			Timeout:       s.TimeoutMS,
+			WaitForReady:  policy.waitAll || s.WaitForReady,
 			Disabled:      !s.Enabled,
-		}
-		if honourAutoApprove {
-			entry.AutoApprove = s.AutoApprove
 		}
 		switch s.Transport {
 		case TransportStdio:
@@ -117,9 +95,16 @@ func renderKASServers(servers []*Server, honourAutoApprove bool) map[string]kasS
 			// One branch for both: KAS negotiates HTTP vs SSE itself.
 			entry.URL = s.URL
 			entry.Headers = pairsRecord(s.Headers)
-			if s.OAuthClientID != "" || s.OAuthClientSecret != "" {
-				entry.OAuth = &kasOAuth{ClientID: s.OAuthClientID, ClientSecret: s.OAuthClientSecret}
+			oauth := kasOAuth{
+				ClientID:          s.OAuthClientID,
+				RedirectURI:       s.OAuthRedirectURI,
+				ClientMetadataURL: s.OAuthClientMetadataURL,
 			}
+			if oauth != (kasOAuth{}) {
+				entry.OAuth = &oauth
+			}
+		case TransportRegistry:
+			entry.Type = string(TransportRegistry)
 		default:
 			// An unknown transport has neither a command nor a url, so KAS would
 			// reject it as "must specify a command or url". Skip it rather than
@@ -129,6 +114,15 @@ func renderKASServers(servers []*Server, honourAutoApprove bool) map[string]kasS
 		out[s.Name] = entry
 	}
 	return out
+}
+
+// kasRenderPolicy is the per-write decision a render takes, RESOLVED rather
+// than a settings key: this package has no business holding the settings
+// vocabulary.
+type kasRenderPolicy struct {
+	// waitAll marks every server waitForReady (the mcp_wait_for_ready setting).
+	// A server's own pasted value still applies when it is false.
+	waitAll bool
 }
 
 // pairsRecord flattens ordered KeyPairs into KAS's record shape. Later entries
@@ -146,34 +140,39 @@ func pairsRecord(in []KeyPair) map[string]string {
 }
 
 // writeKASConfig renders the server set into KAS's config file, preserving
-// every top-level key it does not own.
-//
-// Best-effort on the READ: an unparseable or unreadable existing file is
-// replaced rather than treated as fatal — the alternative leaves the
-// agent connected to a stale server set with no way for the user to fix
-// it from the UI.
-//
-// The auto-approve posture is resolved PER WRITE rather than captured at
-// construction, which is what makes a profile change reach the file: the
-// selection handler calls [Store.RenderKASConfig] and this read then answers with
-// the rung the user just picked.
+// every top-level key it does not own. An unreadable existing file is replaced
+// rather than fatal, or the agent would stay on a stale server set the UI
+// cannot fix. The wait setting is read per write, which is how a settings
+// flip reaches the file.
 func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	doc := s.readKASConfig()
-	rendered, err := json.Marshal(renderKASServers(servers, s.honoursAutoApprove(ctx)))
+	rendered, err := s.renderServersKey(ctx, servers)
 	if err != nil {
-		return fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		return err
 	}
-	doc[kasServerKey] = json.RawMessage(rendered)
+	doc[kasServerKey] = rendered
+	return s.writeKASDoc(ctx, doc)
+}
 
+func (s *Store) renderServersKey(ctx context.Context, servers []*Server) (json.RawMessage, error) {
+	policy := kasRenderPolicy{waitAll: s.waitsForReady(ctx)}
+	rendered, err := json.Marshal(renderKASServers(servers, policy))
+	if err != nil {
+		return nil, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+	}
+	return rendered, nil
+}
+
+// writeKASDoc writes the whole document. 0600: the file holds header values and
+// OAuth client secrets, and KAS reads it as the same user.
+func (s *Store) writeKASDoc(ctx context.Context, doc map[string]json.RawMessage) error {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
 	}
-	// 0600: the file holds header values and OAuth client secrets. KAS reads it
-	// as the same user, so nothing needs broader access.
 	if _, err := atomicfile.WriteFile(ctx, s.kasPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
@@ -181,106 +180,143 @@ func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	return nil
 }
 
-// RenderKASConfig re-renders KAS's config file from the servers already in the
-// store, with no mutation of marotte's own record.
-//
-// It exists for the SECURITY-PROFILE selection, which changes what may be rendered
-// without changing what is configured. The suspension has to land HERE rather than
-// at the next bridge start: KAS watches this file and re-merges on change, so a
-// write applies to the chats already running — and a suspension that waited for the
-// next session would leave a grant standing on every live chat for as long as the
-// user kept talking.
-//
-// The CALLER owns the ordering, and it is load-bearing: the posture is resolved by
-// reading the persisted setting, so this must run AFTER the new profile has been
-// written to disk or it re-renders the outgoing rung.
-//
-// It takes the READ lock across the write, matching persist, which already holds
-// the write lock across its own writeKASConfig call. Serialising concurrent renders
-// is wanted rather than tolerated: two of them race to produce one file.
-//
-// The lock is released BEFORE notifyChange rather than deferred, because that
-// method takes the read lock itself and a recursive RLock deadlocks whenever a
-// writer is waiting between the two (sync.RWMutex documents exactly that).
-//
-// It fires the change callback on success, which WIDENS that callback's meaning
-// from "the persisted set mutated" to "what GET /api/mcp answers changed" — and
-// the second is what its one client-side consumer does with it: the panel
-// refetches. Without it a profile selection reaches KAS's file and not the panel
-// rendering the chips that file just suspended, and the panel has no other
-// trigger (a settings-tab loader fires on FIRST activation only). The cost is one
-// extra MCP prewarm pass per profile selection, which is idempotent and cached.
-func (s *Store) RenderKASConfig(ctx context.Context) error {
-	s.mu.RLock()
-	err := s.writeKASConfig(ctx, s.servers)
-	s.mu.RUnlock()
-	if err != nil {
-		return err
+// WritePowersServers renders `powers.mcpServers` from the installed legacy
+// Powers, keeping every other key, and reports whether the file changed. An
+// unchanged block is not rewritten, because every write makes KAS reload its MCP
+// servers. An empty set removes the member, and `powers` with it when nothing
+// else is left in it. The write lock excludes persist and RenderKASConfig, which
+// rewrite the same file.
+func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.RawMessage) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
 	}
-	s.notifyChange()
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, docOK := s.readKASDoc()
+	rawBlock, hasBlock := doc[kasPowersKey]
+	block := objectOrEmpty(rawBlock)
+	if docOK && powersBlockMatches(block, hasBlock, servers) {
+		return false, nil
+	}
+	if !docOK {
+		// The document was replaced whole, so marotte's own key goes back with it.
+		rendered, err := s.renderServersKey(ctx, s.servers)
+		if err != nil {
+			return false, err
+		}
+		doc[kasServerKey] = rendered
+	}
+	if len(servers) == 0 {
+		delete(block, kasServerKey)
+	} else {
+		rendered, err := json.Marshal(servers)
+		if err != nil {
+			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		}
+		block[kasServerKey] = rendered
+	}
+	if len(block) == 0 {
+		delete(doc, kasPowersKey)
+	} else {
+		rendered, err := json.Marshal(block)
+		if err != nil {
+			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		}
+		doc[kasPowersKey] = rendered
+	}
+	return true, s.writeKASDoc(ctx, doc)
 }
 
-// readKASConfig returns the existing document's top-level keys minus the one
-// marotte owns, so a write can put ours back without touching `powers` or
-// anything else. An absent, oversized or malformed file yields an empty
-// document.
+// powersBlockMatches reports whether the decoded `powers` block already holds
+// exactly servers in its normalized form, so no write is needed.
+func powersBlockMatches(block map[string]json.RawMessage, hasBlock bool, servers map[string]json.RawMessage) bool {
+	rawCurrent, hasCurrent := block[kasServerKey]
+	if len(servers) == 0 {
+		return !hasCurrent && (!hasBlock || len(block) > 0)
+	}
+	return sameServers(objectOrEmpty(rawCurrent), servers)
+}
+
+// objectOrEmpty decodes a member that must be a JSON object. Anything else,
+// null included, reads as an empty map the caller can write into.
+func objectOrEmpty(raw json.RawMessage) map[string]json.RawMessage {
+	var out map[string]json.RawMessage
+	if json.Unmarshal(raw, &out) != nil || out == nil {
+		return map[string]json.RawMessage{}
+	}
+	return out
+}
+
+// sameServers compares two server sets by their compacted JSON, so a reindented
+// file reads as unchanged.
+func sameServers(a, b map[string]json.RawMessage) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, av := range a {
+		bv, ok := b[name]
+		if !ok {
+			return false
+		}
+		var ab, bb bytes.Buffer
+		if json.Compact(&ab, av) != nil || json.Compact(&bb, bv) != nil || !bytes.Equal(ab.Bytes(), bb.Bytes()) {
+			return false
+		}
+	}
+	return true
+}
+
+// RenderKASConfig re-renders KAS's config file from the stored servers, for an
+// mcp_wait_for_ready flip: KAS hot-reloads the file, so running chats take the
+// change now rather than at their next start. Call it AFTER the new value is on
+// disk, or it re-renders the outgoing one. The read lock spans the write, as
+// persist's write lock does.
+func (s *Store) RenderKASConfig(ctx context.Context) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.writeKASConfig(ctx, s.servers)
+}
+
+// readKASConfig returns the existing document's top-level keys minus
+// `mcpServers`, so a write can put ours back without touching `powers` or
+// anything else.
 func (s *Store) readKASConfig() map[string]json.RawMessage {
+	doc, _ := s.readKASDoc()
+	delete(doc, kasServerKey)
+	return doc
+}
+
+// readKASDoc returns every top-level key of the existing document, or an empty
+// one for an absent, oversized or malformed file. ok is false when a file is
+// there but is not a readable JSON object, so the caller knows to replace it.
+func (s *Store) readKASDoc() (doc map[string]json.RawMessage, ok bool) {
 	empty := map[string]json.RawMessage{}
 	info, err := os.Stat(s.kasPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return empty, true
+	}
 	if err != nil || info.Size() > kasFileMaxBytes {
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
 			slogWarnKAS("stat failed", s.kasPath, err)
 		}
-		return empty
+		return empty, false
 	}
 	data, err := os.ReadFile(s.kasPath)
 	if err != nil {
 		slogWarnKAS("read failed", s.kasPath, err)
-		return empty
+		return empty, false
 	}
-	var doc map[string]json.RawMessage
 	// KAS parses this with JSONC, so a hand-written file may carry comments that
 	// encoding/json rejects. Losing an unknown key is the cost of not vendoring a
 	// JSONC parser to preserve keys marotte does not write; it is logged.
 	if err := json.Unmarshal(data, &doc); err != nil {
 		slogWarnKAS("existing file unparseable, its non-mcpServers keys will be dropped", s.kasPath, err)
-		return empty
+		return empty, false
 	}
-	delete(doc, kasServerKey)
-	return doc
-}
-
-// powerNames returns the server names the file's `powers.mcpServers` block
-// declares. Empty when the file is absent, oversized, unparseable, or
-// carries no powers block — every one of which means "marotte cannot
-// attribute this name", which is OriginUnknown rather than an error.
-//
-// This reads the file rather than caching it: AllNames is consulted only
-// for a name marotte's own config does NOT hold, so a status frame for a
-// configured server never reaches the disk.
-func (s *Store) powerNames() map[string]struct{} {
-	out := map[string]struct{}{}
-	// readKASConfig deletes the key marotte owns and keeps the rest, so the
-	// powers block arrives here untouched.
-	raw, ok := s.readKASConfig()[kasPowersKey]
-	if !ok {
-		return out
+	if doc == nil {
+		return empty, false
 	}
-	var block struct {
-		MCPServers map[string]json.RawMessage `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(raw, &block); err != nil {
-		slogWarnKAS("powers block unparseable; its servers will report an unknown origin", s.kasPath, err)
-		return out
-	}
-	for name := range block.MCPServers {
-		if name == "" {
-			continue
-		}
-		out[name] = struct{}{}
-	}
-	return out
+	return doc, true
 }
 
 // kasConfigPath is the file KAS reads for user-level MCP servers.

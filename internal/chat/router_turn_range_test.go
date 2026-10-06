@@ -11,8 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// getTurnRange drives GET /api/chats/{id}/turns/{turn} through the router's own
-// dispatch, so the test reaches the handler the way a client does.
+// getTurnRange drives GET /api/chats/{id}/turns/{turn} through the router's own dispatch.
 func getTurnRange(t *testing.T, s *Store, id marotte.ChatID, turn string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns/"+turn, nil)
@@ -21,11 +20,8 @@ func getTurnRange(t *testing.T, s *Store, id marotte.ChatID, turn string) *httpt
 	return rec
 }
 
-// The range read's TWO refusals are two different statuses, and the split is the whole
-// point: a turn the log holds nothing for is the one outcome a CALLER can cause, so it
-// is a 404, and a log this server cannot read is a 500. Answering 404 for both told a
-// client its turn does not exist whenever a disk or decode fault answered the read, so
-// it stopped asking about a turn that is really there.
+// A missing turn is the caller's 404; an unreadable log the server's 500. One 404 for both told clients real turns
+// did not exist.
 func TestTurnRangeRoute_404sAnUnknownTurnAnd500sAnUnreadableLog(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
@@ -45,9 +41,7 @@ func TestTurnRangeRoute_404sAnUnknownTurnAnd500sAnUnreadableLog(t *testing.T) {
 		t.Errorf("unknown chat = %d, want 404", code)
 	}
 
-	// Overwrite the log's bytes in place at the SAME length, so the store's offset index
-	// still points inside the file and it is the DECODE that fails: the shape a torn or
-	// corrupt log takes for a range read.
+	// Same-length overwrite, so the offset index stays valid and the decode fails, as for a corrupt log.
 	path := filepath.Join(dir, "c1", entriesFileName)
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -1,11 +1,6 @@
-// ---------------------------------------------------------------------------
-// Shared helpers used by both the main file browser and the picker modal.
-// ---------------------------------------------------------------------------
-
 import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 
-// --- CSS class constants for the file browser UI ---
 export const FB_ROW = "fb-row";
 export const FB_NAME = "fb-name";
 export const FB_NAME_LINK = "fb-name-link";
@@ -26,15 +21,12 @@ interface DirListing {
   error?: string;
 }
 
-/** Per-caller abort state for fetchDir. Each caller (browser, picker) must
- *  pass its own holder so they don't abort each other's requests. */
+/** Per-caller abort state for fetchDir; each caller passes its own holder so they cannot abort each other. */
 export interface FetchDirOpts {
   controllerHolder: { current: AbortController | null };
 }
 
-/** Fetch a directory listing from the server. Returns an empty listing
- *  with `error` set on failure. Stale requests are cancelled via
- *  AbortController scoped to the caller's controllerHolder. */
+/** Fetch a directory listing; on failure an empty listing with `error` set. A newer request cancels the caller's previous one. */
 export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirListing> {
   const holder = opts.controllerHolder;
   holder.current?.abort();
@@ -73,12 +65,7 @@ export function sortEntries<T extends { name: string; isDir: boolean }>(entries:
   });
 }
 
-/** Wire an editable path input with click-to-edit, Enter/Escape/blur handling.
- *  `onNavigate` is called with the normalised path on Enter — this is one of the
- *  three doors `normalizeDirPath` exists for, since the text is whatever the user
- *  typed. `getCurrentPath` returns the path to restore on Escape/blur, which is
- *  the path itself: the browser's space IS the user-facing spelling now, so there
- *  is no display form to convert to. */
+/** Wire an editable path input (click to edit, Enter/Escape/blur). `onNavigate` gets the path through `normalizeDirPath`. */
 export function initEditablePath(
   input: HTMLInputElement,
   opts: {
@@ -133,43 +120,27 @@ export function formatDate(ms: number): string {
   );
 }
 
-/** The browser's ROOT listing — the synthetic list of granted mounts, which
- *  `/api/files` answers for this exact path. It is not a real directory in the
- *  allow-list model, but its PATH is the one every child is composed from, so it
- *  belongs to the same space as the rest of them.
- *
- *  This used to be ".", and that one character was the whole of a year-long
- *  silent defect: `joinPath(".", "workspace")` returned "workspace", so every
- *  path the listing produced was rootless while the git-status index, the editor
- *  and `/api/files/search` all speak container-absolute. No key could match, so
- *  the status letters and the directory rollups were dead on every file. */
+/** The root listing: the synthetic list of granted mounts `/api/files` answers for "/". Every child path composes from it. */
 export const FB_ROOT = "/";
 
-/** Join a listing's path with one entry NAME. The base is always in the
- *  container-absolute space (`FB_ROOT` or below), so the result is too. */
+/** Join a listing's path with one entry name; container-absolute in, container-absolute out. */
 export function joinPath(base: string, name: string): string {
   return `${base.replace(/\/+$/, "")}/${name}`;
 }
 
-/** The listing one level up. Bottoms out at `FB_ROOT` rather than walking past
- *  it: above the mounts listing there is nothing browsable. */
+/** One level up, bottoming out at `FB_ROOT`. */
 export function parentPath(p: string): string {
   const parts = p.split("/").filter((s) => s !== "");
   parts.pop();
   return parts.length === 0 ? FB_ROOT : `/${parts.join("/")}`;
 }
 
-/** The ONE door into the browser's path space, for a path arriving from outside
- *  the module: the persisted `fb_path`, a `/files/<path>` deep link, or the text
- *  a user typed into the path input.
- *
- *  It exists so `currentPath` is absolute by construction rather than by every
- *  entry point remembering to make it so — and it is what lets a bookmark or a
- *  setting written by an older build resolve instead of quietly reviving the
- *  rootless space. "." is accepted for the same reason `/api/files` accepts it. */
+/**
+ * The one door into the path space for an outside path (persisted `fb_path`, a `/files/<path>` deep link, typed
+ * text), so `currentPath` is absolute by construction.
+ */
 export function normalizeDirPath(raw: string): string {
-  // Interior runs collapse too, so a pasted `/files/workspace//x` cannot become a
-  // second tab ref for a folder a tab is already open at.
+  // Interior runs collapse too, so `/files/workspace//x` cannot become a second tab ref.
   const trimmed = raw.trim().replace(/\/+/g, "/").replace(/^\//, "").replace(/\/$/, "");
   return trimmed === "" || trimmed === "." ? FB_ROOT : `/${trimmed}`;
 }

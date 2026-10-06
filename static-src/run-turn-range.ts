@@ -1,16 +1,4 @@
 // The run's range read: `GET /api/runs/{id}/turns/{turn}?after=<seq>`.
-//
-// The twin of the chat's read (`store-load.ts` `requestTurnRange`) over the other log, and
-// the ONE repair for every gap on a `run_turn` ref: a digest mismatch, a `gone` verdict, a
-// `seq` hole, a frame naming a turn the store never opened. `after` omitted asks for the
-// whole turn, which is what a lost `turn_opened` needs.
-//
-// It ADOPTS rather than caching, as `run-step-transcript.ts` does: the entries go into
-// `run-store.ts` through the operations the live frames use, so the prefix already held is
-// recognised as a redelivery and this is a hole fill rather than a rewrite.
-//
-// Separate from both of its neighbours because the key differs: `run-store.ts` owns
-// `GET /api/runs/{id}` and the step GET is keyed by node PATH with a verdict the pane reads.
 
 import { join } from "@cplieger/keyenc";
 import { apiGetTyped } from "./api-client.js";
@@ -31,10 +19,10 @@ interface RunTurnRangeResponse {
   open_entries: OpenEntry[];
 }
 
-/** Decode a list of entries, DROPPING a member the generated decoder refuses: the `seq` gap
- *  it leaves reaches the same hole check every other gap does, and the warn IS the signal.
- *  The CONTAINER still throws — a reply whose `entries` is not an array is not one bad line.
- *  The chat's loader states the same rule over the same two generated decoders. */
+/** Decode a list of entries, DROPPING a member the generated decoder refuses: the `seq` gap it
+ *  leaves reaches the same hole check every other gap does, and the warn IS the signal. The
+ *  CONTAINER still throws — a reply whose `entries` is not an array is not one bad line. The
+ *  chat's loader states the same rule over the same two generated decoders. */
 function decodeTolerant<T>(v: unknown, one: Decoder<T>, path: string): T[] {
   const out: T[] = [];
   const raw = asArray(v, path);
@@ -52,11 +40,7 @@ function decodeTolerant<T>(v: unknown, one: Decoder<T>, path: string): T[] {
 }
 
 /** The route answers the same three keys the chat's range read answers, so no `wire-codegen`
- *  round trip is owed for it. `subject` is deliberately NOT decoded: the store's own append
- *  path stamps every OPEN turn it commits under the same `<turn>:<newest sealed seq>` rule
- *  and drops the stamp at the `turn_close` in the same pass, so adopting through it produces
- *  the identical stamp — which is the argument `run-step-transcript.ts` makes for the step
- *  GET's `subject`, held here so the run's two reads follow one rule. */
+ *  round trip is owed for it. */
 const decodeRunTurnRange: Decoder<RunTurnRangeResponse> = (v) => {
   const o = asObject(v, "$.run_turn_range");
   return {
@@ -80,10 +64,9 @@ registerCleanup(() => {
   inFlight.clear();
 });
 
-/** Ask for one step turn's entries past `afterSeq` and adopt them.
- *
- *  Fire-and-forget: the answer reaches every reader through the run store's own log
- *  version, so a caller inside an SSE handler never awaits it. */
+/** Ask for one step turn's entries past `afterSeq` and adopt them. Fire-and-forget: the answer
+ *  reaches every reader through the run store's own log version, so a caller inside an SSE
+ *  handler never awaits it. */
 export function requestRunTurnRange(workflowID: string, turnID: string, afterSeq?: number): void {
   void runRange(workflowID, turnID, afterSeq);
 }
@@ -105,8 +88,8 @@ async function runRange(workflowID: string, turnID: string, afterSeq?: number): 
   inFlight.set(key, controller);
   const before = runTurnHeldSeq(workflowID, turnID);
   let d: RunTurnRangeResponse | null;
-  // Released the moment it settles, before the seat: a read still counting itself would make
-  // the in-flight guard swallow the second-gap re-ask the seat schedules.
+  // Released the moment it settles, before the seat: a read still counting itself would make the
+  // in-flight guard swallow the second-gap re-ask the seat schedules.
   try {
     d = await apiGetTyped(
       rangeURL(workflowID, turnID, afterSeq),
@@ -120,22 +103,18 @@ async function runRange(workflowID: string, turnID: string, afterSeq?: number): 
     return;
   }
   if (d === null) {
-    // The hole stays marked, so the pane's own step read is still owed: a repair that got no
-    // answer must not tell the store the turn is whole.
+    // The hole stays marked, so the pane's own step read is still owed: a repair that got no answer
+    // must not tell the store the turn is whole.
     console.warn(`run turn range: no answer for ${workflowID} ${turnID}`);
     return;
   }
   adopt(workflowID, turnID, d.entries, d.open_entries, before);
 }
 
-/** Commit one answer to the run store, then say whether the turn is whole.
- *
- *  The turn's open tails are REPLACED by the answer's, after the sealed entries: the answer is
- *  authoritative about them (`run-store.ts` `adoptRunOpenEntries` states why), and it must run
- *  after the seats or it would replace the tails of a turn the answer had not created yet.
- *  `clearRunHole` only when the store's newest `seq` reached the
- *  answer's, so a partial answer cannot report a repaired turn; a second gap re-asks once and
- *  only when this seat made PROGRESS, or an answer that fitted nothing is asked forever. */
+/** Commit one answer to the run store, then say whether the turn is whole. The turn's open tails
+ *  are REPLACED by the answer's, after the sealed entries: the answer is authoritative about
+ *  them (`run-store.ts` `adoptRunOpenEntries` states why), and it must run after the seats or it
+ *  would replace the tails of a turn the answer had not created yet. */
 function adopt(
   workflowID: string,
   turnID: string,
@@ -156,13 +135,13 @@ function adopt(
     }
     want = Math.max(want, e.seq);
   }
-  // REPLACED rather than seated, so a tail whose entry this answer sealed does not survive
-  // beside it; the store owns that rule for both of the run's reads.
+  // REPLACED rather than seated, so a tail whose entry this answer sealed does not survive beside
+  // it; the store owns that rule for both of the run's reads.
   adoptRunOpenEntries(workflowID, turnID, open);
   const held = runTurnHeldSeq(workflowID, turnID);
   if (held === undefined) {
-    // Nothing held and nothing seated: the turn's own `turn_open` did not arrive, so there is
-    // no turn to render and asking again would ask the same question.
+    // Nothing held and nothing seated: the turn's own `turn_open` did not arrive, so there is no
+    // turn to render and asking again would ask the same question.
     console.warn(`run turn range: ${workflowID} ${turnID} answered no turn_open`);
     return;
   }

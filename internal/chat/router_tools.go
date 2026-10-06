@@ -13,9 +13,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: the whole of one
-// tool call's persisted input, output and diffs, read off its tool_call entry and
-// the tool_result that settled it.
+// handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: one tool call's whole persisted input, output and
+// diffs, from its tool_call and the settling tool_result.
 func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, toolCallID string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -25,8 +24,7 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	// Echoed back and used as a linear-scan key, so an unbounded or exotic value is
-	// refused rather than searched for.
+	// Echoed and used as a scan key, so an unbounded or exotic value is refused.
 	if !ids.ValidMessageID(toolCallID) {
 		httpreply.BadRequest(w, "invalid tool_call_id")
 		return
@@ -48,9 +46,8 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 	webhttp.WriteJSON(w, bulk)
 }
 
-// findToolCall locates a tool call's create and its settle by id, newest first,
-// and folds the two into the bulk: the input is the create's, and the output, the
-// diffs and the spans are the result's where one settled it, else the create's.
+// findToolCall finds a tool call's create and settle by id, newest first, folding them into the bulk: input from the
+// create; output, diffs and spans from the result if settled, else the create.
 func findToolCall(entries []marotte.Entry, id string) (marotte.ToolCallBulk, bool) {
 	resultID := marotte.ToolResultID(id)
 	var bulk marotte.ToolCallBulk
@@ -67,8 +64,7 @@ func findToolCall(entries []marotte.Entry, id string) (marotte.ToolCallBulk, boo
 	return bulk, found
 }
 
-// adoptToolResult copies the settle's output, diffs and spans into the bulk,
-// answering whether the payload decoded.
+// adoptToolResult copies the settle's output, diffs and spans into the bulk, reporting whether it decoded.
 func adoptToolResult(bulk *marotte.ToolCallBulk, e *marotte.Entry) bool {
 	var res marotte.EntryToolResult
 	if json.Unmarshal(e.Payload, &res) != nil {
@@ -78,8 +74,8 @@ func adoptToolResult(bulk *marotte.ToolCallBulk, e *marotte.Entry) bool {
 	return true
 }
 
-// adoptToolCreate copies the create's id and input into the bulk, and its output
-// too unless a result already settled it; answers whether the payload decoded.
+// adoptToolCreate copies the create's id and input into the bulk, and its output unless already settled; reports
+// whether it decoded.
 func adoptToolCreate(bulk *marotte.ToolCallBulk, e *marotte.Entry, settled bool) bool {
 	var call marotte.EntryToolCall
 	if json.Unmarshal(e.Payload, &call) != nil {

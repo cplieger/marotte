@@ -6,10 +6,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chunkDeltas returns every streamed text delta in a capture, in order — the
-// opening text of an entry_opened and each entry_delta after it — so a test can
-// assert the sentinel still REACHED the user. Ending the turn without showing why
-// would trade a wedge for a silence.
+// chunkDeltas returns every streamed text delta in a capture, in order, so a test can assert
+// the sentinel still REACHED the user.
 func chunkDeltas(events []marotte.ServerEvent) []string {
 	var out []string
 	for _, e := range events {
@@ -35,16 +33,8 @@ func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text strin
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, frame), isReasoning, attr)
 }
 
-// TestHandleAssistantChunk_SentinelEndsTheTurn is the headline case.
-//
-// kiro-cli's security filter cancels a tool call, sends this one sentence, and
-// then never answers the session/prompt. Bridge.Call has no deadline, so before
-// this the prompt slot stayed held until the tab was closed and every later Send
-// on the chat answered 409 busy.
-//
-// Three assertions, and the middle one is the easy thing to get wrong: the turn
-// ends, the sentence is STILL broadcast so the user learns why, and the reason
-// travels so the transcript's divider can attribute it.
+// TestHandleAssistantChunk_SentinelEndsTheTurn pins that the turn ends, the sentence is STILL
+// broadcast, and the reason travels.
 func TestHandleAssistantChunk_SentinelEndsTheTurn(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
@@ -63,21 +53,15 @@ func TestHandleAssistantChunk_SentinelEndsTheTurn(t *testing.T) {
 		t.Errorf("reason = %q, want %q — the divider has no other source for it", got, interruptReason)
 	}
 
-	// The sentence must reach the transcript. It is the only account the user
-	// gets of why the turn stopped, and the host's teardown takes the buffer, so
-	// a broadcast ordered after the interrupt would be lost.
+	// The sentence must reach the transcript before the interrupt's teardown takes the buffer.
 	deltas := chunkDeltas(*events)
 	if len(deltas) != 1 || deltas[0] != interruptSentinel {
 		t.Errorf("streamed deltas = %q, want the sentinel shown to the user", deltas)
 	}
 }
 
-// TestHandleAssistantChunk_SentinelIsExactMatchOnly is the negative half, and it
-// is the reason the match rule is equality rather than a substring or a prefix.
-//
-// Every row here is a turn that must NOT be killed. The quoted-prose row is the
-// one that matters most: a model writing about the interruption message would
-// otherwise stop its own turn mid-thought.
+// TestHandleAssistantChunk_SentinelIsExactMatchOnly pins rows that must NOT end the turn,
+// quoted prose above all.
 func TestHandleAssistantChunk_SentinelIsExactMatchOnly(t *testing.T) {
 	cases := map[string]struct {
 		text        string
@@ -93,27 +77,20 @@ func TestHandleAssistantChunk_SentinelIsExactMatchOnly(t *testing.T) {
 		"a leading fragment of it": {
 			text: "Tool uses were",
 		},
-		// The accepted miss, pinned so nobody widens the rule without evidence.
-		// A prefix matcher would catch this and would also fire on any turn
-		// opening with those three words.
+		// The accepted miss: a prefix matcher would fire on any turn opening with these words.
 		"split across deltas is deliberately missed": {
 			text: "Tool uses were interrupted, waiting for",
 		},
-		// A sentinel-shaped THOUGHT is the model thinking about the sentinel, and
-		// KAS reads its own markers from text entries only.
+		// A sentinel-shaped THOUGHT is not the sentinel; KAS reads markers from text entries only.
 		"as a reasoning chunk": {
 			text:        interruptSentinel,
 			isReasoning: true,
 		},
-		// The second member of kiro-cli's own TUI sentinel list. marotte handles
-		// a user cancel end to end already, so matching it here could only end a
-		// turn the cancel path is ending — or end one on a quote.
+		// The TUI's user-cancel sentinel: CmdCancel already ends that turn.
 		"the user-cancel sentinel": {
 			text: "Response was interrupted by the user",
 		},
-		// A workflow STEP has no session/prompt of marotte's to release, and the
-		// only stop verb is run-scoped, so a step's frame must not cancel the
-		// parent chat's live turn.
+		// A step frame must not cancel the parent chat's live turn.
 		"a workflow step frame": {
 			text: interruptSentinel,
 			attr: FrameAttribution{Step: true, RunID: "wf-1", NodePath: "wf-1/n-1"},
@@ -157,12 +134,8 @@ func TestHandleAssistantChunk_SentinelToleratesSurroundingWhitespace(t *testing.
 	}
 }
 
-// TestHandleAssistantChunk_SentinelEndsTheTurnOnce: frames keep arriving after
-// the filter trips, and the interrupt must not be re-issued per frame. The host
-// latches the first cause per turn, and this pins the detector's half — one call
-// per matching delta, so two deltas are two calls and the host's latch is what
-// makes the SECOND a no-op. Stated here so a future reader does not move the
-// latch out of the host on the belief this side deduplicates.
+// TestHandleAssistantChunk_SentinelEndsTheTurnOnce pins one interrupt call per matching delta;
+// the HOST's per-turn latch makes a second a no-op, so keep the latch there.
 func TestHandleAssistantChunk_SentinelEndsTheTurnOnce(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps))

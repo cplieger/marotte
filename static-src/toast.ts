@@ -1,64 +1,99 @@
-// ---------------------------------------------------------------------------
-// Ephemeral toast notifications — adopted from @cplieger/ui-primitives.
-//
-// The hand-rolled toast.ts + toast-engine.ts (timer/queue state machine + DOM
-// view) were replaced by the library's default `toast` singleton, whose
-// defaults already match marotte's: up to 3 visible (rest queued, cap 20),
-// info/success auto-dismiss after 4s, error sticky, hover OR focus pauses and
-// resumes only once BOTH end, click / Escape (newest first) / Enter / Space
-// dismiss. Screen-reader announcement is decoupled into the shared announce()
-// live region (error = assertive, info/success = polite) instead of a
-// role/aria-live on the stack — strictly better a11y (no nested live regions).
-//
-// This module is the thin marotte wrapper preserving the public surface
-// (`info` / `success` / `error` / `showToast` + the `ToastLevel` / `ToastRetry`
-// types) so the ~hundreds of call sites (and the @cplieger/actions boot wiring
-// in actions/boot.ts) are unchanged. Visuals live in the .uip-toast skin
-// (css/04-uip-skin.css), ported 1:1 from the old .vk-toast (bottom-right stack,
-// solid error/success variants, the countdown progress bar, marotte's motion).
-// ---------------------------------------------------------------------------
+// Ephemeral toasts: a thin wrapper over ui-primitives' default `toast` singleton keeping marotte's
+// surface (`info` / `success` / `error` / `showToast`). Announcement goes through the shared
+// announce() live region, not a role on the stack. Visuals: the .uip-toast skin (04-uip-skin.css).
 
 import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/toast";
 import type { ToastLevel, ToastRetry } from "@cplieger/ui-primitives/toast";
+import type { NoticeLevel } from "./wire/types.gen.js";
 
 export type { ToastLevel, ToastRetry };
 
 /** Show an info-level toast. Auto-dismisses after 4s (paused on hover/focus). */
 export function info(message: string): () => void {
-  return toast.info(message);
+  return track(null, () => toast.info(message));
 }
 
 /** Show a success-level toast. Auto-dismisses after 4s (paused on hover/focus). */
 export function success(message: string): () => void {
-  return toast.success(message);
+  return track(null, () => toast.success(message));
 }
 
-/** How long an error toast stays up. The library's default for `error` is 0
- *  (sticky), which marotte overrides: an error nobody dismisses never leaves,
- *  so two or three of them stack and stay stacked for the rest of the session.
- *  12s is well past a comfortable read for a one-line failure, and the stack
- *  still pauses on hover/focus, so a user reading one is never cut off.
- *
- *  A RETRYABLE error keeps the sticky behaviour: its button is the only way to
- *  take the offered action, and timing that out would silently discard it. How
- *  many of those may stand at once is MAX_STICKY. */
+/** How long an error toast stays up; the library's default (sticky) would stack unread errors for
+ *  the session. The stack pauses on hover/focus. A RETRYABLE error stays sticky: its button is the
+ *  only way to take the action. MAX_STICKY bounds those. */
 const ERROR_DURATION_MS = 12_000;
 
-/** How many sticky toasts may be live at once. The shared stack shows 3
- *  (ui-primitives' DEFAULT_MAX_VISIBLE, which this app does not override and the
- *  library does not export, so it is restated here) and promotes from its queue
- *  only on a dismiss or an expiry — so a third notice that never expires holds
- *  the last rotating slot for the life of the page, and every later toast, any
- *  level and any producer, queues where nobody sees it. Reachable rather than
- *  theoretical: one dead login or one broken agent file is reported per chat, so
- *  three live chats raise three copies. Two keeps a slot turning over. */
+/** How many sticky toasts may be live at once. The stack shows 3 (ui-primitives'
+ *  DEFAULT_MAX_VISIBLE, unexported, restated) and promotes only on dismiss or expiry, so a third
+ *  sticky holds the last slot and queues everything else unseen. One fault is reported per chat, so
+ *  three chats raise three copies. */
 const MAX_STICKY = 2;
 
-/** The sticky toasts raised here, oldest first. An entry leaves this list only
- *  by being dismissed, so what is on screen is never more than it holds — which
- *  is the whole bound. A toast the reader dismissed by hand stays in it (nothing
- *  reports a dismissal), and that costs only a no-op eviction later. */
+/** The sticky toasts raised here, oldest first. An entry leaves only by being dismissed, which is
+ *  the whole bound; a hand-dismissed toast stays and costs a no-op eviction. */
 const sticky: (() => void)[] = [];
+
+/** The library has no warning level, so `info` and `warning` notices ride its info
+ *  level and take a marotte class. */
+const NOTICE_CLASS: Record<Exclude<NoticeLevel, "error">, string> = {
+  info: "uip-toast--notice-info",
+  warning: "uip-toast--notice-warning",
+};
+
+/** The library's DEFAULT_MAX_QUEUE, restated because it is not exported: past it
+ *  the stack drops its oldest queued toast, which then never mounts. */
+const MAX_QUEUE = 20;
+
+interface Owed {
+  readonly cls: string | null;
+  mounted: boolean;
+}
+
+/** One entry per toast shown and not yet mounted, in show order. The stack's queue is FIFO, so the
+ *  Nth unseen node is the Nth entry; show returns no node and text matching would mis-tag. */
+const owed: Owed[] = [];
+const observed = new WeakSet<Element>();
+const SEEN_ATTR = "data-toast-seen";
+
+function tagMounted(): void {
+  for (const stack of document.querySelectorAll(".uip-toast-stack")) {
+    if (!observed.has(stack)) {
+      observed.add(stack);
+      new MutationObserver(tagMounted).observe(stack, { childList: true });
+    }
+    for (const node of stack.querySelectorAll(`.uip-toast:not([${SEEN_ATTR}])`)) {
+      node.setAttribute(SEEN_ATTR, "");
+      const entry = owed.shift();
+      if (entry === undefined) {
+        continue;
+      }
+      entry.mounted = true;
+      if (entry.cls !== null) {
+        node.classList.add(entry.cls);
+      }
+    }
+  }
+}
+
+function track(cls: string | null, show: () => () => void): () => void {
+  const entry: Owed = { cls, mounted: false };
+  owed.push(entry);
+  const dismiss = show();
+  tagMounted();
+  while (owed.length > MAX_QUEUE) {
+    owed.shift();
+  }
+  return () => {
+    tagMounted();
+    if (!entry.mounted) {
+      const at = owed.indexOf(entry);
+      if (at >= 0) {
+        owed.splice(at, 1);
+      }
+    }
+    dismiss();
+  };
+}
 
 /** Raise a notice that never expires, dropping the OLDEST one past the cap: the
  *  reader has had longest to act on that, and the newest says what is wrong now. */
@@ -66,7 +101,7 @@ function showSticky(message: string, retry: ToastRetry): () => void {
   while (sticky.length >= MAX_STICKY) {
     sticky.shift()?.();
   }
-  const dismiss = toast.show(message, { level: "error", retry });
+  const dismiss = track(null, () => toast.show(message, { level: "error", retry }));
   sticky.push(dismiss);
   return dismiss;
 }
@@ -79,19 +114,36 @@ export function error(message: string, retry?: ToastRetry): () => void {
   if (retry !== undefined) {
     return showSticky(message, retry);
   }
-  return toast.show(message, { level: "error", duration: ERROR_DURATION_MS });
+  return track(null, () => toast.show(message, { level: "error", duration: ERROR_DURATION_MS }));
 }
 
-/** Show an error toast carrying an ACTION button that is a convenience rather
- *  than the only way to take it, so it keeps the ordinary 12s timeout.
- *
- *  `error(message, retry)` above goes sticky on purpose: a retry offered nowhere
- *  else must not time out unanswered. That reasoning does not reach a button whose
- *  destination is reachable another way — failure-notice.ts's jump button, whose
- *  chat is one click away in the tab strip regardless — and a sticky notice per
- *  background failure is exactly the stack the 12s default exists to prevent. */
+/** An error toast whose ACTION button is a convenience, so it keeps the 12s timeout. Sticky is for
+ *  an action offered nowhere else; failure-notice.ts's jump target is one click away anyway. */
 export function errorWithAction(message: string, action: ToastRetry): () => void {
-  return toast.show(message, { level: "error", duration: ERROR_DURATION_MS, retry: action });
+  return track(null, () =>
+    toast.show(message, { level: "error", duration: ERROR_DURATION_MS, retry: action }),
+  );
+}
+
+/** Show a notice at its own level: info blue, warning amber, error red, success
+ *  green. An `action` keeps it up as long as an error, because its button is the
+ *  point. */
+export function notice(
+  message: string,
+  level: NoticeLevel | "success",
+  action?: ToastRetry,
+): () => void {
+  if (level === "error") {
+    return action === undefined ? error(message) : errorWithAction(message, action);
+  }
+  const long = level === "warning" || action !== undefined;
+  return track(level === "success" ? null : NOTICE_CLASS[level], () =>
+    toast.show(message, {
+      level: level === "success" ? "success" : "info",
+      ...(long ? { duration: ERROR_DURATION_MS } : {}),
+      ...(action !== undefined ? { retry: action } : {}),
+    }),
+  );
 }
 
 /** Show a toast with explicit level + duration. Use durationMs=0 for a sticky
@@ -103,13 +155,14 @@ export function showToast(
   durationMs?: number,
 ): () => void {
   if (durationMs !== undefined) {
-    return toast.show(message, { level, duration: durationMs });
+    return track(null, () => toast.show(message, { level, duration: durationMs }));
   }
-  return level === "error" ? error(message) : toast.show(message, { level });
+  return level === "error" ? error(message) : track(null, () => toast.show(message, { level }));
 }
 
 /** Test-only: clear all visible + queued toasts and remove the stack. */
 export function _resetForTest(): void {
   sticky.length = 0;
+  owed.length = 0;
   uipResetToast();
 }

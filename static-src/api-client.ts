@@ -14,10 +14,9 @@ export { API_TIMEOUT_MS, withTimeout } from "@cplieger/fetch";
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
 
-// No baseUrl and no prepareHeaders: every path is absolute same-origin and the
-// client sends no CSRF token, because the server enforces an Origin check
-// instead (internal/server/security.go). An ISOLATED instance, so nothing else
-// can mutate marotte's fetch layer through the module-global default.
+// No baseUrl or prepareHeaders: paths are same-origin and the server checks Origin instead
+// of a CSRF token (internal/server/security.go). An ISOLATED instance, so nothing else can
+// mutate the module-global default.
 const fx = createFetch({ credentials: "same-origin" });
 
 /** Build fetch RequestOptions, attaching `signal` only when defined —
@@ -65,11 +64,11 @@ export interface HeaderedGet<T> {
   headers: Headers | null;
 }
 
-/** GET `path` and hand back the parsed body WITH the response headers, for a
- *  caller whose contract lives in a header rather than in the body. The steering
- *  document's `ETag` validator is the one consumer: it is what the save's
- *  `If-Match` carries, so the read has to see it. `data` is null on any failure,
- *  logged like `apiGet`'s. */
+/**
+ * GET `path` and return the parsed body WITH the response headers, for a contract carried
+ * in a header (the steering document's `ETag`, which the save's `If-Match` sends). `data`
+ * is null on any failure, logged like `apiGet`'s.
+ */
 export async function apiGetWithHeaders<T>(
   path: string,
   signal?: AbortSignal,
@@ -115,10 +114,10 @@ interface ApiResult<T> {
   body?: unknown;
 }
 
-/** The ONE mapping onto `ApiResult`, shared by the three OrError helpers below;
- *  each still owns its verb, its decoder and whether it logs. `data` is dropped
- *  on the failure side — a caller handed a status has no business reading a body
- *  the transport rejected. */
+/**
+ * The ONE mapping onto `ApiResult`, shared by the three OrError helpers. `data` is dropped
+ * on failure: a body the transport rejected is not for reading.
+ */
 function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
   if (r.ok) {
     return { ok: true, status: r.status, data: r.data ?? null, error: "" };
@@ -126,10 +125,10 @@ function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
   return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
 }
 
-/** GET `path` and validate it with `decoder`; null on non-2xx, network error or
- *  decoder failure. `timeoutMs` overrides the 30s default, because a server
- *  budget LONGER than the client's is unreachable and a caller's
- *  `AbortSignal.timeout()` cannot substitute — signals compose, shorter wins. */
+/**
+ * GET `path` and validate it with `decoder`; null on non-2xx, network error or decoder
+ * failure. `timeoutMs` overrides the 30s default: a signal cannot extend it (shorter wins).
+ */
 export async function apiGetTyped<T>(
   path: string,
   decoder: Decoder<T>,
@@ -140,12 +139,11 @@ export async function apiGetTyped<T>(
   return collapse(await fx.apiGetRaw<T>(path, reqOpts(base, signal)), "GET", path);
 }
 
-/** `apiGetTyped`'s OrError twin, for a caller that has to tell an ANSWER from the
- *  absence of one: a 404 licenses a terminal claim where a 5xx, a dead network and
- *  an abort license nothing, and the collapsing form answers null for all four.
- *  A rejected decoder lands on the failure side carrying the real 2xx status, so
- *  a caller keying on 404 cannot mistake an undecodable 200 for one. Logs
- *  nothing: an expected status is not a fault. */
+/**
+ * `apiGetTyped`'s OrError twin, for a caller that must tell an ANSWER (a 404) from no
+ * answer (5xx, network, abort). A rejected decoder lands on the failure side with the real
+ * 2xx status. Logs nothing: an expected status is not a fault.
+ */
 export async function apiGetTypedOrError<T>(
   path: string,
   decoder: Decoder<T>,
@@ -163,10 +161,10 @@ export interface ConditionalGet<T> {
   etag: string;
 }
 
-/** GET `path` with `If-None-Match: etag` (omitted when `etag` is ""), decoding a
- *  2xx body with `decoder`. The spec page's poll is the consumer: a 304 keeps its
- *  last reply and a 404 is the directory's own answer, so neither is logged; a
- *  decoder rejection and every other failure log like `apiGetTyped`'s. */
+/**
+ * GET `path` with `If-None-Match: etag` (omitted when ""), decoding a 2xx body. A 304 and
+ * a 404 are not logged; every other failure is, like `apiGetTyped`'s.
+ */
 export async function apiGetConditional<T>(
   path: string,
   etag: string,
@@ -197,11 +195,10 @@ export async function apiPostTyped<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
 }
 
-/** PUT variant that surfaces error details. Use when the UI must show the
- *  server's validation message; otherwise prefer apiAction. `error` falls back
- *  to "HTTP <status>" when the body carried none. The one of the three that
- *  LOGS: a PUT is a mutation, so a failure is a fault, where the other two exist
- *  because their non-2xx statuses are expected. */
+/**
+ * PUT variant that surfaces error details, for showing the server's validation message.
+ * `error` falls back to "HTTP <status>". The one that LOGS: a failed mutation is a fault.
+ */
 export async function apiPutOrError<T>(
   path: string,
   body: unknown,

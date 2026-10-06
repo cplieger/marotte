@@ -1,21 +1,12 @@
-// ---------------------------------------------------------------------------
-// An entry the server appended MID-TURN, as the transcript renders it.
-//
-// The rewrite's founding defect (design 9, item 1): a plan, a compaction failure or a
-// steer that landed while the reply was streaming used to be hoisted out of the array it
-// interrupted and relocated on reload. Under the log an entry's position is its `seq`, on
-// the live path and on the reload path alike, so the two orders below are the SAME order
-// by construction — and this file drives the real renderer through the real store, because
-// reasoning about the dispatcher is what a test replaces.
-// ---------------------------------------------------------------------------
+// An entry appended mid-turn renders at its `seq` on the live and reload paths alike, so both orders are the same
+// order; the real renderer runs through the real store.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry, OpenEntry } from "./wire/types.gen.js";
 
-// The renderer's import graph reaches the shared DOM registry, which throws on a
-// missing app root, so these ids exist before the import is evaluated.
+// The import graph reaches the DOM registry, which throws on a missing app root.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -70,9 +61,10 @@ function open(id: string, text: string): OpenEntry {
   return { turn: TURN, id, kind: "text", text, n: 1 };
 }
 
-/** The body's rendered rows in DOM order, each named by the entry it is stamped for.
- *  A prose run is stamped for its FIRST entry and carries the rest in `data-entries`;
- *  an OPEN run has no seq yet and reads as `open`. */
+/**
+ * The body's rows in DOM order, named by entry. A prose run is stamped for its first entry (rest in
+ * `data-entries`); an open run reads as `open`.
+ */
 function bodyRows(): string[] {
   const body = viewRoot().querySelector<HTMLElement>(".turn > .turn-body");
   expect(body).not.toBeNull();
@@ -101,9 +93,10 @@ async function streamingChat(chatID: string): Promise<void> {
   });
 }
 
-/** The server's shape for a mid-turn append: the open say is SEALED first (KAS flushes it
- *  before every frame that is not text), the interrupting entry takes the next seq, and the
- *  reply continues as a NEW open entry. */
+/**
+ * The mid-turn append shape: KAS seals the open say before any non-text frame, the entry takes the next seq, and
+ * the reply continues as a new open entry.
+ */
 function interrupt(chatID: string, e: Entry): void {
   store.sealEntry(chatID, TURN, "say-1", "", 1, 2, 1);
   store.appendEntry(chatID, { ...e, seq: 2 });
@@ -144,8 +137,7 @@ const FAILED: Entry = sealed(2, "compaction_failed", {
   reason: "the context could not be summarised",
 });
 const COMPACTED: Entry = sealed(2, "compaction", { summary: "the summary" });
-// The population the task file names as this suite's charter, and the one a plan cannot
-// stand in for: a steer renders through `mountSteerNote`, whose placement is its own path.
+// A steer renders through `mountSteerNote`, whose placement is its own path, so a plan cannot stand in for it.
 const STEER: Entry = sealed(2, "steer", {
   text: "actually, use the other file",
   origin: "user",
@@ -161,11 +153,10 @@ describe("an entry appended mid-turn renders at its own seq", () => {
     await vi.waitFor(() => {
       expect(bodyRows()).toEqual(["say-1", "e-2", "open"]);
     });
-    // ONE card: a plan opens no turn, only a `turn_open` does.
+    // One card: only a `turn_open` opens a turn.
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
     expect(viewRoot().querySelector(".plan-message")).not.toBeNull();
-    // Exactly one caret, on the entry still being written into — never on the sealed
-    // prose above the plan, which is a different run now that an entry rendered between.
+    // One caret, on the entry being written; the prose above the plan is a separate run now.
     expect([...new Set(streamingRows())]).toEqual(["open"]);
   });
 
@@ -178,10 +169,7 @@ describe("an entry appended mid-turn renders at its own seq", () => {
       expect(bodyRows()).toEqual(["say-1", "e-2", "open"]);
     });
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
-    // The row is named by the BOUNDARY vocabulary (`switched` / `compacted` / `failed` /
-    // `blocked`), never by the entry kind — and the LABEL is asserted beside the class,
-    // because a class alone cannot tell this row from a turn that ended badly, which is
-    // the one thing `messages-events.ts` says this row must not repeat.
+    // The label is asserted beside the class: a class alone cannot tell this row from a turn that ended badly.
     const row = viewRoot().querySelector<HTMLElement>(".boundary.boundary-failed");
     expect(row).not.toBeNull();
     expect(row?.querySelector(".boundary-label")?.textContent).toBe(
@@ -198,8 +186,7 @@ describe("an entry appended mid-turn renders at its own seq", () => {
       expect(bodyRows()).toEqual(["say-1", "e-2", "open"]);
     });
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
-    // A compaction carrying a summary is the disclosing row rather than a bare boundary,
-    // and its LABEL is asserted beside the class for the reason case 2 states.
+    // A compaction with a summary is the disclosing row; the label is asserted for the reason above.
     const row = viewRoot().querySelector<HTMLElement>("details.compaction");
     expect(row).not.toBeNull();
     expect(row?.querySelector(".compaction-label")?.textContent).toBe("Conversation compacted");
@@ -207,11 +194,7 @@ describe("an entry appended mid-turn renders at its own seq", () => {
   });
 
   it("puts a mid-turn steer between the prose it split, and reloads it there", async () => {
-    // THE FOUNDING DEFECT'S OWN POPULATION. The deleted `messages-steer-note.test.ts` held
-    // one positional oracle ("the note renders at the position the steer landed in") and it
-    // was retired on this file carrying it, so this case is that oracle. It drives BOTH
-    // paths in one test on purpose: the claim is that the two orders are the same order,
-    // which no single-path assertion can make.
+    // Both paths in one test: the claim is that the two orders are the same order.
     const chat = "mto-steer";
     await streamingChat(chat);
     interrupt(chat, STEER);
@@ -220,8 +203,7 @@ describe("an entry appended mid-turn renders at its own seq", () => {
       expect(bodyRows()).toEqual(["say-1", "e-2", "open"]);
     });
     expect(viewRoot().querySelectorAll(".turn").length).toBe(1);
-    // A steer opens no turn either: only a `turn_open` does, which is why a mid-turn
-    // correction can no longer be hoisted out of the reply it interrupted.
+    // A steer opens no turn either, so a mid-turn correction cannot be hoisted out of the reply.
     const note = viewRoot().querySelector<HTMLElement>(".turn-body > .steer-note");
     expect(note).not.toBeNull();
     expect(note?.dataset["state"]).toBe("read");

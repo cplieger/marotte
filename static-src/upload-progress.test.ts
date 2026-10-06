@@ -1,19 +1,7 @@
-// `uploadFiles`'s progress reporting: what the native <progress> is told, and
-// what the container is no longer told.
-//
-// TWO THINGS THIS PINS THAT NOTHING ELSE DOES. The ARIA fix: the container used to
-// carry `role="progressbar"` plus every `aria-*`, and per ARIA a progressbar's
-// children are presentational — so the Cancel button sitting inside it was
-// flattened out of the accessibility tree and the only way to stop an upload was
-// unreachable. And the three-state value path: determinate assigns a value,
-// indeterminate REMOVES the attribute (the native indeterminate rendering, which
-// `progress-bar-css.test.ts` states as its premise), and a later determinate tick
-// puts one back.
-//
-// `upload.ts` is excluded from the coverage config because its shell is an XHR
-// against a real server; that is about the NUMBER, not about testability. A fake
-// XMLHttpRequest reaches every branch below, and these assertions would go red on
-// a revert of either half.
+// `uploadFiles`'s progress reporting. The container carries NO `role="progressbar"` (its children
+// would be presentational, hiding Cancel), and the native <progress>'s value path has three states:
+// determinate sets a value, indeterminate REMOVES it, a later tick restores it. `upload.ts` is
+// excluded from coverage for its XHR shell; a fake XMLHttpRequest reaches every branch here.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
@@ -202,8 +190,7 @@ describe("the progress path", () => {
     expect(bar.hasAttribute("value")).toBe(true);
 
     xhr.progress(60, 0, false);
-    // Not "value 0": a valueless <progress> is the native indeterminate
-    // rendering, which is what the removed `aria-valuenow` used to mean.
+    // Not "value 0": a valueless <progress> is the native indeterminate rendering.
     expect(bar.hasAttribute("value")).toBe(false);
     expect(bar.position).toBe(-1);
     expect(label.textContent).toBe("Uploading...");

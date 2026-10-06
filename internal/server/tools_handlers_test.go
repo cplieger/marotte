@@ -12,10 +12,8 @@ import (
 	"github.com/cplieger/toolbelt/v3"
 )
 
-// TestHandleToolReconcile_RefusesWithNoEngine pins the guard rather than the
-// happy path: with no engine wired the handler would otherwise nil-dereference
-// on the first request, and /api/tools/reconcile is registered unconditionally
-// while the toolbelt projection beside it is not.
+// TestHandleToolReconcile_RefusesWithNoEngine pins the no-engine guard: the route is
+// registered unconditionally.
 func TestHandleToolReconcile_RefusesWithNoEngine(t *testing.T) {
 	s := &Server{}
 	req := httptest.NewRequest(http.MethodPost, "/api/tools/reconcile", http.NoBody)
@@ -79,10 +77,8 @@ func TestHandleToolReconcile_EnqueuesOverARealEngine(t *testing.T) {
 	}
 }
 
-// The 400 arm, pinned on the STATUS and on the body carrying a cause rather
-// than on the upstream error text, so a toolbelt bump cannot redden it for no
-// defect. The manifest is broken AFTER New(): it is re-read per operation, so
-// the engine constructs fine and only Reconcile refuses.
+// TestHandleToolReconcile_RefusesABrokenManifestWithItsCause pins the 400 STATUS and a cause.
+// The manifest is broken after New(): it is re-read per operation.
 func TestHandleToolReconcile_RefusesABrokenManifestWithItsCause(t *testing.T) {
 	e, dir := reconcileEngine(t)
 	if err := os.WriteFile(filepath.Join(dir, "tools.json"), []byte("{"), 0o600); err != nil {

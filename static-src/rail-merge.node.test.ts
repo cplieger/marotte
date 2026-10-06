@@ -1,11 +1,9 @@
-// THE MERGE, and the two things that make it more than a concatenation: it keys on
-// `n` rather than on id, because the appender assigns `n` at open and stores it, so a
-// paginated window and the session-wide index name a turn by the same number; and it
-// validates a payload that arrives through an unchecked cast, because a non-finite `n`
-// reaches `calc(NaN * …)` — an invalid declaration the browser drops, so the failure is
-// a marker silently pinned to the top rather than a wrong one.
-//
-// Node environment: no DOM is reached.
+// THE MERGE, and the two things that make it more than a concatenation: it keys on `n` rather than
+// on id, because the appender assigns `n` at open and stores it, so a paginated window and the
+// session-wide index name a turn by the same number; and it validates a payload that arrives
+// through an unchecked cast, because a non-finite `n` reaches `calc(NaN * …)` — an invalid
+// declaration the browser drops, so the failure is a marker silently pinned to the top rather than
+// a wrong one.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -79,8 +77,8 @@ describe("resident wins for anything it can answer", () => {
   it("reports a turn with no trigger as agent-initiated and unlabelled", () => {
     const { turns } = mergeTurnSets([residentTurn(4, { trigger: undefined })], []);
     expect(turns[0]?.agent_initiated).toBe(true);
-    // ABSENT rather than "": the field is `omitempty` on the wire, so an
-    // agent-initiated turn carries no label there either and every reader defaults.
+    // ABSENT rather than "": the field is `omitempty` on the wire, so an agent-initiated turn
+    // carries no label there either and every reader defaults.
     expect(turns[0]?.first_line).toBeUndefined();
   });
 
@@ -127,8 +125,8 @@ describe("the index extends the set backwards", () => {
 
 describe("the merge keys on n, never on id", () => {
   it("counts one turn once when the two sides name it differently", () => {
-    // The index holds the turn's own id; a resident row can carry a different one
-    // (a turn re-keyed by a merge swap), and the position is what the rail renders.
+    // The index holds the turn's own id; a resident row can carry a different one (a turn re-keyed
+    // by a merge swap), and the position is what the rail renders.
     const index = [indexRow(7), indexRow(8, { id: "t-8-index" })];
     const resident = [residentTurn(8, { id: "t-8-resident" })];
     const { turns } = mergeTurnSets(resident, index);
@@ -138,8 +136,8 @@ describe("the merge keys on n, never on id", () => {
 });
 
 describe("validating the index", () => {
-  // A malformed index warns once per fetch, so every case here silences it and the
-  // one case about the warn reads the spy.
+  // A malformed index warns once per fetch, so every case here silences it and the one case about
+  // the warn reads the spy.
   let warn: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -189,8 +187,8 @@ describe("validating the index", () => {
     ]);
     expect(turns.map((t) => t.id)).toEqual(["a", "b", "c"]);
     expect(dropped).toBe(0);
-    // A plausible start time rather than the epoch: `ts` is the wire's field and
-    // answering for a malformed one is the validator's job.
+    // A plausible start time rather than the epoch: `ts` is the wire's field and answering for a
+    // malformed one is the validator's job.
     expect(turns[1]?.ts).toBe(1000);
   });
 
@@ -208,8 +206,8 @@ describe("validating the index", () => {
       { id: "b", n: 2, ts: 2, outcome: 7 },
       { id: "c", n: 3, ts: 3 },
       { id: "d", n: 4, ts: 4, outcome: "refused" },
-      // An inherited member name is not a member. `Object.hasOwn` is what makes
-      // this a miss rather than the prototype's answer.
+      // An inherited member name is not a member. `Object.hasOwn` is what makes this a miss rather
+      // than the prototype's answer.
       { id: "e", n: 5, ts: 5, outcome: "constructor" },
       // The kind a turn takes when the reader asked for nothing that failed.
       { id: "f", n: 6, ts: 6, outcome: "empty" },

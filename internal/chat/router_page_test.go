@@ -10,8 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chatPage is the transcript GET as the CLIENT decodes it, spelled by hand so a renamed
-// json tag fails here instead of passing an assertion against itself.
+// chatPage is the transcript GET as the client decodes it, spelled by hand so a renamed json tag fails here.
 type chatPage struct {
 	Chat        map[string]any         `json:"chat"`
 	Entries     []marotte.Entry        `json:"entries"`
@@ -33,7 +32,7 @@ func pageStore(t *testing.T, live bool, tails []OpenTurnTail) *Store {
 	return s
 }
 
-// openPromptTurn opens one prompt-class turn and answers its id.
+// openPromptTurn opens one prompt-class turn and returns its id.
 func openPromptTurn(t *testing.T, s *Store, id marotte.ChatID, promptID string) string {
 	t.Helper()
 	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
@@ -69,14 +68,13 @@ func getPage(t *testing.T, s *Store, id marotte.ChatID, query string) chatPage {
 	return page
 }
 
-// seedMidTurn leaves the record a turn in flight leaves on disk: a header and one
-// turn_open with nothing after it.
+// seedMidTurn leaves what an in-flight turn leaves on disk: a header and one turn_open.
 func seedMidTurn(t *testing.T, s *Store, id marotte.ChatID) {
 	t.Helper()
 	openPromptTurn(t, s, id, "m-"+string(id))
 }
 
-// getChat drives the transcript GET and answers the raw envelope.
+// getChat drives the transcript GET and returns the raw envelope.
 func getChat(t *testing.T, s *Store, id marotte.ChatID) map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
@@ -92,7 +90,7 @@ func getChat(t *testing.T, s *Store, id marotte.ChatID) map[string]any {
 	return envelope
 }
 
-// chatStampOf is the page's `chat` stamp: the subject is a LIST, the chat stamp first.
+// chatStampOf returns the page's `chat` stamp; the subject is a list with the chat stamp first.
 func chatStampOf(t *testing.T, envelope map[string]any) any {
 	t.Helper()
 	stamps, ok := envelope["subject"].([]any)
@@ -110,8 +108,7 @@ func stampKinds(stamps []marotte.SubjectStamp) []string {
 	return out
 }
 
-// `live` is the registry's answer, never the log's: a turn open on disk under a dead
-// process reads false, and a turn the registry holds reads true whatever the log says.
+// `live` is the registry's answer: an open turn on disk under a dead process is false, a registry-held turn true.
 func TestChatGet_LiveIsTheRegistrysAnswer(t *testing.T) {
 	for _, live := range []bool{true, false} {
 		s := pageStore(t, live, nil)
@@ -122,8 +119,7 @@ func TestChatGet_LiveIsTheRegistrysAnswer(t *testing.T) {
 	}
 }
 
-// With no registry injected nothing is live: a store serving a chat the process holds no
-// turn for must not read an open turn_open as a live turn.
+// With no registry nothing is live, whatever turn_open the log holds.
 func TestChatGet_LiveIsFalseWithNoRegistryInjected(t *testing.T) {
 	s, _ := newTestStore(t)
 	openPromptTurn(t, s, "c1", "m-1")
@@ -136,9 +132,8 @@ func TestChatGet_LiveIsFalseWithNoRegistryInjected(t *testing.T) {
 	}
 }
 
-// The newest page carries every open tail of a turn in the window and one live_turn
-// stamp per open turn beside the chat stamp, so a reader can tell exactly what the page
-// certifies; a tail for a turn outside the window is not served.
+// The newest page carries every open tail of a turn in the window and one live_turn stamp per open turn beside the
+// chat stamp; tails outside the window are not served.
 func TestChatGet_CarriesOpenTailsAndOneLiveTurnStampPerOpenTurn(t *testing.T) {
 	var tails []OpenTurnTail
 	s := pageStore(t, true, nil)
@@ -161,8 +156,7 @@ func TestChatGet_CarriesOpenTailsAndOneLiveTurnStampPerOpenTurn(t *testing.T) {
 	}
 }
 
-// An older page carries the chat stamp alone and no open tail: no open turn is in an
-// older page, and a client paging back must not adopt a live_turn stamp it cannot refresh.
+// An older page carries the chat stamp alone, with no tail or live_turn stamp the client could not refresh.
 func TestChatGet_OlderPageCarriesTheChatStampAlone(t *testing.T) {
 	var tails []OpenTurnTail
 	s := pageStore(t, true, nil)
@@ -184,7 +178,7 @@ func TestChatGet_OlderPageCarriesTheChatStampAlone(t *testing.T) {
 	}
 }
 
-// railRows drives GET /api/chats/{id}/turns and answers the rows as decoded.
+// railRows drives GET /api/chats/{id}/turns and returns the decoded rows.
 func railRows(t *testing.T, s *Store, id marotte.ChatID) []marotte.TurnSummary {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns", nil)
@@ -202,8 +196,7 @@ func railRows(t *testing.T, s *Store, id marotte.ChatID) []marotte.TurnSummary {
 	return envelope.Turns
 }
 
-// A rail row's outcome is WRITTEN: `running` exactly while the turn has no turn_close,
-// and the close's own outcome once one is appended. Nothing derives it from the body.
+// A rail row's outcome is written: `running` until the turn_close, then the close's outcome.
 func TestTurnsIndex_OutcomeIsRunningUntilTheCloseIsWritten(t *testing.T) {
 	s, _ := newTestStore(t)
 	turn := openPromptTurn(t, s, "c1", "m-1")
@@ -219,7 +212,7 @@ func TestTurnsIndex_OutcomeIsRunningUntilTheCloseIsWritten(t *testing.T) {
 	}
 }
 
-// turnsOfPage is each page entry as "<turn>:<kind>", the shape the paging rules are about.
+// turnsOfPage renders each page entry as "<turn>:<kind>".
 func turnsOfPage(entries []marotte.Entry) string {
 	out := make([]string, 0, len(entries))
 	for i := range entries {
@@ -228,8 +221,7 @@ func turnsOfPage(entries []marotte.Entry) string {
 	return strings.Join(out, " ")
 }
 
-// fourClosedTurns seeds four prompt turns, each a turn_open, one text entry and a
-// close, and answers their ids in order.
+// fourClosedTurns seeds four closed prompt turns with one text entry each and returns their ids in order.
 func fourClosedTurns(t *testing.T, s *Store, id marotte.ChatID) []string {
 	t.Helper()
 	turns := make([]string, 0, 4)
@@ -245,9 +237,8 @@ func fourClosedTurns(t *testing.T, s *Store, id marotte.ChatID) []string {
 	return turns
 }
 
-// The page is N WHOLE turns, newest first by n, never split: `?limit=` counts turns,
-// `has_more` says an older turn exists past the edge, and `?before=<turn_id>` pages
-// older with every entry of each turn in file order.
+// A page is N whole turns, newest by n: `?limit=` counts turns, `has_more` flags an older one, `?before=<turn_id>`
+// pages older with each turn's entries in file order.
 func TestChatGet_PagesWholeTurnsByLimitAndBefore(t *testing.T) {
 	s, _ := newTestStore(t)
 	turns := fourClosedTurns(t, s, "c1")
@@ -277,8 +268,7 @@ func TestChatGet_PagesWholeTurnsByLimitAndBefore(t *testing.T) {
 	}
 }
 
-// A `before` cursor naming a turn this log does not hold is the caller's error
-// (a rewind can produce one under a reader mid-scroll), as is one that is not an id.
+// A `before` naming a turn this log lacks (a rewind can cause it) or not an id is the caller's error.
 func TestChatGet_ABadBeforeCursorIs400(t *testing.T) {
 	s, _ := newTestStore(t)
 	fourClosedTurns(t, s, "c1")
@@ -292,8 +282,7 @@ func TestChatGet_ABadBeforeCursorIs400(t *testing.T) {
 	}
 }
 
-// The generated decoder rejects `null` for an array, so a chat with a header and no
-// log answers `"entries":[]`.
+// The generated decoder rejects `null`, so a header with no log answers `"entries":[]`.
 func TestChatGet_EmptyPageIsAnArrayNotNull(t *testing.T) {
 	s, _ := newTestStore(t)
 	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -313,8 +302,7 @@ func TestChatGet_EmptyPageIsAnArrayNotNull(t *testing.T) {
 	}
 }
 
-// A turn nothing prompted (a wire turn_start with no prompt on its turn_open) is a
-// turn like any other: served whole on its page and counted by `?limit=`.
+// A promptless turn (a wire turn_start) is served whole and counted by `?limit=`.
 func TestChatGet_APromptlessTurnIsServedWhole(t *testing.T) {
 	s, _ := newTestStore(t)
 	first := openPromptTurn(t, s, "c1", "m-1")
@@ -341,9 +329,7 @@ func TestChatGet_APromptlessTurnIsServedWhole(t *testing.T) {
 	}
 }
 
-// `?limit=` is a count of TURNS honoured over 1..200 inclusive; anything else
-// falls back to the default rather than clamping, so a caller asking for the
-// unserveable cannot keep believing the number it sent.
+// `?limit=` counts turns over 1..200; anything else takes the default rather than clamping.
 func TestParseLimitParam_HonoursTheInclusiveRange(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -1,11 +1,6 @@
-// Tests for handlers/system.ts: the `connected` handshake and its two-directional thinking
-// reconcile, the BUS_RECONCILE body, the two connect-hook snapshots, the page resume and
-// mode_changed.
-//
-// Drives the REAL store. LIVENESS IS THE LOG, so a case needing a running turn opens one
-// and a case needing a settled chat carries the header's own `last_turn_outcome`; there are
-// no `turn_done` / `turn_failed` latches and no live-turn marker. store-load.ts and tabs.ts
-// stay mocked, so the reload and dispatcher assertions verify the command at that boundary.
+// The `connected` handshake and its thinking reconcile, the BUS_RECONCILE body, the connect-hook
+// snapshots, page resume and mode_changed. The REAL store: liveness is the LOG, so a running turn
+// is opened and a settled chat carries `last_turn_outcome`. store-load.ts and tabs.ts stay mocked.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import {
@@ -49,10 +44,7 @@ const mockHasTab = vi.fn(() => true);
 // owns is that the gap and the resume reach it, once, and after the epoch bump.
 const mockRefreshActiveView = vi.fn();
 vi.mock("../tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Undefined: present only so real-ESM linking succeeds.
   activateTab: undefined,
   // navigate.js's `openSpec` (the spec tab's door) imports these three beside
   // `activateTab` and the `tabIdFor` below, and Browser Mode links for real, so
@@ -71,10 +63,7 @@ vi.mock("../tabs.js", () => ({
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   refreshActiveView: mockRefreshActiveView,
-  // Reached through turn-teardown.ts, which the gap handler shares with the
-  // turn_closed door. No-ops rather than present-but-undefined: the gap handler
-  // CALLS both once per session, so undefined would throw rather than link.
-  // tabIdFor answers "" (the no-tab answer), the mock rule's empty value.
+  // No-ops, not undefined: the gap handler (via turn-teardown.ts) CALLS both once per session.
   tabIdFor: vi.fn(() => ""),
   setTabStatus: vi.fn(),
 }));
@@ -89,10 +78,7 @@ vi.mock("../settings.js", () => ({
   applyGeneralPanel: vi.fn(),
 }));
 vi.mock("../session-context.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Undefined: present only so real-ESM linking succeeds.
   setLastModel: undefined,
   restoreLastModel: vi.fn(),
   restoreLastEffort: vi.fn(),
@@ -104,20 +90,14 @@ vi.mock("../status.js", () => ({
 }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 
-// The mode/model catalog re-read. Mocked because the real one is a network fetch
-// that seeds four controls, and because a call count is the whole assertion: the
-// catalog is announced on no frame, so a gap is the only signal this client gets
-// that a `config_option_update` or a server restart happened during the outage.
+// A call count is the assertion: the catalog rides no frame, so a gap is the only signal that it
+// may have changed during the outage.
 const mockFetchCatalog = vi.fn(() => Promise.resolve());
 vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
 
-// The live-runs inventory rebuild. A PARTIAL mock, because the two doors want opposite
-// things: the gap door's two run readers stay spies (what this file owns there is the token
-// they share, and both are network reads), while `adoptConnectRuns` is the REAL function,
-// because what the connect door owns IS the state it seeds — a spy could only say the
-// handler called something, which is the shape that let this door ship with no test at all.
-// Both spies go through `vi.hoisted` for the api-client pair's reason below: run-store is
-// imported STATICALLY here, so the mocker resolves this factory during linking.
+// PARTIAL: the gap door's two run readers are spies (they share a token and both fetch), while
+// `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
+// for the api-client pair's reason below.
 const { mockInvalidateCachedRuns, mockRebuildLiveRuns } = vi.hoisted(() => ({
   mockInvalidateCachedRuns: vi.fn(),
   mockRebuildLiveRuns: vi.fn(),
@@ -128,14 +108,8 @@ vi.mock("../run-store.js", async (importOriginal) => ({
   invalidateCachedRuns: mockInvalidateCachedRuns,
 }));
 
-// The two fetchers run-store reaches, replaced so a per-run read is OBSERVABLE: the
-// connect adoption's promise is that it issues none, and the withheld-inventory fallback's
-// is that it issues exactly one. Spread the real surface, so every other consumer keeps
-// the module it had.
-//
-// Through `vi.hoisted` because `../run-store.js` is statically imported above and imports
-// api-client, so the mocker resolves this factory during linking — above this file's own
-// top-level initializers, where a plain `const` is still in its temporal dead zone.
+// Replaced so a per-run read is OBSERVABLE (the connect adoption issues none, the fallback one).
+// `vi.hoisted`: the static run-store import resolves this factory during linking, before plain consts.
 const { mockApiGet, mockApiGetTyped } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
   mockApiGetTyped: vi.fn(),
@@ -159,10 +133,8 @@ vi.mock("../turn-rail.js", () => ({
   resetTurnRail: undefined,
 }));
 
-// Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
-// both transport:reconcile and mode_changed. `decodeEnvelope` and `dispatch` are the
-// REAL ones: the pending_snapshot handler's whole job is to push each item through
-// that door, and a stub there would assert only that the handler called something.
+// `decodeEnvelope` and `dispatch` are REAL: pending_snapshot's job is pushing each item through
+// that door.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 import type * as Bus from "../bus.js";
 const busHandlers = new Map<string, (...args: unknown[]) => void>();
@@ -170,10 +142,7 @@ const dispatched: unknown[] = [];
 vi.mock("../bus.js", async (importOriginal) => {
   const real = await importOriginal<typeof Bus>();
   return createBusMock({
-    // Present-but-undefined so real-ESM linking succeeds: another module in this
-    // graph imports the name, and Browser Mode links for real rather than reading
-    // properties off a namespace object. `undefined` is what the node runner gave
-    // these, so no path under test changes behavior.
+    // Undefined: present only so real-ESM linking succeeds.
     emitBus: undefined,
     lookupSSEDecoder: real.lookupSSEDecoder,
     registerSSEDecoder: real.registerSSEDecoder,
@@ -265,10 +234,8 @@ beforeEach(() => {
   resetVersions();
 });
 
-// The handshake is the only channel that states where the workspace is, and every
-// relative agent path needs it to become openable (workspace.ts). It is recorded
-// HERE rather than in transport.ts, whose own handshake hook returns early on the
-// first connection of a page load — the connection that matters.
+// The handshake alone states the workspace root (workspace.ts needs it for relative paths);
+// recorded here because transport.ts's hook skips a page's first connection.
 describe("connected handshake", () => {
   it("records the workspace root", () => {
     expect.assertions(1);
@@ -298,13 +265,9 @@ describe("connected handshake", () => {
   });
 });
 
-// The handshake's two NEGATIVE statements, neither of which any other frame carries.
-// `busy_chats` is the only thing that ever says a chat this client believes is working is
-// not: a turn that died with the previous process emits no terminal frame, so nothing else
-// retracts that `thinking`. Both are
-// guarded by their own STATED flag rather than by the list being non-empty, because a
-// scoped, capped or withheld list is indistinguishable from a complete one — and read as
-// complete, the first clears a live turn and the second drops live runs.
+// The handshake's two NEGATIVE statements: `busy_chats` alone retracts the `thinking` of a turn
+// that died with the previous process. Each is guarded by its STATED flag, since a scoped, capped
+// or withheld list looks complete.
 
 /** A handshake stating both halves. The two flags default TRUE here, which is the
  *  opposite of the wire default, so each case names the withholding it is about. */
@@ -328,10 +291,8 @@ describe("the connect handshake retracts a thinking the server does not confirm"
   });
 
   it("retracts nothing when the set is not STATED, and still adopts the runs", () => {
-    // A topic-filtered or over-cap connect states nothing about the chats it omits, so the
-    // flag bounds the blast radius rather than making a clear over a live turn merely
-    // unlikely. The runs are OUTSIDE that gate on purpose: the inventory is
-    // workspace-global, carries its own flag, and an early return must not swallow it.
+    // A filtered or over-cap connect says nothing about omitted chats. The runs are OUTSIDE that gate:
+    // the inventory is workspace-global with its own flag.
     setSessions([makeSession("a", { thinking: true })]);
     fireConnected({
       busy_stated: false,
@@ -346,11 +307,8 @@ describe("the connect handshake retracts a thinking the server does not confirm"
   });
 
   it("touches the retracted chat's own log not at all", () => {
-    // The retraction is NARROW. `busy_chats` deliberately
-    // omits a chat whose only open turn is a workflow STEP, so a chat reached here may
-    // still be streaming — and the reply is entries in the log now rather than a marker,
-    // so the retraction has to leave the window alone. It clears this client's `thinking`
-    // and writes no entry, closes no turn and drops no window.
+    // NARROW: `busy_chats` omits a chat whose only open turn is a workflow STEP, so this clears
+    // `thinking` only: no entry, no closed turn, no dropped window.
     setSessions([makeSession("a", { thinking: true })]);
     openTurnOn("a");
     fireConnected({ busy_chats: [] });
@@ -371,11 +329,8 @@ describe("the connect handshake adopts a thinking the server DOES confirm", () =
   });
 
   it("drops the stale liveness statement of the chat it adopts", () => {
-    // The dot's verdict has ONE source —
-    // the header's `last_turn_outcome`, which this handler never writes — so what the adopt
-    // arm has to clear is the SERVER's previous liveness statement: a `turn_open: false`
-    // from a GET taken before this turn started, which `turnLive` reads as settled and
-    // which would therefore outlive the handshake that contradicts it.
+    // The dot's verdict is the header's `last_turn_outcome`, never written here, so the adopt arm
+    // clears the server's stale `turn_open: false`, which `turnLive` would read as settled.
     setSessions([makeSession("a", { turn_open: false, last_turn_outcome: "completed" })]);
     fireConnected({ busy_chats: ["a"] });
     expect(get("a")?.thinking).toBe(true);
@@ -383,11 +338,8 @@ describe("the connect handshake adopts a thinking the server DOES confirm", () =
   });
 
   it("reaches the composer, and leaves the dot to the log", () => {
-    // NEW, and MEASURED rather than assumed — recorded as an observation for the 4c run.
-    // `thinking` is not an input to `turnLive`, so an adopted chat whose window is not
-    // resident keeps whatever the header's own outcome grades to; the dot cannot read
-    // `working` from this arm alone. What the arm does reach is `isThinking`, which is what
-    // the composer reads to offer Cancel over Send.
+    // `thinking` is not an input to `turnLive`, so this arm cannot make the dot read `working`; it
+    // reaches `isThinking`, which offers Cancel over Send.
     setSessions([makeSession("a", { last_turn_outcome: "completed" })]);
     fireConnected({ busy_chats: ["a"] });
     expect(isThinking("a"), "the composer offers Cancel").toBe(true);
@@ -403,11 +355,8 @@ describe("the connect handshake adopts a thinking the server DOES confirm", () =
   });
 
   it("leaves an already-thinking chat's retained status alone", () => {
-    // On the TRANSITION only, like `markTurnLive`: `setThinking(true)` clears the previous
-    // turn's carriers, and `agent_status` is the one a live turn can still be holding —
-    // the agent declares `waiting_on_user` mid-turn and keeps working, and that claim is
-    // deliberately retained because a person still owes an answer. Re-clearing it on every
-    // reconnect is what the gate prevents.
+    // On the TRANSITION only, like `markTurnLive`: `setThinking(true)` clears carriers, and a live
+    // turn's retained `waiting_on_user` must survive a reconnect.
     setSessions([makeSession("a", { thinking: true, agent_status: "waiting_on_user" })]);
     fireConnected({ busy_chats: ["a"] });
     expect(get("a")?.thinking).toBe(true);
@@ -419,11 +368,8 @@ describe("the connect handshake adopts a thinking the server DOES confirm", () =
 
 describe("the connect handshake adopts the live-run inventory off the frame", () => {
   it("seeds the inventory, the chat pairing and the observer", () => {
-    // Three seeds per row, and a reload loses each one differently: without the inventory
-    // a chat with a live run is evicted mid-run, without the pairing that run's tab opens
-    // at the end of the strip instead of under its conversation, and without the observer
-    // the row is seeded and nothing repaints — so the tab keeps the factory's placeholder
-    // label for as long as the run takes.
+    // Three seeds per row: without the inventory a live-run chat is evicted, without the pairing the
+    // run's tab opens at the strip's end, without the observer the tab keeps its placeholder label.
     const seen: string[] = [];
     registerLiveRunObserver((id) => seen.push(id));
     setSessions([makeSession("a")]);
@@ -436,10 +382,8 @@ describe("the connect handshake adopts the live-run inventory off the frame", ()
   });
 
   it("issues no per-run read of its own", () => {
-    // The one thing the connect adoption deliberately does NOT do, and the reason it can
-    // be free: the mark's floor paints a live run's square from THIS frame, so the per-run
-    // `inspect` is a refinement rather than a precondition. Passing a cause here would put
-    // one GET per live run on every reconnect.
+    // No cause: the mark's floor paints a live run's square from THIS frame, so a per-run `inspect` on
+    // every reconnect would be pure cost.
     setSessions([makeSession("a")]);
     fireConnected({ live_runs: [{ workflow_id: "wf-1", chat_id: "a", executing: true }] });
     expect(mockApiGet).not.toHaveBeenCalled();
@@ -494,30 +438,22 @@ describe("BUS_RECONCILE handler", () => {
   });
 
   it("rebuilds the live-runs inventory from the endpoint", () => {
-    // The inventory is event-fed, and the gap means events were lost in both
-    // directions: a run that started or settled inside the outage leaves the
-    // inventory blind. Re-reading the presence projection is the heal; the degrade
-    // rule (a failed rebuild keeps event-fed state) is run-store.test.ts's subject.
+    // Events were lost both ways during the gap, so the presence projection is re-read (the degrade
+    // rule is run-store.test.ts's).
     setSessions([makeSession("a")]);
     fireReconcile();
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 
-  // A run's node state is APPLIED from `run_progress` rather than refetched, so
-  // frames lost in the outage leave a stale tree with nothing to notice it — a
-  // node that completed during the gap keeps reading `running` and its clock keeps
-  // ticking. A gap is the one moment the client knows it missed frames.
+  // Run node state is APPLIED from `run_progress`, so frames lost in a gap leave a stale tree.
   it("re-reads every cached run, because the progress frames it missed were applied ones", () => {
     setSessions([makeSession("a")]);
     fireReconcile();
     expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
   });
 
-  // ONE token for both run readers, which is what takes a gap's run cost from two
-  // requests per live run to one. They act on the same event a network round trip
-  // apart — `rebuildLiveRuns` invalidates each live run only once
-  // `/api/runs/live` has answered — so the token is the only thing that can say
-  // they are the same event. What the token MEANS is run-store.test.ts's subject.
+  // ONE token for both run readers (one request per live run, not two); its meaning is
+  // run-store.test.ts's.
   it("threads ONE cause and the run's signal through both of its run readers", () => {
     setSessions([makeSession("a")]);
     const signal = fireReconcile();
@@ -551,21 +487,15 @@ describe("BUS_RECONCILE handler", () => {
     expect(mockInvalidateTurnRails).toHaveBeenCalledTimes(1);
   });
 
-  // The catalog sits in one workspace-global holder that no frame announces a change to,
-  // and `fetchCatalog` runs at boot and after login otherwise — so without this read a
-  // model list that moved during the outage, or a server restart that empties the holder
-  // until a bridge respawns, leaves the picker on whatever boot answered until a reload.
+  // The catalog rides no frame and is fetched at boot and login only, so a gap must re-read it.
   it("re-reads the mode/model catalog, which no frame announces", () => {
     setSessions([makeSession("a")]);
     fireReconcile();
     expect(mockFetchCatalog).toHaveBeenCalledTimes(1);
   });
 
-  // A reconcile closes NO tab, and adding one in any form is membership by SET DIFFERENCE
-  // over two separately fetched collections: the two answers race, and a chat absent from
-  // one is not evidence its tab was closed. It re-reads the TAB collection instead (app.ts
-  // wires `transport:reconcile` to `listTabs`), and a chat the server deleted has already
-  // had its tabs closed by the membership coordinator, under the record's own lock.
+  // A reconcile closes NO tab: membership by set difference over two separate fetches races. It
+  // re-reads the tab collection (app.ts → `listTabs`); the coordinator closes deleted chats' tabs.
   it("closes NO tab, whatever the chat list came back holding", async () => {
     expect.assertions(2);
     setSessions([makeSession("s1")]);
@@ -601,11 +531,8 @@ describe("BUS_RECONCILE handler", () => {
     expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
   });
 
-  // THE RULED BEHAVIOUR CHANGE (design rev 5). `getActiveId()` is the active CHAT and
-  // the projection's active row is the active TAB, and the two diverge because no
-  // production `setActive` runs on a non-chat activation — so with a git tab on screen
-  // the store still names the last-viewed chat. That chat is a BACKGROUND view now and
-  // heals at its next activation, like every other background view.
+  // `getActiveId()` (the last chat) and the active TAB diverge, so the store's "active" chat is a
+  // BACKGROUND view that heals at its next activation.
   it("refetches no chat window of its own, even one the store still calls active", () => {
     setSessions([makeSession("bg-1"), makeSession("last-viewed"), makeSession("bg-2")]);
     setActive("last-viewed");
@@ -627,10 +554,8 @@ describe("BUS_RECONCILE handler", () => {
     expect(transcriptStale(get("a")!)).toBe(false);
   });
 
-  // The held versions are the stream's to clear: the reconcile is emitted AFTER the bind
-  // that emptied the map, so a background chat already reads stale by the time this body
-  // runs, and the body must not empty the docks either — the fresh hello's own snapshot
-  // frames replace those sets, and clearing them here would race the frames.
+  // The stream clears held versions before this body runs, and the hello's snapshot frames replace
+  // the dock sets, so clearing them here would race those frames.
   it("leaves the decision dock and the steers to the snapshot frames", async () => {
     const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
     _resetForTest();
@@ -652,13 +577,8 @@ describe("BUS_RECONCILE handler", () => {
   });
 
   it("clears this client's own memory and leaves the server's statements standing", () => {
-    // A gap can assert nothing about how anything finished: the verdict is the SERVER's
-    // (the header's `last_turn_outcome`, graded on every read), and so is `turn_open`; what
-    // it clears is `thinking`, this client's own memory of a stream.
-    // HAND-OFF for the 4c run, measured here: a stale `turn_open: true` therefore outlives
-    // the gap, so a chat the server last called live keeps reading `working` until a window
-    // GET or a handshake re-states it — and the next `connected` frame's `busy_chats` does
-    // not write that field either, so nothing retracts it.
+    // A gap asserts nothing about outcomes (the server's `last_turn_outcome` and `turn_open`); it
+    // clears only `thinking`. A stale `turn_open: true` therefore outlives the gap until a window GET.
     setSessions([
       makeSession("a", { thinking: true, last_turn_outcome: "completed" }),
       makeSession("b", { thinking: true, turn_open: true }),
@@ -673,11 +593,8 @@ describe("BUS_RECONCILE handler", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The connect hook's pending set: WHOLE, possibly empty, replaced atomically. Every
-// item is an envelope the live path would have published, so it re-dispatches
-// through the real envelope door and its real handler.
-// ---------------------------------------------------------------------------
+// The connect hook's pending set: WHOLE, possibly empty, replaced atomically; each item
+// re-dispatches through the real envelope door and handler.
 
 describe("pending_snapshot handler", () => {
   it("drops every unanswered ask, because the snapshot carries every live one", async () => {
@@ -783,12 +700,8 @@ describe("pending_snapshot handler", () => {
   });
 
   it("retracts every chat and run banner the snapshot does not name, whether or not this tab held the ask", async () => {
-    // The fresh hello's snapshot still names b's ask and wf_2's; a's and wf_1's were
-    // answered while this client was away and their banners come down. a's ask was never
-    // rendered here — a tab that slept through the ask is the one holding the banner, so
-    // its own decision state cannot be the gate. b's stays: the item re-offers it, and a
-    // retraction there would close the banner for a live question. The registration is
-    // faked so the tags closed are observable.
+    // a's and wf_1's asks were answered elsewhere, so their banners come down (a never rendered here);
+    // b's is re-offered and stays. The registration is faked to observe the closed tags.
     const { pushDecision, _resetForTest } = await import("../decision-dock.js");
     const { _setRegistrationForTest } = await import("../notify.js");
     _resetForTest();
@@ -846,10 +759,8 @@ describe("pending_snapshot handler", () => {
   });
 
   it("keeps a step's permission banner under the RUN's tag, which is the tag it was shown under", async () => {
-    // `handlers/turn.ts` tags a request-shaped ask by `askTarget(chatID, run_id)`: a
-    // step's ask is ABOUT its run, so its banner sits in the run's slot, not the
-    // launching chat's. The sweep has to compute the same tag or it closes the banner
-    // for a live question and leaves the chat's slot, which holds nothing, alone.
+    // A step's ask is tagged `askTarget(chatID, run_id)` (the run's slot), so the sweep must compute
+    // the same tag.
     const { _setRegistrationForTest } = await import("../notify.js");
     const closed: string[] = [];
     _setRegistrationForTest(() =>
@@ -882,11 +793,7 @@ describe("pending_snapshot handler", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The connect hook's retained waiting-status set: every chat's agent status is
-// REPLACED from it, so a `waiting_on_user` answered elsewhere clears and one still
-// owed comes back on a second device.
-// ---------------------------------------------------------------------------
+// The retained waiting-status set REPLACES every chat's agent status.
 
 describe("status_snapshot handler", () => {
   it("sets the status of every chat a row names", () => {
@@ -929,18 +836,11 @@ describe("mode_changed handler", () => {
     expect(get("chat-1")?.current_mode_id).toBe("build");
   });
 
-  // THE EMPTY-CHAT CASE IS DELETED, and its absence is deliberate: an empty chat id names
-  // no session, so `setCurrentMode`'s own missing-session guard makes the write a no-op
-  // whatever this handler's guard does. The case was written, red-checked against the guard's
-  // removal, found to pass anyway, and deleted rather than left as coverage. The guard stays
-  // in production as a redundant producer that says the intent at the door.
+  // No empty-chat case: `setCurrentMode`'s missing-session guard no-ops it whatever this handler's
+  // guard does, so a case could not fail.
 });
 
-// ---------------------------------------------------------------------------
-// The gap door and the turn_closed door share ONE outcome-independent core, and it
-// is two statements now: clear `thinking`, repaint the tab dot from what the log
-// and the header say. What the rail does here is its own line in the gap body.
-// ---------------------------------------------------------------------------
+// The gap door and the turn_closed door share one core: clear `thinking`, repaint the tab dot.
 
 describe("the reconcile runs the shared turn teardown", () => {
   it("reaches every chat, and asks for no per-chat rail read", () => {
@@ -960,11 +860,8 @@ describe("the reconcile runs the shared turn teardown", () => {
   });
 });
 
-// The General panel's own CONTROLS. `refreshRetention` carries the retention
-// EFFECT and the three capability keys are read per spawn, so before this arm the
-// checkboxes on a second device kept showing the old value under an effect that
-// had already changed. Notifications already worked this way through
-// `syncSettings`; this is the same shape for the rest of the panel.
+// `refreshRetention` and the spawn-time capability reads carry the EFFECT; this re-seeds the
+// controls on a second device (as `syncSettings` does for notifications).
 describe("settings_updated re-seeds the General panel", () => {
   it("hands the refetched payload to applyGeneralPanel", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
@@ -979,14 +876,8 @@ describe("settings_updated re-seeds the General panel", () => {
 
   it("seeds nothing when the refetch failed, and refuses rather than throwing", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
-    // Null is a failed fetch, not "the settings are the defaults": seeding the
-    // panel from nothing would clear every control the reader can see.
-    //
-    // THE REJECTION IS THE OBSERVABLE, and the panel assertion alone cannot be. Every route
-    // past the null guard dereferences `s` on its very first statement, so a handler that
-    // reached one would throw inside a `.then` with no catch: `applyGeneralPanel` goes
-    // uncalled either way, and the case would pass because the code CRASHED rather than
-    // because it refused. So the case watches for the unhandled rejection too.
+    // Null is a failed fetch: seeding from it would clear every control. Every route past the guard
+    // dereferences `s` first, so the case also watches for an unhandled rejection.
     vi.mocked(syncSettings).mockResolvedValueOnce(null);
     const rejected: unknown[] = [];
     const onReject = (e: PromiseRejectionEvent): void => {

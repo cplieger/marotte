@@ -21,63 +21,69 @@ import { forceSettingsTab } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
 
-/** Apply a route. RESOLVES when the view it names is open, which is what lets the
- *  router hold its claim on the location for the whole application: the `run` and
- *  `subagent` arms reach their opener through a dynamic `import()`, and while that
- *  import is in flight the active row is still whatever the boot restored.
- *
- *  The arms whose opener is `openTab` deliberately do NOT return its chain: that is a
- *  server mutation bounded only by the API timeout, and awaiting it would hold
- *  `markBootDone` and the identity region for that long on every deep-linked boot.
- *  They keep a narrower version of the same exposure — see the report. */
+/** Apply a route. RESOLVES when the view it names is open, which is what lets the router hold
+ *  its claim on the location for the whole application: the `run` and `subagent` arms reach
+ *  their opener through a dynamic `import()`, and while that import is in flight the active row
+ *  is still whatever the boot restored. */
 export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Promise<void> {
-  // Asked FIRST, because every branch below is an opener and from a Route alone they
-  // cannot be told apart. `deep-link.ts` owns what a location is allowed to mean.
+  // Asked FIRST, because every branch below is an opener and from a Route alone they cannot be told
+  // apart. `deep-link.ts` owns what a location is allowed to mean.
   if (admitLocation(route, origin) === "canonicalized") {
     return Promise.resolve();
   }
   switch (route.kind) {
-    case "chat":
-      if (route.id !== "" && get(route.id) !== undefined) {
-        // The chat EXISTS, so `switchSession` either activates its tab or OPENS one.
-        // Voided: a refusal has already raised its own notice through `openTabCommand`.
-        void switchSession(route.id);
-      } else if (route.id !== "") {
-        // The id names NO ROW. Everything that decision needs — whether asking the server
-        // can be answered at all, what its answer licenses, whether a verdict that arrived
-        // a round trip late still describes the screen — lives in `deep-link.ts`. None of
-        // it is routing. Voided: every outcome is returned rather than thrown, and the
-        // module raises whatever notice its own evidence licenses.
-        void settleDeepLinkedChat(route.id);
+    case "chat": {
+      // A `#turn-<n>` lands through the rail's own jump once the chat is on screen; the tab's route
+      // carries no fragment, so the next projection emit drops it with router.ts's
+      // replace-on-fragment-drop rule.
+      const id = route.id;
+      const turn = route.turn;
+      const land = (): void => {
+        if (turn !== undefined && getActiveId() === id) {
+          // Dynamic, like the `run` arm: the rail's graph stays out of the router's.
+          void import("./turn-rail.js").then((m) => m.jumpToTurn(id, turn));
+        }
+      };
+      if (id !== "" && get(id) !== undefined) {
+        // The chat EXISTS, so `switchSession` either activates its tab or OPENS one. Voided: a
+        // refusal has already raised its own notice through `openTabCommand`.
+        void switchSession(id).then(land);
+      } else if (id !== "") {
+        // The id names NO ROW. Everything that decision needs — whether asking the server can be
+        // answered at all, what its answer licenses, whether a verdict that arrived a round trip
+        // late still describes the screen — lives in `deep-link.ts`. None of it is routing.
+        void settleDeepLinkedChat(id).then((outcome) => {
+          if (outcome === "opened") {
+            land();
+          }
+        });
       } else if (getActiveId() !== "") {
         replaceRoute({ kind: "chat", id: getActiveId() });
       }
       break;
-    // The FOUR singleton routes open their tab and then CORRECT its sub-tab, which a
-    // subject cannot carry (its `ref` is empty). Each goes through `openTab` and NONE
-    // through a `toggle*View` helper: a toggle CLOSES an already-active tab, so a
-    // router that toggled would DESTROY the tab the URL names.
+    }
+    // The FOUR singleton routes open their tab and then CORRECT its sub-tab, which a subject cannot
+    // carry (its `ref` is empty).
     case "settings":
       forceSettingsTab(route.tab);
       void openTab({ kind: "settings" }).then(() => {
         setSettingsTab(route.tab);
-        // A `?highlight=` fires after the panel's loader, so the control it names exists by
-        // the time we look for it. One-shot, so a later popstate does not re-flash it.
+        // A `?highlight=` fires after the panel's loader, so the control it names exists by the
+        // time we look for it. One-shot, so a later popstate does not re-flash it.
         flushURLHighlight();
       });
       break;
     case "git": {
-      // Hoisted rather than read inside the callback: TypeScript discards the narrowing
-      // of a property access across a function boundary, so `route.pr` re-widens to
-      // `string | undefined` at a call inside the `.then()` and `requestPRFocus(identity:
-      // string)` rejects it under `strict`.
+      // Hoisted rather than read inside the callback: TypeScript discards the narrowing of a
+      // property access across a function boundary, so `route.pr` re-widens to `string | undefined`
+      // at a call inside the `.then()` and `requestPRFocus(identity: string)` rejects it under
+      // `strict`.
       const pr = route.tab === "prs" ? (route.pr ?? "") : "";
       forceGitTab(route.tab);
       void openTab({ kind: "git" }).then(() => {
         setGitTab(route.tab);
         if (pr !== "") {
-          // Dynamic, like the `docs` and `run` arms: the PRs tab must not join the
-          // boot bundle.
+          // Dynamic, like the `docs` and `run` arms: the PRs tab must not join the boot bundle.
           void import("./git-prs-tab.js").then(({ requestPRFocus }) => {
             requestPRFocus(pr);
           });
@@ -87,23 +93,21 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
     }
     case "files": {
       const dir = normalizeDirPath(route.path);
-      // A legacy or `.`-spelled path resolves to the same folder as its canonical form,
-      // so the address bar is corrected BEFORE anything reads it. A replace rather than a
-      // push, or the activation's own push stacks an entry that renders identically.
+      // A legacy or `.`-spelled path resolves to the same folder as its canonical form, so the
+      // address bar is corrected BEFORE anything reads it. A replace rather than a push, or the
+      // activation's own push stacks an entry that renders identically.
       replaceRoute({ kind: "files", path: dir });
-      // A files route names a FOLDER rather than a tab, so it RE-POINTS an open browser
-      // and mints only when none is open: a pasted /files/config moves the browser the
-      // reader has, and middle-click is the door that asks for a second one.
+      // A files route names a FOLDER rather than a tab, so it RE-POINTS an open browser and mints
+      // only when none is open: a pasted /files/config moves the browser the reader has, and
+      // middle-click is the door that asks for a second one.
       const { id, ref } = filesTabForRoute(dir);
       if (id === "") {
         void openTab({ kind: "files", ref: dir });
         break;
       }
-      // `activateTab` rather than `openTab`: activating an already-open tab is a
-      // LOCAL move, where openTab would spend a POST /api/command round trip per
-      // Back press for a mutation the server answers created:false to. The
-      // already-active case early-returns inside activateTabQuietly, which is
-      // exactly why the load lives in pointFilesTab rather than in `refresh`.
+      // `activateTab` rather than `openTab`: activating an already-open tab is a LOCAL move, where
+      // openTab would spend a POST /api/command round trip per Back press for a mutation the server
+      // answers created:false to.
       pointFilesTab(ref, dir);
       activateTab(id);
       break;
@@ -112,10 +116,9 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       openFile(openedFilePath(route.path), route.line);
       break;
     case "docs":
-      // The sub-tab is forced BEFORE the open, matching its settings and git siblings:
-      // this tab's refresh loads the ACTIVE panel, so forcing afterwards fetched
-      // Steering and then painted Hooks. Reached through the lazy import the factory
-      // already uses, which is what keeps the page out of the boot bundle.
+      // The sub-tab is forced BEFORE the open, matching its settings and git siblings: this tab's
+      // refresh loads the ACTIVE panel, so forcing afterwards fetched Steering and then painted
+      // Hooks.
       return import("./docs.js")
         .then(({ forceDocsTab }) => {
           forceDocsTab(route.tab);
@@ -127,8 +130,8 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
           /* noop */
         });
     case "history": {
-      // The docs arm's shape: the pane is forced BEFORE the open, because this tab's
-      // refresh loads the ACTIVE pane. Hoisted for the reason the git arm hoists `pr`.
+      // The docs arm's shape: the pane is forced BEFORE the open, because this tab's refresh loads
+      // the ACTIVE pane. Hoisted for the reason the git arm hoists `pr`.
       const tab = route.tab ?? "chats";
       return import("./history.js")
         .then(({ forceHistoryTab }) => {
@@ -142,29 +145,21 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
         });
     }
     case "run":
-      // RETURNED rather than voided: the router's claim on this location stands until it
-      // resolves, so no unrelated projection emit can write the URL while the chunk loads.
+      // RETURNED rather than voided: the router's claim on this location stands until it resolves,
+      // so no unrelated projection emit can write the URL while the chunk loads.
       return import("./run-view.js")
         .then(async ({ openRunView }) => {
-          // Deep link: the run's name is not in the URL, so the tab is titled by id until
-          // the fetch supplies the real name. It still nests under the launching chat when
-          // this client knows which one it was.
-          //
-          // The fourth argument is what makes a COPIED STEP LINK land on the step: the run
-          // card's row href carries the node as `#node=<path>`. `""` means "the run" and
-          // lets the page auto-follow.
-          // AWAITED, not voided: the claim comes off when this promise settles, and the
-          // open is a server round trip.
+          // Deep link: the run's name is not in the URL, so the tab is titled by id until the fetch
+          // supplies the real name. It still nests under the launching chat when this client knows
+          // which one it was.
           await openRunView(route.id, route.id, "", route.node ?? "");
         })
         .catch(() => {
           /* noop */
         });
     case "spec":
-      // RETURNED for the run arm's reason: the claim on this location stands until the
-      // open settles, and the open is a server round trip. A deep link names no parent
-      // chat, so the tab opens parentless; `openTab` activates an already-open subject,
-      // which is what a history entry onto an open spec tab means.
+      // RETURNED for the run arm's reason: the claim on this location stands until the open
+      // settles, and the open is a server round trip.
       return openTab({ kind: "spec", ref: route.dir, owns: false })
         .then(() => undefined)
         .catch(() => {
@@ -178,13 +173,13 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
           /* noop */
         });
     case "subagent":
-      // A delegate's page has nothing to fetch — its blocks are already in the chat store,
-      // or they are not resident and the page says so — so this is just the tab.
+      // A delegate's page has nothing to fetch — its blocks are already in the chat store, or they
+      // are not resident and the page says so — so this is just the tab.
       return import("./subagent-view.js")
         .then(async ({ openSubagentView }) => {
-          // AWAITED for the reason the run branch above is: the claim on this location is
-          // released when this promise settles, so releasing it before the tab exists lets
-          // an unrelated emit write the restored tab's route over the reader's URL.
+          // AWAITED for the reason the run branch above is: the claim on this location is released
+          // when this promise settles, so releasing it before the tab exists lets an unrelated emit
+          // write the restored tab's route over the reader's URL.
           await openSubagentView(route.chat, route.id);
         })
         .catch(() => {
@@ -194,10 +189,10 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
   return Promise.resolve();
 }
 
-/** ServeMux answers `/file//workspace/x` with a 307 to `/file/workspace/x`, so a
- *  reload or a new browser tab parses the path without its leading slash, which
- *  `/api/file` reads as `/` + path. The tab already open under either spelling
- *  wins; otherwise the absolute one, which every in-app opener uses. */
+/** ServeMux answers `/file//workspace/x` with a 307 to `/file/workspace/x`, so a reload or a new
+ *  browser tab parses the path without its leading slash, which `/api/file` reads as `/` + path.
+ *  The tab already open under either spelling wins; otherwise the absolute one, which every
+ *  in-app opener uses. */
 function openedFilePath(path: string): string {
   if (path.startsWith("/") || tabIdFor("editor", path) !== "") {
     return path;

@@ -1,12 +1,8 @@
 package agent
 
-// Unit tests for byte_ring.go wrap-around behaviour. Fuzz coverage is
-// in byte_ring_fuzz_test.go / byte_ring_utf8_fuzz_test.go.
-
 import "testing"
 
-// After more writes than the capacity, the ring keeps only the newest
-// bytes, reports Truncated, and holds exactly capacity bytes.
+// Past capacity the ring keeps only the newest bytes, holds exactly capacity, and reports Truncated.
 func TestByteRing_WrapBehaviour(t *testing.T) {
 	r := newByteRing(4)
 	r.Write([]byte("ab")) // partial fill, pos=2

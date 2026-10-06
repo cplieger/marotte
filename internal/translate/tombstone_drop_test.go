@@ -11,13 +11,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// lateWrite is one handler in this package that persists something AFTER the frame
-// that caused it, which is every write it makes.
+// lateWrite is one handler that persists something AFTER the frame that caused it.
 type lateWrite func(*Translator, context.Context, marotte.ChatID)
 
-// headerWrites are the sites that write the chat HEADER through ChatRecords.Mutate.
-// Keyed by the log message the site emits on a real failure, so a case whose drop
-// regresses names the exact slog line to look for.
+// headerWrites are the sites that write the chat HEADER through ChatRecords.Mutate, keyed
+// by the log message the site emits on a real failure.
 func headerWrites() map[string]lateWrite {
 	permID := int64(1)
 	return map[string]lateWrite{
@@ -82,14 +80,10 @@ func refusingDeps(storeErr, appendErr error) (*baseDeps, *[]marotte.ServerEvent,
 	return deps, events, store
 }
 
-// TestLateWrites_TombstonedRefusalIsNotAnError pins the drop for a chat that was
-// deleted inside the tombstone window: the mutator never ran, nothing reached disk,
-// nothing was broadcast. Every write in this package races a possible delete, so
-// surfacing that as a logged error would put an ERROR line in the operator's log
-// for the mechanism working as intended, on the most travelled paths in the app,
-// several per turn. An entry append answers the same way for any refusal (the
-// write-error rule reports at Warn), so the header sites are the ones this
-// discriminates.
+// TestLateWrites_TombstonedRefusalIsNotAnError pins the drop for a chat deleted inside the
+// tombstone window: every write races a possible delete, so logging it as an ERROR would
+// flag the mechanism working as intended. Entry appends answer the same way for any
+// refusal, so the header sites are the ones this discriminates.
 func TestLateWrites_TombstonedRefusalIsNotAnError(t *testing.T) {
 	writes := headerWrites()
 	maps.Copy(writes, entryWrites())
@@ -109,9 +103,8 @@ func TestLateWrites_TombstonedRefusalIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestLateWrites_ARefusedHeaderWriteLogsAnError is the other half, and it is what
-// keeps the drop narrow: matching the sentinel must not swallow a real persist
-// failure, a full disk, a permission fault, a corrupt chat file.
+// TestLateWrites_ARefusedHeaderWriteLogsAnError keeps the drop narrow: a real persist
+// failure (full disk, permission, corrupt file) still logs an error.
 func TestLateWrites_ARefusedHeaderWriteLogsAnError(t *testing.T) {
 	for name, drive := range headerWrites() {
 		t.Run(name, func(t *testing.T) {
@@ -129,10 +122,9 @@ func TestLateWrites_ARefusedHeaderWriteLogsAnError(t *testing.T) {
 	}
 }
 
-// TestLateWrites_ARefusedAppendIsReportedAtWarn pins the write-error rule for the
-// entry sites: a refused append is reported once per frame at Warn, naming the
-// entry kind, and never as an error. The store latches a refused write for the
-// process's life, so an ERROR per frame would flood the log with one fault.
+// TestLateWrites_ARefusedAppendIsReportedAtWarn pins that a refused append is reported once
+// per frame at Warn, naming the entry kind: the store latches a refused write for the
+// process's life, so an ERROR per frame would flood the log.
 func TestLateWrites_ARefusedAppendIsReportedAtWarn(t *testing.T) {
 	for name, drive := range entryWrites() {
 		t.Run(name, func(t *testing.T) {
@@ -157,10 +149,8 @@ func TestLateWrites_ARefusedAppendIsReportedAtWarn(t *testing.T) {
 	}
 }
 
-// TestHandleCompactionFailed_TombstonedChatGetsNoBanner is the one site whose
-// drop is observable on the wire rather than only in the log: a refused append
-// means the chat is gone, so no client holds it and the error banner has nobody
-// to reach.
+// TestHandleCompactionFailed_TombstonedChatGetsNoBanner pins the wire-observable drop: a
+// refused append means no client holds the chat, so no banner is sent.
 func TestHandleCompactionFailed_TombstonedChatGetsNoBanner(t *testing.T) {
 	deps, events, _ := refusingDeps(chat.ErrTombstoned, chat.ErrTombstoned)
 	tr := New(rolesOf(deps))
@@ -174,9 +164,8 @@ func TestHandleCompactionFailed_TombstonedChatGetsNoBanner(t *testing.T) {
 	}
 }
 
-// TestHandleCompactionCompleted_TombstonedChatStopsAfterOneWrite pins the return
-// rather than the log level: a refused append means the chat is gone, so the
-// watermark Mutate that follows it can only be refused too.
+// TestHandleCompactionCompleted_TombstonedChatStopsAfterOneWrite pins the return: the
+// watermark Mutate after a refused append could only be refused too.
 func TestHandleCompactionCompleted_TombstonedChatStopsAfterOneWrite(t *testing.T) {
 	deps, _, store := refusingDeps(nil, chat.ErrTombstoned)
 	tr := New(rolesOf(deps))
@@ -189,10 +178,8 @@ func TestHandleCompactionCompleted_TombstonedChatStopsAfterOneWrite(t *testing.T
 	}
 }
 
-// TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError pins the one
-// header-side READ on the compaction path: a deleted chat has no header, so its
-// log read answers ErrChatNotFound rather than a tombstone, and that is the delete
-// working as intended, not a fault.
+// TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError pins that the log read
+// of a deleted chat answering ErrChatNotFound is not a fault.
 func TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
 	defer captureSlog(&logs)()
@@ -213,11 +200,8 @@ func TestHandleCompactionCompleted_ADeletedChatsCountReadIsNotAnError(t *testing
 	}
 }
 
-// TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError is the same rule on the
-// title path's READ: the derivation filter reads the log's prompts ahead of the
-// header write, and a deleted chat answers that read with ErrChatNotFound. Any
-// other read failure drops the title and says so at ERROR, because a title lost to
-// a full disk or a corrupt log is the same fault a refused header write is.
+// TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError is the same rule on the title
+// path's prompt read; any other read failure drops the title at ERROR.
 func TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
 	defer captureSlog(&logs)()
@@ -234,8 +218,7 @@ func TestHandleFocusUpdate_ADeletedChatsPromptReadIsNotAnError(t *testing.T) {
 	}
 }
 
-// mustJSONCtx is mustJSON without a *testing.T, for the tables above: a case's
-// payload is built once when the table is composed, outside any subtest.
+// mustJSONCtx is mustJSON without a *testing.T: a case's payload is built when the table is.
 func mustJSONCtx(v any) []byte {
 	return mustJSONRapid(v)
 }

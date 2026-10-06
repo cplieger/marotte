@@ -1,26 +1,8 @@
 package composition
 
-// Two engines write into the same persistent tools tree, so the only thing that
-// keeps them from deleting each other's installs is the namespace split: the
-// toolbelt engine owns bin/, opt/, npm/ and python/ under the tools dir -- its
-// unit is opt/<tool>/<version>/ plus a force-replaced bin/<tool> symlink -- and
-// the kiro-cli install manager owns kiro-cli-versions/<version>/ plus one
-// convenience symlink.
-//
-// These tests plant a toolbelt footprint for a tool literally named `kiro-cli`.
-// That is the worst case rather than a hypothetical, and marotte is the more
-// exposed of the two consumers: the engine's name validator accepts `kiro-cli`,
-// its manifest is hand-editable and re-read per operation, and marotte mounts its
-// HTTP projection at /api/tools -- so one Add from the BROWSER reaches this state.
-//
-// The subject survived the move to the pinstall library, but the level did not:
-// the collision is a property of the values marotte passes (Root, LinkDir, the
-// purge data, and the release name that fixes the install root), so the tests
-// build a manager from kiroInstallConfig -- the exact configuration production
-// runs -- rather than from a copy of it. The library's own suite owns the
-// mechanics these assertions ride on (the purge shape gate, the sentinel, the
-// confined deletes); what is asserted here is that marotte's configuration keeps
-// the two engines apart.
+// Two engines write into the same tools tree, and only the namespace split keeps them from deleting
+// each other's installs: toolbelt owns bin/, opt/, npm/ and python/; pinstall owns
+// kiro-cli-versions/.
 
 import (
 	"os"
@@ -61,9 +43,7 @@ func newNSEnv(t *testing.T) *nsEnv {
 // config is marotte's real install configuration for this volume.
 func (e *nsEnv) config() *pinstall.Config {
 	return kiroInstallConfig(&Config{
-		KiroCLIVersion: nsVersion,
-		// Any well-formed digest: a volume that already holds the complete pin
-		// downloads nothing, so no archive is ever fetched to verify.
+		KiroCLIVersion:     nsVersion,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
 		ToolsDir:           e.tools,
@@ -80,27 +60,9 @@ func (e *nsEnv) manager() *pinstall.Manager {
 	return mgr
 }
 
-// plantToolbeltKiroCLI plants what the toolbelt engine puts on the volume for a
-// manifest entry named `kiro-cli`: a version tree at opt/<name>/<version>/ and a
-// bin/<name> SYMLINK into it for each linked name (the engine's linkBin
-// force-replaces those). No `.complete` sentinel, because the engine writes
-// none -- which is exactly what would make this tree a victim: to a manager
-// rooted at opt/kiro-cli it reads as an INCOMPLETE install, and the partial sweep
-// deletes an incomplete install on every boot before selection.
-//
-// The tree's primary artifact is a script that records its own execution, so
-// "never READ" is observable and not merely inferred: if the manager ever probed
-// this binary or asserted a setting against it, the witness file appears.
-//
-// bin/kiro-cli is deliberately NOT linked here. The convenience symlink
-// force-replaces that ONE path by design (it is the documented
-// `docker exec … kiro-cli` pointer, an atomic rename over whatever is there), so
-// a boot legitimately owns it and its end state cannot distinguish "refused then
-// republished" from "deleted then republished"; the library's purge suite pins
-// the refusal. The sidecar links below are touched by NO code path, which is what
-// makes them the assertable half.
-//
-// It returns every path that must survive untouched, plus the tree directory.
+// plantToolbeltKiroCLI plants what the toolbelt engine writes for a manifest entry named
+// `kiro-cli`: a version tree at opt/<name>/<version>/ and a bin/<name> symlink into it per linked
+// binary.
 func (e *nsEnv) plantToolbeltKiroCLI(linked ...string) (survivors []string, tree string) {
 	e.t.Helper()
 	tree = filepath.Join(e.tools, "opt", nsTool, nsVersion)
@@ -110,8 +72,6 @@ func (e *nsEnv) plantToolbeltKiroCLI(linked ...string) (survivors []string, tree
 			e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 		}
 	}
-	// The engine's own PATH entry for an unrelated tool, so a sweep that walks
-	// the shared bin dir instead of naming its targets is caught too.
 	survivors = append(survivors, e.symlink(filepath.Join(e.tools, "opt", "gopls", "1.0.0", "gopls"), filepath.Join(binDir, "gopls")))
 	for _, name := range []string{nsTool, nsTool + "-chat", nsTool + "-term"} {
 		target := filepath.Join(tree, name)
@@ -120,8 +80,6 @@ func (e *nsEnv) plantToolbeltKiroCLI(linked ...string) (survivors []string, tree
 		}
 		survivors = append(survivors, target)
 	}
-	// The primary is executable AND self-reporting, so it is a viable probe
-	// candidate rather than one excluded for being non-executable.
 	foreign := filepath.Join(tree, nsTool)
 	e.writeScript(foreign, "printf 'was-run\\n' >>"+shellQuote(e.witness)+"\nprintf 'kiro-cli "+nsVersion+"\\n'\n")
 	for _, name := range linked {
@@ -139,16 +97,11 @@ func (e *nsEnv) plantOwnVersion() string {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 	}
-	// Answers --version with the directory's own name (what selection probes)
-	// and exits 0 for every settings assertion. Both dispatchers are planted
-	// because kiro-cli-chat is Required: `kiro-cli acp` re-execs it through a
-	// PATH search, so a directory holding only the main binary is incomplete
-	// (see kirocli.go's Require comment).
+	// Answers --version with its directory's name and exits 0 for every settings assertion; both
+	// dispatchers are planted because kiro-cli-chat is Required.
 	script := "case \"$1\" in --version) printf 'kiro-cli " + nsVersion + "\\n' ;; esac\n"
 	e.writeScript(filepath.Join(dir, nsTool), script)
 	e.writeScript(filepath.Join(dir, nsTool+"-chat"), script)
-	// Written LAST, exactly as the install order requires: it is the sentinel
-	// that makes the directory a selection candidate at all.
 	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {
 		e.t.Fatalf("write sentinel: %v", err)
 	}
@@ -227,8 +180,6 @@ func (e *nsEnv) assertIntact(survivors []string) {
 			e.t.Errorf("read %s: %v", p, err)
 			continue
 		}
-		// The foreign primary is a script, so it is checked for still being one
-		// of the two shapes this test wrote rather than for the marker body.
 		if body := string(raw); body != toolbeltBody && !strings.HasPrefix(body, "#!/bin/sh") {
 			e.t.Errorf("%s holds %q, neither of the shapes this test planted: it was removed and rewritten", p, body)
 		}
@@ -238,16 +189,8 @@ func (e *nsEnv) assertIntact(survivors []string) {
 	}
 }
 
-// TestToolbeltKiroCLIFootprintSurvivesABoot is the whole-boot half of the
-// collision: with a toolbelt-owned `kiro-cli` tool already on the volume, a full
-// Ensure against marotte's own configuration must neither READ nor DELETE any of
-// it, and must activate its own version regardless.
-//
-// Every one of those properties fails if the two roots ever overlap: the partial
-// sweep removes the sentinel-less foreign tree, selection probes the foreign
-// binary, and the pin is satisfied (or destroyed) by another owner's files. The
-// planted foreign tree carries the PINNED version for that reason -- with
-// overlapping roots it would be the pin's own directory.
+// TestToolbeltKiroCLIFootprintSurvivesABoot asserts that with a toolbelt-owned `kiro-cli` on the volume, a full
+// Ensure against marotte's configuration must leave it intact.
 func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	env := newNSEnv(t)
 	survivors, tree := env.plantToolbeltKiroCLI(nsTool+"-chat", nsTool+"-term")
@@ -271,8 +214,6 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	if strings.HasPrefix(mgr.Path(), tree+string(filepath.Separator)) {
 		t.Fatalf("Path() = %q resolves INSIDE the toolbelt-owned tree", mgr.Path())
 	}
-	// The convenience symlink is the one path in the shared bin dir a boot owns:
-	// it must point into the app's own install, never at the colliding tree.
 	link := filepath.Join(env.tools, kiroLinkDir, nsTool)
 	target, err := os.Readlink(link)
 	if err != nil {
@@ -283,16 +224,8 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	}
 }
 
-// TestInstallRootIsOutsideTheToolbeltNamespace pins the structural half, which no
-// single behavioral case can pin on its own: the install root marotte's
-// configuration produces is ONE component directly under the tools dir, and it is
-// none of the four directories the toolbelt engine creates and enumerates. Any
-// tool name the engine accepts therefore resolves to a path that cannot contain,
-// be contained by, or alias this install's tree.
-//
-// It is derived from a live manager rather than from a constant, because the root
-// is the library's function of the release name -- a name change is exactly the
-// silent way this property could be lost.
+// TestInstallRootIsOutsideTheToolbeltNamespace pins the structural half: the install root is one
+// component directly under the tools tree, outside every toolbelt directory.
 func TestInstallRootIsOutsideTheToolbeltNamespace(t *testing.T) {
 	env := newNSEnv(t)
 	own := env.plantOwnVersion()
@@ -312,29 +245,18 @@ func TestInstallRootIsOutsideTheToolbeltNamespace(t *testing.T) {
 	if len(parts) != 2 {
 		t.Fatalf("the active version directory is %s below the tools dir (%q); a nested root can sit inside a tree the engine enumerates", rel, parts)
 	}
-	// The engine's binDir/optDir/npmDir/pythonDir, i.e. every directory it
-	// creates under the tools dir. It never scans the tools dir itself.
 	if owned := []string{"bin", "opt", "npm", "python"}; slices.Contains(owned, parts[0]) {
 		t.Fatalf("the install root %q collides with the toolbelt engine's own %v trees", parts[0], owned)
 	}
 }
 
-// TestLegacySweepSparesToolbeltSymlinks pins the sweep half. The prefix sweep this
-// configuration replaced listed $TOOLS/bin and deleted every kiro-cli* entry,
-// unconditionally, on every boot -- so an engine-owned symlink was unlinked while
-// the engine's state row still claimed it, silently, forever.
-//
-// marotte's purge data names three targets, so a symlink at one of those paths is
-// refused: it is a shape the shell installer never left there. The genuine residue
-// is present at the same time, so the test cannot pass by sweeping nothing; and a
-// refusal must NOT withhold the completion marker, or a volume with a
-// toolbelt-owned bin/kiro-cli-chat would re-walk the co-owned bin dir forever.
+// TestLegacySweepSparesToolbeltSymlinks pins the sweep half: the legacy purge must not delete the
+// engine's kiro-cli symlinks in bin/.
 func TestLegacySweepSparesToolbeltSymlinks(t *testing.T) {
 	env := newNSEnv(t)
 	survivors, _ := env.plantToolbeltKiroCLI(nsTool+"-chat", nsTool+"-term")
-	// Only the orphan staging tree: the two bin names the shell installer also
-	// wrote are the engine's symlinks in this volume, and planting a regular file
-	// over a symlink would write through it into the tree under test.
+	// Only the orphan staging tree: planting a regular file over the engine's symlink would write
+	// through it.
 	residue := env.plantLegacyResidue()
 	own := env.plantOwnVersion()
 
@@ -351,22 +273,13 @@ func TestLegacySweepSparesToolbeltSymlinks(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(env.tools, legacyPurgeMarker)); err != nil {
 		t.Errorf("a refused foreign entry blocked %s, so every later boot re-runs the sweep over the co-owned bin dir: %v", legacyPurgeMarker, err)
 	}
-	// The two entries this install keeps directly under the tools dir must be
-	// unreachable by the orphan-stage pass that shares that directory with them.
 	if _, err := os.Lstat(own); err != nil {
 		t.Errorf("the orphan-stage sweep removed the installation root %s: %v", own, err)
 	}
 }
 
-// TestLegacySweepRunsOncePerVolume pins the once-only property the marker exists
-// for. The layout the sweep deletes cannot come back -- no code writes it any
-// more -- so after the migration a pass over the co-owned bin dir can only find
-// another owner's files. A SECOND boot (a fresh manager on the same volume, which
-// is what a container restart is) must therefore remove nothing at all.
-//
-// The sidecar name is the replant target because nothing republishes it: the
-// primary's path in the shared bin dir is legitimately overwritten by the
-// convenience symlink on every boot, so it could not tell a sweep from a publish.
+// TestLegacySweepRunsOncePerVolume pins the once-only marker: the layout the sweep deletes cannot
+// come back.
 func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	env := newNSEnv(t)
 	env.plantOwnVersion()
@@ -385,8 +298,6 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 		t.Fatalf("the first boot did not record %s, so every later boot re-runs the sweep: %v", legacyPurgeMarker, err)
 	}
 
-	// Plant the sweep's own targets again, in the shape it removes. Only a second
-	// pass could take them.
 	replanted := env.plantLegacyResidue(nsTool + "-chat")
 	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("second Ensure: %v", err)

@@ -1462,6 +1462,11 @@ dd.governance-off {
   font-size: var(--fs-sm);
 }
 
+/* A switch an organization or administrator pins: who set it, under the hint. */
+.setting-lock {
+  color: var(--c-yellow);
+}
+
 /* Inline dropdown used in Settings → Custom instructions (default
    agent picker). */
 .page-select {

@@ -133,10 +133,8 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 	}
 }
 
-// TestHandleV3Summarization_SuccessCompletes pins the between-turns completion:
-// with no turn open there is nothing to seal, so the compaction entry is the one
-// entry the frame files, after the newest turn's close, and the header's
-// watermark names it.
+// TestHandleV3Summarization_SuccessCompletes pins the between-turns completion: the entry
+// files after the newest turn's close and the watermark names it.
 func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -172,9 +170,8 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 }
 
-// A compaction that lands MID-TURN seals every lane first, so the summary sits
-// between what the model said before it and what it says after: the position the
-// compaction happened at, and the position the replay projects it to.
+// TestHandleV3Summarization_SealsTheLanesBeforeTheEntry pins a mid-turn compaction sealing
+// every lane first, so it sits where it happened.
 func TestHandleV3Summarization_SealsTheLanesBeforeTheEntry(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -245,9 +242,8 @@ func TestHandleV3Summarization_AToolCallInFlightStillLandsAfterTheEntry(t *testi
 	}
 }
 
-// A FAILED compaction is a notice rather than a boundary, but it is still an entry
-// of the turn: it seals what was open and sits where it happened, and the turn goes
-// on. Nothing about the context changed, so no watermark moves.
+// TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark pins a failed compaction
+// as an entry of the turn with no watermark move.
 func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -274,10 +270,8 @@ func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing
 	}
 }
 
-// TestHandleV3Summarization_GenuineErrorFails is the regression guard that the
-// canceled special-case did not swallow real failures: a genuine "error" reason
-// still files a compaction_failed entry AND broadcasts the turn-scoped error
-// banner AND tells the host.
+// TestHandleV3Summarization_GenuineErrorFails pins that a genuine "error" files the entry,
+// broadcasts the banner and tells the host.
 func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -331,10 +325,8 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	}
 }
 
-// A compaction that lands says nothing in the log, whether it completed or failed:
-// compaction runs on every long conversation, so a line on the ordinary path trains
-// an operator to scroll past the one that means the entry was really refused (which
-// is the write-error rule's Warn, pinned in tombstone_drop_test.go).
+// TestHandleV3Summarization_ALandedCompactionIsSilent pins no log line on the ordinary path
+// (the refusal's Warn is pinned in tombstone_drop_test.go).
 func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
 	for _, status := range []string{"success", "error"} {
 		t.Run(status, func(t *testing.T) {

@@ -5,9 +5,8 @@ vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
   withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
   API_TIMEOUT_MS: 30000,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened this graph and these
+  // names are imported somewhere in it. No case here calls them.
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./save-indicator.js", () => ({
@@ -37,10 +36,9 @@ describe("patchSettings debounce coalescing", () => {
     vi.clearAllMocks();
     fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetchSpy);
-    // Reset the dedup tracker so tests don't bleed state between
-    // each other. Without this, patchSettings({last_model: "claude"})
-    // in test N+1 would be filtered out as a duplicate of test N's
-    // value.
+    // Reset the dedup tracker so tests don't bleed state between each other. Without this,
+    // patchSettings({last_model: "claude"}) in test N+1 would be filtered out as a duplicate of
+    // test N's value.
     __testResetTracking();
   });
 
@@ -83,14 +81,13 @@ describe("patchSettings debounce coalescing", () => {
   });
 
   it("property: N rapid calls produce merged result matching Object.assign", async () => {
-    // NOTE: This property test uses Math.random for fuzzing. Failures may not
-    // be reproducible without seeding. Log `iter` on failure to narrow down.
+    // NOTE: This property test uses Math.random for fuzzing. Failures may not be reproducible
+    // without seeding. Log `iter` on failure to narrow down.
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
       fetchSpy.mockClear();
-      // Each iteration is an independent batch; reset the dedup
-      // tracker so values from prior iterations don't filter out
-      // patches in this one.
+      // Each iteration is an independent batch; reset the dedup tracker so values from prior
+      // iterations don't filter out patches in this one.
       __testResetTracking();
       // Generate random patches.
       const keys = ["notifications_enabled", "debug_logs", "last_model"] as const;
@@ -150,8 +147,8 @@ describe("patchSettings no-op dedup", () => {
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
     initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
-    // Simulate the bootstrap fire from onSelectionChange: same
-    // supervised_default value the server already has.
+    // Simulate the bootstrap fire from onSelectionChange: same supervised_default value the server
+    // already has.
     patchSettings({ supervised_default: false });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -249,8 +246,8 @@ describe("patchSettings unload flush", () => {
 
   it("sends a still-debounced PATCH when the page is about to unload", async () => {
     patchSettings({ last_model: "opus" });
-    // Inside the 300ms debounce: nothing has gone out yet, so navigating away
-    // now is where a setting gets silently lost.
+    // Inside the 300ms debounce: nothing has gone out yet, so navigating away now is where a
+    // setting gets silently lost.
     expect(fetchSpy).not.toHaveBeenCalled();
 
     window.dispatchEvent(new Event("beforeunload"));
@@ -268,8 +265,7 @@ describe("patchSettings unload flush", () => {
     await vi.advanceTimersByTimeAsync(0);
     fetchSpy.mockClear();
 
-    // The queue drained on the first unload; a second one must not PATCH an
-    // empty body.
+    // The queue drained on the first unload; a second one must not PATCH an empty body.
     window.dispatchEvent(new Event("beforeunload"));
     await vi.advanceTimersByTimeAsync(350);
 
@@ -305,10 +301,9 @@ describe("patchSettings failure handling", () => {
     const { showError } = await import("./save-indicator.js");
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     patchSettings({ last_model: "opus" });
-    // waitFor rather than a fixed advance: a real browser reads a failed
-    // response's body through a stream, so the error path settles a macrotask
-    // or two after the debounce fires. The assertion is unchanged; only the
-    // wait is event-driven instead of a guessed constant.
+    // waitFor rather than a fixed advance: a real browser reads a failed response's body through a
+    // stream, so the error path settles a macrotask or two after the debounce fires. The assertion
+    // is unchanged; only the wait is event-driven instead of a guessed constant.
     await vi.waitFor(() => {
       expect(showError).toHaveBeenCalled();
     });
@@ -321,9 +316,9 @@ describe("patchSettings failure handling", () => {
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    // The failed value was rolled back out of the dedup tracker, so asking for
-    // it again is a change, not a repeat. Without the rollback the retry is
-    // dropped on the floor and the setting never reaches the server.
+    // The failed value was rolled back out of the dedup tracker, so asking for it again is a
+    // change, not a repeat. Without the rollback the retry is dropped on the floor and the setting
+    // never reaches the server.
     fetchSpy.mockClear();
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
     patchSettings({ last_model: "opus" });
@@ -338,8 +333,8 @@ describe("patchSettings failure handling", () => {
   it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
     initSettingsTracking(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
-    // Two writes coalesce into one PATCH; the rollback has to restore the value
-    // the server still holds ("claude"), not the intermediate one.
+    // Two writes coalesce into one PATCH; the rollback has to restore the value the server still
+    // holds ("claude"), not the intermediate one.
     patchSettings({ last_model: "opus" });
     patchSettings({ last_model: "sonnet" });
     await vi.advanceTimersByTimeAsync(350);
@@ -349,8 +344,8 @@ describe("patchSettings failure handling", () => {
     patchSettings({ last_model: "claude" });
     await vi.advanceTimersByTimeAsync(350);
 
-    // "claude" is what the server has, so after a correct rollback this is a
-    // no-op. If the rollback stored "opus" instead, this would PATCH.
+    // "claude" is what the server has, so after a correct rollback this is a no-op. If the rollback
+    // stored "opus" instead, this would PATCH.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -363,8 +358,8 @@ describe("patchSettings failure handling", () => {
     patchSettings({ notifications_enabled: true }, box);
     await vi.advanceTimersByTimeAsync(350);
 
-    // The optimistic record is taken at dispatch time (the user just clicked,
-    // so the previous state is the opposite), and the rollback restores it.
+    // The optimistic record is taken at dispatch time (the user just clicked, so the previous state
+    // is the opposite), and the rollback restores it.
     expect(box.checked).toBe(false);
   });
 
@@ -401,8 +396,8 @@ describe("patchSettings saving indicator", () => {
     patchSettings({ last_model: "opus" });
     patchSettings({ debug_logs: true });
     await vi.advanceTimersByTimeAsync(350);
-    // Per call rather than per batch: the two keys have separate slots, and the
-    // second one is flipped inside the first's debounce window.
+    // Per call rather than per batch: the two keys have separate slots, and the second one is
+    // flipped inside the first's debounce window.
     expect(showSaving).toHaveBeenCalledTimes(2);
     expect(showSaving).toHaveBeenNthCalledWith(1, ["last_model"]);
     expect(showSaving).toHaveBeenNthCalledWith(2, ["debug_logs"]);
@@ -434,9 +429,9 @@ describe("loadSettings", () => {
     vi.clearAllMocks();
     fetchSpy = vi.fn(() =>
       Promise.resolve(
-        // The COMPLETE payload: loadSettings decodes through the generated
-        // decoder, and every field of EffectiveSettings is required, so a sparse
-        // body is a response the server cannot produce and the decoder refuses.
+        // The COMPLETE payload: loadSettings decodes through the generated decoder, and every field
+        // of EffectiveSettings is required, so a sparse body is a response the server cannot
+        // produce and the decoder refuses.
         new Response(
           JSON.stringify(settingsPayload({ last_model: "sonnet", chat_retention_days: 30 })),
           {
@@ -461,27 +456,7 @@ describe("loadSettings", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The indicator belongs to the NEWEST write of each key.
-//
-// Each dispatch stamps its keys with a generation and compares that stamp when
-// its response lands, so a response that has been overtaken cannot paint a slot
-// for a write that has since been superseded. The two halves of that are
-// separately live: `patchAppSettings` is scope-serialized, so the second PATCH
-// does not reach the network until the first answers — but the debounce timer
-// does not wait for the network, so the second `executePatch` (and its stamp) has
-// already happened by then. Without the comparison the user reads "Saved" for a
-// value the server has not been asked about yet, and "failed" for one that is
-// still in the air.
-//
-// PER KEY, because the slots are per setting: a key the newer write does not
-// carry has not been overtaken, and under the single counter this replaced its
-// slot was left spinning with nothing left to answer it.
-//
-// Both tests need a response that is OUTSTANDING while the next write is
-// queued, which the immediate `Promise.resolve(...)` stub used elsewhere in this
-// file cannot express — hence the deferred stub that hands back its resolver.
-// ---------------------------------------------------------------------------
 
 describe("patchSettings generation guard", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -502,10 +477,9 @@ describe("patchSettings generation guard", () => {
   });
 
   afterEach(async () => {
-    // Drain: an unresolved response holds the action's scope chain, and the
-    // chain is module state that would stall the next test in this file. A
-    // queued dispatch reaches the network as its predecessor answers, so this
-    // walks the list as it grows.
+    // Drain: an unresolved response holds the action's scope chain, and the chain is module state
+    // that would stall the next test in this file. A queued dispatch reaches the network as its
+    // predecessor answers, so this walks the list as it grows.
     for (const resolve of pending) {
       resolve(new Response("{}", { status: 200 }));
       await vi.advanceTimersByTimeAsync(0);
@@ -514,8 +488,8 @@ describe("patchSettings generation guard", () => {
     vi.unstubAllGlobals();
   });
 
-  /** Send two writes: the first is on the wire, the second is queued behind it
-   *  and has already claimed the newer generation. */
+  /** Send two writes: the first is on the wire, the second is queued behind it and has already
+   *  claimed the newer generation. */
   async function firstOnTheWireSecondQueued(): Promise<void> {
     patchSettings({ last_model: "first" });
     await vi.advanceTimersByTimeAsync(350);
@@ -528,11 +502,9 @@ describe("patchSettings generation guard", () => {
     const { showSaved } = await import("./save-indicator.js");
     await firstOnTheWireSecondQueued();
 
-    // The queued write reaches the network only as its predecessor answers, and
-    // a real browser settles a response body over a stream rather than in a
-    // microtask, so both halves wait for the observable event instead of a fixed
-    // tick count. The negative is asserted only once the second request is on
-    // the wire, which is strictly later than the overtaken report would land.
+    // The queued write reaches the network only as its predecessor answers, and a real browser
+    // settles a response body over a stream rather than in a microtask, so both halves wait for the
+    // observable event instead of a fixed tick count.
     pending[0]?.(new Response("{}", { status: 200 }));
     await vi.waitFor(() => {
       expect(pending).toHaveLength(2);
@@ -565,8 +537,8 @@ describe("patchSettings generation guard", () => {
 
   it("still reports the keys the newer write did not carry", async () => {
     const { showSaved } = await import("./save-indicator.js");
-    // The first write carries two settings; the second re-writes only one of
-    // them, so the other has nothing left to answer it and must report now.
+    // The first write carries two settings; the second re-writes only one of them, so the other has
+    // nothing left to answer it and must report now.
     patchSettings({ last_model: "first", debug_logs: true });
     await vi.advanceTimersByTimeAsync(350);
     patchSettings({ last_model: "second" });

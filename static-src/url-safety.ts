@@ -1,13 +1,6 @@
-// ---------------------------------------------------------------------------
-// URL scheme safety guard.
-//
-// Shared by the MCP OAuth pill (mcp-ui.ts) and the open_external_url banner
-// (handlers/open-external-url.ts + banner-stack.ts): before rendering a
-// server-supplied URL as a clickable link, confirm it uses http/https so a
-// file:, javascript:, data:, or custom app scheme can't be surfaced to the
-// user. The server applies the same check before broadcasting; this is the
-// client-side belt-and-braces guard.
-// ---------------------------------------------------------------------------
+// URL scheme guard for the MCP OAuth pill (mcp-ui.ts) and the open_external_url banner: a
+// server-supplied URL becomes a link only when http/https, never file:, javascript:, data: or an
+// app scheme. The server applies the same check; this is the client-side second layer.
 
 /** Returns true when `url` parses and uses the http or https scheme. */
 export function isSafeURL(url: string): boolean {

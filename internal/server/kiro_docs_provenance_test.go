@@ -1,19 +1,7 @@
 package server
 
-// D65: the row's provenance, and the affordance gates that ride it.
-//
-// D67a is WITHDRAWN, so what these cover changed shape. It asserted that a
-// symlinked entry arrives read-only because its save would fail with ELOOP; the
-// premise was false — internal/filebrowse resolves the link and applies
-// O_NOFOLLOW to the canonical target, so the save succeeds — and `resolved != full`
-// was never a writability test. It also marked every file beneath an in-root
-// symlinked directory read-only while those writes work.
-//
-// What survives is the DELETE question, which is genuinely different on the same
-// row: the delete route canonicalizes too, so removing a link's path unlinks the
-// target. That earns its own bit. `read_only` stays as D65's provenance channel with
-// no source asserting it yet, and its DIRECTION is what these still pin: absent
-// means unrestricted, and every restriction is asserted.
+// Row provenance: `read_only` has no source yet, and absent means unrestricted. A symlinked
+// entry stays editable (the save resolves the link); only its delete is withheld.
 
 import (
 	"encoding/json"
@@ -23,9 +11,8 @@ import (
 	"testing"
 )
 
-// TestKiroDocs_OrdinaryFilesCarryNoRestriction is the default direction. A plain
-// file in a plain tree must carry neither flag, or every row would arrive gated and
-// the page would offer nothing.
+// TestKiroDocs_OrdinaryFilesCarryNoRestriction pins the default direction: a plain file
+// carries neither flag.
 func TestKiroDocs_OrdinaryFilesCarryNoRestriction(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
@@ -56,14 +43,7 @@ func TestKiroDocs_OrdinaryFilesCarryNoRestriction(t *testing.T) {
 	}
 }
 
-// TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete is the withdrawal, in
-// both directions at once.
-//
-// Read-only was the false half: the write resolves the link and succeeds, so the
-// row must NOT claim otherwise — a page that hides the pencil while its own
-// activation surface opens an editable file is lying about one of the two.
-// Delete-protection is the true half: deleting through the link would remove the
-// file it points at.
+// TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete pins both halves on one row.
 func TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
@@ -79,8 +59,7 @@ func TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete(t *testing.T) {
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
 	docs := srv.collectKiroDocs(t.Context()).Docs
 
-	// The link resolves to the same file, so its row carries the TARGET's
-	// front-matter name. What matters is that the row exists and which bit it has.
+	// The row carries the TARGET's front-matter name; its bits are what matter.
 	linked, ok := findDocByPath(docs, "steering/alias.md")
 	if !ok {
 		t.Fatalf("the symlinked entry is absent; an in-root link IS listed: %+v", docs)
@@ -103,15 +82,8 @@ func TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete(t *testing.T) {
 	}
 }
 
-// TestKiroDocs_FileUnderASymlinkedDirectoryIsUnrestricted is the case that made the
-// old derivation wrong beyond its false premise. `resolved != full` is true for
-// every file BENEATH an in-root symlinked directory, and those writes work exactly
-// as an unaliased file's do — operator reshaping of the tree is what invariant 6
-// protects, so it must not cost the whole directory its affordances.
-//
-// The delete question follows the same reasoning here: the row's own final component
-// is not a link, so deleting it removes the file the reader is looking at and
-// nothing else.
+// TestKiroDocs_FileUnderASymlinkedDirectoryIsUnrestricted pins that a file beneath an
+// in-root linked directory keeps every affordance.
 func TestKiroDocs_FileUnderASymlinkedDirectoryIsUnrestricted(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
@@ -186,9 +158,7 @@ func TestKiroDocs_SymlinkedFlatCategoryEntryIsDeleteProtected(t *testing.T) {
 	}
 }
 
-// TestKiroDocs_RestrictionsAreOmittedWhenFalse is the wire half of the direction
-// rule: both bits are asserted, not always stated, so an older client (and a
-// hand-read of the JSON) treats absence as unrestricted.
+// TestKiroDocs_RestrictionsAreOmittedWhenFalse pins that both bits are omitted when false.
 func TestKiroDocs_RestrictionsAreOmittedWhenFalse(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
@@ -214,9 +184,7 @@ func TestKiroDocs_RestrictionsAreOmittedWhenFalse(t *testing.T) {
 	}
 }
 
-// findDocByPath locates a row by the tail of its path. The provenance cases need
-// this rather than findDoc: a symlink's row carries its TARGET's front-matter
-// name, so the name is not the handle.
+// findDocByPath locates a row by its path tail: a symlink's row carries its target's name.
 func findDocByPath(docs []KiroDoc, suffix string) (KiroDoc, bool) {
 	for _, d := range docs {
 		if strings.HasSuffix(d.Path, suffix) {

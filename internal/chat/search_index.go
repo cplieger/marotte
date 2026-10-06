@@ -9,43 +9,30 @@ import (
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// The cross-chat candidate index: one Bloom filter per chat over the rune trigrams
-// of what the per-chat scan searches (the entrySegments spans of every turn plus
-// the title, through textsearch.Fold). It PRUNES and never decides: a Bloom
-// filter has no false negatives, so a chat holding the query is always read and
-// scanned exactly as an unindexed one, and a saturated filter admits everything.
-// In memory only: the first query to read a chat builds its filter from that read,
-// every append EXTENDS it under the per-chat lock, and a rewind's truncate, a merge
-// rewrite, a header write (the title is indexed) and Remove DROP it to be rebuilt.
+// The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches
+// (entrySegments spans plus the title, via textsearch.Fold). It prunes, never decides: no false negatives, and a
+// saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
+// and a rewind, rewrite, header write or Remove drops it.
 
 const (
 	// filterBytes is one chat's filter, and so the index's cost per chat.
 	filterBytes = 64 << 10
 	filterWords = filterBytes / 8
 	filterBits  = filterBytes * 8
-	// filterHashes is the positions set per trigram, taken by double hashing
-	// from the two halves of one 64-bit hash.
+	// filterHashes is the positions per trigram, double-hashed from one 64-bit hash's halves.
 	filterHashes = 3
 	trigramRunes = 3
 )
 
-// chatFilter is one chat's Bloom filter. It is complete when it enters the index
-// and grows by every append after, so a lookup hands out a pointer the appender is
-// still writing to; a query reads it outside the chat's lock. Every bit is set by
-// an atomic OR and read by an atomic load, so the two never race, and a filter
-// only ever gains bits: a query that reads a word before the append's OR sees the
-// log as it was before that append, which is the answer a scan taken before the
-// append would give.
+// chatFilter is one chat's Bloom filter, complete on entry and grown by every append while queries read it unlocked.
+// Bits are set by atomic OR and read by atomic load, and only ever added, so a query before an append's OR sees the
+// pre-append log.
 type chatFilter struct {
 	words [filterWords]uint64
 }
 
-// buildChatFilter indexes one chat: its title and every span of every turn,
-// folded as the scan folds them. The scan skips an undrawn turn, but drawn is a
-// bit the appender flips, and a filter built while a turn was undrawn outlives
-// the append that draws it; indexing every turn is what keeps the filter a
-// superset of the scan whatever the bit does after the build. A trigram never
-// straddles two spans, because a hit never does.
+// buildChatFilter indexes one chat's title and every span of every turn, folded as the scan folds. Undrawn turns are
+// indexed too: drawn flips later, and the filter must stay a superset. No trigram straddles two spans.
 func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	f := new(chatFilter)
 	f.addText(name)
@@ -58,11 +45,8 @@ func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	return f
 }
 
-// addEntry records one appended entry's segments. The entry is read into a turn of
-// its own, so a tool_call's input is indexed whole: the tool_result whose diff drops
-// a leaf from that input at query time has not landed yet, and a filter may hold
-// more than the scan reads, never less. An undrawn turn's entry is indexed too;
-// the scan skips it, at the cost of one read that finds nothing.
+// addEntry records one appended entry's segments, read as its own turn, so a tool_call's input is indexed whole
+// before any diff drops a leaf at query time. A filter may hold more than the scan reads, never less.
 func (f *chatFilter) addEntry(e *marotte.Entry) {
 	t := newSearchTurn(false)
 	t.observe(e)
@@ -93,9 +77,8 @@ func (f *chatFilter) add(key uint64) {
 	}
 }
 
-// holdsAll reports whether every key's positions are set. No keys means no
-// demand, so it holds: that is how a query under three runes makes every chat a
-// candidate.
+// holdsAll reports whether every key's positions are set. No keys holds, so a query under three runes matches every
+// chat.
 func (f *chatFilter) holdsAll(keys []uint64) bool {
 	for _, key := range keys {
 		h1, h2 := splitHash(key)
@@ -109,7 +92,7 @@ func (f *chatFilter) holdsAll(keys []uint64) bool {
 	return true
 }
 
-// A rune is at most 21 bits, so three fit in one key with room to spare.
+// A rune is at most 21 bits, so three fit in one key.
 const (
 	runeBits = 21
 	runeMask = 1<<runeBits - 1
@@ -120,11 +103,9 @@ func trigramKey(a, b, c rune) uint64 {
 	return uint64(a&runeMask)<<(2*runeBits) | uint64(b&runeMask)<<runeBits | uint64(c&runeMask)
 }
 
-// splitHash is the one 64-bit hash of a trigram, split into the two halves the
-// positions are derived from. The key is three packed fields, so it goes through
-// a finalizer with full avalanche (splitmix64's) before the split, or the halves
-// would carry the runes' own structure. The step is forced odd so the three
-// positions can never collapse onto one.
+// splitHash is a trigram's 64-bit hash split into the two halves positions derive from. The packed key goes through
+// splitmix64's finalizer first, or the halves would carry rune structure. The step is forced odd so positions stay
+// distinct.
 func splitHash(key uint64) (h1, h2 uint64) {
 	h := key
 	h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9
@@ -133,13 +114,9 @@ func splitHash(key uint64) (h1, h2 uint64) {
 	return h & (1<<32 - 1), h>>32 | 1
 }
 
-// queryTrigrams returns the trigram keys of the free text the needle will scan
-// for, or nil when that text is under three runes.
-//
-// The text is prepared exactly as NewNeedle prepares it: invalid UTF-8 repaired
-// to one U+FFFD per run BEFORE folding. Folding the raw text instead would give
-// such a run one U+FFFD per byte, and a filter asked for a trigram the needle
-// never scans with could reject a chat the scan matches.
+// queryTrigrams returns the trigram keys of the free text the needle scans, or nil under three runes. Prepared as
+// NewNeedle does: invalid UTF-8 becomes one U+FFFD per run before folding, so no trigram is demanded the needle never
+// scans.
 func queryTrigrams(text string) []uint64 {
 	runes := []rune(textsearch.Fold(strings.ToValidUTF8(text, "\uFFFD")))
 	if len(runes) < trigramRunes {
@@ -180,11 +157,8 @@ func (x *searchIndex) drop(id marotte.ChatID) {
 	delete(x.filters, id)
 }
 
-// extend folds one appended entry into the chat's filter, when it holds one. A
-// chat with no filter is left without: only a full read of the log can build a
-// complete one, so an append never creates a filter, and the next query does. The
-// caller holds the chat's lock, which is what orders the extension against the
-// query-side build and against the neighbouring appends.
+// extend folds one appended entry into the chat's filter if it has one; only a full read builds a filter. The caller
+// holds the chat's lock, ordering this against the query-side build and other appends.
 func (x *searchIndex) extend(id marotte.ChatID, e *marotte.Entry) {
 	if f, ok := x.lookup(id); ok {
 		f.addEntry(e)

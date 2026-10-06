@@ -20,7 +20,7 @@ func FuzzPayloadTruncation(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, title, body string) {
 		// Apply the same truncation the Service.Send path uses.
-		gotTitle, gotBody, _ := fitToCap(title, body, marotte.PushSubject{})
+		gotTitle, gotBody, _ := fitToCap(title, body, marotte.PushSubject{}, "")
 
 		payload, err := json.Marshal(pushPayload{Title: gotTitle, Body: gotBody})
 		if err != nil {
@@ -28,8 +28,8 @@ func FuzzPayloadTruncation(f *testing.F) {
 		}
 
 		// The marshaled payload must fit the cap so push() delivers it
-		// rather than dropping an oversize record — the property the old
-		// raw-length truncation violated, because the JSON envelope and any
+		// rather than dropping an oversize record — raw-length truncation
+		// cannot guarantee it, because the JSON envelope and any
 		// character escaping count toward the limit.
 		if len(payload) > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", len(payload), pushBodyCap)

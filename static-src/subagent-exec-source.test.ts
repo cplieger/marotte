@@ -1,14 +1,6 @@
-// ---------------------------------------------------------------------------
-// The subagent adapter: one delegate's slice of a chat, folded into the exec view's
-// model.
-//
-// Pure, so these are plain value assertions with no DOM. What they pin is the half a
-// reader cannot check by looking: which of the two SHAPES a delegate produces (a lone
-// leaf against a pipeline's driver-and-stages), and the two facts the page's own
-// layout rule then keys on — `nodes.length` and whether any node has children — since
-// getting those wrong is what puts a tree pane of one row on screen or hides a
-// pipeline's structure entirely.
-// ---------------------------------------------------------------------------
+// The subagent adapter, as pure values: which SHAPE a delegate produces (a lone leaf or a driver
+// with stages), and the two facts the page's layout keys on: `nodes.length` and whether any node
+// has children.
 
 import { describe, it, expect } from "vitest";
 import { subagentToExec, subagentPath } from "./subagent-exec-source.js";
@@ -44,12 +36,8 @@ function driver(id: string, extra: Partial<EntryToolCall> = {}): EntryToolCall {
   });
 }
 
-/** ONE TURN's entries: its `turn_open`, then the calls as `tool_call` entries in the
- *  ISSUER's lane (which is where an invocation lives, design 3.4), then one `text` entry
- *  per `[lane, body]` pair so each delegate's lane has something to project.
- *
- *  Every case here is one turn, because a delegate never spans two: a mid-turn model
- *  switch appends a `model_switched` entry rather than closing the turn (design 4.2). */
+/** ONE turn's entries: `turn_open`, the calls as `tool_call` entries in the ISSUER's lane, then one
+ *  `text` entry per `[lane, body]`. One turn, since a delegate never spans two. */
 function msg(calls: EntryToolCall[], texts: [string, string][] = [], turnID = "t1"): Entry[] {
   const entries: Entry[] = [
     {
@@ -120,11 +108,7 @@ describe("the single-delegate shape", () => {
     expect(run.focus).toBe(subagentPath("sub_1"));
   });
 
-  // NO `output`, and it is the one field this adapter leaves empty on purpose. A
-  // workflow step's `capturedOutput` is durable beside a transcript that is not, so
-  // that pane's Output region is the only place its result exists. A delegate's blocks
-  // ARE its transcript and its last text block IS its report, so filling this renders
-  // the report twice on one screen — measured in the sidecar before it was removed.
+  // NO `output`: a delegate's last text block IS its report, so filling it renders the report twice.
   it("sets no output, because the transcript below already is it", () => {
     const run = exec(
       [
@@ -147,6 +131,25 @@ describe("the single-delegate shape", () => {
     expect(facts.find((f) => f.label === "Agent")?.value).toBe("context-gatherer");
     expect(facts.find((f) => f.label === "Subtask")?.value).toBe("sub_1");
     expect(facts.find((f) => f.label === "Call")?.value).toBe("tooluse_1");
+  });
+
+  it("states an inline helper's model and effort, and marks it inline", () => {
+    const inline = invocation("tooluse_1", "sub_1", {
+      title: "Sub-agent: x",
+      input: { name: "x", inlineAgent: { systemPrompt: "p", model: "m", effort: "high" } },
+    });
+    const run = exec([msg([inline])], "sub_1");
+    const facts = run.nodes[0]?.facts ?? [];
+    expect(facts.find((f) => f.label === "Model")?.value).toBe("m");
+    expect(facts.find((f) => f.label === "Effort")?.value).toBe("high");
+    expect(run.label).toBe("x (inline agent)");
+  });
+
+  it("states no model or effort for a saved agent", () => {
+    const run = exec([msg([invocation("tooluse_1", "sub_1")])], "sub_1");
+    const labels = (run.nodes[0]?.facts ?? []).map((f) => f.label);
+    expect(labels).not.toContain("Model");
+    expect(labels).not.toContain("Effort");
   });
 
   // The timeline's only input. A tool call carries `ts` in millis plus a duration, so
@@ -194,10 +197,7 @@ describe("the single-delegate shape", () => {
     expect(run.state).toBe("running");
   });
 
-  // `warn`, which `exec-view/status.ts` words as "stopped" and gives the yellow
-  // road-sign mark. The arm compiles whatever it answers, so the VALUE needs the
-  // assertion: `ok` would report the reader's own cancel as a clean finish and
-  // `fail` as a malfunction.
+  // `ok` would report the reader's own cancel as a clean finish, `fail` as a malfunction.
   it("maps aborted onto warn", () => {
     const run = exec([msg([invocation("tooluse_1", "sub_1", { status: "aborted" })])], "sub_1");
     expect(run.nodes[0]?.state).toBe("warn");
@@ -224,12 +224,8 @@ describe("the single-delegate shape", () => {
     expect(run.label).toBe("Subagent");
   });
 
-  // The VALUE, in its own case: `pending` is worded "not started" by
-  // `exec-view/status.ts`, which is a positive claim about a delegate this adapter
-  // has no status for — and the case that produces it most often is a delegate that
-  // ran to completion in a turn the agent process died holding, so the page told the
-  // reader the work never began. Reported from the live instance, on a page whose
-  // header read "Subagent / not started" over a delegate that had finished.
+  // `pending` reads "not started", a false claim for a delegate whose turn died after it finished;
+  // an absent invocation is `unknown`.
   it("reads an absent invocation as unknown, never as not-started", () => {
     const run = exec([msg([], [["sub_gone", "it did run"]])], "sub_gone");
     expect(run.nodes[0]?.state).toBe("unknown");
@@ -299,10 +295,8 @@ describe("the pipeline shape", () => {
     expect(exec(failed, "sub_a").nodes[0]?.state).toBe("fail");
   });
 
-  // A driver that is not resident is the OTHER absence, and it used to read `running`
-  // — a claim of progress with nothing behind it, and the second of two different
-  // answers this file gave for "no tool call". `toolState` owns both now, so it reads
-  // `unknown`. Two stages, because one renders no root row at all.
+  // A non-resident driver is `unknown` too (`toolState` owns both absences). Two stages, since one
+  // renders no root row.
   it("reads an absent driver as unknown rather than running", () => {
     const noDriver = [
       msg([
@@ -339,10 +333,8 @@ describe("the pipeline shape", () => {
     expect(exec(messages, "sub_b").inputs).toEqual({ Task: "review the diff" });
   });
 
-  // `input` is whatever the model produced, so a shape this adapter does not recognise
-  // must yield no rows rather than throw on a page whose other half renders fine.
-  // TWO stages, so the malformed input is judged against the GROUP shape: at one the
-  // pipeline promotes and the assertion below would describe the flat shape instead.
+  // Model-produced `input` of an unknown shape yields no rows rather than throwing. TWO stages, or the
+  // pipeline promotes to the flat shape.
   it("survives a driver whose input is not the expected shape", () => {
     for (const bad of [undefined, null, "text", 42, { stages: "nope" }, { stages: [1, null] }]) {
       const odd = [

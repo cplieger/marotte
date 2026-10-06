@@ -1,15 +1,4 @@
-// The one action that reads GET /api/forges, and the decoder for its response.
-//
-// It used to be `git-badge.forges`, named for the only consumer that polled it.
-// Three modules fetched the endpoint independently by then (the badge's poll,
-// the PR fan-out's first leg, and the Sources tab's own reads), so the name said
-// less than it looked like it did. forge-store.ts owns the poll now and every
-// consumer reads through it; the action is that store's request, hence the name.
-//
-// The decoder moved here from forge-auth.ts for the same reason: one owner of an
-// endpoint owns its wire shape, or a second consumer validates the same payload
-// a second way.
-// ---------------------------------------------------------------------------
+// The one action that reads GET /api/forges (forge-store.ts's request), and its wire decoder.
 
 import { apiAction } from "./index.js";
 import type { Decoder } from "../validators.js";
@@ -17,7 +6,6 @@ import { asObject, decodeArray } from "../validators.js";
 import { decodeConfiguredForge } from "../wire/decoders.gen.js";
 import type { ConfiguredForge, ForgeKind } from "../wire/types.gen.js";
 
-/** Single source of truth for the /api/forges endpoint path. */
 const API_PATH_FORGES = "/api/forges" as const;
 
 /** The /api/forges response. `oauth` reports which kinds support the browser

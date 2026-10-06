@@ -101,8 +101,6 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	if c.Name != "Earlier work" {
 		t.Errorf("name = %q, want the session title", c.Name)
 	}
-	// The chain is what the reaper's keep-list reads, so an adopted session
-	// must be IN it or the next sweep deletes the transcript being resumed.
 	chain := c.SessionChain()
 	if len(chain) != 1 || chain[0] != "sess_abc-123" {
 		t.Errorf("session chain = %v, want [sess_abc-123]", chain)
@@ -140,22 +138,8 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	}
 }
 
-// TestCmdResumeSession_RejectsPathUnsafeIDs covers the validation, and the case
-// list documents what the guard does and does NOT promise.
-//
-// ids.ValidSessionID is a PATH-SAFETY guard: non-empty, <= 128 bytes, no
-// `/ \ NUL`, no `..`. It deliberately does not constrain the alphabet or
-// require the `sess_` prefix, which is why this test does not assert those.
-// Two consequences worth stating rather than discovering later:
-//
-//   - `abc-123` (no prefix) and `sess_a b` (a space) are ACCEPTED here. They
-//     are path-safe but not real session ids, so session/load fails on them
-//     downstream — a dead chat, not a security problem, and the picker only
-//     ever offers ids KAS itself reported.
-//   - internal/kirosession has its OWN stricter validSessionID (requires the
-//     prefix, rejects anything outside [A-Za-z0-9_-]) because it decides
-//     whether a DIRECTORY NAME is a reapable session. The two validators
-//     answer different questions; do not "unify" them.
+// TestCmdResumeSession_RejectsPathUnsafeIDs asserts that ids.ValidSessionID is a PATH-SAFETY guard, and the
+// case list documents what it does and does not promise.
 func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 	cases := map[string]string{
 		"empty":          "",

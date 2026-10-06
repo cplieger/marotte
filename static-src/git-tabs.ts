@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// Git view tab bar: switches between Changes / Pull requests / Sources
-// panels inside the git view. Mirrors the pattern in settings-tabs.ts.
-// ---------------------------------------------------------------------------
+// Git view tab bar: Changes / Pull requests / Sources. Mirrors settings-tabs.ts.
 
 import { signal, subscribe } from "@cplieger/reactive";
 import { pushRoute } from "./router.js";
@@ -10,9 +7,7 @@ import { setGitTab as setGitTabRoute } from "./tabs.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 
-// GitTab lives in route-path.ts (the URL source of truth, alongside SettingsTab);
-// re-exported here so existing `import { GitTab } from "./git-tabs.js"` callers
-// keep working.
+// GitTab lives in route-path.ts, the URL source of truth; re-exported for existing callers.
 export type { GitTab };
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
@@ -25,10 +20,7 @@ const GIT_TAB_LABELS: Readonly<Record<GitTab, string>> = {
 
 type Listener = (tab: GitTab) => void;
 
-// Deduped signal mirroring settings-tabs.ts: a same-value write is a no-op, so
-// re-selecting the active tab no longer re-swaps panels. subscribe() fires
-// immediately on attach to init panel visibility; setGitTab keeps its own
-// early-return guard.
+// Deduped: a same-value write is a no-op. subscribe() fires immediately on attach to init panel visibility.
 const activeTab = signal<GitTab>("changes");
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
@@ -36,9 +28,10 @@ export function onGitTabChange(fn: Listener): () => void {
   return subscribe(activeTab, fn);
 }
 
-/** Switch to a tab. No-op if already active. Updates the URL (pushState)
- *  and the git view tab's route so the Pull requests / Sources sub-tabs are
- *  deep-linkable and back/forward navigable, mirroring settings-tabs.ts. */
+/**
+ * Switch to a tab; no-op if already active. Pushes the URL and syncs the git view tab's route, so the sub-tabs are
+ * deep-linkable and back/forward navigable.
+ */
 export function setGitTab(tab: GitTab): void {
   if (tab === activeTab.peek()) {
     return;
@@ -53,27 +46,24 @@ export function getGitTab(): GitTab {
   return activeTab.peek();
 }
 
-/** The active sub-tab as a REACTIVE read: called inside an `effect` it
- *  subscribes, so a derived output re-runs on a switch. Separate verb rather than
- *  a flag on `getGitTab`, which peeks on purpose — most callers want the value at
- *  a moment (a click, a refresh) and a subscription there would be an accident.
- *  Its reader is the toolbar's search affordance, which has to collapse on the
- *  Sources tab. */
+/**
+ * The active sub-tab as a reactive read: inside an `effect` it subscribes. `getGitTab` peeks on purpose, since most
+ * callers want the value at a moment.
+ */
 export function readGitTab(): GitTab {
   return activeTab.value;
 }
 
-/** Externally force the active sub-tab WITHOUT pushing a URL — used by the
- *  router when back/forward navigation lands on a /git/<tab> URL. Mirrors
- *  forceSettingsTab. Safe to call before the git view tab exists (the
- *  TabViewSpec route sync is a no-op then; openTab sets the route directly). */
+/**
+ * Force the active sub-tab without pushing a URL, for the router on back/forward to /git/<tab>. Safe before the git
+ * view tab exists.
+ */
 export function forceGitTab(tab: GitTab): void {
   setGitTabRoute(tab);
   activeTab.value = tab;
 }
 
-/** Wire the static tab buttons + panel visibility. Idempotent (only
- *  acts when the tab bar exists in the DOM, i.e. on the git view). */
+/** Wire the tab buttons and panel visibility. Idempotent; acts only when the tab bar is in the DOM. */
 export function initGitTabs(): void {
   const bar = document.getElementById("git-tab-bar");
   if (bar === null) {

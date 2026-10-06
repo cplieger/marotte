@@ -1,6 +1,6 @@
-// The segmented switcher's controller, over real layout: it owns the ARIA
-// wiring, the click-to-select seam, the keyboard model, the icon-only fit and
-// the active projection, and it decides nothing about routes or panels.
+// The segmented switcher's controller, over real layout: it owns the ARIA wiring, the
+// click-to-select seam, the keyboard model, the icon-only fit and the active projection, and it
+// decides nothing about routes or panels.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,10 +13,10 @@ const TABS: readonly { id: Tab; label: string }[] = [
   { id: "three", label: "Third section" },
 ];
 
-/** A bar the way `static/index.html` authors one: buttons carrying the page's
- *  data attribute, each with a label span. The production rules that turn
- *  overflow into truncation are inlined, because the stylesheet is not loaded
- *  here and the fit reads `scrollWidth > clientWidth` off them. */
+/** A bar the way `static/index.html` authors one: buttons carrying the page's data attribute,
+ *  each with a label span. The production rules that turn overflow into truncation are inlined,
+ *  because the stylesheet is not loaded here and the fit reads `scrollWidth > clientWidth` off
+ *  them. */
 function buildBar(width: string, ids: readonly Tab[] = ["one", "two", "three"]): HTMLElement {
   const host = document.createElement("div");
   host.style.width = width;

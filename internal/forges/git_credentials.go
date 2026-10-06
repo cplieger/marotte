@@ -1,9 +1,6 @@
-// Legacy ~/.git-credentials scrubbing.
-//
-// An earlier tea integration wrote the forge token in cleartext into
-// ~/.git-credentials and never removed it on disconnect. A stale line
-// keeps the token on disk and answers git wherever the store helper is
-// consulted, so every connect and disconnect scrubs the host's lines.
+// Legacy ~/.git-credentials scrubbing: an earlier integration wrote the forge token there in
+// cleartext, and a stale line keeps answering git, so every connect and disconnect scrubs the
+// host's lines.
 
 package forges
 

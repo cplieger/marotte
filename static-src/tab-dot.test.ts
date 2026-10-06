@@ -1,36 +1,10 @@
-//
-// The tab activity dot: the state mapping, the accessible name, and the
-// reduced-motion degradation.
-//
-// Ported from @cplieger/web-terminal-ui's `.wt-status-dot`, and the three things
-// pinned here are the three that a port gets wrong silently:
-//
-//  1. THE MAPPING. Six chat states derive from four independent signals
-//     (`thinking`, `agent_status`, the failure latch, the dock's queue), and two
-//     of them COEXIST — a permission ask arrives mid-turn with `thinking` still
-//     true. Precedence is therefore load-bearing rather than cosmetic: with
-//     working first, every ask on a background chat is masked by the state that
-//     needs nothing from anyone. That masking is a cost the app already pays for
-//     elsewhere (the permission push notice cannot be silenced precisely because
-//     "a background chat waiting on an approval renders identically to one that
-//     is working"), so getting the order wrong would silently keep it.
-//
-//  2. THE ACCESSIBLE NAME. A 9px disc gives a screen-reader user nothing, and
-//     this feature exists FOR tabs nobody is looking at. The announced word also
-//     has to follow the tab name rather than precede it, which is a function of
-//     where in the row the element sits — invisible to any type check.
-//
-//  3. REDUCED MOTION. 40-a11y.css zeroes every animation's duration and
-//     iteration count globally, which RUNS each animation to completion rather
-//     than suppressing it. Neither dot keyframe declares a fill-mode, so a
-//     completed `vk-dot-wave` reverts its ::after to that rule's own
-//     declarations — `opacity: 1`, no transform — leaving a solid opaque band
-//     welded to the disc forever. `content: none` is what prevents that, and
-//     nothing about the global rule makes it obvious.
-//
-// The CSS half asserts SOURCE facts because the test page loads no app
-// stylesheet: nothing links `css/MANIFEST`, so `getComputedStyle` has no cascade
-// to report on and cannot answer "which rule applies".
+// The tab activity dot: the state mapping, the accessible name and reduced motion.
+//  1. MAPPING: states derive from independent signals and an ask COEXISTS with a running turn, so
+//     precedence is load-bearing: working first would mask every background ask.
+//  2. NAME: a 9px disc says nothing to a screen reader, and the word must follow the tab name.
+//  3. REDUCED MOTION: 40-a11y.css RUNS animations to completion; with no fill-mode a completed
+//     `vk-dot-wave` leaves an opaque band on the disc, which `content: none` prevents.
+// The CSS half reads SOURCE: the test page loads no app stylesheet.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import cssContrastScript from "../scripts/css-contrast.py?raw";
@@ -78,10 +52,8 @@ function session(over: Partial<Session> = {}): Session {
   } as Session;
 }
 
-/** A chat whose newest turn FINISHED, which is the state a launching chat comes back to
- *  the moment its run was created: no resident turn without a `turn_close`, and a header
- *  outcome that grades `done`. The verdict has ONE source, so this is spelled as the
- *  header field rather than as a latch a caller sets. */
+/** A chat whose newest turn FINISHED (a launching chat once its run is created): no open turn,
+ *  and a header outcome grading `done`, the verdict's one source. */
 function settledChat(id: string, outcome: TurnOutcome = "completed"): Session {
   return session({ id, last_turn_outcome: outcome, turn_open: false });
 }
@@ -164,15 +136,9 @@ function invocationCall(over: Partial<EntryToolCall> = {}): EntryToolCall {
 // 1. Signal -> state.
 // ---------------------------------------------------------------------------
 
-// LIVENESS IS THE LOG, which is what this section is for: the four independent
-// latches are gone (`thinking`, `turn_done`, `turn_failed`, an `agent_status` of
-// `completed`), so `working` is DERIVED from a resident turn carrying no
-// `turn_close` and `done` reads the header's own statement about the newest turn
-// that finished. `store.test.ts` owns the unit MAPPING of that rule; what only
-// this file can drive is the rule against the real store operations, which is
-// where the reported defect lived — a delegate spends minutes in tool calls
-// emitting no text, so nothing latched, and any completed-shaped signal landing in
-// that window painted the tab green while the turn was mid-flight.
+// LIVENESS IS THE LOG: `working` is a resident turn with no `turn_close`, `done` the header's
+// statement. `store.test.ts` owns the mapping; this drives the rule through the real store
+// operations (a silent delegate's tool calls must never paint the tab green mid-turn).
 describe("the dot derives working from an OPEN TURN rather than from a latch", () => {
   beforeEach(() => {
     setSessions([session({ id: "c1" })]);
@@ -183,11 +149,8 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
   });
 
   it("reads WORKING for a turn holding only delegate-lane entries", () => {
-    // ADDENDUM 6's green bar, first case, and the reported bug. The delegate's
-    // entries are entries of the PARENT's own turn in the delegate's lane, so the
-    // parent's turn carries no `turn_close` and the dot cannot read anything else
-    // for the duration — whatever the delegate is or is not emitting at the top
-    // level.
+    // A delegate's entries are the PARENT's turn in its lane, so the parent's turn stays open whatever
+    // the delegate emits.
     openTurnIn("c1", "t1");
     appendEntry("c1", sealed("t1", 1, "text", { text: "reading" }, "delegate-uuid"));
     appendEntry("c1", sealed("t1", 2, "tool_call", invocationCall(), "delegate-uuid"));
@@ -215,11 +178,8 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
   });
 
   it("does NOT flip on a turn_closed for a DIFFERENT turn of the same chat", () => {
-    // Green bar, fourth case: the two-open-turns state of design 4.1, a prompt in
-    // `pending` beside an agent-initiated turn. Every `turn_closed` settles exactly
-    // the turn it names, so the chat stays live while the OTHER turn has no close —
-    // and the header's outcome, already written by the first closer, may not be read
-    // as this chat's state while that is true.
+    // Two open turns (a pending prompt beside an agent turn): each `turn_closed` settles only its own,
+    // so the header outcome may not be read while the other is open.
     openTurnIn("c1", "t1", 1);
     openTurnIn("c1", "t2", 2);
     closeTurnIn("c1", "t1", 1, "completed");
@@ -231,10 +191,7 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
   });
 
   it("never lets `thinking` outrank the log, in either direction", () => {
-    // `thinking` survives only as a render-time convenience and is NOT an input
-    // here. Both directions are asserted, because the defect is symmetric: a stale
-    // latch must not claim a chat is busy, and a missing one must not claim it is
-    // finished.
+    // `thinking` is NOT an input: a stale latch must not claim busy, a missing one must not claim done.
     openTurnIn("c1", "t1");
     setThinking("c1", false);
     expect(tabStatusFor(get("c1"))).toBe("working");
@@ -260,10 +217,8 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
   });
 
   it("gates FAILED on liveness, so a running turn is never painted red", () => {
-    // `failed` and `done` read the SAME field, and it is rewritten only at a
-    // `turn_close` — so it still describes the previous turn for the whole of the
-    // next one, and an ungated `failed` paints a chat red for the duration of a turn
-    // that is running fine.
+    // `failed` and `done` read a field rewritten only at `turn_close`, so ungated `failed` would paint a
+    // running turn red.
     upsertHeader(headerWithOutcome("c1", "failed"));
     openTurnIn("c1", "t1");
     expect(tabStatusFor(get("c1"))).toBe("working");
@@ -280,7 +235,7 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
   it("ignores the agent statuses that are not their own dot state", () => {
     // `in_progress` and `idle` arrive on the same channel as `waiting_on_user`. A
     // chat is not made busy by the agent SAYING so while the log reports otherwise,
-    // and `completed` is no longer an input at all — the verdict has one source.
+    // and `completed` is not an input at all — the verdict has one source.
     setSessions([session({ id: "c1", turn_open: false })]);
     for (const status of ["in_progress", "idle", "completed"]) {
       setAgentStatus("c1", status);
@@ -321,6 +276,13 @@ vi.mock("./device-view.js", () => {
     setActiveView: vi.fn((id: string) => {
       active = id;
     }),
+    // pointer-tier.ts's imports, reached through the run-input card. Inert here.
+    cachePointerTier: undefined,
+    cachedPointerTier: undefined,
+    coarseEverSeen: undefined,
+    markCoarseSeen: undefined,
+    pointerModeChoice: undefined,
+    setPointerModeChoice: undefined,
   };
 });
 vi.mock("./run-store.js", () => ({
@@ -331,10 +293,8 @@ vi.mock("./run-store.js", () => ({
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 
-// TWO readers of `apiGetTyped` in this graph and they answer different routes:
-// store-load's chat read (stubbed at the boundary so the reconcile logic under
-// test is the real one) and tabs-sync's `GET /api/tabs`, which the harness answers
-// off the fake collection.
+// Two `apiGetTyped` readers: store-load's chat read (stubbed) and tabs-sync's `GET /api/tabs`
+// (answered by the harness).
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => {
@@ -352,18 +312,13 @@ vi.mock("./api-client.js", () =>
     };
   }),
 );
-// `./actions/index.js` is deliberately NOT mocked. It is the actions framework's
-// re-export, and `actions/tabs.ts` — the four tab mutations the projection
-// dispatches — needs its whole surface, so a one-symbol stub no longer links. The
-// harness resets the framework instead, which is what the action suites do.
+// `./actions/index.js` is NOT mocked: `actions/tabs.ts` needs its whole surface; the harness resets
+// the framework.
 
 // The dock's two leaves that reach for DOM it does not own, plus the toast,
 // mocked exactly as decision-dock.test.ts mocks them.
 vi.mock("./editor-openers.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
+  // Undefined: present only so real-ESM linking succeeds.
   openFile: undefined,
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
@@ -392,12 +347,8 @@ vi.mock("./dom.js", () => {
       },
     ),
     byId: vi.fn(() => document.createElement("div")),
-    // Present because the mock must carry every name anything in this test's
-    // import graph reaches — Browser Mode links ESM for real, so a missing
-    // export fails the whole file at link time rather than at the call.
-    // `decision-dock.ts` (reached via the ask readers) imports the first;
-    // `model-switcher.ts`, now in this graph through the shared turn teardown,
-    // imports the second.
+    // Every name the import graph reaches must exist (real ESM linking): `decision-dock.ts` imports the
+    // first, `model-switcher.ts` (via the shared turn teardown) the second.
     forceReflow: vi.fn(() => 0),
     setBusy: vi.fn(),
   };
@@ -407,25 +358,9 @@ async function paint(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(null)));
 }
 
-/** What a screen reader computes for the `role="tab"` row: its name from
- *  contents, in DOM order.
- *
- *  no accessible-name algorithm is consulted here and none of the
- *  app's CSS, so this is the traversal, and its two exclusions are the model
- *  rather than convenience:
- *
- *   - `aria-hidden="true"` — the dot itself. Excluded by the spec.
- *   - `.tab-pin` on a row without `.tab-pinned` — 12-tabs.css gives it
- *     `display: none`, which removes it from the accessibility tree. Every row
- *     carries the node so renderDOM toggles a class instead of adding and
- *     removing one, so a traversal that ignored the class would announce
- *     "Pinned" on every tab in the strip.
- *   - the close BUTTON — a focusable child with its own role and its own name,
- *     which AT presents as a separate node rather than folding into its
- *     container's.
- *
- *  The property under test is ORDER, and none of the three exclusions can
- *  affect it: the state word sits between the name and the pin. */
+/** A screen reader's name-from-contents for the `role="tab"` row, in DOM order. Excludes the
+ *  `aria-hidden` dot, `.tab-pin` on an unpinned row (12-tabs.css `display: none`; every row carries
+ *  the node), and the close BUTTON (its own AT node). The property is ORDER. */
 function nameFromContents(row: HTMLElement): string {
   const parts: string[] = [];
   for (const node of row.childNodes) {
@@ -452,16 +387,9 @@ function nameFromContents(row: HTMLElement): string {
     .trim();
 }
 
-// ---------------------------------------------------------------------------
-// The projection harness the DOM sections below share.
-//
-// Every row on the strip arrives through a real `open_tab` round trip against the
-// fake collection, so the ids are OPAQUE and server-minted: nothing here composes
-// `c1` or `editor:a.ts`, and a row is addressed through `tabIdFor` after it
-// exists. The tab's activation and teardown hooks are the FACTORY's, registered
-// the way the composition root registers them, and the seeded dot rides that same
-// registration rather than a field a caller sets.
-// ---------------------------------------------------------------------------
+// The projection harness: every row arrives through a real `open_tab` round trip, so ids are
+// OPAQUE and addressed through `tabIdFor`. Activation, teardown and the seeded dot use the
+// FACTORY's registration, as the composition root does.
 
 const seededDots = new Map<string, TabDotStatus>();
 
@@ -555,10 +483,7 @@ describe("the tab's accessible name announces its state", () => {
       setTabStatus(chatTabID, s);
       spoken.set(s, nameFromContents(row));
     }
-    // `waiting` and `input` share one VISUAL (a 9px disc has no channel left to
-    // separate them — see css/12-tabs.css), so these phrases are the only place
-    // the distinction survives. If they ever collapse to near-synonyms the
-    // information is simply gone.
+    // `waiting` and `input` share one VISUAL (css/12-tabs.css), so the phrases alone keep them apart.
     expect(new Set(spoken.values()).size).toBe(6);
     expect(spoken.get("waiting")).toBe("Fix the parser, waiting for you");
     expect(spoken.get("input")).toBe("Fix the parser, needs a decision");
@@ -568,15 +493,8 @@ describe("the tab's accessible name announces its state", () => {
     const { setTabStatus } = await import("./tabs.js");
     const row = await openChat();
     setTabStatus(chatTabID, "failed");
-    // REWRITTEN, and it used to pin the OPPOSITE. This case asserted
-    // "last operation failed" and that the name did NOT contain "turn", on the
-    // grounds that the latch was set for every `error` frame naming the chat,
-    // `switch_failed` and `bridge_start_failed` among them. That breadth is gone:
-    // the error handler stopped touching turn state when `endsTurn` was removed
-    // (handlers/turn.ts), so `setTurnFailed` has one live producer, `turn_closed`
-    // with outcome `failed` or `refused`, and its two other callers re-derive the
-    // same turn verdict. The phrase is the only channel a screen-reader user has
-    // here, so it must claim neither more NOR less than that.
+    // `setTurnFailed`'s one live producer is `turn_closed` with outcome `failed` or `refused`, so the
+    // phrase claims exactly a failed turn.
     expect(nameFromContents(row)).toBe("Fix the parser, turn failed");
   });
 
@@ -586,10 +504,8 @@ describe("the tab's accessible name announces its state", () => {
     setTabPinned(chatTabID, true);
     await paint();
     setTabStatus(chatTabID, "input");
-    // Both extra words compose onto the name, in the order they are read: what
-    // this chat IS, then what it needs, then how it is filed. That ordering falls
-    // out of DOM position, which is the only reason the announced word is a
-    // sibling after `.tab-name` rather than a child of the leading dot.
+    // What it IS, what it needs, how it is filed: DOM position orders it, hence the word is a sibling
+    // after `.tab-name`.
     expect(nameFromContents(row)).toBe("Fix the parser, needs a decision Pinned");
   });
 
@@ -603,8 +519,7 @@ describe("the tab's accessible name announces its state", () => {
 
   it("leads a chat row with the dot and gives every other kind its glyph", async () => {
     const chat = await openChat();
-    // A singleton's ref is EMPTY: its identity is its kind, so the `__files__`
-    // sentinel id is gone with every other composed one.
+    // A singleton's ref is EMPTY: its identity is its kind, so there is no sentinel id.
     const filesID = await openSubject("files");
     await paint();
     const files = document.querySelector<HTMLElement>(`[data-tab-id="${filesID}"]`);
@@ -623,20 +538,9 @@ describe("the tab's accessible name announces its state", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 3. The phrase names the tab's own SUBJECT.
-//
-// The disc is `aria-hidden`, so the phrase is the only channel a screen-reader
-// user has for the state — and THREE producers write these states about three
-// different subjects: `tabStatusFor` about a turn, `runStatusFor` about a
-// workflow run (run-dots.ts), `subagentStatusFor` about a delegate
-// (subagent-dots.ts). So the two OUTCOME states have to name the subject of the
-// row they are painted on, while the five that say nothing about a subject stay
-// one wording for every kind. Widening a phrase back toward "last operation
-// failed" to cover all three would spend the narrowness the chat case's own
-// producer measurement bought, so the outcome phrases are pinned to a subject
-// rather than to a state alone.
-// ---------------------------------------------------------------------------
+// The phrase names the tab's own SUBJECT: three producers (`tabStatusFor` a turn, `runStatusFor` a
+// run, `subagentStatusFor` a delegate) write outcome states, so the two outcome phrases are
+// per-subject while the neutral ones are shared.
 
 describe("the announced phrase names the subject of the tab it is on", () => {
   /** Every kind's ref except the composite one. A singleton's identity IS its
@@ -725,10 +629,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     const { setTabStatus } = await import("./tabs.js");
     const { id, row } = await openKind("run");
 
-    // The writer is `run-dots.ts`, and this row announced "turn failed" about a
-    // workflow run for as long as that module has existed. The noun is the one
-    // the rest of the app already puts in front of a reader (run-bar.ts's
-    // fallback name, run-exec-source.ts's label, the run card's aria-label).
+    // `run-dots.ts` writes this; the noun is the one the app already shows for a run.
     setTabStatus(id, "failed");
     expect(phraseOn(row)).toBe("workflow run failed");
     setTabStatus(id, "done");
@@ -752,8 +653,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     const { setTabStatus } = await import("./tabs.js");
     const { id, row } = await openKind("chat");
 
-    // The regression guard for the kind that was already right: `tabStatusFor`'s
-    // subject genuinely is a turn (its latch has one live producer, `turn_closed`
+    // `tabStatusFor`'s subject genuinely is a turn (its latch has one live producer, `turn_closed`
     // with a broken outcome), so kind-awareness must not move this wording.
     setTabStatus(id, "failed");
     expect(phraseOn(row)).toBe("turn failed");
@@ -767,10 +667,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     const run = await openKind("run");
     const sub = await openKind("subagent");
 
-    // These five say nothing about WHAT is idle or waiting, so a per-kind
-    // wording would be five duplicated tables for no information — and a kind
-    // that drifted in one of them would announce a state the CSS paints
-    // identically on every other row.
+    // Neutral states say nothing about a subject, so one shared wording.
     for (const [state, phrase] of NEUTRAL) {
       for (const t of [chat, run, sub]) {
         setTabStatus(t.id, state);
@@ -795,10 +692,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
       ] as const) {
         setTabStatus(id, state);
         const phrase = phraseOn(row);
-        // A subject, then the verb. `endsWith` is what rules out the bare verb,
-        // which is the subject-less phrase this change exists to remove; the
-        // `undefined` read is the runtime half of the lookup's totality, because
-        // a table missing a kind type-checks under a cast and only shows up here.
+        // `endsWith` rules out the bare verb; the `undefined` read is the runtime totality check a cast hides.
         expect(phrase.endsWith(` ${verb}`)).toBe(true);
         expect(phrase).not.toContain("undefined");
       }
@@ -807,10 +701,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
       finishedBy.set(kind, phraseOn(row));
     }
 
-    // The three kinds with a live producer say three different things, which is
-    // the whole property one state-keyed table could not have. Both outcomes are
-    // composed from one `DOT_SUBJECT` entry, so three distinct finished phrases
-    // is three distinct failed ones.
+    // Three live producers, three distinct phrases (both outcomes compose from one `DOT_SUBJECT` entry).
     const producers = ["chat", "run", "subagent"] as const;
     expect(new Set(producers.map((k) => finishedBy.get(k))).size).toBe(3);
   });
@@ -819,10 +710,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     const { setTabStatus } = await import("./tabs.js");
     const { TAB_ICONS } = await import("./tab-view.js");
 
-    // The invariant kind-awareness had to survive: a sighted reader's tooltip and
-    // a screen-reader user's word come from ONE resolver call, so they cannot
-    // drift per kind. Asserted over every kind and every state, because a second
-    // lookup is exactly the shape a per-kind phrase invites.
+    // Tooltip and screen-reader word come from ONE resolver call, so they cannot drift per kind.
     for (const kind of Object.keys(TAB_ICONS) as TabKind[]) {
       const { id, row } = await openKind(kind);
       for (const state of EVERY_STATE) {
@@ -857,26 +745,18 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   const dot = '.tab-status-dot[data-status="working"]';
 
   it("carries the beat on the disc itself, with no overlay to carry it", () => {
-    // The disc animates its OWN opacity, created only while `data-status` is working,
-    // so an idle strip runs none — the shared `:root` clock this replaced cost a
-    // whole-document style invalidation every frame forever. Phase still agrees
-    // across dots because the delay comes off one origin (`beat-phase.ts`).
+    // The disc animates its OWN opacity only while working (a shared `:root` clock invalidated style
+    // every frame); phase agrees via `beat-phase.ts`.
     const disc = ruleContaining(tabs, dot, "top");
     expect(disc.body).toContain("vk-dot-beat");
     expect(disc.body).toContain("var(--beat-phase, 0ms)");
-    // And the overlay is GONE rather than merely unanimated. Anchored at the start of
-    // a line so it cannot match the run row's own `::before`, whose selector carries
-    // this one as a descendant — the substring is present there and means the
-    // opposite thing.
+    // Anchored at line start, so the run row's `::before` (whose selector contains this) cannot match.
     expect(tabs).not.toMatch(/^\.tab-status-dot\[data-status="working"\]::before/mu);
   });
 
   it("needs no reduced-motion arm for the disc, because the beat rests visible", () => {
-    // 40-a11y.css runs the animation once for 0.01ms and `vk-dot-beat` leaves
-    // `from`/`to` implicit, so the disc rests at its own opacity — 1 — and the donut
-    // below is the whole degradation. What DOES need removing there is the run row's
-    // overlay, and it is removed with the other two square marks rather than by a
-    // disc-scoped arm, because it is one of them.
+    // 40-a11y.css runs `vk-dot-beat` once with implicit keyframes, so the disc rests at opacity 1; the
+    // run row's overlay is removed with the other square marks.
     expect(tabs).not.toMatch(/^ {2}\.tab-status-dot\[data-status="working"\]::before/mu);
     const reduced = ruleContaining(
       tabs,
@@ -892,29 +772,19 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
     // (WCAG 1.4.1). It becomes a donut.
     const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
     expect(/radial-gradient\(closest-side, transparent/.test(reduced.body)).toBe(true);
-    // The hole is a TRANSPARENT gradient stop, not a background-coloured inset
-    // shadow: the same dot sits on five different row fills (resting, hovered,
-    // selected, selected-hover, selected-press) in two themes, and an opaque
-    // hole would be wrong on four of them.
+    // A TRANSPARENT stop, not an inset shadow: the dot sits on five row fills in two themes.
     expect(/inset .*var\(--c-bg/.test(reduced.body)).toBe(false);
   });
 
   it("does not borrow the wants-you ring to make up for the motion", () => {
-    // It used to. The ring means "this chat wants you", `working` wants nothing,
-    // and with the waiting/input pair un-merged three of six states would have
-    // carried one. Dropping it also leaves the donut one channel from `idle`
-    // alone rather than from both ringed states.
+    // The ring means "this chat wants you"; `working` wants nothing, so no ring.
     const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
     expect(/box-shadow/.test(reduced.body)).toBe(false);
   });
 
   it("keeps the donut's band tellable apart from a hollow dot's hairline", () => {
-    // `idle` and `waiting` are hollow — a 1.5px edge — so at 9px the donut is the
-    // OTHER ring of ink in the vocabulary and the two have to differ by weight,
-    // not just by hue. A 45% hole leaves a 2.5px band around a 4px hole; the 55%
-    // it started at left 2.0px, close enough to a hairline to read as one.
-    // Widening past 45% closes the hole until the donut reads as a solid disc,
-    // which is the collision on the other side, so the stop is bounded twice.
+    // Hollow states are a 1.5px edge, so the donut differs by weight: a 45% hole leaves a 2.5px band;
+    // wider closes the hole into a solid disc. Bounded both ways.
     const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
     const stop = /transparent 0 (\d+)%, var\(--dot-color\) \1% 100%/.exec(reduced.body);
     expect(stop, "the donut must have one hole radius, used by both stops").not.toBeNull();
@@ -924,7 +794,7 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   });
 
   it("keeps the global reduced-motion sweep that backs it up", () => {
-    // The component rule above is the fix; this is the belt. If the global sweep
+    // The component rule above owns this; this is the belt. If the global sweep
     // ever narrows to a selector list, an animation added to the dot later would
     // silently keep running.
     const a11y = loadCSS("40-a11y.css");
@@ -940,9 +810,7 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
 
 describe("the active row keeps the same dot color", () => {
   it("never re-points --dot-color from an active-tab selector", () => {
-    // Selection belongs to the row. A status belongs to the chat, so selecting
-    // the row must not turn normal green into a darker green. Contrast
-    // adjustments belong to the row fill, not the state indicator's identity.
+    // Selection belongs to the row and a status to the chat, so selecting must not darken the ink.
     const sel = loadCSS("70-selection.css");
     expect(sel).not.toMatch(/\.tab\.active\s+\.tab-status-dot/u);
   });
@@ -972,17 +840,8 @@ describe("the active row keeps the same dot color", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4b. The ink vocabulary, shared with web-terminal-kiro.
-//
-// The two apps sit in the same window (marotte hosts a web-terminal panel), so a
-// state that means one thing must not carry two colours between them. It did
-// twice over. First `working` was marotte's violet accent while the terminal's was
-// blue. Then the fix aligned these tokens to @cplieger/web-terminal-ui's LIBRARY
-// DEFAULTS — which web-terminal-kiro overrides on every member — so the two apps
-// agreed with the package and still disagreed with each other. The values are now
-// web-terminal-kiro's own, hue-exact in both themes with L and C sized per theme.
-// ---------------------------------------------------------------------------
+// The ink vocabulary is web-terminal-kiro's own (marotte hosts a web-terminal panel), hue-exact in
+// both themes, so a state never carries two colours between the apps.
 
 describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   const tabs = loadCSS("12-tabs.css");
@@ -1008,11 +867,8 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   });
 
   it("keeps the editor's mark on the accent token, and working off it", () => {
-    // `dirty` and `working` were BOTH literally --c-accent, which is how an editor
-    // tab with unsaved changes and a chat mid-turn came to look identical. They
-    // read different tokens now. The VALUES are close again — the source's working
-    // violet is nearly this app's accent, deliberately — and what separates them is
-    // MOTION, plus the structural fact that a tab is never both a chat and a file.
+    // `dirty` and `working` read different tokens; their values are close, so MOTION separates them
+    // (a tab is never both a chat and a file).
     const working = ruleContaining(tabs, '.tab-status-dot[data-status="working"]', "top");
     const dirty = ruleContaining(tabs, '.tab-status-dot[data-status="dirty"]', "top");
     expect(working.body).not.toContain("--c-accent");
@@ -1020,16 +876,8 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   });
 
   it("un-merges waiting from input on fill, which is the only channel it has", () => {
-    // The pair shares ONE ink on purpose: both mean "action required", which is the
-    // single thing the source's --status-input says. So fill is what carries them
-    // apart, and it is load-bearing rather than decorative — the alias that used to
-    // exempt this pair from the non-colour-channel check is gone, so hue alone
-    // would be a WCAG 1.4.1 failure. `input` is solid (a turn frozen mid-flight),
-    // `waiting` is hollow (its turn is over).
-    //
-    // These rules serve a CHAT row, which is the population that reasoning is about.
-    // On a RUN row the same two states are both rings and BAND carries them instead,
-    // because fill is spent there on whether the run has ended (4e).
+    // One ink for "action required", so fill carries the pair (hue alone fails WCAG 1.4.1): `input`
+    // solid, `waiting` hollow. On a RUN row fill means ended, so band carries them (4e).
     const waiting = ruleContaining(tabs, '.tab-status-dot[data-status="waiting"]', "top");
     const input = ruleContaining(tabs, '.tab-status-dot[data-status="input"]', "top");
     expect(waiting.body).toContain("background: transparent");
@@ -1044,17 +892,8 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   });
 
   it("gives the ring to the wants-you states and to nothing else", () => {
-    // Every rule in the block, at every scope: exactly FOUR carry a ring, and all
-    // four mean "blocked on a person". The reduced-motion `working` donut used to be
-    // among them, which put the wants-you marker on the one state that wants nothing
-    // from the reader; the workflow mark's own `waiting`/`input` pair joined instead,
-    // which is agreement with the grammar rather than a loan against it — the marker
-    // still means exactly one thing, now across two marks.
-    // Read through `allRules` rather than a prelude regex, so each rule is named by
-    // its WHOLE selector list: the mark's two wants-you rules are shared with the
-    // composer band's glyph and a History run row's lead, and a rule that gains a
-    // consumer has to show it here rather than hiding behind whichever member
-    // happens to be written last.
+    // Exactly FOUR rules at any scope carry a ring, all meaning "blocked on a person". Read via
+    // `allRules` so each is named by its whole selector list, and a new consumer shows up here.
     const ringed = allRules(tabs)
       .filter((r) => /box-shadow: 0 0 0 2px/.test(r.body))
       .map((r) => r.selector.replace(/\s+/gu, " "))
@@ -1068,34 +907,15 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   });
 
   it("keeps the tool's alias list empty, which is where the un-merge is proven", () => {
-    // scripts/css-contrast.py fails when two chat states differ by hue alone, and
-    // DOT_ALIASES is the list of pairs it has been told not to look at. The
-    // wants-you pair was in it, and it now shares one INK, so an entry re-appearing
-    // here would exempt from the check the exact pair whose only separator is fill —
-    // letting a merge come back with the check still reporting PASS, which is the
-    // one failure mode a mechanical gate has that a human reviewer does not.
+    // scripts/css-contrast.py's DOT_ALIASES exempts pairs from its hue check; the wants-you pair
+    // separated only by fill must never re-enter it.
     expect(cssContrastScript).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4c. The WORKFLOW mark, the second mark in a chat row's leading cluster.
-//
-// It reuses this vocabulary rather than opening a second one — the same four
-// `--c-dot-*` inks and the same `--dot-color` indirection — so everything section
-// 4b pins about the dot's ink applies to it unchanged. What is NOT inherited is
-// the SILHOUETTE: the dot is a circle in every state but `failed`, and this mark
-// is a rounded SQUARE in all of them, which is what separates the two at identical
-// hue without spending a channel per state (WCAG 1.4.1).
-//
-// `css-contrast.py dot` now carries both marks in one pairwise population — its
-// matrix used to enumerate the dot's seven states alone, which is how a mark whose
-// `waiting` resolved to the dot's `waiting` tuple exactly shipped with that script
-// reporting PASS. So this section is the STYLESHEET side of the same claim: the
-// script TRANSCRIBES the channels and cannot see the CSS, so every number it
-// transcribes is read off `12-tabs.css` here and compared. A transcription that
-// drifts from the rule it describes turns a mechanical gate into a green light.
-// ---------------------------------------------------------------------------
+// 4c. The WORKFLOW mark reuses the dot's `--c-dot-*` inks and `--dot-color`, but is a rounded
+// SQUARE in every state (the dot is a circle except `failed`), separating them at identical hue.
+// `css-contrast.py dot` transcribes these channels; this reads them off `12-tabs.css` to compare.
 
 describe("the workflow mark is a ring, and never the dot's disc", () => {
   const tabs = loadCSS("12-tabs.css");
@@ -1104,20 +924,14 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
    *  wherever two states differ on it alone. */
   const BAND_RATIO_FLOOR = 2;
 
-  /** The mark's shared LOOK rule: the box, the silhouette, the band's style and the
-   *  default ink. Keyed on the BAR's class rather than the tab's, because
-   *  `.tab-run-dot` is a member of two top-level rules now — this one, which the
-   *  composer band's live-run glyph shares, and the tab row's own tuck-and-spawn,
-   *  which is layout the bar has no use for. */
+  /** The mark's shared LOOK rule, keyed on the bar's class: `.tab-run-dot` also belongs to the tab
+   *  row's layout rule. */
   function lookRule(): string {
     return ruleContaining(tabs, ".run-bar-glyph", "top").body;
   }
 
-  /** The band a state's own rule paints, in px, in whichever of the three spellings
-   *  that rule uses: --run-band when the closing beat has to read the same number,
-   *  `border-width` when a base rule already supplies the style, and the `border`
-   *  shorthand when it does not. Both marks answer, so a run row's own ring is
-   *  measurable against the mark's with one reader. */
+  /** The band a state's rule paints in px, from `--run-band`, `border-width` or the `border`
+   *  shorthand, so both marks are measurable with one reader. */
   function bandOf(selector: string, scope = "top"): number {
     const body = ruleContaining(tabs, selector, scope).body;
     const hit =
@@ -1129,10 +943,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     return hit?.[2] === "rem" ? n * 16 : n;
   }
 
-  /** The band the DOT's `radial-gradient` donut paints, derived from its hole stop.
-   *  The gradient's radius is half of --dot-size (8px), so a hole of H% leaves a
-   *  band of `4 * (1 - H/100)` — the arithmetic that rule is written against, and
-   *  the only way to compare it against the mark's own band numerically. */
+  /** The DOT donut's band from its hole stop: radius 4px (half of --dot-size), so `4 * (1 - H/100)`. */
   function donutBandOf(selector: string): number {
     const body = ruleContaining(tabs, selector, "prefers-reduced-motion").body;
     const stop = /transparent 0 (\d+)%, var\(--dot-color\) \1% 100%/.exec(body);
@@ -1161,23 +972,13 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("defaults its ink to the quiet one, not to the state that means work", () => {
-    // The base body's `--dot-color` is what a state arm added later paints with if
-    // it forgets its own ink. Defaulting to --c-dot-working makes that omission
-    // claim a run is executing; the dot's own base defaults to idle, which is the
-    // quieter failure and the one to match.
+    // A state arm that forgets its ink paints the base: idle, the quieter failure, like the dot's.
     expect(lookRule()).toContain("--dot-color: var(--c-dot-idle)");
   });
 
   it("declares every band in one unit, so the relation survives a root font size", () => {
-    // A --run-band in rem beside 1.5px/2px literals reads as the same ladder at
-    // 16px and inverts at 20px, where 0.125rem is 2.5px. px throughout, like the
-    // activity dot's own bands above.
-    // File-wide and over every SPELLING of a band, because there are three: the
-    // `border` shorthand (a state whose base rule has no border-style to inherit),
-    // `border-width` (one that does), and --run-band (one whose beat mask has to read
-    // the same number). The mark's own four are the three states plus its
-    // reduced-motion arm; the run row's rings are in here too, and a rem among any of
-    // them is what this rejects.
+    // px throughout: a rem band beside px literals inverts at 20px. File-wide over all three band
+    // spellings.
     const bands = [...tabs.matchAll(/(?:border|border-width|--run-band):\s*([\d.]+)(px|rem|em)/g)];
     expect(bands.length).toBeGreaterThanOrEqual(RUN_STATES.length + 1);
     expect([...new Set(bands.map(([, , unit]) => unit))]).toEqual(["px"]);
@@ -1192,10 +993,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("is never a filled disc, in any state or at any scope", () => {
-    // The disc is the activity dot's. Shape is the only thing keeping the two
-    // marks apart at identical hue, so a background of the ink here would collapse
-    // that separation at the one moment both marks are violet. The one fill is the
-    // closing beat's seal, which rests invisible and shows only at the beat's peak.
+    // No ink fill: shape alone separates the marks at identical hue. The one fill is the closing beat's
+    // seal, invisible at rest.
     const marks = allRules(tabs).filter((r) => r.selector.includes(".tab-run-dot"));
     for (const rule of marks.filter((r) => !r.selector.includes("::after"))) {
       expect(
@@ -1209,12 +1008,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("separates its own wants-you pair by band at the exec column's ratio", () => {
-    // The pair shares one ink AND one halo AND one silhouette, and it is still,
-    // so BAND WIDTH is the whole separator — which makes the RATIO the assertion
-    // rather than the inequality. The exec column separates its own rings at 2px
-    // against a snapped 1px; a 1.5px hairline here would have given 1.33:1, a third
-    // of a pixel of ink at 8px, which the stylesheet can express and a reader
-    // cannot. `css-contrast.py dot` gates the same number over its transcription.
+    // One ink, halo and silhouette, and still: BAND WIDTH is the whole separator, so the RATIO is
+    // asserted (`css-contrast.py dot` gates the same number).
     const waiting = bandOf('.tab-run-dot[data-status="waiting"]');
     const input = bandOf('.tab-run-dot[data-status="input"]');
     expect(input / waiting).toBeGreaterThanOrEqual(BAND_RATIO_FLOOR);
@@ -1233,10 +1028,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("beats on the overlay and not on the ring", () => {
-    // The ring is the shape; only the overlay moves. Its animation is scoped to the
-    // working state, so a settled run-dot carries none at all — which matters more
-    // than it reads: an animation OUTRANKS a normal declaration, so a settled state
-    // could not answer a base-rule beat by resetting it.
+    // Only the working overlay animates: an animation outranks a declaration, so a settled state could
+    // not reset a base-rule beat.
     const ring = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top");
     const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
     expect(/animation:/.test(ring.body)).toBe(false);
@@ -1303,13 +1096,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("hands a run's own row the whole band ladder, number for number", () => {
-    // The parity claim on the one axis a render cannot check, and that is why it is
-    // here rather than in 4e: MEASURED in this suite's own browser, Chromium reports
-    // `border-width: 1.5px` as "1px" at dpr 1, 2 and 3 alike, so the dot's declared
-    // hairline and the mark's 1px paint identically and a computed-style comparison
-    // passes whichever number the source holds. What taking the mark's numbers buys
-    // for certain is that the DECLARED ladder is the painted one, so the 2:1 floor
-    // below holds by construction instead of by an engine's snapping.
+    // Chromium paints `1.5px` and `1px` borders identically at dpr 1-3, so a computed-style check cannot
+    // tell; taking the mark's numbers makes the DECLARED ladder the painted one.
     for (const state of RUN_STATES) {
       expect(
         bandOf(`.tab[data-kind="run"] .tab-status-dot[data-status="${state}"]`),
@@ -1343,13 +1131,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("keeps the two marks separable by SILHOUETTE, in every state", () => {
-    // THE CROSS-MARK QUESTION, and the silhouette is what answers it once rather
-    // than per state. The pair that forces it is the reduced-motion one: the dot's
-    // `working` becomes a 2.2px band around a 3.6px hole in the SAME violet 8px to
-    // the left, and a circular mark would have had to answer it with a band tellable
-    // apart at 2:1 — under 1.1px, which collides with `waiting`, or over 4.4px,
-    // which closes the hole at this diameter. Neither exists, so the shape does the
-    // work and the bands are free to separate the mark's own three states.
+    // The silhouette answers the cross-mark question: against the dot's reduced-motion `working` donut
+    // a circular mark has no 2:1 band that neither collides with `waiting` nor closes the hole.
     expect(lookRule()).toContain("border-radius: var(--dot-radius-square)");
     // The dot is the circle, in every state it paints one — which is what the
     // square is being told apart FROM.
@@ -1374,10 +1157,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     const dot = donutBandOf('.tab-status-dot[data-status="working"]');
     const mark = bandOf('.tab-run-dot[data-status="working"]', "prefers-reduced-motion");
     expect(mark).toBeGreaterThan(dot);
-    // And apart from the dot's hollow hairline, which is the state the mark is most
-    // likely to sit beside: a chat that has not initiated with a run already going.
-    // No band in this block equals it, so that pair is separated twice rather than
-    // by silhouette alone.
+    // No band here equals the dot's idle hairline, so that likely neighbour is separated twice.
     const idle = ruleContaining(tabs, '.tab-status-dot[data-status="idle"]', "top").body;
     const hairline = Number(/border:\s*([\d.]+)px/.exec(idle)?.[1]);
     expect(mark).toBeGreaterThan(hairline);
@@ -1387,11 +1167,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("is carried by the mechanical 1.4.1 gate, not only by this file", () => {
-    // `css-contrast.py dot` is the app's declared WCAG 1.4.1 check, and its matrix
-    // enumerated the activity dot's seven states alone while the strip had ten
-    // marks — which is exactly how a mark whose `waiting` was byte-identical to the
-    // dot's shipped with that script reporting PASS. The three states and the axis
-    // that can express their separation both have to be in it.
+    // `css-contrast.py dot` (the WCAG 1.4.1 check) must enumerate the mark's three states and the axis
+    // separating them.
     expect(cssContrastScript).toContain(
       "RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [",
     );
@@ -1410,18 +1187,9 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 
   it("gates a run row's WHOLE vocabulary, transcribed from the producer", () => {
-    // `RUN_ROW_MEMBERS` is the run row's 1.4.1 population, and it is a hand-written
-    // list in another language — so the one thing it can be wrong about is MEMBERSHIP.
-    // A state the producer can paint and this list omits is a state no pair is ever
-    // checked against, and the sweep reports PASS over a population that is not the
-    // row. This is the transcription check for it.
-    //
-    // The producer is `store.ts runStatusFor`, driven over its whole input space
-    // rather than trusted to a second list here: `ALL_STATUSES` is a Record keyed by
-    // `ClassifiedRunStatus`, so a member added to the wire enum fails THIS type check
-    // rather than quietly shrinking the sweep. `""` is excluded because it means "no
-    // state to show" — a reserved empty slot paints no mark, so it has nothing to be
-    // confusable with.
+    // `RUN_ROW_MEMBERS` (the run row's 1.4.1 population, in another language) can be wrong about
+    // MEMBERSHIP, so `runStatusFor` is driven over its whole input space; `ALL_STATUSES` is a Record
+    // over `ClassifiedRunStatus`. `""` paints no mark.
     const ALL_STATUSES: Record<ClassifiedRunStatus, true> = {
       running: true,
       paused: true,
@@ -1455,16 +1223,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4d. The mark's painted geometry, against real layout.
-//
-// `box-sizing: border-box` is what makes --dot-size the painted DIAMETER rather
-// than the diameter plus two bands, and it is the whole reason the ring can sit at
-// the size of the disc it shares a cluster with. A 3px band would otherwise paint
-// a 14px mark beside an 8px dot. Nothing about the markup implies it, so it is
-// measured with the shipped stylesheet mounted — the same thing
-// state-column-size.test.ts does for the run bar's own ring.
-// ---------------------------------------------------------------------------
+// 4d. `box-sizing: border-box` makes --dot-size the painted DIAMETER, so the ring matches the disc
+// beside it (else a 3px band paints 14px). Measured with the shipped stylesheet mounted.
 
 describe("the ring is painted at the size of the disc beside it", () => {
   let style: HTMLStyleElement;
@@ -1518,10 +1278,7 @@ describe("the ring is painted at the size of the disc beside it", () => {
   });
 
   it("paints a square where the dot paints a circle, resolved not transcribed", async () => {
-    // The cross-mark separator, measured through the cascade rather than read off
-    // the rule: the mark's radius is a calc over --dot-size, so the number a reader
-    // sees is the resolved one and a token retune moves it. Half the diameter IS a
-    // circle, so the assertion is the gap between the two.
+    // Measured through the cascade: the radius is a calc over --dot-size. Half the diameter is a circle.
     const { setTabRunStatus } = await import("./tabs.js");
     const id = await openSubject("chat", "c1");
     await paint();
@@ -1553,23 +1310,10 @@ describe("the ring is painted at the size of the disc beside it", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4e. The same MARK on a RUN SUB-TAB's own activity dot.
-//
-// A run's row carries NO `.tab-run-dot` — `createTabEl` appends one for the chat
-// kind only — so the square that means "a workflow run" had to reach the one mark
-// such a row does carry, its activity dot. That makes the geometry a CASCADE
-// question rather than a rule read, twice over: the kind-scoped rule (0,4,0)
-// contests the base `border-radius: 50%` AND outranks the `failed` diamond's own
-// corner, and both silhouettes resolve one shared token. So it is measured off
-// real boxes with the bundle mounted, the way 4d measures the mark's.
-//
-// The SILHOUETTE was the first half and the TREATMENT is the second: all three
-// states the mark has are the mark's here, fill and band and beat included, because
-// the two elements report one run and the strip may not answer with two looks. The
-// two OUTCOMES stay the dot's, which is what re-spends the channels on this row
-// rather than losing one — see the two cases at the end of this section.
-// ---------------------------------------------------------------------------
+// 4e. A run row carries NO `.tab-run-dot` (chat kind only), so its activity dot takes the mark's
+// square: a CASCADE question (the kind rule outranks `50%` and the `failed` diamond's corner),
+// measured off real boxes. Its three live states take the mark's treatment; the two OUTCOMES stay
+// the dot's.
 
 describe("a run sub-tab's dot takes the workflow mark's square", () => {
   let sheet: HTMLStyleElement;
@@ -1662,18 +1406,9 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("paints every live state exactly as the mark on its parent's row does", async () => {
-    // THE WHOLE CONVERGENCE, state by state, and the reported defect is one of its
-    // three rows: the square was there and `working` was FILLED, so a solid violet
-    // square meaning "a conversation is mid-turn" sat one row under a hollow violet
-    // ring meaning the run was going. `input` was the same defect one state over,
-    // and `waiting` differed on band (the dot's 1.5px hairline against the mark's
-    // 1px). Fill, band, halo and ink are all channels in this file, so a mark that
-    // answers any of them differently is the strip contradicting itself about ONE run.
-    //
-    // Property by property rather than "is it hollow", because hollow alone passes on
-    // a ring of the wrong weight, the wrong hue or the wrong corner. `transition` is
-    // deliberately not compared: the mark SPAWNS into its row when a run starts and
-    // the dot does not, which is a lifecycle difference rather than a look.
+    // The convergence state by state: fill, band, halo, ink and corner must all match the mark, or the
+    // strip contradicts itself about ONE run. `transition` is not compared: the mark spawns, the dot
+    // does not.
     const { setTabStatus, setTabRunStatus } = await import("./tabs.js");
     const { id, parent } = await runSubTab();
 
@@ -1719,11 +1454,8 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("keeps the two wants-you states apart on band, at the exec column's ratio", async () => {
-    // The cost of converging `input`: it was the one state fill separated from
-    // `waiting` on this row, and both are hollow now, so BAND is the whole separator
-    // and the RATIO is the assertion rather than the inequality. Taking the mark's
-    // 1px/2px is what buys 2:1; keeping the dot's 1.5px hairline under a 2px ring
-    // would have been 1.33:1, a third of a pixel of ink at 8px.
+    // `input` and `waiting` are both hollow here, so BAND separates them and the RATIO (2:1, the mark's
+    // 1px/2px) is asserted.
     const { setTabStatus } = await import("./tabs.js");
     const { id } = await runSubTab();
     const dot = dotOf(rowOf(id));
@@ -1759,12 +1491,8 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("spends fill on finished-or-not, which is where the convergence stops", async () => {
-    // The channels are RE-SPENT on this row rather than reduced, and this is the
-    // trade: `done` and `failed` are states the mark has no vocabulary for at all
-    // (it withdraws when a run ends), so they keep the dot's disc and fill separates
-    // the three live states from the two settled ones. A chat row spends fill on the
-    // wants-you pair instead, because it has no outcome to tell them from; each row
-    // is internally consistent, which is the population WCAG 1.4.1 is judged over.
+    // Channels are RE-SPENT: `done` and `failed` keep the dot's disc, so fill separates live from
+    // settled on this row; each row is internally consistent (WCAG 1.4.1).
     const { setTabStatus } = await import("./tabs.js");
     const { id } = await runSubTab();
     const dot = dotOf(rowOf(id));
@@ -1833,14 +1561,8 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("keeps the row's geometry across every state a run tab can take", async () => {
-    // ONE run of the state vocabulary, TWO measurements, because one fact governs
-    // both: the radius rule is state-INDEPENDENT apart from the `failed` exclusion,
-    // and the reserved slot plus the diamond's margin correction hold under it — a
-    // row whose label stepped sideways when its run failed would jump at the one
-    // moment the reader is watching it. `runStatusFor` (store.ts) answers
-    // "" | working | waiting | input | done | failed and never `idle`, so this is the
-    // whole vocabulary; `""` is measurable because a sub-tab's dot RESERVES its slot
-    // with no state written, so it keeps its box.
+    // The radius rule is state-independent apart from `failed`, and the slot plus the diamond's margin
+    // hold under it. `runStatusFor` never answers `idle`; `""` keeps its reserved box.
     const { setTabStatus } = await import("./tabs.js");
     const { id } = await runSubTab();
     const row = rowOf(id);
@@ -1874,15 +1596,8 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("gives a PARENTLESS run's row the same mark", async () => {
-    // The scope, and it is the KIND rather than the nesting: a manual or scheduled
-    // run opens a top-level row, and it reports the same subject through the same
-    // element, so the silhouette may not depend on whether the run happens to have a
-    // launching chat. Its SLOT differs (that row leads with its kind glyph and
-    // carries the dot in the trailing one) and its treatment does not.
-    //
-    // This reverses what the rule used to do — it was keyed on `.tab-child`, so such
-    // a row kept the dot's circle — and the earlier note said the square was right by
-    // subject and raised it rather than taking it.
+    // Keyed on the KIND, not the nesting: a top-level run row reports the same subject, so it takes the
+    // same silhouette in its trailing slot.
     const { setTabStatus } = await import("./tabs.js");
     const id = await openSubject("run", "wf_2");
     await paint();
@@ -1900,17 +1615,8 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("holds a PARENTLESS row's trailing slot when the run fails", async () => {
-    // The sub-tab case's twin, one position over, and the neighbours are SWAPPED:
-    // there the dot leads and the name is what would move, here the dot is trailing
-    // and `.tab-name` is the flex grower — so the name absorbs the 2px the smaller
-    // diamond frees and the MARK is what steps sideways. Measured before the fix:
-    // the mark's centre moved 1px right while the × stayed put, at the one moment a
-    // reader is watching the row.
-    //
-    // `done` is the departure state rather than `working`, because both are settled
-    // outcomes at --dot-size and the flip between them is the one this row makes on
-    // its own; `failed` is the only state in the whole vocabulary with a different
-    // box.
+    // Here the name is the flex grower, so the smaller diamond would move the MARK. `done` is the
+    // departure state; `failed` is the only state with a different box.
     const { setTabStatus } = await import("./tabs.js");
     const id = await openSubject("run", "wf_slot");
     await paint();
@@ -1943,45 +1649,15 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 6. The finished-turn latch is DELETED, subject and all.
-//
-// It existed because `agent_status === "completed"` is not a guaranteed signal, so
-// a turn that ended without one fell to `idle` and "this chat finished" held only
-// for the turns where the agent happened to say so. Under the entry log the
-// verdict has ONE source — `last_turn_outcome`, written by the closer in the same
-// header rewrite that appends the `turn_close` — so there is no client memory to
-// latch, to clear, or to keep from being cleared by seeing it. `setTurnDone`,
-// `clearTurnDone`, `applyLatch`, `relatchTurnVerdict` and the `turn_done` /
-// `turn_failed` fields are gone with the four-latch precedence, and the section
-// above pins what replaced them.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 5b. EVERY outcome the wire can send reaches the dot, and none reaches it as
-// "nothing is happening here".
-//
-// This is the section symptom 2 was reported against. The latch's mapping was
-// hand-written over the outcome values and `interrupted` fell into its default
-// arm, so a turn stopped by a network error — which the transcript divider, the
-// collapsed face, the footer glyph and the fold rule all treat as a failure —
-// latched nothing, `tabStatusFor` fell through every rung to `idle`, and
-// 12-tabs.css painted `idle` as a TRANSPARENT disc with a 1.5px ring. The user
-// saw a chat with a clear inline error message and an empty circle beside it.
-//
-// So the table below is the taxonomy, not a sample: every outcome, the latch it
-// sets, the dot state that follows, and — for the two that matter — the SHAPE the
-// stylesheet paints, which is the observable that was actually wrong.
-// ---------------------------------------------------------------------------
+// 5b. EVERY wire outcome reaches the dot and none as "nothing is happening": `interrupted` once fell
+// to `idle`, a TRANSPARENT ring beside an inline error. The table is the taxonomy, with the SHAPE
+// painted for the two that matter.
 
 describe("every turn outcome reaches the tab dot", () => {
   const tabs = loadCSS("12-tabs.css");
 
-  /** outcome -> the dot state a chat shows once that turn has ended.
-   *
-   *  Derived from `severityOf` in production; spelled out here on purpose, because
-   *  a test that re-derived it through the same function it is checking would pass
-   *  for any mapping at all. */
+  /** outcome -> the dot state once that turn has ended, hardcoded: re-deriving through `severityOf`
+   *  would pass for any mapping. */
   const cases: [TurnOutcome, TabDotStatus][] = [
     // BROKEN. All three are failures and all three must say so.
     ["failed", "failed"],
@@ -1989,11 +1665,7 @@ describe("every turn outcome reaches the tab dot", () => {
     ["interrupted", "failed"],
     // CLEAN.
     ["completed", "done"],
-    // STOPPED. Neither is a failure — a cancel is what the user asked for, and an
-    // unmeasured stop reason says nothing about whether the work succeeded — but
-    // neither may be `idle` either, because the hollow ring means the chat has NOT
-    // INITIATED and both of these ran a turn. `done` is
-    // the transport's "a turn finished here", which is what both of them are.
+    // STOPPED: not a failure, but not `idle` either (the hollow ring means the chat has NOT INITIATED).
     ["cancelled", "done"],
     ["unknown", "done"],
   ];
@@ -2012,21 +1684,14 @@ describe("every turn outcome reaches the tab dot", () => {
 
   for (const [outcome, want] of cases) {
     it(`shows ${want} for a turn that ended ${outcome}`, () => {
-      // Through the HEADER, which is the one door left: the verdict is the server's
-      // statement about the newest finished turn, so a chat whose window was never
-      // fetched is the ordinary case rather than a fallback and every row of this
-      // table is that case. There is nothing client-side to re-derive.
+      // Through the HEADER, the one door: an unfetched window is the ordinary case.
       upsertHeader(headerWithOutcome("c1", outcome));
       expect(tabStatusFor(get("c1"))).toBe(want);
     });
   }
 
   it("grades every outcome the same way the dot above painted it", () => {
-    // The table drove the header; this pins the shared grader underneath it, so a
-    // change to `outcomeLatch` that the header path happens to survive still fails
-    // here. `store.test.ts` owns the grader's own table including the two values
-    // this one has no dot row for (`running`, and an absent outcome); what is
-    // asserted here is that the two agree.
+    // Pins the shared grader under the header path; `store.test.ts` owns its full table.
     for (const [outcome, want] of cases) {
       expect(outcomeLatch(outcome), `outcomeLatch(${outcome})`).toBe(
         want === "failed" ? "failed" : want === "done" ? "done" : "",
@@ -2041,25 +1706,15 @@ describe("every turn outcome reaches the tab dot", () => {
   });
 
   it("latches a discarded and an unreadable turn as DONE, which two later fixes rest on", () => {
-    // Named for the same reason as the row above, because two changes now depend on
-    // these exact two mappings and a table row is easy to edit without noticing.
-    //
-    // `cancelled` is what a model switch that threw a live turn away now concludes:
-    // it must not paint red for a switch the reader asked for, and must not paint the
-    // hollow ring, which means the chat has not initiated. `unknown` is what a turn
-    // NOTHING closed now reads as, so it reaches ordinary turns rather than only
-    // displaced fragments — a red dot there would invent a failure the wire never
-    // reported.
+    // `cancelled` (a model switch discarding a turn) must not paint red or hollow; `unknown` (a turn
+    // nothing closed) must not invent a failure.
     expect(outcomeLatch("cancelled")).toBe("done");
     expect(outcomeLatch("unknown")).toBe("done");
   });
 
   it("reads an ABSENT outcome on a later header as a CLEAR, back to the floor", () => {
-    // The header is the AUTHORITY in both directions, so the field going away is a
-    // real statement and not "no news" — which is what makes the hollow ring
-    // reachable again for a record whose outcome the server no longer reports. The
-    // old client-memory rule was the opposite: the latch was sticky, so nothing a
-    // later read carried could return the row to the floor.
+    // The header is the AUTHORITY both ways: an absent outcome is a real statement, so the hollow ring
+    // is reachable again.
     upsertHeader(headerWithOutcome("c1", "failed"));
     expect(tabStatusFor(get("c1"))).toBe("failed");
     upsertHeader(headerWithOutcome("c1"));
@@ -2067,10 +1722,8 @@ describe("every turn outcome reaches the tab dot", () => {
   });
 
   it("paints a failure as the red lozenge and never as the idle ring", () => {
-    // The observable the user described. `failed` is a filled, rotated square with
-    // a small radius; `idle` is a transparent disc with a hairline ring. A source
-    // fact rather than a computed one, for the reason this file's header gives: the
-    // test page links no app stylesheet, so there is no cascade to measure.
+    // `failed` is a filled rotated square, `idle` a transparent hairline disc; a source fact, since no
+    // app stylesheet is linked.
     const failed = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
     expect(failed.body).toMatch(/transform:\s*rotate\(45deg\)/u);
     expect(failed.body).toMatch(/background:\s*var\(--dot-color\)/u);
@@ -2079,30 +1732,14 @@ describe("every turn outcome reaches the tab dot", () => {
     const idle = ruleContaining(tabs, '.tab-status-dot[data-status="idle"]', "top");
     expect(idle.body).toMatch(/background:\s*transparent/u);
     expect(idle.body).toMatch(/border:/u);
-    // The two must not be one shape, or the fix above would be unobservable.
+    // The two must not be one shape, or the case above would be unobservable.
     expect(failed.body.trim()).not.toBe(idle.body.trim());
   });
 });
 
-// ---------------------------------------------------------------------------
-// 7. A LIST REFETCH IS THE VERDICT'S OWN DOOR, and the client keeps nothing of
-// its own to be erased.
-//
-// This section used to defend two client-only latches across `loadList`, because
-// the server sent none of the client's projections and every field the rebuild did
-// not carry over was silently reset. Under the entry log the verdict rides the
-// HEADER, so the rebuild taking it is the mechanism rather than the hazard, and
-// there is no carry-over rule, no rule-1 arbitration between a local latch and a
-// header read, and no convergence order between the seed and the connect replay to
-// reconcile. Every case below goes through the REAL store and the REAL loadList
-// with no pre-existing session, which is what a full page reload, a brand-new
-// browser session and a reconnect after hours all look like from here.
-//
-// `store-load.test.ts` owns the rebuild's own rule (the header replaces the
-// outcome, and an absent one is a CLEAR); what this file adds is that the value
-// reaches the DOT, which is the surface the bug was reported at: "if a turn is done
-// after i close the window and come back, it will be an empty circle".
-// ---------------------------------------------------------------------------
+// 7. A list refetch carries the verdict on the HEADER, so the rebuild is the mechanism. Real store
+// and real loadList with no prior session (a reload, a new browser, a long reconnect).
+// `store-load.test.ts` owns the rebuild rule; this checks the value reaches the DOT.
 
 describe("a list refetch paints the verdict the header carries", () => {
   const header = (id: string): ChatHeader => headerWithOutcome(id);
@@ -2140,10 +1777,7 @@ describe("a list refetch paints the verdict the header carries", () => {
   });
 
   it("stays IDLE only for the LEGACY record, never for a turn that was stopped", async () => {
-    // Both halves of the rule, side by side on one fetch. A cancelled turn
-    // RAN, so the hollow ring — which means the chat has not initiated — would be
-    // wrong for it. A record written before the outcome existed carries nothing to
-    // read, and that case is exempt: no state to pull.
+    // A cancelled turn RAN, so not hollow; a record with no outcome has nothing to read.
     const { loadList } = await import("./store-load.js");
     setSessions([]);
     mockApiGetTyped.mockResolvedValue({
@@ -2156,12 +1790,8 @@ describe("a list refetch paints the verdict the header carries", () => {
   });
 
   it("keeps a mid-turn reload WORKING, because the WINDOW travels and the verdict does not", async () => {
-    // The inverse of the reported bug, and the one thing the header cannot settle: a
-    // live turn invalidates every prior verdict, because the header's outcome
-    // describes the turn BEFORE this one. What defends it is that the rebuild carries
-    // the resident window over — a turn with no `turn_close` is still there after the
-    // refetch — and the dot derives liveness from that window, so `working` outranks
-    // the `completed` the same header carries.
+    // A live turn: the rebuild keeps the resident window, so `working` outranks the header's
+    // `completed` (which describes the previous turn).
     const { loadList } = await import("./store-load.js");
     setSessions([session({ id: "c1" })]);
     openTurnIn("c1", "t1");
@@ -2173,10 +1803,7 @@ describe("a list refetch paints the verdict the header carries", () => {
   });
 
   it("lets a waiting_on_user chat keep saying so over a header's done", async () => {
-    // `waiting` outranks `done` in tabStatusFor, and the status is one of the few
-    // client-held projections the rebuild still carries over — so a header's own
-    // verdict must not bury the one state whose whole meaning is that a person still
-    // owes an answer.
+    // `waiting` outranks `done`, and the rebuild carries the status over, so the header must not bury it.
     const { loadList } = await import("./store-load.js");
     setSessions([session({ id: "c1", agent_status: "waiting_on_user" })]);
     mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
@@ -2186,13 +1813,7 @@ describe("a list refetch paints the verdict the header carries", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 8. An abandoned ask stops claiming the chat needs a decision.
-//
-// `input` outranks every other state, so a queue entry left behind after its
-// request died marked the chat as blocked indefinitely. The queue lives in
-// decision-dock.ts and had no production caller for its own drop function at all.
-// ---------------------------------------------------------------------------
+// 8. An abandoned ask stops claiming the chat needs a decision (`input` outranks everything).
 
 describe("an abandoned ask does not keep a chat in input", () => {
   const ask = (chatID: string, requestID: number, runID: string) => ({
@@ -2217,10 +1838,8 @@ describe("an abandoned ask does not keep a chat in input", () => {
     pushDecision(ask("c1", 1, ""));
     expect(tabStatusFor(get("c1"), hasPendingDecision("c1"))).toBe("input");
 
-    // What handlers/turn.ts now runs on turn_closed. Every ask BLOCKS its turn, so
-    // a turn that has ended is not waiting on one: it was answered (already
-    // spliced) or abandoned when the turn was cancelled, and cmdCancel clears the
-    // server's own pending set — the card left here could never be answered.
+    // handlers/turn.ts runs this on turn_closed: an ended turn waits on no ask (cmdCancel cleared the
+    // server's set).
     dropTurnDecisions("c1");
     expect(tabStatusFor(get("c1"), hasPendingDecision("c1"))).toBe("idle");
   });
@@ -2228,11 +1847,7 @@ describe("an abandoned ask does not keep a chat in input", () => {
   it("leaves a workflow run's ask alone when the launching turn ends", async () => {
     const { pushDecision, hasPendingDecision, dropTurnDecisions, dropDecisions } =
       await import("./decision-dock.js");
-    // An agent-launched run is parented on the calling chat's session and its asks
-    // are keyed under that chat's id, but it OUTLIVES the launching turn (a goal
-    // run ends its turn immediately and then runs). Dropping these would strand
-    // the run waiting for an answer no surface offers — the exact failure the
-    // dock's queue was built to end.
+    // An agent-launched run OUTLIVES the launching turn, so dropping its asks would strand the run.
     pushDecision(ask("c1", 2, "run-7"));
     dropTurnDecisions("c1");
     expect(hasPendingDecision("c1")).toBe(true);
@@ -2252,26 +1867,9 @@ describe("an abandoned ask does not keep a chat in input", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 9. A run's wait ending releases the LAUNCHING chat's dot.
-//
-// A chat-parented run's ask is filed under the LAUNCHING CHAT's queue key:
-// handlers/run.ts takes the chat id off the SSE envelope, and for such a run that
-// is the conversation that started it. So `input` lands on the PARENT tab's dot
-// while a step is parked, which is the correct half of the reported behaviour.
-//
-// The run's own sub-tab reads a DIFFERENT predicate over the same map —
-// `runPendingAsks` scans every queue for the run's own id — so the two surfaces
-// can disagree about whether the wait is over, and that seam is where the reported
-// failure lives: the sub-tab recovers and the parent stays amber for the life of
-// the page. Every case here therefore asserts BOTH surfaces, because a parent
-// stuck beside a recovered sub-tab is a different defect from nothing clearing at
-// all.
-//
-// The state to come back to is `done`, not `idle`: the launching turn ended long
-// before the run did (`run_workflow` returns as soon as the run is created), so a
-// dot stuck on `input` cannot be mistaken for the hollow-ring floor.
-// ---------------------------------------------------------------------------
+// 9. A chat-parented run's ask is filed under the LAUNCHING chat, so `input` lands on the parent's
+// dot, while the run sub-tab reads `runPendingAsks`; every case asserts BOTH surfaces. The state
+// to return to is `done` (the launching turn ended long before the run).
 
 describe("a run's wait ending releases the launching chat's dot", () => {
   const PARENT = "c-parent";
@@ -2389,10 +1987,8 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     pushDecision(runAsk());
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
 
-    // A terminal run cannot still be waiting on a person, and `dropTurnDecisions`
-    // exempts a run-scoped ask on purpose, so the launching turn's own end cannot
-    // reach it. Nothing dropped it, so the parent's dot sat on `input` for the life
-    // of the page.
+    // A terminal run waits on no one, and `dropTurnDecisions` exempts run-scoped asks, so only this
+    // drop reaches it.
     dropRunAsks(RUN);
 
     expect(runPendingAsks(RUN).count).toBe(0);
@@ -2401,10 +1997,8 @@ describe("a run's wait ending releases the launching chat's dot", () => {
 
   it("clears a step's user-input question when the run ends too", async () => {
     const { pushDecision, hasPendingDecision, dropRunAsks } = await import("./decision-dock.js");
-    // The sharpest instance of the same hole: this ask is REQUEST-shaped, so
-    // `collapseSettledRunInput` cannot name it, and it carries a `runID`, so
-    // `dropTurnDecisions` deliberately leaves it. Removal has to ask the adder's
-    // own question — "this run's ask, wherever it is filed".
+    // REQUEST-shaped with a `runID`: neither `collapseSettledRunInput` nor `dropTurnDecisions` takes it,
+    // so removal asks "this run's ask, wherever filed".
     pushDecision(stepQuestion(1));
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
 
@@ -2429,11 +2023,7 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   it("leaves a SIBLING run's ask alone when one of the two ends", async () => {
     const { pushDecision, hasPendingDecision, runPendingAsks, dropRunAsks } =
       await import("./decision-dock.js");
-    // Two runs launched from one chat share that chat's queue key, so the sweep
-    // has to separate them by RUN rather than by queue. A survivor carrying a real
-    // run id is what pins that: an over-broad match on a sibling run and a match
-    // on every ask in the queue are different defects, and only this case can
-    // fail on the first one.
+    // Two runs share one chat's queue key, so the sweep separates by RUN; a sibling survivor pins that.
     pushDecision(runAsk());
     pushDecision(runAsk({ workflow_id: "wf-2", ask_id: "ask-2" }));
 
@@ -2444,18 +2034,9 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
   });
 
-  // The reported symptom, in one assertion: the sub-tab reads as answered and the
-  // PARENT stays amber. What holds it is a step's question whose `run_id` arrived
-  // EMPTY — the registry had not seen its sub-session — which puts it outside every
-  // run-scoped remover while still lighting the launching chat's dot.
-  //
-  // ITS WARRANT IS NOT A RED CHECK, and it must not be read as one: `dropRunAsks`
-  // is keyed on `runID` and this ask has none, so no change to that predicate can
-  // make the `"input"` assertion fail. What it guards is the OVER-BROAD fix —
-  // widening the run sweep to take run-orphans indiscriminately, which is the same
-  // change "leaves another chat's own ask alone when a run ends" below refuses from
-  // the other side. The trigger that DOES clear it is red-checked in
-  // `handlers/run.test.ts`, where the sweep's four gates live.
+  // A step question whose `run_id` arrived EMPTY holds the parent amber. Not a red check: it guards
+  // against widening the run sweep to take orphans indiscriminately. The real trigger is red-checked
+  // in `handlers/run.test.ts`.
   it("holds the parent on input for a step question that carries NO run id", async () => {
     const { pushDecision, hasPendingDecision, runPendingAsks, dropTurnDecisions } =
       await import("./decision-dock.js");
@@ -2491,30 +2072,10 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 8b. The REAL dock repaints a REAL row's dot.
-//
-// The gap this closes is a seam between two suites, each of which fakes the half
-// the other runs for real. Section 8 above drives the real dock and asserts through
-// `tabStatusFor` DIRECTLY, so it proves the QUEUE empties and never that a row
-// repaints. `chat-tab-strip.test.ts` drives the real row effect and the real
-// reactive graph, but against a signal-backed FAKE dock and a mocked
-// `setTabStatus`, so it proves the subscription TOPOLOGY and never that the real
-// predicate participates in it or that a `data-status` attribute moves.
-//
-// So the one link neither suite covers is the real `hasPendingDecision` reading
-// `queueVersion.value` rather than `.peek()` — a one-character change that would
-// leave both suites green and every background chat's dot frozen. This drives the
-// real dock, a real `effect`, the real `setTabStatus` and a real row built through
-// the real projection, and reads the attribute the browser paints from.
-//
-// The effect body is chat.ts's `chatRowEffect` minus its name and tooltip writers,
-// which is what keeps this case honest without importing chat.ts: doing that needs
-// 13 module mocks, three of which (`bus`, `composer-state`, `roles`) are reached by
-// the real `tabs.ts` and `tab-materialize.ts` this suite depends on — measured, it
-// breaks 30 of the 80 tests here. The last case pins the replica against chat.ts's
-// own source instead, which is this suite's existing idiom for a chat.ts fact.
-// ---------------------------------------------------------------------------
+// 8b. The real dock repaints a real row's dot: the link neither section 8 nor
+// `chat-tab-strip.test.ts` covers is `hasPendingDecision` reading `queueVersion.value` (not
+// `.peek()`). The effect replicates chat.ts's `chatRowEffect` minus its name and tooltip writers
+// (importing chat.ts needs mocks that break this suite); the last case pins the replica to the source.
 
 describe("the dock's own signal repaints the launching chat's row", () => {
   const PARENT = "c-parent";
@@ -2572,26 +2133,16 @@ describe("the dock's own signal repaints the launching chat's row", () => {
   });
 
   it("reads the same two inputs chat.ts's own row effect reads", () => {
-    // The replica above stands in for `chatRowEffect`, so it is only worth what
-    // production still doing the same thing is worth. Both reads are unconditional
-    // and ahead of every early return in chat.ts, which is what subscribes a
-    // BACKGROUND chat's row to a decision arriving on it.
+    // The replica stands in for `chatRowEffect`: both reads must be unconditional and ahead of every
+    // early return in chat.ts, which subscribes a BACKGROUND chat's row.
     expect(chatSrc).toContain("hasPendingDecision(chatID)");
     expect(chatSrc).toContain("tabStatusFor(s, pendingAsk)");
     expect(chatSrc).toContain("setTabStatus(tabID,");
   });
 });
 
-// ---------------------------------------------------------------------------
-// 10. A row that is CREATED knows what it should show.
-//
-// The dot used to live only in the DOM and `setTabStatus` wrote only to the live
-// node, so every path that built a row without a following state change showed
-// the seeded `idle` whatever the chat was doing. Two such paths, both ordinary:
-// the boot restore populates sessions BEFORE opening their tabs (so the store
-// effect has already run by the time the rows exist, and nothing makes it run
-// again), and `promoteTab` discards and rebuilds a row on purpose.
-// ---------------------------------------------------------------------------
+// 10. A row that is CREATED knows its state: the dot is recorded, not DOM-only, so a boot restore
+// (sessions before tabs) or a rebuilt row paints its chat's state without a later change.
 
 describe("a row built later paints the state its chat is in", () => {
   beforeEach(async () => {
@@ -2627,11 +2178,7 @@ describe("a row built later paints the state its chat is in", () => {
   });
 
   it("keeps the dot through a rebuild, which a pin change forces", async () => {
-    // `promoteTab` is gone with the reparent it performed: `TabSubject.Parent` is
-    // set at open and never reassigned, which is what makes a parent cycle
-    // unrepresentable. The rebuild it exercised is still reachable — dropping the
-    // node and making the store emit is what any re-render after a lost row does —
-    // so the property survives with the mechanism that remains.
+    // Dropping the node and making the store emit is the rebuild any lost row takes.
     const { openTab, setTabStatus, setTabPinned, tabIdFor } = await import("./tabs.js");
     const parent = await openSubject("chat", "parent");
     await openTab({ kind: "chat", ref: "c2", parent });
@@ -2686,17 +2233,10 @@ describe("a row built later paints the state its chat is in", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 11. The dot is live state, so it must never be persisted.
-//
-// TabViewSpec feeds the persistence subscriber, and a dot restored from a previous
-// process would be a claim about a turn that ended before the page loaded.
-// ---------------------------------------------------------------------------
+// 11. The dot is live state and never persisted: a restored dot would describe a turn that ended
+// before the page loaded.
 
-// The dot is LIVE state, and the projection is what makes that structural rather
-// than a rule someone has to remember: a `TabSubject` has no dot field at all, so
-// there is nothing for a dot write to travel on. `dotVersion` is the other half —
-// a dot write does not `emit()`, so it queues no re-render.
+// Structural: a `TabSubject` has no dot field, and a dot write bumps `dotVersion` without `emit()`.
 describe("the dot is local and costs the projection nothing", () => {
   beforeEach(async () => {
     await resetProjection();
@@ -2745,14 +2285,8 @@ describe("the leading dot slot is one width for every state", () => {
   const tabs = loadCSS("12-tabs.css");
 
   it("derives both slot margins from the tokens they measure, never a literal", () => {
-    // Two derivations per rule and neither may be a number. The SLOT is the kind
-    // glyph's, so it reads --icon-ui: that token is 1rem on a fine pointer and
-    // 1.25rem on a coarse one, and the 0.875rem this used to spell was 2px short of
-    // the glyph on every desktop and 6px on every touch device — a shared text
-    // origin the rule claimed and did not have. The MARK is whichever dot token that
-    // state paints, so the smaller diamond does not reserve less than every other
-    // state, which would move a chat's name at the exact moment its status flipped
-    // to or from failed.
+    // Token-derived, never a number: the SLOT reads --icon-ui (tier-dependent), the MARK the state's dot
+    // token, so the smaller diamond reserves the same width and a name never moves on a status flip.
     const generic = ruleContaining(tabs, ".tab-status-dot:first-child", "top");
     expect(generic.body).toContain("calc((var(--icon-ui) - var(--dot-size)) / 2)");
 
@@ -2765,23 +2299,15 @@ describe("the leading dot slot is one width for every state", () => {
   });
 
   it("keeps the diamond on the small token, so the override stays paired", () => {
-    // A rotated square's DIAGONAL is its footprint, so the diamond takes the
-    // smaller token to sit level with the disc beside it (6px on the diagonal is
-    // 8.49px against an 8px disc). If it ever returns to --dot-size the margin
-    // override above becomes wrong rather than merely redundant, so the two are
-    // asserted together.
+    // A rotated square's DIAGONAL is its footprint, so the diamond takes the smaller token; the margin
+    // override above depends on that, so both are asserted.
     const failed = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
     expect(/inline-size:\s*var\(--dot-size-sm\)/.test(failed.body)).toBe(true);
   });
 
   it("re-derives the SUB-TAB diamond's slot from both dot tokens too", () => {
-    // The same correction one position over, and the position is why it needs its
-    // own rule: on a sub-tab the nesting arrow holds the 14px glyph slot, so the
-    // dot only has to match its own siblings and the leading rule's arithmetic is
-    // the wrong one. Both tokens, never a literal, so changing --dot-size cannot
-    // leave the diamond and the disc reserving different widths — which is what
-    // would move a delegate's name at the exact moment its status flipped to or
-    // from failed.
+    // On a sub-tab the nesting arrow holds the glyph slot, so the dot matches only its siblings. Both
+    // tokens, so --dot-size changes cannot desynchronise diamond and disc.
     const diamond = ruleContaining(
       tabs,
       '.tab.tab-child .tab-status-dot[data-status="failed"]',
@@ -2791,22 +2317,9 @@ describe("the leading dot slot is one width for every state", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 13. The same claim in REAL LAYOUT, for a subagent sub-tab.
-//
-// The source facts above say the two margins are derived from the right tokens.
-// They cannot say what the browser does with them, and the one thing that has to
-// be true is that a delegate's name does not move when its dot changes state:
-// `subagent-dots.ts` writes `working` while the delegate runs and `failed` if it
-// fails, so a row whose label shifted on that transition would be a row jumping
-// at the one moment the reader is watching it.
-//
-// It was never asserted for a sub-tab at all. `.tab-nest + .tab-status-dot` sets
-// `margin-inline-start: 0` at (0,2,0) while the diamond's correction is (0,4,0),
-// so the two rules genuinely contest one property and the cascade decides — which
-// is exactly the class of thing this app's own rule says to verify numerically
-// rather than reason about.
-// ---------------------------------------------------------------------------
+// 13. In REAL LAYOUT for a subagent sub-tab: `subagent-dots.ts` flips it to `failed`, and
+// `.tab-nest + .tab-status-dot` (0,2,0) contests the diamond's correction (0,4,0), so the cascade is
+// verified numerically.
 
 describe("a subagent sub-tab's name holds still while its dot changes state", () => {
   let sheet: HTMLStyleElement;
@@ -2889,11 +2402,7 @@ describe("a subagent sub-tab's name holds still while its dot changes state", ()
   });
 
   it("reserves the slot rather than collapsing it, so the dot has somewhere to land", async () => {
-    // The GAP this change closes, stated as a measurement so the fix is provable
-    // rather than described: with no state written the slot is `display: block`
-    // plus `visibility: hidden`, so it occupies its 8px and the name sits past it.
-    // A dot that never gets a state is what left that 8px (plus the row's own 8px
-    // gap) permanently empty.
+    // With no state the slot is `display: block` plus `visibility: hidden`, occupying its 8px.
     const row = await subagentRow();
     const dot = row.querySelector<HTMLElement>(".tab-status-dot");
     if (dot === null) {
@@ -2906,20 +2415,9 @@ describe("a subagent sub-tab's name holds still while its dot changes state", ()
   });
 });
 
-// ---------------------------------------------------------------------------
-// 14. The gap CLOSED, end to end.
-//
-// Everything above tests one half: `subagent-dots.test.ts` proves the effect
-// resolves the right state (with `tabs.js` mocked, so no DOM), and section 13
-// proves the row's layout holds for each state (written by hand, so no effect).
-// Neither can fail if the two halves are not JOINED — and the join is the
-// deliverable, because the reported defect is a slot that is reserved and never
-// filled.
-//
-// So this drives the real subscriber against the real projection and the real
-// store, and asserts what a reader would see: a dot that is VISIBLE with the
-// delegate's own state on it, in a row whose name did not move to make room.
-// ---------------------------------------------------------------------------
+// 14. The join, end to end: `subagent-dots.test.ts` mocks tabs.js and section 13 writes states by
+// hand, so this drives the real subscriber, projection and store, and asserts a VISIBLE dot in a row
+// whose name did not move.
 
 describe("the real subscriber fills the reserved slot", () => {
   let sheet: HTMLStyleElement;
@@ -2948,12 +2446,8 @@ describe("the real subscriber fills the reserved slot", () => {
     }
   });
 
-  /** A chat whose resident window holds one delegate's invocation, at `status`.
-   *
-   *  The invocation is a `tool_call` ENTRY in the ISSUER's lane, which is what the
-   *  subagent surfaces address a delegate by: `payload.agent_subtask_id` names the
-   *  delegate, and the entry's own lane is `""` because the call was issued at the top
-   *  level. */
+  /** A chat whose window holds one delegate's invocation at `status`: a `tool_call` entry in the
+   *  issuer's lane (`""`) with `payload.agent_subtask_id` naming the delegate. */
   async function chatWithDelegate(status: EntryToolCall["status"]): Promise<void> {
     const { setSessions } = await import("./store.js");
     setSessions([session({ id: "c1" })]);
@@ -3001,14 +2495,8 @@ describe("the real subscriber fills the reserved slot", () => {
     const row = await subagentRow();
     expect(dotOf(row).getAttribute("data-status")).toBe("failed");
     expect(getComputedStyle(dotOf(row)).visibility).toBe("visible");
-    // The 9px mark is not the only channel: the screen-reader word rides its own
-    // element after the name, which is what makes the state reach a reader who
-    // cannot see the diamond.
-    //
-    // The phrase names the DELEGATE, and this case is where the wrong subject was
-    // written down: it asserted ", turn failed" on a subagent's row, because the
-    // phrase table was keyed on the state alone and a turn was the only producer
-    // when it was written. A chat row still says "turn failed" (section 3).
+    // The screen-reader word rides its own element after the name, and names the DELEGATE (a chat row
+    // says "turn failed").
     expect(row.querySelector(".tab-status-sr")?.textContent).toBe(", subagent failed");
     expect(nameFromContents(row)).toContain("subagent failed");
   });
@@ -3039,10 +2527,8 @@ describe("the real subscriber fills the reserved slot", () => {
     const working = offsetOf();
     expect(dotOf(row).getAttribute("data-status")).toBe("working");
 
-    // The real ingest path for a settled tool call, which is what turns a running
-    // delegate into a failed one — and the diamond into the disc's own footprint. A
-    // `tool_result` is an ordinary appended entry that FOLDS into its `tool_call` by
-    // id (`<tool_call entry id>:result`), so the call's own entry is never rewritten.
+    // A `tool_result` FOLDS into its `tool_call` by id (`<tool_call entry id>:result`); the call's own
+    // entry is never rewritten.
     appendEntry("c1", {
       id: "t1-e1:result",
       turn: "t1",

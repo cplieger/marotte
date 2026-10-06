@@ -1,49 +1,20 @@
-// ---------------------------------------------------------------------------
-// How badly a turn ended, as ONE table.
-//
-// This module exists because five surfaces each carried their own partial answer
-// to that one question and disagreed with each other. `interrupted` was the
-// measured case: `messages-events.ts` gave it a red `boundary: "failed"` divider,
-// `turns.ts`'s face lookup put its text in the collapsed face, `29-turns.css` gave its
-// footer glyph a filled yellow mark and a lead word, and `fold-state.ts`'s own
-// header comment promised it would never auto-fold — while `store.ts`'s outcome
-// latch mapped it to NOTHING, so the tab dot fell through to `idle` and painted the
-// hollow ring that means "nothing is happening here", and `attention.ts`'s favicon
-// cue raised nothing at all. One fault, five surfaces, two answers.
-//
-// So a surface asks for a SEVERITY and never enumerates outcomes again. Nothing in
-// this app may re-derive the mapping: a second copy is what the disagreement was.
-//
-// CROSS-LANGUAGE CONTRACT. The identical table is `marotte.SeverityOf` +
-// `marotte.DefaultFailureReason` in `internal/marotte/turns.go`, and both halves
-// are pinned against one shared fixture — `internal/marotte/testdata/
-// turn_severity.json`, read by Go's TestTurnSeverityContract and by
-// `turn-severity.node.test.ts`. Change the rule in one language and the other
-// language's test fails, which is the only thing keeping the two honest.
-//
-// Pure and DOM-free, like `turns.ts` beside it, because the fold rule, the store's
-// latch, the favicon cue and the renderer all need it and none of them may drag a
-// document into the others' tests.
-// ---------------------------------------------------------------------------
+// How badly a turn ended, as ONE table no surface may re-derive. Its Go twin is `marotte.SeverityOf`
+// + `DefaultFailureReason` (internal/marotte/turns.go), both pinned to testdata/turn_severity.json.
+// Pure and DOM-free, so the fold rule, store latch, favicon cue and renderer can all import it.
 
 import type { TurnOutcome, TurnSeverity } from "./wire/types.gen.js";
 
-/** How badly a turn ended.
- *
- *  RE-EXPORTED from the generated wire types for `TurnOutcome`'s reason: the rule
- *  producing it is implemented in both languages, so a hand-written union here
- *  would be a second spelling of one vocabulary with nothing holding the two
- *  together — and the five branches over it have to be TOTAL. */
+/** How badly a turn ended, re-exported from the generated wire types: the rule is implemented in
+ *  both languages, so a hand-written union would be a second spelling. */
 export type { TurnSeverity };
 
-/** Grade a turn outcome. Total over the eight outcomes and MECE: the `default` arm
- *  assigns `outcome` to a `never`, so a ninth union member is a COMPILE error, and the
- *  runtime fallback is `stopped`, never `clean`, so a value the decoder let through
- *  cannot read as a turn that worked; `undefined` has its own case so it does not
- *  consume that check. `interrupted` is BROKEN: a fault nobody chose stopped the turn.
- *  `unknown` is STOPPED, never broken — an unmeasured stop reason says nothing about
- *  whether the work succeeded (`ConcludeStopReason`) — and never clean either: a status
- *  mark may fall back to ambiguous, never to reassuring. */
+/** Grade a turn outcome. Total and MECE: the `default` arm assigns to `never`, so a ninth outcome
+ *  is a COMPILE error; the runtime fallback is `stopped`, never `clean`, for a value the decoder let
+ *  through. `undefined` has its own case so it does not consume that check.
+ *
+ *  `interrupted` is BROKEN: a fault nobody chose stopped the turn. `unknown` is STOPPED, never
+ *  broken (`ConcludeStopReason`): an unmeasured stop says nothing about success, and a status mark
+ *  may fall back to ambiguous, never to reassuring. */
 export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
   switch (outcome) {
     case "running":
@@ -67,26 +38,15 @@ export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
   }
 }
 
-/** Is this turn a failure? THE predicate, and the only question most surfaces
- *  have. Its own function rather than an inline comparison so a grep for the
- *  question finds every asker, and so the five surfaces cannot each spell the
- *  comparison differently. */
+/** Is this turn a failure? THE predicate, one function so every asker is greppable and spells it
+ *  the same way. */
 export function isBroken(outcome: TurnOutcome | undefined): boolean {
   return severityOf(outcome) === "broken";
 }
 
-/** The outcome as ONE WORD, for an accessible NAME — read on every focus, so it
- *  has to be short. Total over `TurnOutcome`.
- *
- *  THE TABLE LIVES HERE BECAUSE TWO SURFACES READ IT: the turn header's dot and
- *  the timeline rail's marker. It was the header's private const, and the rail
- *  then had no words for outcome at all — a marker's whole state vocabulary was
- *  colour plus border style, with nothing anywhere saying what any of it meant.
- *  Copying the table into the rail is the defect this module exists to prevent,
- *  which is why it moved rather than being duplicated.
- *
- *  Not part of the cross-language severity contract: the fixture pins `severityOf`
- *  and `defaultFailureReason`, and these two are display strings with no Go twin. */
+/** The outcome as ONE WORD, for an accessible NAME read on every focus. Total over `TurnOutcome`.
+ *  Lives here because the header dot and the rail marker both read it. Display strings, not part
+ *  of the cross-language contract. */
 export const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   running: "Running",
   completed: "Completed",
@@ -98,24 +58,12 @@ export const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   empty: "Empty",
 };
 
-/** Every member of `TurnOutcome` as a runtime array, for a decoder that has to
- *  check a persisted string against the vocabulary.
- *
- *  DERIVED from the total record above rather than written out, so it cannot drift
- *  from the union: a member ADDED to the generated union is a compile error on that
- *  record, and one REMOVED is a compile error on its keys. The generated
- *  `TURN_OUTCOMES` array is module-private to `decoders.gen.ts` with no export knob,
- *  so this is the only exported spelling of the set. */
+/** Every `TurnOutcome` member as a runtime array, for a decoder checking persisted strings. DERIVED
+ *  from the total record, so it cannot drift; the generated `TURN_OUTCOMES` is module-private. */
 export const TURN_OUTCOME_VALUES = Object.keys(OUTCOME_LABEL) as readonly TurnOutcome[];
 
-/** The outcome as a SENTENCE, for hover and description text — what the state
- *  MEANS rather than its one-word name. Total over `TurnOutcome`, and read by the
- *  same two surfaces as `OUTCOME_LABEL` for the same reason.
- *
- *  Distinct from `defaultFailureReason` on purpose: that answers "why did this turn
- *  not finish" for a turn whose own account is missing, is byte-identical to Go's,
- *  and is empty for the three outcomes that are not failures. This answers "what does
- *  this mark mean" and is total. */
+/** The outcome as a SENTENCE, for hover and description text: what a mark MEANS. Total. Unlike
+ *  `defaultFailureReason` (Go-identical, "" for non-failures), it answers for every outcome. */
 export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   running: "This turn is still running",
   completed: "This turn finished normally",
@@ -127,29 +75,10 @@ export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   empty: "The agent ended this turn without answering",
 };
 
-/** What a turn says when nothing upstream said anything.
- *
- *  The server stamps `turn_failure_reason` on the message that finalized the turn,
- *  so a turn persisted since that field existed carries its own account and this is
- *  never consulted for it. This is the fallback for the ones that DO NOT: every
- *  turn already on disk, which is the population symptom 1 was reported against —
- *  a `failed` turn with 26 blocks, a red footer mark and no sentence anywhere in
- *  the record.
- *
- *  Keyed per OUTCOME rather than per severity because a reader wants the
- *  distinction the severity throws away: a refusal and a dropped connection are
- *  both broken and want different words. Empty for `completed`, `running` and
- *  `empty`, so a caller can read "" as "there is nothing to say" without asking the
- *  severity again — and those are spelled out as cases rather than left to the
- *  default, so a ninth outcome is a compile error here too and cannot silently
- *  inherit "".
- *
- *  The strings are BYTE-IDENTICAL to `marotte.DefaultFailureReason`'s and pinned
- *  that way by the shared fixture. Two hand-written copies of one sentence is
- *  exactly the drift a shared fixture exists to make impossible, and the two
- *  populations are genuinely one thing — the server's sentence goes on disk for a
- *  new turn, this one stands in for an old turn's missing copy of it, and a reader
- *  scrolling one transcript must not see two wordings for one cause. */
+/** What a turn says when nothing upstream did: the fallback for turns persisted before the server
+ *  stamped `turn_failure_reason`. Keyed per OUTCOME (a refusal and a dropped connection want
+ *  different words). "" for `completed`, `running` and `empty`, spelled as cases so a ninth outcome
+ *  is a compile error. BYTE-IDENTICAL to `marotte.DefaultFailureReason`, pinned by the fixture. */
 export function defaultFailureReason(outcome: TurnOutcome | undefined): string {
   switch (outcome) {
     case "failed":

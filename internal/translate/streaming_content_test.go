@@ -15,13 +15,8 @@ import (
 
 var errBoom = errors.New("persist boom")
 
-// captureSlog redirects the default slog logger to buf and returns a
-// restore function. Not parallel-safe (mutates the global slog default).
-//
-// The log package's writer and flags are restored too: slog.SetDefault also points
-// log at the new handler, and it skips pointing it back when the restored handler
-// is the stock one (which reaches log.Output), so every later line in the package
-// would land in buf.
+// captureSlog redirects the default slog logger to buf, restoring it (and the log package's
+// writer and flags, which slog.SetDefault redirects) on cleanup. Not parallel-safe.
 func captureSlog(buf *bytes.Buffer) func() {
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -68,20 +63,13 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 	}
 }
 
-// TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts pins the H3
-// fix: KAS's current_mode_update sub-kind carries the new mode under
-// `currentModeId` (the bundle's zCurrentModeUpdate object), not `modeId`
-// (which is the outbound session/set_mode request's field). HandleModeUpdate
-// must read that key, persist CurrentModeID, and broadcast mode_changed.
-// Fails against the old `json:"modeId"` tag: the payload then decodes to
-// an empty ModeID, so HandleModeUpdate early-returns with no persist and
-// no broadcast.
+// TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts pins the `currentModeId` key KAS's
+// current_mode_update carries (not `modeId`, the outbound request's field).
 func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewRecordingChatStore()
 	deps.store = store
 	chatID := marotte.ChatID("c1")
-	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
 	_, _ = store.Mutate(t.Context(), chatID, func(_ *marotte.Chat, _ bool) bool { return true })
 
 	tr := New(rolesOf(deps))
@@ -89,7 +77,6 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 		"currentModeId": "plan",
 	}))
 
-	// Persisted the new mode.
 	got, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatal("chat missing after HandleModeUpdate")
@@ -98,7 +85,6 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 		t.Errorf("CurrentModeID = %q, want %q (current_mode_update must read currentModeId, not modeId)", got.CurrentModeID, "plan")
 	}
 
-	// Broadcast mode_changed carrying the new mode id.
 	found := false
 	for _, e := range *events {
 		if e.Type != marotte.EventModeChanged {
@@ -118,8 +104,6 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// --- Model refusal (kiro-cli 2.13 _meta.kiro.refusal) ---
-
 // refusalChunk is one text chunk, tagged with meta when non-nil.
 func refusalChunk(meta map[string]any) map[string]any {
 	c := map[string]any{
@@ -131,9 +115,8 @@ func refusalChunk(meta map[string]any) map[string]any {
 	return c
 }
 
-// sealedRefusals is the refusal block on every entry_sealed frame, in wire order.
-// The seal is the LIVE carrier: a tagged chunk opens no entry, it seals the lane's
-// open one, so this reads the frame the refusal branch publishes.
+// sealedRefusals is the refusal block on every entry_sealed frame, in wire order: the seal is
+// the LIVE carrier.
 func sealedRefusals(events []marotte.ServerEvent) []*marotte.RefusalInfo {
 	var out []*marotte.RefusalInfo
 	for _, e := range events {
@@ -214,8 +197,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 			},
 		})), false, FrameAttribution{})
 
-		// The explanation reaches the reader through the refusal record, so the
-		// chunk must open no entry and emit no text frame of its own.
+		// The explanation travels on the refusal record: the chunk opens no entry and emits no text.
 		for _, e := range *events {
 			switch e.Type {
 			case marotte.EventEntryOpened, marotte.EventEntryDelta:
@@ -252,8 +234,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
 			"refusal": map[string]any{"category": "safety", "explanation": "I can't continue."},
 		})), false, FrameAttribution{})
-		// A refusal is not always the last thing in a turn, so what follows it must
-		// not extend the entry that preceded it.
+		// A refusal is not always last: what follows must not extend the entry before it.
 		tr.HandleAssistantChunk(t.Context(), chatID, chunk("after"), false, FrameAttribution{})
 
 		closeChatTurn(t, deps, chatID)
@@ -280,8 +261,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 			"content": map[string]any{"type": marotte.ContentTypeText, "text": "parent "},
 		}), false, FrameAttribution{})
 		tr.HandleAssistantChunk(t.Context(), chatID, laneChunk("sub-1", "delegate "), false, FrameAttribution{})
-		// The lane comes off the chunk, so this seals sub-1 and leaves the parent's
-		// open entry to keep accumulating.
+		// The lane comes off the chunk: this seals sub-1, not the parent's entry.
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
 			"refusal":        map[string]any{"category": "safety", "explanation": "delegate stopped"},
 			"agentSubtaskId": "sub-1",
@@ -336,9 +316,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf1e")
 		tr := New(rolesOf(deps))
-		// Two lanes' prose, then a kind change sealing one of them: a seal with no
-		// refusal behind it must leave the field absent, or the callout mounts on a
-		// turn nothing refused.
+		// A seal with no refusal behind it must leave the field absent.
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 			"content": map[string]any{"type": marotte.ContentTypeText, "text": "prose"},
 		}), false, FrameAttribution{})
@@ -376,10 +354,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf3")
 		tr := New(rolesOf(deps))
-		// The tag is a TURN-level fact and the frame's method says only which stream
-		// it arrived on, so a refusal KAS puts on a thought chunk marks the turn like
-		// any other — and its text is dropped rather than opening a thinking entry
-		// the callout would then duplicate.
+		// The tag is turn-level, so a refusal on a thought chunk marks the turn and its text is dropped.
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 			"content": map[string]any{"type": marotte.ContentTypeText, "text": "reasoning "},
 		}), true, FrameAttribution{})
@@ -417,12 +392,8 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	})
 }
 
-// TestHandleAssistantChunk_AStepsFrameFoldsIntoTheRunsTurn pins WHOSE turn a
-// content frame folds into. A chat-parented run executes on the LAUNCHING chat's
-// session, so a step's frames arrive on that chat's bridge after its launching
-// turn has ended; folded into the chat's own turn they made the chat read as
-// working for the length of the run. The dispatcher's attribution decides: a Step
-// frame folds into the RUN's turn for its path, the chat's own into the chat's.
+// TestHandleAssistantChunk_AStepsFrameFoldsIntoTheRunsTurn pins that a Step frame folds into
+// the RUN's turn: in the chat's own it made the chat read as working for the run's length.
 func TestHandleAssistantChunk_AStepsFrameFoldsIntoTheRunsTurn(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -1,8 +1,6 @@
 package agent
 
-// OpenTurn's and StartTurn's refusals on an already-dead context, and the shutdown
-// window that made them load-bearing: a turn opened once the process has decided to
-// stop has no closer left, so it reached the wire with no terminal frame.
+// A turn opened after the process decided to stop has no closer left, so it reached the wire with no terminal frame.
 
 import (
 	"context"
@@ -11,12 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A turn is never opened on a context that is already dead, whatever the chat's
-// state: OpenTurn refuses BEFORE it appends, so the log stays byte-identical and the
-// registry holds nothing. Asserted per source.
+// OpenTurn refuses a dead context before it appends, so the log is untouched and the registry holds nothing.
 func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -34,7 +31,7 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			id, err := h.coord.OpenTurn(ctx, "c1", tc.source, &marotte.EntryPrompt{ID: "m-1", Text: "hi"}, nil)
+			id, err := h.coord.OpenTurn(ctx, "c1", command.TurnOpen{Source: tc.source, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
 			if err == nil || id != "" {
 				t.Errorf("OpenTurn(cancelled ctx, %v) = (%q, %v), want (\"\", ctx error): a dead context opens nothing", tc.source, id, err)
 			}
@@ -48,15 +45,14 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	}
 }
 
-// StartTurn answers false for a dead ctx AFTER a successful OpenTurn, and the turn
-// stays open: the caller runs the turn end rule on it rather than leaving it to a
-// closer that no longer has a bridge behind it.
+// StartTurn answers false for a dead ctx after a successful OpenTurn and the turn stays open for the caller's
+// turn end rule.
 func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 
-	id, err := h.coord.OpenTurn(t.Context(), "c1", marotte.TurnSourcePrompt, &marotte.EntryPrompt{ID: "m-1", Text: "hi"}, nil)
+	id, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
 	if err != nil {
 		t.Fatalf("OpenTurn: %v", err)
 	}
@@ -73,12 +69,9 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 }
 
-// The shutdown window this closes end to end: a prompt parked in its bridge spawn when
-// Shutdown lands must still reach a TERMINAL frame. Distinct from
-// TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn, which asserts the same outcome
-// but reaches it through whichever closer wins a race — so it passes most of the time
-// with the defect present. This one pins the mechanism: no turn opens at all, so the
-// prompt takes its own zero-epoch branch and the error frame is not a race's byproduct.
+// A prompt parked in its bridge spawn when Shutdown lands still reaches a terminal frame. Unlike
+// TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn, which passes through a closer race, this pins that no turn
+// opens and the prompt takes its zero-epoch branch.
 func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -99,8 +92,6 @@ func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 		t.Fatalf("Shutdown = %v", err)
 	}
 
-	// No turn was ever minted, which is what makes the terminal frame below deterministic
-	// rather than a closer race's byproduct.
 	if open := h.coord.turns.openTurnIDs("c1"); len(open) != 0 {
 		t.Errorf("%d turn(s) still open after shutdown, want none", len(open))
 	}

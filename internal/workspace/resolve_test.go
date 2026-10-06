@@ -56,11 +56,8 @@ func TestResolveInsideAbs_existingFileResolves(t *testing.T) {
 	}
 }
 
-// The containment boundary accepts a path beneath the workspace and rejects the
-// parent directory (whose relative path is ".."). Asserted through
-// ResolveInsideAbs because the boundary is no longer a callable pair: the root
-// is a pathinside.Root the function holds, which is what removes the
-// transposition hazard rather than renaming it.
+// The boundary accepts a path beneath the workspace and rejects the parent (".."),
+// asserted through ResolveInsideAbs, which holds the root.
 func TestResolveInsideAbs_acceptsInsideRejectsParent(t *testing.T) {
 	base := canonTmp(t)
 
@@ -75,11 +72,8 @@ func TestResolveInsideAbs_acceptsInsideRejectsParent(t *testing.T) {
 	}
 }
 
-// An empty workspace root contains NOTHING, so every path is refused. The
-// hand-rolled filepath.Rel predicate this replaced failed OPEN here: Rel cleans
-// an empty base to ".", so a relative path was silently confined to the
-// process's working directory — a boundary nobody chose — and an unset workDir
-// is a missing configuration value, not that request.
+// An empty workspace root contains NOTHING. A bare filepath.Rel cleans "" to ".", which
+// would silently confine to the process's working directory.
 func TestResolveInsideAbs_emptyRootContainsNothing(t *testing.T) {
 	for _, p := range []string{"sub/file.txt", "file.txt", "/abs/file.txt", "."} {
 		if got, err := ResolveInsideAbs("", p); err == nil {
@@ -88,11 +82,8 @@ func TestResolveInsideAbs_emptyRootContainsNothing(t *testing.T) {
 	}
 }
 
-// RelPath returns the forward-slash-normalized relative path on success and
-// an error when the pair cannot be made relative (absolute vs relative).
-// It normalizes but does NOT reject escapes: an abs path outside workDir
-// yields a "../"-prefixed result with no error (containment is
-// ResolveInsideAbs's job).
+// RelPath normalizes to forward slashes and errors when the pair cannot be made relative.
+// It does NOT reject escapes: containment is ResolveInsideAbs's job.
 func TestRelPath_normalizesAndErrors(t *testing.T) {
 	got, err := RelPath("/work", "/work/sub/f.txt")
 	if err != nil {

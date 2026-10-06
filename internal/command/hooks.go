@@ -1,7 +1,5 @@
 package command
 
-// Hook creation command handler.
-
 import (
 	"context"
 	"encoding/json"
@@ -25,6 +23,12 @@ const MaxHookField = 8 * 1024
 // allowlist: lowercase ASCII, digits, underscore, hyphen, 1-64 chars,
 // must start with an alphanumeric.
 var validHookNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// The two action_type values create_hook accepts.
+const (
+	hookActionAskAgent   = "askAgent"
+	hookActionRunCommand = "runCommand"
+)
 
 // hookCreatePayload is the decoded shape for CmdCreateHook.
 type hookCreatePayload struct {
@@ -57,12 +61,12 @@ func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeN
 			errors.New("hook field too large")
 	}
 	switch p.ActionType {
-	case "askAgent":
+	case hookActionAskAgent:
 		if strings.TrimSpace(p.Prompt) == "" {
 			return p, "", http.StatusBadRequest,
 				errors.New("askAgent hook requires a non-empty prompt")
 		}
-	case "runCommand":
+	case hookActionRunCommand:
 		if strings.TrimSpace(p.Command) == "" {
 			return p, "", http.StatusBadRequest,
 				errors.New("runCommand hook requires a non-empty command")
@@ -77,14 +81,14 @@ func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeN
 			fmt.Errorf("event_type %q is not a trigger kiro-cli loads. Expected one of: %s",
 				p.EventType, marotte.KnownHookTriggers())
 	}
-	// A matcher on a trigger that has nothing to match on is always a typo,
-	// and upstream will not say so — KAS logs its own warning with nothing
-	// on the wire, so the hook silently governs nothing. Cheap to catch
-	// here.
-	//
-	// The sibling condition — a PreToolUse/PostToolUse hook with no matcher
-	// — is deliberately not refused: "run on every tool call" is legitimate
-	// and gets a badge on the read surface instead.
+	if trigger.CommandOnly && p.ActionType == hookActionAskAgent {
+		return p, "", http.StatusBadRequest,
+			fmt.Errorf("trigger %s runs only command hooks, so an askAgent hook would load and never fire; use action_type runCommand",
+				trigger.Name)
+	}
+	// A matcher on a trigger with nothing to match is a typo KAS only logs, so the hook would
+	// silently govern nothing. A tool hook with no matcher is legitimate (every call) and is not
+	// refused.
 	if marotte.ClassifyHookMatcher(trigger.Name, p.Patterns) == marotte.HookMatcherIneffective {
 		return p, "", http.StatusBadRequest,
 			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored. Leave patterns empty for this trigger",
@@ -102,14 +106,9 @@ func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeN
 //
 //	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
 //
-// trigger is PascalCase (see marotte.NormalizeHookTrigger); action.type is
-// "command" (carries command) or "agent" (carries prompt).
-//
-// Three independent v-numbers collide here, so do not reconcile them: the
-// agent engine is v1/v2/v3 (marotte pins v3), the hook engine is v1/v2 with
-// no v3 (marotte declares v2 via _meta.kiro.hooks), and this document's
-// "version" field is a literal "v1" KAS's schema requires — bumping it to
-// "v2" to match the hook engine makes every hook unloadable.
+// trigger is PascalCase (marotte.NormalizeHookTrigger); action.type is "command" or "agent".
+// "version" is the literal "v1" KAS's schema requires, unrelated to the v3 agent engine or the v2
+// hook engine: "v2" makes every hook unloadable.
 type hookAction struct {
 	Type    string `json:"type"`
 	Command string `json:"command,omitempty"`
@@ -142,9 +141,9 @@ func mustTrigger(eventType string) string {
 // one of the two values, so the default arm is defensive only.
 func buildHookAction(p *hookCreatePayload) hookAction {
 	switch p.ActionType {
-	case "runCommand":
+	case hookActionRunCommand:
 		return hookAction{Type: "command", Command: p.Command}
-	case "askAgent":
+	case hookActionAskAgent:
 		return hookAction{Type: "agent", Prompt: p.Prompt}
 	default:
 		return hookAction{Type: p.ActionType}
@@ -175,22 +174,29 @@ func CmdCreateHook(ctx context.Context, ws Workspace, cmd *marotte.ClientCommand
 	}
 	hook := buildHookDoc(&p)
 
-	hookPath := filepath.Join(ws.Dir, ".kiro", "hooks", safeName+".json")
-	if _, err := os.Stat(hookPath); err == nil {
+	// Through the workspace root, so a .kiro or hooks link leading out of the
+	// workspace is refused rather than written through: a cloned repo's link
+	// to ~/.kiro/hooks would silently make this hook global.
+	root, err := os.OpenRoot(ws.Dir)
+	if err != nil {
+		return nil, StatusError(http.StatusInternalServerError, err)
+	}
+	defer root.Close()
+	relPath := filepath.Join(".kiro", "hooks", safeName+".json")
+	if _, lstatErr := root.Lstat(relPath); lstatErr == nil {
 		return nil, StatusError(http.StatusConflict,
 			errors.New("a hook with this name already exists"))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, StatusError(http.StatusInternalServerError, err)
+	} else if !errors.Is(lstatErr, os.ErrNotExist) {
+		return nil, StatusError(http.StatusInternalServerError, lstatErr)
 	}
 	data, err := json.MarshalIndent(hook, "", "  ")
 	if err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, hookPath, data,
+	if _, err := atomicfile.WriteFileInRoot(ctx, root, relPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
-	relPath := filepath.Join(".kiro", "hooks", safeName+".json")
 	slog.Info("hook created from chat", keyName, p.Name, "path", relPath)
 	return responseWith(map[string]any{"path": relPath}), nil
 }

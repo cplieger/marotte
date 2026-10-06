@@ -1,19 +1,10 @@
 // THE SHELL IS ANCHORED AT BOTH EDGES AND STATES NO HEIGHT.
-//
-// `#app`, `#sidebar` and the fullscreen shell panel are `position: fixed` with `top`
-// and `bottom` both resolved, so their bottom edge IS the containing block's and an
-// overshoot is unrepresentable. Chromium resolves every viewport unit to the frame
-// height and reports `env(safe-area-inset-*)` as 0, so the device defect cannot be
-// reproduced here; what CAN be measured is that the three bottoms track the frame
-// through a RESIZE (the class no earlier suite exercised), that the one CSS input
-// the module publishes (`--shell-shortfall`) is consumed by exactly those three
-// declarations, and that no stated viewport-unit height has come back.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS, manifestSheets, allRules } from "./__test-helpers__/css-rules.js";
 
-/** The installed iPad window the reported clip came from, in CSS px. Past
- *  `(width <= 48rem)`, so this is the desktop branch. */
+/** The installed iPad window the reported clip came from, in CSS px. Past `(width <= 48rem)`, so
+ *  this is the desktop branch. */
 const FRAME_W = 1106;
 const FRAME_H = 829;
 
@@ -21,8 +12,8 @@ let style: HTMLStyleElement;
 let frame: HTMLIFrameElement;
 let doc: Document;
 
-/** The frame's OWN viewport height, read off its document: an `iframe` carries a
- *  2px UA border per edge, so the viewport is 4px shorter than the attribute. */
+/** The frame's OWN viewport height, read off its document: an `iframe` carries a 2px UA border
+ *  per edge, so the viewport is 4px shorter than the attribute. */
 function windowH(): number {
   return doc.documentElement.clientHeight;
 }
@@ -40,16 +31,15 @@ function bottom(el: Element): number {
   return el.getBoundingClientRect().bottom;
 }
 
-/** The LAYOUT border-box height. `getBoundingClientRect()` is the wrong
- *  instrument for the fullscreen shell panel: `vk-shell-fs-in` starts at
- *  `transform: scale(0.99)` under a `backwards` fill, so before the animation
- *  runs the rect reports the keyframe. */
+/** The LAYOUT border-box height. `getBoundingClientRect()` is the wrong instrument for the
+ *  fullscreen shell panel: `vk-shell-fs-in` starts at `transform: scale(0.99)` under a
+ *  `backwards` fill, so before the animation runs the rect reports the keyframe. */
 function layoutHeight(el: HTMLElement): number {
   return el.offsetHeight;
 }
 
-/** The LAYOUT bottom edge, for the same reason; a fixed box's `offsetParent` is
- *  null, so `offsetTop` is against the containing block. */
+/** The LAYOUT bottom edge, for the same reason; a fixed box's `offsetParent` is null, so
+ *  `offsetTop` is against the containing block. */
 function layoutBottom(el: HTMLElement): number {
   return el.offsetTop + el.offsetHeight;
 }
@@ -73,9 +63,9 @@ function mk(tag: string, id?: string, cls?: string): HTMLElement {
   return el;
 }
 
-/** The shell as `static/index.html` authors it, down to the two LAST children the
- *  clip is about. The growing middles (`#tab-list`, `#messages-wrap-outer`) are
- *  `flex: 1`, so the two last children sit at the bottom of their panels. */
+/** The shell as `static/index.html` authors it, down to the two LAST children the clip is about.
+ *  The growing middles (`#tab-list`, `#messages-wrap-outer`) are `flex: 1`, so the two last
+ *  children sit at the bottom of their panels. */
 function mountShell(): {
   app: HTMLElement;
   sidebar: HTMLElement;
@@ -109,12 +99,9 @@ function mountShell(): {
   return { app, sidebar, footer, send };
 }
 
-/** The fullscreen shell panel NESTED as `static/index.html` nests it, inside
- *  `<main id="chat-area">` inside `#app`: it is the one shell box with an ancestor
- *  between it and `body`, so a flat fixture measures a resolution path production
- *  does not take. `areaPx` forces `#chat-area` to a height that is neither the
- *  window's nor anything else in the fixture, so the two candidate containing
- *  blocks give distinguishable answers. */
+/** The fullscreen shell panel NESTED as `static/index.html` nests it, inside `<main
+ *  id="chat-area">` inside `#app`: it is the one shell box with an ancestor between it and
+ *  `body`, so a flat fixture measures a resolution path production does not take. */
 function mountFullscreenShell(areaPx?: number): HTMLElement {
   const app = mk("div", "app");
   const area = mk("main", "chat-area");
@@ -214,13 +201,9 @@ describe("--shell-shortfall", () => {
 });
 
 describe("the fullscreen panel's containing block", () => {
-  // `#chat-area` carries `position: relative`, `overflow: hidden`, `isolation:
-  // isolate` and `container: chat-area / inline-size`, none of which establishes
-  // a fixed-positioning containing block (`container-type: inline-size` applies
-  // style and inline-size containment only, per MDN). A `transform`, a `filter`,
-  // `will-change: transform`, `content-visibility` or a `contain` carrying
-  // `layout`/`paint`/`strict` added there WOULD, and the panel would silently
-  // anchor to `#chat-area`'s box instead of the window.
+  // `#chat-area` carries `position: relative`, `overflow: hidden`, `isolation: isolate` and
+  // `container: chat-area / inline-size`, none of which establishes a fixed-positioning containing
+  // block (`container-type: inline-size` applies style and inline-size containment only, per MDN).
   const AREA = 400;
 
   it("is the WINDOW, not #chat-area", () => {
@@ -237,8 +220,8 @@ describe("the fullscreen panel's containing block", () => {
   });
 
   it("moves to #chat-area the moment that box establishes one", () => {
-    // The positive control: with the answer forced to the ancestor the same fixture
-    // reads AREA, so the case above is discriminating.
+    // The positive control: with the answer forced to the ancestor the same fixture reads AREA, so
+    // the case above is discriminating.
     const panel = mountFullscreenShell(AREA);
     const area = doc.getElementById("chat-area") as HTMLElement;
     area.style.contain = "layout";
@@ -249,9 +232,7 @@ describe("the fullscreen panel's containing block", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The mechanical guard over the assembled CSS.
-// ---------------------------------------------------------------------------
 
 const SHELL_SELECTORS = ['[id="app"]', '[id="sidebar"]', ".shell-fullscreen"] as const;
 const STATES_HEIGHT =
@@ -265,9 +246,9 @@ describe("the assembled stylesheet", () => {
   });
 
   it("anchors every shell box at the bottom and states no height on it", () => {
-    // Textual rather than computed: `getComputedStyle().bottom` on a positioned
-    // box is the USED value, which reads `0px` for `bottom: auto` under a stated
-    // height too, so it cannot tell the two shapes apart.
+    // Textual rather than computed: `getComputedStyle().bottom` on a positioned box is the USED
+    // value, which reads `0px` for `bottom: auto` under a stated height too, so it cannot tell the
+    // two shapes apart.
     const offenders: string[] = [];
     const anchored = new Set<string>();
     for (const { name, css } of manifestSheets()) {

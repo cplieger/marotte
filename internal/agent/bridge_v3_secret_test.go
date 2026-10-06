@@ -11,8 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/secretstore"
 )
 
-// probeKey is the key shape KAS actually derives, hash and all
-// (probe-confirmed sha256("http://127.0.0.1:46877/mcp" + "|")).
+// probeKey is the key shape KAS derives (sha256("http://127.0.0.1:46877/mcp" + "|")).
 const probeKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773dd72a3ddf3a.client"
 
 func newSecretStore(t *testing.T) *secretstore.Store {
@@ -33,18 +32,14 @@ func rawParams(t *testing.T, v any) json.RawMessage {
 	return data
 }
 
-// TestSecretGetMissIsExplicitNull pins the wire contract. KAS reads
-// result.value and treats null as "no credential yet"; an omitted key or an
-// error would land in its catch-and-warn path and mean the same thing less
-// clearly.
+// TestSecretGetMissIsExplicitNull pins the wire contract: KAS reads null as no credential yet.
 func TestSecretGetMissIsExplicitNull(t *testing.T) {
 	store := newSecretStore(t)
 	got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey}))
 	if got.Value != nil {
 		t.Errorf("Value = %q, want nil for a miss", *got.Value)
 	}
-	// The nil pointer must reach the wire as an explicit null, not an omitted
-	// key: KAS reads result.value.
+	// An explicit null, not an omitted key.
 	data, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
@@ -54,8 +49,7 @@ func TestSecretGetMissIsExplicitNull(t *testing.T) {
 	}
 }
 
-// TestSecretStoreThenGet is the round trip KAS depends on across a bridge
-// spawn: the get that follows a store must return the same blob.
+// TestSecretStoreThenGet is the round trip KAS relies on across a spawn.
 func TestSecretStoreThenGet(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
@@ -75,8 +69,7 @@ func TestSecretStoreThenGet(t *testing.T) {
 	}
 }
 
-// TestSecretDelete covers the delete leg, including the absent-key case KAS
-// issues speculatively.
+// TestSecretDelete covers delete, including the absent key KAS issues speculatively.
 func TestSecretDelete(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
@@ -94,10 +87,7 @@ func TestSecretDelete(t *testing.T) {
 	}
 }
 
-// TestSecretStoreRejectsBadParams pins that a malformed request gets a JSON-RPC
-// error rather than silently storing under an empty key. KAS RETHROWS a store
-// failure, so this surfaces as a failed MCP connect — which is correct: the
-// alternative is a credential filed where nothing will look for it.
+// TestSecretStoreRejectsBadParams pins a JSON-RPC error rather than a store under an empty key.
 func TestSecretStoreRejectsBadParams(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
@@ -118,18 +108,14 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 			if err == nil {
 				t.Error("secretStoreResult() error = nil, want an error")
 			}
-			// The CODE is the part KAS branches on, and JSON-RPC reserves the
-			// negative range: a bad request must arrive as invalid-params
-			// (-32602), not as some positive number outside the spec.
+			// A bad request is invalid-params (-32602).
 			rpcErr, isRPC := errors.AsType[*marotte.RPCError](err)
 			if !isRPC {
 				t.Errorf("secretStoreResult(%s) error = %T, want *marotte.RPCError", tc.name, err)
 			} else if rpcErr.Code != tc.wantCode {
 				t.Errorf("secretStoreResult(%s) error code = %d, want %d", tc.name, rpcErr.Code, tc.wantCode)
 			}
-			// The store must be untouched. Asserted through the read path
-			// rather than an entry count, because "the credential is not
-			// there" is the property that matters to KAS.
+			// Asserted through the read path: "not there" is what KAS sees.
 			if got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey})); got.Value != nil {
 				t.Errorf("a rejected store left a value: %q", *got.Value)
 			}
@@ -137,25 +123,21 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 	}
 }
 
-// TestSecretNilStoreDegradesRatherThanFails covers the not-configured agent (no
-// configDir, and every existing agent test): a get must report "absent" so MCP
-// OAuth falls back to re-registering per spawn, instead of failing the connect.
+// TestSecretNilStoreDegradesRatherThanFails pins that with no store a get reports absent so MCP OAuth re-registers per spawn.
 func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 	if got := secretGetResult(nil, rawParams(t, map[string]string{"key": probeKey})); got.Value != nil {
 		t.Errorf("Value = %q, want nil", *got.Value)
 	}
-	// A delete against no store succeeds: the key is already absent.
+	// A delete against no store succeeds.
 	if _, err := secretDeleteResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey})); err != nil {
 		t.Errorf("secretDeleteResult(nil store) error = %v, want nil", err)
 	}
-	// A store, though, must NOT claim success it cannot deliver — KAS would
-	// then believe the credential is durable.
+	// A store against no store must not claim success.
 	_, err := secretStoreResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey, "value": "v"}))
 	if err == nil {
 		t.Error("secretStoreResult(nil store) error = nil, want an error")
 	}
-	// Internal-error (-32603), not invalid-params: the request was well formed,
-	// the agent simply has nowhere to put it.
+	// Internal-error (-32603): the request was well formed.
 	rpcErr, isRPC := errors.AsType[*marotte.RPCError](err)
 	if !isRPC {
 		t.Errorf("secretStoreResult(nil store) error = %T, want *marotte.RPCError", err)
@@ -164,9 +146,7 @@ func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 	}
 }
 
-// TestSecretDeleteRejectsMissingKey covers the delete leg's own key check. KAS
-// issues deletes speculatively, so a keyless one has to come back as
-// invalid-params rather than a success that deleted nothing.
+// TestSecretDeleteRejectsMissingKey pins that a keyless delete is invalid-params, not a no-op success.
 func TestSecretDeleteRejectsMissingKey(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
@@ -200,10 +180,8 @@ func TestSecretDeleteRejectsMissingKey(t *testing.T) {
 	}
 }
 
-// TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods pins the dispatch hop.
-// Claiming a method it cannot answer would swallow a frame the rest of the
-// cascade needs; NOT claiming one of its own would leave an A→C request
-// unanswered, which wedges the turn.
+// TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods pins the dispatch hop: a wrong claim
+// swallows a frame, a missed one wedges the turn.
 func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	h, _, _ := newTestHub()
 	var id int64 = 1
@@ -222,8 +200,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
 			msg := &marotte.RPCResponse{Method: tc.method, ID: &id}
-			// No bridge is registered, so respondBridge logs and drops the
-			// write; the return value is the whole contract under test.
+			// No bridge is registered, so the return value is the whole contract.
 			if got := h.inbound.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
 				t.Errorf("handleKiroSecretRequest(%q) = %v, want %v", tc.method, got, tc.want)
 			}
@@ -231,31 +208,22 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	}
 }
 
-// TestSecretStoreIsSharedAcrossBridges pins the property that makes the whole
-// feature work: the DCR result a chat bridge obtained must be visible to the
-// NEXT bridge, or each one re-registers exactly as it did before the capability
-// was declared.
+// TestSecretStoreIsSharedAcrossBridges pins that one bridge's DCR result is visible to the next.
 func TestSecretStoreIsSharedAcrossBridges(t *testing.T) {
 	store := newSecretStore(t)
 	ctx := t.Context()
 
-	// Bridge A stores a registration.
 	if _, err := secretStoreResult(ctx, store, rawParams(t, map[string]string{"key": probeKey, "value": "reg"})); err != nil {
 		t.Fatalf("bridge A store: %v", err)
 	}
-	// Bridge B — same process, same store pointer — reads it back.
+	// Same process, same store pointer.
 	if got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey})); got.Value == nil || *got.Value != "reg" {
 		t.Errorf("bridge B Value = %v, want %q", got.Value, "reg")
 	}
 }
 
-// TestSecretRequestReportsOnlyUndecodableParams pins the diagnostic on the key
-// decoder both get and delete share. A request whose params cannot be decoded
-// earns a line naming the reason; a well-formed one must stay quiet, because
-// KAS issues a get on every MCP connect and a warning per connect would bury
-// the one that means something.
-//
-// No t.Parallel: captureLogs swaps the process-global slog default.
+// TestSecretRequestReportsOnlyUndecodableParams pins that only undecodable params earn a line; KAS gets
+// on every MCP connect. No t.Parallel: captureLogs swaps the slog default.
 func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 	const wantLine = "v3 secret: undecodable params"
 
@@ -276,15 +244,13 @@ func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 	})
 }
 
-// startedChatBridge spawns one chat bridge on a runtime built with opts and
-// returns the fake it started, so a test can assert what the spawn was handed.
+// startedChatBridge spawns one chat bridge with opts and returns the fake it started.
 func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	t.Helper()
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
 	cs.wire(h)
-	h.mcpRegistry.SignalReady()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
@@ -300,15 +266,8 @@ func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	return br
 }
 
-// TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins the one
-// input the capability has, in both directions.
-//
-// KAS builds its AcpSecretStorage only for a client that declared the capability,
-// and then ASKS this process to persist every MCP credential. Declaring it without
-// a store loses each one silently and re-runs the OAuth dance on the next spawn;
-// withholding it where a store exists is the same regression by omission. The
-// store is opened best-effort from the config dir, so "does this process hold one"
-// is genuinely a runtime question rather than a build-time constant.
+// TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins both directions:
+// declared without a store loses every credential; withheld with one re-runs OAuth.
 func TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	t.Run("a runtime with a credential store declares the capability", func(t *testing.T) {
 		br := startedChatBridge(t, WithConfigDir(t.TempDir()))

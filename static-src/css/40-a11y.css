@@ -145,6 +145,7 @@ a.subagent-header:focus-visible,
 a.run-step-head:focus-visible,
 .run-open:focus-visible,
 .tool-group-header:focus-visible,
+.tool-summary.opens-file:focus-visible,
 .code-act-btn:focus-visible,
 .git-repo-section-header:focus-visible,
 .git-repo-section-header-toggle:focus-visible,
@@ -175,8 +176,12 @@ a.run-step-head:focus-visible,
  *     `opacity: 1`, or this rule would dim information nobody is being refused.
  *
  * `aria-disabled` is deliberately NOT matched: nothing in the app sets it, and a
- * selector for a state that cannot occur is a claim no reader can check. */
-:where(button, input, select, textarea):disabled {
+ * selector for a state that cannot occur is a claim no reader can check.
+ *
+ * A switch's input is invisible, so its slider carries the face (a switch an
+ * organization pins is the one disabled switch). */
+:where(button, input, select, textarea):disabled,
+.toggle :where(input:disabled) + .toggle-slider {
   opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }

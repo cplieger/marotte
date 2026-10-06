@@ -1,19 +1,4 @@
-// ---------------------------------------------------------------------------
 // "Permissions" section in the Settings panel.
-//
-// Two controllers live here:
-//
-//   - PermissionsUIController — marotte's own complementary controls,
-//     each wired to its config.json field and re-rendered on change:
-//       * supervised_default  boolean
-//       * agent_ignore_files  string[]
-//   - NativePolicyController — the native (Cedar) policy VIEW + editor,
-//     the real tool-call authorization surface on v3.
-//
-// Cedar is the sole tool-call authorization surface on v3: there is no
-// client-side shell classifier, no trust modes, and no per-command rule
-// list — the permission dialog's "Always allow" persists a native rule.
-// ---------------------------------------------------------------------------
 
 import { patchSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -28,8 +13,8 @@ import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
-// `types.js` re-exports the Policy* shapes the panel renders and not this one, which
-// only an explain result carries.
+// `types.js` re-exports the Policy* shapes the panel renders and not this one, which only an
+// explain result carries.
 import type { PolicyRuleCore } from "./wire/types.gen.js";
 
 /** One row of the policy table: a scope's heading, or one rule under it. */
@@ -37,11 +22,10 @@ type PolicyEntry =
   | { readonly kind: "label"; readonly scope: string }
   | { readonly kind: "rule"; readonly scope: string; readonly rule: PolicyRule };
 
-/** A row's stable IDENTITY — everything about a rule except its effect, which is the
- *  one field an edit moves and the one the row is repainted for. `keyenc` join because
- *  a capability, a glob and a source path are all free-form text, so a "|"-joined key
- *  would let one field's content impersonate a boundary and two distinct rules collide
- *  into one row. */
+/** A row's stable IDENTITY — everything about a rule except its effect, which is the one field
+ *  an edit moves and the one the row is repainted for. `keyenc` join because a capability, a
+ *  glob and a source path are all free-form text, so a "|"-joined key would let one field's
+ *  content impersonate a boundary and two distinct rules collide into one row. */
 function policyEntryKey(e: PolicyEntry): string {
   if (e.kind === "label") {
     return join("label", e.scope);
@@ -59,27 +43,16 @@ import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { el } from "@cplieger/reactive";
 
-// ---------------------------------------------------------------------------
 // Agent ignore files: the floor, and the entry rule KAS enforces.
-// ---------------------------------------------------------------------------
 
-/** Sent to kiro-cli whatever the user's list holds, so a `.kiroignore` at the
- *  workspace root is always enforced. Mirrors `settings.AgentIgnoreFloor`; the
- *  panel renders it as a fixed row the user cannot remove. */
+/** Sent to kiro-cli whatever the user's list holds, so a `.kiroignore` at the workspace root is
+ *  always enforced. Mirrors `settings.AgentIgnoreFloor`; the panel renders it as a fixed row the
+ *  user cannot remove. */
 export const AGENT_IGNORE_FLOOR = ".kiroignore";
 
-/** The reason this entry cannot be ADDED to the list, or null when it can.
- *
- *  Every arm but one mirrors `settings.ValidAgentIgnoreEntry`, because an entry
- *  KAS refuses is one it SKIPS — offering to add one would claim a filter the
- *  agent never applies. The FLOOR arm is marotte's own and has no server
- *  counterpart: `.kiroignore` is a perfectly valid entry that is already sent on
- *  every spawn, so adding it would produce a duplicate row the panel then renders
- *  twice. It sits directly after the empty check so the message names the reason
- *  rather than falling through to a rule the floor does not break.
- *
- *  The whitespace arm is unreachable from the panel, whose only caller trims
- *  first; it is here so the rule is the whole rule for any other caller. */
+/** The reason this entry cannot be ADDED to the list, or null when it can. Every arm but one
+ *  mirrors `settings.ValidAgentIgnoreEntry`, because an entry KAS refuses is one it SKIPS —
+ *  offering to add one would claim a filter the agent never applies. */
 export function agentIgnoreEntryError(entry: string): string | null {
   if (entry === "") {
     return "An entry cannot be empty.";
@@ -102,16 +75,14 @@ export function agentIgnoreEntryError(entry: string): string | null {
   return null;
 }
 
-// ---------------------------------------------------------------------------
 // PermissionsUIController — encapsulates all module-level state.
-// ---------------------------------------------------------------------------
 
 class PermissionsUIController {
   private ignoreFiles: string[] = [];
 
   initPermissions(initial: EffectiveSettings): void {
-    // Supervised-mode default for new chats. (Tool-call approval itself is
-    // the native Cedar policy, rendered by NativePolicyController below.)
+    // Supervised-mode default for new chats. (Tool-call approval itself is the native Cedar policy,
+    // rendered by NativePolicyController below.)
     const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default;
@@ -119,9 +90,9 @@ class PermissionsUIController {
         void patchSettings({ supervised_default: supCheckbox.checked });
       });
     }
-    // Whether a SCHEDULED run's tool request is approved or refused when nobody
-    // answers it. Its own switch rather than a read of the policy above, because
-    // approving while watching is a different consent from approving unattended.
+    // Whether a SCHEDULED run's tool request is approved or refused when nobody answers it. Its own
+    // switch rather than a read of the policy above, because approving while watching is a
+    // different consent from approving unattended.
     const schedCheckbox = maybeEl<HTMLInputElement>("scheduled-auto-approve-checkbox");
     if (schedCheckbox !== null) {
       schedCheckbox.checked = initial.scheduled_auto_approve;
@@ -132,17 +103,11 @@ class PermissionsUIController {
     this.initAgentIgnoreUI(initial);
   }
 
-  // --- Private: agent ignore files ---
-
   private initAgentIgnoreUI(initial: EffectiveSettings): void {
     this.renderIgnoreFloor();
-    // No `?? []`. The row is AUTHORITATIVE on write — an add or a remove sends
-    // whatever it holds — so a fallback silently persists an empty list whenever
-    // the field is missing, discarding entries the server was enforcing. It shipped
-    // once: the default was two patterns applied whenever the key was absent, so
-    // the row rendered empty over a live filter and the first edit dropped both.
-    // An empty default narrows the loss to the user's own entries; the floor is
-    // sent server-side and survives either way, so it cannot be lost here.
+    // No `?? []`. The row is AUTHORITATIVE on write — an add or a remove sends whatever it holds —
+    // so a fallback silently persists an empty list whenever the field is missing, discarding
+    // entries the server was enforcing.
     this.ignoreFiles = [...initial.agent_ignore_files];
     this.renderIgnoreChips();
 
@@ -151,10 +116,8 @@ class PermissionsUIController {
     if (input === null || addBtn === null) {
       return;
     }
-    // A REJECTED value disables Add and says which rule refused it; an EMPTY one
-    // leaves the button alone, so it is never disabled at rest. The tooltip is
-    // the channel because `disabled` already announces the unavailability, and a
-    // disabled control still receives hover.
+    // A REJECTED value disables Add and says which rule refused it; an EMPTY one leaves the button
+    // alone, so it is never disabled at rest.
     const syncAddState = (): void => {
       const val = input.value.trim();
       const reason = val === "" ? null : agentIgnoreEntryError(val);
@@ -193,8 +156,8 @@ class PermissionsUIController {
     });
   }
 
-  /** The always-enforced floor, above the user's own chips. A fixed row rather
-   *  than a chip: `buildChip` requires an `onRemove` and this entry has none. */
+  /** The always-enforced floor, above the user's own chips. A fixed row rather than a chip:
+   *  `buildChip` requires an `onRemove` and this entry has none. */
   private renderIgnoreFloor(): void {
     const host = maybeEl("agent-ignore-floor");
     if (host === null) {
@@ -219,10 +182,9 @@ class PermissionsUIController {
     if (container === null) {
       return;
     }
-    // Ignore entries are immutable strings, so a key-by-entry, mount-only
-    // reconcile is sufficient (no update fn needed): add/remove touches only
-    // the changed chip and preserves the rest. The empty state is a sibling
-    // element (agent-ignore-empty-hint), toggled above.
+    // Ignore entries are immutable strings, so a key-by-entry, mount-only reconcile is sufficient
+    // (no update fn needed): add/remove touches only the changed chip and preserves the rest. The
+    // empty state is a sibling element (agent-ignore-empty-hint), toggled above.
     reconcile(container, this.ignoreFiles, {
       key: (entry) => entry,
       mount: (entry) =>
@@ -243,21 +205,7 @@ class PermissionsUIController {
 // Singleton instance — internal to the module.
 const controller = new PermissionsUIController();
 
-// ---------------------------------------------------------------------------
-// NativePolicyController — the native (Cedar) policy VIEW + conservative
-// file-writing editor.
-//
-// The VIEW (GET /api/permissions) is the source of truth for what kiro-cli
-// ENFORCES: the layered rule set (kiro/administration/user/workspace/agent/
-// session) with per-rule capability, 3-valued effect, path match/exclude, and
-// source provenance. The EDITOR writes the user/workspace permissions.yaml
-// (POST /api/permissions/rules), which KAS hot-reloads — the server never
-// mutates the running policy directly. It is conservative: a new rule
-// defaults to Ask (server-enforced), and removing a Deny (which widens
-// access) is confirmed first. The list is a pure server projection: refetched
-// after every edit and on the permissions_changed SSE, so it can't drift from
-// what KAS enforces.
-// ---------------------------------------------------------------------------
+// NativePolicyController — the native (Cedar) policy VIEW + conservative file-writing editor.
 
 const NATIVE_SCOPE_ORDER = ["kiro", "administration", "user", "workspace", "agent", "session"];
 const NATIVE_SCOPE_LABEL: Record<string, string> = {
@@ -276,20 +224,20 @@ function splitGlobs(raw: string): string[] {
     .filter((s) => s !== "");
 }
 
-/** The Custom profile's id, and the one id the client must know by name: it is the
- *  state the table becomes editable in, which is a UI fact rather than a policy one.
- *  Every other profile is rendered from whatever the server sent. */
+/** The Custom profile's id, and the one id the client must know by name: it is the state the
+ *  table becomes editable in, which is a UI fact rather than a policy one. Every other profile
+ *  is rendered from whatever the server sent. */
 const CUSTOM_PROFILE = "custom";
 
-/** The loosest profile's id, needed only to decide which selection earns the extra
- *  confirm. The ladder's ORDER is the server's, so this is a hint the picker checks
- *  rather than a policy it enforces — the server would grant the same set either
- *  way, and a rename upstream costs the extra confirm rather than correctness. */
+/** The loosest profile's id, needed only to decide which selection earns the extra confirm. The
+ *  ladder's ORDER is the server's, so this is a hint the picker checks rather than a policy it
+ *  enforces — the server would grant the same set either way, and a rename upstream costs the
+ *  extra confirm rather than correctness. */
 const LOOSEST_PROFILE_HINT = "unrestricted";
 
-/** Human labels, keyed by profile id. Prose for a person, so it lives on the client
- *  rather than travelling with the ladder; an id the client has no label for falls
- *  back to the id, which is ugly but true. */
+/** Human labels, keyed by profile id. Prose for a person, so it lives on the client rather than
+ *  travelling with the ladder; an id the client has no label for falls back to the id, which is
+ *  ugly but true. */
 function profileLabel(id: string): string {
   switch (id) {
     case "guarded":
@@ -307,8 +255,8 @@ function profileLabel(id: string): string {
   }
 }
 
-/** What each profile grants, in the terms a reader decides on. Read-only names that
- *  it reads OUTSIDE the workspace. */
+/** What each profile grants, in the terms a reader decides on. Read-only names that it reads
+ *  OUTSIDE the workspace. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
@@ -326,8 +274,8 @@ function profileDescription(id: string): string {
   }
 }
 
-/** A rule's globs in one vocabulary, shared by the table's rows and the explain box
- *  so a rule reads the same in both: a match is prefixed, an exclusion negated. */
+/** A rule's globs in one vocabulary, shared by the table's rows and the explain box so a rule
+ *  reads the same in both: a match is prefixed, an exclusion negated. */
 function globLabels(r: { readonly match?: string[]; readonly exclude?: string[] }): string[] {
   return [...(r.match ?? []).map((m) => "+" + m), ...(r.exclude ?? []).map((e) => "\u2212" + e)];
 }
@@ -348,21 +296,17 @@ function shortSource(src: string): string {
 class NativePolicyController {
   private writable = new Set<string>();
   private ctrl: AbortController | null = null;
-  /** The profile ladder and the id in force, both straight from the policy view.
-   *  Never local constants: the ladder decides what one click grants, and
-   *  policyfile owns it.
-   *
-   *  activeProfile is the SERVER's answer rather than the picker's selection, so a
-   *  selection that failed leaves the picker showing what is actually in force. */
+  /** The profile ladder and the id in force, both straight from the policy view. Never local
+   *  constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
-  /** A transient line under the picker: the outcome of a selection, or a note that
-   *  Custom is empty. Carried across the refetch a selection ends in, because that
-   *  refetch repaints this same line. */
+  /** A transient line under the picker: the outcome of a selection, or a note that Custom is
+   *  empty. Carried across the refetch a selection ends in, because that refetch repaints this
+   *  same line. */
   private profileNote = "";
   private profileNoteIsError = false;
-  /** The rules the last completed read-back reported, kept so the picker's own line
-   *  can be repainted without spending another request on the bridge. */
+  /** The rules the last completed read-back reported, kept so the picker's own line can be
+   *  repainted without spending another request on the bridge. */
   private lastRules: PolicyRule[] = [];
 
   init(): void {
@@ -397,12 +341,6 @@ class NativePolicyController {
     registerCleanup(() => {
       this.cancel();
     });
-    // The initial fetch is deliberately NOT fired here (B2): init() runs
-    // during boot (restoreAll, before the auth check), and /api/permissions
-    // is utility-bridge-backed — an expensive fetch for a panel that isn't
-    // visible. refresh() fires on the Permissions tab's first activation
-    // instead (settings-tabs loader map, wired in settings.ts); the
-    // permissions_changed SSE registered above keeps it fresh afterwards.
   }
 
   /** Fetch + render the policy view. Public for the lazy tab loader. */
@@ -423,9 +361,9 @@ class NativePolicyController {
     if (signal.aborted || data === null) {
       return;
     }
-    // A completed read-back supersedes any note a past selection left. Without
-    // this, a failure message outlived the thing it described and got repainted by
-    // every later refetch, including ones triggered by another device.
+    // A completed read-back supersedes any note a past selection left. Without this, a failure
+    // message outlived the thing it described and got repainted by every later refetch, including
+    // ones triggered by another device.
     this.profileNote = "";
     this.profileNoteIsError = false;
     this.writable = new Set(data.writable_scopes);
@@ -443,34 +381,25 @@ class NativePolicyController {
     }
     this.render(data.rules);
     this.renderProfiles();
-    // AFTER render(), which rebuilds the rows this locks: locking first would
-    // disable controls that are about to be replaced by fresh, enabled ones.
+    // AFTER render(), which rebuilds the rows this locks: locking first would disable controls that
+    // are about to be replaced by fresh, enabled ones.
     this.renderProfileState(data.rules);
   }
 
-  // --- The security profile --------------------------------------------------
-  //
-  // A selection writes no rule, so the user's own rules survive it. Outside Custom
-  // the table is read-only, or a hand-edit would be a second posture beside the
-  // picker's. Customize copies the presets in force into the table; picking Custom
-  // from the list copies nothing.
+  // A selection writes no rule, so the user's own rules survive it. Outside Custom the table is
+  // read-only, or a hand-edit would be a second posture beside the picker's. Customize copies the
+  // presets in force into the table; picking Custom from the list copies nothing.
 
-  /** Render the picker. One radio per profile, its own description under the label,
-   *  because what separates two of them is a sentence rather than a word.
-   *
-   *  Keyed by profile id: a radio is focusable and this runs on every policy load
-   *  and every `permissions_changed` frame. `update` writes `checked`
-   *  UNCONDITIONALLY — a signature guard is disqualified where the reader mutates
-   *  the DOM directly, because a refused switch leaves the model
-   *  unchanged and only a repaint corrects the rung on screen. */
+  /** Render the picker. One radio per profile, its own description under the label, because what
+   *  separates two of them is a sentence rather than a word. */
   private renderProfiles(): void {
     const host = maybeEl("security-profile-list");
     if (host === null) {
       return;
     }
-    // The loosest rung is last in the ladder, and the ladder's ORDER is the server's
-    // (Custom sits after it). Deriving "loosest" from the position rather than from
-    // the id is what keeps this from hardcoding a profile name the server owns.
+    // The loosest rung is last in the ladder, and the ladder's ORDER is the server's (Custom sits
+    // after it). Deriving "loosest" from the position rather than from the id is what keeps this
+    // from hardcoding a profile name the server owns.
     const loosest = this.profiles[this.profiles.length - 2]?.id ?? "";
     const paint = (row: HTMLElement, p: SecurityProfile): void => {
       row.classList.toggle("profile-row-loosest", p.id === loosest);
@@ -501,12 +430,9 @@ class NativePolicyController {
     });
   }
 
-  /** Paint the Customize button and the status line, and lock the table outside
-   *  Custom.
-   *
-   *  The button is present only on a named profile, because on Custom you are
-   *  already there and a control that does nothing teaches a reader to distrust
-   *  every other one. */
+  /** Paint the Customize button and the status line, and lock the table outside Custom. The
+   *  button is present only on a named profile, because on Custom you are already there and a
+   *  control that does nothing teaches a reader to distrust every other one. */
   private renderProfileState(rules: PolicyRule[]): void {
     const custom = this.activeProfile === CUSTOM_PROFILE;
     maybeEl("security-profile-customize")?.classList.toggle("hidden", custom);
@@ -517,10 +443,9 @@ class NativePolicyController {
     }
     let text = this.profileNote;
     if (text === "" && custom && rules.filter((r) => this.writable.has(r.scope)).length === 0) {
-      // An empty Custom policy is not a neutral state and the picker has to say so:
-      // Custom sends no presets, so with no rules of its own the agent asks before
-      // it may even read a file. Saying nothing here would leave that to be
-      // discovered one prompt at a time.
+      // An empty Custom policy is not a neutral state and the picker has to say so: Custom sends no
+      // presets, so with no rules of its own the agent asks before it may even read a file. Saying
+      // nothing here would leave that to be discovered one prompt at a time.
       text =
         "Custom, with no rules. Every capability asks, including reading a file. " +
         "Add rules below, or pick a profile to start from one.";
@@ -530,11 +455,7 @@ class NativePolicyController {
     status.classList.toggle("native-policy-status-error", this.profileNoteIsError);
   }
 
-  /** Disable every editing affordance in the Active policy table.
-   *
-   *  Genuinely disabled rather than only dimmed: a `pointer-events: none` would
-   *  leave the controls in the tab order and reachable by keyboard, which is the
-   *  version of this that looks locked and is not. */
+  /** Disable every editing affordance in the Active policy table. */
   private lockPolicyTable(locked: boolean): void {
     maybeEl("native-policy-section")?.classList.toggle("native-policy-locked", locked);
     const scope = maybeEl("native-policy-section");
@@ -550,8 +471,8 @@ class NativePolicyController {
     }
   }
 
-  /** Select a profile. The leaving-Custom confirm says the user's own rules SURVIVE,
-   *  because a grant outliving a narrowing is the surprise this screen can produce. */
+  /** Select a profile. The leaving-Custom confirm says the user's own rules SURVIVE, because a
+   *  grant outliving a narrowing is the surprise this screen can produce. */
   private async selectProfile(id: string): Promise<void> {
     if (id === this.activeProfile) {
       return;
@@ -581,11 +502,9 @@ class NativePolicyController {
     await this.applyProfile(id, false);
   }
 
-  /** The extra confirm the loosest profile earns. It is the one that grants
-   *  `power`, so a power installed afterwards runs its author's code at this
-   *  privilege with nothing asking, and it is also the one whose name invites a
-   *  click. It states what it cannot do as well, because a profile that says it
-   *  allows everything and then prompts reads as broken rather than as bounded. */
+  /** The extra confirm the loosest profile earns. It is the one that grants `power`, so a power
+   *  installed afterwards runs its author's code at this privilege with nothing asking, and it
+   *  is also the one whose name invites a click. */
   private confirmLoosest(): Promise<boolean> {
     return confirm(
       `Allow every capability without asking? This includes "power", so a power you ` +
@@ -598,8 +517,8 @@ class NativePolicyController {
     );
   }
 
-  /** Copy the profile in force into the editable table and switch to Custom. The
-   *  starting-point door, as opposed to the blank one. */
+  /** Copy the profile in force into the editable table and switch to Custom. The starting-point
+   *  door, as opposed to the blank one. */
   private async customize(): Promise<void> {
     this.profileNote = "";
     this.profileNoteIsError = false;
@@ -611,9 +530,9 @@ class NativePolicyController {
     this.setPickerInert(true);
     try {
       const res = await setSecurityProfile.dispatch({ profile: id, seed });
-      // Repaint from the server FIRST, so the picker shows what is actually in
-      // force, then write the failure over it. The other order loses the message:
-      // load() clears the note by design, so a note set before it never survives.
+      // Repaint from the server FIRST, so the picker shows what is actually in force, then write
+      // the failure over it. The other order loses the message: load() clears the note by design,
+      // so a note set before it never survives.
       await this.load();
       if (res === null || res.error !== undefined) {
         this.profileNote = res?.error ?? "The profile was not changed.";
@@ -625,9 +544,9 @@ class NativePolicyController {
     }
   }
 
-  /** Make every control that can START a selection inert for one write: Customize
-   *  snapshots the user file first, so an overlapping one could restore the wrong
-   *  rules. Re-queried on release, so a radio load() mounted meanwhile is enabled. */
+  /** Make every control that can START a selection inert for one write: Customize snapshots the
+   *  user file first, so an overlapping one could restore the wrong rules. Re-queried on
+   *  release, so a radio load() mounted meanwhile is enabled. */
   private setPickerInert(inert: boolean): void {
     const btn = maybeEl<HTMLButtonElement>("security-profile-customize");
     if (btn !== null) {
@@ -642,14 +561,7 @@ class NativePolicyController {
     }
   }
 
-  /** Fill both capability pickers, rebuilding only when the SET moved.
-   *
-   *  `pickerCapabilities` is a union, so the set grows at runtime: a cold no-bridge
-   *  view names only the capabilities the two writable files already use, and the
-   *  live list is wider. Populating once kept that narrow list until a reload. The
-   *  reader's selection is restored, which is what the old idempotence protected. An
-   *  empty answer rebuilds nothing: it says the view could not name a capability,
-   *  not that there are none. */
+  /** Fill both capability pickers, rebuilding only when the SET moved. */
   private populateCapabilities(caps: string[]): void {
     for (const id of ["native-rule-capability", "native-explain-capability"]) {
       const sel = maybeEl<HTMLSelectElement>(id);
@@ -689,13 +601,9 @@ class NativePolicyController {
       ...NATIVE_SCOPE_ORDER,
       ...[...groups.keys()].filter((s) => !NATIVE_SCOPE_ORDER.includes(s)),
     ];
-    // ONE flat keyed list over both element kinds — a scope's label and the rules
-    // under it — so a row is preserved without each group boundary needing a
-    // container. A writable row holds a `<select>`, and this runs on every
-    // `permissions_changed` frame plus after every edit.
-    //
-    // The key is a stable identity and the effect is repainted in `update`; a key
-    // carrying content re-keys on every data change and re-seats the row.
+    // ONE flat keyed list over both element kinds — a scope's label and the rules under it — so a
+    // row is preserved without each group boundary needing a container. A writable row holds a
+    // `<select>`, and this runs on every `permissions_changed` frame plus after every edit.
     const rows: PolicyEntry[] = [];
     for (const scope of order) {
       const grp = groups.get(scope);
@@ -722,9 +630,9 @@ class NativePolicyController {
         sigChanged(row, [e.rule.effect]);
         return row;
       },
-      // The EFFECT is the only field not in the key, so it is the only one a kept row
-      // can be stale about. It decides the row's class and its select's value, so the
-      // repaint is the row's children plus that class.
+      // The EFFECT is the only field not in the key, so it is the only one a kept row can be stale
+      // about. It decides the row's class and its select's value, so the repaint is the row's
+      // children plus that class.
       update: (row: HTMLElement, e: PolicyEntry) => {
         if (e.kind !== "rule" || !sigChanged(row, [e.rule.effect])) {
           return;
@@ -749,10 +657,8 @@ class NativePolicyController {
     }
     const src = el("span", { className: "native-rule-src" }, shortSource(r.source));
     if (r.source !== "") {
-      // `data-tooltip` rather than a native `title`: the delegated controller styles
-      // it like every other hover in the app and republishes it as an accessible
-      // description. The path on screen is elided, so the label is the only channel
-      // carrying the whole of it to a reader who cannot hover.
+      // `data-tooltip` rather than a native `title`: the delegated controller styles it like every
+      // other hover in the app and republishes it as an accessible description.
       src.setAttribute("data-tooltip", r.source);
       src.setAttribute("aria-label", `Defined in ${r.source}`);
     }
@@ -773,11 +679,7 @@ class NativePolicyController {
     return row;
   }
 
-  /** Build the in-place effect editor for a writable rule: a select styled
-   *  as the effect badge. A widening change (deny→ask, deny→allow,
-   *  ask→allow) grants the agent more than it had, so it is confirmed
-   *  first — same guardrail as removing a deny. The select reverts on
-   *  cancel or a failed write; a successful write refetches the view. */
+  /** Build the in-place effect editor for a writable rule: a select styled */
   private effectSelect(r: PolicyRule): HTMLSelectElement {
     const sel = el("select", {
       className: `native-rule-effect eff-${r.effect}`,
@@ -898,8 +800,8 @@ class NativePolicyController {
     if (capability === "" || out === null) {
       return;
     }
-    // Shell decisions are always resource-scoped (there is no
-    // command-independent shell decision to simulate).
+    // Shell decisions are always resource-scoped (there is no command-independent shell decision to
+    // simulate).
     if (capability === "shell" && resource === "") {
       out.textContent = "Enter a command to test the shell capability.";
       return;
@@ -909,11 +811,9 @@ class NativePolicyController {
       out.textContent = "Could not evaluate. Check that a chat session is active.";
       return;
     }
-    // The control is labelled "why?", so the matched RULE is the answer: a scope
-    // names only the layer that decided, and the kiro layer holds dozens of globs the
-    // reader would then have to find by eye. `is_explicit_ask` separates an ask a
-    // rule states, which no allow may be added over, from the implicit ask that
-    // means nothing matched.
+    // The control is labelled "why?", so the matched RULE is the answer: a scope names only the
+    // layer that decided, and the kiro layer holds dozens of globs the reader would then have to
+    // find by eye.
     const parts = [`Effect: ${res.effect}${res.is_explicit_ask ? " (explicit ask)" : ""}`];
     if (res.matched_rule !== undefined) {
       parts.push(`rule: ${ruleSummary(res.matched_rule)}`);
@@ -945,17 +845,16 @@ export function initPermissionsUI(initial: EffectiveSettings): void {
   controller.initPermissions(initial);
 }
 
-/** Initialise the native Cedar policy view + editor: wires the add-rule /
- *  explain controls and the permissions_changed SSE refetch. Does NOT fetch
- *  GET /api/permissions — the initial load is lazy (loadNativePolicy). */
+/** Initialise the native Cedar policy view + editor: wires the add-rule / explain controls and
+ *  the permissions_changed SSE refetch. Does NOT fetch GET /api/permissions — the initial load
+ *  is lazy (loadNativePolicy). */
 export function initNativePolicyUI(): void {
   nativePolicy.init();
 }
 
-/** Load the native policy view. Wired to the Permissions tab's first
- *  activation (settings-tabs loader map) instead of boot, so the
- *  bridge-backed /api/permissions endpoint isn't hit for an invisible
- *  panel. Safe to call repeatedly (in-flight loads are aborted). */
+/** Load the native policy view. Wired to the Permissions tab's first activation (settings-tabs
+ *  loader map) instead of boot, so the bridge-backed /api/permissions endpoint isn't hit for an
+ *  invisible panel. Safe to call repeatedly (in-flight loads are aborted). */
 export function loadNativePolicy(): void {
   nativePolicy.refresh();
 }

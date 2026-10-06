@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
-// newTabsServer is a server wired to a real tab store over a temp dir. A real
-// store rather than a double, because the property this endpoint exists to hold —
-// the set and the version come from ONE critical section — is the store's own.
+// newTabsServer is a server wired to a real tab store over a temp dir: the one-critical-section
+// property is the store's own.
 func newTabsServer(t *testing.T) (*Server, *tabs.Store) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
@@ -64,9 +63,7 @@ func TestTabs_GetReturnsTheSetAndItsVersion(t *testing.T) {
 	}
 }
 
-// TestTabs_AnEmptySetIsAnArray. `[]` rather than `null`, because the field is not
-// optional and a client decoding null where it expects an array fails on the boot
-// path.
+// TestTabs_AnEmptySetIsAnArray pins `[]` rather than `null`.
 func TestTabs_AnEmptySetIsAnArray(t *testing.T) {
 	s, _ := newTabsServer(t)
 	rec := httptest.NewRecorder()
@@ -85,9 +82,8 @@ func TestTabs_AnEmptySetIsAnArray(t *testing.T) {
 	}
 }
 
-// TestTabs_AnUnwiredStoreAnswersTheEmptyCollection, for the reason the ui-state
-// handler answers an empty document: a client that cannot read the arrangement
-// must still boot.
+// TestTabs_AnUnwiredStoreAnswersTheEmptyCollection pins that a client that cannot read the
+// arrangement still boots.
 func TestTabs_AnUnwiredStoreAnswersTheEmptyCollection(t *testing.T) {
 	s := &Server{}
 
@@ -103,8 +99,7 @@ func TestTabs_AnUnwiredStoreAnswersTheEmptyCollection(t *testing.T) {
 
 func TestTabs_RejectsEveryMethodButGET(t *testing.T) {
 	s, _ := newTabsServer(t)
-	// Every mutation rides POST /api/command (invariant 1), so this endpoint has no
-	// write verb to add and each one is a 405 rather than a 404.
+	// Mutations ride POST /api/command, so every write verb is a 405.
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -118,14 +113,8 @@ func TestTabs_RejectsEveryMethodButGET(t *testing.T) {
 	}
 }
 
-// movingTabs is a tab set that ADVANCES on every List: call n returns n tabs at
-// version n.
-//
-// It exists to make one property deterministic that the -race case below can only
-// sample: a handler that reads the set and the version in two separate calls
-// composes a set from one moment with a version from another. Against this double
-// that is a guaranteed mismatch (1 tab stamped version 2), where against the real
-// store it is a nanosecond window nobody can schedule.
+// movingTabs is a tab set that ADVANCES on every List (call n returns n tabs at version n),
+// making a two-call handler's mismatch deterministic.
 type movingTabs struct {
 	calls uint64
 }
@@ -139,13 +128,7 @@ func (m *movingTabs) List() ([]marotte.TabSubject, uint64) {
 	return out, m.calls
 }
 
-// TestTabs_TheSetAndTheVersionComeFromONECall is the paired-read contract, held to
-// deterministically.
-//
-// The number the handler must report is the one this store answered with, and
-// against a store that moves on every call there is exactly one way to get it:
-// call once. Two calls compose 1 tab with version 2, which is precisely the shape
-// that lets a client discard the event its snapshot was missing.
+// TestTabs_TheSetAndTheVersionComeFromONECall pins the paired read deterministically.
 func TestTabs_TheSetAndTheVersionComeFromONECall(t *testing.T) {
 	moving := &movingTabs{}
 	s := &Server{tabs: moving}
@@ -164,15 +147,8 @@ func TestTabs_TheSetAndTheVersionComeFromONECall(t *testing.T) {
 	}
 }
 
-// TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet is the same contract
-//
-// TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet is the same contract
-// against the REAL store and a real concurrent writer, which is what the double
-// above cannot cover: that tabs.Store.List is itself atomic.
-//
-// The fixture makes the invariant exact: each mutation opens exactly one tab, so
-// version N describes a set of N tabs, always. Sampling rather than proving —
-// TestTabs_TheSetAndTheVersionComeFromONECall is the deterministic half.
+// TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet samples the same contract against
+// the REAL store and a concurrent writer: version N always describes N tabs.
 func TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet(t *testing.T) {
 	s, st := newTabsServer(t)
 	const opens = 60
@@ -201,8 +177,7 @@ func TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet(t *testing.T) {
 	}
 	wg.Wait()
 
-	// And once more after the writer is done, so the case cannot pass by only ever
-	// having observed the empty collection.
+	// Once more after the writer finishes, so the case cannot pass on the empty collection alone.
 	got, _ := getTabs(t, s)
 	if got.Version == 0 {
 		t.Fatal("the writer produced no mutation, so nothing was actually raced")

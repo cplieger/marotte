@@ -1,12 +1,7 @@
 // Accessibility tests: tool-group keyboard nav, file-picker labels, upload progress.
-//
-// EVERY CASE HERE GIVES ITS SHELL TWO MEMBERS, and that is not scaffolding. A
-// one-member group is BARE: `14-tools.css` gives it `display: none`, so its header
-// is out of the accessibility tree and out of tab order and no reader can drive it.
-// These cases mount no stylesheet, so they would keep passing on a zero-member
-// shell — exercising a control that cannot be reached, which is the false-confidence
-// shape the testing rules call out. The last case is the other half: it mounts the
-// real stylesheet and asserts the bare header is genuinely unfocusable.
+// Every shell gets TWO members: `14-tools.css` hides a one-member group's header, and
+// these cases mount no stylesheet, so a zero-member shell would pass on an unreachable
+// control. The last case mounts the stylesheet and asserts that bare header is unfocusable.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -87,14 +82,9 @@ describe("a11y: tool-group header keyboard and aria", () => {
   });
 });
 
-// The same claim for the two other kinds the newest-element policy folds. Every one of
-// them keeps `aria-expanded` on its header control in sync with the fold, or a screen
-// reader is told the box is open while the reader sees it shut — and an auto collapse
-// is the one path with no user gesture behind it to make that obvious.
-//
-// Each fixture gets a POPULATED body, for the reason this file's header states for the
-// group: an empty pipeline container withdraws its control entirely, so a case over one
-// would exercise a control no reader can drive.
+// The other folded kinds keep `aria-expanded` in sync with an auto collapse, the one path
+// with no user gesture behind it. Bodies are POPULATED: an empty container withdraws its
+// control.
 describe("a11y: an auto-collapse keeps aria-expanded in sync", () => {
   it("an auto-collapsed pipeline reports aria-expanded=false", async () => {
     const { buildSubagentContainer } = await import("./fundamentals/subagent-block.js");

@@ -1,37 +1,14 @@
-// The model glyph's geometry, derived rather than snapshotted.
-//
-// This icon renders at 12px and at 20px, and the 12px size is what shaped it
-// twice. First the eyes: they were STROKED rings (r=2.5, stroke-width 2) whose
-// outer edges left one user unit between them, which is 0.50 CSS px at 12px.
-// Under a device pixel, so the two rings bridged into a blob, and because the
-// centres sat on integers the 1-unit wall split 25/75 across two pixel columns
-// and painted two greys instead of a gap.
-//
-// Then the head. An antenna dot and stem owned the top 6 of the 22 units a
-// centred content bbox gets, so the head was 15 units tall and its INTERIOR 13
-// — 6.5 CSS px at 12px to hold two eyes and a mouth, with the mouth's stroke
-// ending half a unit off the inner bottom. The antenna itself quantises to a 1px
-// tick at that size, so it was buying nothing with the room it took. The head
-// now fills the box and the face has 18 interior units.
-//
-// The invariants worth pinning are therefore not "the eyes are circles" or "there
-// is an antenna" but: the gap between the eyes survives quantisation at the
-// SMALLEST size this icon is rendered at, the head owns the whole square, and the
-// face fits inside it with the mouth's dip counted. Everything here is computed
-// from the shipped string.
-//
-// Node environment: no DOM, the icon is text.
+// The model glyph's geometry, derived from the shipped string. Pinned: the eye gap survives quantisation at the
+// smallest render size, the head owns the whole square, and the face fits inside it with the mouth's dip counted.
+// Node environment: the icon is text.
 
 import { describe, it, expect } from "vitest";
 import { ICON_MODEL, ICON_MODEL_UI } from "./icons.js";
 
-/** Every render size this glyph ships at, in CSS pixels. Both are real call
- *  sites: the composer's model pill (model-switcher.ts) at the inline tier and
- *  the empty-chat picker's heading (picker.ts) at the ui tier. The second used
- *  to be 20, which was the number its own markup spelled; the tiers in
- *  01-tokens.css put it at 16 on a fine pointer and 18 on a coarse one, so 16 is
- *  the smaller of the two it can render at. A new size belongs here, because the
- *  floors below are evaluated at the smallest member. */
+/**
+ * Every render size, in CSS pixels: the model pill (inline tier) and the picker heading (ui tier, 16 on a fine
+ * pointer). The floors use the smallest member.
+ */
 const RENDER_SIZES = [12, 16];
 
 interface Circle {
@@ -54,7 +31,7 @@ function circles(svg: string): Circle[] {
   }));
 }
 
-/** The viewBox is square and starts at 0, so one number describes it. */
+/** Square and at 0, so one number describes it. */
 function viewBoxSide(svg: string): number {
   const m = /viewBox="0 0 (\d+) (\d+)"/.exec(svg);
   expect(m, "expected a square viewBox anchored at 0 0").not.toBeNull();
@@ -62,10 +39,7 @@ function viewBoxSide(svg: string): number {
   return Number(m![1]);
 }
 
-/** The eyes are the only pair of circles sharing a radius AND a y. Found by that
- *  property rather than by index, so reordering the markup cannot make this test
- *  read the wrong two shapes — and if a third circle is ever added, this fails
- *  loudly instead of silently measuring it. */
+/** Found by shared radius and y, not index, so reordering cannot mislead and a third circle fails loudly. */
 function eyes(svg: string): [Circle, Circle] {
   const groups = new Map<string, Circle[]>();
   for (const c of circles(svg)) {
@@ -79,22 +53,16 @@ function eyes(svg: string): [Circle, Circle] {
 }
 
 /** Declared once on the root, so every stroked edge spends half of it outward. */
-/** The stroke the glyph was DRAWN against, in viewBox units.
- *
- *  It is no longer an attribute on the tag: 03-base.css owns the rendered
- *  stroke and decouples it from the size with `vector-effect:
- *  non-scaling-stroke`, so one authored number could not describe both tiers
- *  anyway. The geometry asserted below is still laid out against 2 units on the
- *  24-unit grid — that is what makes the head's painted box square and centred —
- *  so the value is declared here rather than read back off a tag that no longer
- *  carries it. */
+/**
+ * The stroke the glyph was drawn against, in viewBox units; 03-base.css owns the rendered stroke
+ * (`non-scaling-stroke`), so it is declared here.
+ */
 const DRAWN_STROKE_UNITS = 2;
 
 function strokeWidth(): number {
   return DRAWN_STROKE_UNITS;
 }
 
-/** The head: the glyph's only rect, and its whole silhouette. */
 function headRect(svg: string): { x: number; y: number; width: number; height: number } {
   const tag = /<rect [^>]*\/>/.exec(svg);
   expect(tag, "expected the head rect").not.toBeNull();
@@ -106,9 +74,7 @@ function headRect(svg: string): { x: number; y: number; width: number; height: n
   };
 }
 
-/** The mouth, as a start point plus the span and dip of one quadratic. The
- *  trailing ` 0` in the pattern is the curve ending level with its start, which
- *  is what makes the dip the only thing that can reach past the geometry. */
+/** The trailing ` 0` means the curve ends level with its start, so only the dip reaches past the geometry. */
 function mouth(svg: string): { x0: number; y0: number; dx: number; dip: number } {
   const m = /<path d="M([\d.]+) ([\d.]+)q([\d.]+) ([\d.]+) ([\d.]+) 0"\/>/.exec(svg);
   expect(m, "expected the mouth as one quadratic ending level with its start").not.toBeNull();
@@ -126,9 +92,7 @@ describe("the model glyph's eye gap", () => {
     const side = viewBoxSide(svg);
     const [left, right] = eyes(svg);
 
-    // Filled circles, so the painted edge is the radius — no stroke to add. That
-    // is the change: a stroked ring spends its width outward AND inward, which is
-    // what ate the gap and the pupil at the same time.
+    // Filled circles: the painted edge is the radius. A stroked ring spends its width both ways.
     expect(
       svg,
       "the eyes must be filled, not stroked: a ring at 12px has to hold a wall and a hole inside 1.5 CSS px and loses both",
@@ -149,10 +113,7 @@ describe("the model glyph's eye gap", () => {
   });
 
   it("puts the gap's edges on whole pixel boundaries at the smallest size", () => {
-    // Sub-pixel edges are the second half of the same defect: a gap can be wide
-    // enough on paper and still render as two greys if neither edge lands on a
-    // pixel boundary. At 12px one unit is exactly 0.5 CSS px, so even unit values
-    // ARE the boundaries.
+    // At 12px one unit is 0.5 CSS px, so even unit values are the pixel boundaries.
     const svg = ICON_MODEL;
     const side = viewBoxSide(svg);
     const [left, right] = eyes(svg);
@@ -178,13 +139,10 @@ describe("the model glyph", () => {
         "if their bodies differ now the shared `d` has been forked again",
     ).toBe(body(ICON_MODEL_UI));
 
-    // The two differ only by SIZE TIER now. Neither carries a width, because
-    // 03-base.css owns the pixels: the old pair spelled 12 and 20 in their own
-    // markup, which is what let them drift in the first place.
+    // The two differ only by size tier; 03-base.css owns the pixels.
     expect(ICON_MODEL).toContain('class="ic-inline"');
     expect(ICON_MODEL_UI).toContain('class="ic-ui"');
-    // Scoped to the OPENING TAG: the head rect carries a legitimate width and
-    // height of its own, in viewBox units.
+    // Scoped to the opening tag: the head rect has its own width and height.
     for (const svg of [ICON_MODEL, ICON_MODEL_UI]) {
       const openTag = /^<svg[^>]*>/.exec(svg)![0];
       expect(openTag, "the size belongs to the tier, not to the tag").not.toMatch(
@@ -194,12 +152,7 @@ describe("the model glyph", () => {
   });
 
   it("gives the whole box to the head", () => {
-    // The head's stroked rect IS the content bbox — there is nothing else
-    // outside it. That is the fix this drawing exists for: an antenna dot and
-    // stem used to own the top 6 units, so the head was 15 tall of the 22 a
-    // centred bbox gets and its interior 13, which is 6.5 CSS px at 12px for two
-    // eyes and a mouth. Any element added above the head takes that room back,
-    // and it will show up here as a margin over one unit or a non-square box.
+    // The head's stroked rect is the content bbox; anything above it shows up as a margin over one unit.
     const svg = ICON_MODEL;
     const side = viewBoxSide(svg);
     const half = strokeWidth() / 2;
@@ -224,10 +177,7 @@ describe("the model glyph", () => {
   });
 
   it("keeps the face inside the head, mouth dip included", () => {
-    // The mouth is the one element whose painted extent is not its own
-    // coordinates: it is a quadratic, and a quadratic's dip is HALF its control
-    // offset. Deepening the dip (1 unit read as a straight dash at 12px) is only
-    // safe while the curve plus its stroke stays off the head's inner edge.
+    // A quadratic's dip is half its control offset; it must stay off the head's inner edge with its stroke.
     const svg = ICON_MODEL;
     const half = strokeWidth() / 2;
     const h = headRect(svg);
@@ -264,10 +214,7 @@ describe("the model glyph", () => {
       inner.right,
     );
 
-    // Centred within a unit. The head is symmetric, so a face drifting toward
-    // one wall is a composition bug rather than a rendering one — worth a floor
-    // because the eye and mouth rows are tuned by hand and half a unit is
-    // 0.25 CSS px at 12px, invisible in review and cumulative across edits.
+    // Centred within a unit: half a unit is 0.25 CSS px at 12px, invisible in review and cumulative.
     expect(
       Math.abs((face.top + face.bottom) / 2 - (inner.top + inner.bottom) / 2),
       "the face must sit within a unit of the head interior's vertical centre",

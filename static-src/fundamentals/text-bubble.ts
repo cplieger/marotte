@@ -1,17 +1,6 @@
-// ---------------------------------------------------------------------------
-// Fundamental: the assistant markdown bubble (streaming or replay).
-//
-// A pure view owning its incremental markdown stream; composition forwards
-// deltas and calls end() at turn finalize.
-//
-// A LIVE bubble also owns a reveal cursor (`reveal.ts`), which spreads the
-// network's lumpy deltas across frames at a rate trailing the live edge by a
-// fixed lag, so the transcript grows continuously instead of in bursts.
-// Mounted history paints in one pass; only growth is revealed.
-//
-// `.message.assistant` is the turn body's prose container (~40rem measure);
-// evidence beside it (diffs, tool cards, output) is uncapped.
-// ---------------------------------------------------------------------------
+// The assistant markdown bubble. A LIVE bubble owns a reveal cursor (`reveal.ts`) that spreads
+// lumpy deltas across frames at a fixed lag behind the live edge; mounted history paints at once.
+// `.message.assistant` is the prose container (~40rem measure).
 
 import { el } from "@cplieger/reactive";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "../markdown.js";
@@ -36,22 +25,15 @@ export interface AssistantBubble {
   finishNow(): void;
 }
 
-/**
- * Build an assistant markdown bubble. `live` primes an incremental stream plus a
- * reveal cursor and marks the bubble `.streaming` — the accent wash and the
- * blinking block caret, not a pulsing dot (css/13-messages.css). Replay renders
- * the full markdown one-shot.
- */
+/** `live` primes an incremental stream plus a reveal cursor and marks the bubble `.streaming`
+ *  (css/13-messages.css); replay renders one-shot. */
 export interface AssistantBubbleOpts {
   /** Fires once when the bubble seals — the moment `.streaming` drops. The
    *  live-anchor registry hangs off this, cleared at whichever path sealed
    *  it (tail moved, turn finalized, unmount). */
   onSeal?: (root: HTMLElement) => void;
-  /** Reports whether the bubble is BLANK (nothing to show, not streaming),
-   *  once initially then on every transition. The row wrapper hides on it
-   *  (`.msg-row.is-empty`): a reserved slot must keep its DOM position but
-   *  cost no row until text arrives, while a live bubble stays visible for
-   *  its caret. */
+  /** Reports BLANK (nothing to show, not streaming) initially and on each transition; the row
+   *  wrapper hides on it (`.msg-row.is-empty`). */
   onBlankChange?: (blank: boolean) => void;
 }
 
@@ -76,11 +58,9 @@ export function buildAssistantBubble(
     }
   };
 
-  /** Append `delta`, opening the incremental renderer when there is not one
-   *  yet. Two callers reach the no-stream branch: a live bubble's first
-   *  delta, or a REPLAY bubble whose caller judged it live/replay wrong and
-   *  is re-rendering the already-shown text through a fresh stream —
-   *  `wasRendered` triggers a flush so that swap stays invisible. */
+  /** Append `delta`, opening the incremental renderer if needed. Reached without a stream by a live
+   *  bubble's first delta or a misjudged REPLAY bubble re-rendering through a fresh stream
+   *  (`wasRendered` flushes so the swap is invisible). */
   const write = (delta: string): void => {
     if (delta === "") {
       return;
@@ -190,6 +170,3 @@ export function buildAssistantBubble(
     },
   };
 }
-
-// buildUserBubble is gone with the bubbles: the user's request is the turn
-// card's header band (turn-header.ts) now.

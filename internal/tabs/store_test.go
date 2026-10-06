@@ -11,11 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestOpen_IsIdempotentOnKindAndRef is the flag the client's open resolution
-// depends on. An already-open (Kind, Ref) mutates nothing, so it bumps NO version
-// and therefore emits no event — and with the event as the only render path, a
-// caller that waited for one would wait forever. created=false is what tells it to
-// resolve from the response instead.
+// TestOpen_IsIdempotentOnKindAndRef pins created=false and no version bump for an already-open
+// (Kind, Ref): no event fires, so the caller resolves from the response.
 func TestOpen_IsIdempotentOnKindAndRef(t *testing.T) {
 	s, dir := newTestStore(t)
 	first, created, v1, err := s.Open(t.Context(), chatSpec("c-a"))
@@ -58,10 +55,8 @@ func TestOpen_IsIdempotentPerKind(t *testing.T) {
 	}
 }
 
-// TestOpen_RefusesASpecItCannotHold asserts the SPECIFIC sentinel per case,
-// because an outcome assertion cannot separate them: "Open failed" is the same
-// observation for a kind nobody declared and a ref that belongs to another kind,
-// and the caller answers those two differently.
+// TestOpen_RefusesASpecItCannotHold asserts the SPECIFIC sentinel per case: the caller answers
+// them differently.
 func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 	cases := []struct {
 		desc string
@@ -95,11 +90,8 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 	}
 }
 
-// TestOpen_AtTheProductLimitRefusesWithErrTooMany covers the refusal whose
-// consequence is user-visible: at the limit, New chat stops working, because
-// creating a chat opens a tab for it. The limit is asserted as a boundary — the
-// last one in succeeds, the next is refused — so an off-by-one in either direction
-// fails here rather than in a strip.
+// TestOpen_AtTheProductLimitRefusesWithErrTooMany pins the limit as a boundary (at the limit
+// New chat stops working, since creating a chat opens a tab).
 func TestOpen_AtTheProductLimitRefusesWithErrTooMany(t *testing.T) {
 	s, dir := newTestStore(t)
 	for i := range MaxOpenTabs {
@@ -124,10 +116,8 @@ func TestOpen_AtTheProductLimitRefusesWithErrTooMany(t *testing.T) {
 	}
 }
 
-// TestOpen_PlacesAChildAfterItsParentsExistingChildren pins the position rule
-// against the client's insertSpec, which is the module that has to agree with it:
-// a strip whose server order and client order differ would reshuffle on every
-// reload.
+// TestOpen_PlacesAChildAfterItsParentsExistingChildren pins the position rule the client's
+// insertSpec must agree with.
 func TestOpen_PlacesAChildAfterItsParentsExistingChildren(t *testing.T) {
 	s, _ := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
@@ -148,10 +138,7 @@ func TestOpen_PlacesAChildAfterItsParentsExistingChildren(t *testing.T) {
 	}
 }
 
-// TestOpen_PromotesATabWhoseParentIsNotOpen is the client's own answer to an
-// orphan (a tab nobody can see is worse than a tab in the wrong place), and it is
-// what keeps TabSubject.Parent's promise true: every stored Parent named an open
-// tab at the moment it was set.
+// TestOpen_PromotesATabWhoseParentIsNotOpen pins the orphan promotion.
 func TestOpen_PromotesATabWhoseParentIsNotOpen(t *testing.T) {
 	s, dir := newTestStore(t)
 	top := mustOpen(t, s, chatSpec("c-top"))
@@ -171,10 +158,7 @@ func TestOpen_PromotesATabWhoseParentIsNotOpen(t *testing.T) {
 	}
 }
 
-// TestClose_RemovesTheSubtreeInOneMutation is the reason Close returns what it
-// removed: a parent with children is ONE mutation, so it is one version bump and
-// one event, and the event can only name every removed id if the store hands them
-// back.
+// TestClose_RemovesTheSubtreeInOneMutation pins one bump for a subtree and the returned ids.
 func TestClose_RemovesTheSubtreeInOneMutation(t *testing.T) {
 	s, dir := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
@@ -206,9 +190,8 @@ func TestClose_RemovesTheSubtreeInOneMutation(t *testing.T) {
 	}
 }
 
-// TestClose_ScattersDoNotEscape is the same claim after a drag. Reorder permits
-// any permutation of the set, so a child can sit far from its parent; the closure
-// walks parent POINTERS rather than positions, which is what makes that safe.
+// TestClose_ScattersDoNotEscape pins that closure walks parent POINTERS, so a dragged child
+// still closes with its parent.
 func TestClose_ScattersDoNotEscape(t *testing.T) {
 	s, _ := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
@@ -253,11 +236,8 @@ func TestClose_AnIDThatIsNotOpenIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestReorder_RefusesWithItsSentinelAndNamesTheOffender walks the three ways an
-// order can fail the exact-set check. Every case asserts ErrOrderMismatch AND
-// that the message names what was wrong, because the sentinel alone cannot
-// separate a short list from a duplicate — and the caller is going to log one of
-// these into a support conversation.
+// TestReorder_RefusesWithItsSentinelAndNamesTheOffender pins ErrOrderMismatch and a message
+// naming what was wrong, for each of the three failures.
 func TestReorder_RefusesWithItsSentinelAndNamesTheOffender(t *testing.T) {
 	s, _ := newTestStore(t)
 	a := mustOpen(t, s, chatSpec("c-a"))
@@ -330,11 +310,8 @@ func TestReorder_AppliesTheGestureAndBumpsOnce(t *testing.T) {
 	}
 }
 
-// TestReorder_IsAcceptedAfterAnUnrelatedPinBumpedTheVersion is the drag a
-// base-version precondition would have thrown away. A pin bumps the version
-// without changing the order, so a version check would refuse a gesture whose set
-// is exactly right — which is why the exact-set check IS the precondition and the
-// version is an output only.
+// TestReorder_IsAcceptedAfterAnUnrelatedPinBumpedTheVersion pins the drag a base-version
+// precondition would discard.
 func TestReorder_IsAcceptedAfterAnUnrelatedPinBumpedTheVersion(t *testing.T) {
 	s, _ := newTestStore(t)
 	a := mustOpen(t, s, chatSpec("c-a"))
@@ -406,13 +383,8 @@ func TestSetPinned_BumpsOnceAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestList_ReturnsACopy is the reason List clones: the store's slice IS the order,
-// so handing it out would let a caller reorder the collection through the value it
-// was given, with no mutation, no version bump and no event.
-// TestReparent_MovesTheRowBehindTheNewParentsChildren is the rule the spec
-// sub-tab door depends on: a tab opened parentless and then hung under a chat
-// must sit where an open under that chat would have put it, and the file must
-// say so.
+// TestReparent_MovesTheRowBehindTheNewParentsChildren pins that a reparented tab sits where an
+// open under that parent would have put it, on disk too.
 func TestReparent_MovesTheRowBehindTheNewParentsChildren(t *testing.T) {
 	s, dir := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
@@ -508,10 +480,7 @@ func TestList_ReturnsACopy(t *testing.T) {
 	}
 }
 
-// TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans is load-time crash
-// recovery: the window between the chat record being removed and its tab being
-// closed. It is ONE mutation, so a caller has one event to emit and one version to
-// stamp it with.
+// TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans pins load-time recovery as ONE mutation.
 func TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans(t *testing.T) {
 	s, dir := newTestStore(t)
 	gone := mustOpen(t, s, chatSpec("c-gone"))
@@ -552,9 +521,7 @@ func TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans(t *testing.T) {
 	}
 }
 
-// TestPrune_ChangesNothingWhenEverythingResolves keeps Prune out of the version
-// stream on the ordinary boot, which is every boot: a bump with no change would
-// make every restart look like a mutation to every connected client.
+// TestPrune_ChangesNothingWhenEverythingResolves pins no bump on an ordinary boot.
 func TestPrune_ChangesNothingWhenEverythingResolves(t *testing.T) {
 	s, _ := newTestStore(t)
 	mustOpen(t, s, chatSpec("c-a"))
@@ -600,10 +567,7 @@ func TestPrune_ANilPredicateResolvesEverything(t *testing.T) {
 	}
 }
 
-// TestClosure_TerminatesOnACycle is defence against a file no Open could have
-// written. Parent is set at open and never reassigned, so a cycle is
-// unrepresentable through the API — but a person with an editor can write one, and
-// a recursive walk would exhaust the stack on it.
+// TestClosure_TerminatesOnACycle pins termination on a hand-edited parent cycle.
 func TestClosure_TerminatesOnACycle(t *testing.T) {
 	tabs := []marotte.TabSubject{
 		{ID: "a", Kind: marotte.TabKindChat, Ref: "c-a", Parent: "b"},

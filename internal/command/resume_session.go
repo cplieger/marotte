@@ -1,16 +1,9 @@
 package command
 
-// Resuming a KAS session marotte has no chat record for.
-//
-// The previous-session picker lists what KAS stored, including sessions
-// marotte never had a chat for — a session started from the TUI, or one
-// whose chat the user deleted while retention kept the session. To open
-// one, marotte needs a chat record to hang it on, since a chat is what its
-// UI, retention and per-chat bridge are keyed by.
-//
-// Resume creates a chat already bound to that session id; the next
-// OpenBridge sees a stored ACPSessionID and takes the session/load path,
-// whose replay turns into the transcript. marotte copies no messages.
+// Resuming a KAS session marotte has no chat record for (a TUI session, or one whose chat was
+// deleted while retention kept the session): resume creates a chat bound to that session id, and
+// the next OpenBridge takes the session/load path, whose replay becomes the transcript. No messages
+// are copied.
 
 import (
 	"cmp"
@@ -31,9 +24,8 @@ func CmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientC
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// The session id reaches a filesystem path inside KAS and marotte's own
-	// reaper keep-list, so it is validated on the same pattern as a chat id
-	// rather than trusted from the client.
+	// The id reaches a filesystem path inside KAS and the reaper keep-list, so it is validated like
+	// a chat id.
 	if !ids.ValidSessionID(p.SessionID) || !ValidIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -42,18 +34,15 @@ func CmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientC
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	// The op ledger matters more here than for a bare create: minting per
-	// attempt would leave two chats bound to one KAS session.
+	// Minting per attempt would leave two chats bound to one KAS session.
 	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
 		Init: func(c *marotte.Chat) {
-			// Init runs only when the record does not exist, which is
-			// what refuses to rebind an existing chat: pointing a live
-			// chat at another session would strand its own session.
+			// Init runs only when the record does not exist, which is what refuses to rebind a live
+			// chat and strand its session.
 			c.Name = name
-			// RecordSession, not assignment: the sanctioned writer of
-			// this field, keeping the reaper's keep-list chain invariant.
+			// RecordSession, not assignment: it keeps the reaper's keep-list chain invariant.
 			c.RecordSession(p.SessionID)
 		},
 	})

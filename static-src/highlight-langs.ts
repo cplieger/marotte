@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// Language definitions for the syntax highlighter. Pure static data with
-// no runtime behavior. Adding a new language is a single-site change here.
-// ---------------------------------------------------------------------------
+// Language definitions for the highlighter: static data, one site per language.
 
 export interface LangDef {
   keywords: Set<string>;
@@ -301,13 +298,8 @@ export const SUPPORTED_LANGUAGES: ReadonlyMap<string, LangDef> = new Map<string,
       aliases: ["cplusplus", "c++"],
     },
   ],
-  // Dockerfiles have no statements: the instruction set IS the vocabulary, so
-  // the instructions are the whole highlighting. Uppercase only, because the
-  // lookup in tokenize() is `kw.has(word)` — a lowercase `from` stays plain
-  // text, as it does in every other table here.
-  // No aliases: the fenced tag "dockerfile" already resolves through
-  // KNOWN_EXTENSIONS ("dockerfile" -> lang "docker"), which normalizeLang
-  // consults before FENCED_ALIASES, so an alias entry would never be read.
+  // The instruction set is the whole vocabulary. Uppercase only, since tokenize() matches `kw.has(word)`. No alias:
+  // "dockerfile" resolves through KNOWN_EXTENSIONS before FENCED_ALIASES is consulted.
   [
     "docker",
     {
@@ -330,7 +322,7 @@ export const SUPPORTED_LANGUAGES: ReadonlyMap<string, LangDef> = new Map<string,
         "SHELL",
         "STOPSIGNAL",
         "ONBUILD",
-        // Deprecated since Docker 1.13, still common in the wild.
+        // Deprecated since Docker 1.13, still common.
         "MAINTAINER",
       ]),
       aliases: [],
@@ -338,7 +330,7 @@ export const SUPPORTED_LANGUAGES: ReadonlyMap<string, LangDef> = new Map<string,
   ],
 ]);
 
-// Derived reverse-index: alias → internal key (built from SUPPORTED_LANGUAGES).
+// alias → internal key, derived from SUPPORTED_LANGUAGES.
 export const FENCED_ALIASES: Readonly<Record<string, string>> = (() => {
   const m: Record<string, string> = {};
   for (const [key, def] of SUPPORTED_LANGUAGES) {
@@ -349,7 +341,6 @@ export const FENCED_ALIASES: Readonly<Record<string, string>> = (() => {
   return m;
 })();
 
-// Keyword lookup helper: returns the keyword set for a language key.
 export const KEYWORDS: Readonly<Record<string, Set<string>>> = (() => {
   const m: Record<string, Set<string>> = {};
   for (const [key, def] of SUPPORTED_LANGUAGES) {
@@ -360,7 +351,7 @@ export const KEYWORDS: Readonly<Record<string, Set<string>>> = (() => {
   return m;
 })();
 
-// Shared keywords for languages without specific sets.
+// Shared keywords for languages without their own set.
 export const GENERIC_KW = new Set([
   "if",
   "else",

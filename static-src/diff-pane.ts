@@ -1,8 +1,5 @@
-// Diff pane: one `DiffLine[]` rendered as two columns (comparing two VERSIONS of
-// a file) or as one (reading a CHANGE). Unified is the cheaper path rather than an
-// extra one, because `DiffLine[]` is already a flat unified array.
-//
-// Consumers: chat inline previews, the editor's diff mode, the conflict popup.
+// Diff pane: one `DiffLine[]` as two columns (versions) or one (unified, the cheaper path). Consumers: chat inline
+// previews, the editor's diff mode, the conflict popup.
 
 import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
 import { highlightMarked, resolveLangHint } from "./highlight.js";
@@ -10,8 +7,7 @@ import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 
 export interface DiffPaneOpts {
-  /** Optional max rows. When set, rows beyond the limit are dropped and a
-   *  "+N more" footer row is appended. Useful for the inline chat preview. */
+  /** Drop rows beyond this and append a "+N more" footer. */
   maxRows?: number;
   /** Label above the old (left) column. */
   oldLabel?: string;
@@ -19,38 +15,24 @@ export interface DiffPaneOpts {
   newLabel?: string;
   /** Whether to show gutter line numbers. Default true. */
   lineNumbers?: boolean;
-  /** Lock the two columns' HORIZONTAL scroll together. Default true, ignored when
-   *  `unified`. Vertical is not on this switch: the body is the one scroller. */
+  /** Lock the columns' horizontal scroll (default true; ignored when `unified`). Vertical always shares the body. */
   syncScroll?: boolean;
-  /** Render ONE column instead of two. Default false.
-   *
-   *  Every row is a real code line in this mode, so `lang` can syntax-highlight
-   *  them — which is what makes an inline diff read like the editor. The change
-   *  signal stays on the row BACKGROUND plus the `+`/`-` marker, never on the
-   *  text colour: text colour is the only channel highlighting has. */
+  /**
+   * One column instead of two (default false); `lang` highlights it. The change signal stays on the row background
+   * and `+`/`-` marker, since text colour belongs to highlighting.
+   */
   unified?: boolean;
-  /** Language hint for syntax highlighting: a file PATH, a bare extension, or a
-   *  highlighter language id (`resolveLangHint` accepts all three). Applies to
-   *  BOTH shapes, deletions included: "what did it replace my function with" is
-   *  frequently the question, so neither side is flattened. */
+  /** Highlighting hint (path, extension or language id; `resolveLangHint`), applied to both shapes, deletions included. */
   lang?: string;
-  /** Source texts. When supplied, the pane grows a "Ignore whitespace"
-   *  toggle in the header that re-diffs and re-renders in place. If
-   *  omitted, the toggle is hidden — callers that pre-computed their
-   *  diff (e.g. the conflict compare popup) can still wire up a toggle
-   *  themselves by supplying onToggleWhitespace. */
+  /** Source texts; when supplied the pane owns an "Ignore whitespace" toggle that re-diffs in place. */
   source?: { oldText: string; newText: string };
-  /** Fires whenever the whitespace toggle flips. Mutually exclusive
-   *  with `source`: when `source` is set, the pane handles toggling
-   *  internally and this callback is ignored. */
+  /** Fires when the whitespace toggle flips; ignored when `source` is set. */
   onToggleWhitespace?: (ignoreWhitespace: boolean) => void;
-  /** Draw the change map beside the columns. Default true for two-pane, ignored
-   *  for `unified`: a mark's SIDE carries its kind and needs two columns. */
+  /** Draw the change map (default true for two-pane, ignored for `unified`: a mark's side carries its kind). */
   changeMap?: boolean;
 }
 
-/** What survives a whitespace re-diff. The label row does not: in the two-pane
- *  shape it is a row of the body's own grid. */
+/** What survives a whitespace re-diff; the label row is part of the body grid in two-pane. */
 const CHROME_ROWS = ".diff-pane-toolbar";
 
 /** Build a two-pane diff element. The caller appends it to the DOM. */
@@ -59,16 +41,13 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   const syncScroll = opts.syncScroll !== false;
   const container = el("div", { className: "diff-pane" }) as HTMLDivElement;
 
-  // The toggle is a toolbar control, not a caption: sharing the label row made
-  // both labels flex-shrink around it, so a caption stopped sitting over the
-  // column it names.
+  // A toolbar control, not a caption: sharing the label row made captions shrink off their columns.
   if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
     container.appendChild(
       el("div", { className: "diff-pane-toolbar" }, buildWhitespaceToggle(container, opts)),
     );
   }
-  // Appended late: the two-pane shape puts it inside the body, so a caption's
-  // cell and its column are one grid track and cannot drift.
+  // Inside the body in two-pane, so a caption and its column share one grid track.
   const header =
     opts.oldLabel !== undefined || opts.newLabel !== undefined
       ? (el(
@@ -84,11 +63,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   const lang = opts.lang !== undefined && opts.lang !== "" ? resolveLangHint(opts.lang) : "";
   let rowCount = 0;
 
-  // An all-context diff is not an empty diff, and rendering it as two identical
-  // file listings says nothing — the reader sees a wall of unmarked code and
-  // reads it as broken markup. This is reachable on the ordinary path: a chat's
-  // changed-file link diffs HEAD against the working tree, so once the write is
-  // committed the two agree.
+  // An all-context diff renders a no-changes state; reachable once a chat's write is committed.
   if (!lines.some((l) => l.kind !== "ctx")) {
     if (header !== null) {
       container.appendChild(header);
@@ -103,9 +78,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     return container;
   }
 
-  // Word-level marks pair each modified line with its counterpart, so a
-  // one-character edit reads as a one-character edit rather than as two whole
-  // changed lines. Computed once for the whole diff, before any windowing.
+  // Computed once for the whole diff, before windowing.
   const marks = wordMarks(lines);
 
   if (unified) {
@@ -125,12 +98,8 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     return finishPane(container, lines, rowCount, opts);
   }
 
-  // The body is the one vertical scroller and the columns are cells of its grid,
-  // so the two sides cannot shear.
-  //
-  // A column is a tab stop because it is a scroll container: arrows take its own
-  // axis and bubble to the body for the other, so one stop reaches both and
-  // neither region is keyboard-unreachable (WCAG 2.1.1).
+  // The body is the one vertical scroller (columns are its grid cells), so sides cannot shear. Each
+  // column is a tab stop so both axes are keyboard-reachable (WCAG 2.1.1).
   const colAttrs = (side: string): Record<string, string> => ({
     className: `diff-col diff-col-${side}`,
     tabindex: "0",
@@ -144,8 +113,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   body.appendChild(leftCol);
   body.appendChild(rightCol);
 
-  // The map and the horizontal bar are the scroller's SIBLINGS: a cell of its grid
-  // is as tall as the file, and both have to sit at the scrollport's edge.
+  // The map and bar are the scroller's siblings: a grid cell is as tall as the file.
   const viewport = el("div", { className: "diff-pane-viewport" }, body) as HTMLDivElement;
   container.appendChild(viewport);
 
@@ -172,8 +140,6 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   return container;
 }
 
-/** Append the "+N more lines" footer when rows were dropped, and return the
- *  pane. Shared by both shapes. */
 function finishPane(
   container: HTMLDivElement,
   lines: DiffLine[],
@@ -193,12 +159,7 @@ function finishPane(
   return container;
 }
 
-/** One unified row: gutter, marker, then the line itself.
- *
- *  The line is syntax-highlighted when a `lang` is known, because in this shape
- *  every row IS a code line. Deleted lines are highlighted too — "what did it
- *  replace my function with" is frequently the actual question, so they stay
- *  fully legible rather than being dimmed to a strikethrough. */
+/** Deleted lines are highlighted too: what was replaced is often the question. */
 function makeUnifiedRow(
   line: DiffLine,
   lineNumbers: boolean,
@@ -207,8 +168,7 @@ function makeUnifiedRow(
 ): HTMLDivElement {
   const row = el("div", { className: `diff-row diff-row-${line.kind}` }) as HTMLDivElement;
   if (lineNumbers) {
-    // The NEW number where there is one, else the old: a unified row belongs to
-    // the post-change file except for deletions, which only exist in the pre.
+    // The new number unless deleted.
     const no = line.kind === "del" ? line.oldNo : line.newNo;
     row.appendChild(
       el("span", { className: "diff-gutter", [CHROME_ATTR]: "" }, no > 0 ? String(no) : ""),
@@ -226,9 +186,7 @@ function makeUnifiedRow(
   return row;
 }
 
-/** The code half of a row: syntax-highlighted, with the word-level changes
- *  marked. Shared by both shapes so a click through from the inline preview
- *  cannot land on a plainer rendering than the peek that sent the reader. */
+/** Shared by both shapes so a click-through never lands on a plainer rendering. */
 function lineText(
   line: DiffLine,
   lang: string,
@@ -253,8 +211,7 @@ function appendRow(
   lang: string,
   marks?: readonly CharRange[],
 ): void {
-  // Each row occupies the same vertical slot on both sides, even if one
-  // side is empty — that keeps scroll-sync correct.
+  // Each row holds the same slot on both sides, even when one is empty, for scroll sync.
   const [leftRow, rightRow] = makeRowPair(line, lineNumbers, lang, marks);
   leftCol.appendChild(leftRow);
   rightCol.appendChild(rightRow);
@@ -295,7 +252,7 @@ function populateRow(
       el("span", { className: "diff-gutter", [CHROME_ATTR]: "" }, lineNo > 0 ? String(lineNo) : ""),
     );
   }
-  // Marker glyph so colour-blind users still parse the row kind.
+  // Marker glyph so colour-blind users still read the row kind.
   row.appendChild(
     el(
       "span",
@@ -310,9 +267,7 @@ function populateRow(
   );
 }
 
-/** Give the columns one shared horizontal scrollbar at the bottom of the
- *  SCROLLPORT: a column is as tall as the file, so its own bar would sit below
- *  every scroll position but the last. */
+/** One shared horizontal bar at the scrollport's bottom */
 function wireHorizontalScroll(
   viewport: HTMLDivElement,
   left: HTMLDivElement,
@@ -327,8 +282,7 @@ function wireHorizontalScroll(
   ) as HTMLDivElement;
   viewport.appendChild(bar);
 
-  // Guarded on the values differing, so a write's own scroll event writes nothing
-  // and no lock has to be held across a frame.
+  // Guarded on the values differing, so a write's own scroll event writes nothing and no lock is needed.
   const drive =
     (from: HTMLElement, ...targets: HTMLElement[]) =>
     (): void => {
@@ -345,47 +299,25 @@ function wireHorizontalScroll(
   const measure = (): void => {
     const span = Math.max(left.scrollWidth, right.scrollWidth);
     const range = span - left.clientWidth;
-    // A track with no thumb is a control that does nothing.
     const idle = range <= 1;
     bar.classList.toggle("is-idle", idle);
-    // The bar spans BOTH columns while the range is one column's, so the spacer
-    // buys it that RANGE rather than that width.
+    // The bar spans both columns but the range is one column's, so the spacer buys the range.
     spacer.style.inlineSize = `${String(bar.clientWidth + Math.max(0, range))}px`;
-    // PUBLISHED ONLY WHERE THERE IS A RANGE TO SHARE, and CLEARED otherwise, which
-    // is one branch rather than two readings of it: the span equalises the columns'
-    // scroll range, and `scrollWidth` is floored at `clientWidth` while
-    // `.diff-col-old` spends 1px of its content box on the divider's `border-right`
-    // and `.diff-col-new` does not — so the max over the two is structurally 1px
-    // past this column's own box, and publishing it on a diff that FITS put every
-    // row 1px past the column holding it. That is a phantom overscroll on the
-    // ordinary case, and it is the 1px the pane's own max-content track used to
-    // ratchet on (60-mcp.css `.editor-diff-pane`). The clear is what carries the
-    // other direction, a pane that overflowed and now fits after a resize.
-    //
-    // Re-reading a published span needs no clear first: `scrollWidth` is floored at
-    // `clientWidth` either way, so for unchanged content the value is a FIXED POINT
-    // rather than a corruption. It could only grow wrongly if content narrowed under
-    // the same viewport, and nothing does — the whitespace re-diff swaps the
-    // viewport out and takes the inline value with it.
+    // The span is published only while there is a range, and cleared otherwise: `.diff-col-old` spends 1px on the
+    // divider, so a max over both columns overscrolls a fitting diff by 1px (60-mcp.css `.editor-diff-pane`).
     if (idle) {
       viewport.style.removeProperty("--diff-hspan");
     } else {
       viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
-      // The bar's range arrives only now, so a column position set before it (a
-      // restored one) was clamped out of the bar; the bar drives both from here.
+      // The bar's range arrives only now, so a restored column position is re-applied from here.
       const at = Math.max(left.scrollLeft, right.scrollLeft);
       if (bar.scrollLeft !== at) {
         bar.scrollLeft = at;
       }
     }
   };
-  // Deferred one animation frame, behind a single slot: `--diff-hspan` is written on
-  // the VIEWPORT, an ANCESTOR of the observed column, and a custom property there
-  // invalidates the whole subtree's style — so writing it from inside the delivery
-  // re-activates an observation already delivered in this loop, which the engine
-  // reports as "ResizeObserver loop completed with undelivered notifications". Required
-  // rather than optional for that reason; the spacer and `is-idle` writes ride along.
-  // Same shape as `scroll.ts`'s `scheduleScrollbarWidth`.
+  // Deferred a frame: `--diff-hspan` is written on an ancestor of the observed column, so writing it inside the
+  // delivery causes a ResizeObserver loop error. Same shape as `scroll.ts`'s `scheduleScrollbarWidth`.
   let measureFrame = 0;
   const scheduleMeasure = (): void => {
     if (measureFrame !== 0) {
@@ -396,26 +328,17 @@ function wireHorizontalScroll(
       measure();
     });
   };
-  // Fires once on observe, which is the first real measurement: the pane is detached
-  // while it is built, so every width reads 0 until the caller appends it. The deferral
-  // only moves that read one frame later, which is invisible for a pane being opened.
+  // Fires once on observe, the first real measurement (the pane is detached while built).
   new ResizeObserver(scheduleMeasure).observe(left);
 }
 
-// --- Whitespace toggle ---
-
-/** Build the "Ignore whitespace" checkbox. When `opts.source` is
- *  supplied, toggling re-diffs and re-renders the pane in place
- *  without the caller needing to participate; the pane becomes
- *  self-contained for the common case. */
+/** The "Ignore whitespace" checkbox; with `opts.source` it re-diffs and re-renders the pane itself. */
 function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): HTMLLabelElement {
   const input = el("input", { type: "checkbox" }) as HTMLInputElement;
   const wrap = el(
     "label",
     {
       className: "diff-pane-ws-toggle",
-      // The label names the switch; this says what flipping it does, which
-      // "whitespace" alone cannot — a re-indented block reads as unchanged.
       "data-tooltip": "Treat a line that differs only in spacing or indentation as unchanged",
     },
     input,
@@ -427,17 +350,13 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
       opts.onToggleWhitespace(ignore);
     }
     if (opts.source !== undefined) {
-      // Re-diff and re-render in place. Strip the source from the
-      // cloned opts so the re-rendered pane doesn't attach a second
-      // whitespace toggle to its header (we keep the outer header).
+      // The re-rendered pane drops `source`, or it would attach a second toggle.
       const source = opts.source;
       const { source: _, ...freshOpts } = opts;
       const freshDiffOpts: DiffPaneOpts = freshOpts;
       const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
       const rerendered = renderDiffPane(fresh, freshDiffOpts);
-      // Swap the DERIVED rows and keep the chrome, identified by what it is
-      // rather than by position: the toolbar this checkbox lives in is the
-      // pane's FIRST row, so "everything after the header" would delete it.
+      // Swap derived rows, keep chrome by identity: the toolbar is the first row.
       for (const child of [...container.children]) {
         if (!child.matches(CHROME_ROWS)) {
           child.remove();
@@ -457,8 +376,6 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
   return wrap;
 }
 
-// --- Change map ---
-
 /** One contiguous run of changed rows of a single kind. */
 interface ChangeRun {
   readonly start: number;
@@ -466,9 +383,7 @@ interface ChangeRun {
   readonly kind: "add" | "del";
 }
 
-/** Group the changed rows into runs, breaking on a KIND change as well as on a
- *  context row: the map may name only kinds the rows show. Row INDEX is the unit
- *  because every row is the same height. */
+/** Runs break on a kind change too: the map may name only kinds the rows show. */
 function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
   const runs: ChangeRun[] = [];
   const end = Math.min(lines.length, rowCount);
@@ -497,9 +412,7 @@ function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
   return runs;
 }
 
-/** Build the map: one mark per run. `aria-hidden` and not focusable, because the
- *  rows are the accessible statement of what changed and this is a pointer
- *  shortcut to a position they carry. */
+/** One mark per run; `aria-hidden` and unfocusable, since the rows are the accessible statement. */
 function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivElement {
   const map = el("div", {
     className: "diff-map",
@@ -517,8 +430,7 @@ function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivEl
   return map;
 }
 
-/** Let a press or drag on the map scroll the body. The map REPORTS nothing:
- *  `body`'s own scrollbar thumb is where the reader is. */
+/** Press or drag scrolls the body; the map reports nothing. */
 function wireChangeMap(map: HTMLDivElement, body: HTMLDivElement): void {
   const jumpTo = (clientY: number): void => {
     const box = map.getBoundingClientRect();
@@ -526,8 +438,7 @@ function wireChangeMap(map: HTMLDivElement, body: HTMLDivElement): void {
       return;
     }
     const frac = Math.min(1, Math.max(0, (clientY - box.top) / box.height));
-    // Centre the landing on the press: a reader aiming at a mark wants it in
-    // view, not pinned to the top edge where its context above is cut off.
+    // Centre the landing so the mark's context above stays in view.
     body.scrollTop = Math.max(0, frac * body.scrollHeight - body.clientHeight / 2);
   };
   map.addEventListener("pointerdown", (e: PointerEvent) => {

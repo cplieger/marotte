@@ -11,26 +11,22 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// WhoamiState discriminates /api/whoami's three answers. "I could not ask" is a
-// state of its own so the UI can render a retry rather than a sign-out.
+// WhoamiState discriminates /api/whoami's three answers; "could not ask" is its own state so the UI offers a retry,
+// not a sign-out.
 type WhoamiState string
 
 // Every response carries exactly one arm.
 const (
-	// WhoamiSignedIn carries Email, and Auth/AccountType/StartURL/Region when
-	// kiro-cli reported them.
+	// WhoamiSignedIn carries Email, plus Auth/AccountType/StartURL/Region when kiro-cli reported them.
 	WhoamiSignedIn WhoamiState = "signed_in"
-	// WhoamiSignedOut is a working kiro-cli reporting nobody signed in, and
-	// carries nothing else.
+	// WhoamiSignedOut is a working kiro-cli reporting nobody signed in; it carries nothing else.
 	WhoamiSignedOut WhoamiState = "signed_out"
 	// WhoamiUnavailable is marotte not knowing, and carries Reason.
 	WhoamiUnavailable WhoamiState = "unavailable"
 )
 
-// WhoamiResponse is the typed wire shape returned by /api/whoami. State is the
-// discriminator; the remaining fields belong to one arm each. Any kiro-cli field
-// not represented here is dropped at the wire boundary, so a compromised or
-// upgraded CLI cannot leak arbitrary attributes into the browser.
+// WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
+// arm. Unlisted kiro-cli fields are dropped, so a compromised or upgraded CLI cannot leak attributes to the browser.
 type WhoamiResponse struct {
 	State WhoamiState `json:"state"`
 	// Email and the four labels below belong to the signed_in arm.
@@ -39,14 +35,12 @@ type WhoamiResponse struct {
 	AccountType string `json:"accountType,omitempty"`
 	StartURL    string `json:"startUrl,omitempty"`
 	Region      string `json:"region,omitempty"`
-	// Reason belongs to the unavailable arm: a server-authored phrase, never
-	// CLI output.
+	// Reason belongs to the unavailable arm: a server-authored phrase, never CLI output.
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleWhoami answers from the cached identity, never a subprocess: the
-// endpoint fires on every page load and SSE reconnect, and identityCache owns
-// when kiro-cli is forked. Always 200 — all three states are answers.
+// handleWhoami answers from the cached identity, never a subprocess: it fires on every page load and SSE reconnect.
+// Always 200; all three states are answers.
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -55,14 +49,9 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, h.identity.snapshot())
 }
 
-// whoamiInfo normalises kiro-cli's --format json whoami output into a
-// WhoamiResponse, accepting both snake_case and camelCase field names and
-// emitting canonical camelCase.
-//
-// The email decides the arm: a payload without one — a null payload included —
-// is a working CLI reporting nobody signed in, so signed_out. kiro-cli 2.0.1+
-// appends a non-JSON footer, so decode with json.Decoder: it consumes exactly
-// one JSON value and ignores the trailing bytes.
+// whoamiInfo normalises kiro-cli's JSON whoami output into a WhoamiResponse, accepting snake_case and camelCase.
+// The email decides the arm: without one (null included) it is signed_out. kiro-cli 2.0.1+ appends a non-JSON
+// footer, so json.Decoder reads exactly one value.
 func whoamiInfo(out []byte) (WhoamiResponse, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	var raw map[string]any
@@ -72,7 +61,6 @@ func whoamiInfo(out []byte) (WhoamiResponse, error) {
 	if raw == nil {
 		return signedOutIdentity(), nil
 	}
-	// Lowercase wins; "Email" is the fallback spelling.
 	email := firstNonEmptyString(raw, "email", "Email")
 	if email == "" {
 		return signedOutIdentity(), nil
@@ -87,20 +75,17 @@ func whoamiInfo(out []byte) (WhoamiResponse, error) {
 	return resp, nil
 }
 
-// maxIdentityFieldBytes bounds one identity string on its way to the sidebar and
-// the log.
+// maxIdentityFieldBytes bounds one identity string on its way to the sidebar and the log.
 const maxIdentityFieldBytes = 256
 
-// identityText prepares one upstream identity string for a single-line UI row.
-// The single-line preset maps C0/C1, DEL and Bidi controls to spaces rather than
-// deleting them, because these are labels.
+// identityText prepares one upstream identity string for a single-line UI row, mapping C0/C1, DEL and Bidi controls
+// to spaces since these are labels.
 func identityText(s string) string {
 	return runesafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
 }
 
-// firstNonEmptyString returns the first non-empty string value among keys in raw,
-// or "" when none maps to one. The winner is sanitized here rather than at each
-// assignment so no future field can be added without it.
+// firstNonEmptyString returns the first non-empty string value among keys in raw, or "". It sanitizes the winner so
+// no new field can skip it.
 func firstNonEmptyString(raw map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := raw[k].(string); ok && v != "" {
@@ -110,7 +95,7 @@ func firstNonEmptyString(raw map[string]any, keys ...string) string {
 	return ""
 }
 
-// The phrasing kiro-cli's own plaintext output uses.
+// The phrasing of kiro-cli's own plaintext output.
 const (
 	authBuilderID      = "Logged in with Builder ID"
 	authIdentityCenter = "Logged in with IAM Identity Center"

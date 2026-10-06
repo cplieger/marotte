@@ -1,36 +1,10 @@
-// Package prewarm handles npx package pre-warming for MCP servers.
-//
-// Marotte's pitch is "instantly deployable with everything preinstalled",
-// but MCP servers running via `npx -y <pkg>` pay a one-time install cost
-// on first use (often 5-15s for a mid-sized server). That latency shows
-// up in the user's first chat after a container start, which is exactly
-// the moment first impressions are made.
-//
-// The pre-warmer resolves any enabled stdio server whose command is
-// `npx` and eagerly fills the npm CACHE for its identifier in the
-// background at container start and whenever the user toggles/adds such
-// a server.
-//
-// The npm cache is the whole mechanism, and that is measured rather than
-// assumed. `npx -y <pkg>` NEVER runs an already-installed copy: --yes makes
-// npm exec install into `<cache>/_npx/<hash>` unconditionally. Proved on npm
-// 11.16 by replacing a global bin with a marker script — `npx -y cowsay` printed
-// the real cowsay's output and built a populated `_npx` tree beside it. So the
-// `npm install -g` this used to run contributed nothing to the spawn except the
-// cache it filled on the way past, and the version-addressed global tree it left
-// behind was read by nobody.
-//
-// What that changes is not just tidiness: a global install runs every lifecycle
-// script in the dependency tree, as the container user, at boot, for any package
-// name in mcp.json — unattended, with no permission request and no transcript,
-// because the SERVER spawns it. Filling the cache needs none of that capability,
-// so installOne runs --ignore-scripts into a throwaway tree it deletes. The
-// package's own scripts still run when the server actually spawns, which is where
-// they ran before prewarm existed and where a user is present.
-//
-// Measured on @modelcontextprotocol/server-everything (103 packages), spawn cost
-// of a bare `npx -y <pkg>`: 2236ms cold, 1304ms with only the cache warm, 1415ms
-// with the old global install. The cache-only warm is the whole win.
+// Package prewarm fills the npm CACHE for every enabled stdio MCP server run via `npx`, at
+// container start and when such a server is added or toggled, so the first chat does not pay the
+// 5-15s install.
+// The cache is the whole mechanism: `npx -y <pkg>` always installs into `<cache>/_npx/<hash>` and
+// never runs an installed copy (npm 11.16). So installOne runs --ignore-scripts into a throwaway
+// tree it deletes: a boot-time install would otherwise run every dependency's lifecycle scripts
+// unattended, as the server. The package's own scripts still run at spawn, with a user present.
 package prewarm
 
 import (
@@ -90,15 +64,8 @@ type Runner struct {
 	Lister  ServerLister
 	running map[string]struct{}
 	sem     *semaphore.Weighted
-	// lifetime is the RUNNER's own cancellable context, which Stop cancels, and
-	// it is a second fact from the per-pass ctx Run takes: a pass ends when its
-	// caller's ctx does, while an install already in flight must also die when
-	// the runner is stopped. queue composes BOTH (see there) rather than
-	// picking either, so this cannot become a parameter without losing the Stop
-	// signal.
-	//
-	// Named for what it is rather than `ctx`, so it cannot be read as the
-	// ambient context at the sites that consume it.
+	// lifetime is the RUNNER's own context, which Stop cancels, distinct from a pass's ctx: an
+	// install in flight must die with either. queue composes both.
 	lifetime context.Context
 	cancel   context.CancelFunc
 	OnStatus func(pkg string, state State)
@@ -175,17 +142,10 @@ func (p *Runner) Run(ctx context.Context) {
 	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
 }
 
-// queue waits for one of the maxConcurrentInstalls slots and installs pkg,
-// handing the in-flight reservation back when the wait is abandoned instead.
-//
-// The wait honours the pass ctx AND the runner's lifetime, and the merge is
-// made ONCE here for both the wait and the install — installOne relies on it,
-// so its ctx must already carry both signals.
-//
-// A cancelled context never acquires a slot: semaphore.Weighted.Acquire tests
-// ctx.Done() before its fast path. A select over a slot channel could not
-// promise that — with a slot free, select picks at random among ready cases, so
-// an already-dead pass could still win the send and start an install.
+// queue waits for one of the maxConcurrentInstalls slots and installs pkg, handing the reservation
+// back if the wait is abandoned. It merges the pass ctx and the runner's lifetime once, for wait
+// and install. semaphore.Weighted.Acquire never grants a slot to a dead ctx, where a select on a
+// slot channel could.
 func (p *Runner) queue(ctx context.Context, npmBin, pkg string) {
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -234,17 +194,10 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 // Bytes returns the buffered content, up to Cap bytes (the most recent tail).
 func (r *RingBuffer) Bytes() []byte { return r.buf }
 
-// installOne warms the npm cache for pkg. ctx must already carry both the pass
-// and the runner's lifetime — queue merges them, and the 5-minute budget hangs off
-// that merge, so a ctx carrying only one of the two silently loses the other
-// signal.
-//
-// The install goes into a THROWAWAY tree with --ignore-scripts, for the reason the
-// package comment measures: the cache it fills is the only thing the spawn reads,
-// and running the tree's lifecycle scripts at boot is a capability this needs none
-// of. A per-install tree rather than a shared one because npm runs
-// maxConcurrentInstalls at a time and two of them writing one node_modules would
-// race; the cache underneath IS shared, and cacache is built for that.
+// installOne warms the npm cache for pkg; ctx must already carry both the pass and the runner
+// lifetime (queue merges them). The install goes into a per-install THROWAWAY tree with
+// --ignore-scripts: concurrent installs into one node_modules would race, while the shared cache
+// underneath is built for it.
 func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	defer p.release(pkg)
 

@@ -1,11 +1,6 @@
-// The visual-viewport frame reader: its two numbers, its tolerance, and the three
-// subscriptions its remover has to detach.
-//
-// `window.visualViewport` is replaced by a fake that carries the two fields the
-// module reads and really records its listeners, which is `shell-viewport.test.ts`'s
-// shape in this same suite. The fake is installed AFTER import deliberately: the
-// module reads the global per call rather than caching it, and a cached read would
-// pass every case here against Chromium's own viewport instead.
+// The visual-viewport frame reader: its two numbers, its tolerance, and the three subscriptions its
+// remover detaches. The fake `visualViewport` is installed AFTER import: the module reads the
+// global per call, and a cached read would pass against Chromium's own viewport.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";

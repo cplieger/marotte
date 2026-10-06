@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// A binary built without -tags marotte_test mounts nothing under /api/test/: the
-// stub registers no route, so the bare mux answers 404 for both hooks. (Inside
-// the whole server the same path lands on the SPA shell, like every unknown
-// /api/* path; what this pins is that nothing is mounted.)
+// TestTestHooks_AbsentWithoutTheBuildTag pins that a binary without -tags marotte_test mounts
+// nothing under /api/test/.
 func TestTestHooks_AbsentWithoutTheBuildTag(t *testing.T) {
 	s := &Server{agent: &fakeEngine{}}
 	mux := http.NewServeMux()

@@ -1,42 +1,34 @@
-// ---------------------------------------------------------------------------
 // Status indicators and the context bar.
-//
-// Send-button state lives in prompt-input.ts since it's part of the input
-// affordance (busy=cancel, idle=send). Agent lifecycle is expressed via
-// the send button and the streaming caret on the open entry — no separate
-// "thinking" indicator.
-// ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
+import type { CompactionPoint } from "./context-ring.js";
 import { versionsSignal } from "./versions.js";
 import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
-// --- Context bar controller ---
-
 /** Options for updateContextBar — named fields prevent argument-order bugs. */
 interface ContextBarUpdate {
   pct: number;
   contextSize: number;
-  /** Where the compaction band starts, already defaulted by context-ui.ts. */
-  summarizationPct: number;
+  /** The effective compaction point, resolved by context-ui.ts: where the band starts (null when
+   *  nothing compacts automatically) and the ramp's T. */
+  compaction: CompactionPoint;
   credits: number;
   turnCount: number;
   lastTurnMs: number;
   model: string;
-  /** The reasoning tier to name beside the model, or "" when there is none to
-   *  name. Already resolved by context-ui.ts: empty means the model advertises no
-   *  reasoning effort, or no level resolved at all. This module renders it and
-   *  decides nothing about it. */
+  /** The reasoning tier to name beside the model, or "" when there is none to name. Already
+   *  resolved by context-ui.ts: empty means the model advertises no reasoning effort, or no
+   *  level resolved at all. This module renders it and decides nothing about it. */
   effort?: string;
-  /** The model pick awaiting its apply, from the header's `pending_model`, or "" when none
-   *  is pending. Every device carries it, and it clears when a header arrives with the field
-   *  empty — so the badge is a READ rather than a local queue's memory. */
+  /** The model pick awaiting its apply, from the header's `pending_model`, or "" when none is
+   *  pending. Every device carries it, and it clears when a header arrives with the field empty
+   *  — so the badge is a READ rather than a local queue's memory. */
   pendingModel?: string;
   metering?: MeteringItem[];
   entryCount?: number;
@@ -62,21 +54,23 @@ class ContextBarController {
   }
 
   private updateImpl(opts: ContextBarUpdate): void {
-    const { pct, contextSize, summarizationPct, credits, turnCount, lastTurnMs, model } = opts;
+    const { pct, contextSize, compaction, credits, turnCount, lastTurnMs, model } = opts;
     const metering = opts.metering ?? [];
     const entryCount = opts.entryCount ?? 0;
     const toolCount = opts.toolCount ?? 0;
     const summarizedCount = opts.summarizedCount ?? 0;
     const clamped = Math.min(100, Math.max(0, pct));
 
-    // pathLength="100" on the element makes the dash pattern speak in percent,
-    // so the offset IS the unused remainder. The hardcoded 50.27 circumference
-    // this replaced was the ring's one magic constant.
+    // pathLength="100" on the element makes the dash pattern speak in percent, so the offset IS the
+    // unused remainder. The hardcoded 50.27 circumference this replaced was the ring's one magic
+    // constant.
     $.contextRingFill.style.strokeDashoffset = String(100 - clamped);
-    $.contextRingFill.style.stroke = contextStroke(clamped);
-    const wedge = wedgeDash(summarizationPct);
+    $.contextRingFill.style.stroke = contextStroke(clamped, compaction.t);
+    // A band from 100% is zero-length, so a withheld band draws nothing.
+    const wedge = wedgeDash(compaction.band ?? 100);
     $.contextRingWedge.style.strokeDasharray = wedge.dasharray;
     $.contextRingWedge.style.strokeDashoffset = wedge.dashoffset;
+    $.contextIndicator.setAttribute("data-tooltip", ringTooltip(compaction.band));
     $.contextLabel.textContent = `${pct.toFixed(0)}%`;
 
     // Empty model = server-side default; label it "auto" rather than blank.
@@ -89,17 +83,14 @@ class ContextBarController {
     );
     $.ctxModelPill.textContent = modelLabel;
 
-    // The tier rides its OWN element, not the model label, for two reasons. The
-    // label is capped at 10rem with an ellipsis, so a concatenated tier is the
-    // half that gets clipped. And hidden with the `.hidden` utility rather than
-    // emptied: `.pill` is a flex row with a gap, so an empty span would still pad
-    // the pill.
+    // The tier rides its OWN element, not the model label, for two reasons. The label is capped at
+    // 10rem with an ellipsis, so a concatenated tier is the half that gets clipped.
     const effort = opts.effort ?? "";
     $.ctxEffortPill.textContent = effort === "" ? "" : `· ${effort}`;
     $.ctxEffortPill.classList.toggle("hidden", effort === "");
-    // The button's aria-label wins over its own text, so the current selection
-    // reaches assistive tech only from here. Spelled in words rather than with
-    // the separator, which a screen reader reads out.
+    // The button's aria-label wins over its own text, so the current selection reaches assistive
+    // tech only from here. Spelled in words rather than with the separator, which a screen reader
+    // reads out.
     const current =
       effort === ""
         ? `Switch model, currently ${modelLabel}`
@@ -127,6 +118,14 @@ class ContextBarController {
 
 const contextBar = new ContextBarController();
 
+/** The ring's hover text, naming where the band sits or saying there is none. */
+function ringTooltip(band: number | null): string {
+  const lead = "Context usage: tokens, credits and turns for this chat.";
+  return band === null
+    ? `${lead} Automatic compaction is off, so the conversation is compacted only when you compact it.`
+    : `${lead} The grey band marks ${String(Math.round(band))}%, where the conversation is compacted.`;
+}
+
 function renderMetering(items: MeteringItem[]): void {
   const box = $.ctxMetering;
   if (items.length <= 1) {
@@ -150,22 +149,10 @@ function renderMetering(items: MeteringItem[]): void {
   box.replaceChildren(...rows);
 }
 
-// --- Public API (delegate functions) ---
-
-// --- Connection status announcement debounce ---
-// Prevents rapid connecting→disconnected→connecting cycles from spamming
-// screen readers. Only announces after status is stable for 2s; the actual
-// announcement rides the shared @cplieger/ui-primitives announce() live
-// region (no more per-module sr-only element). announce() re-announces an
-// identical repeated message — after a flappy reconnect that resettles on the
-// same status, the repeat is the honest signal.
 let statusAnnounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** Maps each ConnectionStatus to its CSS class, custom property colour, and the
- *  phrase the TRIGGER publishes as its description.
- *
- *  A third field rather than a second table beside this one: three facts about one
- *  status, so two tables keyed on the same enum could disagree. */
+/** Maps each ConnectionStatus to its CSS class, custom property colour, and the phrase the
+ *  TRIGGER publishes as its description. */
 const STATUS_STYLES: Readonly<
   Record<ConnectionStatus, { cls: string | null; color: string; tip: string }>
 > = {
@@ -181,19 +168,13 @@ export function setStatus(s: ConnectionStatus): void {
   if (style.cls) {
     dot.classList.add(style.cls);
   }
-  // The expanded card tints its border and background from --status-color. It
-  // is the dot's sibling, not its child (15-input.css .pill-slot), so the
-  // value lands on the card: on the dot it would reach nothing.
+  // The expanded card tints its border and background from --status-color. It is the dot's sibling,
+  // not its child (15-input.css .pill-slot), so the value lands on the card: on the dot it would
+  // reach nothing.
   $.statusCard.style.setProperty("--status-color", style.color);
-  // THE STATE IS THE DESCRIPTION, NEVER THE NAME. The dot used to carry
-  // `aria-label: "Connection: <s>"`, which is a FLIPPING NAME on what is now a
-  // disclosure trigger — the APG rule the pointer-mode toggle already follows. The
-  // trigger's name comes from its contents (the address plus the `.sr-only`
-  // subject) and stays that shape in every state; this is the state channel beside
-  // it. `tooltip.ts` (over @cplieger/ui-primitives, configured with
-  // `attribute: "data-tooltip"`) republishes it as `aria-describedby` on show with
-  // a `:focus-visible` focus trigger, so a keyboard user hears it and a
-  // programmatic focus pops nothing.
+  // THE STATE IS THE DESCRIPTION, NEVER THE NAME. The trigger's name comes from its contents (the
+  // address plus the `.sr-only` subject) and stays that shape in every state; this is the state
+  // channel beside it.
   $.accountBtn.dataset["tooltip"] = style.tip;
   lastStatus = s;
   paintConnectionLine();
@@ -205,39 +186,23 @@ export function setStatus(s: ConnectionStatus): void {
   }, 2000);
 }
 
-/** The status the transport last reported, held so the version arriving later can
- *  repaint the line without a second status change. */
+/** The status the transport last reported, held so the version arriving later can repaint the
+ *  line without a second status change. */
 let lastStatus: ConnectionStatus = "connecting";
 
-/** The connection line: the status, plus WHICH server, once its version is known.
- *
- *  The version rides the CONNECTED line only. `connecting` and `disconnected`
- *  describe this page's socket rather than the server behind it, and naming a
- *  build beside "disconnected" would claim knowledge of something the page has
- *  just lost contact with — while the value is a fact about the container it
- *  reached, so it belongs exactly where the line says it reached one. */
+/** The connection line: the status, plus WHICH server, once its version is known. */
 function paintConnectionLine(): void {
   const build = versionsSignal().value.marotte;
   $.stWs.textContent =
     lastStatus === "connected" && build !== "" ? `connected to marotte ${build}` : lastStatus;
 }
 
-/** Repaint both card lines when the version pair lands.
- *
- *  An effect rather than a callback from the loader: the pair arrives once, well
- *  after the card is built and after the transport's first `connected`, and both
- *  lines are derived from it plus state this module already holds.
- *
- *  Registered from the composition root, NOT at module scope: an effect runs its
- *  body once on registration, and this one reads `$.stWs`, which throws when the
- *  element is absent. At import time that is every test of an unrelated export in
- *  this module, and in production it would make a markup change a module-load
- *  failure rather than a missing line. */
+/** Repaint both card lines when the version pair lands. */
 export function initStatusVersions(): void {
   effect(() => {
-    // Read INSIDE the effect so it subscribes; paintConnectionLine reads it again
-    // for its own value. `void` rather than a bare expression, matching
-    // forge-auth.ts: the read is the whole point and the value is not wanted.
+    // Read INSIDE the effect so it subscribes; paintConnectionLine reads it again for its own
+    // value. `void` rather than a bare expression, matching forge-auth.ts: the read is the whole
+    // point and the value is not wanted.
     touch(versionsSignal());
     paintConnectionLine();
     $.stKiro.textContent = runtimeStatusLine();
@@ -248,19 +213,10 @@ export function updateContextBar(opts: ContextBarUpdate): void {
   contextBar.update(opts);
 }
 
-/** Paint the status card's agent-runtime line, then re-probe so an open card is
- *  never as stale as the last transport gap (the boot probe and the gap probe
- *  are the only other times /api/health is read). Painted twice on purpose: the
- *  cached line lands in the same frame the card opens in, and the fresh one
- *  replaces it when the probe answers. The probe also reconciles the global
- *  degraded banner, which is wanted — opening the status surface is exactly
- *  when a stale banner should clear and a real one should appear.
- *  `runtime-health.ts` owns the reason vocabulary; this only renders its line.
- *  Called on popup expand.
- *
- *  Returns the probe's promise so a caller can wait for the SECOND paint. The
- *  app's caller does not (it opens a popup and has nothing to sequence), but a
- *  discarded promise is what makes the two-paint behaviour untestable. */
+/** Paint the status card's agent-runtime line, then re-probe so an open card is never as stale
+ *  as the last transport gap (the boot probe and the gap probe are the only other times
+ *  /api/health is read). Painted twice on purpose: the cached line lands in the same frame the
+ *  card opens in, and the fresh one replaces it when the probe answers. */
 export function refreshRuntimeLine(): Promise<void> {
   $.stKiro.textContent = runtimeStatusLine();
   return checkRuntimeHealth().then(() => {
@@ -268,10 +224,6 @@ export function refreshRuntimeLine(): Promise<void> {
   });
 }
 
-// The send button's face (and the "context nearly full" placeholder) has a
-// single owner: prompt-input.ts, which reads the `contextFull` signal written by
-// context-ui.ts. status.ts used to write the `disabled` DOM props too
-// (setInputDisabled), which fought prompt-input's send-state machine on every
-// turn boundary — last-writer-wins left the state unreliable. That second writer
-// is gone, and so is the disable itself: nothing may lock the composer
-// (prompt-input.ts: "Nothing here disables the composer").
+// The send button's face has a single owner, prompt-input.ts, and nothing here writes the
+// composer's `disabled` props: a second writer fought its send-state machine on every turn
+// boundary.

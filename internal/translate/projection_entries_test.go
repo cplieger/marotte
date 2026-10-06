@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// replayFixture is one recorded-shape session/load frame stream on disk. The extra
+// replayFixture is one hand-written session/load frame stream on disk. The extra
 // fields are the fixture's own statement of what the assertions must derive from the
 // same bytes, so a fixture edit cannot silently invalidate a test.
 type replayFixture struct {
@@ -124,14 +124,9 @@ func payloadOf(t *testing.T, e marotte.Entry, v any) {
 	}
 }
 
-// TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary is the
-// design's first named fixture: the projected compaction id equals what
-// marotte.CompactionEntryID mints from the same summary text, which is the whole reason
-// a live compaction and its replayed twin are ONE entry to the merge rather than two
-// rows of the same 12-16 KB summary.
-//
-// It also pins the rule the message projection does not share: the separator closes NO
-// turn, so a mid-bracket compaction leaves one turn with the entry inside it.
+// TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary pins the projected
+// compaction id equal to marotte.CompactionEntryID over the same summary (one entry to the
+// merge), and that the separator closes NO turn.
 func TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary(t *testing.T) {
 	fx := loadReplayFixture(t, "replay_compaction.json")
 	turns := projectFixture(t, fx)
@@ -160,9 +155,7 @@ func TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary(t
 	if payload.Summary != fx.Summary {
 		t.Errorf("compaction summary = %q, want the fixture's summary verbatim", payload.Summary)
 	}
-	// The frames after the summary continue the SAME say, so the one text entry holds
-	// both halves: the compaction is placed at the separator's position rather than at
-	// the tail, and the say index survives the insertion.
+	// The post-summary frames continue the SAME say: the compaction sits at the separator.
 	var say marotte.EntryText
 	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindText), &say)
 	if !strings.Contains(say.Text, "reading the design") || !strings.Contains(say.Text, "continuing after the summary") {
@@ -199,11 +192,8 @@ func TestEntryProjection_AnEmptySummaryTakesTheOrdinalID(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AReplayedSayHoldsNoSteeringMarker is the design's second named
-// fixture. KAS replays its own log with the acknowledgement it never scrubbed, split
-// across a chunk boundary, and the projected text must hold none of it — otherwise the
-// projection's text is LONGER than the record's by the marker and the merge's text row
-// appends machinery to the record's last segment on every session/load.
+// TestEntryProjection_AReplayedSayHoldsNoSteeringMarker pins that a replayed ack split across
+// chunks leaves no marker in the projected text.
 func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
 	fx := loadReplayFixture(t, "replay_steer_marker.json")
 	turns := projectFixture(t, fx)
@@ -219,9 +209,7 @@ func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
 	if say.Text != "Reindented the file. " {
 		t.Errorf("text = %q, want the prose either side of the marker and nothing else", say.Text)
 	}
-	// The steer itself is a lane-less entry at its queue-time position, with NO state:
-	// the projection knows only that KAS holds the words, and the merge's union takes
-	// the record's state wherever the record has one.
+	// The steer is a lane-less entry at its queue-time position with NO state.
 	steer := entryOfKind(t, turns[0], marotte.EntryKindSteer)
 	if steer.ID != fx.SteerID {
 		t.Errorf("steer id = %q, want KAS's own %q", steer.ID, fx.SteerID)
@@ -234,8 +222,7 @@ func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
 	if payload.Origin != marotte.SteerOriginUser {
 		t.Errorf("steer origin = %q, want %q for a `steer-` id", payload.Origin, marotte.SteerOriginUser)
 	}
-	// No steer_ack entry: the record has them, and an ack whose seal a crash lost is one
-	// line of machinery text the reader never saw.
+	// No steer_ack entry: the record has them.
 	for _, e := range turns[0].Entries {
 		if e.Kind == marotte.EntryKindSteerAck {
 			t.Errorf("projected a steer_ack entry, want none:\n%s", dumpTurns(turns))
@@ -243,9 +230,8 @@ func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AnUnclosedMarkerIsDroppedAtTheClose: a carry that already carries
-// the committing prefix is a marker the model opened and never closed, so the close
-// drops it rather than putting machinery back into the transcript.
+// TestEntryProjection_AnUnclosedMarkerIsDroppedAtTheClose pins that a never-closed marker
+// carry is dropped.
 func TestEntryProjection_AnUnclosedMarkerIsDroppedAtTheClose(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -259,9 +245,7 @@ func TestEntryProjection_AnUnclosedMarkerIsDroppedAtTheClose(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AHeldBracketThatIsNotAMarkerGoesBackIntoTheSay is the other arm of
-// the same rule: a trailing `[` is prose that turned out not to be a marker, so the
-// close returns it to the say it came from.
+// TestEntryProjection_AHeldBracketThatIsNotAMarkerGoesBackIntoTheSay pins the other arm.
 func TestEntryProjection_AHeldBracketThatIsNotAMarkerGoesBackIntoTheSay(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -275,11 +259,8 @@ func TestEntryProjection_AHeldBracketThatIsNotAMarkerGoesBackIntoTheSay(t *testi
 	}
 }
 
-// TestEntryProjection_AnInvocationIsFiledInTheIssuersLane is the design's third named
-// fixture, projection side. The replayed call's id carries KAS's `-sub-agent-start`
-// suffix and the delegate uuid rides its PAYLOAD, which is what lets the merge pair it
-// against a record card whose id lacks the suffix; the pairing itself is asserted in
-// internal/agent over the same fixture.
+// TestEntryProjection_AnInvocationIsFiledInTheIssuersLane pins the invocation's lane and the
+// delegate uuid in its payload (the pairing is asserted in internal/agent).
 func TestEntryProjection_AnInvocationIsFiledInTheIssuersLane(t *testing.T) {
 	fx := loadReplayFixture(t, "replay_invocation.json")
 	turns := projectFixture(t, fx)
@@ -307,8 +288,7 @@ func TestEntryProjection_AnInvocationIsFiledInTheIssuersLane(t *testing.T) {
 	if result.Lane != "" {
 		t.Errorf("result lane = %q, want the CALL's lane whatever the update carried", result.Lane)
 	}
-	// The delegate's own prose is filed in the delegate's lane, which is what makes the
-	// card sit between the issuer's two prose runs rather than inside one of them.
+	// The delegate's prose is in its own lane, so the card sits between the issuer's two runs.
 	var laned []string
 	for _, e := range turns[0].Entries {
 		if e.Lane != "" {
@@ -341,9 +321,7 @@ func TestEntryProjection_AnOrdinaryCallTakesTheFramesOwnLane(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AnUnsettledCallIsAbortedAtTheClose: a call the replay never
-// settles is the crash case, and the close states the abort in the call's own lane
-// rather than leaving a card spinning for the chat's life.
+// TestEntryProjection_AnUnsettledCallIsAbortedAtTheClose pins the abort in the call's own lane.
 func TestEntryProjection_AnUnsettledCallIsAbortedAtTheClose(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -362,8 +340,7 @@ func TestEntryProjection_AnUnsettledCallIsAbortedAtTheClose(t *testing.T) {
 	if payload.Status != marotte.ToolAborted {
 		t.Errorf("status = %q, want %q", payload.Status, marotte.ToolAborted)
 	}
-	// The abort precedes the turn_close: the closer's aggregate is the last line of the
-	// turn, and the merge requires exactly one of it.
+	// The abort precedes the one turn_close.
 	kinds := kindsOf(turns[0])
 	if kinds[len(kinds)-1] != marotte.EntryKindTurnClose {
 		t.Errorf("entry kinds = %v, want turn_close last", kinds)
@@ -390,9 +367,7 @@ func TestEntryProjection_ASettledCallIsNotAborted(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AnInternalToolIsDropped: KAS's log stores the cloud-config fetch
-// it announced during session creation, so without the live path's own suppression a
-// resumed chat regains the card the live stream dropped.
+// TestEntryProjection_AnInternalToolIsDropped pins the live path's suppression on replay.
 func TestEntryProjection_AnInternalToolIsDropped(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -407,9 +382,8 @@ func TestEntryProjection_AnInternalToolIsDropped(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_APromptOpensItsOwnTurnCarryingTheMergesRuleOneKey: the user row
-// before a bracket is the next turn's turn_open.prompt, and its id is KAS's own record
-// id — the one key turn pairing's rule one has.
+// TestEntryProjection_APromptOpensItsOwnTurnCarryingTheMergesRuleOneKey pins the user row as
+// the next turn's prompt, with KAS's record id.
 func TestEntryProjection_APromptOpensItsOwnTurnCarryingTheMergesRuleOneKey(t *testing.T) {
 	turns := entryProject([][2]any{
 		replayUserRow{id: "kas-rec-1", ts: "2026-09-15T09:00:00.000Z", text: "add a test"}.frame(t),
@@ -455,10 +429,8 @@ func TestEntryProjection_NoUserRowMeansAHeaderlessTurn(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_ContentAfterATurnEndContinuesThatTurn is the continuation rule,
-// and the audit found the arm reached in practice: executions with no persisted
-// turn_start. It must not open a second turn, and it must not append a second
-// turn_close, because the merge requires exactly one of each per turn.
+// TestEntryProjection_ContentAfterATurnEndContinuesThatTurn pins the continuation rule: no
+// second turn and no second turn_close.
 func TestEntryProjection_ContentAfterATurnEndContinuesThatTurn(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -483,23 +455,17 @@ func TestEntryProjection_ContentAfterATurnEndContinuesThatTurn(t *testing.T) {
 		t.Errorf("turn holds %d turn_open and %d turn_close, want one of each:\n%s",
 			opens, closes, dumpTurns(turns))
 	}
-	// The counts above cannot see the loss this rule exists to prevent: opening a
-	// SECOND turn discards the first turn's entries rather than sealing them, so what
-	// comes back is one turn holding one of each — and only the prose says which turn
-	// it is. Both says must be in it.
+	// The counts cannot see a second turn discarding the first's entries; both says must be here.
 	wantSays := []string{"first", "an agent-initiated afterthought"}
 	if got := saysOf(t, turns[0]); !slices.Equal(got, wantSays) {
 		t.Errorf("turn holds says %q, want %q:\n%s", got, wantSays, dumpTurns(turns))
 	}
 }
 
-// TestEntryProjection_ASteerLandsAtItsArrivalPosition is the ordering this whole design
-// exists for: a steer read mid-turn sits between the prose either side of it, rather
-// than after the whole reply as the message projection places it.
+// TestEntryProjection_ASteerLandsAtItsArrivalPosition pins a mid-turn steer between the prose
+// either side of it.
 func TestEntryProjection_ASteerLandsAtItsArrivalPosition(t *testing.T) {
-	// Prose on BOTH sides, so the only path that can place the steer here is the agent
-	// text handler's own flush. With a tool call after the steer instead, that handler's
-	// flush is dead weight — the tool path flushes too, and the case passes either way.
+	// Prose on BOTH sides, so only the agent text handler's flush can place the steer here.
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
 		agentChunkFrame(t, "starting"),
@@ -519,10 +485,8 @@ func TestEntryProjection_ASteerLandsAtItsArrivalPosition(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity: a workflow step's
-// send_message note rides the same frame type on the same channel, so it is a steer
-// entry whose origin is the agent's and whose severity comes off
-// _meta.kiro.notification.status — the only place a REPLAY carries it.
+// TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity pins a step's send_message
+// note as an agent steer with its severity (from _meta.kiro.notification.status).
 func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.T) {
 	k, raw := replayFrame(t, replayUserChunkKind, "the step needs a decision", "", map[string]any{
 		"messageId":    "notify-1",
@@ -546,9 +510,7 @@ func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.
 	}
 }
 
-// TestEntryProjection_AWorkflowProgressRowIsDropped: it rides the same frame type and
-// the same steering channel, but its content is a JSON blob for the run card, so
-// rendering it would claim the reader typed JSON.
+// TestEntryProjection_AWorkflowProgressRowIsDropped pins the drop of the run card's JSON row.
 func TestEntryProjection_AWorkflowProgressRowIsDropped(t *testing.T) {
 	k, raw := replayFrame(t, replayUserChunkKind, `{"kind":"node_start"}`, "", map[string]any{
 		"messageId": "wf-progress-1",
@@ -563,10 +525,7 @@ func TestEntryProjection_AWorkflowProgressRowIsDropped(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_TheEmptyBoundaryRowDoesNotHijackTheNextPrompt is the inversion the
-// id-change flush exists to prevent: KAS's boundary row carries the steering source and
-// no text, so without the flush the two rows merge and the reader's own prompt is
-// projected as a steer.
+// TestEntryProjection_TheEmptyBoundaryRowDoesNotHijackTheNextPrompt pins the id-change flush.
 func TestEntryProjection_TheEmptyBoundaryRowDoesNotHijackTheNextPrompt(t *testing.T) {
 	turns := entryProject([][2]any{
 		pair(replaySteerFrame(t, "steering_boundary_65cbb64e", "")),
@@ -636,9 +595,8 @@ func TestEntryProjection_AThinkingDeltaIsItsOwnEntry(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_TheCloserCarriesTheWiresOwnConclusion: the outcome comes from
-// ConcludeStopReason and the metering from the turn_completion frame that precedes the
-// end, which is what restores the footer and the outcome word on a resumed chat.
+// TestEntryProjection_TheCloserCarriesTheWiresOwnConclusion pins the outcome from
+// ConcludeStopReason and the metering from the preceding turn_completion.
 func TestEntryProjection_TheCloserCarriesTheWiresOwnConclusion(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -702,12 +660,8 @@ func toolUpdateFrame(t *testing.T, id, status string, extra map[string]any) [2]a
 	}))
 }
 
-// TestEntryProjection_ATurnWithNoTurnEndEmitsNoCloser is the crash the design's 7.1
-// says the projection must tolerate: the replay's last turn has no turn_end. KAS's
-// account of the turn ends where the frames end, so the projection settles the turn's
-// unsettled calls and emits NO turn_close — the merge's rule 4 synthesizes one for an
-// inserted turn, and a paired turn keeps the record's. An outcome is REQUIRED on the
-// wire, so a closer carrying an empty one is a row the client decoder rejects.
+// TestEntryProjection_ATurnWithNoTurnEndEmitsNoCloser pins that a replay ending inside a turn
+// settles its calls and emits NO turn_close (an empty outcome would be rejected).
 func TestEntryProjection_ATurnWithNoTurnEndEmitsNoCloser(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -757,11 +711,8 @@ func TestEntryProjection_APayloadlessTurnEndClosesAsUnknown(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AnUnsettlingUpdateLeavesTheCallForTheClose: a tool_result is a
-// SETTLED value, so an update carrying no status, or a non-terminal one, projects nothing
-// and the call stays open for the close's abort rule. `entry_tool_result.status` is
-// required on the wire and validated against the closed set, so an empty one costs the
-// client the whole window, and a settled `in_progress` is a card that spins forever.
+// TestEntryProjection_AnUnsettlingUpdateLeavesTheCallForTheClose pins that a status-less or
+// non-terminal update projects no tool_result (an empty status costs the client the window).
 func TestEntryProjection_AnUnsettlingUpdateLeavesTheCallForTheClose(t *testing.T) {
 	for name, status := range map[string]string{"statusless": "", "in_progress": "in_progress"} {
 		t.Run(name, func(t *testing.T) {
@@ -792,10 +743,8 @@ func TestEntryProjection_AnUnsettlingUpdateLeavesTheCallForTheClose(t *testing.T
 	}
 }
 
-// TestEntryProjection_AContinuationIsSettledAtTurns: content after a turn_end continues
-// the turn (7.2), and Turns() must settle it like any other content — a call with no
-// update is aborted and a withheld tail that turned out not to be a marker goes back
-// into its say — even though the turn already holds its closer.
+// TestEntryProjection_AContinuationIsSettledAtTurns pins that Turns() settles a continuation
+// after the closer.
 func TestEntryProjection_AContinuationIsSettledAtTurns(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -822,10 +771,8 @@ func TestEntryProjection_AContinuationIsSettledAtTurns(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_ASayChangeSettlesTheLanesCarry: a tail withheld at the end of say S
-// belongs to S. The live sealing table settles the carry when the next delta names another
-// say or is a thinking delta over a text say; without that seal the `[` lands at the head
-// of the next say, and a thinking delta leaves the text say's carry pending.
+// TestEntryProjection_ASayChangeSettlesTheLanesCarry pins that a carry withheld at the end of
+// say S belongs to S, settled at the next say or a thinking delta.
 func TestEntryProjection_ASayChangeSettlesTheLanesCarry(t *testing.T) {
 	say := func(kind marotte.ACPUpdateKind, id, text string) [2]any {
 		return pair(replayFrame(t, kind, text, "", map[string]any{"messageId": id}))
@@ -843,9 +790,7 @@ func TestEntryProjection_ASayChangeSettlesTheLanesCarry(t *testing.T) {
 		}
 	})
 	t.Run("a thinking delta over a text say", func(t *testing.T) {
-		// The text say is WHOLLY withheld, so where its carry is released decides where
-		// the entry is created: at the thinking delta (the seal) or joined onto the next
-		// text say (no seal).
+		// The text say is wholly withheld, so its release decides where the entry is created.
 		turns := entryProject([][2]any{
 			turnStartFrame(t),
 			say(marotte.ACPUpdateAgentChunk, "s1-say", "["),
@@ -870,9 +815,8 @@ func TestEntryProjection_ASayChangeSettlesTheLanesCarry(t *testing.T) {
 	})
 }
 
-// TestEntryProjection_TheCompactionLandsAfterTheSayItsSeparatorSealed: the separator
-// seals every lane, so a say whose whole text was withheld is created THERE, ahead of
-// the compaction the summary frame then inserts — the live order (seal, then compaction).
+// TestEntryProjection_TheCompactionLandsAfterTheSayItsSeparatorSealed pins the live order:
+// seal, then compaction.
 func TestEntryProjection_TheCompactionLandsAfterTheSayItsSeparatorSealed(t *testing.T) {
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
@@ -892,5 +836,106 @@ func TestEntryProjection_TheCompactionLandsAfterTheSayItsSeparatorSealed(t *test
 	if got := kindsOf(turns[0]); !slices.Equal(got, want) {
 		t.Errorf("entry kinds = %v, want %v — the released say must precede the compaction:\n%s",
 			got, want, dumpTurns(turns))
+	}
+}
+
+// TestEntryProjection_ReplayedRefusalChunkIsNotProse pins the refusal rule on replay.
+func TestEntryProjection_ReplayedRefusalChunkIsNotProse(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		agentChunkFrame(t, "partial"),
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, "I cannot help", "", map[string]any{
+			"refusal": map[string]any{"category": "c", "explanation": "I cannot help"},
+		})),
+		turnEndFrame(t, "content_filtered"),
+	})
+	if got := saysOf(t, turns[0]); !slices.Equal(got, []string{"partial"}) {
+		t.Errorf("text entries = %q, want only the prose before the refusal:\n%s", got, dumpTurns(turns))
+	}
+	var payload marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &payload)
+	want := marotte.RefusalInfo{Category: "c", Explanation: "I cannot help"}
+	if payload.Refusal == nil || *payload.Refusal != want {
+		t.Errorf("turn_close.refusal = %+v, want %+v", payload.Refusal, want)
+	}
+}
+
+// TestEntryProjection_TurnEndStopDetailsRefusalFillsTurnClose: a replayed turn whose
+// refusal reached no chunk still carries it on the turn_end, and that is the closer's
+// refusal.
+func TestEntryProjection_TurnEndStopDetailsRefusalFillsTurnClose(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		agentChunkFrame(t, "working"),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+			"turnEnd": map[string]any{
+				"stopReason":  "refusal",
+				"stopDetails": map[string]any{"refusal": map[string]any{"category": "c", "recommendedModel": "m"}},
+			},
+		})),
+	})
+	var payload marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &payload)
+	want := marotte.RefusalInfo{Category: "c", RecommendedModel: "m"}
+	if payload.Refusal == nil || *payload.Refusal != want {
+		t.Errorf("turn_close.refusal = %+v, want %+v", payload.Refusal, want)
+	}
+}
+
+// A replayed failed turn carries the engine's own account: the display_error row
+// replays before its turn_end, and turn_end itself carries no failure sentence.
+func TestEntryProjection_ReplayedDisplayErrorIsTheFailedTurnsReason(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		agentChunkFrame(t, "working"),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "display_error", map[string]any{
+			"displayError": map[string]any{"message": "Your connection was interrupted.", "errorType": "ge"},
+		})),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+			"turnEnd": map[string]any{"stopReason": "error"},
+		})),
+	})
+	var payload marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &payload)
+	if payload.FailureReason != "Your connection was interrupted." {
+		t.Errorf("turn_close.failure_reason = %q, want the replayed engine sentence", payload.FailureReason)
+	}
+}
+
+// A display_error on a turn that then ended cleanly is not its verdict.
+func TestEntryProjection_ReplayedDisplayErrorLeavesACleanTurnClean(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "display_error", map[string]any{
+			"displayError": map[string]any{"message": "Sub-agent stalled.", "errorType": "ge"},
+		})),
+		agentChunkFrame(t, "recovered"),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+			"turnEnd": map[string]any{"stopReason": "end_turn"},
+		})),
+	})
+	var payload marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &payload)
+	if payload.FailureReason != "" {
+		t.Errorf("turn_close.failure_reason = %q, want empty on a clean turn", payload.FailureReason)
+	}
+}
+
+func TestEntryProjection_AReplayedOffloadReachesTheResult(t *testing.T) {
+	path := "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt"
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		toolCallFrame(t, "call-1", nil),
+		toolUpdateFrame(t, "call-1", "completed", map[string]any{
+			"outputTransformation": map[string]any{"kind": "offloaded", "absFilePath": path, "totalChars": 31000},
+		}),
+	})
+	if len(turns) != 1 {
+		t.Fatalf("projected %d turns, want 1:\n%s", len(turns), dumpTurns(turns))
+	}
+	var payload marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &payload)
+	if payload.Offload == nil || payload.Offload.Path != path || payload.Offload.TotalChars != 31000 {
+		t.Errorf("tool_result offload = %+v, want path %q and 31000 chars", payload.Offload, path)
 	}
 }

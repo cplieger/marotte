@@ -1,25 +1,6 @@
-// ---------------------------------------------------------------------------
-// DOM element registry: query all elements once at startup.
-// Fails fast if an element is missing instead of crashing later.
-//
-// `el<T>(id)` is the single lookup primitive used by `$` below and by any
-// feature module whose DOM ids aren't worth registering on the global
-// Elements class. Modal-local ids (tool-*, filepicker-*, etc.) stay in
-// their own modules but use this helper instead of redefining it.
-//
-// A GETTER NOTHING READS IS DELETED, not left as documentation. 43 of 154 had no
-// `$.<name>` reader (2026-08), and 20 of those looked up an id that exists in no
-// HTML — `byId` throws on a missing element, so each was a call that could only
-// ever raise. Three whole regions went with them (the single-repo git panel, the
-// PR panel, the CI pill): those features build their DOM in TS now, so their
-// registry entries described markup that no longer exists. The check is one
-// grep, `$.<name>` against this file's getter list, and nothing dynamic defeats
-// it — `$` is never aliased on import, never destructured and never indexed.
-// ---------------------------------------------------------------------------
+// DOM element registry, queried lazily and failing fast on a missing id. Modal-local ids stay in their own modules.
 
-/** Look up a DOM element by id. Throws if missing. Use this instead of
- *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
- *  readable error rather than NPE'ing on the next property access. */
+/** Look up an element by id; throws if missing. */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- caller uses T for inference: el<HTMLInputElement>("id")
 export function byId<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -29,46 +10,24 @@ export function byId<T extends HTMLElement>(id: string): T {
   return e as T;
 }
 
-/** Like el() but returns null when the element doesn't exist.
- *  Use for elements that are conditionally present in the DOM.
- *  T parameter only appears in the return type intentionally — the
- *  call site declares which element subclass it expects, mirroring the
- *  built-in `document.getElementById<T>` ergonomics. */
+/** Like byId, but null when absent. T is the call-site contract for the element subclass. */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the call-site contract for the returned element subclass
 export function maybeEl<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
-/** Force a synchronous style and layout flush for `el`.
- *
- *  The browser coalesces style mutations, so removing a class and re-adding it
- *  in one task is not a change and restarts no animation. Reading a layout
- *  property between the two makes the removal land in a completed style
- *  resolution, which is what separates the two writes.
- *
- *  Returns the value it read, and the callers discard it. That is deliberate:
- *  the read IS the side effect, and a returned value keeps it a call rather
- *  than an expression statement, which reads as dead code to anyone (and to
- *  `@typescript-eslint/no-unused-expressions`).
- *
- *  Takes `Element` rather than `HTMLElement` because `getBoundingClientRect`
- *  is on `Element`; `offsetWidth` is not, and every call site that used it
- *  needed a cast to say so. */
+/**
+ * Force a synchronous style and layout flush for `el`, so removing and re-adding a class in one task restarts an
+ * animation. Returns the value read.
+ */
 export function forceReflow(el: Element): number {
   return el.getBoundingClientRect().height;
 }
 
-/** Mark any element as BUSY — its content or its work is in flight — or clear it.
- *
- *  THE ONLY PLACE THE VALUE IS SPELLED, and that is the point. `aria-busy` is a
- *  boolean-typed ARIA attribute, so its value must be the literal `"true"`;
- *  `toggleAttribute("aria-busy", true)` writes the empty string, which is invalid
- *  and therefore treated as the default of false. Measured in Chromium against
- *  the accessibility tree: the empty form yields NO busy property at all, exactly
- *  like an element with no attribute, while `"true"` yields `busy: 1`. It also
- *  fails `[aria-busy="true"]`, so the busy face never paints either. Two callers
- *  had it — the model grid and the model list, each announcing nothing while
- *  their catalogue loaded. */
+/**
+ * Mark an element busy or clear it: the only place the value is spelled. `aria-busy` must be the literal `"true"`;
+ * `toggleAttribute` writes "", which reads as false.
+ */
 export function setBusy(el: Element, busy: boolean): void {
   if (busy) {
     el.setAttribute("aria-busy", "true");
@@ -77,29 +36,17 @@ export function setBusy(el: Element, busy: boolean): void {
   }
 }
 
-/** Mark a CONTROL busy: `disabled` and `aria-busy` together.
- *
- *  That pair is what the two readers need. Assistive tech announces the busy
- *  state off the attribute, and `40-a11y.css`'s busy face paints off the same
- *  one, so a control cannot look busy without saying so or the reverse. Callers
- *  that disable around an `await` had been setting `disabled` alone, which took
- *  the UNAVAILABLE face — dimmed, `not-allowed` — while their own label read
- *  "Suggesting…" or "Delivering…".
- *
- *  Not for a control that is unavailable rather than working: that is `disabled`
- *  on its own, and it should keep the refusal face. `bindLoadingState` from
- *  `@cplieger/actions` already sets both, so an action-bound control needs
- *  nothing here. */
+/**
+ * Mark a control busy: `disabled` and `aria-busy` together, so assistive tech and the busy face (`40-a11y.css`)
+ * cannot disagree.
+ */
 export function setControlBusy(el: HTMLButtonElement | HTMLInputElement, busy: boolean): void {
   el.disabled = busy;
   setBusy(el, busy);
 }
 
-// Lazy singleton: elements are queried on first access via getter.
-// This allows the module to be imported before DOMContentLoaded
-// as long as no property is accessed until the DOM is ready.
+// Lazy getters, so the module may be imported before DOMContentLoaded.
 class Elements {
-  // Sidebar
   get sidebar(): HTMLElement {
     return byId("sidebar");
   }
@@ -121,16 +68,14 @@ class Elements {
   get settingsBtn(): HTMLButtonElement {
     return byId("settings-btn");
   }
-  /** The footer's identity control: the connection mark and the address are ONE
-   *  button, and it is the status popup's trigger. `status.ts` writes its
-   *  `data-tooltip` (the live connection state, which is the DESCRIPTION rather
-   *  than the name), and `app.ts` hands it to `makeExpandable`. */
+  /**
+   * The footer's identity control and the status popup's trigger. `status.ts` writes its `data-tooltip`; `app.ts`
+   * makes it expandable.
+   */
   get accountBtn(): HTMLButtonElement {
     return byId("account-btn");
   }
-  /** The connection mark, a DECORATIVE span inside `#account-btn` — not a button
-   *  any more, so the type is `HTMLElement`. `setStatus` still toggles its
-   *  `.connected` / `.error` classes; nothing else reads it. */
+  /** The decorative connection mark inside `#account-btn`; `setStatus` toggles its classes. */
   get statusDot(): HTMLElement {
     return byId("status-dot");
   }
@@ -141,16 +86,13 @@ class Elements {
     return byId("logout-btn");
   }
 
-  // Chat
   get messages(): HTMLDivElement {
     return byId("messages");
   }
   get messagesWrap(): HTMLDivElement {
     return byId("messages-wrap");
   }
-  // The positioned wrapper AROUND the scroller. The timeline rail mounts here
-  // rather than inside #messages-wrap so it stays put instead of scrolling away
-  // with the transcript.
+  // The positioned wrapper around the scroller, so the timeline rail stays put while the transcript scrolls.
   get messagesWrapOuter(): HTMLDivElement {
     return byId("messages-wrap-outer");
   }
@@ -168,6 +110,9 @@ class Elements {
   }
   get promptInput(): HTMLTextAreaElement {
     return byId("prompt-input");
+  }
+  get slashMenu(): HTMLUListElement {
+    return byId("slash-menu");
   }
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
@@ -195,8 +140,7 @@ class Elements {
   get roleList(): HTMLDivElement {
     return byId("role-list");
   }
-  /** The interaction dock's host. One region replaced the three decision
-   *  <dialog>s (tool-approval, elicitation-dialog, user-input-dialog). */
+  /** The interaction dock's host. */
   get decisionDock(): HTMLDivElement {
     return byId("decision-dock");
   }
@@ -213,15 +157,10 @@ class Elements {
     return byId("context-label");
   }
 
-  // Context popup
   get ctxModelPill(): HTMLElement {
     return byId("ctx-model-pill");
   }
-  /** The reasoning tier beside the model name on the model pill. Its own element
-   *  so the model name keeps the ellipsis and the tier is never the half that
-   *  gets clipped; `.hidden` only when there is no tier to name (the model
-   *  advertises none, or none resolved). CSS also hides it on a phone-shaped
-   *  viewport, where the button's `aria-label` still carries the tier. */
+  /** The reasoning tier on the model pill, its own element so the model name keeps the ellipsis. `.hidden` when no tier. */
   get ctxEffortPill(): HTMLElement {
     return byId("ctx-effort-pill");
   }
@@ -247,11 +186,7 @@ class Elements {
     return byId("ctx-metering");
   }
 
-  // Status popup
-  //
-  // The card is the dot's SIBLING (see 15-input.css .pill-slot), so it
-  // inherits nothing from the dot: status.ts writes --status-color onto the
-  // card itself.
+  // The card is the dot's sibling (15-input.css .pill-slot), so status.ts writes --status-color onto the card.
   get statusCard(): HTMLElement {
     return byId("status-card");
   }
@@ -264,9 +199,7 @@ class Elements {
   get stAuth(): HTMLElement {
     return byId("st-auth");
   }
-  /** The auth row's separator. It hides and shows WITH the row — two elements,
-   *  one fact — which is why `settings.ts`'s `setAuthLine` writes both and nothing
-   *  else touches either. */
+  /** Hides with the auth row; `settings.ts`'s `setAuthLine` is the one writer of both. */
   get stAuthSep(): HTMLElement {
     return byId("st-auth-sep");
   }
@@ -283,7 +216,6 @@ class Elements {
     return byId("acct-overage");
   }
 
-  // Settings
   get steeringInput(): HTMLTextAreaElement {
     return byId("steering-input");
   }
@@ -300,7 +232,6 @@ class Elements {
     return byId("tools-list");
   }
 
-  // Shell
   get shellPanel(): HTMLDivElement {
     return byId("shell-panel");
   }
@@ -326,7 +257,6 @@ class Elements {
     return byId("shell-resize");
   }
 
-  // Git
   get gitBtn(): HTMLButtonElement {
     return byId("git-btn");
   }
@@ -334,7 +264,6 @@ class Elements {
     return byId("git-badge");
   }
 
-  // File browser
   get filesBtn(): HTMLButtonElement {
     return byId("files-btn");
   }
@@ -368,7 +297,6 @@ class Elements {
   get fbPreview(): HTMLButtonElement {
     return byId("fb-preview");
   }
-  // Chat options (the composer's set-once switches menu)
   get chatOptionsBtn(): HTMLButtonElement {
     return byId("chat-options-btn");
   }
@@ -385,7 +313,6 @@ class Elements {
     return byId("fb-drop-overlay");
   }
 
-  // History
   get historyBtn(): HTMLButtonElement {
     return byId("history-btn");
   }
@@ -393,14 +320,10 @@ class Elements {
     return byId("history-tab-bar");
   }
 
-  // Transcript search. The Ctrl+F overlay's toolbar trigger — the hotkey used
-  // to be the only door, which left the feature undiscoverable and unreachable
-  // without a keyboard.
   get findBtn(): HTMLButtonElement {
     return byId("find-btn");
   }
 
-  // Kiro configuration browser (the book icon's page)
   get docsBtn(): HTMLButtonElement {
     return byId("docs-btn");
   }
@@ -411,7 +334,6 @@ class Elements {
     return byId("docs-tab-bar");
   }
 
-  // Editor
   get editorContent(): HTMLTextAreaElement {
     return byId("editor-content");
   }
@@ -442,9 +364,7 @@ class Elements {
   get editorDiffBtn(): HTMLButtonElement {
     return byId("editor-diff-btn");
   }
-  /** The diff-vs-HEAD control, a different question from editorDiffBtn's
-   *  buffer-vs-saved. Its visibility has exactly ONE writer, an effect in
-   *  editor-core.ts; the mode renderers never touch it. */
+  /** Its visibility has one writer, an effect in editor-core.ts. */
   get editorGitDiffBtn(): HTMLButtonElement {
     return byId("editor-git-diff-btn");
   }
@@ -481,7 +401,6 @@ class Elements {
   get editorConflictOverlay(): HTMLDivElement {
     return byId("editor-conflict-overlay");
   }
-  // Modals
   get loginModal(): HTMLDivElement {
     return byId("login-modal");
   }
@@ -489,7 +408,6 @@ class Elements {
     return byId("tool-modal");
   }
 
-  // Settings panel (extra getters added by api-client migration)
   get notifyToggle(): HTMLInputElement {
     return byId("notify-toggle");
   }
@@ -500,17 +418,14 @@ class Elements {
     return byId("notify-sub-options");
   }
 
-  // Settings tab bar (mobile dropdown + desktop segmented control)
   get settingsTabBar(): HTMLDivElement {
     return byId("settings-tab-bar");
   }
 
-  // MCP modal (shared by add + edit)
   get mcpModal(): HTMLDivElement {
     return byId("mcp-modal");
   }
 
-  // Upload progress bar (shared UI at the bottom of viewport)
   get uploadProgress(): HTMLDivElement {
     return byId("upload-progress");
   }
@@ -524,7 +439,6 @@ class Elements {
     return byId("upload-progress-cancel");
   }
 
-  // Theme toggle
   get themeBtn(): HTMLButtonElement {
     return byId("theme-btn");
   }
@@ -532,8 +446,6 @@ class Elements {
     return byId("pointer-mode-btn");
   }
 
-  // Tabs / shell
-  // Startup
   get appRoot(): HTMLElement {
     return byId("app");
   }

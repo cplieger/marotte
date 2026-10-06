@@ -7,15 +7,8 @@ import (
 	"testing"
 )
 
-// TestLoad_ModeIsVerifiedNotRequested pins that load reads the mode BACK off the
-// file rather than assuming the chmod it asked for landed. The drift is driven by
-// an explicit widening chmod so the enforcement is what brings it back, and the
-// witness below fails the test as INVALID rather than letting it pass vacuously
-// on a filesystem that would not store the drift in the first place.
-//
-// It complements TestLoad_ReenforcesTightPermsOnDrift, which asserts the same
-// outcome without the witness: on a filesystem whose umask or ACL refuses 0644,
-// that test's seed never drifts and its assertion holds for the wrong reason.
+// TestLoad_ModeIsVerifiedNotRequested pins that load reads the mode BACK off the file; the drift is
+// an explicit widening chmod, so the enforcement is what restores it.
 func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
@@ -50,21 +43,9 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	}
 }
 
-// TestLoad_EnforcesTheModeOnAHandleNotAPathname is the assertion that separates
-// the enforcement from the os.Chmod it replaced, and the only one a test on a
-// well-behaved filesystem CAN make: chmod-then-stat and a bare chmod store the
-// same bits wherever the filesystem honours the request, so the difference is
-// which OBJECT is tightened.
-//
-// os.Chmod(s.path, 0o600) resolves the name at the instant of the call, so a
-// symlink planted at mcp.json — by anything that can create a name in the config
-// dir — makes marotte chmod a file it never inspected, anywhere on the host.
-// O_NOFOLLOW makes the kernel refuse instead, so the target keeps its mode and
-// the operator gets a warning naming the exposure.
-//
-// The store still LOADS: the posture at this site is warn-and-continue, because
-// load's error is fatal to New and therefore to startup, and a /config the
-// operator reshaped must still come up to be repairable.
+// TestLoad_EnforcesTheModeOnAHandleNotAPathname is the one assertion that separates the enforcement
+// from a bare os.Chmod on a well-behaved filesystem: a symlink at the name is refused, not chmod'ed
+// through.
 func TestLoad_EnforcesTheModeOnAHandleNotAPathname(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "planted.json")

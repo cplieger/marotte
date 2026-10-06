@@ -109,13 +109,10 @@ func TestHandleUserInput(t *testing.T) {
 	})
 }
 
-// The agent composes userInput options, so they are model output on a trusted
-// channel. These cases pin the three ways forwarding them unchecked goes wrong,
-// each of which fails silently rather than loudly.
+// The three ways forwarding agent-composed options unchecked goes wrong, each silently.
 func TestSanitizeUserInputOptions(t *testing.T) {
 	t.Run("drops an empty title, because the title IS the answer", func(t *testing.T) {
-		// The reply carries the option's title text, so an empty one sends "" to
-		// the agent and renders a card nobody can read.
+		// The reply carries the title, so an empty one sends "" to the agent.
 		got := sanitizeUserInputOptions([]wireUserInputOption{
 			{Title: "Keep"}, {Title: "   "}, {Title: ""}, {Title: "Discard"},
 		})
@@ -176,8 +173,7 @@ func TestSanitizeUserInputOptions(t *testing.T) {
 		}
 	})
 
-	// A question whose every option is unusable still returns empty rather than
-	// nil-vs-empty ambiguity, and the caller treats empty options as free-form.
+	// Empty, not nil: the caller treats empty options as free-form.
 	t.Run("returns empty, not nil, when nothing survives", func(t *testing.T) {
 		got := sanitizeUserInputOptions([]wireUserInputOption{{Title: ""}})
 		if got == nil || len(got) != 0 {

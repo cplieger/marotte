@@ -1,6 +1,5 @@
-// Native Cedar policy VIEW (_kiro/permissions/list + explain), read-only at
-// GET /api/permissions. Editing is a FILE write (internal/policyfile) KAS
-// hot-reloads, not an RPC. Both queries route through the utility bridge.
+// The read-only native Cedar policy view (_kiro/permissions/list + explain) at GET /api/permissions,
+// via the utility bridge. Editing is a file write KAS hot-reloads (internal/policyfile).
 
 package agent
 
@@ -14,23 +13,32 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// policyCallTimeout bounds one _kiro/permissions/{list,explain} round-trip.
-// Both hold the single utility mutex across bridge.Call, so without a
-// deadline a wedged list/explain would starve every other utility read.
+// policyCallTimeout bounds one list or explain: both hold the utility mutex across bridge.Call.
 const policyCallTimeout = 45 * time.Second
 
-// buildUtility is the lease's constructor, handed to it at wiring time. It
-// lives here because it closes over Settings hooks that point back into runtime
-// services while those services lease the utility runtime.
+// buildUtility is the utility lease's constructor, here because it closes over Settings hooks into runtime services.
 func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
 		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
-		utilitySessionHooks{
-			onHooksChanged:       rt.config.broadcastHooksChanged,
+		&utilitySessionHooks{
+			onHooksChanged: rt.config.broadcastHooksChanged,
+			onPowersChanged: func(params json.RawMessage) {
+				rt.powers.itemsChanged(rt.lifecycle.shutdownCtx, params)
+			},
+			onRecipesChanged: func() {
+				rt.Broadcast(context.Background(),
+					marotte.NewEvent(marotte.EventRecipesChanged, "", marotte.RecipesChangedPayload{}))
+			},
 			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
 			onPolicyNotification: rt.forwardPolicyNotification,
-			// The step-transcript seam: a `session/load` of a step's session replays
-			// frames the utility session reads as foreign. No-ops until a read is open.
+			onSlashCommands:      rt.applyUtilitySlashCommands,
+			onSteeringDocs: func(params json.RawMessage) {
+				rt.translator.ApplySteeringDocuments(rt.lifecycle.shutdownCtx, params)
+			},
+			onSystemNotify: func(msg *marotte.RPCResponse) {
+				rt.translator.HandleSystemNotify(context.Background(), "", msg)
+			},
+			// A step session's `session/load` replays frames the utility session reads as foreign; no-ops until a read is open.
 			onForeignUpdate: func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool {
 				return rt.runs.stepReplays.ingest(sessionID, kind, update)
 			},
@@ -43,16 +51,15 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			ignoreFiles: func(ctx context.Context) []string {
 				return spawnIgnoreFiles(ctx, rt.lifecycle.configDir)
 			},
+			contentCollection: contentCollectionResolver(rt.lifecycle.configDir, rt.config.GovernanceLocks),
 		},
 		rt.secrets,
 		true, // enableHooks
 	)
 }
 
-// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification the
-// UTILITY session received to the same translator the chat dispatch table uses, so
-// one decode serves both doors. Broadcast workspace-global (empty chatID), on
-// context.Background(): forward is a goroutine with no request behind it.
+// forwardPolicyNotification hands a utility-session _kiro/policy/{changed,error} to the chat
+// translator, broadcast workspace-global on context.Background(): forward has no request behind it.
 func (rt *Runtime) forwardPolicyNotification(msg *marotte.RPCResponse) {
 	switch msg.Method {
 	case methodV3PolicyChanged:
@@ -62,9 +69,7 @@ func (rt *Runtime) forwardPolicyNotification(msg *marotte.RPCResponse) {
 	}
 }
 
-// PolicyList returns the native policy rules, optionally filtered to one
-// scope (empty = all scopes). Backed by _kiro/permissions/list on the
-// utility bridge.
+// PolicyList returns the native policy rules, optionally for one scope, via _kiro/permissions/list.
 func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error) {
 	extra := map[string]any{}
 	if scope != "" {
@@ -91,7 +96,7 @@ func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.Pol
 	return out.Rules, nil
 }
 
-// explainWire mirrors the KAS _kiro/permissions/explain reply (camelCase).
+// explainWire mirrors KAS's _kiro/permissions/explain reply.
 type explainWire struct {
 	Capability  string `json:"capability"`
 	Resource    string `json:"resource"`
@@ -107,10 +112,8 @@ type explainWire struct {
 	IsExplicitAsk bool   `json:"isExplicitAsk"`
 }
 
-// PolicyExplain simulates the policy decision for a capability/resource
-// WITHOUT executing anything or raising a consent prompt (KAS
-// evaluateSingleResource). Exactly one of Capability / ToolID is required;
-// KAS additionally requires a resource for the shell capability.
+// PolicyExplain simulates a policy decision without executing or prompting (KAS
+// evaluateSingleResource). Exactly one of Capability and ToolID; shell also needs a resource.
 func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error) {
 	extra := map[string]any{}
 	switch {

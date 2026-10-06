@@ -1,9 +1,8 @@
 package command
 
-// Rewind: revert this chat to a past turn. There is no branch, no promote and no
-// discard — a fork makes a second chat, and rewind edits the one you are in. One
-// KAS call does it: `_kiro/checkpoint/revertMultiple` drops the addressed user
-// message and everything after it, rolls the files back, and tombstones the cut.
+// Rewind reverts the chat you are in (a fork makes a second chat):
+// `_kiro/checkpoint/revertMultiple` drops the addressed user message and everything after it, rolls
+// the files back, and tombstones the cut.
 
 import (
 	"cmp"
@@ -25,13 +24,11 @@ const reasonRunsInCut = "runs_in_cut"
 // errRewindRunsInCut is the refusal's prose; the runs ride beside it.
 var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched. Confirm to stop them and rewind")
 
-// CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint machinery,
-// then appends the turn_revert that records it. The record is not redundant: the merge
-// keeps a record turn the replay lacks (an absent tail is normally a durability gap),
-// and the appended revert is itself what refuses a projection built from the
-// pre-revert replay at its swap. Refused while the chat's
-// registry holds a turn or a reservation, KAS's own mid-turn rule applied before the
-// round trip; a live run the cut launched is stopRunsInCut's question, asked first.
+// CmdRewindChat reverts the chat to a past turn via KAS's checkpoint machinery, then appends the
+// turn_revert that records it. The record is required: the merge keeps a record turn the replay
+// lacks, and the appended revert refuses a projection built from the pre-revert replay. Refused
+// while the registry holds a turn or reservation; a live run the cut launched is stopRunsInCut's
+// question, asked first.
 func CmdRewindChat(
 	ctx context.Context,
 	bridges BridgeAccess,
@@ -80,10 +77,9 @@ func CmdRewindChat(
 		return nil, StatusError(status, explainRevertRefusal(target.KASMessageID, err))
 	}
 
-	// Record the cut AT the turn: KAS slices from the addressed prompt inclusive, so
-	// the prompt at that turn is reverted with everything after it and has to be
-	// retyped. The record is appended, never a cut, so a failed revert loses nothing
-	// and a second record can answer a revert that failed after this one landed.
+	// KAS slices from the addressed prompt inclusive, so the record is AT the turn. It is an
+	// append, so a failed revert loses nothing and a later record can answer one that failed after
+	// this landed.
 	record, opened, err := chats.Revert(ctx, cmd.ChatID, target.Turn, target.KASMessageID)
 	if err != nil {
 		slog.Error("rewind: record the revert", "chat", cmd.ChatID, "turn", target.Turn, keyError, err)
@@ -108,13 +104,10 @@ func CmdRewindChat(
 	}), nil
 }
 
-// stopRunsInCut is the rewind-versus-live-run rule: a run whose launch lies inside
-// the cut is being un-said, so an unconfirmed rewind answers 409 naming those runs
-// and reverts nothing, and a confirmed one cancels each and waits for it to stop
-// BEFORE the revert, so no step appends into the range being cut. A run launched
-// before the cut is neither named nor touched. A run still live when its wait runs
-// out is logged and the rewind goes on: the cancel landed, and a step's entries are
-// the run's own log, never this chat's.
+// stopRunsInCut is the rewind-versus-live-run rule: a run launched inside the cut is un-said, so an
+// unconfirmed rewind answers 409 naming those runs, and a confirmed one cancels each and waits
+// BEFORE the revert so no step appends into the cut. A run still live after its wait is logged and
+// the rewind continues: the cancel landed, and a step's entries are the run's own log.
 func stopRunsInCut(ctx context.Context, runs RunCutter, chatID marotte.ChatID, launched []string, confirmed bool) error {
 	live := runs.LiveRuns(launched)
 	if len(live) == 0 {
@@ -195,12 +188,9 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 	return result, http.StatusOK, nil
 }
 
-// explainRevertRefusal adds marotte's own account of an unaddressable turn to a refusal
-// KAS could not have explained. It keys on the fallback having been taken rather than on
-// the reason, because the reply carries no code and KAS's prose is not marotte's to
-// match — so on a turn with no bind the sentence is appended whatever the refusal was,
-// mid-turn included, where it names something that is not the cause. It APPENDS rather
-// than replaces, so a more specific reason survives.
+// explainRevertRefusal appends marotte's account of an unaddressable turn to a refusal KAS could
+// not explain. It keys on the fallback having been taken, since the reply carries no code; it
+// appends rather than replaces, so a more specific reason survives.
 func explainRevertRefusal(kasMessageID string, err error) error {
 	if kasMessageID != "" {
 		return err
@@ -208,13 +198,10 @@ func explainRevertRefusal(kasMessageID string, err error) error {
 	return fmt.Errorf("%w — %w", err, errRewindNoAgentID)
 }
 
-// CmdSetEffort sets the chat's reasoning-effort level. On v3 effort is a session
-// config option, so a running session is switched in place; the level is then
-// persisted on the chat and applied to later sessions through StartOpts.Effort.
-// Per-chat, so two chats can disagree and a model switch discards nothing. A
-// bridgeless chat is not a 409, and auto-create mirrors CmdSetMode. It also records
-// the level as the SEED a new chat on this model opens with, LAST, because the seed
-// must not outlive a refusal: only a level this chat actually took is remembered.
+// CmdSetEffort sets the chat's reasoning-effort level: switched in place on a running session,
+// persisted on the chat and applied to later sessions through StartOpts.Effort. A bridgeless chat
+// auto-creates like CmdSetMode. The level is recorded LAST as the new-chat seed for this model, so
+// a refused level is never remembered.
 func CmdSetEffort(
 	ctx context.Context,
 	bridges BridgeAccess,
@@ -232,43 +219,29 @@ func CmdSetEffort(
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	// Switch live first (fail fast) when a bridge is running, so a refusal is
-	// reported rather than persisted as a level the session never took. A cold-spawning
-	// bridge is not a refusal — see applySessionConfig.
+	// Picking any tier turns thinking back on, the slider's other half of its Off
+	// stop. Before the effort, because KAS caps a high tier while thinking is off.
+	thinkingOff := false
+	if rec, ok := chats.Get(ctx, cmd.ChatID); ok && rec.ThinkingIsOff(recorder.ThinkingDefaultOff(rec.Model)) {
+		thinkingOff = true
+		if err := setThinking(ctx, bridges, cmd.ChatID, marotte.ThinkingOn); err != nil {
+			return nil, err
+		}
+	}
+
+	// Fail fast so a refusal is reported, not persisted; a cold-spawning bridge is not a refusal
+	// (applySessionConfig).
 	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_effort",
-		marotte.MethodSetConfigOption, map[string]any{
-			"configId": marotte.ConfigOptionEffort,
-			"value":    string(p.Level),
-		}); err != nil {
+		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionEffort, string(p.Level))); err != nil {
 		return nil, err
 	}
 
-	// The model comes off the record rather than the payload, which carries none.
-	var (
-		model   string
-		changed bool
-	)
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
-		model = c.Model
-		if !exists {
-			c.Name = marotte.DefaultChatName
-			c.Effort = string(p.Level)
-			changed = true
-			return true
-		}
-		if c.Effort == string(p.Level) {
-			return false
-		}
-		c.Effort = string(p.Level)
-		changed = true
-		return true
-	}); err != nil {
+	model, changed, err := persistEffortPick(ctx, chats, cmd.ChatID, string(p.Level), thinkingOff)
+	if err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
-	// Only a tier this chat did not already hold leaves a record: a repeat click
-	// changed nothing, and a refusal never reaches here.
 	if changed {
 		recorder.PersistEffortChange(ctx, cmd.ChatID, model, p.Level)
 	}
@@ -276,13 +249,37 @@ func CmdSetEffort(
 	return responseWith(map[string]any{"level": p.Level}), nil
 }
 
-// recordEffortSeed remembers level as what a NEW chat on model opens with, and
-// tells the other devices. A failure here does not fail the command: the chat now
-// runs at this level whatever the seed says, and the seed is memory for chats that
-// do not exist yet.
-//
-// A chat with no model yet is skipped rather than seeded under an empty key, which
-// is a key no reader resolves.
+// persistEffortPick writes level onto the chat record, auto-creating it, and turns
+// thinking back on when the pick did. It reports the record's model, which the
+// payload does not carry, and whether the level changed.
+func persistEffortPick(
+	ctx context.Context, chats ChatStore, chatID marotte.ChatID, level string, thinkingOff bool,
+) (model string, changed bool, err error) {
+	_, err = chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		model = c.Model
+		thinkingChanged := false
+		if thinkingOff && c.Thinking != marotte.ThinkingOn {
+			c.Thinking = marotte.ThinkingOn
+			thinkingChanged = true
+		}
+		if !exists {
+			c.Name = marotte.DefaultChatName
+			c.Effort = level
+			changed = true
+			return true
+		}
+		if c.Effort == level {
+			return thinkingChanged
+		}
+		c.Effort = level
+		changed = true
+		return true
+	})
+	return model, changed, err
+}
+
+// recordEffortSeed remembers level as what a NEW chat on model opens with, and tells the other
+// devices. A failure does not fail the command; a chat with no model is skipped.
 func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model string, level marotte.EffortLevel) {
 	if configDir == "" || model == "" {
 		return

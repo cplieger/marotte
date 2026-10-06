@@ -10,11 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// searchFixture is the envelope of testdata/search_hits.json: one real
-// GET /api/chats/{id}/search reply per query, pinned across languages. The Go
-// side PRODUCES it from a real scan (golden, regenerated behind UPDATE_GOLDEN=1);
-// the TS side (chat-search.node.test.ts) DECODES it through the generated
-// decodeSearchResult. A field the encoder renames or re-types fails the decode.
+// searchFixture is testdata/search_hits.json: one real search reply per query. Go produces it from a real scan
+// (UPDATE_GOLDEN=1); chat-search.node.test.ts decodes it through decodeSearchResult.
 type searchFixture struct {
 	Comment []string          `json:"_comment"`
 	Queries []searchQueryCase `json:"queries"`
@@ -42,25 +39,16 @@ var searchFixtureComment = []string{
 	"then re-run the TS half: npx vitest --run chat-search.node.test.ts (from static-src/).",
 }
 
-// searchContractEntries is the log the fixture's replies are computed from: two
-// drawn turns. Turn 1 covers every free-text segment kind: the prompt (two
-// occurrences, the second behind a multibyte word so a byte offset could not
-// impersonate a rune offset) and its attachment NAME, a thinking entry, a text
-// entry, a delegate-lane text entry, a tool_call/tool_result pair per settled
-// kind (output, input+diff, disclosed, denial), a steer, a plan, and a failed
-// turn_close. Turn 2 is the filter-only query's target: a prompt, one tool pair
-// with no prose, and a close, so `turn:2` yields entry-kind hits with no text behind
-// one of them.
-//
-// Every declared segment kind must OCCUR here: this file's own loop and
-// TestSearch_SegmentKindsAreExhaustive both fail on a kind with no hit.
+// searchContractEntries is the fixture's log: turn 1 covers every free-text segment kind (the prompt twice, the second
+// after a multibyte word, its attachment name, thinking, text, a delegate lane, one tool pair per settled kind, steer,
+// plan, failed close); turn 2 is `turn:2`'s target, with entry hits and no prose behind one. Every declared kind must
+// occur here.
 func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 	return chatOf(
 		openTurn("t-1", 1, &marotte.EntryPrompt{
 			ID:   "m-1",
 			Text: "Where does the retry backoff live? The naïve loop calls retry twice.",
-			// The PATH carries the needle and contributes no hit: the name-only
-			// decision holding in the golden.
+			// The path carries the needle and adds no hit: names only.
 			Attachments: []marotte.Attachment{{Path: "docs/retry/backoff.md", Name: "retry-notes.md"}},
 		}).
 			thinking("th1", "The retry semantics differ per client.").
@@ -68,10 +56,8 @@ func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 			tool(marotte.EntryToolCall{ID: "tc1", Title: "Read retry.go", Kind: marotte.ToolKindRead},
 				&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "func retry(ctx context.Context) error"}).
 			laneText("sub-1", "a2", "The delegate traced the retry path end to end.").
-			// The ONE tool_input occurrence: its `retry`-bearing leaf is 28 bytes,
-			// under inputLeafDedupeMin (40), so the containment skip keeps it even
-			// though it occurs verbatim in the result's new_text. old_text carries
-			// `retry` too, so the golden shows the new_text-only decision holding.
+			// The one tool_input hit: its 28-byte leaf is under inputLeafDedupeMin (40), so it is kept though it repeats in
+			// new_text. old_text carries the needle too and adds nothing.
 			tool(marotte.EntryToolCall{
 				ID: "tc3", Title: "Replace in File", Kind: marotte.ToolKindEdit,
 				Input: json.RawMessage(`{"path":"fetch.go","newStr":"return retry(ctx, fetchOnce)"}`),
@@ -81,14 +67,12 @@ func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 					OldText: "func fetch(ctx context.Context) error { return retryOnce(ctx) }",
 					NewText: "func fetch(ctx context.Context) error {\n\treturn retry(ctx, fetchOnce)\n}",
 				}}}).
-			// The disclosed claim REPLACES the card's title; the URI carries the
-			// needle and contributes nothing.
+			// The disclosed claim replaces the title; the URI's needle adds nothing.
 			tool(marotte.EntryToolCall{ID: "tc4", Title: "Disclose Context", Kind: marotte.ToolKindOther},
 				&marotte.EntryToolResult{Status: marotte.ToolCompleted, Disclosed: &marotte.ToolDisclosed{
 					Type: "skill", DisplayName: "retry-budget", URI: "file:///workspace/.kiro/skills/retry/SKILL.md",
 				}}).
-			// The denial's RESOURCE is the one reader-facing string; Capability and
-			// the rule's patterns carry the needle and contribute nothing.
+			// The denial's resource is the reader-facing string; capability and patterns add nothing.
 			tool(marotte.EntryToolCall{ID: "tc5", Title: "Run Command", Kind: marotte.ToolKindExecute},
 				&marotte.EntryToolResult{Status: marotte.ToolFailed, Denial: &marotte.ToolDenial{
 					Capability: "shell_retry", Resource: "rm -rf /config/retry", Scope: "user", Source: "permissions.yaml",
@@ -108,8 +92,8 @@ func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 	)
 }
 
-// TestSearchWireContract pins the marshaled shape of the in-chat search reply to
-// testdata/search_hits.json, the cross-language fixture chat-search.node.test.ts reads.
+// TestSearchWireContract pins the in-chat search reply's shape to testdata/search_hits.json, read by
+// chat-search.node.test.ts.
 func TestSearchWireContract(t *testing.T) {
 	entries, drawn := searchContractEntries()
 	fx := searchFixture{
@@ -130,8 +114,7 @@ func TestSearchWireContract(t *testing.T) {
 			kinds[h.SegmentKind]++
 		}
 	}
-	// segmentKinds rather than a literal of its own: two enumerations of one
-	// vocabulary drift silently in exactly the direction that matters.
+	// segmentKinds, not a second literal.
 	for _, want := range segmentKinds {
 		if kinds[want] == 0 {
 			t.Errorf("fixture carries no %q hit; the TS side cannot pin a kind that never occurs", want)
@@ -141,9 +124,8 @@ func TestSearchWireContract(t *testing.T) {
 	pinGolden(t, "testdata/search_hits.json", fx, "TestSearchWireContract", "chat-search.node.test.ts")
 }
 
-// searchAllFixture is the envelope of testdata/search_all.json: one real
-// GET /api/chats/search reply, decoded by actions/chat-search.node.test.ts
-// through the generated decodeSearchAllResult.
+// searchAllFixture is testdata/search_all.json: one real GET /api/chats/search reply, decoded by
+// actions/chat-search.node.test.ts through decodeSearchAllResult.
 type searchAllFixture struct {
 	Comment []string        `json:"_comment"`
 	Query   string          `json:"query"`
@@ -162,11 +144,9 @@ var searchAllFixtureComment = []string{
 	"then re-run the TS half: npx vitest --run actions/chat-search.node.test.ts (from static-src/).",
 }
 
-// TestSearchAllWireContract pins the marshaled shape of the cross-chat search
-// reply. Three chats, each a different row shape: a title-and-body match, a
-// body-only match with several hits (the multibyte word before the second one
-// keeps the rune offset honest), and a title-only match with no best hit. Chat
-// directories are written directly so UpdatedAt and the mtime order are fixed.
+// TestSearchAllWireContract pins the cross-chat reply's shape with three rows: title and body, body-only with
+// several hits (a multibyte word keeps rune offsets honest), and title-only. Directories are written directly to fix
+// UpdatedAt and mtime order.
 func TestSearchAllWireContract(t *testing.T) {
 	s, err := NewStore(t.TempDir())
 	if err != nil {
@@ -206,9 +186,8 @@ func TestSearchAllWireContract(t *testing.T) {
 	pinGolden(t, "testdata/search_all.json", fx, "TestSearchAllWireContract", "actions/chat-search.node.test.ts")
 }
 
-// pinGolden marshals v, rewrites path behind UPDATE_GOLDEN=1, and compares the
-// bytes. The failure names the regeneration command and the TypeScript consumer
-// to re-run, because a cross-language fixture is one atomic change.
+// pinGolden marshals v, rewrites path under UPDATE_GOLDEN=1 and compares bytes. The failure names the regeneration
+// command and the TypeScript consumer: a cross-language fixture changes atomically.
 func pinGolden(t *testing.T, path string, v any, regen, consumer string) {
 	t.Helper()
 	got, err := json.MarshalIndent(v, "", "  ")

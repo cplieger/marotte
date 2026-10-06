@@ -5,13 +5,8 @@ import (
 	"testing"
 )
 
-// TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript pins the whitespace arm
-// against ECMAScript's trim set rather than Go's, because that is the set KAS
-// compares against. The two divergent runes are the reason the arm cannot use
-// strings.TrimSpace: U+FEFF diverges in the ACCEPTING direction, so TrimSpace
-// persists an entry KAS silently skips, which is precisely what this validator
-// exists to prevent. The two controls are one rune from each agreeing class, so
-// a fix that merely inverted the divergence would still fail here.
+// TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript pins the whitespace arm against
+// ECMAScript's trim set, with one control from each agreeing class.
 func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -19,15 +14,13 @@ func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 		wantRefusal bool
 	}{
 		{
-			// Divergent, and it runs the UNSAFE way: JavaScript trims U+FEFF and
-			// Go does not, so strings.TrimSpace accepts this and KAS then drops it.
+			// JavaScript trims U+FEFF and Go does not, so TrimSpace would accept it and KAS drop it.
 			name:        "U+FEFF is refused, because KAS trims it and would skip the entry",
 			entry:       "\uFEFFgitignore",
 			wantRefusal: true,
 		},
 		{
-			// Divergent the other way: Go trims U+0085 and JavaScript does not, so
-			// KAS accepts this entry and marotte must not be stricter than KAS.
+			// Go trims U+0085 and JavaScript does not: marotte must not be stricter than KAS.
 			name:        "U+0085 is accepted, because KAS does not trim it",
 			entry:       "\u0085gitignore",
 			wantRefusal: false,
@@ -39,8 +32,7 @@ func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 			wantRefusal: true,
 		},
 		{
-			// Control from the class neither trims: U+200B left Unicode's
-			// White_Space property in 4.0.1 and is not in ECMAScript's set either.
+			// Neither side trims U+200B.
 			name:        "U+200B is accepted, because neither side trims it",
 			entry:       "\u200Bgitignore",
 			wantRefusal: false,
@@ -62,14 +54,8 @@ func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 	}
 }
 
-// TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet walks every arm of KAS's
-// own `Bvt`, because a validator that is narrower than KAS accepts a name KAS
-// SKIPS — which persists an entry the panel then claims is enforced — and one that
-// is wider refuses a name KAS would have honoured.
-//
-// The accepted rows are half the point: each is a character adjacent to a refused
-// one, so a rule widened by one class fails here rather than only in the direction
-// the refusals cover.
+// TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet walks every arm of KAS's `Bvt`; each
+// accepted row sits next to a refused one, so a widened rule fails too.
 func TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -83,8 +69,7 @@ func TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet(t *testing.T) {
 		{"a backslash makes it a path", `sub\.gitignore`, true},
 		{"a leading parent reference", "..gitignore", true},
 		{"a bare parent reference", "..", true},
-		// KAS's rule is a substring test, not a prefix test, so a dot pair in the
-		// MIDDLE is refused too — the row that tells the two rules apart.
+		// A substring test, not a prefix test: this row tells the two apart.
 		{"a parent reference anywhere in the name", "ignore..list", true},
 		{"a star is a pattern, not a filename", "*.ignore", true},
 		{"a question mark is a pattern", "?ignore", true},
@@ -114,10 +99,8 @@ func TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet(t *testing.T) {
 	}
 }
 
-// TestAgentIgnoreList_DropsAnEntryKASWouldSkip is the other half of the same
-// property, at the surface that puts the list on the wire: what marotte sends
-// must equal what KAS enforces, and config.json is hand-editable, so a name that
-// never reached the PATCH validator can still be in the document.
+// TestAgentIgnoreList_DropsAnEntryKASWouldSkip pins that what marotte sends equals what KAS
+// enforces.
 func TestAgentIgnoreList_DropsAnEntryKASWouldSkip(t *testing.T) {
 	got := AgentIgnoreList([]string{"\uFEFFgitignore", ".gitignore"})
 	want := []string{AgentIgnoreFloor, ".gitignore"}

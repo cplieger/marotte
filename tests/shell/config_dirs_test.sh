@@ -1,34 +1,11 @@
 #!/usr/bin/env bash
-# The boot's first decision: the `mkdir -p` of every directory the container needs,
-# and its fail-CLOSED branch.
-#
-# This block lives inline in the boot path rather than in a function, so it is taken
-# with extract_range. It is the ONE place the entrypoint aborts on /config state, and
-# aborting is correct here: with nothing to persist there is nothing to serve, and
-# the invariant that everything else warns rather than dying rests on this branch
-# still being the exception. A healthy image takes the success path only, so the
-# smoke test can never show the abort works — and if it silently stopped aborting,
-# the boot would carry on into an install that writes nowhere.
-#
-# Every directory in the list is load-bearing: $TOOLS/bin is the PATH entry,
-# $TOOLS/kiro-cli-versions is the version-addressed install root the SERVER writes
-# into -- a SIBLING of the toolbelt engine's opt/ tree rather than a child, so the
-# engine's per-tool prune can never reach it -- (so this branch is also what proves
-# that tree writable before the install runs),
-# $HOME/.local/share/kiro-cli is the parent of the agent runtime store the pruner
-# resolves, and $HOME/.ssh and $KIRO_HOME hold the state that has to survive
-# container recreation.
-# Lint directives for this whole file, each against a stated guarantee rather than
-# an assumption:
-#   SC2015 - the assertion form `[ cond ] && ok "..." || no "..."` cannot mis-fire,
-#     because lib.sh's ok/no return 0 unconditionally by design (see their comment).
-#   SC2034 - the variables set below are the INPUTS to entrypoint.sh code that is
-#     extracted and sourced at RUNTIME, so shellcheck cannot see the reads.
-#   SC2329 - the mkdir/sleep stubs are invoked by that same runtime-sourced code,
-#     never from this file. Every other function here is called directly, so the
-#     disable cannot hide a dead helper.
-#   SC1090 - the sourced path is produced by extract_range at runtime, so there is
-#     nothing on disk for shellcheck to follow at lint time.
+# The boot's first decision: the `mkdir -p` of every directory the container needs, and its
+# fail-CLOSED branch, taken inline with extract_range. The ONE place the entrypoint aborts on
+# /config state (nothing to persist, nothing to serve); a healthy image never shows it. Lint:
+#   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
+#   SC2034 - these variables are inputs to entrypoint.sh code sourced at RUNTIME.
+#   SC2329 - the mkdir/sleep stubs are called only by that runtime-sourced code.
+#   SC1090 - the sourced path is produced by extract_range at runtime.
 # shellcheck disable=SC2015,SC2034,SC2329,SC1090
 set -u
 
@@ -36,16 +13,10 @@ set -u
 . "$(dirname -- "$0")/lib.sh"
 new_workdir >/dev/null
 
-# The block, verbatim: from the `mkdir -p` that opens it to the closing brace of its
-# `||` handler. Captured as a path rather than sourced through a substitution, so a
-# failed extraction stops this file instead of reporting passes against nothing.
+# Captured as a path, not sourced through a substitution, so a failed extraction stops this file.
 BLOCK=$(extract_range '^mkdir -p' '^  }$') || exit 1
-# extract_range's end anchor is a two-space `}`, which is NOT unique in
-# entrypoint.sh: the next one belongs to install_kiro_cli's mktemp handler ~90 lines
-# later, so a shipped edit that removed this block's closing brace would capture the
-# legacy-/config/kiro migration and part of the installer along with it. Today that
-# over-capture does not parse, so the source fails loudly, but that is luck rather
-# than a guarantee. Name the fault instead of relying on it.
+# The end anchor `^  }$` is not unique in entrypoint.sh: a lost closing brace would capture the
+# legacy-/config/kiro migration below it. Name that fault rather than rely on it failing to parse.
 if grep -q '/config/kiro' "$BLOCK"; then
   printf 'harness error: extract_range ran past the mkdir block; its closing-brace end anchor is not unique\n' >&2
   exit 1
@@ -69,31 +40,21 @@ done
   && ok "the boot creates all seven required directories and continues" \
   || no "required directories" "rc=$rc missing:$missing"
 
-# The install root gets its own assertion rather than riding the list above,
-# because it is the only entry the SERVER writes into: the manager creates
-# $TOOLS/kiro-cli-versions/<version>/ under it and would have to MkdirAll the parents
-# itself if this line ever dropped it. A missing parent there is not visible in the
-# boot log -- the install just fails on the first attempt of a fresh volume, inside
-# the server -- so the failure mode is worth naming here.
+# Its own assertion: the only entry the SERVER writes into, and a missing parent fails the first
+# install on a fresh volume, inside the server, invisible in the boot log.
 [ -d "$ROOT/tools/kiro-cli-versions" ] \
   && ok "the kiro-cli version-install root exists before the server can write into it" \
   || no "kiro-cli install root" "$ROOT/tools/kiro-cli-versions was not created by the boot's mkdir"
 
-# The install root must be a SIBLING of the toolbelt engine's trees, never inside
-# one: the engine deletes every version directory under opt/<tool> that is not the
-# version it just installed, and it accepts any tool name from a hand-editable
-# manifest, so an entry named `kiro-cli` would have taken the active install and its
-# retained predecessor with it.
+# A SIBLING of the toolbelt engine's trees: its per-tool prune deletes every non-current version
+# under opt/<tool>, for any manifest name, so an entry named `kiro-cli` would take the install.
 [ ! -e "$ROOT/tools/opt/kiro-cli" ] \
   && ok "the boot creates no kiro-cli tree under the toolbelt engine's opt/, so the engine's prune cannot reach the install" \
   || no "install root under opt/" "$ROOT/tools/opt/kiro-cli exists again; the engine's per-tool prune deletes every non-current version directory under opt/<tool>"
 
 # --- 2. a directory it cannot create aborts the boot -----------------------------
-# Root cannot be denied a mkdir under a directory it owns, so the failure this branch
-# exists for (an unmounted or read-only /config) is provoked by shadowing the
-# external mkdir, scoped to the subshell. `sleep` is shadowed too: the shipped delay
-# is 10 real seconds, and waiting them out would prove nothing the exit status does
-# not already say.
+# Root cannot be denied a mkdir it owns, so an unwritable /config is provoked by shadowing mkdir in
+# the subshell. `sleep` too: the shipped 10s delay proves nothing the exit status does not.
 ROOT="$WORK/fail"
 (
   TOOLS="$ROOT/tools"

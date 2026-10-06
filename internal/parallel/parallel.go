@@ -18,28 +18,12 @@ import (
 	"sync/atomic"
 )
 
-// Bounded dispatches fn over items with up to maxWorkers concurrent goroutines,
-// stopping early when ctx is cancelled, and REPORTS how many items it ran fn for.
-//
-// The count is the whole point of the return value: a cancelled fan-out runs a
-// PREFIX of the work and the caller is the only thing that knows what a short
-// answer means. Answering `done < len(items)` is what lets a caller mark its
-// result incomplete instead of publishing a subset as if it were the whole set —
-// which is exactly what `internal/chat`'s header scan did, silently, because the
-// unvisited result slots were indistinguishable from items that ran and produced
-// nothing. Compare against `len(items)`; a caller that genuinely does not care
-// (a purge pass, where an unvisited chat simply is not purged) ignores it.
-//
-// Workers PULL indices from a shared channel rather than each owning a
-// pre-cut slice, which is what keeps a slow item from stalling the rest: a
-// finished worker takes the next index immediately instead of waiting for the
-// slowest member of its own batch. Degree is min(len(items), maxWorkers), so a
-// two-item call does not start eight goroutines.
-//
-// Storage-agnostic: fn receives the item's INDEX as well as the item, so a
-// caller collects results into a pre-sized slice by index and needs no mutex.
-// The ctx check is per item, so cancellation lands mid-drain rather than only
-// between batches.
+// Bounded dispatches fn over items with up to min(len(items), maxWorkers) goroutines, stopping
+// early when ctx is cancelled, and REPORTS how many items it ran fn for: a cancelled fan-out runs a
+// PREFIX, so a caller compares done to len(items) to mark its result incomplete rather than publish
+// a subset as whole.
+// Workers pull indices from a shared channel, so a slow item stalls nothing else. fn gets the
+// INDEX, so results collect into a pre-sized slice with no mutex. ctx is checked per item.
 func Bounded[T any](ctx context.Context, items []T, maxWorkers int, fn func(i int, item T)) (done int) {
 	if len(items) == 0 {
 		return 0

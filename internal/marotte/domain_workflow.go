@@ -28,8 +28,8 @@ const (
 )
 
 // RunStartedPayload is the payload for type="run_started": a run began on this
-// chat. Name is carried because a client that has never fetched this run has
-// nothing to label the row with.
+// chat. Name is its display label, carried because a client that has never
+// fetched this run has nothing to label the row with.
 //
 // Scheduled marks a run the SCHEDULER launched, and it travels because only the
 // launch path knows: a manual launch is parentless too, so events cannot separate
@@ -120,15 +120,10 @@ const (
 	RunStepTranscriptSourceReplay RunStepTranscriptSource = "replay"
 )
 
-// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of
-// the run's log whose turn_open.node_path is the requested path, turn_open and
-// turn_close included, in file order, plus the open tails of any such turn still
-// open; or, when the log holds no turn for the path, KAS's replay projected into
-// the same shape. PERSISTED BY NOTHING beyond the log itself.
-//
-// NO `omitempty` on ANY field, deliberately: the generator emits a REQUIRED
-// TypeScript field without it, which stops a client inventing a fallback for the
-// verdict. An optional `state` would read as "assume ready".
+// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of the run's log at
+// that node path in file order, with open tails, or KAS's replay projected into the same shape when
+// the log holds none. No `omitempty` anywhere, so the generated fields are required and a client
+// cannot assume a verdict.
 type RunStepTranscript struct {
 	// WorkflowID and NodePath echo the request, so a client holding several reads in
 	// flight tells the answers apart without correlating.
@@ -186,17 +181,10 @@ type RunInputSettledPayload struct {
 	SettledBy  SettledBy `json:"settled_by"`
 }
 
-// RunOpenAsk is one unanswered ask of a run, as GET /api/runs/{id} reports it under
-// `open_asks`. It exists so an agent handed a deferral can READ the question it is
-// being asked to answer: the ask id is on no other endpoint, and it is far too long
-// to embed in the chat message that hands the work over.
-//
-// Question carries no omitempty deliberately: a reconciled ask legitimately has "",
-// because the registry is in memory and a restart loses the text while the run stays
-// parked — and an ABSENT field would read as "complete" where an empty one reads as
-// "the text is gone". No node PATH is exposed because none exists to expose:
-// RunInputNeededPayload carries none and the ask registry holds none, so node_id is
-// the whole of a step's address here.
+// RunOpenAsk is one unanswered ask of a run, under `open_asks` in GET /api/runs/{id}, so an agent
+// handed a deferral can read the question. Question has no omitempty: after a restart a reconciled
+// ask's text is legitimately "", which must not read as absent. node_id is a step's whole address
+// here.
 type RunOpenAsk struct {
 	AskID     string `json:"ask_id"`
 	Question  string `json:"question"`
@@ -287,9 +275,8 @@ type LiveRunsResponse struct {
 // one run, and why not for the rest.
 //
 // Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
-// passthrough. The client used to decide this from a status table plus an SSE-fed
-// cache of which chat launched the run, so any reloaded client read a
-// chat-parented run as parentless. Only the server sees all three inputs.
+// passthrough. Only the server sees all three inputs: a client's SSE-fed cache of
+// which chat launched the run is empty after a reload.
 type RunControlsResponse struct {
 	// Refused maps a verb this run does not offer to the one sentence a reader
 	// needs, and carries only a verb whose absence would otherwise be unexplained.
@@ -298,10 +285,26 @@ type RunControlsResponse struct {
 	// parentless one. Read from the chat store here rather than from an event-fed
 	// client cache, which is empty after a reload.
 	ParentChatID string `json:"parent_chat_id"`
+	// PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
+	// finish_loop verbs send it back. Empty for every other run.
+	PauseNodeID string `json:"pause_node_id,omitempty"`
 	// Verbs are the offered controls, in row order. Strings rather than a
 	// registered enum because the client's label table is the narrowing point: an
 	// unlabelled verb is dropped, so a future one degrades to a missing button.
 	Verbs []string `json:"verbs"`
+}
+
+// RunExtendRequest is POST /api/runs/{id}/extend's body: the paused repeat and how
+// many more iterations it gets (1..1000).
+type RunExtendRequest struct {
+	NodeID     string `json:"node_id"`
+	Iterations int    `json:"iterations"`
+}
+
+// RunFinishLoopRequest is POST /api/runs/{id}/finish-loop's body: the paused repeat
+// to end.
+type RunFinishLoopRequest struct {
+	NodeID string `json:"node_id"`
 }
 
 // RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome

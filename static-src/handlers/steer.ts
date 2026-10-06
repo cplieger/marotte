@@ -5,7 +5,9 @@
 
 import { onSSE } from "../bus.js";
 import { recordSteerQueued } from "../store.js";
-import { info, success, error } from "../toast.js";
+import { notice } from "../toast.js";
+import { named, noticeSubject } from "../notice-subject.js";
+import type { NoticeLevel } from "../wire/types.gen.js";
 
 onSSE("steer_queued", (chatID, p) => {
   recordSteerQueued(chatID, {
@@ -19,21 +21,23 @@ onSSE("steer_queued", (chatID, p) => {
 
 // A toast: nobody can discard a notice and it has no later state, and the step's
 // output already lands in its delegated-work block.
-onSSE("agent_notice", (_chatID, p) => {
+onSSE("agent_notice", (chatID, p) => {
   const text = p.text.trim();
   if (text === "") {
     return;
   }
-  switch (p.severity) {
+  const subject = noticeSubject(chatID);
+  notice(named(subject, text), agentNoticeLevel(p.severity), subject.open);
+});
+
+/** KAS's four steering severities; anything else is the neutral info level. */
+function agentNoticeLevel(severity: string): NoticeLevel | "success" {
+  switch (severity) {
     case "success":
-      success(text);
-      return;
     case "warning":
     case "error":
-      // Both take the error face — warning is closer to error than aside.
-      error(text);
-      return;
+      return severity;
     default:
-      info(text);
+      return "info";
   }
-});
+}

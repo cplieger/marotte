@@ -1,22 +1,15 @@
-/**
- * Shared action-test setup. Provides resetActionFramework() and mock factories.
- * Backed by @cplieger/actions internal modules.
- *
- * NOTE: vi.mock() calls must remain at the top of each test file (Vitest hoisting).
- * Use the exported factory functions as the mock implementation argument.
- */
+/** Shared action-test setup over @cplieger/actions' internals. `vi.mock()` calls stay at the top
+ *  of each test file (hoisting); pass these factories as the implementation argument. */
 import { configure, configureTransport } from "@cplieger/actions";
 import { resetActionFramework as resetFramework } from "@cplieger/actions/testing";
 import type { TransportSendResult } from "@cplieger/actions";
 import { error as toastError, success as toastSuccess } from "../../toast.js";
 import { send as transportSend } from "../../transport.js";
 
-/** Resets define, registry, cleanup, API config, and transport.
- *  Also wires the notifier and transport through to their respective
- *  modules (which tests mock via vi.mock). */
+/** Resets the action framework and wires its notifier and transport to the (mocked) toast.js and
+ *  transport.js. */
 export function resetActionFramework(): void {
   resetFramework();
-  // Wire the library's notifier to toast.js (mocked by tests).
   configure({
     success: (msg) => {
       toastSuccess(msg);
@@ -25,7 +18,6 @@ export function resetActionFramework(): void {
       toastError(msg, retry);
     },
   });
-  // Wire the library's transport to transport.js send (mocked by tests).
   configureTransport(async (cmd, { signal }) => {
     const r = await transportSend(cmd as Parameters<typeof transportSend>[0], {
       signal,
@@ -35,16 +27,9 @@ export function resetActionFramework(): void {
   });
 }
 
-/**
- * Read a header value from a mocked `fetch` call's RequestInit, regardless of
- * how the headers were supplied. Since actions 2.0.7 routes `apiAction` through
- * `@cplieger/fetch`, the request core always hands the underlying `fetch` a
- * `Headers` instance (not the plain lowercase-keyed object the pre-2.0.7 core
- * used), so a bracket lookup like `init.headers["idempotency-key"]` reads
- * `undefined`. This accessor handles a `Headers` instance, a plain record, or
- * an entries array, and is case-insensitive. Returns undefined when the header
- * (or the RequestInit) is absent.
- */
+/** A header from a mocked `fetch` call's RequestInit, case-insensitive, whatever the headers'
+ *  shape: since actions 2.0.7 the request core passes a `Headers` instance, so a bracket lookup
+ *  reads `undefined`. */
 export function headerValue(init: RequestInit | undefined, name: string): string | undefined {
   const h = init?.headers;
   if (h === undefined) {

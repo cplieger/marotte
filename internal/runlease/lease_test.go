@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// The whole arithmetic of one clock over three inputs. Two mechanisms would let a manual
-// run of a scheduled recipe hold that recipe for the whole ceiling and refuse every slot
-// under it, and a late slot bound its run by whatever remained of the interval.
+// TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor pins the composition of
+// one clock over three inputs.
 func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC)
@@ -54,8 +53,7 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 			in:   Bounds{BackstopAt: now.Add(100 * idle), Idle: idle, Floor: floor},
 			want: now.Add(idle),
 		},
-		// Deliberately in the PAST, which is what makes the backstop absolute: floored
-		// instead, a run refilling on its own progress rolls the bound forward forever.
+		// In the PAST: a spent backstop is honoured, not floored, or progress rolls it forward forever.
 		"a spent backstop is honoured, not floored": {
 			in:   Bounds{BackstopAt: now.Add(-time.Hour), Idle: idle, Floor: floor},
 			want: now.Add(-time.Hour),
@@ -93,8 +91,6 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 				t.Errorf("NextDeadline = %v, want %v (in %v / %v from now)",
 					got, tc.want, got.Sub(now), tc.want.Sub(now))
 			}
-			// The floor holds for every case a SPENT backstop does not answer,
-			// which is the one input allowed below it.
 			spent := !tc.in.BackstopAt.IsZero() && tc.in.BackstopAt.Before(now.Add(floor))
 			if !spent && got.Before(now.Add(floor)) {
 				t.Errorf("NextDeadline = %v, below the floor %v", got.Sub(now), floor)
@@ -108,12 +104,8 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 	}
 }
 
-// The one place the inputs genuinely disagree, and the two halves disagree in OPPOSITE
-// directions, so no single composition step serves both. The floor answers how much budget
-// a run should GET — without it an interval edited below it, or a slot fired at the end of
-// its window, writes "failed" into the row while nothing is wrong. The backstop answers how
-// much a run has LEFT, so the floor cannot reach it: any remainder tighter than the floor
-// wins, and a spent one is an instant in the past the timer fires on at once.
+// TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop pins the one disagreement: the
+// floor outranks the slot, while any backstop tighter than the floor wins.
 func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -134,16 +126,15 @@ func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
 			spent.Sub(now), backstop.Sub(now))
 	}
 
-	// A REFILL a moment later computes the same instant, which is what makes it terminal:
-	// the anchor is fixed for the whole stretch, so the armed timer stands.
+	// A refill a moment later computes the same instant: the backstop anchor is fixed.
 	later := NextDeadline(now.Add(2*time.Minute), Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
 	if !later.Equal(spent) {
 		t.Errorf("a stamp two minutes later moved the spent backstop from %v to %v", spent, later)
 	}
 }
 
-// Three readers depend on the meaning of a zero deadline: the timer callback's liveness
-// test, the step cap's authority to act, and the re-arm.
+// TestLeaseBounded_IsTheSuccessorOfTheArmMap pins the zero-deadline meaning three readers
+// depend on: the timer's liveness test, the step cap, and the re-arm.
 func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -168,8 +159,7 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	}
 }
 
-// An unknown origin says neither whether the run is sweepable nor whether it is
-// unattended, so it is refused on the way in and dropped on the way back off disk.
+// TestOriginValid pins that an unknown origin is refused on write and dropped on load.
 func TestOriginValid(t *testing.T) {
 	t.Parallel()
 	for _, o := range []Origin{OriginScheduled, OriginManual, OriginAgent} {

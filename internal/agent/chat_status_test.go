@@ -4,28 +4,25 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/sse"
 )
 
-// Merge is MergeStamped without the stamp, for a test that seeds the cache and
-// reads no version.
+// Merge is MergeStamped without the stamp.
 func (c *chatStatusCache) Merge(chatID marotte.ChatID, p marotte.ChatStatusPayload) marotte.ChatStatusPayload {
 	merged, _ := c.MergeStamped(chatID, p)
 	return merged
 }
 
-// Get returns a chat's last status; production reads the whole set through Snapshot.
+// Get returns a chat's last status.
 func (c *chatStatusCache) Get(chatID marotte.ChatID) marotte.ChatStatusPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.byChat[chatID]
 }
 
-// TestChatStatusCache covers the one status_snapshot input the assistant buffer
-// cannot supply. chat_status arrives on KAS's focus_update channel, so it lives
-// on no message and in no replay — deleting the turn mirror without this would
-// have silently dropped the label from every mid-turn reconnect.
+// TestChatStatusCache covers the status_snapshot input no message or replay supplies.
 func TestChatStatusCache(t *testing.T) {
 	c := newChatStatusCache()
 
@@ -39,58 +36,39 @@ func TestChatStatusCache(t *testing.T) {
 		t.Errorf("got %+v, want in_progress/reading files", got)
 	}
 
-	// Newest wins: the agent re-declares as focus shifts.
+	// Newest wins.
 	c.Merge("c1", marotte.ChatStatusPayload{Status: "waiting_on_user", Description: "needs a decision"})
 	if got := c.Get("c1"); got.Status != "waiting_on_user" {
 		t.Errorf("got %q, want the latest status", got.Status)
 	}
 
-	// Cleared at turn end, so a later connect cannot report a finished turn's
-	// label as current — the same reason the live event is ephemeral.
+	// Cleared, so a later connect cannot report a finished turn's label.
 	c.Clear("c1")
 	if got := c.Get("c1"); got.Status != "" {
 		t.Errorf("status %q survived the turn", got.Status)
 	}
 
-	// waiting_on_user is the one status ClearAtTurnEnd RETAINS: its whole meaning is
-	// that the turn ended and a person still owes an answer, so a refresh or a second
-	// device must still find it. Measured 2026-09-08: deleting that early return left
-	// this package green, so nothing pinned the rule the amber dot rests on.
-	//
-	// Retention is the right rule and is UNCHANGED; what changed is that turn end is no
-	// longer the only exit from the window it opens. The claim now also ends when the
-	// user answers through one of the agent's structured channels (a userInput card, an
-	// MCP elicitation, a permission option — internal/command/discharge.go's
-	// dischargeByAnswer rows), because those answer the agent as squarely as a prompt
-	// does and nothing used to invalidate the claim after one. The mid-turn declaration
-	// that survives a turn the agent finished by itself is a separate shape the wire
-	// carries no discriminator for, so retention still covers it deliberately.
+	// waiting_on_user is the one status ClearAtTurnEnd retains. It also ends when the user answers
+	// a structured channel (internal/command/discharge.go's dischargeByAnswer rows).
 	c.Merge("c2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
 	c.ClearAtTurnEnd("c2")
 	if got := c.Get("c2"); got.Status != marotte.ChatStatusWaitingOnUser || got.Description != "needs a decision" {
 		t.Errorf("got %+v, want waiting_on_user retained whole past turn end", got)
 	}
-	// Every other status goes, which is what keeps a finished turn's label off a
-	// later connect.
+	// Every other status goes.
 	c.Merge("c3", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
 	c.ClearAtTurnEnd("c3")
 	if got := c.Get("c3"); got.Status != "" {
 		t.Errorf("status %q survived turn end; only waiting_on_user is retained", got.Status)
 	}
 
-	// An empty chat id is ignored rather than creating a junk entry: global
-	// events carry no chat.
+	// An empty chat id is ignored: global events carry no chat.
 	c.Merge("", marotte.ChatStatusPayload{Status: "in_progress"})
 	if got := c.Get(""); got.Status != "" {
 		t.Error("an empty chat id was recorded")
 	}
 
-	// A both-empty payload is the discharge's own frame: it must leave no entry, or
-	// every chat that ever discharged keeps a phantom the retention rule then has to
-	// reason about. Get cannot see one (an absent key and a {"",""} value both read as
-	// the zero payload), so Snapshot is the only discriminator. Hygiene rather than
-	// correctness — every consumer of a phantom is inert — so this is a pin, not a
-	// defect guard.
+	// A both-empty payload must leave no entry; only Snapshot can tell.
 	c.Merge("c4", marotte.ChatStatusPayload{Status: "in_progress", Description: "x"})
 	c.Merge("c4", marotte.ChatStatusPayload{})
 	if _, ok := c.Snapshot()["c4"]; ok {
@@ -102,9 +80,7 @@ func TestChatStatusCache(t *testing.T) {
 		t.Errorf("status-only Merge left %q, want in_progress", got.Status)
 	}
 
-	// ClearWaiting is NARROWER than Clear: it ends the retained claim and reports
-	// whether one went, so the discharge cannot delete a status the running turn
-	// declared.
+	// ClearWaiting is narrower than Clear: it never deletes a status the running turn declared.
 	c.Merge("c6", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
 	if !c.ClearWaiting("c6") {
 		t.Error("ClearWaiting reported no claim for a retained waiting_on_user entry")
@@ -115,8 +91,7 @@ func TestChatStatusCache(t *testing.T) {
 	if c.ClearWaiting("c6") {
 		t.Error("ClearWaiting reported a claim for a chat with no entry")
 	}
-	// An in_progress entry belongs to its turn, so the discharge leaves it whole:
-	// clearing it would wipe the tab tooltip's "doing" half for the rest of the turn.
+	// An in_progress entry belongs to its turn.
 	c.Merge("c7", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"})
 	if c.ClearWaiting("c7") {
 		t.Error("ClearWaiting reported a claim for an in_progress entry")
@@ -126,10 +101,8 @@ func TestChatStatusCache(t *testing.T) {
 	}
 }
 
-// TestDischargeWaiting_BroadcastsTheClear covers the half a bare cache delete leaves
-// undone: a second connected device holds the amber dot until its next message_chunk,
-// a reconnect or a gap, so the discharge publishes an empty chat_status too. The empty
-// payload is only true when the retained CLAIM went, which is what the third case pins.
+// TestDischargeWaiting_BroadcastsTheClear pins that other devices need the empty chat_status frame,
+// published only when the claim actually went.
 func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 	t.Run("a retained claim is cleared and broadcast", func(t *testing.T) {
 		rt, _, _ := newTestHub()
@@ -181,11 +154,8 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 	})
 }
 
-// TestChatStatusMerge_OmitIsUnchanged is EXHAUSTIVE over the truth table because the rule
-// IS a truth table, and a table with holes is what let a partial declaration destroy a
-// retained claim. The four values are DISTINCT so every row discriminates WHICH side
-// supplied each field; reusing one status or one description leaves the table exhaustive
-// over emptiness and blind to precedence.
+// TestChatStatusMerge_OmitIsUnchanged is exhaustive over the merge truth table, with distinct
+// values so every row shows which side supplied each field.
 func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 	const (
 		prevStatus = marotte.ChatStatusWaitingOnUser
@@ -219,9 +189,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 		{name: "both prev, both", prevS: true, prevD: true, nextS: true, nextD: true, wantStatus: nextStatus, wantDescription: nextDesc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// A fresh cache per row: Merge is the cache's only writer, so on a shared one
-			// row N's stored entry becomes row N+1's prev and every row after the first
-			// asserts against a prev it did not choose.
+			// A fresh cache per row, or row N's entry becomes row N+1's prev.
 			c := newChatStatusCache()
 			if tc.prevS || tc.prevD {
 				seed := marotte.ChatStatusPayload{}
@@ -247,8 +215,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 				t.Errorf("Merge returned %+v, want {%q %q}", got, tc.wantStatus, tc.wantDescription)
 			}
 			if !tc.nextS && !tc.nextD {
-				// Get cannot tell an absent key from a stored {"",""}, and a phantom entry
-				// is what these rows exist to catch.
+				// Get cannot tell an absent key from a stored {"",""}.
 				if n := len(c.Snapshot()); n != 0 {
 					t.Errorf("a both-empty next left %d entries, want 0: %+v", n, c.Snapshot())
 				}
@@ -275,9 +242,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 	})
 }
 
-// TestEmitChatStatus_PublishesTheMergedPayload is the point of the whole change: the cache
-// being right is not enough, because the client replaces both fields from the frame. The
-// frame assertion is separate from the cache one on purpose.
+// TestEmitChatStatus_PublishesTheMergedPayload asserts the frame separately: the client replaces both fields from it.
 func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 	rt, _, _ := newTestHub()
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
@@ -301,9 +266,7 @@ func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 	}
 }
 
-// TestEmitChatStatus_StatusOnlyKeepsTheDescription is the mirror, and it also pins that a
-// real declaration still discharges the dot: the status moves off waiting_on_user, which is
-// tabStatusFor's own input.
+// TestEmitChatStatus_StatusOnlyKeepsTheDescription is the mirror, and pins that a real declaration discharges the dot.
 func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 	rt, _, _ := newTestHub()
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
@@ -331,10 +294,8 @@ func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 	}
 }
 
-// TestEmitChatStatus_DoesNotStageAMergedDescription pins the raw-versus-merged split. The
-// turn and the wire answer different questions: Turn.statusDesc is what the agent declared
-// during THIS turn, so feeding it the merge would put a previous turn's words in this
-// turn's push body.
+// TestEmitChatStatus_DoesNotStageAMergedDescription pins that Turn.statusDesc takes the raw declaration,
+// or a previous turn's words reach this turn's push.
 func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -342,8 +303,7 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
-	// A wire turn is KAS's own open, not the user answering, so the retention
-	// survives it.
+	// A wire turn is KAS's own open, not an answer, so the retention survives it.
 	if rt.stageWireTurn(t, "c1") == nil {
 		t.Fatal("the fixture could not open a wire turn")
 	}
@@ -351,9 +311,7 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
 		marotte.ChatStatusPayload{Status: "in_progress"}))
 
-	// Read the field the way statusDescription does. Not through claimOwn, which
-	// ends in claimLocked and moves the turn into finalizing, changing the state
-	// under assertion.
+	// Read the field directly: claimOwn would move the turn into finalizing.
 	lc, ok := rt.coord.turns.lookup("c1")
 	if !ok {
 		t.Fatal("no chat lifecycle for c1")
@@ -386,10 +344,7 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 	return out
 }
 
-// TestOpenTurn_DischargesTheWaitingRetention covers the counterpart to
-// ClearAtTurnEnd's retention: waiting_on_user outlives its turn on purpose, so
-// something has to end that window or the amber dot describes a question the user
-// answered hours ago. A prompt's turn_open IS that answer; a `!cmd` reaches no agent.
+// TestOpenTurn_DischargesTheWaitingRetention pins that a prompt's turn_open answers the claim; a `!cmd` reaches no agent.
 func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -404,13 +359,13 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		rt.bus.chatStatus.Merge("c1", waiting)
 		head := rt.bus.fanout.Position().Head
 
-		if _, err := rt.OpenTurn(t.Context(), "c1", marotte.TurnSourcePrompt, prompt, name); err != nil {
+		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: name}); err != nil {
 			t.Fatalf("the fixture could not open a prompt turn: %v", err)
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got.Status != "" {
 			t.Errorf("status %q survived the prompt that answered it, so a reconnect repaints the dot", got.Status)
 		}
-		// A second device converges on the frame rather than on its next entry frame.
+		// A second device converges on the frame.
 		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 1 {
 			t.Errorf("the prompt published %d chat_status frames, want 1: %+v", len(got), got)
 		}
@@ -421,7 +376,7 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		seedChat(t, cs, "c1")
 		rt.bus.chatStatus.Merge("c1", waiting)
 
-		if _, err := rt.OpenTurn(t.Context(), "c1", marotte.TurnSourceLocalShell, prompt, name); err != nil {
+		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourceLocalShell, Prompt: prompt, Init: name}); err != nil {
 			t.Fatalf("the fixture could not open a shell turn: %v", err)
 		}
 		got := rt.bus.chatStatus.Get("c1")

@@ -1,8 +1,5 @@
-// ---------------------------------------------------------------------------
-// Tests for account-usage.ts: renders the account/subscription usage into the
-// status-popup footer elements. api-client + the generated decoder are mocked
-// so we control the fetched payload and assert the rendered DOM.
-// ---------------------------------------------------------------------------
+// account-usage.ts renders account usage into the status-popup footer; api-client and the
+// generated decoder are mocked so the payload is controlled.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type { AccountUsage } from "./types.js";
@@ -10,9 +7,7 @@ import type { AccountUsage } from "./types.js";
 const mockApiGetTyped = vi.fn();
 vi.mock("./api-client.js", () => ({
   apiGetTyped: (...args: unknown[]) => mockApiGetTyped(...args),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  // Present-but-inert so real-ESM linking succeeds; no case calls them.
   apiGet: vi.fn(),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeAccountUsage: vi.fn() }));
@@ -27,13 +22,11 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-/** The card's account row as `static/index.html` authors it. `#st-account` is the
- *  `<a>` ITSELF now — the card's one link, carrying the destination the sidebar
- *  address used to hold — with the plan and the meter in a `.pill-account-lines`
- *  stack beside the external mark. `account-usage.ts` needed no change for that:
- *  `$.stAccount` stays `HTMLElement`, its one `box.hidden = false` and all four
- *  render arms are untouched, and `data-tooltip` is written on the METER rather than
- *  on the box, so the link inherits no tooltip it should not have. */
+/**
+ * The card's account row as `static/index.html` authors it: `#st-account` is the `<a>`
+ * itself, with the plan and meter in `.pill-account-lines`. `data-tooltip` sits on the
+ * METER, so the link inherits no tooltip.
+ */
 function seedDom(): void {
   document.body.innerHTML = `
     <a id="st-account" class="pill-account" hidden
@@ -77,9 +70,7 @@ describe("loadAccountUsage", () => {
     expect($.acctPlan.textContent).toBe("KIRO POWER");
     expect($.acctMeter.textContent).toContain("(1337%)");
     expect($.acctMeter.textContent).toContain("cr");
-    // The reset date appears on no other surface, so the tooltip is its only
-    // home — and the styled controller republishes it as aria-describedby,
-    // which a native title never did.
+    // The reset date's only home is the tooltip, republished as aria-describedby.
     expect($.acctMeter.dataset["tooltip"]).toContain("2026-08-01");
   });
 
@@ -115,12 +106,8 @@ describe("loadAccountUsage", () => {
     expect($.acctMeter.textContent).toBe("");
   });
 
-  // The overage state is READ-ONLY (nothing in kiro-cli sets it), so the row states
-  // it and its own link routes the reader to the page that can change it. Both
-  // states are asserted rather than only the interesting one: `overages_enabled`
-  // carries no `omitempty` precisely so a false is a STATEMENT, and a render that
-  // only spoke up for `true` would be indistinguishable from the omitted field this
-  // change removed.
+  // Overage state is read-only, so the row states it and links to where it changes. Both
+  // values are asserted: `overages_enabled` has no `omitempty`, so false is a statement.
   it("reports that overages are on", async () => {
     mockApiGetTyped.mockResolvedValue({
       plan_name: "KIRO POWER",
@@ -143,9 +130,8 @@ describe("loadAccountUsage", () => {
     expect($.acctOverage.textContent).toBe("Overages off");
   });
 
-  // Sequenced deliberately: the row is never re-hidden, so a failure has to CLEAR a
-  // state an earlier render left behind. Asserting a blank line on a fresh failed
-  // fetch passes even with the clear deleted, because the element starts empty.
+  // Sequenced: the row is never re-hidden, so a failure must CLEAR an earlier render's state
+  // (a fresh element starts empty and would pass anyway).
   it("clears the line when a later fetch fails, rather than leaving a stale state", async () => {
     mockApiGetTyped.mockResolvedValue({
       plan_name: "KIRO POWER",
@@ -177,16 +163,9 @@ describe("loadAccountUsage", () => {
   });
 });
 
-// An UNRENDERED row must generate no box, and that was a live defect until this
-// change. `.pill-account` declares `display: flex`, which is an AUTHOR declaration,
-// and the UA sheet's `[hidden] { display: none }` loses to it on ORIGIN — so the
-// `hidden` attribute this fixture and `static/index.html` both ship did nothing here
-// and the empty row spent one `--sp-2` card gap on nothing before usage loaded.
-// `&[hidden] { display: none }` on the rule itself is the fix, and this is what
-// fails if it is removed.
-//
-// A real cascade rather than a style read: the question is which of two `display`
-// declarations wins, which only the assembled sheet answers.
+// An unrendered row generates no box: `.pill-account`'s author `display: flex` beats the
+// UA `[hidden]` rule, so `&[hidden] { display: none }` is required. A real cascade, since
+// only the assembled sheet answers which `display` wins.
 describe("the row's hidden state", () => {
   it("generates no box while it is hidden", async () => {
     const style = mountAppCSS();

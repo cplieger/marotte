@@ -1,5 +1,3 @@
-// Tests for actions/messages.ts: copyClipboard, explainError, undoEdit.
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -13,9 +11,7 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Inert: present only so real-ESM linking succeeds.
   apiGetTyped: vi.fn(),
 }));
 

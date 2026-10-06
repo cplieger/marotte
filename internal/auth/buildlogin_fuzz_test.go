@@ -2,11 +2,8 @@ package auth
 
 import "testing"
 
-// FuzzBuildLoginArgs verifies buildLoginArgs always produces a safe argument
-// list starting with "login" and "--use-device-flow", with no embedded control
-// characters that could cause argument injection.
-//
-// Bug class: argument injection via embedded newlines/NUL in provider/region.
+// FuzzBuildLoginArgs pins that buildLoginArgs starts with "login" and "--use-device-flow" and that newline or NUL in
+// provider or region cannot inject arguments.
 func FuzzBuildLoginArgs(f *testing.F) {
 	f.Add("", "")
 	f.Add("https://x.com", "us-east-1")
@@ -18,12 +15,11 @@ func FuzzBuildLoginArgs(f *testing.F) {
 	f.Fuzz(func(t *testing.T, provider, region string) {
 		args := buildLoginArgs(provider, region)
 
-		// Invariant 1: always starts with "login", "--use-device-flow".
 		if len(args) < 2 || args[0] != "login" || args[1] != flagDeviceFlow {
 			t.Fatalf("buildLoginArgs(%q, %q) = %v; missing required prefix", provider, region, args)
 		}
 
-		// Invariant 2: provider appears only after --identity-provider flag.
+		// Provider appears only after --identity-provider.
 		if provider != "" {
 			found := false
 			for i, a := range args {
@@ -37,7 +33,7 @@ func FuzzBuildLoginArgs(f *testing.F) {
 			}
 		}
 
-		// Invariant 3: region appears only after --region flag.
+		// Region appears only after --region.
 		if region != "" {
 			found := false
 			for i, a := range args {
@@ -51,7 +47,7 @@ func FuzzBuildLoginArgs(f *testing.F) {
 			}
 		}
 
-		// Invariant 4: length is deterministic based on inputs.
+		// Length is determined by the inputs.
 		expected := 2
 		if provider != "" {
 			expected += 2

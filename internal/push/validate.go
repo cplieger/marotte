@@ -26,12 +26,8 @@ type pushEndpointRule struct {
 	Suffix string // suffix-match; must start with "." (empty if exact-only)
 }
 
-// pushEndpointRules is the declarative policy table of Web Push endpoint
-// hosts recognised by the major browsers. The subscribe endpoint stores
-// a URL that the server will later POST to; an unvalidated endpoint is a
-// textbook SSRF primitive. Limiting to real browser push services
-// neutralises the primitive without coupling us to specific DNS
-// resolution or IP ranges. Adding a new vendor is one line.
+// pushEndpointRules lists the browser push services a stored endpoint may target: an
+// unvalidated endpoint the server later POSTs to is an SSRF primitive.
 var pushEndpointRules = []pushEndpointRule{
 	{Host: "fcm.googleapis.com"},                // Chrome, Edge, others on Chromium
 	{Host: "updates.push.services.mozilla.com"}, // Firefox
@@ -39,11 +35,9 @@ var pushEndpointRules = []pushEndpointRule{
 	{Suffix: ".push.apple.com"},                 // Safari (web.push.apple.com) + Apple push subdomains
 }
 
-// isAllowedPushEndpoint validates that the endpoint URL is https and
-// targets one of the known browser push services. Explicit ports are
-// rejected so the stored endpoint matches what vapidHeader later
-// derives as the JWT audience (which uses u.Host, port included).
-// Returns false for any rejection path.
+// isAllowedPushEndpoint reports whether endpoint is https on a known browser push service.
+// Explicit ports are rejected so the stored endpoint matches the JWT audience vapidHeader
+// derives from u.Host.
 func isAllowedPushEndpoint(endpoint string) bool {
 	u, err := url.Parse(endpoint)
 	if err != nil {

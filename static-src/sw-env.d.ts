@@ -30,11 +30,8 @@ interface WindowClient extends Client {
   readonly focused: boolean;
 }
 
-// `renotify` is absent from the bundled DOM lib's NotificationOptions but is
-// implemented and required here: a same-tag notification replaces the one on
-// screen SILENTLY, so without this a second event supersedes the first with no
-// alert at all. Declaration merging rather than a cast, so the option is
-// type-checked like any other.
+// `renotify` is missing from the bundled DOM lib: without it a same-tag notification replaces the
+// one on screen SILENTLY. Merged, so it is type-checked.
 interface NotificationOptions {
   renotify?: boolean;
 }

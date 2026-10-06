@@ -1,11 +1,8 @@
 package agent
 
-// Replay-projection lifecycle. Replay frames are PUSHED to the bridge's buffered
-// notifCh before session/load returns, so settling at Start's return would race a
-// partial transcript; replay_drain.go owns the completion condition instead, and the
-// step route reads the same type. bridge.replayBudget bounds the RPC above, so the
-// condition needs no timeout of its own. A load that never returned leaves the drain
-// unloaded and the projection is DISCARDED.
+// Replay-projection lifecycle. Replay frames reach notifCh before session/load returns, so
+// replay_drain.go owns the completion condition; bridge.replayBudget bounds the RPC. A load
+// that never returned discards the projection.
 
 import (
 	"context"
@@ -20,72 +17,57 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// replayStore is the chat store as the resume's merge reaches it: the provenance the
-// projection snapshots at open, and the locked swap over log and header. The
-// provenance is a STORE read because the log is reachable only inside a Reconcile
-// callback, which is the swap's own path and announces a rewrite.
-//
-// TWO methods, not three: the record read this held for the revision snapshot has no
-// caller left once the provenance comes off the log.
+// replayStore is the chat store as the resume merge reaches it: the provenance snapshotted at
+// open, and the locked swap. The provenance is a store read because the log is reachable only
+// inside a Reconcile callback.
 type replayStore interface {
 	NewestRevert(ctx context.Context, chatID marotte.ChatID) (string, bool)
 	Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(l *chat.EntryLog, h chat.EntryHeader) (bool, error)) (version string, changed bool, err error)
 }
 
-// replay owns the session/load transcript projection: the in-flight rebuild of a
-// chat's history from KAS's own replay, and the swap that merges it into the record.
+// replay owns the session/load projection: the in-flight rebuild of a chat's history from KAS's
+// replay and the swap that merges it.
 type replay struct {
 	chats replayStore
 	// lifetime supplies the context the swap runs under.
 	lifetime *lifetime
 	// projections are the rebuilds in flight, keyed by chat.
 	projections map[marotte.ChatID]*loadProjection
-	// onProjection receives a settled projection, called WITHOUT projMu held: the swap
-	// writes the chat store, and holding the lock across that would let a store
-	// mutation and a replay frame deadlock against each other.
+	// onProjection receives a settled projection without projMu held: the swap writes the chat store,
+	// which could deadlock against a replay frame.
 	onProjection func(chatID marotte.ChatID, lp *loadProjection)
-	// underLifecycle runs the swap under the chat's lifecycle mutex, the same one the
-	// rewind holds across its truncate, so the merge's gates and its rewrite see one
-	// log. Nil runs the swap unserialized (the projection tests build a bare replay).
+	// underLifecycle runs the swap under the chat's lifecycle mutex, which the rewind holds across its
+	// truncate. Nil runs it unserialized (bare projection tests).
 	underLifecycle func(ctx context.Context, chatID marotte.ChatID, fn func() error) error
 	// broadcast publishes the replacement announcement.
 	broadcast func(context.Context, marotte.ServerEvent)
-	// workDir is the workspace root a projected diff path is made relative to. A VALUE
-	// rather than a read through lifetime, because the projection tests build a bare
-	// replay carrying no lifetime and still open a projection.
+	// workDir is the root projected diff paths are relative to; a value because projection tests carry no lifetime.
 	workDir string
 	projMu  sync.Mutex
 }
 
-// loadProjection is one in-flight session/load's accumulating transcript.
-// Guarded by Runtime.projMu; the fields are not independently safe.
+// loadProjection is one in-flight session/load transcript. Guarded by Runtime.projMu.
 type loadProjection struct {
 	proj *translate.EntryProjection
 	// sessionID is the session the replay came from: turn pairing's scope.
 	sessionID string
-	// snapshot is the newest turn_revert's entry id when the projection opened, empty
-	// when the log held none; the swap refuses a log a revert landed in since.
+	// snapshot is the newest turn_revert id at open, or empty; the swap refuses a log reverted since.
 	snapshot string
-	// frames counts replay frames ingested: many frames projecting zero turns is a
-	// decoding bug.
+	// frames counts ingested replay frames: many frames and zero turns is a decoding bug.
 	frames int
-	// drain is the completion condition, shared with the step route. Last so every
-	// pointer field stays ahead of it (govet fieldalignment).
+	// drain is the completion condition shared with the step route. Last for govet fieldalignment.
 	drain replayDrain
 }
 
-// The three triggers a settle can run from, for the settle log: the reader's own
-// post-load attempt, the position a consumed frame reached, and the bridge-exit seal.
+// The three settle triggers, for the settle log: the post-load attempt, a consumed frame's position, and the exit seal.
 const (
 	settleOnLoad  = "load"
 	settleOnFrame = "frame"
 	settleOnExit  = "exit"
 )
 
-// OpenReplayProjection starts a projection for a chat about to session/load its
-// session, snapshotting the log's newest turn_revert. A projection already open for
-// that chat is discarded: the only way to reach this twice is a re-load (model-switch
-// fallback), whose replay supersedes.
+// OpenReplayProjection starts a projection before a session/load, snapshotting the newest
+// turn_revert. An open one is discarded: only a re-load reaches this twice.
 func (rp *replay) OpenReplayProjection(ctx context.Context, chatID marotte.ChatID, sessionID string) {
 	snapshot, _ := rp.chats.NewestRevert(ctx, chatID)
 	rp.projMu.Lock()
@@ -103,18 +85,14 @@ func (rp *replay) OpenReplayProjection(ctx context.Context, chatID marotte.ChatI
 	}
 }
 
-// MarkReplayLoadedAt records the read-loop position the session/load response arrived
-// at, and ATTEMPTS one settle. Called from the spawn goroutine.
-//
-// The attempt is the point: a replay Forward has already drained is complete HERE and
-// no later frame is coming to notice it.
+// MarkReplayLoadedAt records the session/load response's read-loop position and attempts one
+// settle, from the spawn goroutine: a replay already drained has no later frame to notice it.
 func (rp *replay) MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint) {
 	lp := rp.claimSettled(chatID, at.gen, false, func(d *replayDrain) { d.markLoadedAt(at) })
 	rp.adopt(chatID, lp, settleOnLoad)
 }
 
-// DiscardReplayProjection drops a chat's projection unsettled, when the load failed,
-// so a half-built transcript cannot be adopted later.
+// DiscardReplayProjection drops a chat's projection unsettled after a failed load.
 func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -124,9 +102,8 @@ func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	}
 }
 
-// ingestReplayFrame folds one replay-tagged frame into the chat's open projection.
-// Reports whether a projection consumed it, so the caller can drop a replay that
-// arrived with no load in flight.
+// ingestReplayFrame folds one replay frame into the chat's open projection, reporting whether
+// one consumed it.
 func (rp *replay) ingestReplayFrame(chatID marotte.ChatID, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -139,12 +116,9 @@ func (rp *replay) ingestReplayFrame(chatID marotte.ChatID, kind marotte.ACPUpdat
 	return true
 }
 
-// SettleReplayProjection folds one drain observation into the chat's projection and
-// completes it once the consumer has folded everything that preceded the load result.
-// `at` is the frame's own position and the attachment that consumed it; `force` is the
-// bridge-exit seal, which bypasses the position because no frame can advance it again.
-//
-// No-op when no projection is open, so callers may call it per frame.
+// SettleReplayProjection folds one drain observation into the chat's projection and completes it
+// once everything preceding the load result is folded. `force` is the exit seal, bypassing the
+// position. No-op with no projection open.
 func (rp *replay) SettleReplayProjection(chatID marotte.ChatID, at drainPoint, force bool) {
 	lp := rp.claimSettled(chatID, at.gen, force, func(d *replayDrain) { d.noteConsumed(at) })
 	trigger := settleOnFrame
@@ -154,10 +128,8 @@ func (rp *replay) SettleReplayProjection(chatID marotte.ChatID, at drainPoint, f
 	rp.adopt(chatID, lp, trigger)
 }
 
-// claimSettled applies one observation to the chat's drain and, when that leaves the
-// replay complete, takes the projection out of `projections` — returning it to exactly
-// one caller and nil to every other. The claim is what makes the settle run once: three
-// triggers reach it, on two goroutines.
+// claimSettled applies one observation and, when the replay is complete, hands the projection to
+// exactly one caller: three triggers on two goroutines reach it.
 func (rp *replay) claimSettled(chatID marotte.ChatID, gen uint64, force bool, note func(*replayDrain)) *loadProjection {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -173,8 +145,7 @@ func (rp *replay) claimSettled(chatID marotte.ChatID, gen uint64, force bool, no
 	return lp
 }
 
-// adopt swaps a claimed projection into the record. Nil is the ordinary answer — a
-// settle attempt that claimed nothing.
+// adopt swaps a claimed projection into the record; nil means nothing was claimed.
 func (rp *replay) adopt(chatID marotte.ChatID, lp *loadProjection, trigger string) {
 	if lp == nil {
 		return
@@ -186,14 +157,8 @@ func (rp *replay) adopt(chatID marotte.ChatID, lp *loadProjection, trigger strin
 	}
 }
 
-// swapProjectedTranscript merges a settled replay into the chat's log through
-// SwapMerged's two gates, under the lifecycle mutex so the gates and the rewrite see
-// one log. Runs on the Forward goroutine OR on the spawn goroutine, so it must not
-// hold projMu.
-//
-// It ANNOUNCES a rewrite as a subject_changed for the chat, stamped with the version
-// the rewrite minted: the fetch instruction the client already honours, and the only
-// frame that can tell a rewritten transcript from an appended one.
+// swapProjectedTranscript merges a settled replay through SwapMerged's gates under the lifecycle
+// mutex, never holding projMu. A rewrite is announced as subject_changed with its minted version.
 func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProjection) {
 	ctx := durable.Context(rp.lifetime.shutdownCtx)
 	projected := lp.proj.Turns()
@@ -202,10 +167,8 @@ func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, lp *loadProject
 	swap := func() error {
 		var err error
 		version, changed, err = rp.chats.Reconcile(ctx, chatID, func(l *chat.EntryLog, h chat.EntryHeader) (bool, error) {
-			// The WHOLE file, reverted material included, because the swap ends in a
-			// rewrite: the surviving view as input would make that rewrite a physical
-			// compaction and the rewind's own record would name a window the log no
-			// longer holds. The one caller of AllWithReverted.
+			// The whole file, reverted material included: the swap ends in a rewrite, and the surviving view
+			// would compact the rewind's window away.
 			entries, reverted, readErr := l.AllWithReverted()
 			if readErr != nil {
 				return false, readErr

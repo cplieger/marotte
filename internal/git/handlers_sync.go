@@ -31,13 +31,9 @@ func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
 	writeCmdResult(w, out, err)
 }
 
-// handlePush runs `git push` with git's default behaviour: no
-// --force, no --set-upstream, no --tags. Force-push is intentionally
-// not exposed — a user who wants to rewrite published history should
-// use the shell. The default also fails cleanly on unconfigured
-// upstreams (the error surfaces via writeCmdResult) rather than
-// silently guessing a remote/branch, which keeps the contract
-// predictable.
+// handlePush runs `git push` with git's defaults: no --force, --set-upstream or --tags. Force-push
+// is not exposed (use the shell), and an unconfigured upstream fails cleanly rather than being
+// guessed.
 func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return

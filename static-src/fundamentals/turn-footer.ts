@@ -5,29 +5,25 @@
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
+import { copyClipboard } from "../actions/messages.js";
 import { iconEl } from "../icon-el.js";
+import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
-import { openChange, openChangeSet } from "../navigate.js";
+import { openAtLine, openChange, openChangeSet } from "../navigate.js";
 import { sigChanged } from "../paint-sig.js";
 import { formatElapsed } from "../strings.js";
 import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
-import type { FileChange, ToolKind } from "../types.js";
+import type { FileChange, ToolKind, TurnThroughput } from "../types.js";
 import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
+import { relBeneath, workspaceRoot } from "../workspace.js";
 
-// TWO consumers: `messages.ts` mounts this on a turn card, `subagent-block.ts` on a
-// DELEGATE card (pinned in its own test), which is why every panel field is optional.
-// Nothing on the ACP wire carries credits, a model id or a stop reason PER delegate, so
-// Cost, Model and Diagnostics withhold on every delegate card — designed, not a gap.
+// Mounted on a turn card (`messages.ts`) and a DELEGATE card (`subagent-block.ts`), so every
+// panel field is optional; Cost, Model and Diagnostics always withhold on a delegate.
 
-/** The word the ledger line LEADS with, per outcome. TOTAL over `TurnOutcome`, so no
- *  value the wire can send falls through to a line that opens with a cost.
- *
- *  Two outcomes carry no word because they carry no glyph either: `completed`, where
- *  the absence of a mark IS the clean case, and `running`, which 29-turns.css hides on
- *  the same rule. The other six say their name in the ROW rather than in a hover,
- *  which does not exist on a touch device. Short by design — the row is dense and the
- *  turn's own `.turn-notice` carries the sentence. */
+/** The word the ledger line LEADS with, TOTAL over `TurnOutcome`. `completed` (the absence of a
+ *  mark is the clean case) and `running` (29-turns.css hides it) carry none; the other six say
+ *  their name in the ROW, since touch has no hover. */
 const OUTCOME_LEAD: Record<TurnOutcome, string> = {
   running: "",
   completed: "",
@@ -51,10 +47,8 @@ export interface TurnSummaryData {
   /** The turn's result, carried as the footer's tint so outcome is scannable
    *  down the transcript without reading a word. */
   outcome?: TurnOutcome;
-  /** The info panel's facts, mirroring `TurnLedger`, which owns each field's ABSENCE
-   *  RULE — read it there. A section withholds on absence and never invents a zero: a
-   *  duration nobody stamped is not a duration of zero, `kindCounts` omits a kind
-   *  rather than reporting zero of it, and `endedAt` is a stamp, not a sum. */
+  /** The info panel's facts, mirroring `TurnLedger`, which owns each field's absence rule. A section
+   *  withholds on absence and never invents a zero. */
   toolMs?: number;
   kindCounts?: Partial<Record<ToolKind, number>>;
   delegateCount?: number;
@@ -63,7 +57,39 @@ export interface TurnSummaryData {
   endedAt?: number;
   stopReasonRaw?: string;
   truncated?: boolean;
+  /** How the turn's asks were answered; no entry is no ask of that kind. */
+  asks?: Partial<Record<AskBucket, number>>;
+  /** `turn_close`'s KAS facts, verbatim. Recoveries are KAS's mechanism names, an
+   *  open vocabulary; steering is document ids, file URIs for documents on disk. */
+  requestIds?: string[];
+  throughput?: TurnThroughput | undefined;
+  recoveries?: string[];
+  steering?: string[];
+  engineErrorClass?: string;
 }
+
+/** KAS's recovery mechanism names (`AgentExecutionRecovered`), in words. A name this
+ *  table does not know is shown verbatim. */
+const RECOVERY_PHRASE: Readonly<Record<string, string>> = {
+  empty: "retried an empty response",
+  truncation: "retried a truncated response",
+  streamError: "retried after a stream error",
+  authExpiry: "retried after sign-in expired",
+  strip: "retried after a thinking-signature error",
+  stallToolContinuation: "continued a stalled tool call",
+};
+
+function recoveryPhrase(m: string): string {
+  return Object.hasOwn(RECOVERY_PHRASE, m) ? (RECOVERY_PHRASE[m] ?? m) : m;
+}
+
+const ASK_ORDER: readonly AskBucket[] = [
+  "allowed",
+  "always_allowed",
+  "rejected",
+  "answered",
+  "skipped",
+];
 
 /** Reasons a footer is earned that are NOT in the summary data, passed by the
  *  consumer that can see them. Both are turn-card facts, so the delegate card
@@ -76,11 +102,8 @@ export interface FooterExtras {
   settledProse?: boolean;
 }
 
-/** Whether the footer is earned, READING `turnFacts` rather than re-listing the fields:
- *  a fact for the row, the outcome WORD, or a CONTROL the caller mounts. Two statements
- *  of one question is how those diverged, so an earned footer with nothing on it is
- *  unrepresentable. WIDER than the disjunction it replaced: every kind count leads, so
- *  the twelve kinds outside `COMMAND_KINDS` and `read` earn one now. */
+/** Whether the footer is earned, READING `turnFacts`: a fact for the row, the outcome WORD, or a
+ *  caller-mounted CONTROL, so an earned footer with nothing on it is unrepresentable. */
 export function earnsTurnFooter(d: TurnSummaryData, extra: FooterExtras = {}): boolean {
   return (
     turnFacts(d).length > 0 ||
@@ -102,10 +125,8 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
     className: "turn-ledger-summary",
     type: "button",
   }) as HTMLButtonElement;
-  // An `i` rather than a chevron, LEADING, and the PURPOSE span leads the CONTENT so the
-  // name opens with it. No `aria-label`: one would win over that content and hide the
-  // outcome word and the fact. The tip anchors to the `i`'s ink, not to the wider
-  // button's middle, so it points at what it explains.
+  // An `i`, LEADING, with the PURPOSE span first so the name opens with it. No `aria-label`: it would
+  // hide the outcome word and fact. The tip anchors to the `i`'s ink.
   summary.appendChild(el("span", { className: "sr-only" }, "Turn details"));
   summary.appendChild(
     el("span", { className: "turn-ledger-info", "data-tooltip-anchor": "" }, iconEl(ICON_INFO)),
@@ -163,19 +184,14 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
   }
 }
 
-/** The ledger LINE: the outcome's lead word and nothing else — every other clause moved
- *  into the info panel as a labelled row. No `?? ""` on the lookup, because OUTCOME_LEAD
- *  is total over `TurnOutcome` and the fallback would be dead code the linter rejects;
- *  an absent outcome defaults its KEY instead. */
+/** The ledger LINE: the outcome's lead word only. No `?? ""`: OUTCOME_LEAD is total, so an absent
+ *  outcome defaults its KEY instead. */
 function summaryLine(d: TurnSummaryData): string {
   return OUTCOME_LEAD[d.outcome ?? "completed"];
 }
 
-/** The turn's facts, most important first, each from the same field the info panel
- *  renders it from. A zero or absent value contributes nothing, and the
- *  ROW PAINTS `[0]` — the panel one click away is the full statement. Do NOT rotate the
- *  slot through this list: a dwell replaces a gesture-gated value with a TIME-gated one,
- *  and it fails WCAG 2.2.2 with no pause control anywhere in the app. */
+/** The turn's facts, most important first; zero or absent contributes nothing. The ROW PAINTS
+ *  `[0]`. Do NOT rotate the slot: a time-gated value fails WCAG 2.2.2 with no pause control. */
 export function turnFacts(d: TurnSummaryData): readonly string[] {
   const facts: string[] = [];
   const files = Object.values(d.changedFiles ?? {});
@@ -195,9 +211,8 @@ export function turnFacts(d: TurnSummaryData): readonly string[] {
     }
     facts.push(fact);
   }
-  // `kindCounts` is the ONLY count on the wire now: the `commands`/`reads` aggregates
-  // beside it were deleted once this projection became the gate, because nothing
-  // rendered them and the kind map carries the same walk at finer grain.
+  // `kindCounts` is the ONLY count on the wire: it carries the whole walk at the
+  // finest grain, so no aggregate sits beside it.
   const kinds = sortedKinds(d.kindCounts ?? {});
   for (const [kind, n] of kinds) {
     if (COMMAND_KINDS.has(kind)) {
@@ -224,10 +239,8 @@ export function turnFacts(d: TurnSummaryData): readonly string[] {
   return facts;
 }
 
-/** A metered turn's credits, at the two places that state them. `toFixed(2)` alone
- *  renders a sub-cent charge as `0.00`, asserting the opposite of the `> 0` gate that let
- *  it through. Measured 0 of 941 metered turns, min 0.036, so this is correctness at the
- *  boundary rather than a shape anything has produced. */
+/** A metered turn's credits. `toFixed(2)` alone renders a sub-cent charge as `0.00`, contradicting
+ *  the `> 0` gate. */
 function creditFigure(credits: number): string {
   return credits < 0.005 ? "<0.01" : credits.toFixed(2);
 }
@@ -272,10 +285,8 @@ function stampEl(ms: number): HTMLElement {
   return t;
 }
 
-/** Three durations and two stamps, each withheld on absence. MODEL TIME is withheld
- *  rather than clamped: tool calls overlap, so wall minus tool goes negative and a clamped
- *  zero would assert a measurement nobody made — and with no tool time the row would
- *  restate the wall clock under a second name. `endedAt` is read as a STAMP. */
+/** Three durations and two stamps, each withheld on absence. MODEL TIME is withheld rather than
+ *  clamped (overlapping tool calls make wall minus tool negative). */
 function timingRows(d: TurnSummaryData): HTMLElement[] {
   const rows: HTMLElement[] = [];
   const wall = d.elapsedMs ?? 0;
@@ -292,14 +303,8 @@ function timingRows(d: TurnSummaryData): HTMLElement[] {
   if ((d.startedAt ?? 0) > 0) {
     rows.push(infoRow("Started", stampEl(d.startedAt ?? 0)));
   }
-  // WITHHELD while the turn is still running, because `endedAt` is non-zero long before
-  // the turn ends: a turn's is the LAST BODY MESSAGE's `ts` (`turns.ts` `turnLedger`),
-  // which on a live turn is whenever the reply's first chunk landed — and the stamp is
-  // minute-precision, so the row painted the START time under the word "Ended". Keyed on
-  // the OUTCOME rather than on the two stamps matching: a genuinely sub-minute turn would
-  // lose a legitimate row, and a running turn whose end has drifted a millisecond would go
-  // on lying. Same signal Diagnostics reads below, for the same reason — a running turn has
-  // not ended at all.
+  // WITHHELD while running: a live turn's `endedAt` is its last body message's `ts` and would paint
+  // the START time as "Ended". Keyed on the OUTCOME, like Diagnostics below.
   if ((d.endedAt ?? 0) > 0 && (d.outcome ?? "completed") !== "running") {
     rows.push(infoRow("Ended", stampEl(d.endedAt ?? 0)));
   }
@@ -320,7 +325,7 @@ function sortedKinds(counts: Partial<Record<ToolKind, number>>): [ToolKind, numb
   return entries.filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
-/** The six sections, in order, each withheld when it has nothing to state. Rebuilt
+/** The eight sections, in order, each withheld when it has nothing to state. Rebuilt
  *  wholesale but only when the data moved: `updateTurnFooter` runs at chunk cadence on a
  *  live turn, and every file row is a button with a tooltip that opens a diff. */
 function renderInfoPanel(
@@ -339,14 +344,21 @@ function renderInfoPanel(
   }
 
   // The file rows keep their own `<ul class="turn-ledger-files">`, nested here
-  // inside Work: `renderFileRows`, `fileRow` and `reviewRow` all still address it,
-  // and the list is what the disclosure used to BE before the panel grew around it.
+  // inside Work: `renderFileRows`, `fileRow` and `reviewRow` all address it.
   const kinds = kindRows(d.kindCounts ?? {});
   const list = el("ul", { className: "turn-ledger-files" });
   renderFileRows(list, files);
   const work = infoSection("Work", kinds, files.length > 0 ? [list] : []);
   if (work !== null) {
     sections.push(work);
+  }
+
+  const askRows = ASK_ORDER.filter((b) => (d.asks?.[b] ?? 0) > 0).map((b) =>
+    infoRow(ASK_LABEL[b], String(d.asks?.[b] ?? 0)),
+  );
+  const approvals = infoSection("Approvals", askRows);
+  if (approvals !== null) {
+    sections.push(approvals);
   }
 
   const delegateRows: HTMLElement[] = [];
@@ -361,6 +373,15 @@ function renderInfoPanel(
     sections.push(delegates);
   }
 
+  const steering = d.steering ?? [];
+  const context = infoSection(
+    "Context",
+    steering.length > 0 ? [infoRow("Steering added", steeringList(steering))] : [],
+  );
+  if (context !== null) {
+    sections.push(context);
+  }
+
   const cost = infoSection(
     "Cost",
     (d.credits ?? 0) > 0 ? [infoRow("Credits", creditFigure(d.credits ?? 0))] : [],
@@ -372,19 +393,25 @@ function renderInfoPanel(
   // Arrow when a mid-turn switch split the turn, which is the one case where the
   // plural matters: two names in order say the turn changed hands.
   const models = d.models ?? [];
-  const model = infoSection(
-    "Model",
-    models.length > 0 ? [infoRow("Answered by", models.join(" \u2192 "))] : [],
-  );
+  const modelRows: HTMLElement[] = [];
+  if (models.length > 0) {
+    modelRows.push(infoRow("Answered by", models.join(" \u2192 ")));
+  }
+  const requests = d.requestIds ?? [];
+  if (requests.length > 0) {
+    modelRows.push(infoRow("Requests", String(requests.length)));
+  }
+  const output = outputEstimate(d.throughput);
+  if (output !== "") {
+    modelRows.push(infoRow("Output, estimated", output));
+  }
+  const model = infoSection("Model", modelRows);
   if (model !== null) {
     sections.push(model);
   }
 
-  // ONLY on a turn that did not end clean. On a clean turn the stop reason is the
-  // ordinary one and `truncated` is false, so the section would be a heading over
-  // the absence of news — and `running` has not ended at all, so it has no verdict
-  // to diagnose. The raw reason is rendered VERBATIM and nothing branches on it:
-  // the wire declares that enum OPEN, so `outcome` is what any decision reads.
+  // Only on a turn that did not end clean (`running` has not ended). The raw reason is VERBATIM and
+  // never branched on: the wire declares that enum OPEN.
   const outcomeNow = d.outcome ?? "completed";
   const unclean = outcomeNow !== "completed" && outcomeNow !== "running";
   const diagRows: HTMLElement[] = [];
@@ -393,6 +420,17 @@ function renderInfoPanel(
   }
   if (unclean && d.truncated === true) {
     diagRows.push(infoRow("Truncated", "yes"));
+  }
+  // Every row below is stated on ANY turn: a clean turn can have needed a recovery, and
+  // a request id is what a support case asks for whatever the outcome.
+  for (const m of d.recoveries ?? []) {
+    diagRows.push(infoRow("Recovered", recoveryPhrase(m)));
+  }
+  if ((d.engineErrorClass ?? "") !== "") {
+    diagRows.push(infoRow("Engine error", d.engineErrorClass ?? ""));
+  }
+  if (requests.length > 0) {
+    diagRows.push(infoRow("Request IDs", requestIDList(requests)));
   }
   const diagnostics = infoSection("Diagnostics", diagRows);
   if (diagnostics !== null) {
@@ -421,8 +459,88 @@ function panelSignature(d: TurnSummaryData): string[] {
     endedAt: num(d.endedAt),
     stopReasonRaw: d.stopReasonRaw ?? "",
     truncated: d.truncated === true ? "1" : "",
+    asks: join(...ASK_ORDER.map((b) => num(d.asks?.[b]))),
+    requestIds: join(...(d.requestIds ?? [])),
+    throughput:
+      d.throughput === undefined
+        ? ""
+        : join(String(d.throughput.estimated_tokens), String(d.throughput.active_streaming_ms)),
+    recoveries: join(...(d.recoveries ?? [])),
+    steering: join(...(d.steering ?? [])),
+    engineErrorClass: d.engineErrorClass ?? "",
   };
-  return Object.values(parts);
+  // The root decides which steering ids link (`steeringList`).
+  return [...Object.values(parts), workspaceRoot()];
+}
+
+/** `≈N tokens · ≈N tokens/s`, or "" when KAS estimated nothing. The rate needs time
+ *  chunks were actually arriving, so it is withheld without one. */
+function outputEstimate(t: TurnThroughput | undefined): string {
+  if (t === undefined || t.estimated_tokens <= 0) {
+    return "";
+  }
+  const tokens = `\u2248${Math.round(t.estimated_tokens).toLocaleString()} tokens`;
+  if (t.active_streaming_ms <= 0) {
+    return tokens;
+  }
+  const rate = Math.round(t.estimated_tokens / (t.active_streaming_ms / 1000));
+  return `${tokens} \u00b7 \u2248${rate.toLocaleString()} tokens/s`;
+}
+
+/** The steering KAS added: a workspace document links into the editor, which
+ *  cannot open a global one (`~/.kiro`), so any other id is plain text. */
+function steeringList(ids: readonly string[]): HTMLElement {
+  const list = el("span", { className: "turn-info-list" });
+  for (const id of ids) {
+    const path = filePathOf(id);
+    const name = path?.slice(path.lastIndexOf("/") + 1) ?? id;
+    const root = workspaceRoot();
+    if (path === null || root === "" || relBeneath(root, path) === null) {
+      list.appendChild(el("span", {}, name));
+      continue;
+    }
+    const btn = el(
+      "button",
+      { className: "turn-info-link", type: "button", "data-tooltip": path },
+      name,
+    );
+    btn.addEventListener("click", () => {
+      openAtLine(path);
+    });
+    list.appendChild(btn);
+  }
+  return list;
+}
+
+/** The absolute path a `file:` URI names, or null for any other id. */
+function filePathOf(id: string): string | null {
+  if (!id.startsWith("file://")) {
+    return null;
+  }
+  try {
+    const path = decodeURIComponent(new URL(id).pathname);
+    return path === "" ? null : path;
+  } catch {
+    return null;
+  }
+}
+
+/** The turn's backend request ids, one per line, with one control copying them all. */
+function requestIDList(ids: readonly string[]): HTMLElement {
+  const list = el("span", { className: "turn-info-list turn-info-ids" });
+  for (const id of ids) {
+    list.appendChild(el("code", {}, id));
+  }
+  const copy = el(
+    "button",
+    { className: "btn-small turn-info-copy", type: "button" },
+    ids.length === 1 ? "Copy" : "Copy all",
+  );
+  copy.addEventListener("click", () => {
+    void copyClipboard.dispatch(ids.join("\n"));
+  });
+  list.appendChild(copy);
+  return list;
 }
 
 /** SORTED by path, matching `renderFileRows`' own sort: a `Record`'s insertion order

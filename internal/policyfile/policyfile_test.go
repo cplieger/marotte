@@ -194,11 +194,9 @@ func TestSanitizeRule(t *testing.T) {
 }
 
 // TestSanitizeRule_RefusesAnAllEmptyPatternList closes the widening side of the
-// shape check. Every entry trimming away used to return nil, and a nil Match
-// serialises with no `match` key (yaml:"match,omitempty"), which KAS reads as
-// `**` — so `match:[""]`, whose literal reading is "matches nothing", wrote the
-// broadest grant the file can express. The same function already refuses an
-// empty CAPABILITY, so the lenient side was the widening one.
+// shape check. A nil Match serialises with no `match` key (yaml:"match,omitempty"),
+// which KAS reads as `**`, so accepting `match:[""]` ("matches nothing") would
+// write the broadest grant the file can express.
 func TestSanitizeRule_RefusesAnAllEmptyPatternList(t *testing.T) {
 	cases := map[string][]string{
 		"one empty string":       {""},
@@ -232,16 +230,11 @@ func TestSanitizeRule_BareRuleStaysWritable(t *testing.T) {
 	}
 }
 
-// TestSanitizeRule_ForwardsUnrecognisedCapability is the T67 inversion. This
-// used to be a 400. The capability vocabulary is KAS's — it validates on load and
-// SKIPS an unrecognised rule as non-fatal, reporting it on
-// _kiro/policy/changed's errors array rather than on _kiro/policy/error (which is
-// fatal-only); see SanitizeRule's doc comment. So refusing here only meant
-// marotte could not write a rule for any capability newer than its own
-// hand-copied list, which is exactly the rule a new capability exists for.
+// TestSanitizeRule_ForwardsUnrecognisedCapability — the capability vocabulary is
+// KAS's (SanitizeRule's doc comment owns why), so refusing here would stop marotte
+// writing a rule for any capability newer than a hand-copied list.
 func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
-	// "hooks" is the concrete case: an upstream security report asked for it, and
-	// under the old check marotte would have refused the rule that uses it.
+	// "hooks" is a real capability newer than any hand-copied list.
 	for _, capability := range []string{"hooks", "some_future_capability", "nope"} {
 		got, err := SanitizeRule(&Rule{Capability: capability, Effect: "deny"})
 		if err != nil {
@@ -254,8 +247,8 @@ func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
 	}
 }
 
-// TestSanitizeRule_RejectsMalformedCapability pins the line the T67 change did
-// NOT cross. A vocabulary check is KAS's; a SHAPE check is marotte's, same class
+// TestSanitizeRule_RejectsMalformedCapability — a vocabulary check is KAS's; a
+// SHAPE check is marotte's, same class
 // as the pattern checks. None of these is a capability KAS could ever have, so
 // writing one only puts a rule in a security policy file that the user has to
 // hand-edit out.

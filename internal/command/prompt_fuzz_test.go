@@ -8,24 +8,18 @@ import (
 )
 
 func FuzzValidatePromptPayload(f *testing.F) {
-	// Valid prompt.
 	f.Add([]byte(`{"text":"hello","message_id":"abc-123","model":"claude"}`))
-	// Empty text.
 	f.Add([]byte(`{"text":"","message_id":"abc-123","model":"claude"}`))
-	// Missing message_id.
 	f.Add([]byte(`{"text":"hi","message_id":"","model":"m"}`))
-	// Invalid characters in message_id.
 	f.Add([]byte(`{"text":"hi","message_id":"../evil","model":"m"}`))
-	// Oversized text.
 	f.Add(make([]byte, 600000))
-	// Malformed JSON.
 	f.Add([]byte(`{broken`))
+	f.Add([]byte(`{"text":"","message_id":"abc-123","attachments":[{"path":"/workspace/a.png"}]}`))
+	f.Add([]byte(`{"text":"","message_id":"abc-123","attachments":[{"path":""}]}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		cmd := &marotte.ClientCommand{Payload: json.RawMessage(data)}
 		p, code, err := validatePromptPayload(cmd)
-
-		// No panic (implicit).
 
 		if err == nil && code != 0 {
 			t.Errorf("err==nil but code=%d", code)
@@ -34,12 +28,19 @@ func FuzzValidatePromptPayload(f *testing.F) {
 			t.Errorf("err=%v but code=0", err)
 		}
 
-		// When validation passes, fields must satisfy constraints.
 		if err == nil {
-			if p.Text == "" {
-				t.Error("validation passed but Text is empty")
+			if p.Text == "" && len(p.Attachments) == 0 {
+				t.Error("validation passed with neither text nor attachments")
 			}
-			if len(p.Text) > maxPromptBytes {
+			if len(p.Attachments) > marotte.MaxAttachments {
+				t.Errorf("validation passed with %d attachments, over the cap", len(p.Attachments))
+			}
+			for _, a := range p.Attachments {
+				if a.Path == "" || len(a.Path) > marotte.MaxAttachmentPathBytes {
+					t.Errorf("validation passed with attachment path of %d bytes", len(a.Path))
+				}
+			}
+			if len(p.Text) > MaxPromptBytes {
 				t.Error("validation passed but Text exceeds cap")
 			}
 			if p.MessageID == "" {

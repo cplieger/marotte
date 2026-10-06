@@ -27,26 +27,21 @@ func FuzzValidMessageID(f *testing.F) {
 	f.Fuzz(func(t *testing.T, id string) {
 		result := ValidMessageID(id)
 		if result {
-			// Invariant 1: accepted IDs have length in [1, 128].
 			if len(id) == 0 || len(id) > 128 {
 				t.Errorf("accepted id with len %d", len(id))
 			}
-			// Invariant 2: no control characters or newlines.
 			for _, r := range id {
 				if unicode.IsControl(r) {
 					t.Errorf("accepted id with control char %U", r)
 				}
 			}
-			// Invariant 3: matches the safe character set.
 			if !safeRe.MatchString(id) {
 				t.Errorf("accepted id not matching safe regex: %q", id)
 			}
 		}
-		// Empty string always rejected.
 		if id == "" && result {
 			t.Error("empty string accepted")
 		}
-		// Idempotent.
 		if ValidMessageID(id) != result {
 			t.Error("non-idempotent result")
 		}
@@ -54,7 +49,6 @@ func FuzzValidMessageID(f *testing.F) {
 }
 
 func FuzzValidChatID(f *testing.F) {
-	// Seed corpus from TestChatIDPattern cases in chat/store_test.go.
 	seeds := []string{
 		"abc",
 		"ABC",
@@ -78,11 +72,9 @@ func FuzzValidChatID(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		ok := ValidChatID(s)
-		// Invariant: idempotent.
 		if ok2 := ValidChatID(s); ok2 != ok {
 			t.Errorf("ValidChatID(%q) not idempotent: %v then %v", s, ok, ok2)
 		}
-		// Invariant: if valid, must not contain forbidden characters.
 		if ok {
 			for _, r := range s {
 				if r == '/' || r == '\\' || r == 0 || r == '.' || r == ' ' {

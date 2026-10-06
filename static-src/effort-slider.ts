@@ -1,11 +1,5 @@
-// The reasoning-effort slider: a caption naming the dimension and the live tier,
-// over a bar the knob slides inside. The caption is why the knob carries no text,
-// and a textless knob is why the bar can contain one (15-input.css sizes both).
-// `model-switcher.ts` owns state and dispatch; `effortLabel` is imported so this
-// caption and the model pill resolve a tier through the one function.
-// NOT `input[type="range"]`: `text-field-floor-css.test.ts` asserts the served
-// markup carries none, and 61-mcp-tools.css's coarse font-size floor would grow
-// one. The pointer arithmetic assumes LTR; the app ships no RTL support.
+// The effort slider: a caption naming the dimension and live tier over a bar the knob slides inside; the caption is
+// why the knob carries no text. `model-switcher.ts` owns state and dispatch.
 import { el } from "@cplieger/reactive";
 import { effortLabel } from "./effort.js";
 import type { SessionEffortLevel } from "./types.js";
@@ -15,25 +9,23 @@ export interface EffortSliderHandle {
   readonly el: HTMLDivElement;
   /** Rebuild the ARIA range for a new tier vocabulary. */
   readonly setLevels: (levels: readonly SessionEffortLevel[]) => void;
-  /** Put the knob on `id`. A tier this vocabulary does not offer resolves to the
-   *  lowest one: a slider is always somewhere, and this control has no state for
-   *  "unchosen" (effort.ts is where that answer is still pinned). */
+  /** Put the knob on `id`; an unoffered tier resolves to the lowest (a slider has no "unchosen" state). */
   readonly setActive: (id: string) => void;
 }
 
-/** Build the slider. `onPick` fires on every completed gesture — a released tap
- *  or drag, and each keyboard step — including one that lands where the knob
- *  already sits: `model-switcher.setEffort`'s own guard is what drops a repeat of
- *  the CHAT'S choice, and a chat marked at the model default has chosen nothing. */
+/**
+ * Build the slider. `onPick` fires on every completed gesture, including one landing where the knob sits:
+ * `model-switcher.setEffort` drops a repeat of the chat's choice.
+ */
 export function buildEffortSlider(opts: { onPick: (level: string) => void }): EffortSliderHandle {
   let levels: readonly SessionEffortLevel[] = [];
   /** The tier last synced from the store, for a cancelled drag to fall back to. */
   let synced = "";
 
-  /** The live tier's word, a separate element from the static "Effort:" beside it
-   *  so the writer replaces the value alone. Not an `aria-labelledby` target and not
-   *  a live region: the knob's name has to stay stable, and `aria-valuetext` is
-   *  where the value reaches assistive tech. */
+  /**
+   * Separate from the static "Effort:" so the writer replaces the value alone. Not a live region: the knob's name stays
+   * stable, and `aria-valuetext` carries the value.
+   */
   const value = el("span", { className: "effort-value" });
   const knob = el("div", {
     className: "effort-knob",
@@ -45,9 +37,7 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     "aria-valuenow": "0",
     "aria-valuetext": "",
   }) as HTMLDivElement;
-  /** The tier marks, one dot per level, in a layer under the knob. Its own box spans
-   *  the track, so each dot inside it takes the knob's positioning and travel
-   *  arithmetic verbatim and their centres coincide with where the knob lands. */
+  /** The marks' layer spans the track, so each dot takes the knob's travel arithmetic and lands where the knob does. */
   const stops = el("div", { className: "effort-stops", "aria-hidden": "true" }) as HTMLDivElement;
   const track = el("div", { className: "effort-track" }, stops, knob) as HTMLDivElement;
   const row = el(
@@ -57,21 +47,17 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     track,
   ) as HTMLDivElement;
 
-  /** THE ONE WRITER of the position, both ARIA channels and the caption, so they
-   *  cannot disagree. Position is a custom property, never a px write, so a card
-   *  that grows after this row is appended needs no ResizeObserver.
-   *
-   *  `frac` may diverge from the index only while a finger is down: the knob paints
-   *  where the pointer is while every announced channel names the nearest tier.
-   *  Omitted elsewhere, so a settled position is a function of the index. */
+  /**
+   * The one writer of position, both ARIA channels and the caption. Position is a custom property, so a growing card
+   * needs no ResizeObserver. `frac` diverges from the index only while a finger is down.
+   */
   function apply(index: number, frac?: number): void {
     const n = levels.length;
     const i = n === 0 ? 0 : Math.min(n - 1, Math.max(0, index));
     const level = levels[i];
     const text = level === undefined ? "" : effortLabel(level);
     const snapped = n <= 1 ? 0 : i / (n - 1);
-    // On the TRACK: the bar is the track's `::before`, which inherits from the track
-    // and not from the knob below it, so this is the only element both readers see.
+    // On the track: the bar is its `::before`, so this is the only element both readers see.
     track.style.setProperty("--effort-frac", String(frac ?? snapped));
     knob.setAttribute("aria-valuenow", String(i));
     knob.setAttribute("aria-valuetext", text);
@@ -79,12 +65,10 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     value.textContent = text;
   }
 
-  /** The index the knob is showing. */
   function shownIndex(): number {
     return Number(knob.getAttribute("aria-valuenow") ?? "0");
   }
 
-  /** Move the knob and report the tier it landed on. */
   function pick(index: number): void {
     apply(index);
     const id = knob.dataset["level"] ?? "";
@@ -93,16 +77,10 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     }
   }
 
-  /** Where along its travel `clientX` puts the knob, 0..1, continuous.
-   *
-   *  THE KNOB'S OWN SIZE IS READ FROM LAYOUT, NEVER FROM ITS RECT, and that is what
-   *  keeps the mapping still while the pointer is over it: the knob scales on hover
-   *  and on press (15-input.css), `getBoundingClientRect` reports the SCALED box, so
-   *  both the travel denominator and the centring term used to move with the pointer's
-   *  own hit state — a stationary cursor produced a different `frac` on every frame for
-   *  as long as that scale was in flight. `offsetLeft` and `offsetWidth` are
-   *  pre-transform, so the inset is still read rather than copied out of CSS and the
-   *  arithmetic no longer depends on what the pointer is doing to the handle. */
+  /**
+   * The knob's size is read from layout, never its rect: it scales on hover and press (15-input.css), and
+   * `getBoundingClientRect` would move the mapping under the pointer.
+   */
   function fracAt(clientX: number): number {
     const t = track.getBoundingClientRect();
     const pad = knob.offsetLeft;
@@ -118,16 +96,13 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     return track.dataset["dragging"] !== undefined;
   }
 
-  /** Paint where the finger is, and name the tier that is nearest. */
   function follow(clientX: number): void {
     const frac = fracAt(clientX);
     const n = levels.length;
     apply(n <= 1 ? 0 : Math.round(frac * (n - 1)), frac);
   }
 
-  // One handler on the TRACK serves both gestures. No `preventDefault()`:
-  // `touch-action`/`user-select` already stop what it would cancel, and Firefox
-  // ties `:active` to the mousedown default, so cancelling kills the press rule.
+  // One track handler serves both gestures. No `preventDefault()`: Firefox ties `:active` to the mousedown default.
   track.addEventListener("pointerdown", (e: PointerEvent) => {
     e.stopPropagation();
     track.setPointerCapture(e.pointerId);
@@ -147,12 +122,9 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     if (track.hasPointerCapture(e.pointerId)) {
       track.releasePointerCapture(e.pointerId);
     }
-    // Focus here and not on `pointerdown`: a tap on bare track has no focusable
-    // ancestor, so mousedown's default clears to `<body>` and undoes an earlier
-    // `focus()`. Only real input shows it — a synthetic pointerdown has no default.
+    // Focused here, not on pointerdown: a tap on bare track lets mousedown's default clear focus to `<body>`.
     knob.focus();
-    // The snap: `pick` re-applies with no `frac`, and `data-dragging` is already
-    // gone, so the knob's transition animates it onto the tier.
+    // The snap: no `frac` and `data-dragging` gone, so the transition animates onto the tier.
     pick(shownIndex());
   });
   track.addEventListener("pointercancel", () => {
@@ -160,9 +132,8 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     setActive(synced);
   });
 
-  // The six keys are STOPPED: the card's `rovingFocus` reads no target, so an arrow
-  // reaching it moves focus into the model list. Everything else propagates, because
-  // Escape has to reach the popup's own document handler.
+  // The six keys are stopped: the card's `rovingFocus` reads no target and would move focus into the model list.
+  // Everything else propagates so Escape reaches the popup.
   knob.addEventListener("keydown", (e: KeyboardEvent) => {
     const n = levels.length;
     if (n === 0) {
@@ -197,11 +168,7 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     levels = [...next];
     track.dataset["tiers"] = String(levels.length);
     knob.setAttribute("aria-valuemax", String(Math.max(0, levels.length - 1)));
-    // ONE DOT PER TIER, on the positions the knob lands on: the drag is continuous
-    // but the RELEASE snaps to a tier, so the stops are where the gesture ends, and
-    // without them nothing states how many tiers exist. Each dot carries only its
-    // fraction and takes its geometry from the knob's formula, so a mark cannot
-    // land where the handle would not.
+    // One dot per tier, on the positions the knob lands on: the release snaps, so the marks show where a drag ends.
     stops.replaceChildren(
       ...(levels.length <= 1
         ? []

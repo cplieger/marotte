@@ -1,8 +1,6 @@
 package agent
 
-// `user_message_id_assigned` at the DISPATCHER, because two things about it are only
-// true one level up from the handler: the id rides `update._meta.kiro`, and the frame is
-// attributed from the SESSION it arrived on rather than from anything in its payload.
+// `user_message_id_assigned` at the dispatcher: its id rides `update._meta.kiro`, and it is attributed by session.
 
 import (
 	"encoding/json"
@@ -11,9 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// userMessageIDParams is the whole `session/update` params object, `_meta` nested inside
-// `update` where KAS puts it. Building it here rather than handing the handler an update
-// object is the point: read one level up, every field of it is a zero value.
+// userMessageIDParams is the whole `session/update` params, `_meta` nested in `update` as KAS sends it.
 func userMessageIDParams(t *testing.T, sessionID, kasID string) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -47,16 +43,15 @@ func bindsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnBind {
 	return out
 }
 
-// The id KAS assigns on the chat's OWN session names the prompt marotte just persisted,
-// and it is the only id `_kiro/checkpoint/revertMultiple` accepts — so it has to reach
-// the record, through a frame whose `_meta` sits one level in.
+// The id KAS assigns on the chat's own session names the persisted prompt, the only id
+// `_kiro/checkpoint/revertMultiple` accepts.
 func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *testing.T) {
 	const chatID = marotte.ChatID("chat-own")
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
 	registerParentSession(t, h, chatID, "parent-A")
 	seedChat(t, cs, chatID)
-	// The record's session is what the binding scopes the replay merge on.
+	// The binding scopes the replay merge on the record's session.
 	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("parent-A")
 		return true
@@ -79,10 +74,8 @@ func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *test
 	}
 }
 
-// A workflow step's answer is an ordinary `session/prompt` on the STEP's session, so KAS
-// assigns that prompt an id too. The frame carries no `_meta.kiro.workflow` and is
-// byte-identical to the chat's own, so only the session says it is not the reader's —
-// and stamping it would point rewind at a row the id does not name.
+// A step's answer prompt gets an id too, byte-identical to the chat's; only the session says it is not the
+// reader's, and stamping it would point rewind at the wrong row.
 func TestHandleSessionUpdate_AStepSessionsAssignedIDStampsNothing(t *testing.T) {
 	const (
 		chatID  = marotte.ChatID("chat-step-id")

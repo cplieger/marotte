@@ -6,7 +6,6 @@ import (
 )
 
 func FuzzSanitizeUnicode(f *testing.F) {
-	// Seed corpus from TestSanitizeUnicode cases.
 	seeds := []string{
 		"",
 		"hello world",
@@ -31,14 +30,11 @@ func FuzzSanitizeUnicode(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		out := Unicode(s)
-		// Invariant: output must contain no runes where isHidden returns true.
 		for _, r := range out {
 			if isHidden(r) {
 				t.Errorf("Unicode(%q) output contains hidden rune U+%04X", s, r)
 			}
 		}
-		// Invariant: must not panic (implicit by reaching here).
-		// Invariant: idempotent.
 		if out2 := Unicode(out); out2 != out {
 			t.Errorf("Unicode not idempotent: first=%q second=%q", out, out2)
 		}
@@ -46,7 +42,6 @@ func FuzzSanitizeUnicode(f *testing.F) {
 }
 
 func FuzzStripANSI(f *testing.F) {
-	// Seed corpus from TestStripANSI + TestStripANSI_edge_cases.
 	seeds := []string{
 		"",
 		"hello world",
@@ -68,12 +63,9 @@ func FuzzStripANSI(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		out := StripANSI(s)
-		// Invariant: output must contain no bytes matching ansiRe.
 		if ansiRe.MatchString(out) {
 			t.Errorf("StripANSI(%q) output still contains ANSI escapes", s)
 		}
-		// Invariant: must not panic (implicit by reaching here).
-		// Invariant: idempotent.
 		if out2 := StripANSI(out); out2 != out {
 			t.Errorf("StripANSI not idempotent: first=%q second=%q", out, out2)
 		}

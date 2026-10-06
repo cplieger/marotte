@@ -1,33 +1,9 @@
-// The turn-actions overflow menu as a GROUPED <details>, and the desktop path the
-// group must not disturb.
-//
-// WHY THE GROUP. One `<details class="turn-actions-more">` is built per turn card
-// and there is no sibling coordination anywhere: the only close-on-action is
-// self-scoped (`btn.closest(".turn-actions-more")`). So on the phone layout — where
-// the summary becomes the `…` trigger and the group becomes an absolutely
-// positioned menu — opening turn 5's menu and then turn 9's would leave BOTH open,
-// two floating cards over one transcript. A shared `name` makes that exclusive with
-// no JS at all, which is the platform's own grouped-disclosure feature.
-//
-// WHY THE DESKTOP HALF IS HERE. `name` is an attribute on the same element that
-// carries `display: contents` plus `::details-content { content-visibility:
-// visible }`, and that pseudo-element rule is the ONLY thing keeping all five
-// buttons painted and hittable at desktop widths while `open` is absent — its own
-// comment in 61-mcp-tools.css records that they shipped unpainted without it. An
-// attribute that changed the UA's closed-disclosure handling would take the whole
-// desktop action row with it, silently, because the buttons would still be in the
-// DOM and every existing test would still find them. So the group is pinned
-// together with the thing it could break.
-//
-// WHY DISMISSAL IS HERE TOO. The group makes the menus exclusive of each other and
-// nothing more: a native disclosure does not close because the reader looked away,
-// so `messages-turn-actions.ts` adds one document-level `pointerdown` and one
-// `keydown`. The case that matters is the one that looks like a defensive check and
-// is not — `pointerdown` fires BEFORE `click`, so the listener has to exempt the
-// details' own subtree or an action clicked from the collapsed menu loses the
-// `open` the handler reads, and with it the "Copied" toast that is the only
-// confirmation a menu click has. That is asserted through the `silent` argument
-// the action was dispatched with, with the closed-menu case as its control.
+// The turn-actions overflow menu as a GROUPED <details>, plus the desktop path it must not disturb.
+// A shared `name` makes the per-turn phone menus exclusive with no JS. The desktop row's buttons
+// stay painted only through `::details-content { content-visibility: visible }` on that element,
+// so the group is pinned with what it could break. Dismissal: `pointerdown` fires BEFORE `click`,
+// so the document listener exempts the menu's subtree or a menu click loses the `open` its
+// "Copied" toast depends on (asserted through `silent`).
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
@@ -78,10 +54,7 @@ function mountCard(id: string): HTMLDetailsElement {
   footer.className = "turn-footer";
   card.appendChild(footer);
   document.body.appendChild(card);
-  // The turn's body is ENTRIES, and prose is a `text` entry in the turn's own lane:
-  // `mountTurnFooterActions` returns early on an empty `turnMarkdown`, which switches
-  // on `kind` and reads that payload's `text`, so a body carrying no such entry mounts
-  // no footer at all and every case below would fail on the menu lookup.
+  // The body needs a `text` entry: `mountTurnFooterActions` returns early on an empty `turnMarkdown`.
   const payload: EntryText = { text: "reply" };
   const reply: Entry = { id: `${id}-e1`, turn: id, kind: "text", seq: 1, ts: 1, payload };
   const turn: Turn = {
@@ -215,7 +188,7 @@ describe("the desktop path the group must not disturb", () => {
     expect(getComputedStyle(summary as HTMLElement).display).toBe("none");
 
     const btns = [...menu.querySelectorAll<HTMLElement>(".turn-actions-group .turn-action-btn")];
-    expect(btns).toHaveLength(5);
+    expect(btns).toHaveLength(3);
     for (const btn of btns) {
       const box = btn.getBoundingClientRect();
       expect(box.width, "a laid-out box, not a skipped subtree").toBeGreaterThan(0);
@@ -245,11 +218,8 @@ function press(node: EventTarget): void {
   node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
 }
 
-/** The `silent` flag the click's `copyClipboard.dispatch` carried.
- *
- *  This is the observable the open-before-handler read moves, and the only one it
- *  moves: `silent: false` asks the action for its "Copied" toast, which a click
- *  made from an OPEN menu needs and a click on a visible button does not. */
+/** The `silent` flag the click's `copyClipboard.dispatch` carried: `false` asks for the "Copied"
+ *  toast an OPEN-menu click needs. */
 function dispatchedSilent(): boolean | undefined {
   const { calls } = vi.mocked(copyClipboard.dispatch).mock;
   expect(calls, "the copy action was dispatched exactly once").toHaveLength(1);
@@ -359,10 +329,8 @@ describe("the two collapse arms are one rule", () => {
   });
 
   it("carries identical declarations in both", () => {
-    // The remedy for a duplication no token can remove: a media query cannot read
-    // a custom property, so the QUERY is stated twice and this is what stops the
-    // two bodies drifting. Same shape turn-rewind-css.test.ts uses to pin two
-    // numbers that must stay equal.
+    // A media query cannot read a custom property, so the QUERY is stated twice and this keeps the two
+    // bodies equal.
     const css = loadCSS("61-mcp-tools.css");
     const fine = declarations(blockAfter(css, "@media (width <= 40rem)"));
     const coarse = declarations(
@@ -379,25 +347,10 @@ describe("the two collapse arms are one rule", () => {
 });
 
 describe("the coarse tier collapses at a width a fine pointer does not", () => {
-  // 896px IS 56rem, and `<=` includes it, so this is the widest row a coarse
-  // pointer collapses. It is also above the 40rem arm and above 01-tokens.css's
-  // 48rem no-JS fallback, so the tier attribute is the only thing that can collapse
-  // it — which is what makes the fine case a control rather than a second reading of
-  // one rule.
-  //
-  // MEASURED, and it corrects the width this suite was asked for: at 1024px NEITHER
-  // tier collapses, because 1024 is past 56rem. A pair of cases at that width would
-  // have passed for the wrong reason on the fine side and been unsatisfiable on the
-  // coarse one, so the third case below pins 1024 as INLINE on a coarse pointer
-  // instead — the coarse arm is a threshold, not "a finger always gets the menu".
-  //
-  // The tier IS an attribute, so this is a faithful test of the RULE and cannot
-  // prove a real tablet takes that path. Same limit run-card-metrics.ts accepts and
-  // states.
-  //
-  // Last in the file, and it restores the size it found: `page.viewport` has no
-  // getter, so a hand-copied pair would silently leave every later file measuring
-  // at the wrong size.
+  // 896px IS 56rem, the widest row a coarse pointer collapses, above the 40rem arm and the 48rem no-JS
+  // fallback, so only the tier can collapse it. At 1024px NEITHER tier collapses (the third case).
+  // The tier is an attribute, so this tests the RULE, not a real tablet. Last in the file and restores
+  // its size: `page.viewport` has no getter.
   let entry: { readonly width: number; readonly height: number } | null = null;
 
   beforeAll(() => {

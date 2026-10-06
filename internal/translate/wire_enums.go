@@ -2,12 +2,9 @@ package translate
 
 import "github.com/cplieger/marotte/internal/marotte"
 
-// The KAS door's enum gate. `encoding/json` fills a named string type from ANY
-// string, so a kind or status this build does not know would reach the entry log
-// verbatim, and the generated decoder validates both against a closed set: one
-// unknown value costs the reader the card, or a strict boot window. A closed enum
-// on the wire is only honest where marotte derives or normalises the value, so it
-// is normalised here, in the one package that unmarshals a KAS frame.
+// The KAS door's enum gate: `encoding/json` fills a named string type from ANY string,
+// and the generated client decoder validates against a closed set, so one unknown value
+// costs the reader the card. Normalised here, the one package unmarshalling KAS frames.
 
 // knownToolKinds is the ToolKind set the wire declares.
 var knownToolKinds = map[marotte.ToolKind]struct{}{
@@ -29,9 +26,8 @@ var knownToolKinds = map[marotte.ToolKind]struct{}{
 	marotte.ToolKindOther:      {},
 }
 
-// knownToolStatuses is the ToolStatus set the wire declares. ToolAborted is
-// marotte's own and never arrives on the wire; it is a value the entry log
-// carries, so it belongs to the set a frame may not widen past.
+// knownToolStatuses is the ToolStatus set the wire declares, plus marotte's own
+// ToolAborted, which the entry log carries.
 var knownToolStatuses = map[marotte.ToolStatus]struct{}{
 	marotte.ToolPending:    {},
 	marotte.ToolInProgress: {},
@@ -47,9 +43,8 @@ var knownPlanStatuses = map[marotte.PlanStatus]struct{}{
 	marotte.PlanCompleted:  {},
 }
 
-// toolKindFromWire maps an unrecognized kind to ToolKindOther, which is ACP's own
-// default for an absent kind and loses nothing: WorkingLabelForKind already reads
-// `other` and an unknown kind as the same label.
+// toolKindFromWire maps an unrecognized kind to ToolKindOther, ACP's own default;
+// WorkingLabelForKind labels both the same.
 func toolKindFromWire(k marotte.ToolKind) marotte.ToolKind {
 	if _, ok := knownToolKinds[k]; ok {
 		return k
@@ -57,11 +52,9 @@ func toolKindFromWire(k marotte.ToolKind) marotte.ToolKind {
 	return marotte.ToolKindOther
 }
 
-// toolStatusFromWire maps an unrecognized status to ToolInProgress: the call
-// exists and no outcome is known, so the turn's close rule settles it as
-// `aborted` rather than claiming an outcome the tool never reported. An EMPTY
-// status is returned unchanged, because absent means unchanged on an update; the
-// create door substitutes ACP's default itself.
+// toolStatusFromWire maps an unrecognized status to ToolInProgress, so the turn's close
+// settles it as `aborted` rather than claiming an outcome. An EMPTY status is returned
+// unchanged (absent means unchanged on an update).
 func toolStatusFromWire(s marotte.ToolStatus) marotte.ToolStatus {
 	if s == "" {
 		return s
@@ -91,9 +84,8 @@ func (w *ACPToolCallWire) gate() {
 	w.Status = toolStatusFromWire(w.Status)
 }
 
-// gate normalises the enum-typed fields an update frame carries. An update names
-// only what changed, so an absent field is left absent for the fold's own
-// unchanged rule (applyToolCallStatus, applyToolCallTitleAndKind).
+// gate normalises the enum-typed fields an update frame carries; an absent field stays
+// absent for the fold's unchanged rule.
 func (w *ACPToolCallUpdateWire) gate() {
 	if w.Kind != "" {
 		w.Kind = toolKindFromWire(w.Kind)

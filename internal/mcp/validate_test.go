@@ -114,6 +114,24 @@ func TestValidate_AcceptReject(t *testing.T) {
 	}
 }
 
+func TestValidate_TimeoutRange(t *testing.T) {
+	for _, tc := range []struct {
+		timeout int
+		wantErr bool
+	}{
+		{-1, true}, {0, false}, {600_000, false}, {600_001, true},
+	} {
+		srv := &Server{Transport: TransportStdio, Name: "ok", Command: "npx", TimeoutMS: tc.timeout}
+		err := Validate(srv)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("Validate(timeout_ms %d) = %v, want error %t", tc.timeout, err, tc.wantErr)
+		}
+		if err != nil && (len(FieldErrors(err)) != 1 || FieldErrors(err)[0].Field != fieldTimeoutMS) {
+			t.Errorf("Validate(timeout_ms %d) fields = %+v, want one %q error", tc.timeout, FieldErrors(err), fieldTimeoutMS)
+		}
+	}
+}
+
 func TestValidate_BadName(t *testing.T) {
 	cases := []string{"", "1leading-digit", "has space", "with/slash", "dot.separated"}
 	for _, n := range cases {
@@ -132,7 +150,7 @@ func TestValidate_GoodName(t *testing.T) {
 	}
 }
 
-// F7: Name length boundaries (NameMaxLen, 64 bytes).
+// Name length boundaries (NameMaxLen, 64 bytes).
 func TestValidate_NameLengthBoundaries(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -152,7 +170,7 @@ func TestValidate_NameLengthBoundaries(t *testing.T) {
 	}
 }
 
-// F7: Env key length boundary (keyRe cap at 128 chars).
+// Env key length boundary (keyRe cap at 128 chars).
 func TestValidate_EnvHeaderKeyLengthBoundary(t *testing.T) {
 	cases := []struct {
 		keyName string
@@ -174,7 +192,7 @@ func TestValidate_EnvHeaderKeyLengthBoundary(t *testing.T) {
 	}
 }
 
-// F8: URL shape edge cases.
+// URL shape edge cases.
 func TestValidate_RemoteURLShapes(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -201,8 +219,8 @@ func TestValidate_RemoteURLShapes(t *testing.T) {
 	}
 }
 
-// Regression: URLs with userinfo must be rejected so tokens never leak
-// through the masking boundary. Ops-mcp-005.
+// URLs with userinfo must be rejected so tokens never leak through the
+// masking boundary.
 func TestValidate_RejectsURLUserinfo(t *testing.T) {
 	cases := []string{
 		"https://token@mcp.example.com/v1",
@@ -226,7 +244,7 @@ func TestValidate_CommandRejectsControlChars(t *testing.T) {
 	}
 }
 
-// Regression: Env value length cap.
+// Env value length cap.
 func TestValidate_EnvValueLengthCap(t *testing.T) {
 	big := strings.Repeat("x", envValueMax+1)
 	err := Validate(&Server{
@@ -238,9 +256,8 @@ func TestValidate_EnvValueLengthCap(t *testing.T) {
 	}
 }
 
-// Regression: Duplicate env names must be rejected (closes the ambiguity
-// between mergeSecrets's map-based lookup and the KeyPair ordered
-// contract). Q11 / root-cause fix for Q6.
+// Duplicate env names must be rejected: mergeSecrets's map-based lookup
+// cannot honour the KeyPair ordered contract otherwise.
 func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 	err := Validate(&Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
@@ -254,7 +271,7 @@ func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 	}
 }
 
-// Regression: Duplicate header names (case-insensitive) must be rejected.
+// Duplicate header names (case-insensitive) must be rejected.
 func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
 	err := Validate(&Server{
 		Transport: TransportHTTP, Name: "x", URL: "https://x.example",
@@ -268,8 +285,7 @@ func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
 	}
 }
 
-// DisabledTools entries must reject control chars and respect
-// length caps.
+// DisabledTools entries must reject control chars and respect length caps.
 func TestValidate_DisabledToolsRejectsBadEntries(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -292,9 +308,9 @@ func TestValidate_DisabledToolsRejectsBadEntries(t *testing.T) {
 	}
 }
 
-// Nine length-cap + cross-transport-field error branches. Each asserts on the
-// concrete error substring, so a reword that weakens the check (e.g. "too long"
-// → "invalid") fails here.
+// Length-cap and cross-transport-field error branches. Each asserts on the
+// concrete error substring, so a reword that weakens the check (e.g.
+// "too long" → "invalid") is caught.
 func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 	cases := []struct {
 		srv        *Server
@@ -405,8 +421,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 	}
 }
 
-// The remaining error branches in validate, each a distinct
-// production-code line.
+// Further validate error branches, each exercising a distinct production line.
 func TestValidate_MoreErrorBranches(t *testing.T) {
 	// Helpers build N unique KeyPairs so the length cap fires before
 	// the duplicate-name detection inside the shared helper.

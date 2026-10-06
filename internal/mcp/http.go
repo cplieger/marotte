@@ -12,19 +12,9 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// RegisterRoutes wires the MCP config endpoints.
-//
-//	GET    /api/mcp          → list (secrets masked)
-//	POST   /api/mcp          → create
-//	POST   /api/mcp/import   → create every server of a pasted README block
-//	GET    /api/mcp/{id}     → one (secrets masked)
-//	PUT    /api/mcp/{id}     → replace (preserves "***" values)
-//	PATCH  /api/mcp/{id}     → toggle enabled: body {"enabled": bool}
-//	DELETE /api/mcp/{id}     → remove
-//
-// `import` is its own route rather than a second body shape on POST /api/mcp:
-// that endpoint decodes ONE marotte record and answers with one, while a
-// paste decodes a foreign shape and can name several servers.
+// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked, create), POST
+// /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
+// values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
 	mux.HandleFunc("/api/mcp/import", s.handleImport)
@@ -64,25 +54,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// `honours_auto_approve` rides the LIST rather than a settings payload or
-		// the permissions view, and both halves of that are deliberate.
-		//
-		// It rides THIS response because the panel rendering the `auto_approve`
-		// chips already reads it, so a suspension needs no second fetch — and
-		// `GET /api/permissions` is utility-bridge-backed and deliberately lazy,
-		// so asking it would put a subprocess round trip on the MCP panel's open.
-		// `internal/settings`' own TestKnownKeys_CoversTheClientSurface refuses the
-		// third option outright: `security_profile` is not in the effective view,
-		// "owned by the permissions endpoints, not this payload".
-		//
-		// It is the RESOLVED decision and not a profile id, so this package still
-		// holds none of the ladder's vocabulary — and it comes from the same
-		// resolver writeKASConfig reads, which is what stops the chips and KAS's
-		// own file disagreeing about whether the grant is in force.
-		webhttp.WriteJSON(w, map[string]any{
-			"servers":              s.List(r.Context()),
-			"honours_auto_approve": s.honoursAutoApprove(r.Context()),
-		})
+		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {

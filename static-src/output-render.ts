@@ -1,21 +1,11 @@
-// Renders command output into a <pre>: plain text plus the style spans the
-// server parsed off it (internal/ansitext).
-//
-// It replaced the ansi_up dependency, and the reason is not the 2.9 KB. Every
-// call site here assigns DOM NODES; none builds an HTML string. The path this
-// replaced set `pre.innerHTML = ansiToHtml(text)` on agent-controlled bytes, so
-// correctness rested on that library's escaper being right about `& < > " '`
-// forever. Building text nodes removes the question rather than answering it.
-//
-// The parse itself is the server's (see internal/ansitext for why): the text has
-// to stay searchable, exportable and redactable as text, so it travels as text
-// with offsets beside it rather than as markup.
+// Renders command output into a <pre>: plain text plus the style spans the server parsed off it
+// (internal/ansitext).
 
 import { el } from "@cplieger/reactive";
 import type { TextSpan } from "./types.js";
 
-// Attribute bits, matching internal/ansitext and web-terminal-engine's
-// WireRun.a so this app has one attribute vocabulary rather than two.
+// Attribute bits, matching internal/ansitext and web-terminal-engine's WireRun.a so this app has
+// one attribute vocabulary rather than two.
 const ATTR_BOLD = 1;
 const ATTR_ITALIC = 2;
 const ATTR_UNDERLINE = 4;
@@ -32,9 +22,9 @@ const COLOR_DEFAULT = -1;
 /** Values at or above this are packed 24-bit colour, not a palette index. */
 const RGB_FLAG = 0x1000000;
 
-// The 16 basic palette indices map to the class names in css/15-ansi.css, which
-// are theme-tuned rather than the standard values. Indices 16-255 are the
-// extended palette and are computed in colorValue.
+// The 16 basic palette indices map to the class names in css/15-ansi.css, which are theme-tuned
+// rather than the standard values. Indices 16-255 are the extended palette and are computed in
+// colorValue.
 const BASIC_NAMES = [
   "black",
   "red",
@@ -60,17 +50,7 @@ interface Piece {
   span: TextSpan | null;
 }
 
-/**
- * Split text into styled and unstyled pieces using the spans' offsets.
- *
- * Offsets are UTF-16 code units, which is what `String.prototype.slice` indexes
- * with, so no conversion is needed. Spans arrive sorted and non-overlapping (a
- * Go fuzz target asserts both), and this function is defensive about it anyway:
- * a span that reaches backwards or past the end would otherwise slice garbage
- * into the transcript, and clamping is cheaper than trusting.
- *
- * Exported for unit testing; callers use renderOutput/appendOutput.
- */
+/** Split text into styled and unstyled pieces using the spans' offsets. */
 export function splitBySpans(text: string, spans: readonly TextSpan[]): Piece[] {
   if (spans.length === 0) {
     return text === "" ? [] : [{ text, span: null }];
@@ -94,14 +74,11 @@ export function splitBySpans(text: string, spans: readonly TextSpan[]): Piece[] 
   return pieces;
 }
 
-/** Resolve a wire colour to a CSS colour value, or null for a basic index that
- *  a class already covers.
- *
- *  The extended palette is COMPUTED rather than tabulated, because it is
- *  defined algorithmically: 16-231 is a 6x6x6 RGB cube over the levels
- *  {0,95,135,175,215,255}, and 232-255 is a 24-step greyscale ramp from 8 to
- *  238. Writing it out would be 240 CSS declarations or a 240-entry TS array,
- *  and either would be a second place for the same rule to be wrong. */
+/** Resolve a wire colour to a CSS colour value, or null for a basic index that a class already
+ *  covers. The extended palette is COMPUTED rather than tabulated, because it is defined
+ *  algorithmically: 16-231 is a 6x6x6 RGB cube over the levels {0,95,135,175,215,255}, and
+ *  232-255 is a 24-step greyscale ramp from 8 to and either would be a second place for the same
+ *  rule to be wrong. */
 function colorValue(c: number): string | null {
   if (c >= RGB_FLAG) {
     return rgb((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
@@ -152,18 +129,15 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
   if ((attrs & ATTR_BLINK) !== 0) {
     classes.push("ansi-blink");
   }
-  // Inverse swaps foreground and background. Done by swapping the values here
-  // rather than with a CSS filter, because only this code knows what the two
-  // colours actually are once defaults are involved.
+  // Inverse swaps foreground and background. Done by swapping the values here rather than with a
+  // CSS filter, because only this code knows what the two colours actually are once defaults are
+  // involved.
   const inverse = (attrs & ATTR_INVERSE) !== 0;
   const fg = inverse ? span.bg : span.fg;
   const bg = inverse ? span.fg : span.bg;
 
-  // Conceal wins over whatever colour the foreground resolved to, so the
-  // foreground is not emitted at all and `.ansi-hidden` supplies the only ink.
-  // Emitting it and letting CSS override would be wrong for the extended
-  // palette, which arrives as an INLINE style and so beats any class: a span
-  // that was both concealed and 256-colour rendered its text in full.
+  // Conceal wins over whatever colour the foreground resolved to, so the foreground is not emitted
+  // at all and `.ansi-hidden` supplies the only ink.
   if ((attrs & ATTR_HIDDEN) !== 0) {
     classes.push("ansi-hidden");
   } else if (fg !== COLOR_DEFAULT) {
@@ -174,11 +148,8 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
       node.style.color = v;
     }
   } else if (inverse) {
-    // Under inverse, a side that is DEFAULT has to resolve to something concrete
-    // or the swap loses half of itself. Two single-property classes do that, one
-    // per side, so each side is handled independently: a rule setting both would
-    // override the swapped palette class on the explicit side, which is how
-    // inverse red-on-blue used to render as the default inverse pair.
+    // Under inverse, a side that is DEFAULT has to resolve to something concrete or the swap loses
+    // half of itself.
     classes.push("ansi-inverse-ink");
   }
   if (bg !== COLOR_DEFAULT) {
@@ -196,8 +167,8 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
   }
 }
 
-/** Build a DocumentFragment for text + spans. Text nodes for unstyled runs,
- *  one <span> per styled run. Nothing is ever parsed as HTML. */
+/** Build a DocumentFragment for text + spans. Text nodes for unstyled runs, one <span> per
+ *  styled run. Nothing is ever parsed as HTML. */
 export function outputFragment(text: string, spans: readonly TextSpan[]): DocumentFragment {
   const frag = document.createDocumentFragment();
   for (const piece of splitBySpans(text, spans)) {
@@ -218,17 +189,7 @@ export function renderOutput(host: HTMLElement, text: string, spans: readonly Te
   host.replaceChildren(outputFragment(text, spans));
 }
 
-/**
- * Append a live chunk to an element already holding earlier output.
- *
- * `base` is where this chunk's text begins in the terminal's accumulated
- * output. The spans carry ABSOLUTE offsets across that whole stream, so
- * subtracting `base` is what turns them into offsets into the chunk that was
- * handed over. Callers pass the payload's `offset` field, which the server sets
- * from the terminal's own accumulated length. Nothing here detects a gap: a
- * chunk that never arrived is invisible to this function, and the completion
- * snapshot is what makes the record whole.
- */
+/** Append a live chunk to an element already holding earlier output. */
 export function appendOutput(
   host: HTMLElement,
   text: string,

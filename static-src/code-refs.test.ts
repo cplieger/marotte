@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests for code-refs.ts — the licensed-code attribution footnote renderer.
-// Pure DOM (no store/bus): syncCodeReferences(wrap, refs) builds/updates/removes
-// the footnote off the turn's attributions, gating links on http/https safety.
-// ---------------------------------------------------------------------------
-
 import { describe, it, expect } from "vitest";
 import { syncCodeReferences } from "./code-refs.js";
 import type { CodeReference } from "./types.js";
