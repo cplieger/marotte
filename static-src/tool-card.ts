@@ -1013,7 +1013,7 @@ export function insertDiffPreview(
     wrap.appendChild(more);
   }
 
-  // The third §3.4 case: a card GROWS when its diff preview lands on the update
+  // The third layout-change case: a card GROWS when its diff preview lands on the update
   // path, which pushes everything below it — including the reader's position —
   // down. Content-growth class, same helper. Immediate, like reasoning's seal
   // and unlike tool-group's animated collapse.

@@ -978,17 +978,12 @@ body.sidebar-resizing {
   overflow: hidden;
 }
 
-/* THE SLIDE RIDES `transform`, NEVER `translate`, and that is a hard constraint
- * rather than a preference: `icon-crisp.ts` owns the `translate` PROPERTY on every
- * `.ic-*` glyph in the app, writing an inline sub-pixel offset onto it. Declaring a
- * `transition` for `translate` here therefore animated every one of those writes
- * over 0.35s, and the crisp pass re-measures 250ms after a write that MOVED
- * something — so it read the interpolated box mid-flight, computed a different
- * offset from it, wrote again, and re-armed itself. That is a self-sustaining
- * oscillation with no gesture behind it, and it is what the user reported as these
- * two buttons wiggling (left-right in mouse mode, up in touch mode — whichever axis
- * the snap was correcting). The two properties compose additively, so `transform`
- * carries the slide and `translate` stays the snap's alone. */
+/* THE SLIDE RIDES `transform`, NEVER `translate`: `icon-crisp.ts` owns the `translate`
+ * PROPERTY on every `.ic-*` glyph, writing an inline sub-pixel offset. A `transition` on
+ * `translate` here animates each of those writes, the crisp pass re-measures the
+ * interpolated box 250ms later, computes a different offset and writes again — a
+ * self-sustaining wiggle with no gesture behind it. The two properties compose
+ * additively, so `transform` carries the slide and `translate` stays the snap's alone. */
 :is([id="theme-btn"], [id="pointer-mode-btn"]) svg {
   display: inline-block;
   transition:

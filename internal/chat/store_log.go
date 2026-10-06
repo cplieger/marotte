@@ -193,14 +193,13 @@ type Page struct {
 }
 
 // Page reads the newest `turns` turns, or the `turns` below `before`, with everything
-// the transcript GET serves beside them. `turns` is the page SIZE in whole turns, which
-// §6.3 requires: a page is a set of whole turns, never an entry count. False for a chat with no header; a `before`
-// naming a turn the log does not hold is an error the handler turns into a 400.
-// The registry (Live and the open tails) is read BEFORE the chat's lock: its
-// writers take the store lock inside their own, so the reverse order deadlocks.
-// The stamps are read under the lock with the window, so each certifies exactly
-// the entries served; a tail that sealed between the two reads is reconciled by
-// id (openTail). An older page carries the `chat` stamp alone and no tails.
+// the transcript GET serves beside them. `turns` is the page SIZE in whole turns, never
+// an entry count. False for a chat with no header; a `before` naming a turn the log does
+// not hold is an error the handler turns into a 400. The registry (Live and the open
+// tails) is read BEFORE the chat's lock: its writers take the store lock inside their own,
+// so the reverse order deadlocks. The stamps are read under the lock with the window, so
+// each certifies exactly the entries served; a tail that sealed between the two reads is
+// reconciled by id (openTail). An older page carries the `chat` stamp alone and no tails.
 func (s *Store) Page(ctx context.Context, chatID marotte.ChatID, turns int, before string) (*Page, bool, error) {
 	if ctx.Err() != nil {
 		return nil, false, ctx.Err()

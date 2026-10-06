@@ -1,12 +1,8 @@
 // ---------------------------------------------------------------------------
 // The PRs tab's one-shot focus request: a notification naming a pull request
-// lands on that pull request's row.
-//
-// A FILE of its own rather than a describe in git-prs-tab.test.ts, because the
-// harness is materially different in the two ways this behaviour is about. That
-// suite fakes the timers and stubs `preserveGitScroll` to a pass-through, and the
-// scheduling ruling here is exactly a claim about REAL frames and about that
-// module's own rAF scroll restore.
+// lands on that pull request's row. A file of its own because git-prs-tab.test.ts
+// fakes the timers and stubs `preserveGitScroll`, and this behaviour is a claim
+// about REAL frames and that module's own rAF scroll restore.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

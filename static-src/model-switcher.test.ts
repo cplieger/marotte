@@ -429,7 +429,7 @@ describe("the effort section", () => {
   });
 
   it("a level picked under ANOTHER model yields the current model's default", () => {
-    // The seed is model-scoped (user report, 2026-08-31): a tier chosen on
+    // The seed is model-scoped: a tier chosen on
     // opus-5 must not override gpt-luna's own default.
     lastEffortByModel = { "opus-5": "max" };
     setCatalogEfforts(fiveTiers(), "high");

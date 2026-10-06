@@ -43,7 +43,7 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1086",
+        "internal/chat/entrylog.go:1072",
         "internal/translate/projection_entries.go:668",
         "internal/translate/wire_enums.go:40",
         "internal/turnlog/turnlog.go:548"
@@ -111,12 +111,12 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/entry_merge.go:975",
+      "site": "internal/agent/entry_merge.go:972",
       "form": "compare",
       "status": "aborted"
     },
     {
-      "site": "internal/chat/entrylog.go:1086",
+      "site": "internal/chat/entrylog.go:1072",
       "form": "status_field",
       "status": "aborted"
     },

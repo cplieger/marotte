@@ -500,12 +500,10 @@ describe("summarize folds the chat tabs into one value", () => {
   it("opens at one per finished tab on a device with no acknowledgements", () => {
     // Eight open chat tabs, and the SPLIT is the live instance's own: six
     // `completed`, two `interrupted` (which `severityOf` grades broken, so
-    // `failed`). Re-measured against /config on 2026-09-04 rather than assumed,
-    // and the number came back identical under the pre-ruling mapping too — the
-    // one cancelled chat and the one unreadable chat have no open tab, so the
-    // hollow-ring ruling moved nothing here. A stopped turn nevertheless DOES
-    // count when it has a tab (user ratification, same day): `done` is the dot for
-    // a turn that ended, whatever became of it, and this fold sees only the dot.
+    // `failed`). The one cancelled chat and the one unreadable chat have no open
+    // tab, so stopped outcomes move nothing here. A stopped turn DOES count when it
+    // has a tab: `done` is the dot for a turn that ended, whatever became of it,
+    // and this fold sees only the dot.
     const tabs = [
       { id: "t1", status: "done" },
       { id: "t2", status: "done" },

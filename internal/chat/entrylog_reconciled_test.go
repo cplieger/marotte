@@ -211,8 +211,8 @@ func TestNeedsReconcile_AChatWhoseOwnBindNamesItsSessionIsQuiet(t *testing.T) {
 }
 
 // A rewind loses nothing, so it raises no reconcile signal — for j > 1, where the record
-// files into a survivor, and for j = 1, where §2.2 step 3 mints a carrier because no turn
-// survives. The CLOSE of that carrier is the load-bearing half (design §9 item 33): an
+// files into a survivor, and for j = 1, where the log mints a carrier because no turn
+// survives. The CLOSE of that carrier is the load-bearing half: an
 // open turn is synthesized `turn_close{unterminated}` at the next open, which IS condition
 // (ii), so a rewind that lost nothing would raise the signal one restart later and every
 // later resume of that chat would rewrite its whole file. j = 1 is the arm that can see

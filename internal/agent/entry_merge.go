@@ -55,11 +55,8 @@ const synthesizedCloserSuffix = ":close"
 // turn. reverted is the set AllWithReverted answers beside the entries, and each turn is
 // stamped from it. A turn with no turn_open is skipped with one Warn.
 //
-// The order is the READ's, which is file order, and never turn_open.n: two turns can
-// carry one n once a revert has reused an ordinal (§2.3), so an n sort is ambiguous, and
-// it interleaves reverted and surviving turns in the file the rewrite writes. This
-// output is groupByTurn's input, so sorting here decides that order whatever the log
-// does.
+// The order is file order, never turn_open.n: a revert reuses ordinals, so two turns can
+// carry one n. This output is groupByTurn's input, so its order is the rewritten file's.
 func RecordTurnsOf(entries []marotte.Entry, reverted map[string]struct{}) []RecordTurn {
 	byTurn := make(map[string][]marotte.Entry)
 	var order []string
@@ -306,9 +303,9 @@ func lastSurviving(turns []MergedTurn) (*MergedTurn, bool) {
 	return nil, false
 }
 
-// mergedClearers reads the merged list's own answers to §2.6's clauses: the turns a
-// reconciled record already names, and whether the header's session is one this record
-// has adopted — bound by a turn_bind the replay carried, or already recorded.
+// mergedClearers reads the merged list's own answers to the reconcile signal's clauses:
+// the turns a reconciled record already names, and whether the header's session is one
+// this record has adopted — bound by a turn_bind the replay carried, or already recorded.
 func mergedClearers(turns []MergedTurn, session string) (recorded map[string]struct{}, sessionKnown bool) {
 	recorded = make(map[string]struct{})
 	for i := range turns {
@@ -1064,11 +1061,9 @@ func sameEntry(rec, out *marotte.Entry) bool {
 // and reports whether anything moved. A renumber is itself a change: turn_count reads
 // the newest n, and a client detects a missed frame as a hole in seq.
 //
-// The n runs over the SURVIVING turns only and a reverted turn keeps whatever n it had:
-// under §2.3 a hidden turn's ordinal is a coordinate no reader reads, while every reader
-// of an n reads it off the surviving view, so numbering a hidden turn into that sequence
-// would put it in a surviving turn's slot. seq is per turn and is assigned to every one
-// of them, hidden or not, because the rewrite writes each group contiguously from 0.
+// n runs over the SURVIVING turns only and a reverted turn keeps its n: every reader of
+// an n reads the surviving view, so numbering a hidden turn would take a survivor's slot.
+// seq is assigned to every turn, because the rewrite writes each group from 0.
 func renumber(turns []MergedTurn) bool {
 	moved := false
 	surviving := uint64(0)

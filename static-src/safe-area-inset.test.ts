@@ -250,16 +250,15 @@ describe("the composer's bottom clearance", () => {
       parseFloat(getComputedStyle(form).getPropertyValue("--composer-inset-cap")) * 16 || 24;
     expect(page, `${page}px of page below the card`).toBeCloseTo(cap, 0);
     // The cap is the whole point, so pin that it BINDS here: an uncapped rule would
-    // put the device's own 34px in this gap and this case would pass for the shape
-    // the ruling rejected.
+    // put the device's own 34px in this gap and this case would pass for the uncapped
+    // shape.
     expect(page, "the cap binds rather than the device's own inset").toBeLessThan(INSET_BOTTOM);
   });
 
   it("leaves the card's own material uniform, so the box reads symmetric", () => {
-    // The other half of the same ruling. With the band outside the card, the pill
-    // row's two insets are its uniform `--composer-pill-pad` again — it used to
-    // render 21px against its 6px top — so the row sits centred about the 1px
-    // divider that separates it from the textarea.
+    // With the band outside the card, the pill row's two insets are its uniform
+    // `--composer-pill-pad`, so the row sits centred about the 1px divider that
+    // separates it from the textarea.
     withInsets(true);
     const { pill } = mountComposer();
     const row = pill.closest(".prompt-pills") as HTMLElement;

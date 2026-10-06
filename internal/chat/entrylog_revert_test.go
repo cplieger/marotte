@@ -15,7 +15,7 @@ import (
 )
 
 // revertRecord appends one turn_revert into carrier, naming the window from..through.
-// The id is §2.1's, so the shape a reader greps for is the shape the store writes.
+// The id has the store's own shape, so what a reader greps for is what the store writes.
 func revertRecord(f *logFixture, carrier, from, through string, fromN uint64) {
 	f.t.Helper()
 	f.append(carrier, "", from+":revert", marotte.EntryKindTurnRevert, marotte.EntryTurnRevert{
@@ -58,7 +58,7 @@ func mustAll(t *testing.T, l *EntryLog) []marotte.Entry {
 	return entries
 }
 
-// The skip rule's four properties (design-2 §2.2) over a real file: the window is
+// The skip rule's four properties over a real file: the window is
 // FILE order, bounded above by the turn the record NAMES, the carrier is excluded,
 // and the record itself stays visible because it lives in a surviving turn.
 func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
@@ -124,7 +124,7 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 }
 
 // The `T != C` exclusion, which is reachable only when the carrier's own turn_open
-// lies INSIDE the window: the no-survivor shape §2.2 step 3 mints. Without it the
+// lies INSIDE the window: the no-survivor carrier the log mints. Without it the
 // record lands in a turn every reader skips, so a reload draws no boundary row and
 // the surviving view is EMPTY.
 func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
@@ -156,10 +156,10 @@ func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
 	check("after a reopen")
 }
 
-// §2.2 step 3's ONE crash state: the carrier's turn_open is on disk and its record is
+// A minted carrier's ONE crash state: its turn_open is on disk and its record is
 // not. The scan marks such a carrier reverted, which restores the pre-revert surviving
 // view AND keeps the store-open closer off it — a closer there would be stamped
-// interrupted/unterminated, which is §2.6's reconcile-needed signal, so every rewind to
+// interrupted/unterminated, which is the reconcile-needed signal, so every rewind to
 // turn 1 would raise a lost-history claim for a chat that lost nothing.
 func TestRevert_IncompleteCarrierIsRevertedAndSynthesizesNoCloser(t *testing.T) {
 	f := newLogFixture(t)
@@ -247,7 +247,7 @@ func TestRevert_AllWithRevertedHoldsEverything(t *testing.T) {
 	}
 }
 
-// The skip rule survives the merge's REWRITE, which is what §2.2's stated Through
+// The skip rule survives the merge's REWRITE, which is what the record's stated Through
 // exists for. A rewrite regroups by turn, so the record travels into its carrier's
 // group and the carrier PRECEDES the window it names by construction: a window
 // resolved while the order is still being built resolves against neither end and
@@ -301,7 +301,7 @@ func TestRevert_RewriteDoesNotUnRevert(t *testing.T) {
 	check("after a reopen")
 }
 
-// §2.2 step 2: the carrier is the newest SURVIVOR, so reverting turn 1 of k reverts
+// The carrier is the newest SURVIVOR, so reverting turn 1 of k reverts
 // all k, and the record still lands where every reader sees it. The append path picks
 // it; nothing hands the revert a turn.
 func TestRevert_CarrierIsTheNewestSurvivor(t *testing.T) {
@@ -395,7 +395,7 @@ func TestRevert_ASecondRevertsRecordIsVisible(t *testing.T) {
 	check("after a reopen")
 }
 
-// §2.2 step 3: when the window takes every turn, the log mints its own carrier at the
+// When the window takes every turn, the log mints its own carrier at the
 // POST-revert high-water and CLOSES it before the record exists. The close is
 // load-bearing — an open carrier is synthesized `unterminated` at the next open, which
 // is the reconcile signal, so a rewind that lost nothing would raise it.
@@ -445,10 +445,9 @@ func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 	check("after a reopen")
 }
 
-// §9 item 34: a between-turns append after a revert lands in a SURVIVING turn. Its
-// target is unconditional and Through is that same turn, so before the re-base every
-// model switch, mode switch and between-turns steer after a rewind landed where no
-// reader looks, with a live frame the client answers as a hole.
+// A between-turns append after a revert lands in a SURVIVING turn. Filed into the newest
+// turn instead, every model switch, mode switch and between-turns steer after a rewind
+// would land where no reader looks, with a live frame the client answers as a hole.
 func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	f := newLogFixture(t)
 	a := f.prompt("a")
@@ -591,7 +590,7 @@ func TestRevert_WindowReadsOnePreadPerRange(t *testing.T) {
 }
 
 // The scan carries the reconcile predicate's ANSWERS rather than making it re-scan:
-// design-2 §2.4's index row (the synthesized closer's own stop reason, a text-less
+// the index row (the synthesized closer's own stop reason, a text-less
 // steer) and its three log-level sets (the reconciled turns, the reconciled sessions,
 // the sessions a turn_bind names). The predicate itself reads them at the door.
 func TestScan_CarriesTheReconcileAnswers(t *testing.T) {
@@ -644,17 +643,12 @@ func TestScan_CarriesTheReconcileAnswers(t *testing.T) {
 	check("after a reopen")
 }
 
-// Property 6's fourth and fifth arms (design-2 §10): an incomplete carrier is reverted
-// at EITHER interruption point, and the flags follow the RECORD rather than the
-// attempt — so a failed revert answers in memory exactly what a fresh open of the same
-// bytes answers.
-//
-// The interruption is the k-th syncEntries, the seam the store's write-error test
-// already drives: the carrier's turn_open is the revert's first write, its turn_close
-// the second, the record the third. One measured difference from the design's wording,
-// stated rather than worked around: a failed sync leaves the LINE on disk, because the
-// write returned before it, so the "does not land" half of each arm is the unsynced
-// tail going with the failure — the crash property 4 models by truncation.
+// An incomplete carrier is reverted at EITHER interruption point, and the flags follow
+// the RECORD rather than the attempt — so a failed revert answers in memory exactly what
+// a fresh open of the same bytes answers. The interruption is the k-th syncEntries: the
+// carrier's turn_open is the revert's first write, its turn_close the second, the record
+// the third. A failed sync leaves the LINE on disk, because the write returned before it,
+// so the "does not land" half of each arm is the unsynced tail going with the failure.
 func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -699,8 +693,8 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			}
 			t.Cleanup(func() { syncEntries = restore })
 
-			// Reverting the OLDEST turn takes b with it, so no turn survives and §2.2
-			// step 3 mints the carrier this arm interrupts.
+			// Reverting the OLDEST turn takes b with it, so no turn survives and the
+			// log mints the carrier this arm interrupts.
 			_, opened, err := f.log.Revert(t.Context(), a, marotte.TurnRevertCauseRewind, "kas-a")
 			if !errors.Is(err, boom) {
 				t.Fatalf("Revert(%q) with sync %d failing = %v, want the write error", a, tc.failAt, err)
@@ -820,7 +814,7 @@ func TestStore_NewestRevertIsTheRecordAResumeSnapshots(t *testing.T) {
 	}
 }
 
-// §2.3's ordinal REUSE is what makes the rewrite's group order load-bearing: a turn opened
+// Ordinal REUSE is what makes the rewrite's group order load-bearing: a turn opened
 // after a revert takes the SURVIVING high-water plus one, so two turns in one log carry one
 // `n` and a sort over it is ambiguous — and it would interleave reverted turns with
 // surviving ones. groupByTurn therefore keeps the READ's order, which is this log's own file

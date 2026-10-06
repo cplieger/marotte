@@ -1,23 +1,12 @@
 package agent
 
-// The unattended floor: a permission request raised by a SCHEDULED run has
-// nobody to answer it, so it is refused on a short budget instead of parking the
-// run forever.
+// The unattended floor: a permission request raised by a SCHEDULED run has nobody to
+// answer it, so it is refused on a short budget instead of parking the run forever — a
+// parked run blocks every later run of its recipe. Manually launched and agent-launched
+// runs are attended, so they are never marked and never auto-refused.
 //
-// Why this exists: the one-live-run-per-recipe rule means a parked run blocks
-// every later run of the same recipe, so an unanswered prompt at 03:00 silently
-// stops the schedule until someone notices.
-//
-// Scope is deliberately narrow (user decision): SCHEDULED runs only. A manually
-// launched run is attended by definition, and an agent-launched run is the
-// agent's own on its chat's bridge. Neither is marked, so neither is ever
-// auto-refused.
-//
-// DENY by default, with an explicit opt-out (`scheduled_auto_approve`,
-// Settings → Permissions, off by default): "I approve this while watching" and
-// "approve this unattended at 03:00" are different consents, and inheriting the
-// first as the second is how a scheduler quietly acquires privileges nobody
-// granted.
+// DENY by default; `scheduled_auto_approve` (Settings → Permissions, off by default) opts
+// out, because approving while watching and approving unattended are different consents.
 
 import (
 	"context"

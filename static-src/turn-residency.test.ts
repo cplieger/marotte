@@ -438,12 +438,9 @@ describe("the mounted derivation", () => {
 
   it("STUBS a turn the fold policy wants open where the window cannot reach it", () => {
     const id = chatID();
-    // OVERTURNED. This case claimed presence keeps such a turn's height on the page
-    // — "a body holding no row, and a spacer standing in for every ordinal it has" —
-    // and that shape is the defect, not the design: the card renders OPEN with one
-    // whole-turn spacer as its only child, which a reader sees as a blank box
-    // (measured 23,988px on a 400-entry turn, reported as "a huge empty space").
-    // Height is not worth that: a stub folds to its face and offers the toggle.
+    // A stub folds to its face and offers the toggle: an OPEN card whose only child is
+    // one whole-turn spacer reads as a blank box (23,988px on a 400-entry turn), and
+    // keeping the turn's height on the page is not worth that.
     setTurnOpen(id, "u1", true);
     activate(id, [toolTurn("u1"), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
     expect(hasBody("u1")).toBe(false);
@@ -574,7 +571,7 @@ describe("the fold policy over residency", () => {
     const id = chatID();
     activate(id, plainTurns(8));
     // One prose answer per turn, so a face would equal its body: an auto-fold
-    // there animates and changes nothing (user report, 2026-08-31).
+    // there animates and changes nothing.
     for (let n = 1; n <= 8; n++) {
       expect(isFolded(`u${String(n)}`), `turn ${String(n)} open`).toBe(false);
       expect(card(`u${String(n)}`).hasAttribute("data-no-fold")).toBe(true);
@@ -685,7 +682,7 @@ describe("the fold policy over residency", () => {
     // Its toggle is hidden (data-no-fold), so a recorded fold can only be a
     // leftover from an earlier build or from before a rewind made this turn
     // newest; honouring it would strand the tail closed with no control left
-    // to reopen it (user report, 2026-08-31).
+    // to reopen it.
     const id = chatID();
     setTurnOpen(id, "u8", false);
     activate(id, toolTurns(8));

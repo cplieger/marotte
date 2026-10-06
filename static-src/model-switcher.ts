@@ -403,8 +403,7 @@ class ModelSwitchController {
     if (isEmpty) {
       // Instant local apply, PLUS the command: the record is what every header
       // echo carries, so a pick that stays local is clobbered back the moment
-      // set_effort or set_mode auto-persists (user report, 2026-08-31 — picking
-      // an effort reverted the model). The server persists a pre-session pick
+      // set_effort or set_mode auto-persists. The server persists a pre-session pick
       // without spawning a bridge.
       this.applyLocalChoice(modelID);
       this.fire(session.id, modelID);

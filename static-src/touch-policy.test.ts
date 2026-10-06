@@ -233,7 +233,7 @@ describe("the third tier state moves the hit floor and nothing else", () => {
   });
 
   it("leaves every control-height token at the fine tier's value", () => {
-    // "That token only" is the whole ruling, and it is what keeps a painted box or
+    // "That token only" is the whole rule, and it is what keeps a painted box or
     // a glyph from moving: --ctl-h and its two siblings decide heights, --icon-ui
     // decides glyph size, and none of them may follow a touch that has already
     // happened. Their coarse values are 2.75/2.5/2.25rem and 1.25rem.

@@ -1,9 +1,7 @@
 package agent
 
-// Pure-function tests extracted from bridge_fs.go. These exercise the
-// slicing, truncation, and tool-call-id helpers that
-// bridge_fs uses on every agent fs/* round trip — and that the batch-15
-// review flagged as undertested.
+// Pure-function tests extracted from bridge_fs.go: the slicing, truncation, and
+// tool-call-id helpers bridge_fs uses on every agent fs/* round trip.
 
 import (
 	"context"

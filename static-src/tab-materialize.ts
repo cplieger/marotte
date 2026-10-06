@@ -325,21 +325,11 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
     case "run": {
       const workflowID = subject.ref;
       // A RUN TAB IS ALWAYS A VIEW: `owns: false`, no `onClose`, so dismissing it
-      // stops nothing (user decision, 2026-08, superseding the earlier split where
-      // the launcher's own tab cancelled on ×).
-      //
-      // The subpage view is universal — one component serves a workflow run and a
-      // subagent — and a × that means "close this" on one door and "destroy the
-      // work" on another is a gesture a reader cannot learn. It was also the only
-      // destructive control in the app with no confirmation, reachable by the
-      // smallest target on the row.
-      //
-      // The consequence is accepted rather than overlooked: a parentless run can now
-      // outlive every view of it. Stopping one is the CANCEL VERB, which is why the
-      // control row is no longer gated on which door opened the tab (run-view.ts) —
-      // with the × disarmed, gating Cancel would have made a live run reachable and
-      // unstoppable. The launching chat's × still cancels its runs, and that is a
-      // different gesture: it destroys the conversation, not a view of it.
+      // stops nothing. One component serves a workflow run and a subagent, and a × that
+      // means "close this" on one door and "destroy the work" on another cannot be
+      // learned. A parentless run can therefore outlive every view of it; stopping one
+      // is the CANCEL VERB, which run-view.ts never gates on the door. The launching
+      // chat's × still cancels its runs: it destroys the conversation, not a view of it.
       return {
         name: runName(workflowID),
         icon: TAB_ICONS.run,

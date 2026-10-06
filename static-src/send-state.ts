@@ -1,52 +1,10 @@
 // ---------------------------------------------------------------------------
-// Derives the send-button state from the global pieces of the world:
-//   - SSE connection status               (signal, set by transport.ts)
-//   - the agent being unreachable         (signal, set by handlers/turn.ts)
-//   - thinking flag for the active chat   (reactive via the store)
-//
-// The two externally-driven inputs are `signal`s; the resulting SendState is a
-// `computed` that also reads the already-reactive `activeSession` store input,
-// so it auto-tracks every dependency. A single `effect` pushes the value to
-// prompt-input.ts on any change — no manual recompute call anywhere.
-//
-// Precedence: disconnected > sendBlocked > streaming > idle.
-//
-// THE ERROR FACE MEANS "A SEND CANNOT SUCCEED RIGHT NOW", NOT "THE LAST SEND
-// FAILED", and narrowing it to that is the point of this file's current shape
-// (2026-08, user decision). The `sendBlocked` rung used to be a general
-// `lastError` that every failure wrote: a 429 throttle, a 5xx, a dead POST, a
-// timeout, a refused model switch. An alert icon on the one control whose job
-// is to send communicates that the chat is dead and nothing can be sent, which
-// was false in every one of those cases — a failed prompt leaves the server
-// IDLE (CmdPrompt's deferred ReleaseAfterPrompt runs on the error path too), so
-// the chat is promptable the instant the error lands. Those failures go to
-// failure-notice.ts (a toast) and to the turn's own transcript divider, which
-// are surfaces that report a past event without making a claim about the
-// future.
-//
-// Three states earn the face, and each is a statement about what happens to a
-// send NOW rather than about one past attempt:
-//   - the SSE stream is down, so this client is not talking to the server at all
-//   - `bridge_start_failed`, so kiro-cli could not be spawned for this chat and
-//     there is no ACP connection behind it to send to
-//   - a prompt was refused with 409 reason:"starting" — the chat's admission
-//     slot is held by something that cannot take a steer (a cold spawn, a
-//     shell command, a workflow step), so a send right now cannot land. submit.ts owns that
-//     copy and pushes it through `reportSendRefused`.
-//
-// Neither rung is a LOCK. The composer stays live through both: nothing here sets
-// `disabled`, because a dropped SSE stream says nothing about the command POST
-// (different connection, usually still lands, and the reconnect replay catches the
-// transcript up), and a bridge that failed to start is retried by the next prompt.
-// The state used to be `blocked` and disabled the textarea, which turned one
-// throttled turn into a dead thread.
-//
-// There used to be a `queued` state between streaming and idle, and its removal
-// is the point rather than a simplification: a prompt typed mid-turn is a STEER
-// now, delivered into the running turn instead of buffered client-side, so there
-// is no pending-send for the button to report. What IS pending — a steer the
-// agent has not read yet — is server state and belongs on the chip row that
-// projects it, not on the one control whose job is to stop the turn.
+// Derives the send-button state (disconnected > sendBlocked > streaming > idle) from
+// the SSE status, the agent being unreachable and the active chat's thinking flag, as
+// one `computed` an `effect` pushes to prompt-input.ts. The error face means "a send
+// cannot succeed NOW" — the stream is down, `bridge_start_failed`, or a 409
+// reason:"starting" — so a failed send, which leaves the chat promptable, goes to
+// failure-notice.ts instead. Nothing here sets `disabled`: the composer stays live.
 // ---------------------------------------------------------------------------
 
 import { signal, computed, effect } from "@cplieger/reactive";

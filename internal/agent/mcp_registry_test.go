@@ -234,11 +234,9 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	}
 }
 
-// TestMCPRegistry_RecordDisabled covers the amendment: KAS's "disabled" status
-// becomes a read-only row for a server marotte never configured, and stays
-// discarded for one it did. The second half is what keeps the narrowed guard
-// from resurrecting a server the user switched off mid-session — the whole
-// reason the early return was kept rather than deleted.
+// TestMCPRegistry_RecordDisabled: KAS's "disabled" status becomes a read-only row for a
+// server marotte never configured, and stays discarded for one it did. The second half
+// is what keeps the guard from resurrecting a server the user switched off mid-session.
 func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	cases := map[string]struct {
 		cfg        func() *fakeMCPConfig

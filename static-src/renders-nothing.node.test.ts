@@ -1,13 +1,10 @@
-// `rendersNothing` is the predicate that replaced `turnCost(t).entries === 0` at
-// messages.ts's bodyless test (design-2 §4.3): the question is EXISTENCE, and a count
-// answers it by pricing every entry.
-//
-// The oracle is equality with the count it replaced, which holds by construction while
-// the predicate consults `entryRenders` and breaks the moment it hardcodes a kind list
-// of its own. Equality alone is only an oracle over the kinds the generator draws, so
-// the kind SET is part of it (a `Record<EntryKind, true>` fails `typecheck:tests` when
-// the wire gains a kind) and two arms are pinned WITHOUT reading `turnCost`, because a
-// predicate and a price can agree on a wrong answer.
+// `rendersNothing` is messages.ts's bodyless test: the question is EXISTENCE, and a
+// count answers it by pricing every entry. The oracle is equality with
+// `turnCost(t).entries === 0`, which holds while the predicate consults `entryRenders`
+// and breaks the moment it hardcodes a kind list of its own. The kind SET is part of it
+// (a `Record<EntryKind, true>` fails `typecheck:tests` when the wire gains a kind), and
+// two arms are pinned WITHOUT `turnCost`, because a predicate and a price can agree on a
+// wrong answer.
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 

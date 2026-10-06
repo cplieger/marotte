@@ -320,8 +320,7 @@ describe("the knob's size", () => {
 
   it("FILLS the bar's height: the handle is the groove, not a dot inside it", () => {
     // The handle's band and the bar's band are the same band at every tier, which is
-    // what makes it read as the thing filling the groove. It used to clear the bar by
-    // 2px on all four edges, and that clearance is what the user reported twice.
+    // what makes it read as the thing filling the groove, with no clearance on any edge.
     mount(FIVE, "high");
     const bar = barHeight();
     expect(bar).toBe(TIER.fine.bar);

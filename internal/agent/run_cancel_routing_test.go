@@ -292,9 +292,7 @@ func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 // TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun keeps the fallback
 // honest, which is what makes the routing a preference rather than a requirement: a
 // run whose owner is gone has no carrier to prefer, and KAS's ownership check passes
-// on a stale stamp. That population is the one measured success in the record —
-// wf_5fa90abea7328028's tab-close cancel landed on the utility session because by
-// then its owner was stale.
+// on a stale stamp, so a tab-close cancel of such a run lands on the utility session.
 func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T) {
 	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
 		// Parented on a session no open chat owns, so nothing here hosts it.

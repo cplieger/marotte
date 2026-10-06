@@ -67,7 +67,6 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 		wantBridge bool
 		wantLease  bool
 	}{
-		// The ruling's own row.
 		"a pause drops the process and keeps the lease": {string(marotte.RunStatusPaused), false, true},
 		// Here so a mutation widening the close cannot pass on the pause row alone.
 		"a completed run drops both":  {"completed", false, false},
@@ -919,7 +918,7 @@ func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	}
 }
 
-// The ruling's other half: a failed run stays openable in a subtab though nothing is
+// Every run stays reachable: a failed run stays openable in a subtab though nothing is
 // running. The endpoint reads no lease and needs no run bridge — it goes out on the
 // shared utility session and passes `state` and `nodePlan` through verbatim.
 func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {

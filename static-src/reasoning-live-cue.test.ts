@@ -213,7 +213,7 @@ describe("13-messages.css keeps reasoning still and flush", () => {
   const css = loadCSS("13-messages.css");
 
   it("hangs no animation off any reasoning selector", () => {
-    // The ruling this pins: a pulsing dot is reserved to TABS and
+    // The rule this pins: a pulsing dot is reserved to TABS and
     // workflow-agent surfaces. A live trace is on screen already — it mounts
     // open with its text growing and its label reading "Thinking…" — so no
     // reasoning rule may carry an animation, a ::before disc included.

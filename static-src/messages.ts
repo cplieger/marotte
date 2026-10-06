@@ -647,7 +647,7 @@ export function mountChatView(): void {
 }
 
 // ---------------------------------------------------------------------------
-// The follow model's two client-side obligations (§3.4).
+// The follow model's two client-side obligations.
 // ---------------------------------------------------------------------------
 
 /** Entries the reader can REACH, which is what the resume chip counts. `entryRenders`

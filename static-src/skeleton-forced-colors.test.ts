@@ -60,7 +60,7 @@ describe("the forced-colors arm, in source", () => {
     // any other block in it, which is the same collision one query over.
     expect(
       loadCSS("40-a11y.css").toLowerCase(),
-      "the forced-colors arm lives in 30-utilities.css beside the rule it modifies (design §2.5); a .skeleton rule in 40-a11y.css means the two files' owners have collided",
+      "the forced-colors arm lives in 30-utilities.css beside the rule it modifies; a .skeleton rule in 40-a11y.css means the two files' owners have collided",
     ).not.toContain("skeleton");
   });
 });
@@ -92,11 +92,11 @@ describe("the forced-colors arm, rendered under the emulated feature", () => {
     // A comparison, not a literal: the border resolves to the platform's
     // `CanvasText` and the background to its `Canvas`, and the fix is that the
     // two DIFFER. Under emulation this is a reading about the emulated palette
-    // rather than about a real forced-colours OS session — see the run record.
+    // rather than about a real forced-colours OS session.
     expect(style.borderTopColor).not.toBe(style.backgroundColor);
   });
 
-  it("keeps the pulse running, so §2.2's arm is not read as covering this mode", () => {
+  it("keeps the pulse running in forced colours", () => {
     // The arm adds no `animation: none` and no `opacity: 1`: forced colours and
     // reduced motion are independent preferences, so a forced-colours reader has
     // not asked to lose the ambient loading signal.

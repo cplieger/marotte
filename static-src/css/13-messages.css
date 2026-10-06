@@ -335,7 +335,7 @@
      * height transition retriggered a 200ms animation per text delta, and chunks land
      * faster than that. The per-chunk fade-in supplies the perception of motion. */
     /* No streaming wash: an accent gradient that vanished at turn end read as a
-     * rendering glitch rather than as state (user report, 2026-08-31). The caret
+     * rendering glitch rather than as state. The caret
      * below and the working pill are the "still typing" signals. */
 
     /* Blinking caret LEADING the text, attached to the element the renderer is

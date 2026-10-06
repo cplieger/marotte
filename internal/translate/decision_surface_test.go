@@ -134,10 +134,9 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	}
 }
 
-// TestPermissionCard_LeavesLegitimateTitlesByteIdentical is the other half of
-// the ruling: the cost is paid only by text that could also be the attack.
-// Measured on runesafe v1.4.2 — pure RTL survives because the Unicode bidi
-// algorithm derives direction from strong characters alone.
+// TestPermissionCard_LeavesLegitimateTitlesByteIdentical bounds the bidi neutralisation:
+// the cost is paid only by text that could also be the attack. Pure RTL survives
+// because the Unicode bidi algorithm derives direction from strong characters alone.
 func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 	for _, title := range []string{
 		"Write config.tf",

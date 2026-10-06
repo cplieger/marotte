@@ -1663,11 +1663,10 @@ func TestCtxReader_Read(t *testing.T) {
 // --- actionRename destination resolvePath coverage ---
 //
 // Pins that rename's destination runs through resolvePath (blacklist
-// + real-path) instead of only the lexical sensitive/protected checks.
-// Without the fix, renaming a file into a name that matches a sensitive
-// PREFIX directory (e.g. `chats`) on cold boot could slip past the
-// per-call guards. This mirrors the rename/copy asymmetry security
-// review flagged.
+// + real-path) instead of only the lexical sensitive/protected checks,
+// so renaming a file into a name that matches a sensitive PREFIX
+// directory (e.g. `chats`) on cold boot cannot slip past the per-call
+// guards. This keeps rename's destination checks the same as copy's.
 func TestAction_Rename_DestRunsResolvePath(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "old.txt"),

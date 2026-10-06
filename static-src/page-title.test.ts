@@ -77,17 +77,11 @@ describe("the title bar's measured fit", () => {
   });
 
   it("clips a SHORT title once the ACTIONS have wrapped", () => {
-    // AMENDMENT §E, and this is the bistable band it rules must go. The title's own
-    // overflow is not the whole test: the heading is `flex: 1 1 0`, so it contributes
-    // no basis to the line, but it is still a flex item and the bar is still charged
-    // its 2px GAP — which the row's 44px targets and their gaps cannot spare. So the
-    // bar wrapped, the wrap handed the heading a row of its own, a short title then
-    // measured as fitting, and it rendered BECAUSE the actions had spilled onto a
-    // second row: a title visible only in the state where the bar had broken for it.
-    // Measured on the SERVED page (where the phone row is eight buttons rather than
-    // this environment's seven, the hamburger being desktop-hidden at the test
-    // viewport's own width): before, 387-391 showed the title over a 91px two-row
-    // bar; after, 390 and 391 are a single 52px row and the band is gone.
+    // No bistable band: the title's own overflow is not the whole test. The heading is
+    // `flex: 1 1 0`, so it adds no basis to the line, but it is still a flex item and the
+    // bar is still charged its 2px GAP, which the row's 44px targets cannot spare. If that
+    // wraps the bar, the heading gets a row of its own, a short title then measures as
+    // fitting, and it renders only BECAUSE the actions spilled onto a second row.
     const heading = mountBar("320px");
     setPageTitle("Git", "chat");
     expect(heading.classList.contains("sr-only"), "clipped although the title is short").toBe(true);
@@ -105,8 +99,8 @@ describe("the title bar's measured fit", () => {
     heading.classList.add("sr-only");
 
     // Two rows here is geometry rather than a fallback — the targets do not fit one
-    // row at this width and shrinking one is not on the table — and §E's point is
-    // that the state is now STABLE rather than emergent.
+    // row at this width and shrinking one is not on the table — and the state is
+    // STABLE rather than emergent.
     const bar = heading.parentElement;
     expect(bar).not.toBeNull();
     const rows = new Set(

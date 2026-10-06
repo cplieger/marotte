@@ -51,7 +51,7 @@
       "compared": true,
       "sites": [
         "internal/agent/bridge_coord.go:1206",
-        "internal/agent/entry_merge.go:604"
+        "internal/agent/entry_merge.go:601"
       ]
     },
     {
@@ -107,7 +107,7 @@
       "label": "Not read · the session restarted",
       "compared": true,
       "sites": [
-        "internal/agent/entry_merge.go:604"
+        "internal/agent/entry_merge.go:601"
       ]
     },
     {
@@ -149,7 +149,7 @@
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:604",
+      "site": "internal/agent/entry_merge.go:601",
       "form": "mutation",
       "origin": "",
       "state": "dropped",

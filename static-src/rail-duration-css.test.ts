@@ -166,7 +166,7 @@ describe("the durable channel", () => {
 const DURATION_SHAPED = /elapsed|duration|timings|dur|time|gap/iu;
 
 /** The audited list, CLOSED. Every member carries the row that rules on it, so adding a
- *  class here without a ruling is visibly the wrong move. */
+ *  class here without a row is visibly the wrong move. */
 const RULED = new Map<string, string>([
   // Site 1 was the rail's dashed pause BAND, `.rail-seam`. The band went in 2026-09 and
   // the pause REPORTING went with it — no rail clause, no footer row, no computation —
@@ -186,7 +186,7 @@ const RULED = new Map<string, string>([
   ["ev-dur", "out of scope — the exec view"],
   ["ev-d-dur", "out of scope — the exec view"],
   ["ev-tl-dur", "out of scope — the exec view"],
-  // Row 8's ruling applied elsewhere: an absolute timestamp is not a duration.
+  // Row 8's rule applied elsewhere: an absolute timestamp is not a duration.
   ["sched-time", "wall clock, not a duration"],
   ["entry-time", "wall clock, not a duration — and painted at rest on every device"],
 ]);

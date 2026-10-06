@@ -232,8 +232,8 @@ describe("summarize", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The four grouping amendments. All four turn on one axis: collapsing exists to
-// hide items that are individually uninteresting, and a FAILURE is the opposite.
+// Four grouping rules, all on one axis: collapsing exists to hide items that are
+// individually uninteresting, and a FAILURE is the opposite.
 // ---------------------------------------------------------------------------
 
 /** A settled card, as the group's DOM sees it. */
@@ -265,7 +265,7 @@ function groupWith(...cards: HTMLElement[]): HTMLElement {
   return g;
 }
 
-describe("grouping amendments", () => {
+describe("grouping rules for failures", () => {
   it("names the failure in the summary rather than averaging it away", () => {
     const g = groupWith(card("execute", "ok"), card("execute", "fail"), card("execute", "ok"));
     const text = g.querySelector(".tool-group-count")?.textContent ?? "";

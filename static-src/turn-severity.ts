@@ -36,31 +36,14 @@ import type { TurnOutcome, TurnSeverity } from "./wire/types.gen.js";
  *  together — and the five branches over it have to be TOTAL. */
 export type { TurnSeverity };
 
-/** Grade a turn outcome.
- *
- *  Total over the eight outcomes and MECE, and total in BOTH directions: the
- *  `default` arm assigns `outcome` to a `never`, so a ninth member added to the
- *  generated union is a COMPILE error here rather than a value silently graded
- *  `stopped`. The runtime fallback stays behind that check, because the compiler
- *  cannot see a value the decoder let through.
- *
- *  `stopped` rather than `clean` is the direction of both: a value the wire adds
- *  later must not read as a turn that worked. The DECODER is what makes an unknown
- *  value unreachable in practice (`TurnOutcome` is a generated union, so a subject
- *  carrying something else fails at the boundary), and the arm is what makes the
- *  failure direction safe if it ever is reached. `undefined` gets its own case so
- *  it does not consume the exhaustiveness check the ninth-member guard needs.
- *
- *  Two rulings, both of which the surfaces above had got wrong between them:
- *
- *   - `interrupted` is BROKEN. A fault nobody chose stopped the turn, four
- *     surfaces already said so, and the latch that fed the tab dot is the one that
- *     did not. THIS LINE is the fix for the hollow dot.
- *   - `unknown` is STOPPED, never broken. `ConcludeStopReason`'s ruling is the
- *     authority: an unmeasured stop reason says nothing about whether the work
- *     succeeded, so grading it broken would report a working turn as failed. It is
- *     equally not clean — a status mark may fall back to ambiguous and may never
- *     fall back to reassuring. */
+/** Grade a turn outcome. Total over the eight outcomes and MECE: the `default` arm
+ *  assigns `outcome` to a `never`, so a ninth union member is a COMPILE error, and the
+ *  runtime fallback is `stopped`, never `clean`, so a value the decoder let through
+ *  cannot read as a turn that worked; `undefined` has its own case so it does not
+ *  consume that check. `interrupted` is BROKEN: a fault nobody chose stopped the turn.
+ *  `unknown` is STOPPED, never broken — an unmeasured stop reason says nothing about
+ *  whether the work succeeded (`ConcludeStopReason`) — and never clean either: a status
+ *  mark may fall back to ambiguous, never to reassuring. */
 export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
   switch (outcome) {
     case "running":

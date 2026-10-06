@@ -116,8 +116,8 @@ type turnState struct {
 	// on disk — a rewind is a record, never a truncate.
 	reverted bool
 	// hasRevert is whether this turn's body holds its own turn_revert record, which
-	// is what tells a COMPLETE revert carrier from the one crash state §2.2 step 3
-	// can leave behind.
+	// is what tells a COMPLETE revert carrier from the one crash state a minted
+	// carrier can leave behind (its turn_open written, its record not).
 	hasRevert bool
 	// unterminated is this turn's turn_close carrying the synthesized closer's own
 	// stop reason: the reconcile signal a crash leaves, which the scan answers here
@@ -317,8 +317,8 @@ func (l *EntryLog) openTurnLocked(ctx context.Context, spec *TurnSpec) (*marotte
 }
 
 // openTurnWithOrdinalLocked opens a turn at a STATED ordinal, for the one caller
-// whose ordinal is not the surviving high-water plus one: §2.2 step 3's revert
-// carrier, whose ordinal is the high-water AFTER the window it is about to hide.
+// whose ordinal is not the surviving high-water plus one: the carrier a revert mints
+// when no turn survives, whose ordinal is the high-water AFTER the window it hides.
 func (l *EntryLog) openTurnWithOrdinalLocked(ctx context.Context, spec *TurnSpec, ordinal uint64) (*marotte.Entry, error) {
 	raw, err := json.Marshal(marotte.EntryTurnOpen{
 		Prompt:    spec.Prompt,
@@ -443,8 +443,8 @@ func ReconciledEntryID(rec marotte.EntryReconciled) string {
 }
 
 // Revert appends this log's record of a rewind and answers it, plus the carrier's
-// own turn_open when §2.2 step 3 had to mint one, so the caller announces that open
-// ahead of the record. from is the reverted turn, resolved from the SURVIVING view.
+// own turn_open when no turn survived and one was minted, so the caller announces that
+// open ahead of the record. from is the reverted turn, resolved from the SURVIVING view.
 //
 // Nothing is cut and nothing is re-closed: the reverted range stays on disk, every
 // read surface skips it, and a failed append leaves the surviving view exactly as it
@@ -455,15 +455,13 @@ func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRe
 	return l.appendRevertLocked(ctx, from, cause, kasMessageID)
 }
 
-// appendRevertLocked is §2.2's five ordered steps, and the order is the
-// specification: compute the window; choose the carrier against it AND against the
-// turns an earlier record took; when none survives mint a carrier and CLOSE it
-// before the record exists; append the record with its stated Through; and only then
-// mark the index, which the append path's own drain does once the write returned.
-//
-// It is NOT AppendBetweenTurns: that files into the newest SURVIVING turn, which is
-// inside this window by construction, so reverting turn 1 of 7 would revert 1-6 and
-// leave 7 alive.
+// appendRevertLocked runs the revert in an order that is the specification: compute the
+// window; choose the carrier against it AND against the turns an earlier record took;
+// when none survives mint a carrier and CLOSE it before the record exists; append the
+// record with its stated Through; and only then mark the index, which the append path's
+// own drain does once the write returned. It is NOT AppendBetweenTurns: that files into
+// the newest SURVIVING turn, inside this window by construction, so reverting turn 1 of 7
+// would revert 1-6 and leave 7 alive.
 func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record, opened *marotte.Entry, err error) {
 	st := l.turns[from]
 	if st == nil || st.reverted {
@@ -491,7 +489,7 @@ func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause ma
 		}()
 		// Closed BEFORE the record, so the one crash state this step can leave is a
 		// complete turn on disk: an open carrier is synthesized `unterminated` at
-		// the next open, which IS §2.6's reconcile signal, so a rewind that lost
+		// the next open, which IS the reconcile signal, so a rewind that lost
 		// nothing would raise it one restart later.
 		if cerr := l.closeCarrierLocked(ctx, opened.Turn); cerr != nil {
 			return nil, opened, cerr
@@ -814,25 +812,13 @@ func (l *EntryLog) applyRevertsLocked() {
 	}
 }
 
-// markRevertedLocked applies §2.2's skip rule for one record: every turn whose
-// turn_open lies at or after from's and at or before through's, in file order,
-// except the CARRIER the record's own envelope names.
-//
-// The bound is the turn the record NAMES, never this line's byte offset: the merge's
-// rewrite regroups by turn and files a lane-less record inside its carrier's group,
-// which sits BELOW the turns the revert took, so an offset-bounded rule would mark
-// nothing after one swap and hand the reverted range back.
-//
-// It resolves against the COMPLETED order for the same reason, which is why the fold
-// queues the window instead of calling this: after a rewrite the record travels into
-// its carrier's group and the carrier precedes the window by construction (step 2
-// picks the newest SURVIVOR, groupByTurn writes one contiguous group per turn), so
-// both ends are still unread when the line is met and an inline resolution marks
-// nothing — the same reverted range handed back, from the other direction.
-//
-// A window this log cannot resolve marks NOTHING. Both ends are turn ids this log is
-// expected to hold, so an absent one is a record from another log or a torn line, and
-// hiding turns on it would lose history the rule exists to preserve.
+// markRevertedLocked applies the skip rule for one record: every turn whose turn_open
+// lies at or after from's and at or before through's, in file order, except the CARRIER
+// the record's own envelope names. The bound is the turn the record NAMES and it resolves
+// against the COMPLETED order (so the fold queues the window): a rewrite moves the record
+// into its carrier's group, ahead of the window, and an offset-bounded or inline rule
+// would mark nothing and hand the reverted range back. A window this log cannot resolve
+// marks NOTHING: an absent end is another log's record or a torn line.
 func (l *EntryLog) markRevertedLocked(w revertWindow) {
 	first := slices.Index(l.order, w.from)
 	last := slices.Index(l.order, w.through)
@@ -963,7 +949,7 @@ func (l *EntryLog) rescanLocked() error {
 }
 
 // markIncompleteCarriersLocked marks every `source: revert` turn holding no
-// turn_revert of its own. That is §2.2 step 3's ONE crash state — the carrier's
+// turn_revert of its own. That is a minted carrier's ONE crash state — the carrier's
 // turn_open on disk and the record not — and marking it restores the pre-revert
 // surviving view: every reader skips the turn, openTurnsLocked skips it so no closer
 // is synthesized for it, and the ordinal it reserved is no coordinate any reader reads.
@@ -1174,20 +1160,12 @@ func (l *EntryLog) writeRewriteLocked(ctx context.Context, groups [][]marotte.En
 }
 
 // groupByTurn partitions entries into one contiguous group per turn, groups in the
-// INPUT's own first-appearance order and entries in seq order within a group. An
-// interleave the input held is deliberately NOT reproduced: it recorded nothing once
-// both turns are on disk.
-//
-// The group order is never turn_open.n: a revert reuses an ordinal (§2.3), so two turns
-// can carry one n and a sort over it is ambiguous — and it would interleave reverted
-// turns with surviving ones. The caller's order is the merge's spine, which is this
-// log's own file order, so it is the order to keep.
-//
-// It REFUSES a group its own turn_open does not lead, because the rescan a rewrite
-// ends with reads a first line naming a turn it does not hold as a torn tail: the
-// caller must learn its merge is malformed rather than have the log truncated to
-// nothing and reported as a success. That refusal is turnOrdinal's, which is why the
-// call stays after the sort it used to key.
+// INPUT's own first-appearance order and entries in seq order within a group; an
+// interleave the input held is not reproduced. The group order is never turn_open.n: a
+// revert reuses ordinals, so an n sort is ambiguous and would interleave reverted turns
+// with surviving ones. It REFUSES a group its own turn_open does not lead, because the
+// rewrite's rescan reads such a first line as a torn tail and would truncate the log to
+// nothing while reporting success.
 func groupByTurn(entries []marotte.Entry) ([][]marotte.Entry, error) {
 	byTurn := make(map[string][]marotte.Entry)
 	var order []string
@@ -1347,11 +1325,8 @@ type Window struct {
 
 // Window reads the `turns` turns with the highest n among the SURVIVING turns, or the
 // `turns` surviving turns whose n is below before's when before names one this log
-// holds and no revert took.
-//
-// `turns` is a PAGE SIZE, not a coordinate: §5.3 and §6.3 define the read as a SET of
-// whole turns, so an entry count here would split a turn across two pages. R1 deletes
-// the second COORDINATE system and leaves the page size named for what it counts.
+// holds and no revert took. `turns` is a PAGE SIZE of whole turns, never an entry count,
+// so no turn splits across two pages.
 //
 // One read per byte range of the set, keeping the lines whose turn is in the set: a
 // line of a turn OUTSIDE a range is skipped, which is the interleave the one
@@ -1392,8 +1367,8 @@ func (l *EntryLog) All() ([]marotte.Entry, error) {
 }
 
 // AllWithReverted is the merge's read: every entry in file order, reverted material
-// included, beside the set of turn ids §2.2's rule marks. The ONE reader that sees
-// past the surviving view, so a reviewer greps the name and finds one site.
+// included, beside the set of turn ids the skip rule marks. The ONE reader that sees
+// past the surviving view, so a grep for the name finds one site.
 //
 // The set is RETURNED rather than recomputed by the caller: the rule has one
 // implementation, the index's own scan, and a second copy in internal/agent is the

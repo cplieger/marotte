@@ -91,8 +91,8 @@ describe("prIdentity", () => {
 describe("the constructors", () => {
   it("refuses a synthetic run: chat id and answers the RUN", () => {
     // internal/agent/run_host.go registers a parentless run's bridge under
-    // `run:<workflowId>`, so that run's asks arrive as the envelope chat id. The only
-    // mechanical proof of the parentless-run ruling.
+    // `run:<workflowId>`, so that run's asks arrive as the envelope chat id. This is
+    // the only mechanical proof of that routing.
     expect(chatTarget("run:wf_1")).toEqual({ kind: "run", workflowID: "wf_1" });
   });
 

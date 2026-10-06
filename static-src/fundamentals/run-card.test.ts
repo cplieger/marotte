@@ -147,8 +147,7 @@ describe("a step's own state", () => {
     );
     expect(rowStates(c.root)).toEqual(["ok", "fail", "warn", "skipped", "pending"]);
     // The three settled OUTCOMES take a silhouette; `skipped` keeps its en dash
-    // (nothing happened, and a dash was never one of the marks the ruling removed)
-    // and `pending` is a CSS ring.
+    // (nothing happened) and `pending` is a CSS ring.
     expect(glyphs(c.root)).toEqual(["icon", "icon", "icon", "\u2013", ""]);
     // The shape channel at this surface: three states, three different shapes, so
     // hue is never the only thing separating them (WCAG 1.4.1).
