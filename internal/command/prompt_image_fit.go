@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"image"
-	_ "image/gif"
+	_ "image/gif" // registers the GIF decoder for image.Decode
 	"image/jpeg"
 	"image/png"
 	"strconv"
 
 	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
+	_ "golang.org/x/image/webp" // registers the WebP decoder for image.Decode
 )
 
 // MaxImageEdgePx is the long edge an inlined image is fitted to. The backend
