@@ -1,35 +1,9 @@
-// ---------------------------------------------------------------------------
-// GENERATED FILE — do not hand-edit.
-//
-// The named character references HTML 4.01 publishes, which is the membership
-// rule for a named reference in this parser. The standard defines the set as
-// three blocks, and this table is all three minus the names the parser owns
-// inline:
-//
-//   Latin-1                     https://www.w3.org/TR/html4/HTMLlat1.ent
-//   symbols, math, Greek        https://www.w3.org/TR/html4/HTMLsymbol.ent
-//   markup-significant, i18n    https://www.w3.org/TR/html4/HTMLspecial.ent
-//
-// Index: https://www.w3.org/TR/html4/sgml/entities.html
-//
-// 252 names are declared across the three blocks. `amp`, `gt`, `lt` and
-// `quot` are removed because smd-parser-handlers.ts decodes those inline (with
-// `apos`, which HTML 4.01 does not define), leaving the 248 here. Both halves
-// come from the standard: a `<!ENTITY name CDATA "&#NNN;">` declaration supplies
-// the name and the code point.
-//
-// This set rather than WHATWG's 2,125 is a DECLINED CommonMark 6.2 conformance,
-// recorded with its measurement in smd-parser.ts's divergence register.
-//
-// Regenerate with:
-//   for f in HTMLlat1 HTMLsymbol HTMLspecial; do
-//     curl -sSo /tmp/$f.ent https://www.w3.org/TR/html4/$f.ent
-//   done
-//   node _scratch/marotte-md-round4/gen-entities-html4.mjs \
-//     /tmp/HTMLlat1.ent /tmp/HTMLsymbol.ent /tmp/HTMLspecial.ent \
-//     static-src/smd-entities.ts
-//   npx prettier --write static-src/smd-entities.ts
-// ---------------------------------------------------------------------------
+// The named character references this parser decodes: HTML 4.01's Latin-1, symbol
+// and special entity blocks (https://www.w3.org/TR/html4/sgml/entities.html) minus
+// `amp`, `gt`, `lt` and `quot`, which smd-parser-handlers.ts decodes inline. A row
+// changes only to match those blocks. WHATWG's 2,125 is a DECLINED CommonMark 6.2
+// conformance: every named reference measured in agent markdown is in HTML 4.01's
+// set, and an unknown name stays literal, as CommonMark requires.
 
 /** The longest name in the table, which bounds how long the parser holds a
  *  candidate reference before deciding it is not one. */

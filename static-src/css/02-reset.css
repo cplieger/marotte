@@ -124,14 +124,11 @@
   }
 
   /* TEXT INFLATION IS THE UA'S OWN DEFAULT, and on iOS it scales EACH BLOCK by
-     that block's own width — so a surface whose blocks differ in width renders
-     one font size per block. ONE declaration at the root covers every such
-     surface, because the property inherits. The PREFIXED form is required:
-     Safari implements only `-webkit-text-size-adjust`, so the standard property
-     alone fixes nothing on the one engine that has the behaviour. `100%` and not
-     `none`, which also blocks the reader's own zoom-to-scale text in older
-     WebKit. Measurement, the reported surface and the affected set:
-     `marotte-ui.md` "Text inflation". */
+     that block's own width, so blocks of different widths render different font
+     sizes. ONE declaration at the root covers every surface (it inherits). The
+     PREFIXED form is required: Safari implements only `-webkit-text-size-adjust`.
+     `100%` and not `none`, which also blocks the reader's own zoom-to-scale text
+     in older WebKit. */
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
@@ -225,7 +222,7 @@
     inset: 0;
 
     /* Both edges anchored, never a stated height: a viewport unit can overstate
-       the window (marotte-ui.md "The shell never states its height").
+       the window, and the shell must never state its own height.
        `--shell-shortfall` is shell-viewport.ts's measured extension for a
        transiently short containing block; absent, this is `bottom: 0`. */
     bottom: calc(-1 * var(--shell-shortfall, 0px));

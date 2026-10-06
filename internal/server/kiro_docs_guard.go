@@ -68,26 +68,14 @@ import (
 // writes work for exactly the same reason.
 type docVerdict struct {
 	allowed bool
-	// deleteProtected marks an entry whose DELETE must not be offered.
+	// deleteProtected marks an entry whose DELETE must not be offered: its OWN final
+	// component is a symlink (not merely a file under a symlinked directory, which is
+	// one row, one file). Deleting a `steering/` entry whose FILE links into
+	// `shared/` would remove that target, a second row the reader never touched.
+	// Editing through a link writes the target, which is what following a link means.
 	//
-	// True when the entry's OWN final component is a symlink, and the precision
-	// matters: `resolved != full` is the test D67a used, and it is true for every
-	// file beneath an in-root symlinked DIRECTORY as well. Those are not the same
-	// case. Deleting `steering/inner.md` where `steering` links to `elsewhere`
-	// removes `elsewhere/inner.md`, which IS the file the row names — one row, one
-	// file, nothing surprising. Deleting `steering/alias.md` where the FILE links to
-	// `shared/canonical.md` removes canonical.md, and canonical.md is its own row on
-	// the same page: a second entry the reader never touched silently disappears.
-	//
-	// That is why this bit survived the withdrawal while the read-only one did not.
-	// The delete route canonicalizes exactly as the write route does, so editing
-	// through a link writes the target — which is what following a link MEANS — while
-	// deleting through it destroys a file the user was addressing by another name.
-	//
-	// It is an advisory for the page, not a boundary: the delete route still runs
-	// resolveOrForbid, mount confinement, the sensitive-path list, the
-	// protected-directory check and the mount-root refusal, none of which trust
-	// anything the client was told.
+	// Advisory for the page only: the delete route still runs every server-side check
+	// (resolveOrForbid, mount confinement, sensitive paths, protected dirs, mount root).
 	deleteProtected bool
 }
 

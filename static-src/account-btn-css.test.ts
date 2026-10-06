@@ -243,14 +243,10 @@ describe("the merged control's box", () => {
 });
 
 describe("nothing moved", () => {
-  // Verified NUMERICALLY against `pre-change-geometry.md`, which recorded these
-  // readings off a real build BEFORE any CSS edit. The derivation in
-  // `.account-btn`'s comment says the mark's x and the logout button's right edge are
-  // both unchanged; encoding the derivation would prove only that it is
-  // self-consistent, so these are the observations instead.
-  //
-  // Both equal the footer's own content edges at 1280px with a 259px sidebar: 16 and
-  // 243.
+  // OBSERVED readings off a real build, not the derivation in `.account-btn`'s
+  // comment (encoding that would prove only that it is self-consistent): the mark's
+  // x and the logout button's right edge equal the footer's own content edges at
+  // 1280px with a 259px sidebar, 16 and 243.
   const PRE_CHANGE = { dotLeft: 16, logoutRight: 243 } as const;
 
   it.each(["fine", "coarse"])("keeps the mark's x and the logout's right edge at %s", (tier) => {

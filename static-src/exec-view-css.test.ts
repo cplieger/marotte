@@ -245,7 +245,7 @@ describe("a row inside the group box is a band, not a pill", () => {
     expect(last.getBoundingClientRect().bottom).toBeCloseTo(innerBottom, 1);
 
     // The corner is the BOX's, taken through the clip rather than restated on the
-    // row: `web.md`'s flush-inside-a-clipping-parent exemption, and the only shape
+    // row (a child flush inside a clipping parent takes no radius), the only shape
     // that works at any nesting depth, since the visually-last row can be the last
     // descendant of a nested container.
     expect(css(box, "overflow")).toBe("hidden");

@@ -119,8 +119,7 @@
 
 /* THE TWO-PANE BODY IS THE ONE VERTICAL SCROLLER. One offset, so the columns
    cannot shear and nothing has to sync them; one native scrollbar, whose thumb is
-   the viewport indicator the map used to draw for itself. Reasoning and the
-   measurements: `marotte-ui.md` "Diff viewer". */
+   the viewport indicator. */
 .diff-pane-split {
   grid-area: 1 / 1;
   min-width: 0;
@@ -267,7 +266,7 @@
    The third column of the body, so it spans exactly the rows it describes. A
    mark's SIDE is its kind as much as its hue, which keeps the strip off
    colour-alone (WCAG 1.4.1); positions come from TS as percentages, because
-   every row is the same height. Full contract: `marotte-ui.md` "Diff viewer". */
+   every row is the same height. */
 .diff-map {
   grid-area: 1 / 2;
   position: relative;

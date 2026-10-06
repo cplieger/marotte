@@ -1,40 +1,13 @@
 package agent
 
-// The MCP OAuth loopback relay.
+// The MCP OAuth loopback relay. KAS's OAuth redirect listener binds the container's
+// localhost, which a remote browser cannot reach, so marotte replays the pasted
+// address from INSIDE the container. Rewriting redirect_uri to marotte's origin
+// instead breaks the token exchange, which must repeat it (RFC 6749 §4.1.3).
 //
-// KAS owns the whole MCP OAuth flow (discovery, DCR, PKCE, token exchange,
-// refresh) and binds its own redirect listener on
-// `http://localhost:<ephemeral>/oauth/callback` inside the container.
-// marotte's browser is elsewhere — a phone, a laptop, anything reaching the
-// container over the network — so the provider's 302 sends that browser to
-// its OWN localhost, nothing answers, and the flow dies with no recovery
-// path. For a remotely-reached container that is the normal case, not an
-// edge one.
-//
-// The user copies the address bar off the dead page and pastes it here;
-// marotte validates it and replays the GET to the loopback listener from
-// INSIDE the container, where `127.0.0.1` means what KAS meant by it. KAS's
-// own listener then completes the exchange with the redirect_uri it
-// originally sent, stores the tokens through `_kiro/secret/*`, and
-// connects. Adopted from KiroCrew's `POST /api/mcp/oauth/relay` (see
-// #kiro-crew-research), including its central rule: request data must
-// never choose a remote host.
-//
-// Two shapes deliberately not built: rewriting `redirect_uri` to marotte's
-// own origin (breaks at the token endpoint — RFC 6749 §4.1.3 requires the
-// value used at authorize and at token exchange to match, and KAS still
-// sends its own loopback value there); and terminating the exchange in
-// marotte (inverts "kiro-cli owns what kiro-cli owns", and secretstore's
-// blobs are opaque by decision).
-//
-// THE TRUST MODEL. This endpoint takes an authorization code on an HTTP
-// surface with no auth of its own. The pasted address is UNTRUSTED input;
-// the stored authorization URL is the trust anchor, because KAS wrote it
-// and marotte only ever kept it verbatim. Everything the relay dials or
-// forwards is checked against that URL rather than taken on the request's
-// word: the dial target comes from the URL's `redirect_uri`, and `state`
-// must match the URL's `state`. Without that binding this route would be
-// an authorization-code injection lever into KAS's token exchange.
+// The pasted address is UNTRUSTED. The stored authorization URL (written by KAS) is
+// the trust anchor: the dial target comes from its `redirect_uri` and `state` must
+// match its `state`, so request data never chooses a host or injects a code.
 
 import (
 	"context"

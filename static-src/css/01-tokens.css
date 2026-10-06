@@ -19,8 +19,7 @@
     /* The transcript's card rung: page -> card -> box -> band, monotonically away
      * from the page, so both themes run one ladder in opposite directions. A SEED
      * in each, at the same fraction of the page->box gap (30.8%); an alias of
-     * another rung collapses the card and every box inside it onto one colour.
-     * Ladder, numbers and the hover recipe: marotte-ui.md "Color system". */
+     * another rung collapses the card and every box inside it onto one colour. */
     --c-turn-body: oklch(19% 0.0245 284deg);
     --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
     --c-bg-elevated: oklch(42.5% 0.044 283.6deg);
@@ -320,7 +319,7 @@
      * that steps against the ramp. A wash so it is relative to its container; a
      * shade per theme because no single alpha darkens a near-white and a
      * near-black card alike. Floored in oklch-L, not WCAG (`css-contrast.py all`):
-     * below the L19 body no shadow can reach 1.15:1. marotte-ui.md "The well". */
+     * below the L19 body no shadow can reach 1.15:1. */
     --c-well: color-mix(in oklch, oklch(0% 0 none) 55%, transparent);
 
     /* A previewed page's canvas: white in BOTH themes, because a page that sets
@@ -401,8 +400,8 @@
     --main-min-w: 57.5rem;
     /* ---- Control heights ------------------------------------------------- *
      * --ctl-h stands alone in its row or beside a full-size button, --ctl-h-dense
-     * is a labelled field or an action in a dense row (marotte-ui.md "One control
-     * height per row"). THE TIER IS THE POINTER, NOT THE WIDTH, and --hit-floor
+     * is a labelled field or an action in a dense row; every action in one row
+     * takes one height. THE TIER IS THE POINTER, NOT THE WIDTH, and --hit-floor
      * lives here so one tier decides both. --btn-h is an alias. */
     --ctl-h: 2.25rem;
     --ctl-h-dense: 2rem;
@@ -412,12 +411,11 @@
 
     /* ---- List-row heights ------------------------------------------------ *
      * A row's height is a TOKEN, never the sum of its content: content that does
-     * not fit truncates on its own line and the row never grows (marotte-ui.md
-     * "One row height per list"). Two rungs, because a list carries either a
-     * title plus one line of metadata or a title plus a description region, and
-     * a page picks one for every row it renders. POINTER-TIERED like --ctl-h
-     * above: a coarse row is one rung taller because its inks and its actions
-     * are, not because a finger needs a bigger row than the ink it holds. */
+     * not fit truncates on its own line and the row never grows. Two rungs,
+     * because a list carries either a title plus one line of metadata or a title
+     * plus a description region, and a page picks one for every row it renders.
+     * POINTER-TIERED like --ctl-h: a coarse row is one rung taller because its
+     * inks and its actions are, not because a finger needs a bigger row. */
     --row-h-2: 3.5rem;
     --row-h-3: 4.5rem;
 
@@ -645,7 +643,7 @@
 
     /* ---- Motion ---------------------------------------------------------- *
      * One curve for the two general durations; --ease-enter / --ease-exit are
-     * genuinely different curves (marotte-ui.md). */
+     * genuinely different curves. */
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
     --dur-micro: 0.1s;
     --dur-standard: 0.2s;

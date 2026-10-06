@@ -1361,8 +1361,8 @@ function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string 
 
 /** How long ago a finished thing finished, appended to its own phrase.
  *
- *  It does NOT tick: a 1s interval over a sidebar of finished chats is the wakeup
- *  cost `marotte-ui.md` forbids, and both surfaces this feeds are read on demand —
+ *  It does NOT tick: a 1s interval over a sidebar of finished chats is a wakeup
+ *  cost for nothing, because both surfaces this feeds are read on demand —
  *  the tooltip on hover, the word when a screen reader reaches the row. */
 function withAge(phrase: string, since?: number): string {
   return since === undefined ? phrase : `${phrase} · ${relativeTime(since)}`;

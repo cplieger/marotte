@@ -863,8 +863,7 @@ export function approvalView(
   }
   const busy = approving.has(seg.role);
   // A key off the wire, so `Object.hasOwn` is the membership question: a bare
-  // read of `approvals["constructor"]` answers `Object.prototype`'s member
-  // (typescript.md "A record indexed by untrusted text").
+  // read of `approvals["constructor"]` answers `Object.prototype`'s member.
   const record = spec.approvals;
   const a = record !== undefined && Object.hasOwn(record, seg.role) ? record[seg.role] : undefined;
   const approvable = seg.doc.hash !== "";
@@ -978,7 +977,7 @@ export function paint(ref: string): void {
   const thinking = chat !== "" && isThinking(chat);
 
   // Everything the head renders, so an unchanged head is not re-seated on every
-  // poll tick (web.md "RE-INSERTING AN ATTACHED NODE").
+  // poll tick (re-inserting an attached node restarts animations and drops focus).
   const headParts = [
     String(st.gone),
     st.etag,

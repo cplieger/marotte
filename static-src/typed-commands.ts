@@ -1,20 +1,10 @@
-// ---------------------------------------------------------------------------
-// Typed-command intercepts: a HANDLER TABLE, not a palette.
-//
-// Two or three entries, checked before send. This exists because a typed slash
-// command that KAS does not parse reaches the MODEL as prose, and the model
-// answers as though it had run — `/compact` returns `end_turn` in ~3.4s with zero
-// summarization frames while the reply says "Done — context compacted." That is
-// the worst failure shape available: a lie with no tell.
-//
-// So a command marotte wants to be DETERMINISTIC must own its handler and call
-// its own endpoint. Passing the text through is asking the model to maybe do it.
-//
-// This is deliberately NOT the command palette, which was priced out and
-// declined (see marotte.md "Slash commands"). A palette advertises ~90 entries of
-// which one category in four silently degrades to prose; a table of three
-// entries advertises nothing and makes exactly those three true.
-// ---------------------------------------------------------------------------
+// Typed-command intercepts: a HANDLER TABLE, not a palette. A typed slash command
+// KAS does not parse reaches the MODEL as prose, and the model answers as though it
+// had run (`/compact` returns `end_turn` with zero summarization frames while the
+// reply says it compacted): a lie with no tell. So a command marotte wants to be
+// DETERMINISTIC owns its handler and calls its own endpoint. A palette would
+// advertise ~90 entries of which one category in four degrades to prose; a table
+// of three advertises nothing and makes exactly those three true.
 
 import { compactChat } from "./actions/chat.js";
 import { isThinking, setThinking } from "./store.js";

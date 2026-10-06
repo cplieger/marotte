@@ -76,13 +76,9 @@
      `.turn-rail` both live there and both take `var(--sp-3)`. */
   --below-chat-toolbar: calc(var(--titlebar-h) + var(--sp-2) + env(safe-area-inset-top, 0));
 
-  /* Was published from JS by chat-toolbar-metrics.ts, a ResizeObserver whose only
-     reader was `.banner-stack`'s right inset: the bar was a floating pill of
-     content-driven width, so nothing but a measurement could say where it ended.
-     A full-width bar has no right edge to dodge, so the answer is a constant and
-     the module is deleted. Declared rather than dropped because `.banner-stack`
-     reads it with a fallback, and a fallback on an undefined token is how a
-     palette forks silently (marotte-ui.md "No phantom tokens"). */
+  /* A full-width bar has no right edge to dodge, so this is a constant. Declared
+     rather than dropped because `.banner-stack` reads it with a fallback, and a
+     fallback on an undefined token is how a palette forks silently. */
   --chat-toolbar-w: 0px;
 }
 
@@ -231,20 +227,11 @@
 
 /* ==========================================================================
    The bar's heading: every page's title, left-aligned, with an optional subtitle.
+   One element, written only by page-title.ts, for every view.
 
-   ONE element, written by ONE function (page-title.ts), for all nine views. What
-   it replaces was nine answers to one question: five views carried a `.page-title`
-   inside their own scrolling content (three of those hardcoded in markup, two
-   written by their own tab module), four carried none at all, and the bar itself
-   held a separate `#toolbar-title` that only ever appeared below 48rem. No view
-   had a subtitle, and there was no registry — `TabViewSpec.name` came closest and
-   fed only the mobile span and the sidebar rows.
-
-   The SEPARATOR is a rule rather than a middle dot, and that is a legibility
-   decision: git already shipped `Git · Changes` and it reads as one string, so a
-   dot inside a title becomes part of the title. A rule is structural, and it
-   lets the whole subtitle segment be dropped at a narrow width without leaving
-   orphan punctuation behind.
+   The separator is a rule rather than a middle dot: a dot inside a title reads
+   as part of the title (`Git · Changes` is one string), and a rule lets the
+   whole subtitle segment drop at a narrow width without orphan punctuation.
    ========================================================================== */
 
 .titlebar-heading {

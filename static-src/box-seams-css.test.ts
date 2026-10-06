@@ -1,22 +1,10 @@
-// EVERY BOX SEAM IN A TRANSCRIPT, under the one rule marotte-ui.md "Seams" states:
-// a seam is marked by a FILL step or by a 1px rule, never both.
-//
-//   - a step (a band over the body, a well below a header) → no rule
-//   - regions sharing one fill → the rule is the only boundary, and it stays
-//
-// A TABLE rather than a set of cases: the population is what has to be right, and
-// a new box added on either side of the split without a row here is the drift this
-// guards. Both halves of each row are asserted, because either alone passes for the
-// wrong reason — the rule's absence alone is satisfied by a box that stopped
-// painting its band, and the fill step alone says nothing about whether somebody
-// put the line back.
-//
-// SOURCE facts, read off the assembled stylesheet, not computed style. What a future
-// editor changes is a DECLARATION, and `.tool-call` carries `content-visibility:
-// auto`, so a card's own box is its `contain-intrinsic-size` fallback until Chromium
-// decides it is near the viewport (tool-group-height.test.ts records the trap in
-// full) — measuring these by layout means fighting that for no gain, since the
-// question is which selector declares what.
+// EVERY BOX SEAM IN A TRANSCRIPT: a seam is marked by a FILL step or by a 1px rule,
+// never both (a step → no rule; regions sharing one fill → the rule stays). A TABLE,
+// because the population is what has to be right, and both halves of each row are
+// asserted: either alone passes for the wrong reason. SOURCE facts off the
+// assembled stylesheet, not layout: `.tool-call`'s `content-visibility: auto` makes
+// a card's box its `contain-intrinsic-size` fallback until it nears the viewport
+// (tool-group-height.test.ts), and the question is which selector declares what.
 import { describe, expect, it } from "vitest";
 
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";

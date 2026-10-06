@@ -1,8 +1,7 @@
 /* The turn card: header (tinted trigger) / body (work) / footer (tinted outcome ledger).
    ONE card type at every size. The bands are the transcript's ONLY band-rung fills and the
-   card has no internal rule: the fill step is each seam (marotte-ui.md "Surfaces"). No
-   width cap inside the card: 13-messages.css derives that, marotte-client.md "There are no
-   bubbles" rules it. Unlayered, so source order is the cascade. */
+   card has no internal rule: the fill step is each seam. No width cap inside the card
+   (13-messages.css derives the prose measure). Unlayered, so source order is the cascade. */
 
 .turn {
   display: flex;
@@ -22,8 +21,8 @@
   transition: outline-color var(--dur-standard) var(--ease-standard);
 }
 
-/* NO entry animation: the tallest box in the app, so a mount animation allocated 3.4 phone
- * screens of compositor layer (marotte-ui.md "Entry motion is a GPU budget" measures it). */
+/* NO entry animation: the tallest box in the app, so a mount animation allocates
+ * screens' worth of compositor layer on a phone. */
 
 .turn-header {
   display: flex;
@@ -329,8 +328,8 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
 
-  /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` (a dense control row, marotte-ui.md "One
-     control height per row") floored by `--hit-floor`, so 32 on a mouse and 44 on a coarse
+  /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` (a dense control row) floored by
+     `--hit-floor`, so 32 on a mouse and 44 on a coarse
      pointer. A declared height rather than block padding, which cannot follow the tier. */
   min-height: max(var(--hit-floor), var(--ctl-h-dense));
   transition: opacity var(--dur-enter) var(--ease-enter);
@@ -715,7 +714,7 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* THE ONE HOVER RECIPE (marotte-ui.md "Color system"): the interaction ladder's wash, gated
+/* THE APP'S ONE HOVER WASH (the interaction ladder's), gated
    on `any-hover`. THE WHOLE ROW LIGHTS AS ONE INK — the row is one door into one diff, so
    the `+N −M` counts FOLLOW it rather than keeping their status hues: a hovered band is one
    of the ink ramp's two-level surfaces (01-tokens.css), where `--c-red` reads 3.34:1 dark.

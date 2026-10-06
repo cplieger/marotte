@@ -1,29 +1,11 @@
-// ---------------------------------------------------------------------------
-// The cues a live thinking trace carries, and the one it carries once sealed.
-//
-// While it streams: it mounts EXPANDED with text growing into
-// `.reasoning-body` and its label reads "Thinking…" — that is the whole live
-// affordance. There is deliberately NO pulsing disc and NO animation on any
-// reasoning selector: a pulsing dot is reserved to TABS and workflow-agent
-// surfaces, which report work the reader cannot see, and a live trace is
-// already on screen (user ruling, `marotte-ui.md` "GPU compositing").
-// `buildReasoning` still sets the `streaming` class for a live trace (state
-// bookkeeping `seal()` removes); no stylesheet may hang an animation off it.
-// Once sealed the disclosure folds shut and the label becomes "Thinking
-// completed", so the collapsed row is all the reader is left with.
-//
-// The word count is what fills that row. It is a SIBLING of the label rather
-// than part of it, so every assertion here on the label's exact text has to keep
-// holding — that is the property the two elements exist to give.
-//
-// The DOM half runs the real builder; a SOURCE half reads the shipped
-// stylesheet to pin that no reasoning selector carries an animation (see
-// __test-helpers__/css-rules.ts).
-//
-// The last describe is a third kind and says why it has to be: two of the
-// count's declarations are not source facts at all, so it injects the sheet and
-// measures.
-// ---------------------------------------------------------------------------
+// The cues a live thinking trace carries, and the one it carries once sealed. While
+// it streams it mounts EXPANDED with text growing into `.reasoning-body` under
+// "Thinking…"; there is deliberately NO pulsing disc or animation on any reasoning
+// selector (a pulse is reserved for surfaces reporting work the reader cannot see,
+// and `streaming` is bookkeeping `seal()` removes). Sealed, it folds shut as
+// "Thinking completed" with the word count as the label's SIBLING, so assertions on
+// the label's exact text keep holding. DOM cases run the real builder, a SOURCE half
+// sweeps the sheet for animations, and the last describe injects the sheet and measures.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import fc from "fast-check";

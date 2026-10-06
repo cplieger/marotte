@@ -302,19 +302,12 @@
    * predates the floor becoming universal, so it never gained one. */
   justify-content: center;
 
-  /* A DECLARED 24px SQUARE AT BOTH TIERS, because the floor may not size the PAINTED
-   * box — `.attachment-close` (15-input.css) carries the same pair for the same reason,
-   * and `marotte-ui.md` states the rule: the floor grows the TARGET, never the box.
-   * With `padding: 0` and nothing else to size it, the floor's `min-*` WAS the box, so
-   * on a coarse pointer this painted a 44px square around a 12px glyph inside a chip
-   * that is 34px tall on a mouse — 16px of invisible box between the label and the
-   * chip's trailing border, measured 25px from border to × ink against 9px at the
-   * leading end. The 24px is WCAG 2.5.8's own minimum on the inline axis, which is the
-   * axis that cannot grow (below).
-   *
-   * The chip declares no height, so this box is what sets it: 24px plus the chip's
-   * `padding-block` either side, which is why the well is 4px on all four sides at
-   * both tiers and needs no tier arithmetic. */
+  /* A DECLARED 24px SQUARE AT BOTH TIERS: the hit floor grows the TARGET, never the
+   * painted box (`.attachment-close` carries the same pair). With `padding: 0` the
+   * floor's `min-*` would BE the box, a 44px square around a 12px glyph on a coarse
+   * pointer. 24px is WCAG 2.5.8's minimum on the inline axis, the axis that cannot
+   * grow. The chip declares no height, so this box plus the chip's `padding-block`
+   * sets it and the well is 4px on all four sides at both tiers. */
   min-width: 0;
   min-height: 0;
   inline-size: 1.5rem;

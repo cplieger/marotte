@@ -1,9 +1,9 @@
-/** Rebuild a subtree only when the state it renders moved.
- *
- *  For a subtree whose shape is derived wholesale from data. For a list whose
- *  members have identities, reach for `@cplieger/reactive`'s keyed `reconcile`
- *  first. Rules and the two disqualifiers: `web.md` "A `replaceChildren` DRIVEN
- *  BY AN EVENT THAT USUALLY CHANGES NOTHING".
+/** Rebuild a subtree only when the state it renders moved: for a subtree derived
+ *  wholesale from data (a list with identities wants `@cplieger/reactive`'s keyed
+ *  `reconcile`). The parts must be TOTAL over what the subtree renders, or it stops
+ *  updating. A subtree the reader mutates DIRECTLY (a native radio or checkbox) is
+ *  disqualified: after a refused write the model is unchanged and the guard skips
+ *  the repaint that corrects the DOM.
  */
 
 import { join } from "@cplieger/keyenc";
@@ -63,7 +63,6 @@ export function forgetSig(host: Element): void {
 export function wireSignature(value: object): string {
   // `object` rather than `unknown`: the three values `JSON.stringify` answers
   // `undefined` for are not assignable, so this needs no nullish fallback the
-  // type system cannot see is live (`typescript.md` "typing untrusted input
-  // DELETES the guards you need").
+  // type system cannot see is live.
   return JSON.stringify(value);
 }

@@ -12,10 +12,8 @@ import (
 // may spawn children; a PID-only kill orphans them and leaves the stdout
 // pipe open, pinning cmd.Wait to the last descendant's lifetime.
 //
-// This is the group HALF of the fleet's own-process-group child wrapper
-// (`scheduler.md` "Setpgid pairing rule") — deliberately not the full
-// shape, since this login flow wants a hard SIGKILL on timeout, not a
-// graceful drain.
+// This is only the process-group half of an own-group child wrapper — no
+// graceful drain, since this login flow wants a hard SIGKILL on timeout.
 func setProcGroup(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

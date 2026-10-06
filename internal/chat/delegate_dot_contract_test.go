@@ -127,9 +127,8 @@ var delegateDotFixtureComment = []string{
 	"moment its chat's liveness says the turn is over and every surface says what it already",
 	"says for that status — `folds_to` is what makes the claim checkable from both sides.",
 	"",
-	"ONE wire value reaches THREE announced words, deliberately (.kiro/steering/",
-	"marotte.md 'A delegate has THREE terminal states'): aborted is the wire's spelling, a",
-	"card says 'cancelled' and the page says 'stopped'. The row surface's own word is",
+	"ONE wire value reaches THREE announced words, deliberately: aborted is the wire's",
+	"spelling, a card says 'cancelled' and the page says 'stopped'. The row surface's own word is",
 	"tool-card.ts's outcomeWord, which is unexported and is therefore not a compared",
 	"column here; the card and the page are.",
 }
@@ -215,7 +214,7 @@ func TestDelegateDotContract(t *testing.T) {
 	statuses := steerEnumMembers(t, consts, "ToolStatus")
 	if strings.Join(statuses, ",") != "aborted,completed,failed,in_progress,pending" {
 		t.Fatalf("ToolStatus membership moved to %v; a new member is a coordinated wire "+
-			"change (marotte.md), so extend delegateDotWords and the client reader before "+
+			"change, so extend delegateDotWords and the client reader before "+
 			"regenerating", statuses)
 	}
 

@@ -1,29 +1,11 @@
-// ---------------------------------------------------------------------------
-// The conflict overlay's actions are the app's shared small button, at the DENSE
-// control tier.
-//
-// `.conflict-btn` used to carry a near-copy of `.btn-small` (the same
-// `--c-bg-secondary` fill, the same `--c-bg-tertiary` hover, differing only in
-// padding, radius, ink and `display`), so a declaration added to the shared rule
-// reached every other neutral ghost button in the app and not these four. The
-// copy is gone and the buttons carry `btn-small` from editor-conflict.ts; what
-// stays local is the dense tier, because a hunk row is four actions beside a mono
-// title inside a strip padded `--sp-1`.
-//
-// MEASURED rather than reasoned, for two reasons a source read cannot answer.
-// `padding-block: 0` has to beat `14-tools.css`'s `padding: var(--sp-2) var(--sp-3)`
-// SHORTHAND from a later manifest slice, and this stylesheet set decides
-// equal-specificity ties by that order — the class of cross-slice override the
-// steering doc says to verify numerically. And `max(var(--ctl-h-dense),
-// var(--hit-floor))` resolves differently per POINTER tier, which is the axis the
-// universal hit-target floor keys on, so the coarse answer is not derivable from
-// the fine one.
-//
-// The overlay is built by hand rather than through `renderConflictOverlay`: that
-// function reaches the `$` DOM registry and a full `FileState`, and every editor
-// suite in the tree mocks it out. So the TS side of the class pair — that the
-// four buttons carry `btn-small` at all — is deliberately NOT pinned here.
-// ---------------------------------------------------------------------------
+// The conflict overlay's actions are the app's shared small button (`btn-small`,
+// from editor-conflict.ts) at the DENSE control tier, because a hunk row is four
+// actions beside a mono title in a strip padded `--sp-1`. MEASURED, not read:
+// `padding-block: 0` must beat 14-tools.css's `padding` SHORTHAND from a later
+// manifest slice (equal-specificity ties go by that order), and `max(--ctl-h-dense,
+// --hit-floor)` differs per POINTER tier. The overlay is built by hand, since
+// `renderConflictOverlay` needs the `$` registry and a full `FileState`, so the TS
+// half (the buttons carry `btn-small`) is deliberately NOT pinned here.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 

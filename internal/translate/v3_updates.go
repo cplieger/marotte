@@ -2,7 +2,7 @@ package translate
 
 // v3 (KAS) session/update sub-kind handlers: context usage, compaction status
 // and the model catalog. Shapes verified against the KAS 2.12 acp-server
-// bundle; see kiro-cli-research.md "v3 _kiro/* wire surface".
+// bundle.
 
 import (
 	"cmp"

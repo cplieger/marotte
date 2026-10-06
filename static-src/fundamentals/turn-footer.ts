@@ -104,8 +104,8 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
   }) as HTMLButtonElement;
   // An `i` rather than a chevron, LEADING, and the PURPOSE span leads the CONTENT so the
   // name opens with it. No `aria-label`: one would win over that content and hide the
-  // outcome word and the fact. Why the `i`, and why the tip anchors to it rather than to a
-  // wider button's middle: `marotte-ui.md` "A THIRD case" and "A TOOLTIP POINTS AT INK".
+  // outcome word and the fact. The tip anchors to the `i`'s ink, not to the wider
+  // button's middle, so it points at what it explains.
   summary.appendChild(el("span", { className: "sr-only" }, "Turn details"));
   summary.appendChild(
     el("span", { className: "turn-ledger-info", "data-tooltip-anchor": "" }, iconEl(ICON_INFO)),
@@ -175,8 +175,7 @@ function summaryLine(d: TurnSummaryData): string {
  *  renders it from. A zero or absent value contributes nothing, and the
  *  ROW PAINTS `[0]` — the panel one click away is the full statement. Do NOT rotate the
  *  slot through this list: a dwell replaces a gesture-gated value with a TIME-gated one,
- *  and it fails WCAG 2.2.2 with no pause control anywhere in the app (`marotte-ui.md`
- *  "A ROTATING READOUT IS NOT A BEAT"). */
+ *  and it fails WCAG 2.2.2 with no pause control anywhere in the app. */
 export function turnFacts(d: TurnSummaryData): readonly string[] {
   const facts: string[] = [];
   const files = Object.values(d.changedFiles ?? {});

@@ -320,7 +320,7 @@ describe(".rolling-output cuts no line of a job's output", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SITE 2 — every tooltip in the app. ONE size class (the marotte-ui ruling), so
+// SITE 2 — every tooltip in the app. ONE size class, so
 // these cases drive `--tooltip-lines` rather than a second class.
 // ---------------------------------------------------------------------------
 

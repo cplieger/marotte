@@ -1,26 +1,9 @@
 // A TURN CARD HAS NO INTERNAL SEAM: each tinted band is separated from the body by
-// its own FILL, never by a 1px rule.
-//
-// The header drew a `border-bottom` and the footer a `border-top` until 2026-09-13,
-// while `.turn-face` — a body-coloured region sitting between those same two bands —
-// drew neither and named its fill as what separated it. So one card delimited its
-// regions two ways, and the reader who reported it had it half right: on a FOLDED
-// card the header genuinely had no line under it (`.turn[data-folded] >
-// .turn-header` dropped it) while the footer kept one, which is the asymmetry that
-// got noticed. Everywhere else both lines were there and identical.
-//
-// WHAT THIS PINS, and why a style read alone would not: `0px` on both borders is
-// satisfied by a card whose bands have stopped painting at all, which loses the
-// separation rather than restyling it. So each seam is measured twice — no rule, AND
-// the two fills either side of it differ — and the second half is what keeps the
-// first honest. The three rules that existed only to stop those lines doubling
-// against an adjacent one are asserted GONE for the same reason: each was a
-// `border-*: 0` whose absence is indistinguishable from its presence now, so the
-// only way to notice one being resurrected with its border is here.
-//
-// Real layout in a real engine, because "does the reader see a line" is a painted
-// question and `getComputedStyle` on a `var()`-driven background answers `""` in a
-// DOM emulator (testing-ts.md).
+// its own FILL, never by a 1px rule. `0px` on both borders is also satisfied by a
+// card whose bands stopped painting, so each seam is measured twice: no rule, AND
+// the fills either side differ. The three `border-*: 0` rules that only stopped
+// doubled lines are asserted GONE, since a resurrected one is otherwise invisible.
+// Real layout in a real engine: "does the reader see a line" is a painted question.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

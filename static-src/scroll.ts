@@ -1278,7 +1278,7 @@ class ScrollController {
    *  need not move `scrollTop`, so there may be no scroll event to ask on.
    *  ONE-DIRECTIONAL, and that is the whole safety of it: only the reader may ENTER
    *  Reading, and a size change is not the reader. Its threshold is ASYMMETRIC
-   *  against `parkedByOwnAim`'s, and open: `marotte-client.md`, "`scroll.ts`".
+   *  against `parkedByOwnAim`'s.
    *
    *  `atBottom` is passed in because the MUTATION caller may not measure: it runs
    *  mid-task with the DOM dirty, where the read costs a full synchronous layout. */

@@ -6,8 +6,7 @@ package translate
 // customAgent/not_found, customAgent/config_error) reuse the v2 handlers
 // directly via the dispatch table and are not repeated here.
 //
-// Wire shapes verified against the KAS 2.12 acp-server bundle; see
-// kiro-cli-research.md "v3 _kiro/* wire surface".
+// Wire shapes verified against the KAS 2.12 acp-server bundle.
 
 import (
 	"context"

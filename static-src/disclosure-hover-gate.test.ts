@@ -1,36 +1,11 @@
-// ONE HOVER GATE FOR EVERY DISCLOSURE TRIGGER IN THE TRANSCRIPT.
-//
-// A disclosure trigger is the one control class where an ungated `:hover`
-// LATCHES: the finger is still on the header when the tap ends, so the wash (or
-// the ink lift) stays painted until the next tap elsewhere and a folded box
-// reads as hovered for as long as the reader leaves it alone. `14-tools.css`
-// states the rule and its reason at `.tool-group-header`; this file is what
-// makes it true of the whole population at once, because it was stated at ONE
-// rule and six of the nine members had been written against it by hand while
-// the three native `<summary>` triggers in `13-messages.css` had not.
-//
-// `any-hover`, NEVER `hover` (web.md): those queries report only the PRIMARY
-// input and iPadOS answers `hover: none` with a trackpad attached, so a
-// `hover: hover` gate silently drops the rule on every touch-primary device —
-// which is the one direction a gate must not fail in, since it takes the paint
-// away from a reader who has a pointer.
-//
-// A SOURCE read rather than a computed one, for the reason
-// `account-btn-css.test.ts` records: a synthetic hover drives no style recalc
-// and `CSS.forcePseudoState` is a devtools protocol call, so `getComputedStyle`
-// cannot answer a question about a `:hover` rule. The subject is the CASCADE
-// anyway — which at-rule a rule sits inside.
-//
-// THE POPULATION IS A DECLARED TABLE, and that is a limit worth stating rather
-// than dressing up. There is no mechanical predicate for "this selector is a
-// disclosure trigger": the fact lives in the TypeScript that builds the header
-// (a native `<summary>`, `createDisclosure`, `wireRowToggle`), and the CSS
-// carries no marker for it — the shared box-header recipe (`var(--c-hover)`)
-// is spent by ~21 sites app-wide including plain buttons and links, so keying
-// on the declaration would sweep in controls this rule does not govern. What
-// the table DOES buy: every row is checked for existence as well as for its
-// gate, so a rename or a duplicated rule fails here instead of silently
-// dropping coverage. A tenth trigger needs a row.
+// ONE HOVER GATE FOR EVERY DISCLOSURE TRIGGER IN THE TRANSCRIPT. An ungated `:hover`
+// on a disclosure trigger LATCHES (the finger is still on the header when the tap
+// ends). `any-hover`, NEVER `hover`: `hover` reports only the PRIMARY input and
+// iPadOS answers `hover: none` with a trackpad attached. A SOURCE read, because
+// `getComputedStyle` cannot answer a question about a `:hover` rule (no synthetic
+// hover recalc, no `CSS.forcePseudoState`). The population is a DECLARED table: no
+// CSS marker says "disclosure trigger", so every row is also checked for existence,
+// and a tenth trigger needs a row.
 import { describe, it, expect } from "vitest";
 
 import { manifestSheets } from "./__test-helpers__/css-rules.js";

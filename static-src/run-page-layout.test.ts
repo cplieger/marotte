@@ -279,9 +279,7 @@ describe("the run page claims its height", () => {
 
   // An `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap
   // WITHOUT this shrink-wraps the column to its content and the measure never
-  // binds — the trap `marotte-ui.md` records for `.code-refs` and
-  // `.refusal-callout`, whose inert `margin-inline: auto` sat against a cap that
-  // never bound either.
+  // binds (an inert `margin-inline: auto` against a cap that never binds).
   it.each(['[id="run-body"]', '[id="subagent-body"]'])(
     "lets %s fill its measure rather than shrink-wrapping to content",
     (selector) => {

@@ -118,26 +118,17 @@
 .pill[aria-pressed="true"],
 .pill-expandable.pill-expanded:not([id="account-btn"]),
 .icon-btn.active,
-/* The pointer-mode toggle is excluded for a reason of its own, adjacent to the
-   account button's above: not "a fourth channel breaks the pair" but "the fill is a
-   SECOND channel it does not need". Its glyph IS its state — `pointer-mode.ts`'s
-   `paint()` slides the
-   mouse out and the hand in — so the selected fill renders one fact twice, and it
-   left a header button looking permanently selected for as long as touch mode was
-   on. The theme toggle sitting beside it in the same header swaps glyphs and takes
-   no fill, so the pair also disagreed about what an ON header toggle looks like.
-   `aria-pressed` STAYS: it is the state channel a screen reader reads and the
-   reason that button's accessible name does not flip (marotte-ui.md "Toggle
-   state"). Only the paint goes, from all three rules in this file — leaving it on
-   the hover or press rule would make a fill appear under the pointer in one state
-   and not the other. Excluded by id rather than by a new class because there is
-   exactly one member. */
+/* The pointer-mode toggle is excluded because its glyph IS its state
+   (`pointer-mode.ts`'s `paint()` slides the mouse out and the hand in), so a
+   selected fill would render one fact twice and left the header button looking
+   permanently selected; the theme toggle beside it takes no fill either.
+   `aria-pressed` STAYS as the screen-reader state channel, which is why the
+   button's accessible name does not flip. Only the paint goes, from all three
+   rules in this file. Excluded by id because there is exactly one member. */
 .icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]),
-/* The shell panel's header toggles: full screen, and the key-toolbar trigger.
-   Both wrote aria-pressed and neither was in this list, so each announced its
-   state to a screen reader and showed the user nothing — the defect the
-   toggle-state rule in marotte-ui.md exists to prevent, one class short of
-   being covered by .icon-btn above. */
+/* The shell panel's header toggles: full screen, and the key-toolbar trigger. A
+   control that writes aria-pressed must also show its state, or it announces a
+   state the user cannot see. */
 .shell-header-btn[aria-pressed="true"],
 .turn-action-btn[aria-pressed="true"],
 .chat-find-case[aria-pressed="true"],

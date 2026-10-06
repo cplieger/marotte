@@ -1,12 +1,12 @@
 package agent
 
 // The idle window's evidence rule is scoped to the STEP, not to the carrier chat.
-// A parallel run is several step turns on one carrier (design.md §5.4, §13 property
-// 9), so a chat-scoped question answers true while ANY of them holds a terminal —
-// and a step whose own tool call is hung then reads as working because a sibling
-// step is compiling, or because the carrier chat's own conversation holds a shell.
-// The link that carries the step is the ACP session: the run log records it on each
-// step's turn_open, and terminal/create carries it on the wire.
+// A parallel run is several step turns on one carrier, so a chat-scoped question
+// answers true while ANY of them holds a terminal — and a step whose own tool call is
+// hung then reads as working because a sibling step is compiling, or because the
+// carrier chat's own conversation holds a shell. The link that carries the step is
+// the ACP session: the run log records it on each step's turn_open, and
+// terminal/create carries it on the wire.
 
 import (
 	"encoding/json"

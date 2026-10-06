@@ -1,31 +1,10 @@
-// ---------------------------------------------------------------------------
-// Permission card: the agent is asking to do something, rendered in the
-// interaction dock (decision-dock.ts owns the queue, the host and the settle
-// -once guard; this file only builds DOM and reports the choice).
-//
-// TWO shapes, one payload, and the discriminator is `files`:
-//
-//   - A TOOL permission ("may I run this bash command"): the ask, an input
-//     preview so the user can see what they are approving, one button per
-//     offered option, and for shell commands an "Always allow" expansion that
-//     persists a native Cedar rule.
-//   - A TURN APPROVAL ("this turn wrote these files, which do you keep"):
-//     KAS's `autopilot: off` gate. Arrives as an ordinary permission request
-//     carrying `files[]`, and answers on the ordinary permission reply with a
-//     per-ACTION decision map. See marotte-acp.md "Supervised mode on v3".
-//
-// The turn-approval half has two constraints that are easy to get wrong and
-// expensive when you do:
-//
-//   1. The decision unit is the ACTION, not the file. A multi-file semantic
-//      rename arrives as several entries sharing ONE action_id, and the map is
-//      keyed by that id — so `alpha.py` and `beta.py` cannot disagree. Rows are
-//      grouped by action_id and toggle together; N checkboxes over N files
-//      would offer a choice the wire cannot express.
-//   2. An OMITTED id counts as a REJECT, not as unspecified. So a decision is
-//      sent for every action offered, always — a partial map silently discards
-//      whatever it forgot.
-// ---------------------------------------------------------------------------
+// Permission card, rendered in the interaction dock (decision-dock.ts owns the queue,
+// the host and the settle-once guard; this file builds DOM and reports the choice).
+// Two shapes, discriminated by `files`: a TOOL permission (input preview, one button
+// per option, "Always allow" for shell commands) and a TURN APPROVAL (KAS's
+// `autopilot: off` gate, answered with a per-ACTION decision map). The decision unit
+// is the ACTION, not the file: entries sharing an action_id toggle together. An
+// OMITTED id counts as a REJECT, so a decision is sent for every action offered.
 
 import type {
   AlwaysAllowBlock,

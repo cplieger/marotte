@@ -1,26 +1,11 @@
-// Presence guard for the attention favicon variants (static/favicon-*.svg).
-//
-// The attention system swaps every `link[rel~="icon"]` to a pre-rendered variant
-// when a background chat holds an unacknowledged cue. A MISSING variant is not a
-// missing feature: the link gets an href that 404s, so the tab icon goes blank
-// with nothing logged anywhere. Nothing else in this repo asserts that a static
-// asset exists, so this is the whole guard, and it has to hold whether or not the
-// icon sink is wired yet.
-//
-// The names are the convention @cplieger/web-terminal-ui's `iconVariantHref`
-// rewrites to and `.kiro/scripts/gen-attention-icons.py` writes: the `favicon` token of
-// the filename gains `-<variant>`, extension preserved. Three variants for four
-// cues, because `crashed` and `failed` both render as `alert`.
-//
-// Regenerate from the workspace root with:
-//   python3 .kiro/scripts/gen-attention-icons.py --app marotte --static marotte/static
-// which reads the base icon and appends one dot rather than redrawing anything.
-//
-// Skipped assets under Stryker: its sandbox copies static-src only
-// (ignorePatterns excludes ../static), so the real assets may be absent there.
-// A GLOB rather than static imports is what preserves that: a missing key reads
-// as absent, exactly as the existsSync guard it replaced did, where a static
-// `?raw` import of a missing file would fail the whole module instead.
+// Presence guard for the attention favicon variants (static/favicon-*.svg): a
+// MISSING variant gets an href that 404s, so the tab icon goes blank with nothing
+// logged. The names follow @cplieger/web-terminal-ui's `iconVariantHref`: the
+// `favicon` token gains `-<variant>`, extension preserved; three variants for four
+// cues (`crashed` and `failed` both render as `alert`). The assets are the icon
+// generator's output (base icon plus one dot). A GLOB rather than static imports,
+// so a sandbox that copies static-src only (Stryker) reads a missing key as absent
+// instead of failing the module.
 
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -32,32 +17,14 @@ const staticAssets = import.meta.glob<string>(["../static/*.svg", "../static/ind
   eager: true,
 });
 
-/** One entry per cue, and each field pins a different link in the chain the
- *  generator walks.
- *
- *  `token` + `oklch` are what the generator is HANDED: its APPS entry names these
- *  three tab-dot tokens by their oklch parameters
- *  (.kiro/scripts/gen-attention-icons.py). `fill` is
- *  what it WRITES — the sRGB hex those parameters resolve to, which is the only
- *  form an SVG fill can carry.
- *
- *  Pinning both ends is what makes a colour drift fail here rather than ship: an
- *  asset whose dot took another cue's colour fails the fill assertion, and a theme
- *  edit to one of the tokens fails the oklch assertion, which is the reminder to
- *  re-run the generator so the tab icon and the tab dot still agree. The
- *  conversion itself is deliberately NOT reimplemented here — porting a colour
- *  space into a test would make the test the thing most likely to be wrong.
- *
- *  `state` and `shape` are the other half of the agreement: a cue stands for one
- *  TAB DOT STATE, so the assertions below read that state's own rule out of
- *  12-tabs.css rather than restating what it should be. `alert` is a diamond
- *  because `failed` is one, and `failed` is one because it and `done` were
- *  otherwise separable by hue alone.
- *
- *  The three values are web-terminal-kiro's own --status-* overrides, adopted in
- *  2026-08 (see the --c-dot-* block in 01-tokens.css). `input` and `done` are its
- *  literal declarations; `alert` keeps its hue and moves in L, because #dc2626 is
- *  invisible on this app's hovered sidebar row. */
+/** One entry per cue, pinning both ends of the generator's chain: `token` + `oklch`
+ *  are what it is HANDED (the tab-dot tokens' oklch parameters) and `fill` is what
+ *  it WRITES (the sRGB hex an SVG fill can carry). A drifted asset fails the fill;
+ *  a theme edit fails the oklch, the reminder to regenerate. The conversion is
+ *  deliberately not reimplemented here. `state` and `shape` read the cue's tab-dot
+ *  rule out of 12-tabs.css: `alert` is a diamond because `failed` is one. `alert`
+ *  keeps its hue and moves in L because #dc2626 is invisible on a hovered sidebar
+ *  row (the --c-dot-* block in 01-tokens.css). */
 const CUES = {
   input: {
     token: "--c-dot-input",

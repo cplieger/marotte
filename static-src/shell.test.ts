@@ -387,7 +387,7 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(opts.wsPath).toBe("/api/shell/ws");
     // The companion ALONE, not the theme's two-family stack: naming the overlay
     // first makes WebKit resolve the gate before the text face loads, so the PTY
-    // is sized on fallback metrics (#web-terminal-ui, `fontReady`).
+    // is sized on fallback metrics (`@cplieger/web-terminal-ui`, `fontReady`).
     expect(opts.fontReady).toBe('14px "Monaspace Neon NF"');
     // The glyph family FIRST, ahead of the text face: it carries only the
     // codepoints that have to tile, so dropping it or reordering it takes box

@@ -188,7 +188,7 @@ def rule_one_receiver_per_type(f):
     # Keyed by PACKAGE and type. Keying by type name alone reported Buffer and
     # Store as having two receivers each, because several packages declare a type
     # by those names — the same trap that invents a god object out of ten
-    # different Handlers, recorded in architecture.md.
+    # different Handlers.
     seen = collections.defaultdict(set)
     for p, _, recv, typ, _ in methods():
         seen[(str(p.parent.relative_to(ROOT)), typ)].add(recv)

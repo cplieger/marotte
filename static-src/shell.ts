@@ -54,7 +54,7 @@ import { attachSplitter, type Splitter } from "./splitter.js";
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell
 // metrics. ONE family — the one the width probe measures — declared in
-// css/00-fonts.css, and never --font-mono's stack: #web-terminal-ui's
+// css/00-fonts.css, and never --font-mono's stack: `@cplieger/web-terminal-ui`'s
 // `fontReady` owns why.
 const SHELL_FONT_READY = '14px "Monaspace Neon NF"';
 

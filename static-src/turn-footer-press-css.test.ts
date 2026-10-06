@@ -1,6 +1,6 @@
 // States are read off the CSSOM, not computed style: a synthetic hover drives no style
-// recalc here and `CSS.forcePseudoState` is a devtools call a test page cannot make
-// (`chromium-sidecar.md`). The walk must descend into nested rules — `CSSStyleRule` is
+// recalc here and `CSS.forcePseudoState` is a devtools call a test page cannot make.
+// The walk must descend into nested rules — `CSSStyleRule` is
 // not a `CSSGroupingRule` yet carries `cssRules`, so recursing only through grouping
 // rules reads a top-level selector and none of its `&:hover` children.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";

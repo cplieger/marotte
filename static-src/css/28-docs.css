@@ -193,7 +193,7 @@
 }
 
 /* `--btn-h`: the field shares its row with the form's own full-size Launch
-   button (marotte-ui.md "One control height per row"). */
+   button, and every control in one row takes one height. */
 .recipe-input {
   min-width: 14rem;
   min-block-size: var(--btn-h);

@@ -27,9 +27,8 @@ import "strings"
 // ending the turn.
 //
 // It lives here, beside the matcher, rather than in internal/marotte: this is a
-// foreign system's literal contract, the same class of thing as internal/kascap's
-// table and internal/policyfile's format, and those stay with their contract test
-// rather than moving to the wire-vocabulary package (see #go-rulebook C17).
+// foreign system's literal contract, like internal/kascap's table and
+// internal/policyfile's format, and those stay with their contract test.
 const interruptSentinel = "Tool uses were interrupted, waiting for the next user prompt"
 
 // interruptReason is what the transcript's divider says about the stop. The

@@ -129,8 +129,7 @@ function overlayEntries(conflict: ConflictFile, state: FileState): OverlayEntry[
  *  Keyed on a stable identity with the content repainted in `update`, never on the
  *  rendered state: this re-runs for state belonging to ONE hunk, every row is a set
  *  of real buttons, and the status line is an `aria-live` region a replacement is not
- *  reliably re-announced from. Why the key may not carry content: `web.md` "A KEYED
- *  RECONCILE IS NOT ENOUGH ON ITS OWN". */
+ *  reliably re-announced from. A key carrying content would re-key on every change. */
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
   if (state.mode.value.kind !== "conflict" || state.mode.value.conflict.hunks.length === 0) {

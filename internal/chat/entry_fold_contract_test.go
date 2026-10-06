@@ -88,8 +88,8 @@ var entryFoldEdges = map[marotte.EntryKind]string{
 
 // entryFoldLog writes one log of two interleaved turns and answers its entries with the
 // server-minted turn ids normalised to t-1, t-2 in order of first appearance and every ts
-// zeroed. Two turns open together is the shape the log must hold (marotte.md: nothing may
-// assume a turn is a contiguous byte range), and it is what makes the grouping worth
+// zeroed. Two turns open together is the shape the log must hold (nothing may assume a
+// turn is a contiguous byte range), and it is what makes the grouping worth
 // pinning at all — with one turn per run, file order IS the grouping.
 func entryFoldLog(t *testing.T) []marotte.Entry {
 	t.Helper()

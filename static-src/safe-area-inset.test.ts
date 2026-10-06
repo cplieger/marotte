@@ -1,24 +1,10 @@
-// HOW THE APP SPENDS `env(safe-area-inset-*)`, measured.
-//
-// Chromium reports every one of those as 0, so neither claim below is observable
-// against the shipped stylesheet: the app looks correct here and wrong on a phone.
-// The instrument is the assembled bundle with the iPhone values SUBSTITUTED (top 47,
-// bottom 34), which is the only way to measure this class at all
-// (`marotte-ui.md`: "Chromium reports every `env(safe-area-inset-*)` as 0 … the
-// final look needs a real device"). Each case is paired with the UNSUBSTITUTED
-// sheet as its control, so a rule that stopped reading the inset entirely fails
-// rather than passing for the wrong reason.
-//
-// Two rules, one subject:
-//
-//   THE INSET IS A CLEARANCE FOR THE NEAREST CONTROL. The composer's last pill sits
-//   exactly on Apple's 34pt boundary, and the band is the CARD's own material
-//   rather than empty page below it (Apple's bars fill it; ours used to leave 29px
-//   of page there, reported as a safety area below the app looking way too large).
-//
-//   AND IT IS PAID ONCE. `.page-header` used to add the TOP inset a second
-//   time under a title bar that had already paid it, which is the gap reported
-//   above the multi-select menu on the settings, docs and git pages.
+// HOW THE APP SPENDS `env(safe-area-inset-*)`, measured. Chromium reports every
+// inset as 0, so the instrument is the assembled bundle with the iPhone values
+// SUBSTITUTED (top 47, bottom 34), each case paired with the unsubstituted sheet as
+// its control so a rule that stopped reading the inset fails. Two rules: THE INSET
+// IS A CLEARANCE FOR THE NEAREST CONTROL (the composer's last pill sits on the 34pt
+// boundary, the band below it is card material), AND IT IS PAID ONCE (`.page-header`
+// must not add the top inset again under a title bar that already paid it).
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

@@ -3,8 +3,7 @@
 //
 // KAS's buffer has two verbs, append and clear, so the SERVER builds a one-row delete
 // (`steer_remove`): it clears and resends the kept rows as one combined steer. A row's
-// id is its stable key across that, so the kept rows keep their elements. Shape and
-// history: marotte-client.md "Send discipline, steering & model pill".
+// id is its stable key across that, so the kept rows keep their elements.
 
 import { el, computed, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";

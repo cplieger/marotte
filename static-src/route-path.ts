@@ -1,13 +1,10 @@
-// ---------------------------------------------------------------------------
 // The URL vocabulary, DOM-free so the service worker shares it: `Route`,
-// `parseRoute` and its inverse `buildPath`. The route table is marotte.md "URL
-// scheme"; the shape here is flat paths with one level of nesting for the
-// sub-tabbed pages (`/git/{tab}`, `/docs/{tab}`, `/history/runs`,
+// `parseRoute` and its inverse `buildPath`. Flat paths with one level of nesting
+// for the sub-tabbed pages (`/git/{tab}`, `/docs/{tab}`, `/history/runs`,
 // `/settings/{tab}`), a fragment where a position contains `/` or `#` (`#L<line>`,
 // `#pr=<identity>`, `#node=<path>`), and a CANONICAL default per sub-tabbed page
 // whose URL omits the segment (`/settings`, never `/settings/general`).
 // Shell, popups and modals are transient UI and get no URL.
-// ---------------------------------------------------------------------------
 
 // --- Route types ---
 
@@ -389,7 +386,7 @@ export function buildPath(route: Route): string {
 }
 
 // encodePath URL-encodes each path segment while preserving the separators,
-// so a file at "dir/my file.md" serialises to "dir/my%20file.md" rather
+// so a file at "dir/my notes.md" serialises to "dir/my%20notes.md" rather
 // than collapsing to an unreadable blob.
 function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");

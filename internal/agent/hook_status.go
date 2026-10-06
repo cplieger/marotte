@@ -100,10 +100,8 @@ func newHookStatusCache(path string) *hookStatusCache {
 // true (show hooks) on any error or when the setting is unset, matching
 // kiro-cli's own default.
 //
-// Read from marotte's own configDir would be wrong: that file uses
-// underscore keys with no entry for this toggle, so the prior lookup of
-// "hooks_show_status" against it was a permanent no-op. See marotte.md
-// "Experimental kiro-cli flags".
+// Reading marotte's own configDir would be wrong: that file uses underscore keys
+// and has no entry for this toggle.
 func (c *hookStatusCache) IsHookStatusEnabled() bool {
 	return c.field.get()
 }

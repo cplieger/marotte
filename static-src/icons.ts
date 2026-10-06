@@ -17,12 +17,9 @@ function svg(tier: IconTier, d: string, extra = ""): string {
 }
 
 // ---------------------------------------------------------------------------
-// SHARED DRAWINGS. Six paths were each written out two to four times across the
-// constants below, so one drawing had several definitions and nothing held them
-// equal — the drift `marotte-ui.md` "ONE CONCEPT, ONE DRAWING" exists to prevent,
-// reached from the other side. A tier variant is a different SIZE of one mark, not
-// a second mark, so the path is named once here and the tier is chosen at the call.
-// Every exported string below is byte-identical to what it was before the split.
+// SHARED DRAWINGS. One concept, one drawing: a path used by several constants is
+// named once here so nothing can let the copies drift. A tier variant is a
+// different SIZE of one mark, so the tier is chosen at the call.
 // ---------------------------------------------------------------------------
 const PATH_PENCIL = '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>';
 const PATH_X = '<path d="M18 6L6 18M6 6l12 12"/>';
@@ -267,17 +264,10 @@ export const ICON_SAVE_FAIL = svg(
 // --- Tool-call icons ---
 
 /** The read family — files, and through `readSubject` also processes, folders and
- *  diagnostics — draws the SAME open book as the configuration browser, deliberately
- *  (user ruling, 2026-09). It was Lucide's two-path book-open, and the two are one
- *  mark: measured at the shipped 16px against `ICON_SUBAGENT_INTROSPECT`, which is
- *  also Lucide's book-open at the time, the two were indistinguishable — and both
- *  render in the TRANSCRIPT, a tool card and a delegate card deep enough in one turn to
- *  sit on the same screen. That collision is gone from both sides in the same change:
- *  introspect left the book family for a graduation cap, and this glyph is now the
- *  browser's own drawing. What the share costs instead is one silhouette across two
- *  REGISTERS — sidebar chrome and transcript content — which is the cheaper trade and
- *  the reason it is allowed here at all; `marotte-ui.md` "ONE CONCEPT, ONE DRAWING"
- *  carries the ruling. */
+ *  diagnostics — draws the SAME open book as the configuration browser, deliberately:
+ *  a second open book would be indistinguishable at 16px from this one, and a tool
+ *  card and a delegate card can share one screen. The cost is one silhouette across
+ *  two registers (sidebar chrome, transcript content), the cheaper trade. */
 const ICON_TOOL_READ = svg("ui", PATH_BOOK_OPEN);
 const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
 const ICON_TOOL_DELETE = svg("ui", PATH_TRASH);
@@ -626,50 +616,13 @@ export const ICON_TAB_FILES = svg(
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /** The Kiro configuration browser: an open book, ONE closed outline plus ONE spine
- *  line. Also the sidebar button that opens the page, pinned to this constant by
- *  `menu-icons.test.ts`. Two cover paths sharing a spine on x=12 is not one stroke:
- *  measured on a 16px raster that column pair painted 55% alpha each against every
- *  other stroke's 33%, so the centre read as a double spine.
- *
- *  EVERY CORNER IS AN ARC AND BOTH PAGE EDGES ARE CURVES. It was four mitred
- *  vertices and four straight diagonals meeting in a point at each end of the spine,
- *  which the user reported as too sharp and too simple. The cover corners are now
- *  1.5-unit quadratics and each page edge is one cubic bowing away from the book's
- *  centre, so the pages read as leaves rather than as folded card. Rendered and
- *  compared against five alternatives at the shipped 16px before choosing this one;
- *  a CLOSED book was the other candidate the user offered and is declined below, and
- *  an added page line per side was legible enlarged and muddied the middle at 16px.
- *
- *  ONE CURVE, TRANSLATED — NEVER MIRRORED — SO EVERY FLAP RISES FROM THE SPINE TO ITS
- *  OUTER TIP. The bottom pair is the top pair moved down by the spine's own length, so
- *  all four edges are the same drawing and both flaps curve the same way. Reflecting
- *  the bottom about y=12 instead is the one thing that must not happen: it points the
- *  bottom flaps down while the top ones point up, which the user rejected on sight,
- *  and it renders as a spool rather than a book.
- *
- *  THE RISE IS 1.5, HALF OF WHAT IT WAS (user ruling, 2026-09; it was 3, and the flaps
- *  were reported as angled too steeply). One dial: the tips hold the ceiling at y=3 and
- *  the spine's bottom holds the floor at y=21, so shrinking the rise pulls the bottom
- *  tips down from 18 to 19.5 and the spine's top down with them, and the ink stays
- *  18x18 with no re-centring. Zero is the end of that dial and is NOT available: level
- *  ends leave a rounded rectangle with a divider, which is the closed book declined
- *  below, and at the `ui` tier one unit is 0.667 CSS px, so a rise under about 1.5
- *  renders as that same rectangle anyway. Rendered at 3 / 2.25 / 1.5 / 0.75 at the
- *  shipped 16px before settling here.
- *
- *  The straight strokes still sit on the 3-unit grid — x=3, x=12 and x=21, this row's
- *  crisp pixel grid, whose reasoning is on the shell button in static/index.html —
- *  and the ink is still 18x18 on 3..21, the toolbar's own median extent. Only the
- *  corner arcs use half units (4.5/18/19.5), which are arc endpoints rather than
- *  structural strokes, so nothing the grid governs moved.
- *
- *  THE ONLY OPEN BOOK IN THE APP, and it stays OPEN because `ICON_REPO` is the closed
- *  one: drawing a closed book here would give that silhouette two meanings — the defect
- *  `marotte-ui.md` records at the two wrenches. It was one of THREE open books, all
- *  three near-identical at 16px and each meaning something else; the other two are
- *  resolved (2026-09) rather than merely distinguished — `ICON_TOOL_READ` shares this
- *  drawing through `PATH_BOOK_OPEN`, and the introspect subagent left for a graduation
- *  cap. So the book family is now two marks: this open one and the closed one. */
+ *  line (two covers sharing x=12 double-paint the spine), pinned by
+ *  `menu-icons.test.ts`. Corners are arcs and each page edge one cubic; the bottom
+ *  pair is the top pair TRANSLATED, never mirrored (a mirror reads as a spool). The
+ *  rise is 1.5: under that, at the `ui` tier, it renders as a closed rectangle. The
+ *  straight strokes sit on the 3-unit grid (x=3/12/21) with 18x18 ink on 3..21. It
+ *  stays OPEN because `ICON_REPO` is the closed book, and `ICON_TOOL_READ` shares this
+ *  drawing through `PATH_BOOK_OPEN`. */
 export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never

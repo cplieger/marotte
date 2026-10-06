@@ -1,5 +1,5 @@
 /** Snaps icon boxes onto the pixel grid so a structural stroke or fill edge paints whole
- *  device pixels. Rule, measurement and the rejected alternatives: `marotte-ui.md` "Icon crispness". */
+ *  device pixels. */
 
 const TIERS = ".ic-inline, .ic-ui, .ic-lg, .ic-hero";
 const SHAPES = "path, circle, line, rect, polyline, polygon, ellipse";

@@ -453,13 +453,10 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 // scanDocsSpecs walks `specs/` and groups each document under its feature
 // directory.
 //
-// Specs carry NO front-matter — a spec doc opens directly on its H1 — so the
-// label comes from that heading. There is also no stable requirements/design/
-// tasks trio to hardcode: measured across nine feature directories, nine
-// requirements.md, nine design.md, one study.md and (in the root tree) zero
-// tasks.md. Fixed columns would manufacture an empty Tasks column for every
-// feature and hide the study entirely, so a feature is a group with arbitrary
-// children, ordered requirements → design → tasks → lexical.
+// Specs carry NO front-matter, so the label comes from the H1. A feature directory
+// holds arbitrary documents rather than a fixed requirements/design/tasks trio, and
+// fixed columns would invent empty ones and hide the rest, so a feature is a group
+// with arbitrary children, ordered requirements → design → tasks → lexical.
 func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	sc := walkMarkdown(ctx, root, "specs", catSpec, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc {
 		group := path.Dir(rel)
