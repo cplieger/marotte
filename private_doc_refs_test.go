@@ -3,12 +3,13 @@ package main
 // A comment in this repository is public, so it may not point a reader at a document
 // the repository does not ship: a path under the maintainer's private `.kiro` tree, a
 // bare `<name>.md` that is not one of this repo's own files or a file marotte's
-// product reads, a `#<doc>` pointer, or a rulebook or `§` section named bare. The check
-// is structural rather than a list of private names, because such a list would itself
-// publish them.
+// product reads, a `#<doc>` pointer, or a private document's name written bare. The
+// names are matched by hash, because a list of them would itself publish them.
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"go/scanner"
 	"go/token"
 	"io/fs"
@@ -19,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // productDocNames are document names marotte's product reads or writes, so a comment
@@ -59,7 +61,102 @@ var (
 	// document of the families above, written with neither `#` nor `.md`.
 	bareDocStem = regexp.MustCompile(`(^|[^\w./#@-])([a-z]+-rulebook|(marotte|kiro|web-terminal)(-[a-z]+)+\s*§)`)
 	codeToken   = regexp.MustCompile(`[\w-]+`)
+	// stemToken is a lowercase word, hyphenated or not, that knownStemRefs hashes.
+	stemToken = regexp.MustCompile(`[a-z][a-z0-9]*(-[a-z0-9]+)*`)
+	// sectionCite is what follows a document name cited by section: `§` or a quoted title.
+	sectionCite = regexp.MustCompile(`^\s*(§|"[A-Z])`)
 )
+
+// knownStems holds the first 16 hex digits of the SHA-256 of each document stem in the
+// maintainer's private steering set. Regenerate it from that directory with:
+//
+//	for f in *.md; do printf %s "${f%.md}" | sha256sum | cut -c1-16; done
+var knownStems = func() map[string]bool {
+	set := map[string]bool{}
+	for _, h := range strings.Fields(`
+012a653f42db9044 05d131b75cc2a753 06cf5b96eca79a03 07d907bcb31655dc 0bcd728f4324a803 0c1f7f3108b9dc7c
+0d5a011050205b39 0faee5c5f42eebd4 0fd04bc364d66a70 11a7fe42b3e3235b 145cf109484a7a7d 1669a1013e1f0f57
+16d231429d0199c2 177a7ea3611fe6b1 19687460032e31fa 1b158839f8aa339e 1c0f2b8a7d5ea781 1c8f936de110baa9
+20e8cdb5b4093e18 21b747de22dbb757 244d70ee4683876a 27e0a4238214b0f3 2b0dcdd40016096b 2fc20975c6d52c00
+303d4d3c42510a26 31182319f2fc98f9 33559d24c650ae38 33cfdcd7d72ecedf 34ba5ecd2347a565 37a854952ffc23b6
+38f07265e5d92893 3a7382430ac92803 3cd564db50fccc8f 3ee591fcb25f09a0 40fc00fa1d13df5d 420c352eea8797be
+44c3f6f83c39094f 46b4b524c68556f0 4b5e57f6eb2f42b9 4ca303a3bf7ddf7b 4cd0e21a9a0795a1 4f881a1a3db524da
+500e8d2c01015fbb 520cdb563bf80b19 5491d8106908e03a 55b95f14512b10d6 56977b5ae3300aa4 58ee00072efbff71
+5ab2a0b7488fbbb3 5d1c3ed5059b9064 5d2d3ceb7abe5523 5e92499d63592222 5ff73b4804620b07 614b1adce676994c
+61946c94a43ed3ae 62484e22a6a5ade1 659d988c7bad9d27 6b4021c5c51645a2 6ba1ccdc6bfaff79 6e6c429183062d65
+708117346fea6751 7124ddae77f1359b 74de07c4e919534b 7775ded789ee9769 780107e3f01a41db 7843221d63dabca8
+7b26e4c0eb7d5a15 7c301b6396a715a9 83c2efa92fb5598a 83dd46ce66dd5598 83ef92353e592a76 8ac20d8c772b887f
+8bb6922758ad870f 8ea20d7601daf25b 90305a4228bedb99 913b1d298ca9979d 922c8b860a58fdbc 92c36045af636d0c
+932e19e0f5b79c03 949c872e74776cef 9502c0830e76622c 969545dde1584d88 980f52e021a032d5 98a031a699f4e488
+997568b868a5a5d5 9b43cbc5010a1908 9e16ad4c32210e16 9f22321ae5703f7b 9f3a240916adc275 a02ba163f3a02db2
+a2534aa4e36f2989 a33428cbc33ddd9b a365b36d190f46db a376267626fc2bc8 a485ec6d47de9fbd a56f226e4dd67057
+a5a425b87fea0fe8 a8792157cb4f27fb aea028c2b5cf9178 b0019ef18d89eaa8 b1467a4c8116c29d b2de2480c3ebd219
+b4a42c3843db2473 b5ffa2b60f3a2598 b6b674c8251eb34d ba5285161ba6eed0 bc378f4433cfa391 bdf49c3c3882102f
+c2186bc47c349a4a c2c5f5673f7e53ff c41fae5186560782 c48a0c55ab8a2dd2 c846e2988a073bce c8ea72e56a1d450a
+cace491b69555e8d ce635c4eabff5e4f cf299109dee20171 cf80cd8aed482d5d d0334f008a9e3429 d07915cde0dee19c
+d2110fd79028b647 d6e0ff2b7a534a97 d791d4dae5d930e5 d9e97184f411b5ff da14a33ad09acf0c de15986752061435
+de8b3e42e7ac0278 df959e0bb356780c e296d81ff5d146d0 e33539a47126eee9 e3400d038ebc2d2a e64ddfef8fa7b1c2
+e75fe741533c59b9 e7d3799ecc09f5cb ebf58a8a5240a087 ed2dee336938286e edde7ebafe908447 ee871105e875f3de
+f0d831b004f71460 f3be092176e2abda f71af02bbaaa6f4f f9d35d43770d3909 fe3811fe21af748f fe9bbd400bb6cb31
+ffa4299909ef865f
+`) {
+		set[h] = true
+	}
+	return set
+}()
+
+func stemHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
+}
+
+// knownStemRefs reports a private document named by its bare stem: anywhere when the
+// stem is hyphenated, and a single-word stem only after `#` or before a section
+// citation, since those are ordinary words. A stem the sources define outside comments
+// (a public package such as `web-terminal-ui`) passes unless a section is cited. A
+// token reached through a path, a URL or a file extension is not a bare name.
+func knownStemRefs(line string, defined, stems map[string]bool) []string {
+	var refs []string
+	for _, ix := range stemToken.FindAllStringIndex(line, -1) {
+		tok, rest := line[ix[0]:ix[1]], line[ix[1]:]
+		var prev byte
+		if ix[0] > 0 {
+			prev = line[ix[0]-1]
+		}
+		path := prev != 0 && strings.IndexByte("./@-_\\", prev) >= 0 || 'A' <= prev && prev <= 'Z' ||
+			'0' <= prev && prev <= '9' || strings.HasPrefix(rest, "/") ||
+			len(rest) > 1 && rest[0] == '.' && (unicode.IsLetter(rune(rest[1])) || unicode.IsDigit(rune(rest[1])))
+		if path || len(rest) > 0 && (rest[0] == '_' || 'A' <= rest[0] && rest[0] <= 'Z') || !stems[stemHash(tok)] {
+			continue
+		}
+		cited := sectionCite.MatchString(rest)
+		hyphenated := strings.Contains(tok, "-")
+		switch {
+		case cited:
+		case prev == '#' && hyphenated: // hashDocRef and hashName own `#a-b`
+			continue
+		case !hyphenated && prev != '#', defined[tok], publicProjects[tok]:
+			continue
+		}
+		refs = append(refs, tok)
+	}
+	return refs
+}
+
+// publicProjects are public repositories whose name a private document shares; a
+// comment names the project, so the bare name passes unless a section is cited.
+var publicProjects = func() map[string]bool {
+	set := map[string]bool{}
+	for _, name := range strings.Fields(`cert-converter docker-age docker-caddy
+		docker-fclones-scheduler docker-keepalived docker-nut-upsd docker-radvd
+		docker-renovate-scheduler docker-rsync-scheduler docker-smtp-relay docker-static-web
+		github-scout pg-autodump plex-exporter plex-language-sync registry-stats seadex-scout
+		tautulli-remap tool-catalog ui-primitives web-terminal-engine web-terminal-glyphs
+		web-terminal-kiro web-terminal-server web-terminal-ui`) {
+		set[name] = true
+	}
+	return set
+}()
 
 type commentSpan struct {
 	text string
@@ -107,6 +204,11 @@ func privateDocRefs(line, code string, shipped, defined map[string]bool) []strin
 	}
 	for _, m := range bareDocStem.FindAllStringSubmatch(line, -1) {
 		if stem := strings.TrimRight(m[2], " \t§"); !defined[stem] {
+			refs = append(refs, stem)
+		}
+	}
+	for _, stem := range knownStemRefs(line, defined, knownStems) {
+		if !slices.Contains(refs, stem) && !slices.Contains(refs, "#"+stem) {
 			refs = append(refs, stem)
 		}
 	}
@@ -470,6 +572,9 @@ func TestSourceComments_NameNoPrivateDocument(t *testing.T) {
 			}
 		}
 	}
+	if len(knownStems) < 100 {
+		t.Fatalf("knownStems holds %d hashes, want more than 100: the literal is not parsing", len(knownStems))
+	}
 	if len(sources) < 1000 {
 		t.Fatalf("scanned %d source files, want more than 1000: the file listing is broken", len(sources))
 	}
@@ -518,6 +623,41 @@ func TestPrivateDocRefs(t *testing.T) {
 			got := privateDocRefs(tc.line, tc.code, shipped, defined)
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("privateDocRefs(%q) = %q, want %q", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestKnownStemRefs(t *testing.T) {
+	stems := map[string]bool{stemHash("foo-notes"): true, stemHash("style"): true, stemHash("web-terminal-ui"): true}
+	cases := map[string]struct {
+		line    string
+		defined map[string]bool
+		want    []string
+	}{
+		"hyphenated stem bare":           {line: "// see foo-notes for the rule", want: []string{"foo-notes"}},
+		"hyphenated stem ends a line":    {line: "// the rule is in foo-notes.", want: []string{"foo-notes"}},
+		"hyphenated stem with section":   {line: "// foo-notes \"Headings\"", want: []string{"foo-notes"}},
+		"stem inside a path":             {line: "// docs/foo-notes.txt and foo-notes/x"},
+		"stem after a slash":             {line: "// read docs/foo-notes first"},
+		"stem with a file extension":     {line: "// foo-notes.go holds it"},
+		"stem inside a longer word":      {line: "// a foo-notes-cache and Xfoo-notes"},
+		"defined stem bare":              {line: "// the foo-notes value", defined: map[string]bool{"foo-notes": true}},
+		"defined stem with section":      {line: "// foo-notes §2", defined: map[string]bool{"foo-notes": true}, want: []string{"foo-notes"}},
+		"word stem bare":                 {line: "// the style of a row"},
+		"word stem with quoted title":    {line: "// (style \"Headings\")", want: []string{"style"}},
+		"word stem with section":         {line: "// style §2", want: []string{"style"}},
+		"word stem as a hash pointer":    {line: "// see #style", want: []string{"style"}},
+		"word stem with lowercase quote": {line: "// style \"x\" here"},
+		"public project bare":            {line: "// the web-terminal-ui grid"},
+		"public project with section":    {line: "// web-terminal-ui \"Grid\"", want: []string{"web-terminal-ui"}},
+		"unknown stem":                   {line: "// bar-notes \"Headings\" and fooz §1"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := knownStemRefs(tc.line, tc.defined, stems)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("knownStemRefs(%q) = %q, want %q", tc.line, got, tc.want)
 			}
 		})
 	}
