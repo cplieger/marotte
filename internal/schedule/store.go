@@ -22,6 +22,25 @@ const FileName = "schedules.json"
 // ErrNotFound means no schedule owns the given id.
 var ErrNotFound = errors.New("schedule not found")
 
+// Status is how a schedule's last slot ended, as far as the server knows.
+type Status string
+
+const (
+	// StatusStarted means the launch took and nothing has reported an ending yet.
+	StatusStarted Status = "started"
+	// StatusFailed means the launch or the run failed; the reason says why.
+	StatusFailed Status = "failed"
+	// StatusUnknown means the run went away without a terminal signal.
+	StatusUnknown Status = "unknown"
+)
+
+// Outcome is one slot's ending. Reason is plain text a person reads, never a
+// prefix-coded value: Status alone carries the classification.
+type Outcome struct {
+	Status Status
+	Reason string
+}
+
 // Entry is one scheduled workflow. Source is the recipe launch key that
 // Launch takes; it is re-validated at launch time rather than trusted here,
 // because it looks like a path.
@@ -30,15 +49,42 @@ type Entry struct {
 	// back to creation so a new schedule does not immediately fire for every
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
-	// LastRunAt / LastResult are for display only; the run's own record is the
-	// durable history (see marotte-acp.md "Workflow runs on the wire").
+	// LastRunAt, LastStatus and LastReason are for display only; the run's own
+	// record is the durable history.
 	LastRunAt  time.Time `json:"last_run_at,omitzero"`
 	ID         string    `json:"id"`
 	Source     string    `json:"source"`
 	Name       string    `json:"name,omitempty"`
-	LastResult string    `json:"last_result,omitempty"`
+	LastStatus Status    `json:"last_status,omitempty"`
+	LastReason string    `json:"last_reason,omitempty"`
 	Spec       Spec      `json:"spec"`
 	Enabled    bool      `json:"enabled"`
+}
+
+// storedEntry reads an Entry plus last_result, the single prefix-coded string
+// that held the outcome in files written before LastStatus existed. Writes
+// never emit it, so a store converts on its first mutation.
+type storedEntry struct {
+	LegacyResult string `json:"last_result,omitempty"`
+	Entry
+}
+
+// legacyOutcome splits an old last_result by the prefixes its writers used.
+// Text with no known prefix was a failure sentence written whole.
+func legacyOutcome(result string) Outcome {
+	if result == string(StatusStarted) {
+		return Outcome{Status: StatusStarted}
+	}
+	if reason, ok := strings.CutPrefix(result, "failed: "); ok {
+		return Outcome{Status: StatusFailed, Reason: reason}
+	}
+	if reason, ok := strings.CutPrefix(result, "unknown: "); ok {
+		return Outcome{Status: StatusUnknown, Reason: reason}
+	}
+	if rest, ok := strings.CutPrefix(result, "stopped: "); ok {
+		return Outcome{Status: StatusFailed, Reason: "stopped because " + rest}
+	}
+	return Outcome{Status: StatusFailed, Reason: result}
 }
 
 // Store persists schedules in one 0600 JSON file, rewritten atomically. Same
@@ -62,12 +108,17 @@ func NewStore(dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", s.path, err)
 	}
-	var list []Entry
+	var list []storedEntry
 	if err := json.Unmarshal(data, &list); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	for i := range list {
-		s.entries[list[i].ID] = list[i]
+		e := list[i].Entry
+		if e.LastStatus == "" && list[i].LegacyResult != "" {
+			o := legacyOutcome(list[i].LegacyResult)
+			e.LastStatus, e.LastReason = o.Status, o.Reason
+		}
+		s.entries[e.ID] = e
 	}
 	return s, nil
 }
@@ -107,7 +158,7 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	defer s.mu.Unlock()
 	if prev, ok := s.entries[e.ID]; ok {
 		// Preserve run history across an edit; the client does not send it.
-		e.LastRunAt, e.LastResult = prev.LastRunAt, prev.LastResult
+		e.LastRunAt, e.LastStatus, e.LastReason = prev.LastRunAt, prev.LastStatus, prev.LastReason
 		if e.Anchor.IsZero() {
 			e.Anchor = prev.Anchor
 		}
@@ -133,7 +184,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // recordFire advances a schedule's anchor after a fire or a skip. The anchor is
 // set to the DUE time rather than now, so a schedule cannot drift later by the
 // tick's own latency.
-func (s *Store) recordFire(ctx context.Context, id string, due time.Time, result string) error {
+func (s *Store) recordFire(ctx context.Context, id string, due time.Time, o Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
@@ -142,7 +193,7 @@ func (s *Store) recordFire(ctx context.Context, id string, due time.Time, result
 	}
 	e.Anchor = due
 	e.LastRunAt = due
-	e.LastResult = result
+	e.LastStatus, e.LastReason = o.Status, o.Reason
 	s.entries[id] = e
 	return s.persistLocked(ctx)
 }
@@ -161,23 +212,19 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	return s.persistLocked(ctx)
 }
 
-// RecordOutcome overwrites a schedule's last result AFTER its run has started.
-//
-// Separate from recordFire because the interesting outcomes arrive late: a
-// scheduled run that parks on an unanswered permission is denied minutes after
-// it launched, and without this the row would still read "started" while the
-// schedule silently failed the same way every night.
-//
-// Deliberately does NOT touch the anchor: the slot already fired, and moving the
-// anchor here would shift the next run by however long the failure took.
-func (s *Store) RecordOutcome(ctx context.Context, id, result string) error {
+// RecordOutcome overwrites a schedule's last outcome AFTER its run has started.
+// The interesting outcomes arrive late: an unattended run denied a permission
+// fails minutes after launch, and without this the row would still read
+// "started". It does not touch the anchor, because the slot already fired and
+// moving it would shift the next run by however long the failure took.
+func (s *Store) RecordOutcome(ctx context.Context, id string, o Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[id]
 	if !ok {
 		return ErrNotFound
 	}
-	e.LastResult = result
+	e.LastStatus, e.LastReason = o.Status, o.Reason
 	s.entries[id] = e
 	return s.persistLocked(ctx)
 }

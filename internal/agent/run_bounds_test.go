@@ -559,9 +559,9 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows", len(rows))
 	}
-	if rows[0].LastResult != outcomeOverran {
-		t.Errorf("the schedule row reads %q, want the overran outcome; without it the row still "+
-			"says `started` while the schedule has silently stopped producing", rows[0].LastResult)
+	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != reasonOverran {
+		t.Errorf("the schedule row reads (%q, %q), want the overran failure; without it the row still "+
+			"says `started` while the schedule has silently stopped producing", rows[0].LastStatus, rows[0].LastReason)
 	}
 }
 

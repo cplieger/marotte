@@ -27,7 +27,8 @@ type scheduleView struct {
 	ID         string        `json:"id"`
 	Source     string        `json:"source"`
 	Name       string        `json:"name,omitempty"`
-	LastResult string        `json:"last_result,omitempty"`
+	LastStatus string        `json:"last_status,omitempty"`
+	LastReason string        `json:"last_reason,omitempty"`
 	Spec       schedule.Spec `json:"spec"`
 	Enabled    bool          `json:"enabled"`
 }
@@ -59,7 +60,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
-		LastResult: e.LastResult, Enabled: e.Enabled,
+		LastStatus: string(e.LastStatus), LastReason: e.LastReason, Enabled: e.Enabled,
 	}
 	if !e.LastRunAt.IsZero() {
 		t := e.LastRunAt

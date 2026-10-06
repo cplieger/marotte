@@ -210,9 +210,9 @@ function renderList(items: KnowledgeContext[], stalled = false): void {
   }
   if (items.length === 0) {
     container.replaceChildren();
-    // Two CONCRETE examples, one of them a named repository (user ruling): the
-    // shapes-only wording readers could not tell an entry from. The section hint
-    // above already defines what a base IS; the README carries the longer list.
+    // Two concrete examples, one a named repository: the section hint above
+    // defines what a base is, and a wording that only described shapes left
+    // readers unable to tell what an entry looks like.
     container.appendChild(
       el(
         "div",

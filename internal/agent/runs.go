@@ -81,7 +81,7 @@ type runChatReader interface {
 // outside, since a wedge and a long run look alike from the log. A run with no
 // schedule behind it, or a store that is not wired, is a no-op rather than an
 // error: the outcome has nowhere to go and the run's own row already carries it.
-func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID, outcome string) {
+func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, outcome schedule.Outcome) {
 	if rs.schedules == nil || scheduleID == "" {
 		return
 	}

@@ -101,16 +101,16 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 		slotAt = time.Time{}
 	}
 	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
-	result := "started"
+	outcome := Outcome{Status: StatusStarted}
 	if err != nil {
 		// An overlap is the expected refusal (one live run per recipe), not a fault:
 		// the previous run is still going, so this slot is simply skipped.
-		result = "failed: " + err.Error()
+		outcome = Outcome{Status: StatusFailed, Reason: err.Error()}
 		slog.Warn("scheduled run did not start", "id", e.ID, "source", e.Source, "error", err)
 	} else {
 		slog.Info("scheduled run started", "id", e.ID, "run_id", runID, "recipe", name, "due", due)
 	}
-	if err := r.store.recordFire(ctx, e.ID, due, result); err != nil {
+	if err := r.store.recordFire(ctx, e.ID, due, outcome); err != nil {
 		slog.Error("schedule record failed", "id", e.ID, "error", err)
 	}
 }

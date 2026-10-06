@@ -43,11 +43,11 @@ const maxSteeringBytes = 1 << 20 // 1 MiB
 // msgSteeringUnreadable is what a steering read answers when a file stands at
 // custom.md and could not be read. It states both halves the reader needs: the
 // file could not be read, and nothing was written over it.
-const msgSteeringUnreadable = "custom.md could not be read; your instructions were not overwritten"
+const msgSteeringUnreadable = "custom.md could not be read, so your instructions were not overwritten"
 
 // msgSteeringConflict is the 409, answered with the fresh token and the document
 // beside it so the reader's box can be re-seeded from the refusal itself.
-const msgSteeringConflict = "custom.md changed since you loaded it; your text was not saved"
+const msgSteeringConflict = "custom.md changed since you loaded it, so your text was not saved"
 
 // msgSteeringIfMatchRequired is the 428: no validator token was offered, so this
 // write cannot be told from one that would overwrite a newer document.
@@ -288,7 +288,7 @@ const maxSettingsBytes = 1 << 20 // 1 MiB
 // what is already stored. It states both halves the user needs: the file could
 // not be read, and nothing was written over it — so the preferences they can no
 // longer see are still on disk, and the remedy is config.json itself.
-const msgSettingsUnreadable = "config.json could not be read; your settings were not overwritten"
+const msgSettingsUnreadable = "config.json could not be read, so your settings were not overwritten"
 
 // readStoredSettings reads and parses the on-disk settings document for the READ
 // side: the GET resolves the effective view over the result, and lazySettings
