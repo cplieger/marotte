@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { renderMarkdown, createMarkdownStream } from "./markdown.js";
-import { adoptLinkGuard } from "./link-guard.js";
+import { adoptLinkGuard, setLinkCopyCallback } from "./link-guard.js";
 import { exfilShaped } from "./utils-url.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 
@@ -2392,6 +2392,9 @@ describe("markdown link guard", () => {
 
   afterEach(() => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
+    setLinkCopyCallback(() => {
+      /* reset */
+    });
   });
 
   function rendered(md: string): HTMLElement {
@@ -2400,12 +2403,19 @@ describe("markdown link guard", () => {
     return el;
   }
 
+  function copiedUrl(el: HTMLElement): unknown {
+    const copied = vi.fn();
+    setLinkCopyCallback(copied);
+    (el.querySelector("button.link-withheld") as HTMLButtonElement | null)?.click();
+    return copied.mock.calls[0]?.[0];
+  }
+
   it("withholds a payload-shaped inline link behind a copy button when ON", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     const el = rendered(`see [file an issue](${PAYLOAD}) now`);
     const button = el.querySelector("button.link-withheld");
     expect(button?.textContent).toBe("file an issue");
-    expect(button?.getAttribute("data-payload-url")).toBe(PAYLOAD);
+    expect(copiedUrl(el)).toBe(PAYLOAD);
     expect(el.querySelector("a[href]")).toBeNull();
   });
 
@@ -2422,25 +2432,21 @@ describe("markdown link guard", () => {
     const el = rendered(`please [file an issue](${prefill}) for this`);
     const button = el.querySelector("button.link-withheld");
     expect(button?.textContent).toBe("file an issue");
-    expect(button?.getAttribute("data-payload-url")).toBe(prefill);
+    expect(copiedUrl(el)).toBe(prefill);
     expect(el.querySelector("a[href]")).toBeNull();
   });
 
   it("withholds a payload-shaped angle autolink when ON", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     const el = rendered(`see <${PAYLOAD}> now`);
-    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(
-      PAYLOAD,
-    );
+    expect(copiedUrl(el)).toBe(PAYLOAD);
     expect(el.querySelector("a[href]")).toBeNull();
   });
 
   it("leaves no navigable payload behind a reference-style link when ON", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     const el = rendered(`see [file an issue][r] now\n\n[r]: ${PAYLOAD}\n`);
-    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(
-      PAYLOAD,
-    );
+    expect(copiedUrl(el)).toBe(PAYLOAD);
     expect(el.querySelector("a[href]")).toBeNull();
   });
 
@@ -2451,7 +2457,7 @@ describe("markdown link guard", () => {
   ])("withholds a link carrying %s when ON", (_name, url) => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     const el = rendered(`see [x](${url}) now`);
-    expect(el.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(url);
+    expect(copiedUrl(el)).toBe(url);
     expect(el.querySelector("a[href]")).toBeNull();
   });
 
@@ -2474,7 +2480,7 @@ describe("markdown link guard", () => {
     const el = rendered(`[file an issue](${PAYLOAD})`);
     const a = el.querySelector("a");
     expect(a?.getAttribute("href")).toBe(PAYLOAD);
-    expect(a?.getAttribute("data-payload-url")).toBe(PAYLOAD);
+    expect(a?.hasAttribute("data-payload-url")).toBe(true);
     expect(el.querySelector("button")).toBeNull();
   });
 

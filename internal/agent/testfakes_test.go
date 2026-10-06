@@ -67,7 +67,9 @@ type fakeBridge struct {
 	// notifsOnStart is the transcript a session/load replays, pushed before Start returns.
 	notifsOnStart []*marotte.RPCResponse
 	mu            sync.Mutex
-	responds      int
+	// sendMu orders a send against the close: a real bridge reads no frame once stopped.
+	sendMu   sync.RWMutex
+	responds int
 	// setModelFailures fails the next N SetModel calls.
 	setModelFailures int
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
@@ -179,6 +181,8 @@ func (b *fakeBridge) isStopped() bool {
 }
 
 func (b *fakeBridge) Stop() {
+	b.sendMu.Lock()
+	defer b.sendMu.Unlock()
 	b.mu.Lock()
 	b.stopped = true
 	if !b.streamClosed {
@@ -190,6 +194,8 @@ func (b *fakeBridge) Stop() {
 
 // endStream ends the frame stream without marking the bridge stopped.
 func (b *fakeBridge) endStream() {
+	b.sendMu.Lock()
+	defer b.sendMu.Unlock()
 	b.mu.Lock()
 	if !b.streamClosed {
 		b.streamClosed = true
@@ -257,7 +263,13 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 
 // deliver stamps the next sequence and pushes, as the real read loop does.
 func (b *fakeBridge) deliver(msg *marotte.RPCResponse) {
+	b.sendMu.RLock()
+	defer b.sendMu.RUnlock()
 	b.mu.Lock()
+	if b.streamClosed {
+		b.mu.Unlock()
+		return
+	}
 	b.deliveredSeq++
 	seq := b.deliveredSeq
 	b.mu.Unlock()

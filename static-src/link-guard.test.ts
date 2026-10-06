@@ -56,7 +56,7 @@ describe("formPayloadLink", () => {
     expect(a.isConnected).toBe(false);
     expect(formed.parentElement).toBe(host);
     expectSameNodes(formed.childNodes, [textNode, span]);
-    expect(formed.getAttribute("data-payload-url")).toBe(URL_);
+    expect(formed.hasAttribute("data-payload-url")).toBe(true);
     expect(formed.getAttribute("aria-label")).toBe("Copy link to github.com");
     expect(host.querySelector("a[href]")).toBeNull();
   });
@@ -67,7 +67,7 @@ describe("formPayloadLink", () => {
     const formed = formPayloadLink(a, URL_);
     expect(formed).toBe(a);
     expect(a.getAttribute("href")).toBe(URL_);
-    expect(a.getAttribute("data-payload-url")).toBe(URL_);
+    expect(a.hasAttribute("data-payload-url")).toBe(true);
     expect(host.querySelector("button")).toBeNull();
   });
 
@@ -102,17 +102,36 @@ describe("reformPayloadLinks", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     reformPayloadLinks(host);
     expect(host.querySelector("a")).toBeNull();
-    expect(host.querySelector("button.link-withheld")?.getAttribute("data-payload-url")).toBe(URL_);
+    const copied = vi.fn();
+    setLinkCopyCallback(copied);
+    (host.querySelector("button.link-withheld") as HTMLButtonElement).click();
+    expect(copied).toHaveBeenCalledExactlyOnceWith(URL_);
   });
 
   it("never turns a guarded button with an unsafe scheme into a link", () => {
-    const b = document.createElement("button");
-    b.setAttribute("data-payload-url", "javascript:alert(1)");
-    host.append(b);
+    const { a } = anchorWithText();
+    const b = formPayloadLink(a, "javascript:alert(1)");
     adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
     reformPayloadLinks(host);
     expect(host.firstElementChild).toBe(b);
     expect(host.querySelector("a")).toBeNull();
+  });
+
+  it("links the address it was given, not one written into the marker afterwards", () => {
+    const { a } = anchorWithText();
+    formPayloadLink(a, URL_).setAttribute("data-payload-url", "javascript:alert(1)");
+    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
+    reformPayloadLinks(host);
+    expect(host.querySelector("a")?.getAttribute("href")).toBe(URL_);
+  });
+
+  it("never re-forms a marker it did not form", () => {
+    const b = document.createElement("button");
+    b.setAttribute("data-payload-url", "https://e.example/x");
+    host.append(b);
+    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
+    reformPayloadLinks(host);
+    expect(host.firstElementChild).toBe(b);
   });
 
   it("never touches an ordinary link", () => {
@@ -140,7 +159,7 @@ describe("installLinkGuard", () => {
   it("writes nothing on its first run", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
     const { a } = anchorWithText();
-    a.setAttribute("data-payload-url", URL_);
+    formPayloadLink(a, URL_);
     // OFF never leaves an href-less anchor, so a pass on install would rebuild it.
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     const before = host.firstElementChild;

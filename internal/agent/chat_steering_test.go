@@ -20,8 +20,9 @@ func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := newTestChatStore()
-			br := newFakeBridge()
-			h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
+			// A bridge per spawn: a resumed session's rehydration starts the utility bridge too, so a
+			// shared fake's last start can be the utility's.
+			h := New(context.Background(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs)
 			cs.wire(h)
 			h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return sentinel })
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -30,8 +31,13 @@ func TestChatSteeringReachesBothChatVerbsAndNotTheUtility(t *testing.T) {
 				return true
 			})
 
-			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+			sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
+			}
+			br, ok := sb.bridge.(*fakeBridge)
+			if !ok {
+				t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 			}
 			opts := br.lastStartOpts()
 			if opts == nil {
