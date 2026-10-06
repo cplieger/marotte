@@ -119,6 +119,9 @@ method (ServerID).String
 # the chain, so nothing calls it by name. Call site:
 # internal/command/prompt.go errors.AsType[*marotte.TransportError].
 method (*TransportError).Unwrap
+# internal/powers/manager.go errors.AsType walks RenderError and ScanError to their causes.
+method (*RenderError).Unwrap
+method (*ScanError).Unwrap
 
 # --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
 # Swap/Push/Pop through the interface: internal/buffer/lines.go uses
