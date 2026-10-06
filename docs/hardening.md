@@ -4,7 +4,7 @@ This page is for anyone deciding where to run marotte and who can reach it. It c
 
 ## Who can reach it
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace`. They can also use the kiro-cli sign-in stored in `/config`. Keep the port on your private network, or put marotte behind a reverse proxy that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace`. They can also use the kiro-cli sign-in stored in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
 
 Signing in on the page signs kiro-cli in to your Kiro account. That is the agent's identity, and it does not protect marotte itself.
 
@@ -44,4 +44,4 @@ The download is checked against a SHA-256 checksum pinned for your architecture 
 
 ## The image
 
-Images are published with cosign signatures and SBOM attestations. The image carries the license text of every bundled component under `/usr/share/licenses/`.
+Images are published with cosign signatures and SBOM attestations, which [Checking a signature](https://github.com/cplieger/docs/blob/main/docs/images.md#checking-a-signature) and [Reading the software bill of materials](https://github.com/cplieger/docs/blob/main/docs/images.md#reading-the-software-bill-of-materials) show how to check. The image carries the license text of every bundled component under `/usr/share/licenses/`.
