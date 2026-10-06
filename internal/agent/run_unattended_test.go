@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant.
@@ -368,6 +369,45 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 					"standing rule nobody wrote")
 			}
 		})
+	}
+}
+
+// TestAnswerUnattended_ADenialFailsTheScheduleRow: the refusal is what the
+// Workflows row shows, so it must read as a failure whose reason names the tool,
+// with no status word folded into the reason.
+func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	chatID := runChatID("wf_deny")
+	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+
+	id := int64(90211)
+	h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}))
+
+	h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash",
+		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
+
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
+	}
+	const wantReason = "needed approval for execute_bash with nobody watching. Add a permission rule to allow it"
+	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
+		t.Errorf("answerUnattended(deny) row = (%q, %q), want (%q, %q)",
+			rows[0].LastStatus, rows[0].LastReason, schedule.StatusFailed, wantReason)
 	}
 }
 

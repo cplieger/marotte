@@ -353,35 +353,57 @@ describe("describeOutcome", () => {
 
   it("reports a launch that took, with when", () => {
     const out = describeOutcome(
-      view({ last_result: "started", last_run_at: "2026-08-10T02:00:00+02:00" }),
+      view({ last_status: "started", last_run_at: "2026-08-10T02:00:00+02:00" }),
     );
-    expect(out).toContain("last started");
-    expect(out).toContain(formatStamp("2026-08-10T02:00:00+02:00"));
+    expect(out).toBe(`last started ${formatStamp("2026-08-10T02:00:00+02:00")}`);
   });
 
-  // The reason is the actionable half — it names the fix — so it is kept whole
-  // rather than reduced to the word "failed".
+  // The reason is the actionable half, because it names the fix, so it is kept
+  // whole rather than reduced to the word "failed".
   it("leads with the word failed and keeps the reason", () => {
     const out = describeOutcome(
       view({
-        last_result: "failed: needed approval for fs_write with nobody watching",
+        last_status: "failed",
+        last_reason: "needed approval for fs_write with nobody watching",
         last_run_at: "2026-08-10T02:00:00+02:00",
       }),
     );
-    expect(out).toContain("last failed");
-    expect(out).toContain("needed approval for fs_write with nobody watching");
-    // The server's prefix is not printed twice.
-    expect(out).not.toContain("failed: failed");
-  });
-
-  it("passes an unrecognised result through as written", () => {
-    expect(describeOutcome(view({ last_result: "cancelled by hand" }))).toBe(
-      "last: cancelled by hand",
+    expect(out).toBe(
+      `last failed ${formatStamp("2026-08-10T02:00:00+02:00")}: needed approval for fs_write with nobody watching`,
     );
   });
 
+  it("reads a failure with no reason as the bare word", () => {
+    expect(describeOutcome(view({ last_status: "failed" }))).toBe("last failed");
+  });
+
+  it("names an unknown outcome as unknown and keeps the reason", () => {
+    expect(
+      describeOutcome(
+        view({
+          last_status: "unknown",
+          last_reason: "no terminal signal was seen and the run stayed absent for 6 hours",
+        }),
+      ),
+    ).toBe(
+      "last outcome unknown: no terminal signal was seen and the run stayed absent for 6 hours",
+    );
+  });
+
+  // A status a newer server sends is shown with its reason, not dropped.
+  it("passes an unrecognised status's reason through", () => {
+    expect(
+      describeOutcome(
+        view({
+          last_status: "cancelled" as unknown as NonNullable<ScheduleView["last_status"]>,
+          last_reason: "by hand",
+        }),
+      ),
+    ).toBe("last: by hand");
+  });
+
   it("drops the stamp when the server sent no last-run time", () => {
-    expect(describeOutcome(view({ last_result: "started" }))).toBe("last started");
+    expect(describeOutcome(view({ last_status: "started" }))).toBe("last started");
   });
 });
 
@@ -413,7 +435,8 @@ describe("summaryLine", () => {
     const line = summaryLine(
       view({
         next_run_at: "2026-08-11T02:00:00+02:00",
-        last_result: "failed: needed approval for fs_write with nobody watching",
+        last_status: "failed",
+        last_reason: "needed approval for fs_write with nobody watching",
         last_run_at: "2026-08-10T02:00:00+02:00",
       }),
     );
@@ -423,7 +446,7 @@ describe("summaryLine", () => {
   });
 
   it("shows the outcome even when no next run resolved", () => {
-    expect(summaryLine(view({ last_result: "started", last_run_at: "" }))).toBe(
+    expect(summaryLine(view({ last_status: "started", last_run_at: "" }))).toBe(
       "Every day at 02:00 · last started",
     );
   });
@@ -431,7 +454,7 @@ describe("summaryLine", () => {
   // A disabled schedule reads "Not scheduled" and nothing else: its history is
   // not what the row is for once it will not fire again.
   it("stays 'Not scheduled' when disabled, outcome or not", () => {
-    expect(summaryLine(view({ enabled: false, last_result: "started" }))).toBe("Not scheduled");
+    expect(summaryLine(view({ enabled: false, last_status: "started" }))).toBe("Not scheduled");
   });
 });
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // runIdleWindow is how long a run may execute without producing observable progress
@@ -715,7 +716,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	// while it silently stops producing.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
-	rs.recordScheduleOutcome(ctx, l.ScheduleID, outcomeOverran)
+	rs.recordScheduleOutcome(ctx, l.ScheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOverran})
 }
 
 // backstopSpent reports whether the run's absolute executing-time budget is gone at

@@ -346,8 +346,9 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("schedule rows = %d, want 1", len(rows))
 	}
-	if rows[0].LastResult != orphanOutcome {
-		t.Errorf("schedule outcome = %q, want %q", rows[0].LastResult, orphanOutcome)
+	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != reasonOrphaned {
+		t.Errorf("schedule outcome = (%q, %q), want (%q, %q)",
+			rows[0].LastStatus, rows[0].LastReason, schedule.StatusFailed, reasonOrphaned)
 	}
 }
 
@@ -485,9 +486,10 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	if len(rows) != 1 {
 		t.Fatalf("schedule rows = %d, want 1", len(rows))
 	}
-	const wantOutcome = "unknown: no terminal signal was seen and the run stayed absent for 6 hours"
-	if rows[0].LastResult != wantOutcome {
-		t.Errorf("schedule outcome = %q, want %q", rows[0].LastResult, wantOutcome)
+	const wantReason = "no terminal signal was seen and the run stayed absent for 6 hours"
+	if rows[0].LastStatus != schedule.StatusUnknown || rows[0].LastReason != wantReason {
+		t.Errorf("schedule outcome = (%q, %q), want (%q, %q)",
+			rows[0].LastStatus, rows[0].LastReason, schedule.StatusUnknown, wantReason)
 	}
 }
 

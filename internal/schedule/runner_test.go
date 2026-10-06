@@ -117,8 +117,8 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor must advance to the DUE time (not now) to prevent drift: got %v want %v", got.Anchor, due)
 	}
-	if got.LastResult != "started" {
-		t.Errorf("LastResult = %q", got.LastResult)
+	if got.LastStatus != StatusStarted || got.LastReason != "" {
+		t.Errorf("last outcome = (%q, %q), want (%q, \"\")", got.LastStatus, got.LastReason, StatusStarted)
 	}
 	// The schedule's id must travel with the launch, or an unattended denial has
 	// no row to report itself on.
@@ -237,8 +237,8 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor must advance even on failure: got %v", got.Anchor)
 	}
-	if got.LastResult == "started" {
-		t.Errorf("a failed launch must not record success")
+	if got.LastStatus != StatusFailed || got.LastReason != "this recipe already has a live run" {
+		t.Errorf("last outcome = (%q, %q), want (%q, the launch error)", got.LastStatus, got.LastReason, StatusFailed)
 	}
 	r.sweep(t.Context())
 	if got := l.launched(); got != 1 {
@@ -266,8 +266,8 @@ func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor = %v, want the due time %v", got.Anchor, due)
 	}
-	if got.LastResult != "started" {
-		t.Errorf("LastResult = %q, want %q", got.LastResult, "started")
+	if got.LastStatus != StatusStarted {
+		t.Errorf("LastStatus = %q, want %q", got.LastStatus, StatusStarted)
 	}
 
 	// One tick past the edge is the other side of the same line.
@@ -401,7 +401,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 1, 0)
-	if err := st.recordFire(ctx, "a", due, "started"); err != nil {
+	if err := st.recordFire(ctx, "a", due, Outcome{Status: StatusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
@@ -413,7 +413,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 	if got.Spec.Hour != 5 {
 		t.Errorf("edit did not apply: hour = %d", got.Spec.Hour)
 	}
-	if got.LastResult != "started" || got.LastRunAt.IsZero() {
+	if got.LastStatus != StatusStarted || got.LastRunAt.IsZero() {
 		t.Errorf("edit dropped run history: %+v", got)
 	}
 }
@@ -447,17 +447,17 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.recordFire(ctx, "s1", due, "started"); err != nil {
+	if err := st.recordFire(ctx, "s1", due, Outcome{Status: StatusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
-	const reason = "failed: needed approval for Write with nobody watching"
-	if err := st.RecordOutcome(ctx, "s1", reason); err != nil {
+	denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
+	if err := st.RecordOutcome(ctx, "s1", denial); err != nil {
 		t.Fatalf("RecordOutcome: %v", err)
 	}
 	got := st.List()[0]
-	if got.LastResult != reason {
-		t.Errorf("LastResult = %q, want the denial reason", got.LastResult)
+	if got.LastStatus != denial.Status || got.LastReason != denial.Reason {
+		t.Errorf("last outcome = (%q, %q), want the denial %+v", got.LastStatus, got.LastReason, denial)
 	}
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor moved: got %v want %v — the next run would drift", got.Anchor, due)
@@ -466,7 +466,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(t.Context(), "gone", "x"); !errors.Is(err, ErrNotFound) {
+	if err := st.RecordOutcome(t.Context(), "gone", Outcome{Status: StatusFailed}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

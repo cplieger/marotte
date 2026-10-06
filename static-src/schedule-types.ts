@@ -53,7 +53,10 @@ export interface ScheduleView {
   /** RFC3339; the server computes this so the client never does. */
   next_run_at?: string;
   last_run_at?: string;
-  last_result?: string;
+  /** How the last slot ended; mirrors internal/schedule.Status. */
+  last_status?: "started" | "failed" | "unknown";
+  /** Why, as plain text for a person to read. */
+  last_reason?: string;
 }
 
 export interface SchedulesResponse {

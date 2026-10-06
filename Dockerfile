@@ -392,7 +392,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # directory earlier. They were also real exposure: they sit ahead of /usr/bin, the
 # entrypoint never creates or repairs them, and a binary planted while such a tree
 # was group/other-writable is executed by root. Removing them removes that path
-# rather than policing it (see marotte.md invariant 6). Inherited pre-v2 volumes are
+# rather than policing it. Inherited pre-v2 volumes are
 # the one regressing case — a binary in npm/bin with no tools/bin symlink stops
 # resolving; it surfaces immediately as "command not found", and the remedy is to
 # symlink it into tools/bin.

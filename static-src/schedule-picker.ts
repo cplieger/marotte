@@ -156,36 +156,31 @@ export function formatStamp(iso: string | undefined): string {
   });
 }
 
-/** The result the server records when a launch took. Every other value is a
- *  failure sentence, and the ones marotte writes carry this prefix. */
-const RESULT_STARTED = "started";
-const RESULT_FAILED = "failed: ";
-
 /**
- * describeOutcome renders the row's last-run segment from the two fields the
- * client already holds: the server's `last_result` sentence and `last_run_at`.
- *
- * This is the half of the row that makes a schedule failing the same way every
- * night visible. The server writes one of two shapes — `started` when the launch
- * took, or `failed: <why>` when it did not, including the unattended run that
- * was denied an approval minutes later — and the `<why>` is kept in full because
- * it is the actionable part (it names the permission rule to add). Anything else
- * is passed through as written rather than reclassified here.
+ * describeOutcome renders the row's last-run segment from `last_status`,
+ * `last_reason` and `last_run_at`. It is what makes a schedule failing the same
+ * way every night visible, so the reason is kept whole: it names the fix. A
+ * status this client does not know still shows its reason.
  */
 export function describeOutcome(view: ScheduleView): string {
-  const result = view.last_result ?? "";
-  if (result === "") {
+  const status = view.last_status;
+  if (status === undefined) {
     return "";
   }
   const when = formatStamp(view.last_run_at);
   const stamp = when === "" ? "" : ` ${when}`;
-  if (result === RESULT_STARTED) {
-    return `last started${stamp}`;
+  const reason = view.last_reason ?? "";
+  const because = reason === "" ? "" : `: ${reason}`;
+  switch (status) {
+    case "started":
+      return `last started${stamp}`;
+    case "failed":
+      return `last failed${stamp}${because}`;
+    case "unknown":
+      return `last outcome unknown${stamp}${because}`;
+    default:
+      return `last${stamp}${because}`;
   }
-  if (result.startsWith(RESULT_FAILED)) {
-    return `last failed${stamp}: ${result.slice(RESULT_FAILED.length)}`;
-  }
-  return `last${stamp}: ${result}`;
 }
 
 /** summaryLine is what the row and the picker both show. */
