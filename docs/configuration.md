@@ -40,12 +40,7 @@ Set it on any server that stays up. It blocks DNS rebinding, where a website you
 
 The access log and the sign-in and sign-out logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when nothing sits in front of marotte. The address is then the connecting socket's, which a client cannot fake, and any `X-Forwarded-For` header is ignored.
 
-Behind a reverse proxy, set it to the address ranges of every proxy hop, as comma-separated CIDR ranges. A bare IP counts as one host.
-
-```yaml
-environment:
-  TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
-```
+Behind a reverse proxy, set it to the proxy's address, or a comma-separated list of every proxy hop, as [Telling the app about the proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md#telling-the-app-about-the-proxy) shows. A bare IP counts as one host, and a CIDR range trusts every address inside it.
 
 marotte reads `X-Forwarded-For` only when the connecting address is inside that list. An empty, unset or malformed value therefore cannot be used to fake an address.
 
