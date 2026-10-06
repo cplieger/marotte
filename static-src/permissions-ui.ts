@@ -154,7 +154,7 @@ class PermissionsUIController {
     // A REJECTED value disables Add and says which rule refused it; an EMPTY one
     // leaves the button alone, so it is never disabled at rest. The tooltip is
     // the channel because `disabled` already announces the unavailability, and a
-    // disabled control still receives hover (`marotte-ui.md`).
+    // disabled control still receives hover.
     const syncAddState = (): void => {
       const val = input.value.trim();
       const reason = val === "" ? null : agentIgnoreEntryError(val);
@@ -461,7 +461,7 @@ class NativePolicyController {
    *  Keyed by profile id: a radio is focusable and this runs on every policy load
    *  and every `permissions_changed` frame. `update` writes `checked`
    *  UNCONDITIONALLY — a signature guard is disqualified where the reader mutates
-   *  the DOM directly (`web.md`), because a refused switch leaves the model
+   *  the DOM directly, because a refused switch leaves the model
    *  unchanged and only a repaint corrects the rung on screen. */
   private renderProfiles(): void {
     const host = maybeEl("security-profile-list");
@@ -694,8 +694,8 @@ class NativePolicyController {
     // container. A writable row holds a `<select>`, and this runs on every
     // `permissions_changed` frame plus after every edit.
     //
-    // The key is a stable identity and the effect is repainted in `update`; the key
-    // may not carry content (`web.md` "A KEYED RECONCILE IS NOT ENOUGH ON ITS OWN").
+    // The key is a stable identity and the effect is repainted in `update`; a key
+    // carrying content re-keys on every data change and re-seats the row.
     const rows: PolicyEntry[] = [];
     for (const scope of order) {
       const grp = groups.get(scope);

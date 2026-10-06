@@ -5,9 +5,8 @@ import "slices"
 // Named security profiles for the Settings -> Permissions picker. A named profile is
 // KAS policy presets alone, injected at SESSION scope as `source: preset:<id>`, so it
 // writes nothing to disk and cannot drift from upstream's review of which commands
-// are safe. Custom has no presets: its policy files are the whole policy. Bundle
-// constraints (a preset is only selected, never enumerated or changed live):
-// marotte-acp.md.
+// are safe. Custom has no presets: its policy files are the whole policy. A preset is
+// only selected, never enumerated or changed live.
 
 // Preset ids KAS's registry accepts. Pinned because an unknown id is not a
 // degraded grant but a failed session: validatePresetIds throws InvalidParamsError

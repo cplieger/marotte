@@ -1,24 +1,10 @@
-// A CHAT TAB AND THE NEW CHAT BUTTON ARE THE SAME BOX, on a phone.
-//
-// The defect this pins: `.tab` is `min-height: var(--btn-h)` with
-// `padding-block: var(--sp-2)` and a 1px border reserved on every row, so a child
-// that paints its own `--btn-h` box STACKS on that chrome. 50-mobile.css used to
-// give `.tab-close` `width`/`height: var(--btn-h)` for its touch target, which
-// took every row to 62px against `#new-chat`'s 44px — reported as the chat tabs
-// appearing larger than the New chat button. The × now grows its TARGET through an
-// absolutely positioned `::after` instead, which is the app's documented escape for
-// a control that must stay visually small (`marotte-ui.md` "Hit targets").
-//
-// So there are two claims and they pull against each other, which is why both are
-// here: the ROW must not grow, and the × must still be reachable with a finger. A
-// test for either one alone passes for the shape that broke the other.
-//
-// Real layout, in an IFRAME: the page viewport is pinned at 1280x720
-// (vitest.config.ts) and every rule involved sits behind `width <= 48rem`, so the
-// narrow side needs a viewport of its own for the query to evaluate against.
-// `data-pointer="coarse"` is set explicitly rather than left to 01-tokens.css's
-// no-JS fallback, so the 44px tier is a stated premise rather than a side effect of
-// the same width.
+// A CHAT TAB AND THE NEW CHAT BUTTON ARE THE SAME BOX, on a phone. A child painting
+// its own `--btn-h` box STACKS on `.tab`'s min-height, padding and border, so the ×
+// grows its TARGET through an absolutely positioned `::after` and its painted box
+// stays small. Two claims that pull against each other: the ROW must not grow, and
+// the × must still be reachable with a finger. Real layout in an IFRAME, because the
+// page viewport is pinned at 1280x720 and every rule sits behind `width <= 48rem`;
+// `data-pointer="coarse"` is set so the 44px tier is a stated premise.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

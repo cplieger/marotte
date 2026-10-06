@@ -1426,16 +1426,11 @@ describe("server-hit navigation", () => {
   const DIFF_ROW = "return retry(ctx, fetchOnce)";
 
   /** The elapsed budget the two "the ceiling was not paid" cases assert against.
-   *
    *  `DEFERRED_DIFF_WAIT_MS` is 1500 and the fast path is the fixture's 120ms bulk plus
-   *  one rendered frame plus this poll's interval, so any threshold in roughly
-   *  (400, 1500) discriminates. 1200 sits near the top of that band DELIBERATELY: it
-   *  still proves the ceiling was not paid — which is the whole assertion — while
-   *  leaving ~1080ms of headroom for a loaded worker instead of ~680ms, at no cost to
-   *  what it can detect. `testing-ts.md` records that a cold `npm test` under full load
-   *  is where this repo's wall-clock assertions fail, and elapsed time is the only
-   *  channel that can see these two defects (an existence assertion is green with
-   *  `childList` alone, measured at 2284ms). */
+   *  a frame plus this poll's interval, so any threshold in roughly (400, 1500)
+   *  discriminates; 1200 leaves the most headroom for a loaded worker, where a cold
+   *  full run is what fails wall-clock assertions. Elapsed time is the only channel
+   *  that sees these defects (an existence assertion is green with `childList` alone). */
   const CEILING_NOT_PAID_MS = 1200;
 
   it("lands a tool_diff hit on the rendered mini-diff row", async () => {

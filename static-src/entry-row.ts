@@ -1,12 +1,10 @@
-// ---------------------------------------------------------------------------
 // The list row both page lists build, and the container it sits in. ONE builder
 // for History and the configuration browser, so a row's height, inset, truncation
 // and hit target are decided once; what varies between the pages is which SLOTS a
-// row fills, and that is what the spec is. The rules it enforces are
-// `marotte-ui.md`'s: one row height per list (CSS's, from the tier the list
-// sets), a row with one destination puts the box inside the control, at most two
-// badges on the title line, a relative time whose absolute twin is the tooltip.
-// ---------------------------------------------------------------------------
+// row fills, and that is what the spec is. The rules it enforces: one row height
+// per list (CSS's, from the tier the list sets), a row with one destination puts
+// the box inside the control, at most two badges on the title line, a relative
+// time whose absolute twin is the tooltip.
 
 import { el } from "@cplieger/reactive";
 import { relativeTime, absoluteTime } from "./relative-time.js";
@@ -167,8 +165,8 @@ export function entryDetail(...children: HTMLElement[]): HTMLElement {
 
 /**
  * N placeholder rows at the list's own tier, each holding a title bar and a
- * subtitle bar, so the swap to real rows moves nothing (`marotte-ui.md` "Stable
- * skeletons"). `aria-hidden`, because a placeholder names nothing.
+ * subtitle bar, so the swap to real rows moves nothing. `aria-hidden`, because a
+ * placeholder names nothing.
  */
 export function entrySkeleton(n: number): HTMLElement[] {
   const rows: HTMLElement[] = [];

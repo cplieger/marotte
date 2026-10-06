@@ -63,7 +63,7 @@ describe("a suspended tool list", () => {
   });
 
   it("washes the notice in its own state rather than stepping a surface rung", () => {
-    // `marotte-ui.md`'s notice rule: a hue wash of the state over the container,
+    // A notice is a hue wash of the state over the container,
     // never a rung. A transparent background means the rule did not apply at all.
     const { notice } = mountSection(true);
     const bg = getComputedStyle(notice).backgroundColor;

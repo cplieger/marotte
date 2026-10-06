@@ -1015,19 +1015,12 @@ describe("Pull all", () => {
   });
 });
 
-// The loading placeholder. The tab used to paint NOTHING for the whole of
-// `status-all` — and with `?fetch=1` that is one server-side `git fetch` per
-// repository, the slowest path it has — while the PRs tab beside it had a
-// skeleton, which is how it was reported.
-//
-// The half with a real trap behind it is the SECOND case: `status-all` is polled
-// (SSE debounce, post-action refreshes, tab activation), so a skeleton armed on
-// "a request is in flight" rather than on "the mount is empty" would paint over
-// real content several times a minute. `marotte-ui.md` states that rule and this
-// pins it.
-//
-// Fake timers are scoped to this block rather than the file: the suite above runs
-// on real ones and the 150ms show delay is the only thing here that needs them.
+// The loading placeholder. The SECOND case is the trap: `status-all` is polled (SSE
+// debounce, post-action refreshes, tab activation), so a skeleton armed on "a
+// request is in flight" rather than on "the mount is empty" would paint over real
+// content several times a minute; a skeleton may only paint over an empty container.
+// Fake timers are scoped to this block: the suite above runs on real ones and the
+// 150ms show delay is the only thing here that needs them.
 describe("the loading placeholder", () => {
   /** Resolve the pending `status-all`. */
   let settle: ((value: unknown) => void) | null = null;

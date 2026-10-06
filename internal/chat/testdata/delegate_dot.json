@@ -22,9 +22,8 @@
     "moment its chat's liveness says the turn is over and every surface says what it already",
     "says for that status — `folds_to` is what makes the claim checkable from both sides.",
     "",
-    "ONE wire value reaches THREE announced words, deliberately (.kiro/steering/",
-    "marotte.md 'A delegate has THREE terminal states'): aborted is the wire's spelling, a",
-    "card says 'cancelled' and the page says 'stopped'. The row surface's own word is",
+    "ONE wire value reaches THREE announced words, deliberately: aborted is the wire's",
+    "spelling, a card says 'cancelled' and the page says 'stopped'. The row surface's own word is",
     "tool-card.ts's outcomeWord, which is unexported and is therefore not a compared",
     "column here; the card and the page are."
   ],
@@ -137,27 +136,27 @@
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:416",
+      "site": "internal/translate/streaming_tools.go:413",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:446",
+      "site": "internal/translate/streaming_tools.go:443",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:464",
+      "site": "internal/translate/streaming_tools.go:461",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:464",
+      "site": "internal/translate/streaming_tools.go:461",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:490",
+      "site": "internal/translate/streaming_tools.go:487",
       "form": "compare",
       "status": "completed"
     },

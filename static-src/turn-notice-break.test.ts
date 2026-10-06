@@ -1,61 +1,11 @@
-// A BROKEN TURN'S REASON IS THE FRAMED PROSE UNDER THE BODY'S LAST DIVIDER.
-//
-// Two rows can say a turn ended badly, and each owns half of it: a body-ending
-// `.boundary` names the KIND ("Conversation compacted") and the card-level
-// `.turn-notice` carries the server's own PROSE ("ACP bridge exited"). That
-// ownership split is pinned elsewhere (`buildEvent`, `turnFailureText`); what is
-// pinned HERE is the geometry it leaves behind, and the geometry has been reported
-// wrong twice.
-//
-// ONE ORACLE DROPPED OUT LOUD, and it is why the divider below changed kind. This
-// file was written around an `interrupted` EVENT ROW, and there is no such entry
-// kind: `EventEntryKind` is `compaction | compaction_failed | safety_blocked |
-// model_switched`, the string `interrupted` appears nowhere in messages-events.ts,
-// and an interrupted turn is `turn_close.outcome` — which renders as the footer's
-// severity and the notice's own `data-outcome`, both pinned elsewhere. So the
-// divider a body can END with is one of those four, and a `compaction` is the one
-// that can precede a turn breaking (the summary lands, then the bridge dies). The
-// CSS claim is unchanged by the swap, because every kind draws one `.boundary`.
-//
-// FIRST REPORT, the spacing: "then a large gap and then the rror 'ACP bridge
-// exited' with 0 padding vs the footing. please copy what we did for the
-// compaction banner". Answered by framing the reason and trimming the divider's
-// trailing margin.
-//
-// SECOND REPORT (2026-09-12), the reason this file's claim changed: the frame
-// opened TWICE. Expected
-//
-//     --------- turn interrupted --------------
-//     error message details
-//     ------------------------------
-//
-// and rendered
-//
-//     -------- turn interrupted ----------------
-//     ----------------------
-//     error message details
-//
-// Three rules drew four lines around one sentence — `.boundary`'s own dashed rule
-// flanking its label, `.turn-notice`'s `border-block-start`, and the footer's
-// solid seam — so the label sat above a bare second rule and belonged to neither
-// half of its own break. `.turn-header + .turn-notice` had been avoiding exactly
-// that doubling one element over since the notice existed.
-//
-// THE CLAIM NOW, and the three parts pull against each other, which is why all
-// three are here: the DIVIDER is the frame's top edge (its dashed rule, at the
-// compaction break's weight and ink), the FOOTER BAND's own edge is the bottom one
-// — a fill change rather than a rule since the card's two internal seams were
-// deleted (29-turns.css's file header) — and the reason sits between them at a
-// SYMMETRIC inset. A test for "no second rule" alone passes for a reason pressed
-// against its own divider; a test for the inset alone passes for a break still
-// opening twice; and a test for the bottom edge that read only the footer's
-// `border-top` passed for a card whose band had stopped painting at all.
-//
-// Real layout, because every claim is a distance. `.boundary` carries
-// `vk-slide-up … backwards`, whose `from` keyframe is `translateY(6px)`, so its
-// RECT is 6px below its layout box until the animation has progressed — measured,
-// and it is why the divider's animation is stopped in the harness rather than
-// measured around (`marotte-client.md` records the same 6px trap).
+// A BROKEN TURN'S REASON IS THE FRAMED PROSE UNDER THE BODY'S LAST DIVIDER. A
+// body-ending `.boundary` names the KIND and the card-level `.turn-notice` carries
+// the server's PROSE; this pins the geometry. Three parts pull against each other:
+// the DIVIDER is the frame's top edge, the FOOTER BAND's fill change is the bottom
+// one, and the reason sits between them at a SYMMETRIC inset with no second rule.
+// Real layout, because every claim is a distance; `.boundary`'s `vk-slide-up …
+// backwards` puts its rect 6px low until it runs, so the harness stops it. The
+// divider here is a `compaction` (an interrupted turn is `turn_close.outcome`).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

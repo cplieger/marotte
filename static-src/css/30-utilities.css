@@ -429,25 +429,3 @@
     animation: none;
   }
 }
-
-/* THE DIFF VOCABULARY IS NOT HERE. This file used to carry `.diff-inline`,
-   `.diff-line`, `.diff-text`, `.diff-add`, `.diff-del`, `.diff-hunk`,
-   `.diff-mini` and `.diff-gutter` — a renderer that no longer exists. The live
-   one is `diff-pane.ts`, whose classes are `.diff-pane*`, `.diff-col*`,
-   `.diff-row*`, `.diff-none` and `.diff-more`, styled in 60-mcp.css and
-   20-editor.css. There is no `.diff-hunk*` class in either half now: the pane's
-   per-hunk toolbar was deleted in 2026-09 (marotte-ui.md "Diff viewer and
-   conflict resolution"), so a `diff-hunk` hit anywhere is dead.
-
-   Seven of the eight had no emitter at all. `.diff-gutter` did, and 60-mcp.css
-   redeclares it later in the MANIFEST — but the stale copy was NOT inert, it was
-   a defect: its `width: 3ch` capped the gutter's automatic minimum size, so a
-   line number past three digits was clipped (probed: `12345` in a 21.67px box
-   with a 40px scrollWidth). Without it the gutter grows to fit, 22.5px at two
-   digits and 44.1px at five, and nothing clips. So deleting dead CSS fixed every
-   diff of a file over 999 lines.
-
-   The near-miss worth recording: a `\b<name>\b` search calls a dead class LIVE,
-   because `-` is a non-word character, so `\bdiff-add\b` matches inside
-   `diff-add-count` (tool-card.ts's stats row, still live). A class token ends
-   where the next character is neither `-` nor a word character. */

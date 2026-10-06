@@ -479,7 +479,7 @@ describe("the run bar", () => {
 });
 
 // A live run re-renders this bar several times a minute, and re-inserting a node
-// restarts every animation in it and drops `:hover` and focus (`web.md`). Object
+// restarts every animation in it and drops `:hover` and focus. Object
 // IDENTITY is the assertion in every case here: a rebuilt row is indistinguishable
 // from a patched one by content.
 describe("a render patches its rows rather than rebuilding them", () => {

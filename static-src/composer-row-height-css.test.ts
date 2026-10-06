@@ -692,16 +692,12 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   });
 
   it("paints nothing that could reveal the remove button's asymmetric target", async () => {
-    // THE CONDITION THE ASYMMETRY WAS ACCEPTED ON (user ruling, 2026-09-12): the `×`
-    // target is the full floor tall and 24px wide, and that is fine only while nothing
-    // on screen draws the difference. Two things have to hold, and neither is
-    // automatic — a fill on either box would make the target's shape visible.
-    //
-    // The background half is a CSSOM WALK rather than a computed-style read, because
-    // computed style answers for ONE state and the question is about every state a rule
-    // can put this button in. `CSS.forcePseudoState` is a devtools call a test page
-    // cannot make, and a synthetic hover drives no style recalc (chromium-sidecar.md
-    // "Synthetic hover").
+    // The `×` target is the full floor tall and 24px wide, which is acceptable only
+    // while nothing on screen draws the difference: a fill on either box would make
+    // the target's shape visible. The background half is a CSSOM WALK, because
+    // computed style answers for ONE state and the question is every state a rule can
+    // put this button in; a test page cannot call `CSS.forcePseudoState`, and a
+    // synthetic hover drives no style recalc.
     await chipsAt(390, 844, "coarse");
     const close = document.querySelector<HTMLElement>("#attachment-row .attachment-close");
     const label = document.querySelector<HTMLElement>("#attachment-row .attachment-open");

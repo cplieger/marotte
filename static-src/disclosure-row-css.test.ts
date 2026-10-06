@@ -1,15 +1,9 @@
-// The CSS half of the whole-header disclosure: does the row LOOK like the
-// control it now is?
-//
-// Behaviour is pinned elsewhere (`disclosure-row.test.ts` for the surface,
-// `tool-card.test.ts` for the tool card end to end, `fundamentals/
-// turn-header.test.ts` for where the turn's surface stops). What those cannot
-// see is the affordance, and an invisible hit target is the same defect in the
-// other direction — marotte-ui.md's "no dead zones" rule cuts both ways.
-//
-// `mountAppCSS` assembles the stylesheet from `css/MANIFEST` in declared order,
-// the way `cmd/bundle` concatenates it, because equal-specificity ties in this
-// app are decided by that order rather than by the selectors.
+// The CSS half of the whole-header disclosure: does the row LOOK like the control
+// it now is? Behaviour is pinned elsewhere (`disclosure-row.test.ts`,
+// `tool-card.test.ts`, `fundamentals/turn-header.test.ts`); an invisible hit target
+// is the same defect in the other direction. `mountAppCSS` assembles the sheet from
+// `css/MANIFEST` in declared order, as `cmd/bundle` does, because equal-specificity
+// ties in this app are decided by that order.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
@@ -148,7 +142,7 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("pointer");
     // A drag across either line must not select its label instead of toggling.
     expect(css(summary, "user-select")).toBe("none");
-    // Never `transition: all` (marotte-ui.md); the hover fill is the only thing
+    // Never `transition: all`; the hover fill is the only thing
     // that animates here.
     expect(css(summary, "transition-property")).toBe("background");
   });
@@ -617,8 +611,7 @@ describe("turn card header affordance", () => {
   });
 
   it("the fold toggle clears the 24px hit-target floor", async () => {
-    // It was 1rem. marotte-ui.md: "24px minimum desktop", and this is the
-    // measurement the whole change started from.
+    // 24px is the desktop target minimum.
     const card = await turn("open");
     const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
     const r = btn.getBoundingClientRect();
@@ -894,10 +887,9 @@ describe("sub-page menu bars", () => {
   });
 });
 
-// The steer note is a CARD on the tool-card box, not a left rail. `#marotte-ui`
-// reserves a leading rail for work this agent did not do itself — the run card
-// and the delegated-work card — so a steer carrying one was borrowing the wrong
-// vocabulary, and the whole of Bug 4 was that it did.
+// The steer note is a CARD on the tool-card box, not a left rail: a leading rail is
+// reserved for work this agent did not do itself (the run card and the
+// delegated-work card).
 describe("the mid-turn steer note's box", () => {
   function note(state: "read" | "dropped", origin: "user" | "agent"): HTMLElement {
     const el = document.createElement("div");

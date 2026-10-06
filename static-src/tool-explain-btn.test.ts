@@ -425,9 +425,9 @@ describe("nothing here suppresses the app-wide focus ring", () => {
   it("declares no outline at any state of this selector", () => {
     // 40-a11y.css draws every `:focus-visible` ring at ZERO specificity, so it is a
     // floor rather than a mandate — any rule here declaring `outline` would win and
-    // could silently take the ring away. `CSS.forcePseudoState` and synthetic mouse
-    // events both fail to drive `:focus-visible` in this sidecar
-    // (`chromium-sidecar.md`), so a source sweep is the honest instrument.
+    // could silently take the ring away. Neither `CSS.forcePseudoState` nor
+    // synthetic mouse events drive `:focus-visible` from a test page, so a source
+    // sweep is the honest instrument.
     const rules = allRules(loadCSS("61-mcp-tools.css")).filter((r) =>
       r.selector.includes(".tool-explain-btn"),
     );

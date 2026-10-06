@@ -2,26 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { allRules, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// ---------------------------------------------------------------------------
-// Every placeholder pulses at ONE period, read from one token.
-//
-// Modelled on spin-period.test.ts, and structured as its two halves for the same
-// reason: either alone passes while the app is broken. The SWEEP is over every
-// stylesheet rather than the one that carries the rule today, so a second
-// consumer written with a literal fails here instead of shipping — which is the
-// rule that file's own token comment generalises ("a literal here let two rings
-// of one size sit side by side visibly drifting"). And a literal is not the only
-// way to get this wrong: `var(--skeleton-dur)` with no declaration behind it is
-// valid CSS text that resolves to nothing at computed-value time, which
-// invalidates the whole `animation` shorthand and runs NO animation — a
-// placeholder that has stopped rather than one at the wrong speed, and nothing
-// to grep for. So the second half reads the period off a real element.
-//
-// The easing is the third case, on the same element, because the vocabulary rule
-// is the same shape as the period rule: `marotte-ui.md` states four named
-// easings and "no bare `ease` or `ease-in-out`", and a bare keyword is greppable
-// only if you already know to look for it.
-// ---------------------------------------------------------------------------
+// Every placeholder pulses at ONE period, read from one token, in two halves (like
+// spin-period.test.ts) because either alone passes while the app is broken: a
+// SWEEP over every stylesheet so a second consumer with a literal fails, and a read
+// off a real element, because `var(--skeleton-dur)` with no declaration invalidates
+// the whole `animation` shorthand and runs nothing. The easing is the third case: the
+// app names four easings and allows no bare `ease` or `ease-in-out`.
 
 /** Every shipped stylesheet, so the sweep cannot miss a file. */
 const sheets = import.meta.glob<string>("./css/*.css", {

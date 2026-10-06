@@ -69,7 +69,7 @@ effect there (verified on a live probe: no gate, getProperties returns []).
 It is required for the gate's statusChanged/propertiesChanged notifications
 to ever surface (translate/safety.go); on an enterprise account with the
 flag on, enforce mode can block infra-as-code writes remotely. Distinct
-from supervised mode, which is KAS's autopilot gate (marotte-acp.md).`,
+from supervised mode, which is KAS's autopilot gate.`,
 	},
 	{
 		key:      "userInput",
@@ -212,8 +212,7 @@ exist, _meta.kiro.knowledge told the agent WHAT was indexed, and
 no tool existed to read it. marotte shipped the whole knowledge UI,
 the REST surface, the progress polling and a system-prompt listing
 over a store the agent could not query, silently in both
-directions (no error, no -32601). marotte.md says "both are
-needed"; there are three.
+directions (no error, no -32601).
 
 GATED since 2026-08 on knowledge_enabled, together with the capability
 row above — see that row for why the switch moved off
@@ -616,12 +615,11 @@ resolveAgentPermissions hands that agent-scope policy ONLY to KAS-shipped
 profiles: a user- or workspace-authored agent "stays fail-closed and contributes
 no agent-scope rules".
 
-marotte is exactly the client that loses. It seeds ZERO Cedar rules by decision
-(marotte.md, Settings/Permissions), and its mode pill offers every workspace
-custom agent as a one-click mode threaded to StartOpts.Mode. Measured in this
-workspace: 44 .kiro/agents/*.md, 22 declaring a permissions block, and ZERO
-declaring an fs_read rule of any effect — a declared block REPLACES the default
-rather than extending it, so all 44 contribute none either way. So without this
+marotte is exactly the client that loses. It seeds ZERO Cedar rules by decision,
+and its mode pill offers every workspace custom agent as a one-click mode
+threaded to StartOpts.Mode. A custom agent that declares a permissions block
+REPLACES the default rather than extending it, and custom agents commonly
+declare no fs_read rule at all. So without this
 row, a chat switched to any custom agent gets zero search results after the pin
 bump, and file_search compounds it: hasMoreResults is computed from the
 PRE-filter provider count while the FILTERED list is sliced, so the agent is

@@ -52,8 +52,7 @@ func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *marotte.ClientCo
 	// which this verb can withhold on a committed compaction — so its absence is
 	// not an error and must not be synthesized from `success`. The narrow
 	// `BridgeAccess` parameter is what enforces that: no store, no broadcaster,
-	// so none of it is expressible here. Keep it narrow. Outcomes and the two
-	// withholding paths: `marotte-acp.md` "Upstream 2.21.1".
+	// so none of it is expressible here. Keep it narrow.
 	slog.Info("compact accepted", "chat", cmd.ChatID)
 	return responseWith(nil), nil
 }

@@ -1,25 +1,10 @@
-// AN ACTION INSIDE A DENSE LIST ROW TAKES THE DENSE TIER, NOT `--btn-h`.
-//
-// `.btn-small` reads `min-height: var(--btn-h)` (2.25rem / 36px) from the shared
-// button base in 14-tools.css, and `.list-row`'s own floor is `--ctl-h-sm`
-// (1.5rem / 24px) — so a `.btn-small` inside a row DRIVES that row's height and
-// reads as its subject rather than as its action. Reported against the Add-tool
-// modal's Install button, which is `.btn-small.list-row-enable` inside
-// `.list-row.tool-hit` (tools.ts `renderSearchHit`), as the button having "its
-// desktop touch mode height, not desktop mouse size" — the pointer tier is
-// correct and the token was wrong, which is the same call `marotte-ui.md` "One
-// control height per row" already made for the PRs tab's Merge/Close.
-//
-// TWO claims, and they pull against each other, which is why both are here: a
-// `.btn-small` INSIDE a row shrinks to the dense tier, and a `.btn-small` that
-// stands ALONE (a modal footer's Cancel / Open pull request) keeps `--btn-h`.
-// A test for the first alone passes for a rule that shrank every `.btn-small` in
-// the app, which is what the scoping exists to prevent.
-//
-// Real layout, because the claim is geometric: the rendered heights, and which
-// element the row's own height comes from. `data-pointer="fine"` is stated
-// rather than inherited, so the mouse tier is a premise instead of a side
-// effect of the 1280px test viewport.
+// AN ACTION INSIDE A DENSE LIST ROW TAKES THE DENSE TIER, NOT `--btn-h`: a
+// `.btn-small` (36px) inside a `.list-row` (24px floor) would DRIVE the row's height
+// and read as its subject (the Add-tool modal's Install button). TWO claims that
+// pull against each other: a `.btn-small` INSIDE a row shrinks, one standing ALONE
+// (a modal footer) keeps `--btn-h`; the first alone passes for a rule that shrank
+// every button. Real layout, because the claim is geometric; `data-pointer="fine"`
+// is stated so the mouse tier is a premise.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

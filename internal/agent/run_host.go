@@ -4,8 +4,8 @@ package agent
 // An agent-launched run is parented on its chat's session by KAS and needs nothing
 // here; a manual or scheduled one gets ONE bridge of its own under the synthetic chat
 // id `run:<workflowId>`, which every response path already resolves by chat id. That
-// id gets no chat file. Which bridge holds what, and why the lease outlives the
-// process: marotte-runtime.md. The KAS-side shapes: marotte-acp.md.
+// id gets no chat file. A paused run keeps its lease after its process closes, so it
+// stays reachable and hostRun re-hosts it on demand.
 
 import (
 	"cmp"
@@ -404,7 +404,7 @@ var errStepStatusUnreadable = fmt.Errorf(
 // SetStepStatus marks a step completed, failed, or running so a wedged run can
 // advance. The verb carries NO node id, so KAS resolves its target positionally and a
 // client naming node X can have KAS mark node Y — the tree is READ first and the write
-// withheld unless the two agree. Schema and resolver: marotte-acp.md.
+// withheld unless the two agree.
 func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")
@@ -551,8 +551,7 @@ func stepTargets(n *askNode) (running, paused *askNode) {
 }
 
 // The step statuses a human may set. `running` is the CONTINUE-WITHOUT-ANSWERING
-// verb rather than a mark, and plain Resume cannot substitute for it — the KAS-side
-// mechanics and what `update` also carries are in marotte-acp.md.
+// verb rather than a mark, and plain Resume cannot substitute for it.
 const (
 	runStepCompleted = "completed"
 	runStepFailed    = "failed"
@@ -572,8 +571,7 @@ var errAskAlreadySettled = errors.New(
 // `session/prompt` addressed to the PAUSED STEP's own session.
 //
 // THE ORDER IS THE CONTRACT: carrier, then claim, then address, then send. Each
-// step guards a window the next one would open — see marotte-runtime.md's
-// liveness-split block. A failed send puts the claim back.
+// step guards a window the next one would open. A failed send puts the claim back.
 func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
@@ -654,10 +652,8 @@ const (
 // run's state says about the question.
 //
 // THE FRESH READ LEADS and the ask's own address is only the fallback, because a
-// prompt KAS does not reroute runs as an ordinary turn on that session —
-// marotte-acp.md "A step's answer is a plain `session/prompt`". An UNREADABLE run
-// falls back rather than refusing: a failed read never destroys work here. The three
-// verdicts: marotte-runtime.md's liveness-split block.
+// prompt KAS does not reroute runs as an ordinary turn on that session. An
+// UNREADABLE run falls back rather than refusing: a failed read never destroys work.
 func (rs *Runs) answerAddress(
 	ctx context.Context, workflowID string, a *runAsk,
 ) (session string, verdict answerVerdict) {
@@ -692,7 +688,7 @@ func (rs *Runs) answerAddress(
 // askedStep finds the PARKED step one ask belongs to, or nil when that step is not
 // parked right now. Addressed by the ask's own NODE ID rather than by pausedLeaf's
 // first depth-first match, which is what makes a parallel run's second parked branch
-// answerable — the divergence is in marotte-runtime.md's liveness-split block.
+// answerable.
 //
 // An EMPTY id matches any parked step: such an ask was minted before that field
 // existed, so it keeps pausedLeaf's older behaviour rather than being refused. A
@@ -1076,7 +1072,7 @@ func (rs *Runs) startRunCarrier(
 
 // carrierUse counts the run verbs currently HOLDING each carrier, so the kept-carrier
 // bound asks rather than inferring. The key is the CARRIER, because one carrier holds
-// several verbs in turn. Both: marotte-runtime.md's liveness-split block.
+// several verbs in turn.
 type carrierUse struct {
 	held map[*sharedBridge]int
 	// onIdle is the close a lifecycle frame deferred because a verb was holding the
@@ -1135,7 +1131,7 @@ func (c *carrierUse) busy(sb *sharedBridge) bool {
 // It is what lets a LIFECYCLE frame ask the kept-carrier bound's question without a
 // timer, and TWO INDEPENDENT terminators end the wait: the caller's context, and KAS
 // answering — likely here, a terminal frame just arrived. Bridge exit is NOT a third,
-// being the close being deferred. The residual: marotte-runtime.md. A repeat frame
+// being the close being deferred. A repeat frame
 // REPLACES the pending closer rather than queueing beside it — one carrier, one close,
 // so exactly-once is the whole requirement.
 func (c *carrierUse) whenIdle(sb *sharedBridge, closeFn func()) {
@@ -1216,7 +1212,7 @@ const (
 // below make a late firing cost one inspect instead of a wrong close. A BUSY verdict
 // RE-ARMS, and that re-arm is NOT self-terminating — while a verb blocks on this
 // carrier nothing here closes it, so the loop ends at that verb's own end or at
-// shutdown. Why each of those ends it, plus the residual: marotte-runtime.md.
+// shutdown.
 func (rs *Runs) boundKeptCarrier(chatID marotte.ChatID, workflowID string, kept *sharedBridge) {
 	time.AfterFunc(keptCarrierGrace, func() {
 		if rs.closeKeptCarrier(chatID, workflowID, kept) == carrierBusy {
@@ -1313,7 +1309,7 @@ func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
 // The utility session is REFUSED while the owner lives — KAS checks ownership on every
 // branch but its own registry hit — so routing is what makes these two land. Resolving
 // it needs no re-host (hostBridgeChat), so the fallback costs one `workflow/list` trip
-// and a carrier the CALLER resolved (cancelOn) costs none. Bundle: marotte-acp.md.
+// and a carrier the CALLER resolved (cancelOn) costs none.
 func (rs *Runs) control(
 	ctx context.Context, workflowID, method, logLabel string, carrier *sharedBridge,
 ) error {
@@ -1395,13 +1391,11 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID marotte.ChatID, m
 
 // closeStoppedBridge closes a run bridge once its run STOPPED EXECUTING, terminal or
 // paused alike; hostRun re-hosts a parked one on demand. Run bridges only, no
-// lease released, an unrecognised status kept: marotte-runtime.md for each.
+// lease released, an unrecognised status kept.
 //
-// The close is a goroutine because this runs FROM the forward loop, whose channel
-// CloseBridge → Stop closes. It ASKS about a verb in flight, closeKeptCarrier's own
-// question, and DEFERS until the carrier is idle: it holds a terminal frame, so the
-// held span's end is a signal it can wait on. A verb that entered meanwhile hands the
-// carrier to the kept-carrier bound instead (closeStoppedCarrier).
+// A goroutine because this runs FROM the forward loop, whose channel CloseBridge →
+// Stop closes. It DEFERS until no verb holds the carrier; a verb that entered
+// meanwhile hands it to the kept-carrier bound instead (closeStoppedCarrier).
 func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Status marotte.RunStatus `json:"status"`
@@ -1602,8 +1596,7 @@ const (
 
 // transientErrorClass is the `pauseDetail.class` KAS stamps for every transient
 // fault, the MACHINE-READABLE half of the reasons above. It reaches a pause a REASON
-// cannot, because a parallel branch's prose is re-rendered around it — see
-// marotte-acp.md.
+// cannot, because a parallel branch's prose is re-rendered around it.
 const transientErrorClass = "transient-error"
 
 // pauseDetail is KAS's machine-readable pause CLASSIFICATION, on both the

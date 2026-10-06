@@ -11,7 +11,7 @@ export interface ViewportPick {
 
 export const PRESET_WIDTH = { phone: 390, tablet: 820, desktop: 1440 } as const;
 
-/** The app's phone-shaped test (`marotte-ui.md`): on such a screen the switcher
+/** The app's phone-shaped test (narrow OR short): on such a screen the switcher
  *  and the scale toggle are hidden, so the page is always shown at Fill. */
 export const PHONE_SHAPED_QUERY = "(width <= 48rem), (height <= 30rem)";
 

@@ -645,31 +645,13 @@ input[type="radio"] {
   font-size: var(--fs-xs);
 }
 
-/* Tool error explanation button + result.
- *
- * THE TRIGGER IS A CIRCULAR ICON BUTTON IN THE FAILED CARD'S BOTTOM-RIGHT, and the
- * RESERVED STRIP below is what stops it sitting on the card's own content — a
- * z-index would not, because both things it would cover are content rather than
- * chrome. `.tool-details` is force-opened on a failure and is a scroll region
- * (`overflow-y: auto`, its own scrollbar at the card's inline end), and on a card
- * the reader has COLLAPSED that corner is the claim row's trailing edge, where
- * `.tool-file-link` lives. Reservation beats an overlay (marotte-ui.md "Design").
- *
- * `:has(> …)` rather than an unconditional strip, because the trigger BECOMES the
- * result IN PLACE (`btn.className = "tool-explain-result"`) and a result is an
- * in-flow block that wants no strip. `position` is declared here rather than on
- * `.tool-call` so the whole change is one block in one file, and it is ADDITIVE
- * rather than a re-parenting: `content-visibility: auto` (14-tools.css) already
- * applies layout containment, which makes that card a containing block for every
- * absolutely positioned descendant it has.
- *
- * ALWAYS VISIBLE, never hover-only: this app is touch-first and a coarse pointer has
- * no hover to reveal an affordance with. Hover adds the fill and nothing withdraws.
- *
- * THE FOCUS RING is 40-a11y.css's zero-specificity floor, so nothing here declares
- * `outline` in any state — and the corner inset below (>= 8px) clears that ring's
- * 3px reach inside `.tool-call`'s `overflow: hidden`, which is why this control is
- * NOT a member of that file's inset-ring list. */
+/* Tool error explanation button: a circular icon button in the failed card's
+ * bottom-right over a RESERVED STRIP (a z-index would cover `.tool-details`'s
+ * scrollbar or `.tool-file-link`, both content). `:has(> …)` because the trigger
+ * BECOMES the in-flow result in place. `position` is additive: the card's
+ * `content-visibility: auto` already makes it a containing block. ALWAYS VISIBLE,
+ * never hover-only (touch-first). No `outline` here: 40-a11y.css's floor ring fits
+ * inside the >= 8px corner inset under `.tool-call`'s `overflow: hidden`. */
 .tool-call:has(> .tool-explain-btn) {
   /* THE CORNER INSET, a `max()` rather than --sp-2 because it also has to clear the
      TARGET expander below. `--hit-floor` and `--ctl-h-sm` move on different tiers
@@ -705,7 +687,7 @@ input[type="radio"] {
   block-size: var(--ctl-h-sm);
 
   /* A circle is a deliberate SHAPE rather than a nesting decision, so it takes no
-     concentric radius from the card it sits in (web.md's own carve-out). */
+     concentric radius from the card it sits in. */
   border-radius: 50%;
   border: 1px solid var(--c-accent);
   background: none;
@@ -744,7 +726,7 @@ input[type="radio"] {
 }
 
 /* `any-hover`, never `hover`: those queries report only the PRIMARY input, so a
-   `hover: hover` gate drops the rule on every touch-primary device (web.md) — and on
+   `hover: hover` gate drops the rule on every touch-primary device — and on
    a bare touchscreen a `:hover` fill latches after a tap, which is what the gate is
    for. Touch gets 03-base.css's app-wide `:active` press instead. */
 @media (any-hover: hover) {

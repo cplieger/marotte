@@ -3,8 +3,7 @@
 // There is no background ticker; a fill happens only because a request asked for
 // the data, and the one goroutine that exists is the revalidation of an
 // already-served stale value, bounded by listFillBudget.
-// Mutations are never cached; a successful one evicts its repository's entries
-// (ARCHITECTURE.md "Cache coherence").
+// Mutations are never cached; a successful one evicts its repository's entries.
 
 package forges
 

@@ -45,11 +45,11 @@
 
 /* --- The segmented switcher ---------------------------------------------- */
 
-/* The nesting rule is inner = outer − border − inset (web.md "A nested rounded
- * corner"), derived the OTHER way round: from a 6px bar the segment would be 1px,
- * square, on the one element whose job is to read as a pressable pill, so the
- * SEGMENT keeps its shape and the bar takes 4 + 1 + 4 = 9px. A calc rather than a
- * token because no rung of the 12/8/6/4 ladder is 5px apart from another. */
+/* A nested corner is inner = outer − border − inset, derived the OTHER way round
+ * here: from a 6px bar the segment would be 1px, square, on the one element whose
+ * job is to read as a pressable pill, so the SEGMENT keeps its shape and the bar
+ * takes 4 + 1 + 4 = 9px. A calc rather than a token because no rung of the
+ * 12/8/6/4 ladder is 5px apart from another. */
 .seg-bar {
   display: flex;
   flex-wrap: wrap;
@@ -155,7 +155,7 @@
   justify-content: center;
 }
 
-/* A ROW WITH ONE DESTINATION PUTS THE BOX INSIDE THE CONTROL (marotte-ui.md): the
+/* A ROW WITH ONE DESTINATION PUTS THE BOX INSIDE THE CONTROL: the
    body IS the open target, and `align-self: stretch` is what makes that target the
    row's height rather than its text's. A row that opens nothing is the same box as
    a `div`, so only the button form needs the appearance reset. */
@@ -186,7 +186,7 @@ button.entry-open {
     outline-offset: var(--focus-offset-inset);
   }
 
-  /* ONE HOVER RECIPE (marotte-ui.md), gated so a tap does not latch it. */
+  /* The app's one row-hover wash, gated so a tap does not latch it. */
   @media (any-hover: hover) {
     &:hover {
       background: var(--c-hover);
@@ -277,7 +277,7 @@ button.entry-open {
   font-family: var(--font-mono);
 }
 
-/* ONE CONTROL HEIGHT PER ROW (marotte-ui.md): every action in the slot reads the
+/* ONE CONTROL HEIGHT PER ROW: every action in the slot reads the
    dense tier, icon or text. `max()` rather than the bare token because the
    universal hit floor (61-mcp-tools.css) scores zero and LOSES to this rule, which
    would take a 40px button beside a 44px sibling on coarse; `.list-row .btn-small`

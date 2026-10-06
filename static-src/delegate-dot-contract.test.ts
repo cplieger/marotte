@@ -1,33 +1,11 @@
-// The client half of the shared delegate DOT oracle: testdata/delegate_dot.json is the
-// contract and TestDelegateDotContract is the other reader. That one SCANS every producer
-// of a ToolStatus under internal/ — classifying each reference by the position it sits in,
-// so a comparison is read as a reader and not as a stamp — and states, per producible
-// status, what each of this side's three surfaces has to say about it. This one asks the
-// real functions.
+// The client half of the shared delegate DOT oracle (testdata/delegate_dot.json; the Go
+// reader is TestDelegateDotContract). One wire value, three words, deliberately: the
+// wire spells `aborted`, the delegate CARD says "cancelled" like its turn footer, and the
+// subagent PAGE says "stopped". The ROW's word is not compared (outcomeWord is unexported).
 //
-// THREE SURFACES, ONE VALUE, and the divergence is deliberate (.kiro/steering/marotte.md
-// "A delegate has THREE terminal states"): the wire spells it `aborted`, a delegate's CARD
-// announces "cancelled" because the enclosing turn card's footer says that about the same
-// stop, and the subagent PAGE says "stopped". Nothing in the app asserted any pair of the
-// three against another before this fixture, so the divergence could drift into a
-// disagreement nobody would see.
-//
-// Browser placement, like the steer-label contract and unlike the fold's node test:
-// `stateWord` is unexported, so its only reachable channel is the card's own accessible
-// state element, which needs a DOM. The fixture arrives through the `?raw` import Vite
-// already allows for ../internal (vitest.config.ts's server.fs.allow).
-//
-// EVERY PRODUCTION IMPORT IS DYNAMIC, and that is what keeps this file out of the vi.mock
-// ratchet's population: `fundamentals/subagent-block.ts` reaches `scroll.ts`, a singleton
-// that builds itself against a real `#messages` at import, and the canonical answer
-// elsewhere is a whole-module `vi.mock` of it — which is exactly the shape
-// __test-helpers__/vi-mock-original.node.test.ts exists to stop new files adopting. Seeding
-// the three elements it reads and importing afterwards needs no mock at all, and it drives
-// the real scroll controller rather than a fake.
-//
-// The ROW surface's word is NOT compared here: `tool-card.ts`'s outcomeWord is unexported
-// and reaches no seam a test can drive, so the fixture carries the card and the page, and
-// the wire's own spelling stands for the row.
+// Browser placement because `stateWord` is reachable only through the card's DOM. Every
+// production import is DYNAMIC so the three elements scroll.ts reads at import can be
+// seeded first, which drives the real scroll controller without a vi.mock.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import goldenRaw from "../internal/chat/testdata/delegate_dot.json?raw";

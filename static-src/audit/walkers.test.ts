@@ -1,14 +1,10 @@
-// The audit walkers, driven against real fixtures in a real engine.
-//
-// Two things this file is for, and the second is the reason the module lives in
-// the app at all. It pins what each walker REPORTS, so the number a ui-qa runner
-// prints is a number a test asserted. And it pins the INJECTION CONTRACT: the
-// same walker run through `pageSource` — the string `cdp.mjs` hands to
-// `Runtime.evaluate` — has to answer exactly what the direct call answers, or the
-// vitest gate and the live runner are testing two different programs.
-//
-// Every case is scoped to its own fixture by class prefix, never to a total,
-// because the walkers scan the whole document and the runner's page is not empty.
+// The audit walkers, driven against real fixtures in a real engine. It pins what
+// each walker REPORTS, so the number a live runner prints is a number a test
+// asserted, and the INJECTION CONTRACT: the same walker run through `pageSource`,
+// the string a runner hands to `Runtime.evaluate`, must answer exactly what the
+// direct call answers. Every case is scoped to its own fixture by class prefix,
+// never to a total, because the walkers scan the whole document and the runner's
+// page is not empty.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { WALKERS, pageSource } from "./walkers.js";

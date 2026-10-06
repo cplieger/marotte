@@ -1,25 +1,11 @@
-// The root's text-inflation pin, guarded at the SOURCE because no engine
-// available to this suite can observe the behaviour it defends.
-//
-// iOS Safari's default `-webkit-text-size-adjust: auto` scales each block by
-// that block's own width, so a surface whose blocks differ in width renders one
-// font size per block. The app's diff rows are exactly that shape — a
-// `white-space: pre` line inside a horizontal scroller — and a phone rendered a
-// tool card's inline diff at a different size per line. Full measurement:
-// `marotte-ui.md` "Text inflation".
-//
-// Chromium's own autosizing is Android-only and gated off by this app's
-// `width=device-width` viewport, so a rendered assertion reads identically with
-// the declaration present and absent. That is what makes the regression SILENT
-// here and the source the only honest oracle.
-//
-// The likely regression is not a deletion but a `stylelint --fix`, which would
-// rewrite the prefixed declaration away and leave the standard one — Safari
-// implements only the prefixed form, so the fix would be gone with the suite
-// green. `property-no-vendor-prefix` is fixable, and the synced config exempts
-// this property by name (`web.md`), so nothing raises it today; the guard is
-// against that exemption being narrowed or the rule being run with `--fix`
-// under a config that lacks it.
+// The root's text-inflation pin, guarded at the SOURCE: iOS Safari's default
+// `-webkit-text-size-adjust: auto` scales each block by its own width, so a diff's
+// `white-space: pre` lines in a scroller render at a different size per line, and no
+// engine available here observes it (Chromium's autosizing is Android-only and off
+// under `width=device-width`). The likely regression is a `stylelint --fix` of
+// `property-no-vendor-prefix` rewriting the prefixed form away (Safari implements
+// only that one); the synced config exempts this property by name, and this guards
+// that exemption being narrowed.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

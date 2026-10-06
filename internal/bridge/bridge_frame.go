@@ -1,33 +1,13 @@
 package bridge
 
-// Newline-delimited frame reading off the bridge's stdout, with an oversize
-// frame SURVIVED rather than fatal.
+// Newline-delimited frame reading off the bridge's stdout. An oversize frame is
+// DRAINED to its delimiter, not fatal: ReadSlice leaves the reader mid-line on
+// ErrBufferFull, so the stream resynchronises on a real frame boundary.
 //
-// This replaced a bufio.Scanner, and the swap is the whole point rather than a
-// style preference. bufio.ErrTooLong is terminal for the Scanner that raised it
-// and leaves no resumable position, so one frame past the cap ended the scan,
-// readLoop treated the bridge as exited, and a single large tool result killed
-// the chat's session. bufio.Reader.ReadSlice returns ErrBufferFull and leaves the
-// reader positioned MID-LINE, which is what makes a drain-to-the-delimiter
-// possible: the oversize frame is consumed to its terminator and the stream
-// resynchronises on a real frame boundary.
-//
-// Adopted from KiroCrew's _drain_oversize_line (see #kiro-crew-research), with
-// its three load-bearing details kept:
-//
-//  1. The recovered remainder is DISCARDED, never parsed. It is a byte slice cut
-//     at an arbitrary offset, so it is not JSON and can split a multi-byte UTF-8
-//     rune; the accumulated prefix is dropped for the same reason.
-//  2. The drain budget is per FRAME and in BYTES, not a count of oversize frames.
-//     Each drain provably ends on a frame boundary, so a replay of many
-//     legitimately-oversize-but-terminated frames each gets its own budget and
-//     stays survivable. A count would kill the bridge on exactly that replay.
-//     Only a single blob that never terminates can exhaust it.
-//  3. Crew's own bounded reader can afford a bare discard because every one of
-//     its callers runs a deadline. marotte's Bridge.Call deliberately does not,
-//     so the Go port MUST answer the pending requests a discard would otherwise
-//     orphan forever. That half is readLoop's (see reportDroppedFrame); this file
-//     only reports the loss upward.
+// The drained remainder is DISCARDED, never parsed (it is cut mid-JSON, maybe
+// mid-rune). The budget is per FRAME in bytes, so a replay of many terminated
+// oversize frames survives. Bridge.Call has no deadline, so readLoop must answer the
+// pending requests a discard orphans (reportDroppedFrame); this file only reports.
 
 import (
 	"bufio"

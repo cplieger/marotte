@@ -1,22 +1,9 @@
-/* ==========================================================================
-   The EXEC VIEW — a full tab for one delegated execution.
-
-   The `/run/{id}` page's skin, and the skin a subagent tab will reuse: every rule
-   is scoped under `.ev-page` with an `ev-` vocabulary, so it cannot collide with
-   the transcript run card's `.run-*` (the collision `27-run-card.css` records) nor
-   with anything a consumer adds.
-
-   It shares the app's LANGUAGE and not the transcript's LAYOUT. Tokens, the radius
-   ladder, the status hues, the still-vs-spinning ring, the tool card and the
-   markdown bubble are all the app's; the single capped column is not, because an
-   execution is a tree over time and a column can express neither nesting nor
-   concurrency.
-
-   The radius ladder, spent down the page per `web.md`'s concentric rule
-   (`child-radius = parent-radius - parent-padding`): a pane is `--r-lg` (12px)
-   with `--sp-3` inside it, a row or a bar inside that is `--r` (6px), and a chip
-   inside a row is `--r-sm` (4px).
-   ========================================================================== */
+/* The EXEC VIEW, a full tab for one delegated execution (the `/run/{id}` page's
+   skin). Every rule is scoped under `.ev-page` with an `ev-` vocabulary so it cannot
+   collide with the transcript run card's `.run-*`. It shares the app's tokens and
+   components, not the transcript's single capped column, because an execution is a
+   tree over time. Radius ladder, child = parent radius − parent padding: a pane is
+   `--r-lg` with `--sp-3` inside, a row or bar inside it `--r`, a chip `--r-sm`. */
 
 .ev-page {
   display: flex;
@@ -30,11 +17,9 @@
   flex: 1 0 auto;
   gap: var(--sp-3);
 
-  /* A CONTAINER spaces its children and a child never spaces itself
-     (marotte-ui.md): the gap above is the only vertical rhythm on this page, so no
-     region below carries a margin of its own. That rule exists because a turn's
-     block container shipped without it and every block boundary in a turn
-     measured 0.0px. */
+  /* A CONTAINER spaces its children and a child never spaces itself: the gap above
+     is the only vertical rhythm on this page, so no region below carries a margin of
+     its own. */
   container: exec-view / inline-size;
 }
 
@@ -536,20 +521,13 @@
   background: var(--c-bg-tertiary);
 }
 
-/* EVERY ROW INSIDE THE BOX IS SQUARE, the header included. A row spans the box's
-   whole inner width — `.ev-kids` adds no inline padding — so a rounded hover or
-   selection fill on a row with rows above and below it reads as a floating pill
-   rather than as a band in a list, which is what was reported. The BOX owns the
-   corners and its `overflow: hidden` clips whatever reaches them, which is
-   `web.md`'s flush-inside-a-clipping-parent exemption rather than a nesting
-   violation.
-
-   A DESCENDANT selector on purpose, unlike the state and chevron rules in this
-   file: those answer for the row that OWNS the attribute, so reaching a subtree
-   would repaint rows that are not their subject, while mid-list-ness is a property
-   of every row in the box at any depth. `.ev-row-main` keeps its own `--r` for the
-   un-boxed top-level case, where a row genuinely is its own box in a gapped
-   column. */
+/* EVERY ROW INSIDE THE BOX IS SQUARE, the header included: a row spans the box's
+   whole inner width, so a rounded fill on a mid-list row reads as a floating pill.
+   The BOX owns the corners and its `overflow: hidden` clips them (a child flush
+   inside a clipping parent takes no radius of its own). A DESCENDANT selector on
+   purpose: mid-list-ness holds for every row at any depth, unlike the state rules
+   that answer only for the owning row. `.ev-row-main` keeps `--r` for the un-boxed
+   top-level case. */
 .ev-row.ev-group .ev-row-main {
   border-radius: 0;
 }
@@ -1090,7 +1068,7 @@
 }
 
 /* The shared wash, not a hand-rolled ink mix. The ink move to `--c-text-primary` is
-   the button idiom (marotte-ui.md): accent ink on hover would read as a link, which
+   the button idiom: accent ink on hover would read as a link, which
    the two `-more` controls above are and this door is not. */
 @media (any-hover: hover) {
   .ev-d-link:hover {

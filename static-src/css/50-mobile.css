@@ -170,47 +170,13 @@
       max(var(--sp-4), env(safe-area-inset-left, 0));
   }
 
-  /* THE HOME-INDICATOR INSET SITS BELOW THE CARD, AND IT IS CAPPED. Apple reserves
-     34pt at the bottom (portrait; 21pt landscape) and asks that no control enter
-     it. Its own bars fill that band with the bar's material, and this bar was
-     built that way — the inset carried by `.prompt-pills`' block-end padding — but
-     the composer is the one bottom bar whose last control is not its own last row,
-     so the band rendered as 21px of card under the buttons and the reader reported
-     it as a large gap there. Third position, and the ruling is that the band is
-     PAGE below the card (user ruling, 2026-09-12).
-
-     BOTH EARLIER SPENDS WERE REJECTED ON SIZE RATHER THAN LOCATION, which is why
-     the figure is capped rather than restored. Charging the whole inset here
-     (`max(--sp-3, inset - --pill-inset - 1px)`) left 29px of `--c-bg-primary`
-     between the card's border edge and the screen edge, reported as the safety area
-     below the app looking way too large; spending it inside the card left 21px
-     under the buttons, reported this time. So the bar honours the inset only up to
-     `--composer-inset-cap` (24px, declared on `#prompt-form` in 15-input.css with
-     the reasoning), floored at the house gap so an inset-less device is untouched.
-
-     Measured on the 390x844 preset with the inset substituted at 34px: page below
-     the card 21 -> 24px, card material under the last control 21 -> 4px, composer
-     131 -> 121px, and the last control 34 -> 29px above the screen edge, still
-     clear of the indicator. The pill row's two insets are equal again, so the box
-     reads symmetric about its own divider.
-
-     The other three bars (editor, file browser, run) put their controls directly in
-     the bar, so their last control IS the bar's last row and the shared rule above
-     — which honours the FULL inset — is already right for them. This is the one bar
-     that needs its own number.
-
-     PHYSICAL `padding-bottom`, not the logical property, and that is what makes the
-     shell-panel case work with no second rule here. With the terminal open the
-     composer is not the bottom-most surface, so there is no indicator under it and
-     nothing to clear; 19-files.css already states that for every `.bottom-bar` at
-     (0,4,0) — but a logical property and its physical twin are DIFFERENT properties
-     resolved against each other by cascade ORDER rather than by specificity
-     (web.md), and this file sorts later, so a `padding-block-end` here would beat
-     that reset from (0,2,0) and leave up to 24px of dead inset with the terminal
-     open. Matching the property that rule writes puts the two back in a specificity
-     contest, which the reset wins. The base `.bottom-bar` rules are physical too
-     (both spell the `padding` shorthand), so this is the axis this surface is
-     already argued on rather than a departure. */
+  /* THE HOME-INDICATOR INSET SITS BELOW THE CARD, CAPPED at `--composer-inset-cap`
+     (15-input.css) and floored at the house gap: the composer's last control is not
+     its own last row, so a full inset renders as card material under the buttons,
+     and an uncapped one as a tall band of page below. The other bottom bars honour
+     the full inset in the shared rule. PHYSICAL `padding-bottom`: 19-files.css resets
+     it at (0,4,0) when the terminal is open, and a logical twin would win that
+     contest on cascade ORDER (this file sorts later), not specificity. */
   [id="prompt-form"].bottom-bar {
     padding-bottom: max(
       var(--sp-3),
@@ -241,28 +207,13 @@
     padding: var(--sp-3);
   }
 
-  /* THE × 'S TARGET GROWS, ITS PAINTED BOX DOES NOT — and the box growing is what
-     made a chat tab taller than the New chat button. `.tab-close` is a 24px span
-     (10-shell-app.css); this block used to set `width`/`height: var(--btn-h)` on
-     it, and `.tab` is `min-height: var(--btn-h)` with `padding-block: var(--sp-2)`
-     plus a 1px border reserved on every row, so a 44px child STACKS on that
-     chrome: measured at 390x844 on the coarse tier, every `.tab` rendered 62px
-     tall against `#new-chat`'s 44px. That is the row outgrowing the floor
-     (`marotte-ui.md` "Hit targets"), and the row is already a 44px target itself,
-     so the × needs no 44px box of its own — it takes the documented expander
-     instead, an absolutely positioned `::after` sized off `--hit-floor`, the same
-     escape `.shell-resize` and `.tool-file-link` use.
-
-     Neither this rule nor `.tab` may declare `overflow`: an expander is clipped
-     away by an overflow on its own control or its ancestor, which reads
-     identically in the cascade and hits nothing. (`.tab.exiting` does declare one,
-     and that is correct — a departing row is `pointer-events: none`.)
-
-     The expander is CENTRED on the × rather than anchored to the row's trailing
-     edge, so the glyph sits in the middle of its own target. It reaches 10px past
-     the 24px box on each side, which is 8px into the row's trailing padding plus
-     2px beyond its border — strictly less intrusive than the 44px painted box it
-     replaces, which started 20px further into the name. */
+  /* THE × 'S TARGET GROWS, ITS PAINTED BOX DOES NOT: a 44px box would stack on
+     `.tab`'s own min-height and padding and make every tab taller than the New chat
+     button. The row is already a 44px target, so the × takes the expander, an
+     absolutely positioned `::after` sized off `--hit-floor` and CENTRED on the glyph
+     (like `.shell-resize` and `.tool-file-link`). Neither this rule nor `.tab` may
+     declare `overflow`, which would clip the expander; `.tab.exiting` may, being
+     `pointer-events: none`. */
   .tab-close {
     position: relative;
   }
@@ -281,7 +232,7 @@
 /* PHONE-SHAPED means narrow OR short, and a media query list is CSS's OR. The
    short arm answers LANDSCAPE, where a phone is mostly wider than 48rem and the
    narrow arm stops matching; 30rem measures the short edge, the axis a rotation
-   cannot change (derivation: marotte-ui.md "Hit targets"). The rule sits outside
+   cannot change. The rule sits outside
    the width block above because that block is layout — widening that prelude would
    hand a short desktop window the drawer and the safe-area rules. The other two
    conditions are pointer-mode.ts's and travel on `.hidden`, whose

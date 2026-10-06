@@ -73,20 +73,12 @@ const (
 
 	// KeySecurityProfile is the named security posture every session marotte
 	// starts opens with: one of policyfile's profile ids, resolved into KAS policy
-	// preset ids and sent as _meta.kiro.policyPreset.
+	// preset ids and sent as _meta.kiro.policyPreset. GLOBAL, because KAS cannot
+	// change a live session's policy, so a per-chat level could only apply at the
+	// next session start.
 	//
-	// GLOBAL rather than per chat, and that is a measured limit rather than a
-	// simplification. KAS offers no way to change a live session's policy — no
-	// set_config_option id and no client-callable setter — so a per-chat level
-	// could only take effect on the next session start, and the per-chat control
-	// was dropped for that reason (marotte-acp.md has the enumeration). One
-	// instance is also one HOME, one user and one workspace root, so a global
-	// setting and a per-workspace one would address the same population anyway.
-	//
-	// An unset or unrecognised value resolves to policyfile.DefaultProfile with a
-	// logged reason rather than to Custom: Custom sends no presets, so a typo
-	// would silently remove the fs_read floor from an instance that never chose to
-	// and leave the agent asking permission to read a file.
+	// An unset or unrecognised value resolves to policyfile.DefaultProfile, not to
+	// Custom: Custom sends no presets, so a typo would remove the fs_read floor.
 	KeySecurityProfile = "security_profile"
 
 	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved

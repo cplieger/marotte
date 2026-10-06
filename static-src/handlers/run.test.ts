@@ -27,7 +27,7 @@ vi.mock("../run-store.js", () => ({
   runChatID: vi.fn(() => "c1"),
   // A run's own LOG: the five operations the six entry events reach. Present here
   // because Browser Mode links a mock for real, so a factory missing one name fails
-  // the whole file's collection rather than one case (`testing-ts.md`).
+  // the whole file's collection rather than one case.
   openRunTurn: vi.fn(),
   openRunEntry: vi.fn(),
   applyRunDelta: vi.fn(),

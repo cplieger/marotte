@@ -146,8 +146,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	presence := push.NewPresence()
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
 
-	// The second argument is WHO this reaper answers for, and only the workspace root
-	// is correct — see marotte-runtime.md, "What the reaper may delete".
+	// The second argument is WHO this reaper answers for and must be the workspace root:
+	// a candidate's recorded cwd is compared against it, and any other value widens or
+	// empties what the sweep may delete rather than failing.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"), cfg.WorkDir)
 	// Closed by the server once its listener has bound; the destructive session sweep
 	// waits on it. Created here because the runtime is built before the server.

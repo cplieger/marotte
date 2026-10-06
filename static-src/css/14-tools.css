@@ -78,16 +78,11 @@
    unwindowed box; it is a windowed reveal inside the card's own disclosure now
    (first and last 20 lines, the rest one click further). */
 
-/* The reveal control for a windowed output's elided middle. The only depth 2 in
-   the ladder that does not leave the transcript, and the class's one placement:
-   it sits INSIDE `.tool-output`, so `.tool-output`'s own padding is its inline
-   inset and this rule keeps only the block gap that placement needs.
-   Its shape is `.btn-small`'s: it carried a hand copy of that rule whose only
-   divergences were defects, so the two selector lists below name it. The copy's
-   `--c-bg-primary` fill was the PAGE rung under a control sitting inside a
-   `--c-bg-secondary` tool card, which in dark mode paints #0a0a14 in a #262636
-   box — reported as a pitch-black box. `.refusal-btn` was the same defect and the
-   same conversion fixed it (marotte-ui.md "Color system"). */
+/* The reveal control for a windowed output's elided middle. It sits INSIDE
+   `.tool-output`, whose padding is its inline inset, so this rule keeps only the
+   block gap. Its shape is `.btn-small`'s (the selector lists below name it): a
+   local `--c-bg-primary` fill would be the PAGE rung inside a `--c-bg-secondary`
+   tool card, a pitch-black box in dark mode. */
 .tool-output-reveal {
   margin-block-start: var(--sp-1);
 }
@@ -249,8 +244,8 @@
 }
 
 /* One hover recipe for every box header in a transcript: the interaction ladder's
-   wash (01-tokens.css), never a jump to a ramp rung. Gated on `any-hover` (never
-   `hover`, see web.md) because the header is a disclosure trigger, so the finger is
+   wash (01-tokens.css), never a jump to a ramp rung. Gated on `any-hover` (`hover`
+   reports only the primary input) because the header is a disclosure trigger, so the finger is
    still on it when the tap ends and `:hover` latches; touch takes the press from
    03-base.css. The ink lift is this header's own — its resting ink is secondary
    where a card's title is the accent. */
@@ -703,7 +698,7 @@
   max-height: 18.75rem;
   overflow-y: auto;
 
-  /* A well; its step is the seam, so no rule (marotte-ui.md "Seams"). */
+  /* A well; its step is the seam, so no rule. */
   background: var(--c-well);
   transition:
     height var(--dur-standard) var(--ease-standard),
@@ -1920,18 +1915,12 @@ a.subagent-header {
 }
 
 /* Git button dot in the chat toolbar. Colours derived from data-state via
- * git-badge.ts. Priority: error > dirty > hidden.
- *
- * TWO hues, both of which a developer already reads without a legend: red is
- * broken, amber is modified. That is the vocabulary `.git-st-*` above uses per
- * file, and it is VS Code's (gitDecoration.deletedResourceForeground /
- * .modifiedResourceForeground). They are the STATE inks, never the
- * destructive-action palette --c-danger / --c-warning — see marotte-ui.md
- * "Color system".
- *
- * There is no third hue, because behind-origin is not a state here and the
- * blended local-AND-behind fill it forced into existence is deleted with it
- * (git-badge.ts's header carries the reasoning). */
+ * git-badge.ts. Priority: error > dirty > hidden. TWO hues a developer reads
+ * without a legend, the same as `.git-st-*` above and VS Code's
+ * gitDecoration.deletedResourceForeground / .modifiedResourceForeground: red is
+ * broken, amber is modified. They are the STATE inks, never the destructive-action
+ * palette --c-danger / --c-warning. Behind-origin is not a state here, so there is
+ * no third hue. */
 .git-badge {
   position: absolute;
   /* These insets have to keep it INSIDE the button's box: the toolbar clips its

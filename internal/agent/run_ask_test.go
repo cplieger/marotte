@@ -679,7 +679,7 @@ func TestReconcileNeedInput(t *testing.T) {
 // TestReconcileNeedInput_InsideAParallelBranch pins the arm no pause reason can reach:
 // a branch's own sentence is written to a throwaway state copy, so the run keeps only
 // a wrapper that KAS also emits for an interruption and a permanent failure, and what
-// survives is the branch NODE's completionSignal (marotte-acp.md has the read).
+// survives is the branch NODE's completionSignal.
 //
 // Its own function rather than a case in the table above: the fixture is a different
 // tree shape, and the checking logic here is about which NODE was named.

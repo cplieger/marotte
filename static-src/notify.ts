@@ -181,9 +181,7 @@ let ask: NotifyAsk | null = null;
  *  `"Notification" in window` idiom the rest of this module uses, which is the shape
  *  `@cplieger/web-terminal-ui`'s own binding takes: `in` answers true for a global
  *  that exists and is not a constructor, and reading `.permission` off that throws
- *  out of the arm — which would take a whole cue down for a capability check. The
- *  fleet's own rule (`typescript.md`, "Read the capability off the object, never test
- *  for the object") says the same thing from the other side. */
+ *  out of the arm — which would take a whole cue down for a capability check. */
 function notificationCtor(): { permission?: unknown; requestPermission?: unknown } | undefined {
   const value: unknown = (globalThis as { Notification?: unknown }).Notification;
   return typeof value === "function"

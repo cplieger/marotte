@@ -1,44 +1,10 @@
-// ---------------------------------------------------------------------------
-// A card header IS its disclosure's hit target.
-//
-// Measured on a live transcript (110 chevrons, 9 distinct header shapes): four
-// of the collapsible cards in the chat already took a click anywhere on their
-// header — the tool group, the delegated-work card, the run card and every
-// native `<summary>` — while two demanded the chevron itself. The tool card's
-// was a 24x24 button at the FAR END of a 775px row, and the turn card's was
-// 16x16, under the 24px desktop floor `marotte-ui.md` states. 54 tool headers
-// and 3 turn headers on that one page reported `cursor: auto`. So the same
-// gesture worked on some cards and not on others, which is the whole defect.
-//
-// This is an ACTIVATION SURFACE, not a second control. The header forwards its
-// click to the button that already owns the disclosure, so `aria-expanded`, the
-// keyboard path, the focus ring and every CSS rule keyed off that attribute
-// stay exactly where they were, and the disclosure primitive still sees one
-// trigger.
-//
-// Promoting the header to `role="button"` — the shape the delegated-work card
-// and the run card use — is NOT available to either of these two, and that is
-// the reason this module exists rather than a fourth copy of that shape. Both
-// headers contain real `<button>`s: the tool card's filename link, the turn
-// card's Copy. A button inside a `role="button"` is axe's `nested-interactive`
-// (serious), and `aria-hidden` plus `tabindex="-1"` does not clear it, because
-// a `tabindex="-1"` element is still focusable by click and by script. That
-// finding is written up twice in this codebase already
-// (`fundamentals/subagent-block.ts`, and `tabs.ts` for the tab row's close
-// affordance), and the CSS-side twin is in `22-git-multirepo.css`.
-//
-// Two gestures the header must NOT swallow, both real rather than theoretical:
-//
-//   - A click on a nested control. Skipped by ELEMENT KIND, not by a class
-//     list, so a control added to one of these headers later is covered without
-//     anyone remembering this file. That is also what makes the forwarded click
-//     terminate: the synthetic click lands on the `<button>` the header
-//     forwarded to, so the header's own listener sees a control and stops.
-//   - A click that ends a text SELECTION. A reader dragging a prompt out of a
-//     turn header and having the turn fold shut under the cursor is worse than
-//     a small chevron, and it is what keeps the turn header's prompt text
-//     selectable while the whole band stays the fold's target.
-// ---------------------------------------------------------------------------
+// A card header IS its disclosure's hit target, so the same gesture folds every
+// card. An ACTIVATION SURFACE, not a second control: the header forwards its click
+// to the button that owns the disclosure, so `aria-expanded`, the keyboard path and
+// the focus ring stay on that button. Not `role="button"`: these headers hold real
+// `<button>`s, and nesting them is axe's `nested-interactive`. Two gestures pass
+// through: a click on a nested control (skipped by ELEMENT KIND, which also ends the
+// forwarded click) and a click that ends a text SELECTION.
 
 /** Anything inside a header row that owns its own click.
  *

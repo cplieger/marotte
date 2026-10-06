@@ -1,6 +1,6 @@
 // Fundamental: SteerNote — a message delivered into a turn already running, rendered at the
 // `seq` where the agent read it. A CARD on the tool-card box vocabulary, not a left rail:
-// `#marotte-ui` reserves a leading rail for work this agent did not do itself.
+// a leading rail is reserved for work this agent did not do itself.
 //
 // IT HOLDS THE READER'S WORDS ALONE AND CARRIES NO CONTROL. The agent's acknowledgement is
 // its own `steer_ack` entry rendering at its own position, so the note carries a MARKER for

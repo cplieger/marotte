@@ -58,9 +58,8 @@ func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool 
 	}
 }
 
-// The ruling in one table: no process needs to run for a run that cannot be resumed,
-// and every run stays reachable. The lease a PAUSED run keeps is not an inconsistency
-// (marotte-runtime.md's liveness-split block). Driven through the real dispatch path
+// No process needs to run for a run that cannot be resumed, and every run stays
+// reachable, so a PAUSED run keeps its lease. Driven through the real dispatch path
 // because observeComplete decides the lease half on that same frame.
 func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	cases := map[string]struct {
@@ -256,10 +255,9 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 }
 
-// The three wrongs ending a resident carrier produced are in marotte-runtime.md's
-// liveness-split block. A resident under the run's chat id is found before any second
-// process exists. The factory is overridden because newTestHub's serves one shared
-// bridge, and the question here is whether a SECOND one is ever made.
+// A resident under the run's chat id is found before any second process exists. The
+// factory is overridden because newTestHub's serves one shared bridge, and the
+// question here is whether a SECOND one is ever made.
 func TestRehost_AResidentCarrierIsHandedBackAndNoSecondProcessStarts(t *testing.T) {
 	h, _, _ := newTestHub()
 	incumbent := newFakeBridge()
@@ -661,8 +659,8 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 }
 
 // KAS reroutes a prompt into the run only while the addressed step is parked; past
-// that the same prompt runs as an ordinary turn on that session (marotte-acp.md "A
-// step's answer is a plain `session/prompt`"). SETTLED rather than restored, because
+// that the same prompt runs as an ordinary turn on that session. SETTLED rather than
+// restored, because
 // nothing will wait on the question again — the between-steps case below will.
 func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	cases := map[string]json.RawMessage{

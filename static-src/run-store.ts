@@ -1,7 +1,6 @@
 // The one owner of a workflow run's state: refetched on invalidation, cached
-// verbatim, never accumulated from an SSE payload. Its readers, the coalescing,
-// the cache bound and the live-run inventory: marotte-client.md "The run store";
-// why the run events cannot reconstruct a run: marotte-acp.md.
+// verbatim, never accumulated from an SSE payload, because the run events alone
+// cannot reconstruct a run.
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
@@ -71,7 +70,7 @@ export interface RunInspect {
   state?: RunState;
   /** KAS's node PLAN, forwarded verbatim. `unknown` because the client walks it
    *  structurally, so typing it would re-model a structure marotte does not own;
-   *  `run-exec-source.ts` narrows it at the point of use. Contents: marotte-acp.md. */
+   *  `run-exec-source.ts` narrows it at the point of use. */
   nodePlan?: unknown;
 }
 
@@ -508,8 +507,7 @@ export function registerRunStateDemand(fn: (workflowID: string) => boolean): () 
  *  DEMAND: any predicate answering true keeps everything below, because no call site can
  *  enumerate this store's readers. A refused forget is NOT retried, so a demanded cell
  *  lives as long as the page — which is why a predicate asks about state that is still
- *  live rather than about a surface that once existed. marotte-client.md, "The run
- *  store". */
+ *  live rather than about a surface that once existed. */
 export function forgetRun(workflowID: string): void {
   if (stateDemands.some((fn) => fn(workflowID))) {
     return;
@@ -529,7 +527,8 @@ export function forgetRun(workflowID: string): void {
 
 /** What this run is CALLED, or `""` when nothing has been fetched for it yet: the
  *  launcher's label for this execution first, the recipe's name second. UNTRACKED,
- *  like `runPlan`. Both reasons: marotte-client.md "The run store". */
+ *  like `runPlan`: the tab factory calls it inside a row build, and the effect that
+ *  repaints the row already subscribes to the cell. */
 export function runLabelOf(workflowID: string): string {
   const state = peekRunState(workflowID);
   const label = state?.runLabel ?? "";
@@ -624,7 +623,7 @@ export function runPlan(workflowID: string): unknown {
 
 /** Which chat's agent launched a run, learned from the SSE envelope, and empty for
  *  a parentless run. A fact ABOUT a run rather than the reading handler's, and the
- *  one `parentSessionId` cannot supply: marotte-client.md, `run-dots.ts`. */
+ *  one `parentSessionId` cannot supply (`run-dots.ts` reads it). */
 const launchedBy = new Map<string, string>();
 
 /** A parentless run's own surface, and NOT a chat id.
@@ -651,8 +650,8 @@ export function runChatID(workflowID: string): string {
 }
 
 // The live-runs inventory: which chats have a run in flight. Event-fed, rebuilt
-// from `GET /api/runs/live`, and a row carries two facts because two readers ask
-// two questions — marotte-client.md "The run store".
+// from `GET /api/runs/live`, and a row carries two facts (live, executing) because
+// two readers ask two questions.
 
 /** One live run: the chat that launched it ("" for a parentless run), and whether
  *  it is still EXECUTING as opposed to parked. `executing` is read by the chat row's
@@ -691,8 +690,8 @@ function bumpLiveRuns(): void {
  *  are tracked too: they exempt no chat, but their presence mirrors the server's
  *  inventory, which is what the dot painter reads.
  *
- *  `executing` is the CALLER's statement rather than a default — why, and what each
- *  of the five callers knows: marotte-client.md "The run store". */
+ *  `executing` is the CALLER's statement rather than a default: only the caller
+ *  knows whether the frame it holds means the run is executing or parked. */
 export function noteRunLive(workflowID: string, chatID: string, executing: boolean): void {
   if (workflowID === "") {
     return;
@@ -716,13 +715,11 @@ export function hasLiveRunForChat(chatID: string): boolean {
 
 /** The live runs this chat launched, in the order they were recorded. Parked runs
  *  are INCLUDED like `hasLiveRunForChat`; parentless ones are EXCLUDED, their own
- *  tab dot already surfacing them (`run-dots.ts`).
- *
- *  The one TRACKED read of the inventory here, because this caller is a reactive
- *  effect where the two booleans' are not: marotte-client.md "The run store". A
- *  reader takes the whole row, `executing` included: the fetched cell can be absent
- *  for a run this client saw no frames for, and the row is then the only thing that
- *  says anything about it. */
+ *  tab dot already surfacing them (`run-dots.ts`). The one TRACKED read of the
+ *  inventory here, because this caller is a reactive effect. A reader takes the
+ *  whole row, `executing` included: the fetched cell can be absent for a run this
+ *  client saw no frames for, and the row is then the only thing that says anything
+ *  about it. */
 export function liveRunsForChat(chatID: string): LiveRunEntry[] {
   touch(liveRunsVersion);
   if (chatID === "") {
@@ -790,16 +787,12 @@ export async function rebuildLiveRuns(cause = "", signal?: AbortSignal): Promise
   observeStamp(d.subject);
 }
 
-/** Adopt an inventory somebody else already read.
- *
- *  The three seeds per row are what a reload would otherwise lose — marotte-client.md
- *  "The run store". The per-row `invalidateRun` is the one thing a caller opts into, by
- *  PASSING a cause rather than by passing a non-empty one: a gap threads `""`-or-token
- *  through legitimately and `invalidateRun(id, "")` is legal, so gating on `!== ""`
- *  would silently stop the gap door invalidating.
- *
- *  The clear and the repopulation are ONE synchronous pass under ONE bump, which is what
- *  keeps this from being a transient-empty fold for `chat-run-dots.ts`. */
+/** Adopt an inventory somebody else already read. The three seeds per row are what
+ *  a reload would otherwise lose. A caller opts into the per-row `invalidateRun` by
+ *  PASSING a cause, not a non-empty one: a gap threads `""` through legitimately and
+ *  `invalidateRun(id, "")` is legal. The clear and the repopulation are ONE
+ *  synchronous pass under ONE bump, so `chat-run-dots.ts` never sees a transient
+ *  empty inventory. */
 export function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
   liveRunChats.clear();
   for (const r of rows) {
@@ -1134,8 +1127,8 @@ export function leafNodes(root: RunNode | undefined): RunNode[] {
 }
 
 /** What KAS calls this node in a node PATH, which for a repeat's per-iteration
- *  container is not what it calls it in the state tree — the two spellings and why
- *  the frame's is canonical: marotte-acp.md "Workflow runs on the wire".
+ *  container is not what it calls it in the state tree; the frame's path spelling
+ *  is canonical.
  *
  *  A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the
  *  wrong place beats content that vanishes, the same call the server's own
@@ -1159,7 +1152,7 @@ export interface NodeAddress {
 /** A leaf's stable address within its run, plus whether the walk placed it.
  *
  *  Rebuilt from the tree rather than read off the node, because `NodeState` carries
- *  no path — the join and who owns it: marotte-client.md "The run card". */
+ *  no path. */
 export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeAddress {
   const found: string[] = [];
   const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
@@ -1200,7 +1193,8 @@ export interface RunCounters {
   done: number;
   failed: number;
   /** The 1-based position of the RUNNING leaf, or 0 when none is — the header's
-   *  "step N of M", and not `done + 1`: marotte-client.md "The run store". */
+   *  "step N of M", and not `done + 1`, which a skipped leaf or a parallel node
+   *  with several in flight would shift. */
   current: number;
 }
 
@@ -1328,8 +1322,8 @@ export function isNeedInputPause(reason: string | undefined): boolean {
 }
 
 /** The paused node whose own completion signal says it is waiting on a person.
- *  Depth-first, first match wins. Why the per-NODE signal is the only thing left of
- *  a park inside a parallel branch: marotte-acp.md. */
+ *  Depth-first, first match wins. The per-NODE signal is the only thing left of a
+ *  park inside a parallel branch, whose own sentence goes to a throwaway state copy. */
 function needInputNode(n: RunNode | undefined): RunNode | undefined {
   if (n === undefined) {
     return undefined;
@@ -1376,12 +1370,10 @@ function pauseClassLabel(cls: string): string | undefined {
 }
 
 /** The pause's machine detail as one phrase, or undefined when there is none.
- *  Upstream 2.21.1 made `pauseDetail.class` a two-member enum, and both render
- *  sites had folded the single member into prose — so an exhausted continuation
- *  budget read as "a transient error", which it is not and which points the
- *  reader at the wrong next action. An unrecognised class claims nothing.
- *  An ABSENT class takes the transient label: that is every pre-2.21.1 engine's
- *  wire, and the field is optional. Rule: `marotte-acp.md` single-member enums. */
+ *  `pauseDetail.class` is a two-member enum (since 2.21.1): an exhausted continuation
+ *  budget is not "a transient error", and reading it as one points the reader at the
+ *  wrong next action. An unrecognised class claims nothing. An ABSENT class takes the
+ *  transient label: that is every pre-2.21.1 engine's wire, and the field is optional. */
 export function pauseDetailPhrase(detail: RunState["pauseDetail"]): string | undefined {
   const code = detail?.code;
   if (code === undefined || code === "") {

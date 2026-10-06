@@ -316,14 +316,9 @@ body.sidebar-resizing {
 
   /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
    * only filled row in the strip is the selected one. The lift is the
-   * SELECTION-TINTED wash (01-tokens.css) rather than the ladder's achromatic
-   * one: on this strip the neutral film was the only untinted fill among rest,
-   * selected and the drag ghost, and it previews the fill the row is one click from.
-   *
-   * `any-hover`, never `hover`, per web.md — and unlike the SELECTED row's
-   * hover next door, this rule was never gated, so a tap latched the wash on
-   * until the next tap elsewhere. That matters more now that the wash carries
-   * the accent: a latched violet row reads as selected. */
+   * SELECTION-TINTED wash (01-tokens.css), previewing the fill the row is one
+   * click from. Gated on `any-hover` (`hover` reports only the primary input),
+   * so a tap does not latch a violet wash that reads as selected. */
   @media (any-hover: hover) {
     &:not(.active):hover {
       background: var(--c-hover-select);
@@ -522,7 +517,7 @@ body.sidebar-resizing {
 
 /* On <body> for the life of a drag, because the pointer leaves the strip and the
  * selection would follow it across the page. Paired: Safari through 27 parses only
- * the prefixed form (web.md). */
+ * the prefixed form. */
 .tab-dragging {
   -webkit-user-select: none;
   user-select: none;
@@ -672,25 +667,12 @@ body.sidebar-resizing {
 }
 
 /* The footer's identity control: the connection mark and the address are ONE
-   button, and it is the status popup's trigger. A reader presses the row rather
-   than an 8px disc, which is the whole point — the disc was the app's smallest
-   target and the address beside it did nothing but leave for app.kiro.dev.
-
-   The state channels are `.icon-btn`'s, by user instruction — the footer's two
-   controls are a PAIR and must answer the pointer alike — so the hover value below
-   is deliberately the shared class's rather than the app's row-hover recipe
-   (`--c-hover`, marotte-ui.md "ONE HOVER RECIPE"). `account-btn-css.test.ts` reads
-   both rules out of the sheet and fails when they diverge.
-
-   The box is `--footer-ctl-h` tall and centred by the footer, not stretched to the
-   band: hover, press and the focus ring are the element's own background, so one
-   box is what keeps all three the pill the logout button beside it paints. Shape
-   ruling in marotte-ui.md "THE FOOTER'S TWO CONTROLS ARE ONE PILL SIZE".
-
-   Button chrome is stripped by NAMED declarations rather than `all: unset`: that
-   shorthand resets `min-width`/`min-height` at this selector's own (0,1,0), which
-   is what made `.status-dot` invisible to the app-wide hit floor
-   (61-mcp-tools.css). Naming them keeps the floor reachable as a backstop. */
+   button, the status popup's trigger. Its state channels are `.icon-btn`'s, not
+   the row-hover `--c-hover`, because the footer's two controls are a PAIR that
+   answer the pointer alike (`account-btn-css.test.ts` fails when they diverge),
+   and its box is `--footer-ctl-h`, the logout button's pill, not the band. Chrome
+   is stripped by NAMED declarations, not `all: unset`, which would reset
+   `min-width`/`min-height` and hide the control from the app-wide hit floor. */
 .account-btn {
   appearance: none;
   background: none;
@@ -755,38 +737,13 @@ body.sidebar-resizing {
     background var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
 
-  /* GATED, unlike `.icon-btn`'s own `&:hover` one rule below, and the divergence is
-     deliberate rather than an oversight: `.icon-btn`'s ungated hover is a
-     pre-existing app-wide property of a shared class and not this change's to fix,
-     while an ungated wash on a 240px row latches under a finger until the next tap
-     elsewhere — far more visible than on a 32px glyph. `any-hover`, never `hover`:
-     the latter reports only the PRIMARY input and drops the rule on every
-     touch-primary device (web.md).
-
-     Measured, both floors, both themes (scripts/css-contrast.py): the three mark
-     inks over this fill are 7.544/4.048 (green), 8.827/4.455 (yellow) and
-     4.844/3.900 (red) dark/light against WCAG 1.4.11's 3:1, and the address ink is
-     11.217/11.795 against 1.4.3's 4.5:1. Nothing is close HOVERED.
-
-     RECORDED RESIDUAL — the one FAIL this control ships. The PRESSED composite is a
-     separate measurement and it is where the mark degrades, in BOTH themes: over
-     `over(--c-press, --c-bg-secondary)` the marks read 4.433/2.878 green,
-     5.187/3.168 yellow and 2.847/2.773 red, so dark red, light green and light red
-     all sit under 3:1 while light yellow clears at 3.168; pressed WHILE hovered
-     every figure drops again (2.259-4.117 dark / 2.333-2.665 light). The mechanism:
-     an inset `box-shadow` paints over its own element's background but BELOW its
-     descendants, so the press film lands on the row AROUND the disc while the disc
-     keeps its hue — painting order read from css-backgrounds-3 rather than measured
-     here. It is a real degradation INTRODUCED by merging the two controls: today the
-     mark IS the button, so the film lands on the DISC. Recorded rather than fixed,
-     for four reasons: the mark's meaning is also spelled in words one row inside the
-     card (`#st-ws`), announced through the live region on every settled change, and
-     published as this trigger's own tooltip; it is app-wide in kind (every mark
-     inside a pressed row has it, the tab strip's activity dots being the largest
-     population); fixing it means exempting this one control from 03-base.css's
-     universal press, which breaks the user's instruction that the footer's two
-     controls answer the pointer alike; and lifting the mark's own fill while pressed
-     is a fourth channel on a mark whose fill IS its state. */
+  /* GATED on `any-hover` (`hover` drops the rule on every touch-primary device),
+     unlike `.icon-btn`'s own hover: an ungated wash on a 240px row latches under a
+     finger until the next tap elsewhere. The marks and the address clear WCAG
+     1.4.11 / 1.4.3 over this fill in both themes. Known residual: under the PRESSED
+     inset film the mark keeps its hue while the row darkens around it, so some
+     marks drop under 3:1 while pressed; the state is also spelled in words in the
+     card, the live region and the tooltip. */
   @media (any-hover: hover) {
     &:hover {
       background: var(--c-bg-tertiary);
@@ -1094,35 +1051,19 @@ body.sidebar-resizing {
   box-shadow: inset 0 -0.35rem 0.75rem var(--c-glow-system);
 }
 
-/* ========================================================================
-   THE DISCLOSURE CHEVRON — see chevron.ts for why one technique replaced
-   three. This is the whole vocabulary: the glyph is `ICON_CHEVRON_DOWN`, the
-   closed state points along the inline axis, the open state points down at the
-   body below it, and `--chev-size` is the one other knob a site turns.
-
-   Both custom properties are DECLARED here rather than left to a `var()`
-   fallback, per the no-phantom-token rule in marotte-ui.md: a default that
-   lives only in a fallback is a literal wearing a token's name.
-
-   Declaring them on the chevron also enforces the one hazard worth naming.
-   They inherit, so setting `--chev-turn` on an ancestor (`.turn[data-folded]`,
-   say) would rotate every nested chevron inside it. A declaration on the
-   element beats an inherited value, so a site rule has no choice but to target
-   the chevron itself — which is what every one of them does.
-
-   This file sits EARLY in the MANIFEST order, so 14-tools, 29-turns,
-   17-settings, 22-git and 61-mcp each override size and colour with a bare
-   class selector by coming later at equal specificity, and flip `--chev-turn`
-   from whatever element carries THEIR open state. That is the intended
-   relationship, not a specificity accident.
-
-   The rotation is on this span rather than on the button some sites wrap it
-   in, so a focus ring stays axis-aligned and a hit target stays square. */
+/* THE DISCLOSURE CHEVRON (chevron.ts): the glyph is `ICON_CHEVRON_DOWN`, closed
+   points along the inline axis, open points down, `--chev-size` is the other knob.
+   Both properties are DECLARED here, never left to a `var()` fallback, and on the
+   chevron itself: they inherit, so a value set on an ancestor would rotate every
+   nested chevron, and the element's own declaration forces site rules to target
+   the chevron. This file sits EARLY in MANIFEST so later sheets override at equal
+   specificity. The rotation is on this span so a wrapping button's focus ring stays
+   axis-aligned. */
 .disclosure-chevron {
   --chev-turn: -90deg;
   /* 16px, matching `--icon-ui`. The chevron's own coordinates are multiples of 3, and
      at 16/24 those map to whole css pixels — ONE phase class, so the snap aligns all
-     of them (`marotte-ui.md` "Icon crispness"). 14px gives 4 classes and 12px gives 2. */
+     of them. 14px gives 4 classes and 12px gives 2. */
   --chev-size: 1rem;
 
   display: grid;

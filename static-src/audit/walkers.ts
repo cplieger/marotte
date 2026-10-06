@@ -1,32 +1,16 @@
-// ---------------------------------------------------------------------------
-// The ui-qa audit walkers: ONE implementation, in the app, for TWO consumers.
-// vitest runs them here against fixtures as a CI gate, and the ui-qa runners
-// (`.kiro/skills/ui-qa/references/{control-height,radius,contrast}-audit.mjs`)
-// inject the same source into a live page over CDP — `cdp.mjs auditSource`
-// imports this file and calls `pageSource`, which is why the module lives in the
-// app rather than beside those runners: a walker change is an app change with a
-// red-green test, and the number a runner prints is the number vitest pinned.
-//
-// FOUR CONSTRAINTS, every one of them from the injection side:
-//
-//  1. A WALKER IS SELF-CONTAINED. It is serialised with
-//     `Function.prototype.toString()`, so it may reference nothing from module
-//     scope — only its own body, the page's globals, and the helpers
-//     `pageSource` emits beside it (see HELPERS).
-//  2. ONLY ERASABLE TYPE SYNTAX. node imports this `.ts` file with type
-//     stripping, which BLANKS annotations rather than compiling them (measured:
-//     `(o: Opts)` comes back as `(o      )`), so an enum, a decorator or a
-//     parameter property would reach the page as a syntax error.
-//  3. EVERY RESULT IS JSON. `Runtime.evaluate` returns by value, so no element
-//     reference can cross the boundary and a finding carries a DESCRIPTION.
-//  4. NOTHING TOUCHES THE DOM AT MODULE LOAD. node imports this file with no
-//     document at all.
-//
-// The findings are deduped with a count, because a repeated row (fifty list
-// items with one wrong control) is one finding a reader acts on once.
-// ---------------------------------------------------------------------------
+// The audit walkers: ONE implementation, in the app, for TWO consumers. vitest
+// runs them against fixtures as a CI gate, and live-page audit runners outside
+// this repo import this file and inject `pageSource` into a page over CDP, so a
+// walker change is an app change with a red-green test and the number a runner
+// prints is the number vitest pinned. Nothing here touches the DOM at module
+// load: node imports this file with no document at all.
 
-/** A page-side audit. Takes its options by value and returns JSON. */
+/** A page-side audit, serialised with `Function.prototype.toString()`, so it
+ *  references nothing from module scope (only its own body, the page's globals
+ *  and the HELPERS `pageSource` emits beside it); uses only erasable type syntax,
+ *  because node strips annotations to blanks and an enum or a parameter property
+ *  would reach the page as a syntax error; and returns JSON, because
+ *  `Runtime.evaluate` returns by value, so a finding carries a DESCRIPTION. */
 type Walker = (opts: never) => unknown;
 
 // --- helpers, emitted into the page beside the walker -----------------------
@@ -144,8 +128,8 @@ function distortedUnder(el: Element): Element | null {
   return null;
 }
 
-/** Group by a key, keeping the FIRST payload and counting the rest. Every
- *  finding list below is bucketed this way. */
+/** Group by a key, keeping the FIRST payload and counting the rest: fifty list
+ *  items with one wrong control are one finding a reader acts on once. */
 function bucket<T>(rows: readonly (readonly [string, T])[]): (T & { count: number })[] {
   const seen = new Map<string, T & { count: number }>();
   for (const [key, payload] of rows) {
@@ -361,24 +345,12 @@ function reveal(): { revealed: number; passes: number } {
 
 // --- control height --------------------------------------------------------
 
-/** Every form control whose height disagrees with the controls beside it
- *  (marotte-ui.md "One control height per row"), and every control whose TARGET
- *  is under the tier's hit floor.
- *
- *  A ROW is a flex or grid parent plus a vertical BAND, which is what makes this
- *  a claim about controls a reader sees side by side rather than about every
- *  control on the page. Members are clustered by rect overlap rather than by a
- *  rounded coordinate, so two controls one pixel either side of a bucket
- *  boundary still belong to the same row.
- *
- *  A target IN A SENTENCE is excluded outright (`inlineInText`): that is WCAG
- *  2.5.8's own inline exception, and an inline box constrained by a line height has
- *  no height for a row to agree on either. Reported as `inlineExempt` rather than
- *  dropped silently, because the population is large enough that a reader should
- *  see it was looked at.
- *
- *  A box HEADER is not a control and is invisible here — that is
- *  `height-sweep.mjs`. */
+/** Every form control whose height disagrees with the controls beside it (one
+ *  control height per row), and every control whose TARGET is under the tier's hit
+ *  floor. A ROW is a flex or grid parent plus a vertical BAND, clustered by rect
+ *  overlap rather than a rounded coordinate. A target IN A SENTENCE is WCAG 2.5.8's
+ *  inline exception and is reported as `inlineExempt`, not dropped. A box HEADER is
+ *  not a control and is out of scope here. */
 function controlHeight(opts: { tol: number; floor?: number }): unknown {
   const SEL = [
     "button",
@@ -466,20 +438,11 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
       fs: cs.fontSize,
       node: el,
     };
-    // IS THIS CONTROL CLAIMING THE ROW'S HEIGHT AT ALL? A control painted under
-    // the floor that grows its target with an expander has DECLARED itself
-    // visually small, which `marotte-ui.md` states as its own rule — "a
-    // control-height token belongs to a control that OWNS its row, and anything
-    // riding inside a row already floored at one measures the ink beside it
-    // instead" — so it is not in the one-height-per-row population and comparing
-    // it against a sibling reports a settled decision as a defect.
-    //
-    // Both rows this closes were measured on the live app and both are documented
-    // deliberate: a tool header's file badge reads the glyph token so it does not
-    // inflate a 36px row, and the turn footer's Rewind leaves the floor because
-    // its resting border would weld onto the card's. Neither is silent — each
-    // lands in `expanded`, which is a reporting bucket for exactly the reason
-    // `growsTarget` reads a declaration rather than a hit test.
+    // IS THIS CONTROL CLAIMING THE ROW'S HEIGHT AT ALL? A control painted under the
+    // floor that grows its target with an expander has DECLARED itself visually
+    // small: a control-height token belongs to a control that OWNS its row, so it is
+    // outside the one-height-per-row population. It lands in `expanded`, a reporting
+    // bucket, because `growsTarget` reads a declaration rather than a hit test.
     const shortSide = Math.min(r.height, r.width);
     if (shortSide + tol < floor && growsTarget(el)) {
       const { node: _n, ...row } = m;
@@ -627,22 +590,12 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
 // --- radius ----------------------------------------------------------------
 
 /** Every nested rounded corner that does not nest, all four corners of every
- *  radius-bearing element against its nearest radius-bearing ancestor.
- *
- *  THE RULE IS web.md's: a corner is a quarter circle whose centre sits `radius`
- *  in from both edges it joins, so two arcs share a centre only at
- *  `inner = outer - outer-border - inset`, and equal centres additionally
- *  require the inset to be EQUAL on the corner's two edges. An anisotropic inset
- *  is therefore unsatisfiable at any single radius — reported as its own verdict
- *  with no ideal, because the fix is the inset rather than the radius.
- *
- *  Two shapes are outside the rule rather than breaking it, and both are reported
- *  as exempt rather than silently dropped: a stadium or circle (a radius at or
- *  past half the shorter side is a deliberate shape, not a nesting decision), and
- *  a child sitting flush inside a clipping parent, which takes the parent's
- *  corner. A child that paints nothing AT REST is NOT exempt — nearly every icon
- *  button gets a background on hover — so it is judged and flagged as
- *  hover-only. */
+ *  radius-bearing element against its nearest radius-bearing ancestor. Two arcs
+ *  share a centre only at `inner = outer - outer-border - inset` with the inset
+ *  EQUAL on the corner's two edges; an anisotropic inset is its own verdict with no
+ *  ideal. Exempt, and reported as such: a stadium or circle (radius at or past half
+ *  the shorter side), and a child flush inside a clipping parent. A child that
+ *  paints nothing AT REST is judged and flagged as hover-only. */
 function radius(opts: { tol: number }): unknown {
   const tol = opts.tol;
   const CORNERS = [

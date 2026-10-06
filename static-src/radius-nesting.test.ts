@@ -2,13 +2,11 @@ import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-// ---------------------------------------------------------------------------
 // Nested corners: a child against its container's corner is concentric only at
-// `inner = outer - outer-border - inset` (web.md "A nested rounded corner"). Pinned
-// because the arithmetic lives in a `calc()` on a custom property and a missing
-// declaration fails SILENTLY: `var(--menu-radius)` with nothing behind it is an
-// invalid value and the corner renders SQUARE.
-// ---------------------------------------------------------------------------
+// `inner = outer - outer-border - inset`. Pinned because the arithmetic lives in a
+// `calc()` on a custom property and a missing declaration fails SILENTLY:
+// `var(--menu-radius)` with nothing behind it is an invalid value and the corner
+// renders SQUARE.
 
 const host = document.createElement("div");
 host.style.cssText = "position:fixed;top:-9999px;left:0;";
@@ -96,8 +94,8 @@ describe("a 24px icon button takes the ladder's small rung", () => {
 
   // The SHAPE half of the same claim, which the 4px assertion alone cannot make: a
   // percentage radius resolves against the box, so `parseFloat` on "50%" yields 50 and
-  // every pixel comparison above passes for a circle too. Read the way
-  // `radius-audit.mjs` reads it, and assert the corner is not a circle by its own test.
+  // every pixel comparison above passes for a circle too, so assert the corner is not
+  // a circle by its own test.
   it("keeps the attachment pill's remove control a rounded square, never a circle", () => {
     const pill = document.createElement("li");
     pill.className = "attachment-pill";
@@ -163,12 +161,10 @@ describe("the footer's ledger keeps ONE radius on every corner", () => {
       },
     ],
   ] as const)("gives the ledger the ladder's rung inside a %s", (cls, nest) => {
-    // It used to take the CARD's arc on the one corner it shared with it. It shares none
-    // now: the control paints a box centred in the band rather than filling it
-    // (29-turns.css), so the concentric rule has no single answer — an inset of 4px on
-    // one edge and 0 on the other is unsatisfiable at any radius (`web.md`) — and one
-    // rung is the whole vocabulary, the same 4px its siblings at the row's other end
-    // paint.
+    // The control paints a box centred in the band rather than filling it
+    // (29-turns.css), so the concentric rule has no single answer: an inset of 4px on
+    // one edge and 0 on the other is unsatisfiable at any radius. One rung is the
+    // whole vocabulary, the same 4px its siblings at the row's other end paint.
     const card = document.createElement("div");
     card.className = cls;
     const footer = document.createElement("div");

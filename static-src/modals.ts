@@ -195,10 +195,6 @@ export function closeTopModal(): boolean {
   return false;
 }
 
-// showConfirm removed — use confirm() from "./confirm.js" instead.
-// The static #confirm-modal element in index.html has also been
-// removed; confirm.ts creates its own <dialog> on demand.
-
 // --- Login modal ------------------------------------------------------------
 
 /** Active login-poll abort controller; aborted when the modal is dismissed. */

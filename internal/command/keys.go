@@ -8,9 +8,8 @@ import (
 )
 
 // JSON protocol key constants used across command response maps and
-// pending-permission payloads. These are wire-format identifiers
-// documented in marotte.md / marotte-acp.md; centralising them keeps
-// the goconst linter happy and makes renames visible in one place.
+// pending-permission payloads. These are wire-format identifiers;
+// centralising them makes renames visible in one place.
 const (
 	keyError = "error"
 	keyName  = httpreply.JSONKeyName

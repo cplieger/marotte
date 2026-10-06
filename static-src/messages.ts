@@ -1057,11 +1057,10 @@ function paint(): void {
   paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
   // The placeholder never coexists with content, dropped HERE because this is the
-  // line where content lands (`marotte-ui.md` "A SKELETON MAY ONLY PAINT OVER AN
-  // EMPTY CONTAINER" owns why the activation's continuation is too late). Only with
-  // something to replace it: an empty turn list is a chat still loading. Scoped to
-  // THIS view, and the load-more furniture is deliberately untouched — that one
-  // mounts BESIDE real turns.
+  // line where content lands; the activation's continuation is a frame too late, and
+  // a skeleton may only paint over an EMPTY container. Only with something to
+  // replace it: an empty turn list is a chat still loading. Scoped to THIS view; the
+  // load-more furniture is deliberately untouched, as it mounts BESIDE real turns.
   if (turns.length > 0) {
     const skel = document.getElementById(CHAT_SKELETON_ID);
     if (skel !== null && root.contains(skel)) {
@@ -1924,7 +1923,7 @@ function syncTurnCloseNotes(card: HTMLElement, t: Turn, chatID: string): void {
 
 /** Keep an appended card-level region above the ledger. Moves ONLY a region below the
  *  footer: re-seating an attached node restarts its animations and drops focus and
- *  `:hover` inside it (`web.md`), and `.code-refs` is a disclosure the reader opens. */
+ *  `:hover` inside it, and `.code-refs` is a disclosure the reader opens. */
 function placeAboveFooter(card: HTMLElement, selector: string): void {
   const region = card.querySelector<HTMLElement>(`:scope > ${selector}`);
   const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
@@ -1988,8 +1987,7 @@ function buildTurn(t: Turn): HTMLElement {
   // A turn the reader just sent overrides Reading. BOTH conditions, because a user
   // trigger alone does not mean they asked for anything NOW: this mount also runs
   // for a chat-switch replay, a refetched window and a prepend, and the pin
-  // publishes a reader gesture that would revoke the rail's own pick
-  // (`marotte-client.md` "The timeline rail").
+  // publishes a reader gesture that would revoke the timeline rail's own pick.
   if (t.trigger !== undefined && appendNewIds.has(t.id)) {
     scrollToBottom();
   }
@@ -2420,7 +2418,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   btn.disabled = busy;
   // The CONSEQUENCE, in the channel `aria-label` is not: the name carries the
   // action. `data-tooltip` rather than `title` reaches this button even while it
-  // is disabled — `web.md` "A DISABLED control still fires hover events".
+  // is disabled, because a disabled control still fires hover events.
   btn.setAttribute(
     "data-tooltip",
     busy
@@ -2520,8 +2518,8 @@ function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
 
 /** The row wrapper for a top-level assistant bubble.
  *
- *  No avatar: the card already establishes identity (`marotte-ui.md` "There are no
- *  bubbles"). The row element stays because the block dispatcher mounts into it. */
+ *  No avatar: the card already establishes identity. The row element stays because
+ *  the block dispatcher mounts into it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;
 }

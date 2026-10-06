@@ -275,46 +275,19 @@
  * structure changed mid-stream. Visual smoothness now comes from the
  * chat-entry animation + height interpolation + flush throttle. */
 
-/* NO ENTRY ANIMATION ON AN APPENDED TRANSCRIPT ELEMENT, and this is a GPU budget
- * rather than a taste call. Animating `opacity` or `transform` composites the
- * element, and a composited layer costs its own AREA x DPR^2 x 4 bytes — so the
- * rule scales with the box, and this attribute was on a bare selector that
- * matched every appended element including the turn card. Measured: the tallest
- * turn card on a real transcript is 3,203 CSS px, which on a 430px-wide phone at
- * DPR 3 is a 47 MB layer, 3.4 full screens, created and destroyed per mount for
- * a 200ms fade. Reported as constant WebKit tab crashes plus a phone that heats
- * up; the reading, the arithmetic and what is left animating are in
- * `marotte-ui.md` "Entry motion is a GPU budget".
- *
- * What is left animating is the streamed text's own per-chunk and per-block
- * fades, which are small elements. */
+/* NO ENTRY ANIMATION ON AN APPENDED TRANSCRIPT ELEMENT: a GPU budget, not taste.
+ * Animating `opacity` or `transform` composites the element, and a layer costs
+ * AREA x DPR^2 x 4 bytes, so a tall turn card on a DPR-3 phone is tens of MB per
+ * mount (crashed WebKit tabs). What is left animating is the streamed text's own
+ * per-chunk and per-block fades, which are small elements. */
 
-/* ==========================================================================
-   THE DOT BEAT — one keyframe set, created per dot and only while it beats.
-
-   An idle app runs NOTHING. This replaced a single `vk-beat` animation on `:root`
-   driving an inherited registered custom property that 11 rules read as
-   `opacity: calc(...)`: that made the cost independent of the DOT COUNT by making
-   it proportional to the DOCUMENT and permanent, so the worst case was an idle
-   page with no dot on screen re-inheriting a changed property across 8,294
-   elements 60 times a second to animate nothing. Measured 3-4ms of every frame
-   and 23-55 dropped frames per 90, against per-dot sitting at the floor even at
-   48 dots. Numbers and the refuted claim: `marotte-ui.md` "Entry motion is a GPU
-   budget".
-
-   A dot declares its PEAK and inherits the rest: `from`/`to` are implicit, so
-   they are the element's own `opacity`, which is what makes reduced motion
-   correct for free — the global sweep in 40-a11y.css runs the animation once for
-   0.01ms and the dot then rests at its own resting amplitude, exactly as a
-   stopped clock used to leave it. So no rule here needs a reduced-motion arm.
-
-   SYNCHRONISATION IS A SHARED ORIGIN, NOT A SHARED CLOCK. `--beat-phase` is a
-   negative `animation-delay` of `-(now % duration)`, so an animation created at
-   any moment behaves as though it began on one global grid; `beat-phase.ts`
-   stamps it. Proven cross-time: dots created 0, 700 and 1600ms apart read
-   0.864/0.846/0.847 then 1/1/1, against 0.277 for an unaligned control. The
-   fallback is `0ms`, so a dot whose phase never lands beats correctly and merely
-   out of step. */
+/* THE DOT BEAT: one keyframe set, created per dot and only while it beats, so an
+   idle app runs NOTHING. A dot declares its PEAK and inherits `from`/`to` from its
+   own `opacity`, so 40-a11y.css's reduced-motion sweep leaves it at its resting
+   amplitude and no rule here needs a reduced-motion arm. Synchronisation is a
+   shared ORIGIN: `--beat-phase` (stamped by beat-phase.ts) is a negative delay of
+   `-(now % duration)`, so every dot sits on one global grid; the `0ms` fallback
+   beats correctly, merely out of step. */
 
 @keyframes vk-dot-beat {
   50% {

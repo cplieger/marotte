@@ -277,8 +277,7 @@ function mountForeignRow(name: string): HTMLElement {
   const row = el("div", { className: "mcp-row mcp-row-readonly" }, body) as HTMLDivElement;
 
   // A nested effect's only disposer is its own stop function — the enclosing effect
-  // disposes nothing (`web.md` "A NESTED `effect` IS NOT OWNED BY THE EFFECT THAT
-  // CREATED IT"), so the list holds this one and `onRemove` calls it.
+  // disposes nothing — so the list holds this one and `onRemove` calls it.
   foreignRowCleanups.get(name)?.();
   foreignRowCleanups.set(
     name,

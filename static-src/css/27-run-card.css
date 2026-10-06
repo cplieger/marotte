@@ -1,29 +1,10 @@
-/* ==========================================================================
-   The workflow run card — a run's RECORD in the transcript, and nothing else.
-   Head, alert, one row per step, foot. It renders no step CONTENT: each row is a
-   door into `/run/{id}` with that node selected, and the step's own transcript is
-   rendered there (`exec-view/detail.ts`). The `/run/{id}` page is a different
-   component (31-exec-view.css); the `full` detail mode that once made this one
-   serve both is long gone.
-
-   Every rule is scoped under `.run-card`, which used to be a collision defence:
-   the /run/{id} page owned its own `.run-*` vocabulary in 18-pages.css
-   (`.run-status`, `.run-tree`, `.run-node-*`, `.run-output`) and two components
-   sharing a class name is how one page's tweak silently restyles another. Those
-   rules are GONE — the page renders this card now — so the scoping is ordinary
-   hygiene again rather than a guard.
-
-   The head is the run's IDENTITY row (name plus step counter) and the foot its
-   OUTCOME row (steps, failures, status word, elapsed). One fact, one row: the head
-   carried the word and the clock too, 44px above the foot saying both.
-
-   Nesting is THREE boxes now, not four: a turn card holds this card, this card
-   holds a step row, and the row holds only its own spans. So the radius ladder
-   stops at --r — --r-lg at the card, --r at a step — and each level's inline
-   padding is what keeps the concentric rule (`child-radius = parent-radius -
-   parent-padding`, web.md). Uncapped and unindented, like every other evidence
-   block (see .tool-call).
-   ========================================================================== */
+/* The workflow run card: a run's RECORD in the transcript (head, alert, one row per
+   step, foot). It renders no step CONTENT: each row is a door into `/run/{id}` with
+   that node selected. The head is the run's IDENTITY row and the foot its OUTCOME
+   row; one fact, one row. Three boxes nest (turn card, this card, step row), so the
+   radius ladder stops at --r, and each level's inline padding keeps the corners
+   concentric (child = parent radius − parent padding). Uncapped and unindented,
+   like every other evidence block (.tool-call). */
 
 .run-card {
   /* The COLLAPSED card's content height — head, foot row, foot hairline — which is
@@ -175,9 +156,8 @@
    two pixels away, in the one channel the card uses for its own edge. The
    non-colour channel is the alert's own text: `fundamentals/run-card.ts` writes
    the state into `alert.textContent`, on a `role="status"` live region. */
-/* A notice is a hue wash of its state over the container, never a rung
-   (marotte-ui.md "Notices"). Every kind `renderAlert` writes has an arm, so the
-   base carries no fill. */
+/* A notice is a hue wash of its state over the container, never a rung. Every
+   kind `renderAlert` writes has an arm, so the base carries no fill. */
 .run-alert {
   margin: var(--sp-2) var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
@@ -505,7 +485,7 @@
 
 /* Outside the disclosure, so a collapsed card still states its result. No block
    padding: the row IS `.run-open`'s hit box. Box rung with a rule, like every
-   nested foot (marotte-ui.md "Bands"). */
+   nested foot. */
 .run-foot {
   display: flex;
   align-items: center;
@@ -534,19 +514,13 @@
   color: var(--c-text-secondary);
   text-decoration: none;
 
-  /* The hit target on this 11px row is the APP-WIDE FLOOR's (61-mcp-tools.css):
-     24px on a fine pointer, 44px on a coarse one, so it follows the tier with no
-     value here to keep in step. The `1.5rem` this used to declare was (0,1,0) and
-     beat that zero-specificity floor, which left the link at 24px under a finger.
-     The `padding-inline` is the hover wash's inset, not the target.
-
-     THE BAND IS THIS BOX, now that the foot carries no block padding: the floor
-     alone would leave the row at 24px on a mouse where every other card foot is 32,
-     so this declares the same band they do — the dense control height, floored by the
-     target. (0,1,0), which is what lets it raise the zero-specificity floor rather
-     than replace it. Its hover wash then spans the band and lands flush in the card's
-     bottom trailing corner, which the card's own clip rounds (`web.md`: a child flush
-     inside a clipping parent takes the parent's corner). */
+  /* The hit target is the APP-WIDE FLOOR's (61-mcp-tools.css), 24px fine and 44px
+     coarse; a (0,1,0) height here would beat that zero-specificity floor. The
+     `padding-inline` is the hover wash's inset, not the target. The foot has no
+     block padding, so THE BAND IS THIS BOX: the dense control height floored by the
+     target, matching every other card foot. Its hover wash lands flush in the card's
+     bottom trailing corner, which the card's own clip rounds: a child flush inside
+     a clipping parent takes no radius of its own. */
   min-height: max(var(--hit-floor), var(--ctl-h-dense));
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);

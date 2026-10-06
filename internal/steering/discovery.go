@@ -11,12 +11,12 @@ import (
 )
 
 // Doc is one classified per-repo steering markdown file. The
-// `Filename` is the basename (e.g. "conventions.md"); the `Inclusion`
+// `Filename` is the basename (e.g. "notes.md"); the `Inclusion`
 // + `FileMatch` + `Description` are parsed from YAML frontmatter (or
 // defaulted when absent). Used by writeWorkspace to render the per-repo
 // steering inventory in environment.md grouped by trigger type.
 type Doc struct {
-	Filename    string // basename, e.g. "architecture.md"
+	Filename    string // basename, e.g. "notes.md"
 	Inclusion   string // "always" | "fileMatch" | "manual" | "auto"; defaults to "always"
 	FileMatch   string // glob pattern when Inclusion == "fileMatch"; empty otherwise
 	Description string // human-readable description from the description field

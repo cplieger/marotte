@@ -128,7 +128,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 // tangent inherited nothing.
 //
 // It refuses nothing, and a failure does not heal itself: the chat stays as it stands.
-// Why the load runs here, and what a late swap reaches: `marotte.md`'s `fork_chat` row.
+// A merge that lands after the command answered is announced by the transcript swap.
 func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *marotte.Chat) (*marotte.Chat, bool) {
 	if c == nil || c.ACPSessionID == "" {
 		return c, false

@@ -128,19 +128,11 @@
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
 
-  /* NO SHADOW (user ruling, 2026-09-14, from a phone report). marotte-ui.md's
-     shadow population is "overlays", which this is — and the ruling narrows that
-     to the surfaces a reader meets as a LIFTED card. A toast shares one band with
-     `.banner`, which paints its edge with a 1px border and no shadow, so the two
-     rows of one band were drawn as two different kinds of object; the skin's own
-     severity rules already exist to make them read as one component.
-
-     It also DOUBLE-PAINTED the edge, which is the defect the transcript's resume
-     control already recorded: `--shadow-ambient` is `0 0 0 1px var(--c-border)`,
-     the same token and the same colour as the `border` above it, so the two
-     hairlines stacked and the toast carried a 2px rim. Deleting the declaration
-     removes the drop shadow AND that duplicate in one edit — the border below is
-     the whole edge now, so do not restore either layer without moving the border. */
+  /* NO SHADOW: a toast shares one band with `.banner`, which paints its edge with a
+     1px border and no shadow, so both rows of the band read as one component. A
+     shadow here also DOUBLE-PAINTS the edge (`--shadow-ambient` is
+     `0 0 0 1px var(--c-border)`, the same hairline as the border): the border
+     below is the whole edge, so do not add either layer without moving it. */
   overflow-wrap: break-word;
 
   /* Enter from ABOVE (slide down), which is the edge a top-anchored stack is
@@ -169,25 +161,11 @@
 
 /* Severity is the WASH plus the ink, byte-identical in shape to `.banner-*`
    (13-messages.css), so a toast and a banner sharing the band read as one
-   component rather than two. A SOLID `--c-red`/`--c-green` fill with
-   `--c-on-accent` ink is the rejected alternative, and it is rejected on the BAND
-   rather than on contrast: it measures 7.59:1 dark and 5.98:1 light, so it is
-   perfectly legible and still reads as a different component beside a banner.
-
-   THE BASE IS THE CANVAS TOKEN, NOT THE RAISED ONE, for the reason the banner
-   records: in light mode `--c-bg-secondary` is darker than the canvas and put the
-   error level at 4.23:1 against the 4.5 its text needs. Measured on this pair with
-   `scripts/css-contrast.py`: red 7.73:1 dark / 5.09:1 light, green 11.67:1 / 5.30:1.
-
-   THE BORDER STAYS, where the solid fill set it transparent: the wash sits within
-   a few percent of the canvas, so an unbordered rectangle reads as a hole punched
-   in the transcript underneath it. `.banner` keeps one for the same reason.
-
-   There is deliberately no `--info` rule. `info` is the neutral base above, which
-   is where a toast's level vocabulary and a banner's stop agreeing: a banner's
-   lowest level is a CONDITION worth acting on and takes the accent wash, while
-   most of this app's `toast.info` calls are statements of fact, and accent ink is
-   this app's text-control idiom (marotte-ui.md "Color system"). */
+   component; a solid fill is legible but reads as a different component. The
+   base is the CANVAS token: light `--c-bg-secondary` put the error level under
+   4.5:1. The border stays, or the near-canvas wash reads as a hole. No `--info`
+   rule: `info` is the neutral base, because accent ink is this app's
+   text-control idiom and most `toast.info` calls are statements of fact. */
 
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--error {

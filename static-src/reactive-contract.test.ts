@@ -47,16 +47,12 @@ describe("a nested effect's lifetime is its OWN", () => {
   });
 });
 
-// An element LEAVING the list leaves every element before it SEATED, which is what
-// makes a key safe to derive from content again. It was the opposite until
-// `@cplieger/reactive` 2.1.1: the placement walk ran before the departing elements were
-// removed, so a predecessor's `nextSibling` pointed at a node about to vanish and the
-// position guard re-seated a row nothing had changed, restarting its animations and
-// dropping `:hover` and focus. Mechanism and the consumer rule: `web.md` "A KEYED
-// RECONCILE IS NOT ENOUGH ON ITS OWN".
-//
-// A DEPENDENCY contract, so these four cases are what a downgrade or a regression in the
-// library trips, and focus is the assertion because identity survives a re-seat.
+// An element LEAVING the list leaves every element before it SEATED (since
+// `@cplieger/reactive` 2.1.1, which removes departing elements before the placement
+// walk), which is what makes a key safe to derive from content. A re-seat restarts
+// animations and drops `:hover` and focus. A DEPENDENCY contract: a downgrade or a
+// library regression trips these four cases, and focus is the assertion because
+// identity survives a re-seat.
 describe("reconcile leaves a predecessor seated when a later element leaves", () => {
   const mount = (k: string): HTMLElement => {
     const b = document.createElement("button");

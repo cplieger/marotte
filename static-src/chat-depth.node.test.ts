@@ -1,17 +1,9 @@
-// The transcript's depth ladder and its one hover recipe, in BOTH themes, because
-// the claim being guarded is that the two are one ladder run in opposite
-// directions. The ladder, the numbers and what a collapse looked like:
-// marotte-ui.md "Color system".
-//
-// Shelling out to `scripts/css-contrast.py` rather than reimplementing the colour
-// maths, for the reason `rail-mark-contrast.node.test.ts` records: a second
-// implementation is a second thing to be wrong.
-//
-// The hover POPULATION is DERIVED from the stylesheets. A hand-kept list of six
-// selectors passes forever once somebody adds a seventh box header, which is the
-// failure this guard exists to prevent.
-//
-// Node environment: this runs a process.
+// The transcript's depth ladder and its one hover recipe, in BOTH themes: the two
+// themes run one ladder in opposite directions. Shells out to
+// `scripts/css-contrast.py` rather than reimplementing the colour maths (a second
+// implementation is a second thing to be wrong). The hover POPULATION is DERIVED
+// from the stylesheets, because a hand-kept list passes forever once somebody adds
+// a box header. Node environment: this runs a process.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -242,7 +234,7 @@ describe("one hover recipe for every box header in a transcript", () => {
   it("gates each of them on any-hover so a tap cannot latch the wash on", () => {
     // Each of these is a disclosure trigger or a link, so the finger is still on
     // it when the gesture ends and `:hover` sticks. `any-hover` rather than
-    // `hover`, per web.md: `hover` reports the primary input only.
+    // `hover`: `hover` reports the primary input only.
     for (const r of population) {
       expect(
         r.gated,

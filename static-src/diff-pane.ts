@@ -61,7 +61,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   // The toggle is a toolbar control, not a caption: sharing the label row made
   // both labels flex-shrink around it, so a caption stopped sitting over the
-  // column it names. Measurement in `marotte-ui.md` "Diff viewer".
+  // column it names.
   if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
     container.appendChild(
       el("div", { className: "diff-pane-toolbar" }, buildWhitespaceToggle(container, opts)),
@@ -126,7 +126,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   }
 
   // The body is the one vertical scroller and the columns are cells of its grid,
-  // so the two sides cannot shear. Reasoning: `marotte-ui.md` "Diff viewer".
+  // so the two sides cannot shear.
   //
   // A column is a tab stop because it is a scroll container: arrows take its own
   // axis and bubble to the body for the other, so one stop reaches both and
@@ -312,8 +312,7 @@ function populateRow(
 
 /** Give the columns one shared horizontal scrollbar at the bottom of the
  *  SCROLLPORT: a column is as tall as the file, so its own bar would sit below
- *  every scroll position but the last. Contract, and the two widths that make it
- *  correct: `marotte-ui.md` "Diff viewer". */
+ *  every scroll position but the last. */
 function wireHorizontalScroll(
   viewport: HTMLDivElement,
   left: HTMLDivElement,
@@ -500,7 +499,7 @@ function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
 
 /** Build the map: one mark per run. `aria-hidden` and not focusable, because the
  *  rows are the accessible statement of what changed and this is a pointer
- *  shortcut to a position they carry. Contract: `marotte-ui.md` "Diff viewer". */
+ *  shortcut to a position they carry. */
 function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivElement {
   const map = el("div", {
     className: "diff-map",

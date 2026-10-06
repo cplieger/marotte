@@ -404,14 +404,11 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 
 // applyUpdateRefusal folds a workflow-update tool's own verdict onto the card.
 //
-// ONE-WAY and narrow, by four mechanical conditions rather than by a promise: the key
-// is the FIELD and not a tool name or title (rawOutputUpdate reports present=false
-// for every other tool), absent means taken, it only ever marks a call the status
-// already settled as `completed`, and it never clears the mark. THIS IS THE STATED
-// EXCEPTION to marotte-acp.md's rule that outcome comes from the tool_call status and
-// never from a payload: the general test is that a field RESTATING the outcome
-// (`success`, which is `legacySuccess ?? isSuccess(actionState)`) is never read, while
-// a domain fact carried on no other channel is a different question.
+// ONE-WAY and narrow: keyed on the FIELD (rawOutputUpdate reports present=false for
+// every other tool), absent means taken, it only marks a call the status already
+// settled as `completed`, and it never clears the mark. The one exception to reading
+// outcome from the tool_call status alone: a field RESTATING the outcome (`success`)
+// is never read, while a domain fact carried on no other channel is.
 func applyUpdateRefusal(tc *marotte.ToolCall, raw json.RawMessage) {
 	if tc.Status != marotte.ToolCompleted {
 		return

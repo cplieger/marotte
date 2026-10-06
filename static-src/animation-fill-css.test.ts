@@ -110,9 +110,7 @@ const ENTRY: readonly Fixture[] = [
 /** A container whose height the CONTENT decides may carry no entry animation at
  *  all. Animating `opacity` or `transform` composites the element, and a layer
  *  costs its own area x DPR^2 x 4 bytes — so a 3,203 CSS px turn card is a 47 MB
- *  layer on a DPR-3 phone, per mount, which is what crashed WebKit and heated the
- *  device. These carried one until 2026-09-10; `marotte-ui.md` "Entry motion is a
- *  GPU budget". The reader of the removed rows in ENTRY, so a re-added animation
+ *  layer on a DPR-3 phone, per mount, which crashes WebKit. A re-added animation
  *  fails here rather than silently costing a layer again. */
 const UNBOUNDED: readonly Fixture[] = [
   { what: "an appended chat element", el: "div[data-chat-entry]" },
