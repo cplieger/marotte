@@ -393,7 +393,7 @@ func TestCmdSteerRemove_ATurnEndOutlivesTheOpsBudget(t *testing.T) {
 		if _, err := CmdSteerRemove(t.Context(), steerRolesOf(h, NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
 			t.Fatalf("CmdSteerRemove = %v, want success", err)
 		}
-		h.waitPrompt(t)
+		h.waitInflight(t)
 
 		if log := q.callLog(); !slices.Contains(log, "delivered") || slices.Contains(log, "unsent") {
 			t.Errorf("record calls = %v, want the kept rows delivered and never left unsent", log)
@@ -496,6 +496,7 @@ type resendHost struct {
 	admit     AdmissionOutcome
 	opened    []*marotte.EntryPrompt
 	mu        sync.Mutex
+	inflight  int
 	drained   chan struct{}
 }
 
@@ -529,19 +530,37 @@ func (h *resendHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge
 	return nil, errors.New("no bridge in this test")
 }
 
+func (h *resendHost) InflightAdd(delta int) {
+	h.mu.Lock()
+	h.inflight += delta
+	h.mu.Unlock()
+}
+
+// InflightDone signals drained when the count returns to zero, not on each Done:
+// a turn end resolved on its own goroutine registers before the prompt goroutine
+// it launches, so the prompt can finish while the resolution has not yet
+// delivered the rows.
 func (h *resendHost) InflightDone() {
+	h.mu.Lock()
+	h.inflight--
+	idle := h.inflight == 0
+	h.mu.Unlock()
+	if !idle {
+		return
+	}
 	select {
 	case h.drained <- struct{}{}:
 	default:
 	}
 }
 
-func (h *resendHost) waitPrompt(t *testing.T) {
+// waitInflight waits for every goroutine registered in flight to finish.
+func (h *resendHost) waitInflight(t *testing.T) {
 	t.Helper()
 	select {
 	case <-h.drained:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the resend's prompt goroutine never finished")
+		t.Fatal("the resend's in-flight goroutines never finished")
 	}
 }
 
@@ -555,7 +574,7 @@ func TestResolveTurnEnd_ResendsTheRowsAsTheNextPrompt(t *testing.T) {
 	q.resentText = "first\n\nsecond"
 
 	resolveTurnEnd(t.Context(), steerRolesOf(h, NewSteerLedger(), q), "c1", "job-1", &SteerTurnEnd{TurnID: "t1"})
-	h.waitPrompt(t)
+	h.waitInflight(t)
 
 	if len(h.opened) != 1 {
 		t.Fatalf("prompts opened = %d, want 1", len(h.opened))
