@@ -73,7 +73,7 @@ var (
 //	for f in *.md; do printf %s "${f%.md}" | sha256sum | cut -c1-16; done
 var knownStems = func() map[string]bool {
 	set := map[string]bool{}
-	for _, h := range strings.Fields(`
+	for h := range strings.FieldsSeq(`
 012a653f42db9044 05d131b75cc2a753 06cf5b96eca79a03 07d907bcb31655dc 0bcd728f4324a803 0c1f7f3108b9dc7c
 0d5a011050205b39 0faee5c5f42eebd4 0fd04bc364d66a70 11a7fe42b3e3235b 145cf109484a7a7d 1669a1013e1f0f57
 16d231429d0199c2 177a7ea3611fe6b1 19687460032e31fa 1b158839f8aa339e 1c0f2b8a7d5ea781 1c8f936de110baa9
@@ -147,7 +147,7 @@ func knownStemRefs(line string, defined, stems map[string]bool) []string {
 // comment names the project, so the bare name passes unless a section is cited.
 var publicProjects = func() map[string]bool {
 	set := map[string]bool{}
-	for _, name := range strings.Fields(`cert-converter docker-age docker-caddy
+	for name := range strings.FieldsSeq(`cert-converter docker-age docker-caddy
 		docker-fclones-scheduler docker-keepalived docker-nut-upsd docker-radvd
 		docker-renovate-scheduler docker-rsync-scheduler docker-smtp-relay docker-static-web
 		github-scout pg-autodump plex-exporter plex-language-sync registry-stats seadex-scout
