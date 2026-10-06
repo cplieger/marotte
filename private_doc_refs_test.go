@@ -3,8 +3,9 @@ package main
 // A comment in this repository is public, so it may not point a reader at a document
 // the repository does not ship: a path under the maintainer's private `.kiro` tree, a
 // bare `<name>.md` that is not one of this repo's own files or a file marotte's
-// product reads, or a `#<doc>` pointer. The check is structural rather than a list of
-// private names, because such a list would itself publish them.
+// product reads, a `#<doc>` pointer, or a rulebook or `§` section named bare. The check
+// is structural rather than a list of private names, because such a list would itself
+// publish them.
 
 import (
 	"bytes"
@@ -53,8 +54,11 @@ var (
 	hashDocRef = regexp.MustCompile(`(^|[\s(\x60'"])#(marotte(-[a-z]+)*|kiro-[a-z]+(-[a-z]+)*|web-terminal-[a-z]+(-[a-z]+)*)([^\w-]|$)`)
 	// hashName is any hyphenated `#<name>`: a pointer unless the name is something the
 	// sources define outside comments, such as the element id in `#web-view`.
-	hashName  = regexp.MustCompile(`(^|[\s(\x60'"])#([a-z][a-z0-9]*(-[a-z0-9]+)+)([^\w-]|$)`)
-	codeToken = regexp.MustCompile(`[\w-]+`)
+	hashName = regexp.MustCompile(`(^|[\s(\x60'"])#([a-z][a-z0-9]*(-[a-z0-9]+)+)([^\w-]|$)`)
+	// bareDocStem is a hyphenated `<name>-rulebook`, or a `§` section citation of a
+	// document of the families above, written with neither `#` nor `.md`.
+	bareDocStem = regexp.MustCompile(`(^|[^\w./#@-])([a-z]+-rulebook|(marotte|kiro|web-terminal)(-[a-z]+)+\s*§)`)
+	codeToken   = regexp.MustCompile(`[\w-]+`)
 )
 
 type commentSpan struct {
@@ -99,6 +103,11 @@ func privateDocRefs(line, code string, shipped, defined map[string]bool) []strin
 	for _, m := range hashName.FindAllStringSubmatch(line, -1) {
 		if !hashDocRef.MatchString(m[0]) && !defined[m[2]] {
 			refs = append(refs, "#"+m[2])
+		}
+	}
+	for _, m := range bareDocStem.FindAllStringSubmatch(line, -1) {
+		if stem := strings.TrimRight(m[2], " \t§"); !defined[stem] {
+			refs = append(refs, stem)
 		}
 	}
 	return refs
@@ -486,6 +495,11 @@ func TestPrivateDocRefs(t *testing.T) {
 		"app hash pointer":              {line: "// (see #kiro-foo-notes)", want: []string{"#kiro-foo-notes"}},
 		"app hash pointer with section": {line: "// #web-terminal-foo C17", want: []string{"#web-terminal-foo"}},
 		"undefined hash pointer":        {line: "// see #foo-rulebook C17", want: []string{"#foo-rulebook"}},
+		"bare rulebook stem":            {line: "// (foo-rulebook §7)", want: []string{"foo-rulebook"}},
+		"bare app doc section":          {line: "// marotte-foo §3 says so", want: []string{"marotte-foo"}},
+		"app compound word":             {line: "// a marotte-side cache"},
+		"defined name with a section":   {line: "// kiro-foo-notes §2", want: nil},
+		"rulebook inside a path":        {line: "// docs/foo-rulebook.txt"},
 		"shipped doc":                   {line: "// see README.md"},
 		"product doc":                   {line: "// writes environment.md"},
 		"product steering path":         {line: "// .kiro/steering/environment.md is generated"},
