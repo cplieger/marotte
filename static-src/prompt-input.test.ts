@@ -75,7 +75,21 @@ beforeAll(() => {
     <form id="prompt-form" action="javascript:void 0">
       <textarea id="prompt-input"></textarea>
       <button id="send-btn" type="submit"></button>
-    </form>`;
+    </form>
+    <button id="switch-model-btn">
+      <span id="ctx-model-pill"></span><span id="ctx-effort-pill" class="hidden"></span>
+    </button>
+    <span id="context-indicator"></span>
+    <span id="context-ring-fill"></span>
+    <span id="context-ring-wedge"></span>
+    <span id="context-label"></span>
+    <span id="ctx-tokens"></span>
+    <span id="ctx-credits"></span>
+    <span id="ctx-turns"></span>
+    <span id="ctx-last-turn"></span>
+    <span id="ctx-entries"></span>
+    <span id="ctx-tools"></span>
+    <span id="ctx-metering"></span>`;
   initPromptInput(
     (text: string) => {
       submitted.push(text);
@@ -276,12 +290,17 @@ describe("send", () => {
 // The ring is the only context surface: a context past every threshold, on the active chat, leaves
 // the composer's placeholder and Send's name as they are.
 describe("a full context", () => {
-  it("changes nothing on the composer", () => {
+  it("changes nothing on the composer", async () => {
     const s = makeSession([]);
     s.usage = { ...s.usage, context_pct: 99, context_size: 200_000 };
     setSessions([s]);
     setActive(CHAT);
     refreshContextUI(s);
+    // The context bar paints in a frame; awaiting it keeps that paint, and any throw, in this test.
+    await new Promise((resolve) => {
+      requestAnimationFrame(resolve);
+    });
+    expect(document.getElementById("context-label")?.textContent).toBe("99%");
     expect(input().placeholder).toBe("Message Kiro...");
     const send = document.getElementById("send-btn");
     expect(send?.getAttribute("data-tooltip")).toBe("Send");

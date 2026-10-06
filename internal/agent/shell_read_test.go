@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,29 +89,32 @@ func TestReadShell_RacesARestartSafely(t *testing.T) {
 }
 
 // A spent shell's final output stays readable until the next socket swaps it.
+// The child exits only once its output is on the screen: engine v6.1.0 can cancel the PTY reader
+// at exit before it drains, which would drop the output this test reads.
 func TestReadShell_KeepsTheFinalOutputOfAnExitedShell(t *testing.T) {
 	dir := t.TempDir()
 	sm := &ShellManager{workDir: dir}
-	exited := make(chan struct{})
-	sm.handler = terminal.NewHandler([]string{"sh", "-c", "echo goodbye"},
+	sm.handler = terminal.NewHandler(
+		[]string{"sh", "-c", "echo goodbye; while [ ! -e release ]; do sleep 0.01; done"},
 		terminal.WithWorkDir(dir),
 		terminal.WithOnProcessExit(func(error) {
 			sm.mu.Lock()
 			sm.spent = true
 			sm.mu.Unlock()
-			close(exited)
 		}),
 	)
 	t.Cleanup(func() { retireHandler(context.Background(), sm.handler, "test") })
 	if err := sm.handler.StartEager(); err != nil {
 		t.Fatalf("StartEager: %v", err)
 	}
-	select {
-	case <-exited:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the shell never exited")
+	ws := command.Workspace{Terminal: sm, Dir: dir}
+	waitFor(t, func() bool { return strings.Contains(terminalReference(t, ws, "#[[terminal:]]"), "goodbye") })
+	if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o600); err != nil {
+		t.Fatalf("release the shell: %v", err)
 	}
-	got := terminalReference(t, command.Workspace{Terminal: sm, Dir: dir}, "#[[terminal:]]")
+	// Exited() turns true after the exit callback returns, so spent is latched by then.
+	waitFor(t, sm.handler.Exited)
+	got := terminalReference(t, ws, "#[[terminal:]]")
 	if !strings.Contains(got, "goodbye") || !strings.HasSuffix(got, "[The shell has exited.]") {
 		t.Fatalf("terminal reference after exit = %q, want the final output and the exit note", got)
 	}
