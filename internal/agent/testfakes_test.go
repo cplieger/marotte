@@ -567,3 +567,8 @@ func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *maro
 		tb.Fatalf("seed chat %s: %v", id, err)
 	}
 }
+
+// Forward runs one bridge's forward loop in the caller, taking the chat's forward attachment first.
+func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
+	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
+}
