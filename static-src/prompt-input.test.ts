@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { initPromptInput, sendComposer } from "./prompt-input.js";
+import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { setSessions, setActive } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -268,5 +268,39 @@ describe("send", () => {
     // deeper into the previous cycle.
     press("ArrowUp");
     expect(input().value).toBe("newest");
+  });
+});
+
+// Send never disables and nothing disables the composer: mid-turn the button becomes
+// Cancel (a `type="button"` click, so it cannot submit the form) and a failure keeps
+// both controls live so the reader can retry at once.
+describe("the send button's state", () => {
+  function sendBtn(): HTMLButtonElement {
+    return document.getElementById("send-btn") as HTMLButtonElement;
+  }
+
+  it("is an enabled Cancel button mid-turn, with the textarea still enabled", () => {
+    expect.assertions(4);
+    setSendState({ kind: "streaming" });
+    expect(sendBtn().disabled).toBe(false);
+    expect(sendBtn().getAttribute("aria-label")).toBe("Cancel this turn");
+    expect(sendBtn().type).toBe("button");
+    expect(input().disabled).toBe(false);
+  });
+
+  it("stays enabled after a failure, with the textarea still enabled", () => {
+    expect.assertions(2);
+    setSendState({ kind: "error", reason: "The bridge exited." });
+    expect(sendBtn().disabled).toBe(false);
+    expect(input().disabled).toBe(false);
+  });
+
+  it("is an enabled submit button again once the turn is over", () => {
+    expect.assertions(3);
+    setSendState({ kind: "streaming" });
+    setSendState({ kind: "idle" });
+    expect(sendBtn().disabled).toBe(false);
+    expect(sendBtn().type).toBe("submit");
+    expect(sendBtn().getAttribute("aria-label")).toBe("Send");
   });
 });

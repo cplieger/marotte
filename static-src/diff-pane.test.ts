@@ -660,3 +660,26 @@ describe("the change map", () => {
     expect(pane.querySelector(".diff-map")).toBeNull();
   });
 });
+
+// An added or removed row carries a `+` or `-` glyph, so the row kind does not rest on
+// its background colour alone (WCAG 1.4.1). Both shapes build their own rows.
+describe("renderDiffPane row markers", () => {
+  const LINES = [ctx(1, 1, "keep"), del(2, "old"), add(2, "new"), ctx(3, 3, "tail")];
+
+  function markers(pane: HTMLElement, kind: string): string[] {
+    return [...pane.querySelectorAll(`.diff-row-${kind} .diff-marker`)].map((m) => m.textContent);
+  }
+
+  it.each([
+    ["two-pane", {}],
+    ["unified", { unified: true }],
+  ])("marks every row by its kind in the %s shape", (_shape, opts) => {
+    expect.assertions(3);
+    const pane = renderDiffPane(LINES, opts);
+    expect(markers(pane, "add")).toEqual(["+"]);
+    expect(markers(pane, "del")).toEqual(["-"]);
+    expect(markers(pane, "ctx").length > 0 && markers(pane, "ctx").every((m) => m === " ")).toBe(
+      true,
+    );
+  });
+});
