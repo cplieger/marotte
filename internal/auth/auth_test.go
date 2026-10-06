@@ -54,10 +54,18 @@ func writeFakeCLI(t *testing.T, stdout string, exitCode int) string {
 		t.Fatalf("writeFakeCLI data: %v", err)
 	}
 	script := fmt.Sprintf("#!/bin/sh\ncat %q\nexit %d\n", dataPath, exitCode)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := writeExecutable(path, script); err != nil {
 		t.Fatalf("writeFakeCLI: %v", err)
 	}
 	return path
+}
+
+// ForkLock keeps a fork from another test from inheriting the write fd, which
+// fails the exec with ETXTBSY (golang/go#22315).
+func writeExecutable(path, content string) error {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	return os.WriteFile(path, []byte(content), 0o755)
 }
 
 // writeFakeCLIScript writes an executable /bin/sh script with the
@@ -69,7 +77,7 @@ func writeFakeCLIScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-kiro-cli")
 	script := "#!/bin/sh\n" + body
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := writeExecutable(path, script); err != nil {
 		t.Fatalf("writeFakeCLIScript: %v", err)
 	}
 	return path
@@ -88,7 +96,7 @@ func writeCountingCLI(t *testing.T, stdout string) (path string, calls func() in
 		t.Fatalf("writeCountingCLI data: %v", err)
 	}
 	script := fmt.Sprintf("#!/bin/sh\necho x >> %q\ncat %q\n", countPath, dataPath)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := writeExecutable(path, script); err != nil {
 		t.Fatalf("writeCountingCLI: %v", err)
 	}
 	return path, func() int {
