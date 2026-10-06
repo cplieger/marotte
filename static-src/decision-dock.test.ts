@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import { userEvent } from "vitest/browser";
 
 // The store is NOT mocked: the dock's chat-switch trigger is an effect over the
 // real `activeSession` computed, and a stubbed signal would test the stub's
@@ -1948,5 +1949,33 @@ describe("the cleanup timer and the stylesheet agree on every duration", () => {
     // The exit is the fast one: the tray has to be gone before the reader
     // reaches for the box underneath it.
     expect(DOCK_PHASE_MS.leaving).toBeLessThan(DOCK_PHASE_MS.entering);
+  });
+});
+
+// A permission request is a dock region, not a dialog: the reader must be able to
+// leave it for the transcript the decision is about and come back, so nothing around
+// the card is modal and Tab off its last control leaves the dock.
+describe("the dock is not modal", () => {
+  it("puts the permission card inside no dialog and no aria-modal region", () => {
+    expect.assertions(3);
+    pushPerm("c1", 1);
+    const card = liveCard();
+    expect(card).not.toBeNull();
+    expect(card?.closest("dialog")).toBeNull();
+    expect(card?.closest('[aria-modal="true"]')).toBeNull();
+  });
+
+  it("lets Tab move focus from the card's last control out of the dock", async () => {
+    expect.assertions(2);
+    const outside = document.createElement("button");
+    outside.textContent = "outside";
+    document.body.append(outside);
+    pushPerm("c1", 1);
+    const controls = [...(liveCard()?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const last = controls.at(-1);
+    expect(last).toBeDefined();
+    last?.focus();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(outside);
   });
 });
