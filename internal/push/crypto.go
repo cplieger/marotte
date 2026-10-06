@@ -38,16 +38,10 @@ func ecdhToECDSA(key *ecdh.PrivateKey) (*ecdsa.PrivateKey, error) {
 
 // keyMaterial carries the five byte slices RFC 8291's key derivation consumes.
 //
-// A struct rather than five positional []byte parameters, and this is the one
-// signature in the fleet where that distinction is load-bearing rather than
-// stylistic. Every input is a []byte, so the compiler accepts any permutation;
-// HKDF has no notion of which slice was meant to be which, so a transposition
-// does not fail — it derives a DIFFERENT key, successfully, and returns no
-// error. The push payload is then encrypted with a key the subscriber's browser
-// cannot reconstruct, so it is discarded by the user agent with nothing logged
-// on either side. There is no assertion that could catch it and no test short
-// of a live round trip that would notice, which is why the field names are the
-// guard.
+// A struct rather than five positional []byte parameters: the compiler accepts
+// any permutation, and a transposition does not fail — HKDF derives a different
+// key, the subscriber's browser cannot decrypt the payload and drops it with
+// nothing logged on either side. The field names are the only guard.
 type keyMaterial struct {
 	// Shared is the ECDH shared secret between our ephemeral key and the
 	// subscription's public key.

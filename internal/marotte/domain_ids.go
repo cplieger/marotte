@@ -45,26 +45,13 @@ const MaxAttachmentPathBytes = MaxChatNameBytes
 // this limit.
 const MaxChatNameBytes = 512
 
-// NewChatID mints a chat identifier: "c-" followed by the hex of 16 bytes.
+// NewChatID mints a chat identifier: "c-" followed by the hex of 16 bytes, a
+// shape ids.ValidChatID accepts.
 //
-// crypto/rand, not math/rand/v2. The id ADDRESSES a conversation: it is the path
-// segment of /chat/{id}, the name of the chat's own JSON file, and the key the
-// ACP session chain hangs off, so a guessable id is one a stranger can name
-// (go-rulebook §5). rand.Read has been documented since Go 1.24 never to fail,
-// so there is no error to return and no branch a caller could act on.
-//
-// This function did not exist, and the comment here said adding one back "would
-// mean the server had invented a chat the client cannot address". That reasoning
-// belonged to the rewind BRANCH, the server's only chat-creating path at the
-// time: it minted a second chat as a side effect of reverting the one you were
-// in, with nothing awaiting a response, so the new id reached no caller. A
-// create that RETURNS its chat has no such problem — create_chat, fork_chat and
-// resume_session each hand the minted chat back in their response, which closes
-// the window a client-minted id used to leave open and makes minting here
-// correct rather than a regression.
-//
-// The shape satisfies ids.ValidChatID, and so does the c-<ts>-<rand> the client
-// used to mint, so no chat data moves.
+// crypto/rand, not math/rand/v2: the id is the path segment of /chat/{id}, the
+// chat's file name and the key its ACP session chain hangs off, so a guessable id
+// is one a stranger can name. rand.Read never fails since Go 1.24, so there is no
+// error to return.
 func NewChatID() ChatID {
 	var b [16]byte
 	rand.Read(b[:])

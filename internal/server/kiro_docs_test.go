@@ -130,19 +130,19 @@ func TestScanKiroDocs_SkillWithoutInclusionReportsNone(t *testing.T) {
 // reference material under a skill directory is not a row.
 func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 	fsys := fstest.MapFS{
-		"skills/judgement/SKILL.md":                 {Data: []byte("---\nname: judgement\ndescription: Adversarial\ninclusion: manual\nsteering_override: true\n---\n")},
-		"skills/judgement/references/format.md":     {Data: []byte("# Report format\n")},
-		"skills/judgement/regulations/rewrite.md":   {Data: []byte("# Rewrite\n")},
-		"skills/judgement/judgement-agent-guide.md": {Data: []byte("# Guide\n")},
-		"skills/nomanifest/notes.md":                {Data: []byte("# Notes\n")},
+		"skills/triage/SKILL.md":               {Data: []byte("---\nname: triage\ndescription: Adversarial\ninclusion: manual\nsteering_override: true\n---\n")},
+		"skills/triage/references/format.md":   {Data: []byte("# Report format\n")},
+		"skills/triage/regulations/rewrite.md": {Data: []byte("# Rewrite\n")},
+		"skills/triage/triage-agent-guide.md":  {Data: []byte("# Guide\n")},
+		"skills/nomanifest/notes.md":           {Data: []byte("# Notes\n")},
 	}
 	skills := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catSkill)
 	if len(skills) != 2 {
 		t.Fatalf("got %d skill rows, want 2 (one per directory, manifests only): %+v", len(skills), skills)
 	}
-	j, ok := findDoc(skills, "judgement")
+	j, ok := findDoc(skills, "triage")
 	if !ok {
-		t.Fatal("judgement row missing")
+		t.Fatal("triage row missing")
 	}
 	if j.Inclusion != "manual" {
 		t.Errorf("Inclusion = %q, want manual", j.Inclusion)
@@ -150,7 +150,7 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 	if !j.SteeringOverride {
 		t.Error("SteeringOverride = false, want true")
 	}
-	if j.Path != "ws/.kiro/skills/judgement/SKILL.md" {
+	if j.Path != "ws/.kiro/skills/triage/SKILL.md" {
 		t.Errorf("Path = %q", j.Path)
 	}
 	// A directory without a manifest is still a skill, named by its directory.

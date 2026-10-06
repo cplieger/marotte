@@ -232,40 +232,14 @@
   box-shadow: none;
 }
 
-/* A ROW YIELDS ITS PRESS TO A CONTROL INSIDE IT.
-
-   `:active` matches the element being activated AND its ancestors, so a press on
-   the tab strip's × is a press on the row as far as the rule above can tell: the
-   whole row took the selected press fill while the × answered with nothing, which
-   reads as the wrong thing lighting up under the finger. The × grew a press of its
-   own in 10-shell-app.css; this is the other half, and neither is sufficient alone.
-
-   Scored (0,4,0) against that rule's (0,3,0), so it wins on specificity wherever
-   either file sits rather than on this file's position in the MANIFEST. It cannot be
-   written as the honest `:not(:has(.tab-close:active))` guard ON that rule: four
-   pseudo-classes is over the fleet's `selector-max-pseudo-class` of 3 and (0,5,0) is
-   over its `selector-max-specificity`, and those numbers are canonical in
-   cplieger/ci rather than marotte's to raise.
-
-   The value is the RAMP'S MIDDLE RUNG, not a claim that the row is hovered — the
-   selected fill runs resting, `-hover` at 12% of the ink, `-press` at 22%, and a row
-   whose child is taking the press wants the rung one short of its own press. That is
-   why it is ungated where the hover rule two blocks up is `@media (any-hover: hover)`:
-   that gate exists because a touchscreen's `:hover` LATCHES after a tap, and this
-   keys on `:active` inside, which unlatches on pointerup. So a finger holding the ×
-   lifts the row one rung and the × wears the press, which is the same ordering a
-   mouse gets.
-
-   TABS ONLY, and that is a swept answer rather than a scoping decision. Asking the
-   same question of the other 21 members of the list found exactly ONE more surface
-   with a control inside it, `.fb-row.fb-row-selected`, and it wanted the opposite
-   remedy — it left the list (see the block below). Every remaining member is a
-   `<button>` or a `div[role="option"]` whose children are spans and text, so there is
-   nothing nested to yield to; `.popup-item` and the two `.repo-picker-*` entries have
-   no production construction site at all and render nowhere. The app's OTHER pressed
-   containers — the `role="button"` heads and the four `<summary>` elements that take
-   03-base.css's wash — are control-free by construction, because axe's
-   `nested-interactive` forced it and four of them carry a comment saying so. */
+/* A ROW YIELDS ITS PRESS TO A CONTROL INSIDE IT: `:active` matches the pressed
+   element AND its ancestors, so a press on the tab's × would light the whole row.
+   Scored (0,4,0) against that rule's (0,3,0), so it wins wherever either file sits;
+   a `:not(:has(.tab-close:active))` guard would exceed stylelint's
+   `selector-max-pseudo-class` (3) and `selector-max-specificity`. The value is the
+   ramp's middle rung, one short of the row's own press. Ungated by any-hover
+   because `:active` unlatches on pointerup, unlike a touchscreen's `:hover`. Tabs
+   only: no other selected surface nests a control. */
 .tab.active:has(.tab-close:active) {
   background: var(--c-selected-bg-hover);
 }
@@ -384,10 +358,9 @@
 
 /* A tab's selected fill never rewrites its activity dot. Selection belongs to
    the row; status belongs to the chat, and its hue stays byte-identical whether
-   or not this device is reading that tab (user ruling, 2026-08-31).
-   The workflow mark beside it (`.tab-run-dot`) is governed by the same ruling and
-   likewise has no rule here: it reads the same --dot-color and the same
-   --c-dot-* family, so a selected row inherits both marks unchanged. */
+   or not this device is reading that tab. The workflow mark beside it
+   (`.tab-run-dot`) likewise has no rule here: it reads the same --dot-color and
+   the same --c-dot-* family, so a selected row inherits both marks unchanged. */
 
 /* `.effort-knob` is deliberately absent: it is a handle on a track, painted in
    15-input.css. Adding it here wins on MANIFEST order and costs the handle the 3:1

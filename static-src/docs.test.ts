@@ -222,8 +222,8 @@ describe("row rendering", () => {
   it("marks a skill that overrides the steering set", () => {
     const row = _renderRowForTest({
       category: "skill",
-      name: "judgement",
-      path: "workspace/.kiro/skills/judgement/SKILL.md",
+      name: "triage",
+      path: "workspace/.kiro/skills/triage/SKILL.md",
       inclusion: "manual",
       steering_override: true,
     });
@@ -735,19 +735,19 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     _setHooksForTest([
       wsHook({
         scope: "global",
-        file_path: "~/.kiro/hooks/fleet.json",
-        name: "fleet",
+        file_path: "~/.kiro/hooks/format.json",
+        name: "format",
         trigger: "PostFileSave",
         command: "make fmt",
       }),
     ]);
     const rows = _hookRowsForTest();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.name).toBe("fleet");
+    expect(rows[0]?.name).toBe("format");
     expect(rows[0]?.trigger).toBe("PostFileSave");
     expect(rows[0]?.action).toBe("make fmt");
     // The file name groups it, matching how the scanned rows group.
-    expect(rows[0]?.group).toBe("fleet.json");
+    expect(rows[0]?.group).toBe("format.json");
   });
 
   it("does not duplicate a hook the scan already reported", () => {
@@ -764,9 +764,14 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     _setDocsForTest([wsHookDoc()]);
     _setHooksForTest([
       wsHook(),
-      wsHook({ id: "id-g", name: "fleet", scope: "global", file_path: "~/.kiro/hooks/fleet.json" }),
+      wsHook({
+        id: "id-g",
+        name: "format",
+        scope: "global",
+        file_path: "~/.kiro/hooks/format.json",
+      }),
     ]);
-    expect(_hookRowsForTest().map((d) => d.name)).toEqual(["greet", "fleet"]);
+    expect(_hookRowsForTest().map((d) => d.name)).toEqual(["greet", "format"]);
   });
 
   it("synthesizes nothing for a workspace hook the scan missed", () => {

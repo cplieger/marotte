@@ -82,14 +82,9 @@ const reads = new Map<string, StepRead>();
  *  on an entry a failed fetch has to remember to clean up. */
 const inFlight = new Set<string>();
 
-/** The cache key.
- *
- *  keyenc `join`, the fleet rule for a composite key over text this app does not
- *  author — a node path is arbitrary text from a workflow file, joined with "/".
- *  Honest scope: with the arbitrary component LAST, a template literal would not
- *  actually collide for the ids KAS mints, so this removes the question rather than
- *  answering a live defect, and it keeps holding if a third component is ever
- *  added. */
+/** The cache key: keyenc `join`, because a node path is arbitrary text from a
+ *  workflow file, so a plain template literal could collide once a component is
+ *  added after it. */
 function readKey(workflowID: string, nodePath: string): string {
   return join(workflowID, nodePath);
 }

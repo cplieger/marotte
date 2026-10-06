@@ -238,12 +238,10 @@ afterAll(() => {
 });
 
 describe("the composer's bottom clearance", () => {
-  // THE BAND IS PAGE BELOW THE CARD, AND IT IS CAPPED (user ruling, 2026-09-12).
-  // Both earlier spends were rejected on SIZE: the whole inset below the card left
-  // 29px of page and read as a safety area that was way too large, and moving it
-  // inside the card left 21px of card material under the buttons and read as a
-  // large gap under them. So the location is back outside the card and the figure
-  // is `--composer-inset-cap` rather than Apple's full 34pt.
+  // THE BAND IS PAGE BELOW THE CARD, AND IT IS CAPPED. The whole inset below the
+  // card read as an oversized safety area, and inside the card it left 21px of card
+  // under the buttons, so the band sits outside the card at `--composer-inset-cap`
+  // rather than Apple's full 34pt.
   it("spends the band as page BELOW the card, capped under the device's inset", () => {
     withInsets(true);
     const { form, box } = mountComposer();

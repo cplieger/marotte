@@ -43,19 +43,13 @@
     background: var(--c-bg-secondary);
   }
 
-  /* The drawer slides on TRANSFORM, not on `left`. `left` is a layout
-     property, so the old `transition: left` re-laid-out and repainted a
-     full-viewport-width element on every frame of every open and close —
-     on the weakest devices in the fleet, which is exactly where the mobile
-     breakpoint lives. translateX is compositor-only: the drawer rasterizes
-     once and the GPU moves the layer.
-
-     Safe here because nothing inside the sidebar is `position: fixed` or
-     CSS-anchor-positioned — every popover, context menu and expanded pill is
-     hosted into <body> by @cplieger/ui-primitives, and the `anchor-name`
-     declarations have no `anchor()` consumer — so the containing block a
-     transform introduces has no descendant to reposition. Check that again
-     before moving a fixed-position surface INTO the sidebar. */
+  /* The drawer slides on TRANSFORM, not on `left`: `left` re-lays-out and repaints
+     a full-viewport-width element every frame, on exactly the devices the mobile
+     breakpoint serves; translateX is compositor-only. Safe because nothing inside
+     the sidebar is `position: fixed` or anchor-positioned (popovers and menus are
+     hosted into <body> by @cplieger/ui-primitives), so the containing block a
+     transform introduces repositions nothing. Re-check before moving a
+     fixed-position surface INTO the sidebar. */
   [id="sidebar"] {
     width: 100vw;
     z-index: 100;

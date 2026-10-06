@@ -225,8 +225,7 @@ describe("13-messages.css keeps reasoning still and flush", () => {
   });
 
   it("draws no accent bar and no indent on the block", () => {
-    // The purple border-inline-start and the body's inline padding were
-    // removed by user ruling (2026-08-30): the trace sits flush on the
+    // No border-inline-start and no inline padding: the trace sits flush on the
     // turn body's content edge like every other block.
     expect(ruleContaining(css, ".reasoning-block").body).not.toMatch(/border/u);
     const body = ruleContaining(css, ".reasoning-body").body;

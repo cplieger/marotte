@@ -389,10 +389,7 @@
     );
     /* THE measure, for every full-page surface. The transcript, the composer, the
        dock, the run page and a delegate's page all end on this column, so a reader
-       crossing between them learns one pair of edges (user ruling, 2026-09-10).
-       `--run-page-max-w: 68rem` sat here for the exec pages and is DELETED with
-       that divergence; 18-pages.css `[id="run-body"]` records why the
-       machine-output argument behind it was withdrawn rather than retuned. */
+       crossing between them learns one pair of edges. */
     --content-max-w: 50rem;
 
     /* The chat area's floor under a widened sidebar. Query conditions cannot read
@@ -575,23 +572,11 @@
 
   :root {
     /* ---- Tooltip size ----------------------------------------------------- *
-     * ONE SIZE CLASS for every hover in the app, and the ONLY difference between
-     * tooltips may be the VIEW (user ruling, 2026-09-12). Read by the single
-     * `.uip-tooltip` rule in 04-uip-skin.css; a per-site override is the
-     * divergence being forbidden, so there is no second writer.
-     *
-     * TWO LINES because the widest content a tooltip legitimately carries is a
-     * file PATH, and two lines at this width hold ~114 characters against a
-     * measured p99 of 85 (28,841 real file-path tool inputs on the live volume,
-     * p50 49, p90 62, max 121). Nothing else needs a third line: what used to
-     * fill six was an agent's front-matter description, which is a paragraph and
-     * belongs in a row rather than under a pointer.
-     *
-     * THE VIEWPORT TERM IS THE PER-VIEW DIFFERENCE, and it is a real fix rather
-     * than symmetry: the library positions a tooltip with `placeAnchored`, which
-     * clamps its POSITION and not its width, so a flat 22rem box overflows a
-     * 320px phone. `100vw` rather than a breakpoint, so there is no threshold to
-     * keep in step with the pointer tiers above. */
+     * ONE SIZE CLASS for every hover in the app; only the VIEW may differ. Read
+     * by the single `.uip-tooltip` rule in 04-uip-skin.css, with no second writer.
+     * TWO LINES hold ~114 characters, above the p99 of real file-path tooltips
+     * (85). The viewport term is load-bearing: the library's `placeAnchored`
+     * clamps position, not width, so a flat 22rem box overflows a 320px phone. */
     --tooltip-max-w: min(22rem, calc(100vw - 2 * var(--sp-4)));
     --tooltip-lines: 2;
   }

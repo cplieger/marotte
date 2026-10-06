@@ -513,15 +513,11 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 // as well, which spent a second run on the identical assertion and made the
 // runtime's test binary import internal/mcp for nothing else.
 
-// TestMCPRegistry_PendingSummaryPartitionsByCause is the join a readiness timeout
-// used to lack: the prompt path logged a chat id and nothing else, while every
-// cause an operator acts on was already distinguishable per server here.
-//
-// One case per bucket, and the ENABLED-but-unreported case is the one that needs
-// the census rather than the registry: a server that never said anything appears
-// nowhere in the registry at all, so "absent from the reported set" is the only
-// way it can be named. A server that reported CONNECTED is in none of the
-// buckets, which is what stops the summary reporting a healthy fleet as pending.
+// TestMCPRegistry_PendingSummaryPartitionsByCause: one case per bucket. The
+// ENABLED-but-unreported case needs the census rather than the registry, because
+// a server that never reported appears nowhere in the registry, so "absent from
+// the reported set" is the only way to name it. A CONNECTED server is in no
+// bucket, which is what stops a healthy set of servers reading as pending.
 func TestMCPRegistry_PendingSummaryPartitionsByCause(t *testing.T) {
 	cfg := &fakeMCPConfig{
 		enabled: map[string]struct{}{
@@ -561,11 +557,9 @@ func TestMCPRegistry_PendingSummaryPartitionsByCause(t *testing.T) {
 // The bounds are the method's, not the caller's, because the server list is
 // backend-controlled: a Power's servers reach this registry through KAS's own
 // config file, so an unbounded list would push the attributes an operator needs
-// off the end of a log record.
-//
-// Both halves are asserted together: the cap keeps mcpSummaryNameCap names, and
-// the marker keeps the total honest. Truncating silently would report a fleet of
-// nine as a fleet of eight.
+// off the end of a log record. The cap keeps mcpSummaryNameCap names and the
+// marker keeps the total honest: truncating silently would report nine servers
+// as eight.
 func TestMCPRegistry_PendingSummaryBoundsEachBucket(t *testing.T) {
 	const extra = 3
 	cfg := &fakeMCPConfig{enabled: map[string]struct{}{}}

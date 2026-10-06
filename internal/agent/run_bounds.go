@@ -66,7 +66,7 @@ const (
 	runEndOrphaned = "orphaned"
 )
 
-// logMsgRunOrphaned is a CONSTANT because a homelab Loki rule keys on the message.
+// logMsgRunOrphaned is a CONSTANT because a deployment's Loki rule can key on the message.
 const logMsgRunOrphaned = "run was orphaned by a restart; cancelling so its recipe is idle again"
 
 // logMsgRunStalled and logMsgRunBackstop are the two ways the deadline's own bound
@@ -830,7 +830,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 // that reaches a reader who is not looking at the page.
 //
 // NOT filtered on origin: the emit covers the chat-parented and parentless
-// populations alike. The scheduled-run overlap with the homelab's own alerting is
+// populations alike. The scheduled-run overlap with a deployment's own alerting is
 // stated in the settings hint rather than coded as an exclusion here. The nil guard
 // covers the bare &Runs{} a bounds test builds, which has no coordinator.
 func (rs *Runs) notifyRunOutcome(ctx context.Context, f lifecycleFrame) {

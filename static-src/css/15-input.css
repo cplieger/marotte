@@ -452,26 +452,13 @@
   /* The well this box sits in is the PILL's (`.attachment-pill:has()` above); nothing
      about the inset is stated here, because the pill is what knows its own height. */
 
-  /* THE LADDER'S RUNG, character for character with every other close button in the
-     app — `.tab-close`, `.shell-header-btn`, `.turn-action-btn`, `.native-rule-remove`
-     are all `--r-sm` on a 24px box, and `radius-nesting.test.ts` holds the population
-     together. A circle shipped here for one build and was reported: it is the app's
-     only circular control, and one × that is not the shape of every other × is a
-     worse defect than the geometric residual below.
-
-     THE RESIDUAL, stated because `radius-audit.mjs` reports it and the next run should
-     read it as ruled rather than as drift: with the box inset equally (above) the
-     corner nests isotropically at a 4px gap on a mouse and 6px on a finger, so the
-     CONCENTRIC radius would be `--r` - 1px - gap = 2px and 0px. Neither is a rung, one
-     of them is a hard square, and both are further from the rest of the app's close
-     buttons than 4px is — so the rung wins and the corner is reported `too-round`.
-     `.tab-close` carries the same ruling in prose ("centred in a 36px row rather than
-     sitting in the tab's corner, so the concentric rule does not bind here … the rung
-     is the whole answer") and escapes the audit only because its 8px trailing padding
-     puts its gap past the tab's arc. This pill cannot buy that: it is 32px tall by the
-     composer's control-height contract and the box is 24px by WCAG 2.5.8, so 3px is
-     the whole well there is. Closing it needs the composer's row height or the pill's
-     own `--r` to move, which is a decision above this rule. */
+  /* THE LADDER'S RUNG, character for character with every other close button
+     (`.tab-close`, `.shell-header-btn`, `.turn-action-btn`, `.native-rule-remove`:
+     `--r-sm` on a 24px box; `radius-nesting.test.ts` holds the population). A
+     circle would be the app's only circular control. The concentric radius
+     (`--r` - 1px - gap) would be 2px on a mouse and 0px on a finger, neither a rung,
+     so this corner is deliberately `too-round` for a concentric audit. Closing it
+     needs the composer's row height or the pill's `--r` to move. */
   border-radius: var(--r-sm);
   opacity: 0.5;
   transition:
@@ -1333,27 +1320,12 @@
 }
 
 /* THE BAR: the box the knob travels inside, centred in the line by the
-   `inset-block-start: 50%` / `translateY(-50%)` pair. Its edge is a BORDER in
-   `--c-border`, the token every other surface in this app draws an edge with. It used
-   to be two inset shadows — dark at the top lip, light at the bottom — on the ground
-   that `--c-border` measures 1.154:1 against the CARD and so draws nothing; that
-   reading was about the wrong backdrop, because this edge is drawn against the bar's
-   own fill rather than against the card, and against a persistent in-flow control
-   being the app's one shadowed surface it was not worth the divergence (user ruling,
-   2026-09: no other surface in the interface uses a shadow).
-
-   THE FILL IS A GRADIENT WHOSE BOUNDARY IS THE KNOB'S OWN CENTRE, so the bar states
-   how far along the range the reader is instead of only how hot it is. It replaced a
-   single flat `color-mix` over the whole bar whose only variable was intensity — a bar
-   that changed colour and never showed a fill.
-
-   THE CONTRAST BOUND SURVIVES BY CONSTRUCTION rather than by another measurement:
-   every colour in the ramp is `--c-accent` mixed over `--c-bg-tertiary` at a fraction
-   between `--effort-fill-min` and `--effort-fill-max`, and the handle already clears
-   WCAG 1.4.11's 3:1 against the 70% end (`effort-slider.test.ts` measures both ends
-   and the middle). So no position on the bar can be hotter than the ceiling the handle
-   was measured against, and widening the ceiling is still the one edit that needs the
-   measurement re-run. */
+   `inset-block-start: 50%` / `translateY(-50%)` pair, edged with a `--c-border`
+   border because no surface in the interface uses a shadow. The fill is a gradient
+   whose boundary is the knob's centre, so the bar states how far along the range
+   the reader is. Every ramp colour is `--c-accent` over `--c-bg-tertiary` between
+   `--effort-fill-min` and `--effort-fill-max`, and the handle clears 3:1 against the
+   max end (`effort-slider.test.ts`), so raising the max needs that re-measured. */
 .effort-track::before {
   content: "";
   position: absolute;
@@ -1941,30 +1913,13 @@
   color: var(--c-text-primary);
   cursor: pointer;
 
-  /* THE SAME BOX AS THE ROW'S OTHER ICON-ONLY CONTROL: the block axis is the shared
-     `--composer-ctl-h` and the inline axis is the glyph plus `.pill`'s own inline
-     padding, so this button and `#chat-options-btn` are geometrically identical and
-     Send differs from its neighbours by COLOUR alone. Wider than tall on purpose —
-     the extra width is free touch area (user ruling, 2026-09-12).
-
-     IT WAS SQUARE, and the square is what made it read as a different size class.
-     `aspect-ratio: 1` plus `inline-size: var(--composer-ctl-h)` plus `padding: 0`
-     made it the only control in the row whose width was its height: 32x32 against a
-     46x32 `+` and pills out to 88px. Measured in Chromium 152 AND WebKit, it was the
-     NARROWEST control in the row while reading as the biggest, because a square box
-     around the row's densest glyph is what the eye weighs.
-     That amendment was itself a fix for a real defect — 42x32 on a fine pointer and
-     44x44 on a coarse one, two independent measures agreeing on one tier by
-     coincidence — and the defect it named is still closed here: the width comes from
-     ONE mechanism, the padding every other icon-only control in this row uses,
-     rather than from a second literal that can drift from the height.
-
-     `min-width: 0`, PHYSICAL, is the opt-out from the app-wide hit floor's own
-     `min-width` (61-mcp-tools.css) — a logical property is a different one resolved
-     by source order, and that file sorts later. The painted box is shorter than the
-     floor on both tiers, so the TARGET is held at --hit-floor by the `::after`
-     expander below (the `.tool-file-link` idiom) rather than by a
-     taller box, which is what makes opting out safe. */
+  /* THE SAME BOX AS THE ROW'S OTHER ICON-ONLY CONTROL: block axis `--composer-ctl-h`,
+     inline axis the glyph plus `.pill`'s inline padding, so Send matches
+     `#chat-options-btn` and differs by COLOUR alone. Wider than tall on purpose: a
+     square read as a different size class, and the width comes from the shared
+     padding rather than a second literal. `min-width: 0`, PHYSICAL, opts out of the
+     hit floor's `min-width` (61-mcp-tools.css sorts later); the `::after` expander
+     below holds the target at --hit-floor instead. */
   block-size: var(--composer-ctl-h);
 
   /* The row's padding, or whatever keeps this button wider than tall (the ratified
@@ -2103,23 +2058,10 @@
      the block axis is 32 and this rule declared the inline axis 44. The base rule
      derives both axes from one term instead (see `.send-btn` above). */
 
-  /* THE HOME-INDICATOR INSET IS NOT THIS ROW'S, and it used to be. Two rules lived
-     here — the row taking `max(--composer-pill-pad, inset - --sp-3 - 1px)` as its
-     block-end padding, and a shell-panel reset that existed only to undo it — so
-     Apple's 34pt band was spent as the CARD's own material and the row's bottom
-     inset rendered 21px against its 6px top. Measured on the 390x844 preset with
-     the inset substituted: composer 131px, pill row 60px, 21px of card under the
-     buttons, which the reader reported as a large gap under them (and which Safari
-     never showed, because a visible toolbar makes `env(safe-area-inset-bottom)` 0).
-     Both rules are DELETED: the band belongs below the card, capped, and
-     `50-mobile.css`'s `[id="prompt-form"].bottom-bar` owns it (user ruling,
-     2026-09-12). Do not move it back inside the row without a third ruling — the
-     two spends have now been tried in both directions and the reader rejected the
-     SIZE both times, so the open question is the number, not the location.
-
-     One thing the deletion takes with it: the row's bottom corners are concentric
-     with the box's again on a phone, so the anisotropic-inset carve-out that rule
-     recorded no longer applies to anything here. */
+  /* THE HOME-INDICATOR INSET IS NOT THIS ROW'S: spent inside the card it left 21px
+     of card under the buttons on a phone. `50-mobile.css`'s
+     `[id="prompt-form"].bottom-bar` spends it below the card, capped, and
+     `safe-area-inset.test.ts` pins that. */
 
   /* No --composer-rest-h override here any more, and it must not come back on a
      WIDTH query. It used to carry the match between the textarea's band and the

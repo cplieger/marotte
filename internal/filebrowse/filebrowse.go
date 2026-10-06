@@ -96,9 +96,8 @@ const errNoSpaceLeft = "not enough space left on the volume"
 // write paths answer with 507 rather than a generic 500 so the user is told
 // what to fix rather than told it broke.
 //
-// EDQUOT as well as ENOSPC: this fleet's volumes sit on ZFS datasets with
-// quotas, and a quota-exhausted write reports EDQUOT where a genuinely full
-// filesystem reports ENOSPC. TestIsOutOfSpace_MatchesThroughAtomicfileWrapping
+// EDQUOT as well as ENOSPC: a volume on a dataset with a quota reports EDQUOT
+// when the quota is exhausted, where a genuinely full filesystem reports ENOSPC. TestIsOutOfSpace_MatchesThroughAtomicfileWrapping
 // pins the wrapping errors.Is walks to reach either errno.
 func isOutOfSpace(err error) bool {
 	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)

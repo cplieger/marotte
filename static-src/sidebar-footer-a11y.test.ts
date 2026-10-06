@@ -1,32 +1,11 @@
-// THE MERGED TRIGGER'S ACCESSIBILITY, as far as a committed test can reach.
-//
-// WHY THESE ARE PROXIES AND NOT AN AXE RUN: `axe-core` is NOT a dependency of
-// `static-src`, and neither is `@testing-library/*` nor `dom-accessibility-api` — so
-// NO committed test in this repo can compute an accessible name or run a rule
-// engine. That is a capability absence, not an oversight, and the honest response is
-// to assert the STRUCTURE the name is computed from and leave the axe pass to the
-// `ui-qa` sidecar over the live footer and the OPEN popup.
-//
-// Three claims, each of which the restructure could have broken:
-//
-//   NO NESTED INTERACTIVE CONTENT. axe's `nested-interactive` is SERIOUS and
-//   `aria-hidden` plus `tabindex="-1"` does not clear it, because a `tabindex="-1"`
-//   element is still focusable by click and by script. The mark and the address are
-//   non-interactive spans, and the card's real `<a>` is the trigger's SIBLING rather
-//   than its descendant. `html-validate`'s `element-permitted-content` is the
-//   MECHANICAL half of this (verified by planting an `<a href>`, which fails the
-//   build); this is the second line of defence.
-//
-//   THE NAME IS FROM CONTENTS AND IS STABLE ACROSS STATES. Name = the address plus
-//   the `.sr-only` subject, whitespace-joined, so it reads
-//   "<address> Account and connection status" — and just the subject before whoami
-//   answers or on the two arms that name nobody. `aria-expanded` is the only state
-//   channel, which is the APG rule the pointer-mode toggle already follows.
-//
-//   THE STATE IS IN THE DESCRIPTION. `setStatus` used to write a FLIPPING
-//   `aria-label` on the dot ("Connection: connecting"), which is a changing NAME on
-//   what is now a disclosure trigger. It writes `data-tooltip` on the trigger
-//   instead, which `tooltip.ts` republishes as `aria-describedby` on show.
+// THE MERGED TRIGGER'S ACCESSIBILITY, asserted as the STRUCTURE the accessible
+// name is computed from, because no rule engine or name computation is a
+// dependency of `static-src`. Three claims: no nested interactive content (the
+// card's real `<a>` is the trigger's sibling; `html-validate` is the mechanical
+// half); the name comes from contents and is stable across states, with
+// `aria-expanded` the only state channel; and the connection state is in the
+// DESCRIPTION (`data-tooltip`, republished by `tooltip.ts` as `aria-describedby`),
+// never a flipping `aria-label`.
 import { describe, it, expect, beforeEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";

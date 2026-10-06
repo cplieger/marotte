@@ -591,14 +591,11 @@
   align-items: center;
   gap: var(--sp-2);
 
-  /* A PLAIN CONTAINER <div> (git-changes-tab.ts:848 — no role, no tabindex, no
-     listener), so it is NOT A TARGET and the hit floor is not its measure. It
-     briefly read `var(--hit-floor)`, which took this row from 36px to 44px on a
-     finger for a box nothing taps; the ruling (2026-09-10) is that the floor does
-     not apply to a non-interactive container and there was nothing to fix here.
-     The buttons INSIDE it carry their own floor and are what a finger aims at.
-     Its own 1.5rem is the label row's measure, and the `align-items: center` above
-     is what centres the taller buttons against it. */
+  /* A PLAIN CONTAINER <div> (git-changes-tab.ts — no role, no tabindex, no
+     listener), so it is NOT A TARGET and the hit floor does not apply; the
+     buttons INSIDE it carry their own floor. Its own 1.5rem is the label row's
+     measure, and the `align-items: center` above is what centres the taller
+     buttons against it. */
   min-height: 1.5rem;
 }
 

@@ -25,40 +25,13 @@ import "context"
 // config file, which marotte renders — passing them on session/new would OUTRANK
 // that file and freeze the set for the session's lifetime.
 type StartOpts struct {
-	// Lifetime bounds the kiro-cli SUBPROCESS. Cancelling it closes the
-	// process's stdin and signals its tree.
-	//
-	// It is REQUIRED, and Start refuses a nil one. This is the canonical
-	// statement of the fleet's rule for a lifetime context: a long-lived
-	// component takes it as a parameter to the method that runs, and where
-	// that context must outlive the call it is REQUIRED there rather than
-	// defaulted, because every default for a lifetime is a lifetime nothing
-	// can cancel. Start used to substitute context.WithoutCancel(ctx) —
-	// literally an uncancellable context — for a caller who forgot this
-	// field, and startProcess had a second context.Background() fallback
-	// behind that one. Both are gone; a caller that genuinely wants a
-	// subprocess owned solely by Stop() now says so by passing
-	// context.Background() at the call site, which is a decision in the
-	// diff rather than an omission nobody reviews.
-	//
-	// It is deliberately NOT Start's ctx, which bounds only the startup
-	// handshake. Two contexts, one parameter each, is also why the lifetime
-	// rides this struct instead of becoming a second positional argument:
-	// adjacent same-typed parameters are the misuse-proof-signature hazard
-	// this fleet fixes elsewhere, and a swap here is silent. Conflating the
-	// two is a defect with a measured signature:
-	// CmdPrompt runs a turn under a per-turn context and cancels it on
-	// handler return, so a bridge that took its lifetime from there had its
-	// stdin closed and its head signalled the moment the FIRST prompt
-	// finished. marotte could not see that either — kiro-cli passes its stdio
-	// down to kiro-cli-chat and node, so all three hold the write end of the
-	// stdout pipe and the head's death never reaches the readLoop as EOF.
-	// The bridge stayed registered and healthy-looking (measured 105 s) while
-	// every write to it returned "file already closed", which is what made
-	// every model switch fall back to a restart, and each abandoned child
-	// tree leaked ~250 MB.
-	//
-	// Pass the runtime's shutdown context, not a request or turn context.
+	// Lifetime bounds the kiro-cli SUBPROCESS: cancelling it closes the
+	// process's stdin and signals its tree. REQUIRED, and Start refuses a nil
+	// one, because any default lifetime is one nothing can cancel. It is NOT
+	// Start's ctx, which bounds only the handshake: a turn context here closes
+	// the bridge's stdin when the first prompt returns, and since the children
+	// hold the stdout pipe the readLoop never sees EOF, so the dead bridge
+	// stays registered. Pass the runtime's shutdown context.
 	Lifetime    context.Context
 	SessionID   string
 	Model       string

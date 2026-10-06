@@ -1115,39 +1115,13 @@
   overflow: hidden auto;
 }
 
-/* The run body sizes to its content, so the page's own height is the sum of its
-   regions. `flex: 1 0 auto` is this file's established page-scrolling shape (see
-   the `[id="git-view"] > .page-content` group at the top); `flex-basis: 0` plus
-   `min-height: 0` is what pinned it to the scrollport and made a scrollbar
-   unreachable.
-
-   It also carries THE MEASURE, and that measure is `--content-max-w` — the SAME
-   column the transcript and the composer end on, so every full-page surface in
-   this app shares one pair of edges (user ruling, 2026-09-10).
-
-   It used to be `--run-page-max-w`, 68rem, on the argument that this page is not
-   prose: a node tree, tool cards, diffs and captured reports, so a reading measure
-   left 240px of dead gutter on each side of a 1440 desktop. That argument is
-   withdrawn rather than refined. It priced the gutter and never priced the cost of
-   a second column width: a run opened from a chat rendered 288px wider than the
-   chat, its own step rows did not line up with the turn cards that launched them,
-   and a reader crossing between the two surfaces re-learned the edges every time.
-   Machine output does not need protecting from a measure, and every box on this
-   page is already bounded by its own row.
-
-   `width: 100%` is load-bearing beside the auto margins rather than a belt: an
-   `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap alone
-   would shrink-wrap this column to its content and the measure would never bind.
-   `.transcript-view` carries the same trio for the same reason.
-
-   ONE CONSEQUENCE, which the exec view's own threshold already prescribes: 50rem
-   is under `@container exec-view (width < 52rem)` (31-exec-view.css), so `.ev-panes`
-   STACKS its tree above its detail at every width instead of placing them side by
-   side. That query is the judgement that two panes stop being usable below 52rem,
-   and the stacked layout is a designed one rather than a fallback — the page is the
-   single scroller either way. So the two-column grid above that query is now
-   unreachable for both consumers of `.ev-page`; collapsing it is a separate
-   decision, because it would delete the side-by-side layout rather than shelve it. */
+/* The run body sizes to its content (`flex: 1 0 auto`, this file's page-scrolling
+   shape; `flex-basis: 0` plus `min-height: 0` would pin it to the scrollport).
+   Its measure is `--content-max-w`, the column the transcript ends on, so a run
+   opened from a chat lines up with the turn that launched it. `width: 100%` is
+   load-bearing: an `auto` cross-axis margin suppresses `stretch`, so the cap alone
+   would shrink-wrap the column. At 50rem `.ev-panes` always stacks
+   (`@container exec-view (width < 52rem)`, 31-exec-view.css). */
 [id="run-body"] {
   display: flex;
   flex-direction: column;

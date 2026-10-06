@@ -321,7 +321,7 @@ describe("the run bar", () => {
     const c = chatID();
     chats.push(c);
     const id = runID("long");
-    const label = "nightly dependency sweep across every repository in the fleet";
+    const label = "nightly dependency sweep across every repository in the organisation";
     inspect.set(id, state({ runLabel: label }));
     live(id, c);
     await activate(c);

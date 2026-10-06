@@ -1,13 +1,11 @@
 """Reachability rules for shape-audit: who actually calls this?
 
-Three checks the compiler and golangci-lint structurally cannot make, each one
-mechanizing a defect that was found by hand in this repo and only after several
-rounds of review had missed it.
+Three checks the compiler and golangci-lint structurally cannot make.
 
-`unused` cannot make the first one. The fleet's golangci config sets
+`unused` cannot make the first one. The shared golangci config sets
 `tests: true`, so a reference from a `_test.go` file counts as a use — which is
 correct for its purpose and blind to a production symbol that only its own test
-calls. `Runtime.isHookStatusEnabled` lived that way through four review passes.
+calls.
 
 Every rule here is deliberately conservative: it suppresses anything named in an
 interface (satisfying a contract is a use with no call site), anything a method
@@ -95,27 +93,18 @@ STDLIB_CONTRACT = {
 def dependency_interface_members():
     """Interface method names declared by this module's FIRST-PARTY dependencies.
 
-    A method satisfying a third-party contract is not named by the repo that
-    implements it. Running the Get-prefix rule on subflux renamed eight
-    authstore methods before the compiler objected: GetUserByID, GetSessionByHash
-    and six others are members of cplieger/auth's UserStore, SessionPersister,
-    PasskeyStore and KeyStore. Reading only the audited repo's own interfaces
-    cannot see that, so the rule reported eight findings that were not the repo's
-    to fix.
-
-    Scoped to github.com/cplieger/* requirements: those are the fleet's own
-    libraries, which is where this actually bites. A rule cannot be
-    self-consistent across a fleet if it flags a name the fleet's own library
-    imposes.
+    A method satisfying a dependency's interface is named by that dependency,
+    not by the repo that implements it (cplieger/auth's UserStore imposes
+    GetUserByID), so a naming rule must not flag it. Scoped to
+    github.com/cplieger/* requirements, the shared libraries these repos
+    implement.
     """
     names = set()
     if not (ROOT / "go.mod").exists():
         return names
     # `go list` rather than parsing go.mod and guessing a cache path: a /vN module
-    # lives under a versioned directory, and this fleet rides unpublished majors
-    # through local `replace` directives in go.work, so the real directory is
-    # often a sibling checkout. Asking the toolchain is the only way to be right
-    # about both.
+    # lives under a versioned directory, and a go.work `replace` can point at a
+    # sibling checkout. Only the toolchain is right about both.
     try:
         out = subprocess.run(
             ["go", "list", "-m", "-f", "{{.Path}} {{.Dir}}", "all"],
@@ -292,7 +281,7 @@ def rule_test_only_production(report):
 
     Either it is dead and the test is keeping it alive, or the behaviour is real
     and its production caller was removed — both are findings. `unused` cannot
-    see this class because the fleet config counts test usage as usage.
+    see this class because the shared config counts test usage as usage.
     """
     iface = _interface_member_names() | dependency_interface_members()
     prod, test = _reference_counts()

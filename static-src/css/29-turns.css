@@ -115,9 +115,9 @@
   background: var(--c-yellow);
 }
 
-/* RED, and `interrupted` IS IN HERE BY RULING: a fault nobody chose stopped the turn,
- * and the tab dot's own latch already grades it `failed`. `refused` shares the hue —
- * see `.refusal-callout` (13-messages.css) — because the words carry the distinction. */
+/* RED, and `interrupted` IS IN HERE: a fault nobody chose stopped the turn, and the
+ * tab dot's own latch already grades it `failed`. `refused` shares the hue — see
+ * `.refusal-callout` (13-messages.css) — because the words carry the distinction. */
 .turn-header[data-severity="broken"] .turn-dot {
   background: var(--c-red);
 }
@@ -231,7 +231,7 @@
 
 /* FOLD-CONDITIONAL and CSS-only, so `-webkit-line-clamp` renders its own ellipsis and no
  * TypeScript constant stands behind the count. An OPEN prompt is not clamped, full text
- * however long (user ruling); a FOLDED one clamps to four lines, because folded rows are
+ * however long; a FOLDED one clamps to four lines, because folded rows are
  * the session's navigation surface and one pasted stack trace would push every
  * neighbouring row off screen. Scoped to the TEXT, so the attachment chips are unclamped. */
 .turn[data-folded] .turn-req-text {
@@ -423,7 +423,7 @@
 }
 
 /* The collapsed turn's FACE: the final answer IN FULL — real markdown, no clamp, because
-   the fold hides the WORK and never the answer (user ruling, 2026-08-31). A live run the
+   the fold hides the WORK and never the answer. A live run the
    turn launched is not here (26-dock.css's run bar carries it across the fold) and neither
    is a failed turn's reason (`.turn-notice`, a sibling, so it shows in both fold states).
    A CARD-level child where the body was, so the ledger keeps its open-state layout. */
@@ -513,7 +513,7 @@
   color: var(--c-text-secondary);
 }
 
-/* RED, `interrupted` included by ruling — see the header dot's broken arm. */
+/* RED, `interrupted` included — see the header dot's broken arm. */
 .turn-footer[data-severity="broken"] {
   background: var(--c-band-broken);
   color: var(--c-text-secondary);
@@ -586,7 +586,7 @@
   background: var(--c-yellow);
 }
 
-/* RED, `interrupted` included by ruling — see the header dot's broken arm. */
+/* RED, `interrupted` included — see the header dot's broken arm. */
 .turn-footer[data-severity="broken"] .turn-ledger-glyph {
   border-color: var(--c-red);
   background: var(--c-red);
@@ -898,7 +898,7 @@
   color: var(--c-yellow);
 }
 
-/* RED, `interrupted` included by ruling — see the header dot's broken arm. */
+/* RED, `interrupted` included — see the header dot's broken arm. */
 .rail-marker[data-severity="broken"] {
   color: var(--c-red);
 }
@@ -1052,9 +1052,7 @@
  * POSITIONED, which makes "expand right" and "reserve the box" the same thing here: out of
  * flow, the slot carries its whole geometry at rest, so revealing it moves nothing. The
  * 70rem floor is where `--rail-inset-end` leaves the ~60px this pill wants clear of the
- * window, reused from the resume label rather than adding a second number. OPEN (user
- * ruling, 2026-09-10): the ruling rests on an AT-A-GLANCE read of every turn's time, which
- * a per-marker hover does not deliver — the shape wanted is this slot painted at rest. */
+ * window, reused from the resume label rather than adding a second number. */
 .rail-marker-time {
   display: none;
 }

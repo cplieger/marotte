@@ -31,7 +31,7 @@ func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 		Deadline:   time.Now().Add(time.Hour),
 		WorkflowID: workflowID,
 		ChatID:     chatID,
-		Recipe:     "app-review",
+		Recipe:     "code-review",
 		Origin:     runlease.OriginAgent,
 	}
 	if err := h.runs.leaseStore().Put(t.Context(), &l); err != nil {

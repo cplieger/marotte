@@ -62,13 +62,13 @@ const (
 
 // logMsgUnattendedPermission is the message the unattended answer logs under.
 //
-// A CONSTANT because a homelab Loki rule alerts on it: a scheduled run refused a
+// A CONSTANT because a deployment's Loki rule alerts on it: a scheduled run refused a
 // permission is the app's one genuinely unattended failure, and the schedule row
 // only tells the user once they look. Changing this string breaks that rule
 // silently, so change both together.
 const logMsgUnattendedPermission = "unattended permission answered with no user present"
 
-// The two outcomes, as they appear in the log's `outcome` field. A homelab Loki
+// The two outcomes, as they appear in the log's `outcome` field. A deployment's Loki
 // rule matches outcomeRefused, so these are values with a consumer, not labels.
 const (
 	outcomeRefused  = "refused"
@@ -76,7 +76,7 @@ const (
 )
 
 // logMsgRunOverran is the message a run cancelled at its own repeat interval logs
-// under. A CONSTANT for the same reason as logMsgUnattendedPermission: a homelab
+// under. A CONSTANT for the same reason as logMsgUnattendedPermission: a deployment's
 // Loki rule matches this string, and it is the ONLY signal that a schedule stopped
 // producing rather than merely running long. Changing it breaks that rule
 // silently, so change both together.

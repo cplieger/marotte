@@ -134,10 +134,9 @@ describe("the height's declarations, read from source", () => {
       // statement about the drawing rather than about the row.
       const brace = rule.body.indexOf("{");
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-      // Either spelling: `.pill` says `height`, `.send-btn` says `block-size`. It used
-      // to read the term on BOTH axes because amendment §A required a structural
-      // square; that was overturned on 2026-09-12 and only the BLOCK axis is shared
-      // now, the inline one coming from the padding its icon-only sibling uses.
+      // Either spelling: `.pill` says `height`, `.send-btn` says `block-size`. Only the
+      // BLOCK axis is shared; the inline one comes from the padding its icon-only
+      // sibling uses.
       expect(own, `${selector} reads the shared height`).toMatch(
         /(?:block-size|height):\s*var\(--composer-ctl-h\)/,
       );
@@ -147,14 +146,11 @@ describe("the height's declarations, read from source", () => {
   });
 
   it("takes Send's width from ONE mechanism, so it cannot drift from the height", () => {
-    // What amendment §A was actually defending, kept after its square was overturned
-    // (2026-09-12). The original defect was 42x32 on a fine pointer and 44x44 on a
-    // coarse one: the inline axis came from `padding: 0 var(--sp-3)` plus the glyph,
-    // the block axis from `height`, and the coarse square was the hit floor's
-    // `min-width` landing on the same number by coincidence rather than by a rule.
-    // §A closed that by making both axes one term. The width is a mechanism again —
-    // but the SAME padding `.pill` takes, declared in one place per tier and shared
-    // with it by selector, so there is still no second literal to drift.
+    // The width is one mechanism, not a literal: an inline axis from its own padding
+    // plus a block axis from `height` once gave 42x32 on a fine pointer and 44x44 on a
+    // coarse one, the coarse square landing on the hit floor by coincidence. Send
+    // takes the SAME padding `.pill` takes, declared once per tier and shared by
+    // selector, so there is no second literal to drift.
     const rule = ruleContaining(css, ".send-btn", "top");
     const brace = rule.body.indexOf("{");
     const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
@@ -376,19 +372,12 @@ describe("the composer, measured at real viewport sizes", () => {
   }
 
   it("keeps Send wider than tall on every tier and width", async () => {
-    // OVERTURNS amendment §A's square (user ruling, 2026-09-12). The square made Send
-    // the only control in the row whose width was its height, which read as a
-    // different size class — measured in Chromium AND WebKit as the NARROWEST control
-    // in the row while reading as the biggest. The surplus width is free touch area,
-    // which is why the direction is asserted rather than a number: an edit that
-    // squares it again fails here instead of passing a height-only check.
-    //
-    // Box-IDENTICAL to `#chat-options-btn` was tried and reverted — it cost 6px of a
-    // row with 4px of slack — so only the HEIGHT is compared against the sibling. The
-    // ink case below is the half the report was actually about.
-    //
-    // What §A was ACTUALLY defending survives and is asserted in the source read: the
-    // width comes from one mechanism rather than a literal that can drift.
+    // Send is WIDER than tall: a square made it the only control in the row whose
+    // width was its height, which read as a different size class (the narrowest
+    // control, read as the biggest). The surplus width is free touch area, so the
+    // direction is asserted rather than a number. Only the HEIGHT is compared with
+    // `#chat-options-btn`: box-identical cost 6px of a row with 4px of slack. The
+    // source read asserts the width comes from one mechanism, not a literal.
     for (const [w, h, tier] of [
       [320, 568, "coarse"],
       [390, 844, "coarse"],

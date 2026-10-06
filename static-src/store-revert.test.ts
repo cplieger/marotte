@@ -26,7 +26,7 @@ import {
 import { abortReadsForRevert, loadMessages, requestTurnRange } from "./store-load.js";
 import type { Entry, EntryTurnRevert } from "./wire/types.gen.js";
 // A type-only import of the mocked module, so `importOriginal` can be typed without an
-// inline `import()` annotation (the fleet forbids those) and without a runtime edge.
+// inline `import()` annotation (the lint config forbids those) and without a runtime edge.
 import type * as ApiClient from "./api-client.js";
 
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));

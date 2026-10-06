@@ -696,11 +696,11 @@
   outline-offset: var(--focus-offset);
 }
 
-/* Reasoning/thinking block (collapsible). NO bar and no indent (user ruling,
- * 2026-08-30): the trace sits flush on `.turn-body`'s content edge, the same left
- * edge the prose and every evidence card start from. Subordination is carried by
- * `--c-text-aside`, the italic and the smaller type step; an accent
- * border-inline-start read as decoration and pushed the block off the measure. */
+/* Reasoning/thinking block (collapsible). NO bar and no indent: the trace sits
+ * flush on `.turn-body`'s content edge, the same left edge the prose and every
+ * evidence card start from. Subordination is carried by `--c-text-aside`, the
+ * italic and the smaller type step; an accent border-inline-start read as
+ * decoration and pushed the block off the measure. */
 .reasoning-block {
   max-width: var(--content-max-w);
 
@@ -737,11 +737,10 @@
   block-size: auto;
 }
 
-/* NO ANIMATION MAY RETURN TO A REASONING SELECTOR (user ruling): a pulsing dot
- * is reserved to tabs and workflow-agent surfaces, which report work the reader
- * cannot see. A live trace mounts open, its text grows, and its label reads
- * "Thinking…" until `seal()` rewrites it. `reasoning-live-cue.test.ts` fails if
- * one grows an animation again. */
+/* NO ANIMATION ON A REASONING SELECTOR: a pulsing dot is reserved to tabs and
+ * workflow-agent surfaces, which report work the reader cannot see. A live trace
+ * mounts open, its text grows, and its label reads "Thinking…" until `seal()`
+ * rewrites it. `reasoning-live-cue.test.ts` fails if one grows an animation. */
 
 /* The summary row. `display: flex` and `list-style: none` are load-bearing:
  * without them the native <details> marker paints beside the real chevron and the

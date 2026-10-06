@@ -146,31 +146,13 @@ if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   rm -rf /config/kiro
 fi
 
-# Reclaim superseded kiro-cli agent-server runtimes. Each version unpacks its own
-# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on
-# its FIRST bridge launch -- after this entrypoint has exec'd the server -- and
-# nothing ever removes the old ones, so the store gains a full tree per Renovate
-# bump and never shrinks (six trees / 1.4 GB found on a borgcube volume, 2026-07).
-# The installer only ever cleaned what IT writes, which is why this was missed:
-# the tree is written later, by the binary it installed. Distinct from the KAS
-# SESSION state marotte already reaps (per-chat records, governed by the
-# cleanup.periodDays=0 the server now seeds) -- same acronym, different object,
-# and the session reaper never touches these trees. The toolbelt engine applies
-# exactly this keep-current-drop-the-rest rule to its own versioned
-# opt/<tool>/<version>/ trees
-# (pruneOldVersions in install.go), so this extends it to the one install outside
-# the engine's custody: kiro-cli, unmanageable by the engine because licensing
-# forbids baking it into the image.
-#
+# Reclaim superseded kiro-cli agent-server runtimes: each version unpacks a
+# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ on its first bridge launch
+# and kiro-cli never removes old ones, so keep the current tree and drop the rest.
+# Runs here because it must finish before the server can unpack a new tree.
 # Data-dir resolution mirrors kiro-cli's own (XDG_DATA_HOME, else
-# $HOME/.local/share, as internal/kiroauth documents): pruning a directory the CLI
-# does not use would be a silent no-op, the one failure mode a hygiene step must
-# not have. Warn, never fail the boot -- degraded-not-dead, the same posture as the
-# install itself.
-#
-# This one function stayed in the entrypoint when the installer moved into the
-# server: it prunes kiro-cli's DATA dir, not the install, and it has to run BEFORE
-# the server can start unpacking a new runtime tree.
+# $HOME/.local/share): pruning a directory the CLI does not use is a silent
+# no-op. Warn, never fail the boot.
 prune_superseded_kas_runtimes() {
   local data_home kas_dir kas_real entry name
   data_home="${XDG_DATA_HOME:-}"

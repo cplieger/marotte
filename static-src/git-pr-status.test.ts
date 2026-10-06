@@ -372,9 +372,8 @@ describe("rerunControl", () => {
     }
   });
 
-  // The user's ruling: GitHub decides re-runs per repository and no connection
-  // read can say, so its control stays enabled whatever the capability reads,
-  // read or not.
+  // GitHub decides re-runs per repository and no connection read can say, so its
+  // control stays enabled whatever the capability reads, read or not.
   it("stays enabled on GitHub when the capability is unknown or not read yet", () => {
     expect(rerunControl("github", cap("unknown"), undefined)).toEqual({ offer: true, reason: "" });
     expect(rerunControl("github", undefined, undefined)).toEqual({ offer: true, reason: "" });

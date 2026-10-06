@@ -279,9 +279,8 @@ describe("the turn's facts", () => {
   it("sits INSIDE the trigger and JOINS its name", async () => {
     // One control over the `i`, the outcome word and this label, so one press box covers
     // all three (29-turns.css) — and the slot carries NO `aria-hidden`, so the name a
-    // screen reader hears is the readout a sighted reader sees. User ruling, 2026-09-15:
-    // an exposed fact does move the name whenever the turn's numbers do, and that is a
-    // test problem rather than a reader's.
+    // screen reader hears is the readout a sighted reader sees, even though it then
+    // moves whenever the turn's numbers do.
     const el = buildTurnFooter({ elapsedMs: 1000, kindCounts: { execute: 2 } });
     expect(el.querySelector(":scope > .turn-fact")).toBeNull();
     const inside = el.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");

@@ -21,9 +21,8 @@
   background: var(--c-bg-secondary);
 
   /* No leading rail. The box, its tinted border and the header glyph already say
-     "work that is not this agent's own"; a 0.25rem accent edge on top of them was
-     a fourth channel saying the same thing, and it read as decoration rather than
-     as state (user call, 2026-08). The outcome tint moved to this border. */
+     "work that is not this agent's own"; a fourth channel read as decoration
+     rather than as state. The outcome tint lives on this border. */
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
   border-radius: var(--r-lg);
   font-size: var(--fs-base);

@@ -627,10 +627,9 @@ describe("a tabs_changed whose order omits a tab we hold", () => {
 // ---------------------------------------------------------------------------
 
 // A DOUBLE GESTURE IS ONE MUTATION: two taps on one door open one tab. A REPEATED
-// GESTURE IS SEVERAL: pin -> unpin -> pin has to end pinned. Those pull in
-// opposite directions, and both have shipped broken in this fleet — once as an
-// argument-composite idempotency key replaying a cached success (`files.rename`),
-// once as a `dedupe` default whose key included a unique id and collapsed nothing.
+// GESTURE IS SEVERAL: pin -> unpin -> pin has to end pinned. An argument-composite
+// idempotency key breaks the second (it replays a cached success); a `dedupe` key
+// holding a unique id breaks the first (it collapses nothing).
 describe("a double gesture on one door", () => {
   it("collapses two opens 0ms apart into ONE round trip", async () => {
     expect.assertions(3);

@@ -580,8 +580,8 @@ func toolResultSegments(res *marotte.EntryToolResult) []segment {
 // inputLeafDedupeMin is the leaf length at which a leaf occurring verbatim in the
 // diff text handed beside it stops being searched. Below it a leaf is a path, a
 // pattern or a short command and cannot be the write payload; at or above it,
-// 7,281 of 7,361 calls fleet-wide carrying both an input and diffs hold such a
-// leaf verbatim in the new_text.
+// 99% of measured calls carrying both an input and diffs hold such a leaf
+// verbatim in the new_text.
 const inputLeafDedupeMin = 40
 
 // inputLeafText is a tool call's Input string LEAF VALUES, one per line, in

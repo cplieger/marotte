@@ -775,11 +775,10 @@ describe("folded turn face", () => {
   }
 
   it("the answer renders in full — the fold hides work, never the reply", () => {
-    // A 3-line clamp shipped here once and was overruled (user ruling,
-    // 2026-08-31): the folded turn keeps the WHOLE final answer, and the
-    // fold's compactness comes from hiding tool cards, reasoning and delegate
-    // output. A turn with none of those offers no fold at all (data-no-fold),
-    // so an unclamped face can no longer read as "collapse does not work".
+    // The folded turn keeps the WHOLE final answer, unclamped; the fold's
+    // compactness comes from hiding tool cards, reasoning and delegate output. A
+    // turn with none of those offers no fold at all (data-no-fold), so an
+    // unclamped face cannot read as "collapse does not work".
     for (const kind of ["turn-face-prose", "turn-notice"] as const) {
       const content = face(kind, 40);
       expect(content.scrollHeight, `${kind}: nothing clipped`).toBeLessThanOrEqual(

@@ -1258,7 +1258,7 @@ describe("history: the runs filter", () => {
   const lint = {
     workflow_id: "wf_l",
     name: "lint-all",
-    workflow_name: "app-review",
+    workflow_name: "code-review",
     status: "failed",
     updated_at: 4,
   };
@@ -1311,7 +1311,7 @@ describe("history: the runs filter", () => {
   it("reads the recipe as well as the label", async () => {
     // The subtitle carries the recipe when it differs from the label, and the
     // filter reads what the row shows.
-    const { runs } = await filter("app-review");
+    const { runs } = await filter("code-review");
     expect(keysIn(runs)).toEqual(["r:wf_l"]);
   });
 
@@ -1589,11 +1589,16 @@ describe("history: the row's subtitle and time", () => {
     await render({
       sessions: [],
       runs: [
-        { ...runRow, workflow_id: "wf_labelled", name: "review-auth", workflow_name: "app-review" },
-        { ...runRow, workflow_id: "wf_bare", name: "app-review", workflow_name: "app-review" },
+        {
+          ...runRow,
+          workflow_id: "wf_labelled",
+          name: "review-auth",
+          workflow_name: "code-review",
+        },
+        { ...runRow, workflow_id: "wf_bare", name: "code-review", workflow_name: "code-review" },
       ],
     });
-    expect(sub("r:wf_labelled")).toBe("app-review");
+    expect(sub("r:wf_labelled")).toBe("code-review");
     expect(sub("r:wf_bare")).toBe("");
   });
 

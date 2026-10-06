@@ -404,9 +404,9 @@ the reference client's for no stated reason.
 The cost this does NOT remove, recorded because it is the reason to
 think twice before reaching for a pipeline: a subagent has no
 session of its own, so its whole run lands in the PARENT
-transcript and every later turn re-bills it. Measured elsewhere in
-this fleet at 48,931 bytes for a trivial delegation against 3,018
-for the same work as a workflow step. So this key makes pipelines
+transcript and every later turn re-bills it: a trivial delegation
+costs roughly sixteen times the transcript bytes of the same work
+as a workflow step. So this key makes pipelines
 expressible, not cheap; real fan-out still belongs in a workflow
 run, and A4.2's tool-output cap is what bounds the damage when the
 agent chooses otherwise.`,
