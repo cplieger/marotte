@@ -216,7 +216,7 @@ func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *te
 	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
-	runs := &rewindRuns{live: map[string]string{"wf-1": "app-review"}}
+	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review"}}
 
 	_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReq(t, "c1", "u2"))
 
@@ -226,7 +226,7 @@ func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *te
 	if got := reasonOf(err); got != reasonRunsInCut {
 		t.Errorf("reason = %q, want %q", got, reasonRunsInCut)
 	}
-	if want := []LiveRunRef{{ID: "wf-1", Label: "app-review"}}; !slices.Equal(runsOf(err), want) {
+	if want := []LiveRunRef{{ID: "wf-1", Label: "code-review"}}; !slices.Equal(runsOf(err), want) {
 		t.Errorf("runs named = %+v, want %+v", runsOf(err), want)
 	}
 	if len(runs.cancelled) != 0 || b.callCount != 0 || len(store.reverted) != 0 {
@@ -244,7 +244,7 @@ func TestCmdRewindChat_ConfirmedStopsTheRunsBeforeTheRevertAndCutsOnce(t *testin
 	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
 	host := idleHost(store, b, b)
-	runs := &rewindRuns{live: map[string]string{"wf-1": "app-review", "wf-2": "docs-review"}, order: &order}
+	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review", "wf-2": "docs-sweep"}, order: &order}
 
 	_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReqConfirmed(t, "c1", "u2", true))
 
@@ -274,7 +274,7 @@ func TestCmdRewindChat_ARunOutsideTheCutIsNeitherCancelledNorNamed(t *testing.T)
 			store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: tc.launched}
 			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 			host := idleHost(store, b, b)
-			runs := &rewindRuns{live: map[string]string{"wf-0": "app-review"}}
+			runs := &rewindRuns{live: map[string]string{"wf-0": "code-review"}}
 
 			_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReq(t, "c1", "u2"))
 

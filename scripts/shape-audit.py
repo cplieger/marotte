@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Mechanical shape audit for this module's Go packages.
 
-Written because three rounds of hand-auditing kept finding gaps the previous
-round had missed: each pass checked whatever rules the reader happened to
-remember, so "I fixed my findings" was always a weaker claim than it sounded.
-A checklist that runs is the only kind that stays complete.
-
 Every rule below cites the authority it enforces. Run it, fix, run it again,
 until the exit code is 0.
 
@@ -20,7 +15,8 @@ Sources:
   R5  receiver matches its type  same; a receiver naming a former type is stale
   R9  wide consumer interface    google's coupling caution; a composite spanning
                                  several owners forces a god object to satisfy it
-  R10 unexplained nolint         .kiro go-rulebook (a waiver states its reason)
+  R10 unexplained nolint         golangci-lint nolintlint require-explanation
+                                 (a waiver states its reason)
   R11 stale vocabulary           a rename that leaves the old name in identifiers
                                  has only moved the problem
 """
@@ -134,17 +130,10 @@ def methods():
                 yield p, i, m.group(1), m.group(2), m.group(3)
 
 
-# There is deliberately NO method-count rule here, and the one that was here is
-# deleted rather than tuned. It flagged a receiver over 53 methods, a figure this
-# fleet derived by measuring two stdlib packages; no authority states any such
-# limit, and the standard library fails it in four places (reflect.Value 97,
-# go/types.Checker 195, os.File 73, time.Time 60 — while database/sql.DB is 46,
-# not the 53 quoted). A gate the stdlib fails is not a rule, and chasing it splits
-# types that were right.
-#
-# Cohesion is the property that actually discriminates, and it does not reduce to
-# a pass/fail line, so it lives in scripts/cohesion.py as a report to read rather
-# than a check to satisfy.
+# There is deliberately NO method-count rule: no authority states a limit, and the
+# standard library fails any plausible one (reflect.Value 97, go/types.Checker 195,
+# os.File 73, time.Time 60 methods). Cohesion is what discriminates, and it does
+# not reduce to pass/fail, so scripts/cohesion.py reports it instead.
 def camel_words(name):
     """Split a Go identifier into its CamelCase components.
 

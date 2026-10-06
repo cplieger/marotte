@@ -583,8 +583,8 @@ describe("the census: every string a row renders is matchable", () => {
       }),
       {
         category: "skill",
-        name: "judgement",
-        path: "workspace/.kiro/skills/judgement/SKILL.md",
+        name: "triage",
+        path: "workspace/.kiro/skills/triage/SKILL.md",
         inclusion: "manual",
         steering_override: true,
       },

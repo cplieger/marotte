@@ -291,17 +291,11 @@
     border-block-end-color: Canvas;
   }
 
-  /* ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP (user ruling, 2026-09-12): the
-   * only admissible difference is between VIEWS, which is the viewport term
-   * inside --tooltip-max-w. Both numbers are tokens in 01-tokens.css, where the
-   * reasoning and the measurement live, because a per-site override is exactly
-   * the divergence this rule exists to forbid.
-   *
-   * WRAPS. `nowrap` and `max-width` contradicted each other: nowrap forbids the
-   * break the max-width needs, so a long tooltip ignored the cap and ran off
-   * the viewport instead. The clamp is what bounds the height, and it was 6 —
-   * a mode description then rendered 352x98 against the theme button's 87x23,
-   * 17x the area for one hover idiom. */
+  /* ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP: the only admissible difference
+   * is between VIEWS, the viewport term inside --tooltip-max-w. Both numbers are
+   * tokens in 01-tokens.css; a per-site override is the divergence forbidden.
+   * WRAPS, because `nowrap` forbids the break `max-width` needs and a long
+   * tooltip would run off the viewport; the line clamp bounds the height. */
   white-space: normal;
   overflow-wrap: anywhere;
   max-width: var(--tooltip-max-w);

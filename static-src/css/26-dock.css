@@ -627,9 +627,9 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
 
-  /* Centred, never `start`: the 1.5rem action button is the tallest item, so a
-     top-aligned row hangs the state word and a one-line message ~4px above the
-     row's own middle. User ruling: centred at every message length. */
+  /* Centred at every message length, never `start`: the 1.5rem action button is
+     the tallest item, so a top-aligned row hangs the state word and a one-line
+     message ~4px above the row's own middle. */
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);

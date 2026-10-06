@@ -336,18 +336,12 @@ body.sidebar-resizing {
     background: var(--c-press-select);
   }
 
-  /* And the row YIELDS its press to the ×, which is the other half of the rule
-   * 70-selection.css states for a selected row: `:active` propagates to every
-   * ancestor, so without this, pressing the × steps the whole row while the ×
-   * paints its own press inside it, and the wrong thing lights up under the
-   * finger. The value is the rung BELOW — this ladder has two, so the row falls
-   * back to its hover fill, where a selected row falls back to `-hover`, its own
-   * middle rung.
-   *
-   * Scored (0,4,0) against the press rule's (0,3,0), so it wins on specificity.
-   * It cannot be written as the honest `:not(:has(.tab-close:active))` guard on
-   * that rule for the reason recorded at the selected twin: four pseudo-classes
-   * is over the fleet's `selector-max-pseudo-class` of 3. */
+  /* The row YIELDS its press to the ×: `:active` propagates to every ancestor, so
+   * without this a press on the × steps the whole row too. The value is the rung
+   * below the press (this ladder has two, so the row falls back to its hover fill).
+   * Scored (0,4,0) against the press rule's (0,3,0), so it wins on specificity; a
+   * `:not(:has(.tab-close:active))` guard on that rule would need four
+   * pseudo-classes, over stylelint's `selector-max-pseudo-class` of 3. */
   &:not(.active):has(.tab-close:active) {
     background: var(--c-hover-select);
   }
@@ -637,32 +631,12 @@ body.sidebar-resizing {
      tier, which is what catches an `.icon-btn` padding change splitting the pair. */
   --footer-ctl-h: max(var(--hit-floor), calc(var(--icon-ui) + 2 * var(--sp-2)));
 
-  /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER. With many tabs the strip runs
-     right up to the footer and the two read as one column; this is the line that
-     separates them. Same COLOUR token as the header's own hairline and the panel's
-     trailing edge (`--c-border`), and the fleet's hairline WIDTH (`--hairline`,
-     which those two still spell as the literal `1px` — moving them onto the token
-     is a separate change). SOLID, so the panel's two internal boundaries are one
-     treatment rather than two vocabularies (user call, 2026-09-12; it shipped
-     dotted for one day on the reasoning that a second solid rule would read as a
-     repeated one, and the repetition is the point — both ends of the panel close
-     the same way).
-
-     `box-sizing: border-box` (02-reset.css) means it is spent OUT of the band
-     exactly as the header's is, so both of the panel's ends still render the same
-     52px box and both content bands are now 51px. That is the symmetry
-     `sidebar-band-css.test.ts` pins, inverted: the footer used to be the end
-     without a hairline.
-
-     Double-up check, done rather than assumed: `[id="tab-list"]` declares
-     `padding: var(--sp-1) var(--sp-2)` and no bottom margin, and this rule declares
-     no block padding, so the line sits directly under the last tab row's 4px bottom
-     padding with nothing to retune on either side. The border is on the FOOTER,
-     outside the scroller, so it cannot scroll away, and the panel's
-     `padding-bottom: env(safe-area-inset-bottom)` sits BELOW the footer rather than
-     in this seam. `--c-border` is a `color-mix` over `--c-text-primary` declared
-     once (01-tokens.css) and the light block redeclares that ink, so it re-resolves
-     per theme at computed-value time — nothing is added to the light block. */
+  /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER: with many tabs the strip runs
+     into the footer and the two read as one column. Solid `--hairline` in
+     `--c-border`, the same treatment as the header's hairline, so both ends of the
+     panel close the same way. With `box-sizing: border-box` it is spent out of the
+     52px band exactly as the header's is, the symmetry `sidebar-band-css.test.ts`
+     pins. On the footer, outside the scroller, so it cannot scroll away. */
   border-block-start: var(--hairline) solid var(--c-border);
 }
 

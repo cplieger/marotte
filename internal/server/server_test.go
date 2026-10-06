@@ -517,20 +517,11 @@ func FuzzScanKiroDirFS(f *testing.F) {
 }
 
 // TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties this
-// handler shares with webhttp.ReadinessHandler, and therefore with every other
-// app in the fleet that serves a readiness verdict.
-//
-// KEY ORDER: this handler cannot BE the library's handler (its verdict is
-// composite -- a second reason for an unavailable kiro-cli -- while
-// ReadinessChecker is Ready() bool), so it matches the library's wire shape by
-// hand. It built a map before, and encoding/json sorts map keys, so it emitted
-// {"reason":…,"status":…} while the library emitted {"status":…,"reason":…}: one
-// envelope in two orders, in apps whose own comments called it canonical.
-//
-// CACHE: a 200 with no explicit freshness is heuristically cacheable under RFC
-// 9111, and a cached "ok" outliving the readiness it reported keeps traffic
-// arriving at an instance that has begun draining -- the exact failure the gate
-// exists to prevent.
+// handler shares with webhttp.ReadinessHandler. KEY ORDER: its verdict is
+// composite, so it cannot be the library's handler and matches the shape by hand;
+// a map would sort "reason" before "status". CACHE: a 200 with no explicit
+// freshness is heuristically cacheable (RFC 9111), and a cached "ok" outliving its
+// readiness keeps traffic arriving at a draining instance.
 func TestHandleHealth_envelopeMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

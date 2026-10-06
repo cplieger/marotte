@@ -1,25 +1,9 @@
-// THE FOOTER'S DIVIDER, in both themes.
-//
-// With many tabs the strip runs right up to the footer and the two read as one
-// column. `.sidebar-footer` carries a `border-block-start` that separates them, and
-// three properties are worth pinning because each could regress independently:
-//
-//   IT IS SOLID, matching the header's own hairline and the panel's trailing edge,
-//   so the panel's internal boundaries are ONE treatment (user call, 2026-09-12).
-//   It shipped dotted for a day on the reasoning that a second solid rule would
-//   read as a repeated one; the repetition is the point.
-//
-//   IT COSTS THE BAND NOTHING. `box-sizing: border-box` (02-reset.css) means the
-//   border is spent OUT of `--sidebar-band-h` exactly as the header's is, so both of
-//   the panel's ends still render the same box while both content bands become
-//   box − 1. `sidebar-band-css.test.ts` owns the equality; this file owns the
-//   divider's own three declarations and the per-theme colour.
-//
-//   IT RE-RESOLVES PER THEME FROM ONE DECLARATION. `--c-border` is a `color-mix`
-//   over `--c-text-primary` declared once in `01-tokens.css`, and the light block
-//   redeclares that ink — so a per-theme literal on either end is the drift to catch,
-//   and it is caught as SOURCE because a computed read cannot tell a token from a
-//   literal that currently agrees with it.
+// THE FOOTER'S DIVIDER, in both themes. `.sidebar-footer`'s `border-block-start`
+// separates the tab strip from the footer. Pinned: it is SOLID, matching the
+// header's hairline; it costs the band nothing (`sidebar-band-css.test.ts` owns
+// that equality); and it re-resolves per theme from one `--c-border` declaration,
+// checked as SOURCE because a computed read cannot tell a token from a literal
+// that currently agrees with it.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -162,7 +146,7 @@ describe("read as source: neither end spells a colour", () => {
     expect(body, "the divider reads the shared border token").toMatch(
       /border-block-start:[^;]*var\(--c-border\)/u,
     );
-    expect(body, "and the fleet's hairline width token").toMatch(
+    expect(body, "and the shared hairline width token").toMatch(
       /border-block-start:\s*var\(--hairline\)/u,
     );
     expect(body, "no colour literal").not.toMatch(

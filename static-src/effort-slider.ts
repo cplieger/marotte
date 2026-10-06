@@ -197,17 +197,11 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     levels = [...next];
     track.dataset["tiers"] = String(levels.length);
     knob.setAttribute("aria-valuemax", String(Math.max(0, levels.length - 1)));
-    // ONE DOT PER TIER, on the positions the knob actually lands on.
-    //
-    // OVERTURNED (user call, 2026-09): this used to read "no per-tier element: the
-    // drag is continuous, so a mark per tier would draw a grid the gesture does not
-    // follow." The premise held and the conclusion did not — the gesture is still
-    // continuous and the knob still tracks the finger unsnapped, but the RELEASE snaps
-    // to a tier, so the stops are where the gesture ends rather than a grid it has to
-    // obey. Without them the bar states how many tiers exist nowhere at all: the
-    // caption names the one in force and `data-tiers` reached exactly one CSS rule.
-    // Each dot carries only its own fraction and takes its geometry from the same
-    // formula as the knob, so a mark cannot land where the handle would not.
+    // ONE DOT PER TIER, on the positions the knob lands on: the drag is continuous
+    // but the RELEASE snaps to a tier, so the stops are where the gesture ends, and
+    // without them nothing states how many tiers exist. Each dot carries only its
+    // fraction and takes its geometry from the knob's formula, so a mark cannot
+    // land where the handle would not.
     stops.replaceChildren(
       ...(levels.length <= 1
         ? []

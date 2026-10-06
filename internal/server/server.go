@@ -485,8 +485,8 @@ type healthBody struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleHealth returns the liveness+readiness status in the envelope shared across the
-// fleet: 200 {"status":"ok"} when the listener is bound and serving, 503
+// handleHealth returns the liveness+readiness status in webhttp.ReadinessHandler's
+// envelope: 200 {"status":"ok"} when the listener is bound and serving, 503
 // {"status":"unready",...} during startup, drain, or an unavailable kiro-cli.
 //
 // The kiro-cli verdict is the install manager's and is VERSION-AWARE, so a binary drifted

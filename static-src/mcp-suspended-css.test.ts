@@ -2,10 +2,8 @@
 //
 // The panel test beside this one pins the mark (`data-suspended`) and the notice;
 // what it cannot see is whether the mark PAINTS anything. A rule whose selector
-// loses, or whose spelling the fleet's stylelint config would reject, reads
-// identically from the panel's side — the attribute is written, the chips look
-// exactly as they did, and a reader is told a grant is in force when it is not.
-//
+// loses, or whose spelling the shared stylelint config rejects, reads identically
+// from the panel's side, and a reader is told a grant is in force when it is not.
 // Every claim here is a computed value in a real browser over the real bundle.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 

@@ -1,19 +1,9 @@
 // ---------------------------------------------------------------------------
-// ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP, and the only admissible
-// difference is the VIEW (user ruling, 2026-09-12).
-//
-// 139 sites write `data-tooltip`, one delegated controller renders them, and one
-// rule sizes them — so the property is stated once here rather than per site.
-// Before this the clamp was 6 lines: measured against the shipped stylesheet, an
-// agent's front-matter description rendered 352x98 while the theme button's
-// rendered 87x23, 17x the area for one hover idiom.
-//
-// THREE HALVES, because none answers another's question. The source read says the
-// two numbers are TOKENS with no second writer (a computed style cannot see a
-// per-site override that is not in force). The desktop measurement says the cap
-// actually binds over content up to the longest a tooltip carries in production
-// (a source read cannot evaluate wrapping). The narrow measurement says the
-// viewport term is real (a `min()` reads as a literal at one size).
+// ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP; only the VIEW may differ.
+// Three halves, none answering another's question: the source read says both
+// numbers are TOKENS with no second writer; the desktop measurement says the cap
+// binds over the longest content a tooltip carries; the narrow measurement says
+// the viewport term is real (a `min()` reads as a literal at one size).
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -32,20 +22,20 @@ import {
 /** The one rule that sizes every tooltip. */
 const TIP = ".uip-tooltip";
 
-/** Real tooltip content, worst case first. Each is a live `data-tooltip` shape:
- *  an agent description (role-picker.ts), a typed steer (pending-steers.ts), a
- *  docs badge sentence (docs.ts), the longest file path measured on the live
- *  volume (tool-card.ts — 121 chars, against a p50 of 49 and a p99 of 85 over
- *  28,841 file-path tool inputs), and two icon-button hints. */
+/** Tooltip content at production lengths, worst case first. Each is a
+ *  `data-tooltip` shape: an agent description (role-picker.ts), a typed steer
+ *  (pending-steers.ts), a docs badge sentence (docs.ts), a file path at the longest
+ *  measured length (tool-card.ts, 121 chars against a p99 of 85), and two
+ *  icon-button hints. */
 const SAMPLES: readonly { readonly what: string; readonly text: string }[] = [
   {
     what: "an agent's front-matter description",
     text:
-      "L2 feature owner in the app-review skill: the decision half of the feature layer, " +
-      "ONE per feature after the 3-family tracer wave. The feature's PM with stated priors: " +
-      "leanness wins ties, deletion outranks addition, zoom out and run greenfield before " +
-      "any addition, the boundary is exempt from lean pressure, and posture scales with cost " +
-      "against value. Re-reads the code at every site it rules on, never from a summary.",
+      "Release reviewer for the billing service: reads every change that touches invoices, " +
+      "checks each migration against the rollback plan, and flags any query that scans the " +
+      "ledger table without an index. Prefers small, reversible steps, asks before deleting " +
+      "data, and writes its findings as a short list ordered by risk, with the file and line " +
+      "for each one and the smallest change that would resolve it, never a broad rewrite.",
   },
   {
     what: "a typed steer",
@@ -60,8 +50,8 @@ const SAMPLES: readonly { readonly what: string; readonly text: string }[] = [
       "file, so delete is disabled here",
   },
   {
-    what: "the longest file path on the live volume",
-    text: "/workspace/marotte/.worktrees/tool-card-bare-disclosure/static-src/node_modules/@cplieger/ui-primitives/src/disclosure.ts",
+    what: "a file path at the longest measured length",
+    text: "/workspace/project/.worktrees/feature-card-bare-disclosure/web/src/node_modules/@example/ui-primitives/src/disclosures.ts",
   },
   { what: "a two-clause icon hint", text: "Mouse mode. Switch to touch mode" },
   { what: "an icon hint", text: "Toggle theme" },

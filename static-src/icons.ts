@@ -196,7 +196,7 @@ export const ICON_REFRESH = svg(
 // The funnel: this app's mark for a filter that NARROWS A LIST, and only that.
 // The file browser's changed-by-this-chat toggle is deliberately not a consumer —
 // it sets opacity on the rows the chat did not write and removes nothing, so the
-// funnel would claim an operation it does not perform (user ruling, 2026-09).
+// funnel would claim an operation it does not perform.
 export const ICON_FILTER =
   '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +

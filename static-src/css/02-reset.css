@@ -163,19 +163,12 @@
     font-optical-sizing: auto;
     scrollbar-gutter: stable;
 
-    /* PINCH TO ZOOM IS ON, and `pinch-zoom` is the term that turns it on. This
-       list used to be `pan-x pan-y`, which excludes the pinch gesture, so
-       deleting `maximum-scale=1.0, user-scalable=no` from the viewport meta
-       (static/index.html) achieved nothing on its own — one clause suppressed the
-       gesture and the other still forbade it. WCAG 1.4.4 is the whole purpose of
-       that meta change, so the two land together or neither does.
-       It does NOT reintroduce the 300ms double-tap delay: that is what
-       `touch-action: manipulation` on `:where(button)` below removes, and the two
-       values are independent — `manipulation` is `pan-x pan-y pinch-zoom` minus
-       double-tap-zoom, so a button keeps its own answer either way.
-       OVERRIDES A PRIOR USER RULING (touch-policy.test.ts, "pinch to zoom is off
-       on purpose"), ratified 2026-09-10; reverting is this one declaration plus
-       that test's own case. */
+    /* PINCH TO ZOOM IS ON (WCAG 1.4.4), and `pinch-zoom` is the term that turns
+       it on: `pan-x pan-y` alone excludes the gesture, so the viewport meta's
+       lack of `user-scalable=no` would achieve nothing without it. It does not
+       reintroduce the 300ms double-tap delay: `touch-action: manipulation` on
+       `:where(button)` below removes that, independently. `touch-policy.test.ts`
+       pins both halves. */
     touch-action: pan-x pan-y pinch-zoom;
     /* The web-terminal-ui bundle (in the lowest `web-terminal-ui` layer) sets
        `body { color-scheme: dark }` for its standalone full-page terminal.

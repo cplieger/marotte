@@ -639,11 +639,6 @@ def show_pairs(
 # muted metadata mixes toward the FILL (no hue to protect, stays on the row's
 # own axis), a status hue mixes toward the row's INK (lightens on dark, darkens
 # on light, and `color-mix(in oklch)` leaves H alone so the hue survives).
-#
-# No `--c-selected-accent-fg` row: it was the editor `dirty` dot's on-selected
-# ink, the 2026-08-31 ruling deleted that role, and nothing in the stylesheets
-# declares or reads it. It printed "not declared" here rather than crashing, which
-# is why it outlived the six reads in DOT_STATES that did crash.
 SELECTED_INKS: list[tuple[str, str, str]] = [
     # (token, the colour it is mixed with, the direction label)
     ("--c-selected-muted-fg", "var(--c-selected-bg)", "toward fill"),
@@ -787,26 +782,11 @@ AMBIENT_CANDIDATES = [
 
 
 # ---------------------------------------------------------------------------
-# The tab activity dot (12-tabs.css / 70-selection.css).
-#
-# A status dot is a graphical object conveying information, so its floor is
-# WCAG 1.4.11's 3:1 rather than 4.5:1. A tab row presents five fills — unselected
-# (the sidebar, or the sidebar under the hover wash) and selected (three rungs of
-# its own fill) — and the same ink paints the dot on all five, because selection
-# belongs to the ROW and never to the status ink (user ruling, 2026-08-31; see
-# --c-dot-idle in 01-tokens.css and the note at the end of 70-selection.css).
-#
-# So the FLOOR is the two unselected fills and the selected rungs are REPORTED.
-# That is not a relaxation: this table used to read an on-selected ink family
-# (`--c-selected-dot-*-fg`) in the selected columns, and the ruling deleted every
-# one of those tokens, so those columns were measuring inks no stylesheet
-# declares — six reads that made `css-contrast.py dot` exit on a KeyError before
-# it printed the channel matrix. Measured with the ink the CSS actually paints, a
-# floor on `selected` and `sel+hover` is sixteen standing failures across the two
-# themes (light misses on every state), which is a cost the ruling accepted when
-# it chose a byte-identical hue over a legible one. `main()` already applies this
-# reasoning to `--c-bg-elevated`: report the number, gate where the app can hold
-# the line.
+# The tab activity dot (12-tabs.css / 70-selection.css): a graphical object, so
+# its floor is WCAG 1.4.11's 3:1. One ink paints it on all five tab-row fills,
+# because selection belongs to the ROW and never to the status ink. So the FLOOR
+# is the two unselected fills and the three selected rungs are REPORTED: holding
+# them would fail every light-theme state, the price of one hue per status.
 # ---------------------------------------------------------------------------
 
 # The fills a tab row can present. Held = the two UNSELECTED fills; every
@@ -1083,17 +1063,11 @@ DOT_SOURCE_HUES = [
 DOT_SWEEP_LIGHTNESS = range(30, 93)
 DOT_SWEEP_CHROMA = (0.05, 0.28, 0.005)
 
-# The base favicon's own artwork under the attention badge, and why the badge's
-# ink is a separate question from the tab dot's. static/favicon.svg is an opaque
-# 48-unit rounded rect filled FLAT, so the badge is never seen against a theme
-# surface, which is what decides that ONE icon serves both themes.
-#
-# The backdrop is READ OUT OF THE SHIPPED ASSET rather than restated here. It used
-# to be a literal cross-checked against light `--c-accent`, on the reasoning that
-# the icon copied that token; the icon carries the FLEET's brand violet now
-# (#9046FF, shared byte-for-byte with web-terminal-kiro) and no token holds it, so
-# a copy here would be a second source of truth for a fact only the asset owns.
-# Deriving it makes the drift the old check existed to catch unrepresentable.
+# The base favicon's own artwork under the attention badge. static/favicon.svg is
+# an opaque 48-unit rounded rect filled FLAT, so the badge is never seen against a
+# theme surface, which is what decides that ONE icon serves both themes. The
+# backdrop is READ OUT OF THE SHIPPED ASSET because no theme token holds the
+# icon's violet, so a literal here would be a second source of truth.
 FAVICON_SVG = Path(__file__).resolve().parent.parent / "static" / "favicon.svg"
 FAVICON_CUES = [
     ("input", "--c-dot-input"),
@@ -1118,8 +1092,8 @@ def as_expr(ink: str) -> str:
 def show_dot(themes: list[Theme]) -> None:
     print("TAB ACTIVITY DOT (WCAG 1.4.11: 3:1 for a graphical object; the floor is")
     print("the two UNSELECTED fills, and the three selected rungs are reported —")
-    print("selection never re-tints a status ink, so their lower ratios are a cost")
-    print("that ruling accepted rather than a regression this can gate)")
+    print("selection never re-tints a status ink, so their lower ratios are an")
+    print("accepted cost rather than a regression this can gate)")
     print()
     for th in themes:
         print(f"  {th.name}:")
@@ -1342,11 +1316,10 @@ def show_dot_hues(themes: list[Theme]) -> None:
 def dot_held_worst(th: Theme, expr: str) -> tuple[str, float]:
     """The worst contrast an ink reads on any HELD tab-row fill.
 
-    One ink across every fill, because that is what the stylesheets paint: the
-    56% mix toward `--c-selected-fg` this used to apply to the selected columns
-    belonged to an on-selected ink family the 2026-08-31 ruling deleted. The held
-    set is the two unselected fills (DOT_HELD), so a sweep sizes a candidate
-    against the surfaces the floor is actually held on.
+    One ink across every fill, because that is what the stylesheets paint: no
+    on-selected ink family exists. The held set is the two unselected fills
+    (DOT_HELD), so a sweep sizes a candidate against the surfaces the floor is
+    actually held on.
     """
     held = []
     for col, fill in DOT_FILLS + DOT_SELECTED_FILLS:
@@ -1458,8 +1431,8 @@ def show_favicon_badge(themes: list[Theme]) -> None:
     print()
     backdrop = from_hex(favicon_backdrop())
     print(f"  badge sits on the icon's flat fill: {backdrop.hex()}")
-    print("  (read from static/favicon.svg; the fleet brand violet, shared with")
-    print("  web-terminal-kiro, and deliberately not a copy of any theme token)")
+    print("  (read from static/favicon.svg; the brand violet, deliberately not")
+    print("  a copy of any theme token)")
     print()
     print(
         f"  {'cue':<8} {'token':<12} "

@@ -761,15 +761,10 @@ input[type="radio"] {
 
 /* --- Specificity-sensitive overrides (must come after base declarations) --- */
 
-/* THE SETTINGS COG DOES NOT SPIN, and the rule is the absence rather than an
-   override to find and delete later. It used to take `transform: rotate(45deg)`
-   on `.active` over a `--dur-standard` transition, which is the one nav button in
-   this row that moved when selected: its six neighbours mark the active view with
-   ink and fill alone (`70-selection.css`), so the spin claimed a second meaning
-   for a state the row already states, and a gear turning toward its own teeth
-   reads as machinery rather than as selection. Removed on a user ruling
-   (2026-09-10). Do not reintroduce a transform here without moving the other six
-   with it, or the row disagrees with itself again. */
+/* THE SETTINGS COG DOES NOT SPIN: its six neighbours mark the active view with ink
+   and fill alone (`70-selection.css`), so a transform on `.active` would claim a
+   second meaning for a state the row already states. A transform here needs the
+   other six to move with it. */
 
 /* THERE IS NO HIDDEN-TAB ANIMATION OVERRIDE, and it was deleted on evidence
    rather than tidied. Six selectors here carried `animation: none !important`

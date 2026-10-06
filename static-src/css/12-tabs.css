@@ -649,8 +649,8 @@
 
   /* Every state paints from this one custom property, exactly as the activity dot
      does, which is what lets 70-selection.css keep saying nothing (a tab's
-     selected fill never rewrites a status ink — user ruling, 2026-08-31) and what
-     keeps a state's whole treatment readable from one rule body.
+     selected fill never rewrites a status ink) and what keeps a state's whole
+     treatment readable from one rule body.
      The DEFAULT is the dot's own — the quiet grey — rather than the violet this
      mark's `working` takes: a state arm added below that forgot its ink then
      paints as nothing in particular instead of claiming a run is executing. */
@@ -924,13 +924,11 @@
   }
 
   /* THE SPAWN'S DELAYS, which the global sweep cannot reach: 40-a11y.css zeroes
-     `transition-duration` and says nothing about `transition-delay`, so a reader on
-     this preference would get the space opening instantly and then 200ms of an open
-     gap with nothing in it before the mark appeared — a lag with no motion left to
-     justify it. Zeroed HERE rather than in that sweep because these are the only
-     delayed transitions in the corpus, so widening the sweep would be a fleet-wide
-     rule for a gap one file can reach. Both selectors: each direction carries its
-     delay in its own shorthand, and the state rule outranks the tuck. */
+     `transition-duration` but not `transition-delay`, so this preference would get
+     200ms of an empty open gap before the mark appeared. Zeroed here rather than in
+     that sweep because these are the only delayed transitions in the stylesheets.
+     Both selectors: each direction carries its delay in its own shorthand, and the
+     state rule outranks the tuck. */
   .tab-run-dot,
   .tab-run-dot[data-status] {
     transition-delay: 0s;

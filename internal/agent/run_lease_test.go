@@ -309,7 +309,7 @@ func cancelsIssued(br *fakeBridge) int {
 // answers nil, with the cancel issued once.
 func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
 	rewindCancelWaitOf(t, 5*time.Second)
-	h, br := heldRun(t, "wf_1", "app-review")
+	h, br := heldRun(t, "wf_1", "code-review")
 	go func() {
 		deadline := time.Now().Add(2 * time.Second)
 		for cancelsIssued(br) == 0 {
@@ -333,7 +333,7 @@ func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
 
 func TestCancelRun_AHeldLeasePastTheWaitIsStillLive(t *testing.T) {
 	rewindCancelWaitOf(t, 100*time.Millisecond)
-	h, br := heldRun(t, "wf_1", "app-review")
+	h, br := heldRun(t, "wf_1", "code-review")
 
 	err := h.runs.CancelRun(t.Context(), "wf_1")
 	if !errors.Is(err, command.ErrRunStillLive) {
@@ -349,7 +349,7 @@ func TestCancelRun_AHeldLeasePastTheWaitIsStillLive(t *testing.T) {
 
 func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 	rewindCancelWaitOf(t, 5*time.Second)
-	h, _ := heldRun(t, "wf_1", "app-review")
+	h, _ := heldRun(t, "wf_1", "code-review")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -361,12 +361,12 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 // LiveRuns answers the runs still holding a lease, labelled by recipe; a released or
 // unknown id is not live.
 func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
-	h, _ := heldRun(t, "wf_held", "app-review")
+	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch())
 	h.runs.releaseLease(t.Context(), "wf_released")
 
 	got := h.runs.LiveRuns([]string{"wf_held", "wf_released", "wf_unknown"})
-	want := []command.LiveRunRef{{ID: "wf_held", Label: "app-review"}}
+	want := []command.LiveRunRef{{ID: "wf_held", Label: "code-review"}}
 	if !slices.Equal(got, want) {
 		t.Errorf("LiveRuns([held released unknown]) = %+v, want %+v", got, want)
 	}

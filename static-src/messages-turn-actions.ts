@@ -162,15 +162,9 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false):
 
 /** Mount the action buttons into the turn's footer, once per footer element,
  *  and refresh the turn snapshot the handlers read. Buttons appear only once
- *  the turn has settled with something to copy — a running turn's footer (rare:
- *  ledger data lands at turn end) stays actions-free, matching the old
- *  finalize-time attachment.
- *
- *  EVERY action is inside the collapsible group, Copy included (user call,
- *  2026-09): on a narrow row the footer keeps the ledger, the turn's time, one
- *  `…` trigger and Rewind's glyph, and nothing else. Copy used to sit outside as
- *  the one direct control, which left the phone row carrying two targets where
- *  the point of the overflow is one. */
+ *  the turn has settled with something to copy. EVERY action, Copy included,
+ *  is inside the collapsible group, so a narrow row carries one `…` target
+ *  beside the ledger, the time and Rewind's glyph. */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
   // Ahead of every early return, and idempotent: the first mount of the document's
   // life is what needs the listeners, and repeat mounts must not stack them.

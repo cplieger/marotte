@@ -15,27 +15,12 @@ import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rul
 
 describe("pinch-zoom is enabled", () => {
   it("keeps `pinch-zoom` in the body's touch-action list", () => {
-    // THE PRIOR RULING IS OVERTURNED, deliberately, and this case is its record.
-    // It used to assert `pan-x pan-y` and read: "USER RULING, stated twice: pinch
-    // to zoom is off on purpose. This is an app shell with its own scroll
-    // containers, a docked composer and a terminal, and a pinch that scales the
-    // whole layout leaves every one of them mispositioned with no way back except
-    // a reload." It also said the rule was pinned because it is what a
-    // well-meaning accessibility sweep deletes.
-    //
-    // What changed is that the sweep happened and was RATIFIED (2026-09-10): the
-    // viewport meta lost `maximum-scale=1.0, user-scalable=no` for WCAG 1.4.4, and
-    // that clause is inert while this list excludes the gesture — one suppressed
-    // the pinch, the other forbade it. So the two travel together: without
-    // `pinch-zoom` here the meta change buys nothing at all.
-    //
-    // The mispositioning cost the old ruling named is real and is accepted rather
-    // than answered. `pinch-zoom` does NOT reintroduce the 300ms double-tap delay
-    // that `touch-action: manipulation` on `:where(button)` exists to remove; the
-    // two are independent values.
-    //
-    // Scoped to the `reset` layer, which is where 02-reset.css puts its element
-    // defaults — a top-level lookup finds nothing.
+    // PINCH TO ZOOM IS ON (WCAG 1.4.4): the viewport meta carries no
+    // `user-scalable=no`, and that is inert unless this list includes `pinch-zoom`,
+    // so the two travel together. The cost, a pinch that scales the whole shell, is
+    // accepted. `pinch-zoom` does not reintroduce the 300ms double-tap delay that
+    // `touch-action: manipulation` on `:where(button)` removes. Scoped to the
+    // `reset` layer, where 02-reset.css puts its element defaults.
     const reset = loadCSS("02-reset.css");
     const body = ruleContaining(reset, "body", "reset");
     expect(body.body).toMatch(/touch-action:\s*pan-x pan-y pinch-zoom/u);

@@ -2,34 +2,11 @@
 // named status responses, the error envelope they carry, and the request
 // guards whose failure IS one of those responses.
 //
-// Every symbol here either writes a reply or refuses a request by writing one,
-// which is what the name claims and the whole of what the package does.
-//
-// It exists because this is BEHAVIOUR, and it used to sit in internal/marotte
-// beside the wire and domain TYPES. That put the 405 helper every handler
-// imports inside the one package the code generator walks for the
-// cross-language type contract, so neither half could be read or changed
-// without the other in view.
-//
-// The mechanism is the fleet's: webhttp owns the headers, the status and the
-// encode, and handlers call it directly for a plain body. What is marotte's,
-// and the only reason this package exists at all, is the error TAXONOMY: every
-// helper here writes the bare {"error": "msg"} envelope marotte's clients
-// decode, leaving webhttp.ErrorResponse's Code and RequestID fields empty. A
-// handler that hand-rolls that envelope instead is the drift these helpers
-// exist to stop, and webhttp's own contract puts the named helpers here — it
-// ships WriteError as the mechanism and leaves each app's taxonomy per app.
-//
-// NOT httpwire, which this package was called for one commit. subflux has a
-// package of that name for the OPPOSITE direction — bridging httpx errors
-// while reading an UPSTREAM response — so one spelling would have named two
-// disjoint concerns and taught a fleet reader that the name carries no
-// information. Fleet alignment aligns concepts, not spellings: the shared
-// concept is "the app's own HTTP boundary vocabulary", and the direction is
-// what the name has to say out loud. NOT apireply either: internal/marotte is the
-// package being renamed away from api because api names nothing, so borrowing
-// the word for its neighbour would repeat the mistake and leave a reader
-// guessing whether the prefix means the package, the URL space, or the idea.
+// webhttp owns the headers, the status and the encode; this package owns
+// marotte's error taxonomy. Every helper writes the bare {"error": "msg"}
+// envelope marotte's clients decode, leaving webhttp.ErrorResponse's Code and
+// RequestID empty, so a handler must use these helpers rather than hand-roll
+// the envelope.
 package httpreply
 
 import (

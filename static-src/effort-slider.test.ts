@@ -344,11 +344,9 @@ describe("the knob's size", () => {
   });
 
   it("draws both of its edges with a border and carries no shadow", () => {
-    // The bar's groove was two inset shadows and the handle carried two drop shadows —
-    // the app's one persistent lift, and its one standing exception to the rule that a
-    // shadow marks a surface off the page. Both are borders now (user ruling, 2026-09:
-    // no other surface in the interface uses a shadow), so the control is edged the way
-    // every other surface is.
+    // The groove and the handle are edged with borders, not shadows: no surface in
+    // the interface uses a shadow, so the control is edged the way every other
+    // surface is.
     mount(FIVE, "high");
     const bar = getComputedStyle(track(), "::before");
     const k = getComputedStyle(knob());
@@ -462,10 +460,8 @@ describe("the knob's size", () => {
   });
 
   it("marks each tier where the knob actually lands", () => {
-    // OVERTURNED (user call): this used to assert the bar carried NO per-tier mark, on
-    // the ground that a continuous drag should not draw a grid. The RELEASE snaps to a
-    // tier, so the marks are where the gesture ends. What keeps them honest is that
-    // they take the knob's own travel arithmetic, so a dot cannot sit where the handle
+    // The bar carries one mark per tier, because the RELEASE snaps to a tier. They
+    // take the knob's own travel arithmetic, so a dot cannot sit where the handle
     // would not — which is what this measures rather than the count alone.
     mount(FIVE, "low");
     const dots = [...slider.el.querySelectorAll<HTMLElement>(".effort-stop")];

@@ -136,15 +136,15 @@ func TestObserveComplete_PushesNothingForANonTerminalRun(t *testing.T) {
 func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
-	h.runs.grantLease(ctx, "wf_1", "app-review", manualLaunch())
+	h.runs.grantLease(ctx, "wf_1", "code-review", manualLaunch())
 
 	h.runs.observeComplete(ctx, "", runNotif(methodWFRunComplete, map[string]any{
 		"workflowId": "wf_1", "status": "completed",
 	}))
 
-	if got := awaitRunPush(t, fp); got.body != "app-review finished" {
+	if got := awaitRunPush(t, fp); got.body != "code-review finished" {
 		t.Errorf("push body = %q, want %q; the frame carries no name, so the lease is the source",
-			got.body, "app-review finished")
+			got.body, "code-review finished")
 	}
 }
 

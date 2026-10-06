@@ -23,9 +23,8 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		BadRequest(w, "expected "+MIMETypeJSON)
 		return false
 	}
-	// Cap + decode + reject-trailing is webhttp.DecodeJSONInto (shared with the
-	// fleet); marotte keeps its Content-Type gate, the 413/400 split, and its
-	// bare {"error":…} envelope on top — DecodeJSONInto writes nothing itself.
+	// webhttp.DecodeJSONInto caps, decodes and rejects trailing data but writes
+	// nothing, so the 413/400 split and the envelope are written here.
 	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
 		if refuseTooLarge(w, r, err) {
 			return false

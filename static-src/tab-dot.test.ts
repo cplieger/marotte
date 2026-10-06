@@ -941,9 +941,8 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
 describe("the active row keeps the same dot color", () => {
   it("never re-points --dot-color from an active-tab selector", () => {
     // Selection belongs to the row. A status belongs to the chat, so selecting
-    // the row must not turn normal green into a darker green (user ruling,
-    // 2026-08-31). Contrast adjustments belong to the row fill, not the state
-    // indicator's identity.
+    // the row must not turn normal green into a darker green. Contrast
+    // adjustments belong to the row fill, not the state indicator's identity.
     const sel = loadCSS("70-selection.css");
     expect(sel).not.toMatch(/\.tab\.active\s+\.tab-status-dot/u);
   });
@@ -1993,7 +1992,7 @@ describe("every turn outcome reaches the tab dot", () => {
     // STOPPED. Neither is a failure — a cancel is what the user asked for, and an
     // unmeasured stop reason says nothing about whether the work succeeded — but
     // neither may be `idle` either, because the hollow ring means the chat has NOT
-    // INITIATED (user ruling, 2026-09-04) and both of these ran a turn. `done` is
+    // INITIATED and both of these ran a turn. `done` is
     // the transport's "a turn finished here", which is what both of them are.
     ["cancelled", "done"],
     ["unknown", "done"],

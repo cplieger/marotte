@@ -565,7 +565,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	}
 }
 
-// TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure: a homelab Loki
+// TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure: a deployment's Loki
 // rule reads logMsgRunOverran as "a schedule stopped producing", so reusing it for a
 // manual run standing aside for its slot would page somebody for correct behaviour.
 func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *testing.T) {
@@ -592,7 +592,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 	}
 	if strings.Contains(out, logMsgRunOverran) {
 		t.Errorf("a manual run yielding to a slot logged the schedule-failure message, which a "+
-			"homelab alert rule keys on: %s", out)
+			"deployment alert rule keys on: %s", out)
 	}
 	if strings.Contains(out, logMsgRunStalled) {
 		t.Errorf("the stall message was logged for a run cancelled at its slot: %s", out)

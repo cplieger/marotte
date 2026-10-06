@@ -101,7 +101,7 @@ func TestCmdPrompt_MCPReadinessTimeoutNamesTheServers(t *testing.T) {
 // nothing. A summary read on the ordinary path would put a registry read plus a
 // config-store read on every prompt, and a line that fires when nothing is wrong
 // is how a reader learns to skip the one that matters.
-func TestCmdPrompt_AReadyMCPFleetIsSilent(t *testing.T) {
+func TestCmdPrompt_ReadyMCPServersAreSilent(t *testing.T) {
 	deps := &readyMCPDeps{
 		hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
 		bridge:     &recordingBridge{},
@@ -119,7 +119,7 @@ func TestCmdPrompt_AReadyMCPFleetIsSilent(t *testing.T) {
 	join.join()
 
 	if deps.asked != 0 {
-		t.Errorf("PendingSummary called %d times on a ready fleet, want 0", deps.asked)
+		t.Errorf("PendingSummary called %d times with every server ready, want 0", deps.asked)
 	}
 	if out := logs.String(); strings.Contains(out, "MCP readiness timeout") {
 		t.Errorf("logs = %q, must not report a timeout that did not happen", out)

@@ -992,8 +992,8 @@ describe("run view instructions", () => {
     ]);
   });
 
-  // The case the user called out, and the one a character count also gets right —
-  // so it is the floor rather than the proof.
+  // The short-instruction case, which a character count also gets right — so it is
+  // the floor rather than the proof.
   it("offers NO opener on a short instruction", async () => {
     const { body } = await paint(openRunView, "running", {
       inputs: { repo: "marotte" },

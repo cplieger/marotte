@@ -1,15 +1,10 @@
 // ---------------------------------------------------------------------------
 // The four tab mutations, and the two opposite properties their coalescing has
-// to hold at once.
-//
-// A DOUBLE GESTURE IS ONE MUTATION: two taps on one door open one tab, which is
-// what `dedupe` with a key function on (kind, ref) buys. A REPEATED GESTURE IS
-// SEVERAL MUTATIONS: pin → unpin → pin has to end pinned and a drag A → B → A has
-// to end at A, so nothing may collapse the third onto the first. Those pull in
-// opposite directions, and both have shipped broken in this fleet before — once as
-// an arg-composite idempotency key replaying a cached success (`files.rename`), and
-// once as a dedupe default whose key included a unique id and therefore collapsed
-// nothing at all.
+// to hold at once. A DOUBLE GESTURE IS ONE MUTATION: two taps on one door open one
+// tab (`dedupe` keyed on (kind, ref)). A REPEATED GESTURE IS SEVERAL: pin → unpin
+// → pin ends pinned and a drag A → B → A ends at A. An argument-composite
+// idempotency key breaks the second; a dedupe key holding a unique id breaks the
+// first.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

@@ -299,77 +299,13 @@ func firstSubcommand(args []string) string {
 	return ""
 }
 
-// gitExec builds an *exec.Cmd for a git subprocess with hardening
-// applied: protocol.ext.allow=never on the command line (so ext::
-// transports stay blocked even if user gitconfig tries to enable
-// them — `-c` always wins over gitconfig), no terminal/askpass
-// prompts (so credential failures bubble up as errors instead of
-// hanging), and runtime GIT_CONFIG_* env injection cleared so a
-// malicious parent process can't inject inline gitconfig.
-//
-// IMPORTANT: this DOES allow the user's ~/.gitconfig and the
-// system /etc/gitconfig to load. That's deliberate: the
-// `credential.<url>.helper` entries marotte registers for each
-// connected forge live in ~/.gitconfig, so GIT_CONFIG_GLOBAL=/dev/null
-// would disable them alongside the ext:: hardening and every private
-// HTTPS clone would fail with "terminal prompts disabled". The -c
-// flags block ext:: without discarding the rest of the user's config.
-//
-// # What git will still execute for a repo nobody here wrote, and why
-//
-// Loading gitconfig FILES means loading a REPO's `.git/config` too, and
-// several config keys name a command git then runs. The two with no
-// legitimate use on this surface are neutralised on the command line
-// above (core.fsmonitor) and per call site (diff.<driver>.textconv, via
-// --no-textconv on the diff family). Two classes are deliberately left
-// live, and neither is closed by anything in this package:
-//
-//   - `filter.<driver>.clean` / `.smudge` CANNOT be disabled generically. A
-//     driver can be cleared BY NAME (`git -c filter.pwn.smudge=` does suppress
-//     it, measured on git 2.47.3), but there is no --no-filter flag and no
-//     wildcard form — `git -c 'filter.*.smudge='` still runs the driver, also
-//     measured — so nothing here can neutralise a name it does not know. A repo
-//     carrying both a .git/config entry and a .gitattributes line that selects
-//     the driver runs that command. Clearing GIT_CONFIG_COUNT does not touch it
-//     — that only blocks INLINE config from a parent process, and this one is on
-//     disk. The exposure is real and stated rather than papered over: opening an
-//     untrusted repo in this app can execute code from it.
-//
-//     WHICH operations trigger it, measured rather than assumed, because the
-//     answer decides whether a user action is needed: `git status` runs the
-//     clean filter on a filtered path whose stat info has changed, `git diff`
-//     runs it (twice), `git add` runs it, and a checkout runs the smudge side.
-//     `git show <rev>:<path>` does NOT — it hands back the stored blob. So the
-//     dashboard's own periodic status poll is enough; this is not gated on the
-//     user opening a diff, which is how an earlier version of this comment read.
-//
-//     A probe-and-refuse was considered and DECLINED (2026-09). It buys no
-//     boundary: the only principal that can write a workspace .git/config in
-//     this container already holds unrestricted shell execution at the same uid
-//     through `!cmd`, reached from the same caller that posts to this surface.
-//     And it costs a git panel that refuses status, diff, commit and checkout
-//     for a legitimately configured repo with no manual fallback — `git lfs
-//     install --local` writes exactly these three keys.
-//
-//   - HOOKS stay ON, deliberately. `git commit` and `git push` run
-//     pre-commit, commit-msg and pre-push, which is what makes the git
-//     panel's commit equivalent to the user's own — this fleet's repos
-//     use hooks for formatting and secret scanning, and a UI that
-//     silently skipped them would produce commits CI then rejects.
-//     Nothing here passes --no-verify or core.hooksPath.
-//
-// Both classes require a repo already checked out into the workspace,
-// which is a decision the user made, so the answer is not to break the
-// tooling for every ordinary repo — it is to know that this is what
-// "open somebody else's repo" costs.
-//
-// The first non-flag arg in `args` must be one of allowedSubcommands;
-// otherwise gitExec returns a command rigged to fail without launching
-// git. This local guarantee satisfies CodeQL's go/command-injection
-// analyzer and gives defence-in-depth against future callers that
-// don't validate subcommand input upstream.
-//
-// Callers must supply a context with an appropriate timeout.
+// gitExec builds a hardened git command: protocol.ext.allow=never and
+// core.fsmonitor neutralised with -c, no terminal or askpass prompts, inherited
+// GIT_CONFIG_* cleared. User and system gitconfig still load, because the forge
+// credential helpers live in ~/.gitconfig. A repo's own filter drivers and hooks
+// still run (status runs clean filters), so opening an untrusted repo can execute
+// its code. The first non-flag arg must be in allowedSubcommands, else the command
+// fails without launching git. Callers supply a context with a timeout.
 func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if _, ok := allowedSubcommand(args); !ok {
 		// Build a synthetic command that fails without launching git. /bin/false

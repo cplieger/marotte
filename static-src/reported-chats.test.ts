@@ -313,7 +313,7 @@ describe("symptom 2: the tab dot", () => {
     // The control, and it has to say two things now. A cancel the user asked for is
     // not a FAILURE — that is why the interrupted turn above had to be tested on its
     // own outcome rather than on the chat's. But it is not `""` either: the hollow
-    // ring means the chat has not initiated (user ruling, 2026-09-04), and this chat
+    // ring means the chat has not initiated, and this chat
     // ran two turns. `done` is the transport's "a turn finished here".
     const turns = turnsOf("reported-interrupted-hollow-dot");
     expect(outcomeLatch(turns[1]?.outcome)).toBe("done");
@@ -342,15 +342,11 @@ describe("the four surfaces agree, per turn, across both records", () => {
   });
 
   it("does not overstate the turns that merely stopped, and does not erase them either", () => {
-    // The other direction, and it is what keeps the property above from being
-    // satisfiable by painting everything red: a `cancelled` or `unknown` turn is
-    // never latched as a FAILURE and folds like any other. What it may not do is
-    // latch nothing — the hollow ring means the chat has not initiated (user ruling,
-    // 2026-09-04), so a turn that ended has to register as one whatever became of it.
-    //
-    // Whether it SAYS anything splits by OUTCOME, not by severity: `severityOf`
-    // grades the two alike, `unknown` still speaks, and `cancelled` is silent because
-    // the reader caused the stop and the footer's own word already reads "Cancelled".
+    // The other direction, which keeps the property above from being satisfiable by
+    // painting everything red: a `cancelled` or `unknown` turn is never latched as a
+    // FAILURE, yet must latch something, because the hollow ring means the chat has
+    // not initiated. Whether it SAYS anything splits by OUTCOME: `unknown` speaks,
+    // `cancelled` is silent because the footer already reads "Cancelled".
     for (const name of Object.keys(fixture)) {
       const turns = turnsOf(name);
       for (const [i, t] of turns.entries()) {

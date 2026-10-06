@@ -174,7 +174,7 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	// Feed chunks for each goroutine's prompt. Since calls serialize,
 	// each prompt drains the idle timer before the next starts. The frames are
 	// built HERE, on the test's own goroutine: newChunkMsg can t.Fatalf, and a
-	// Fatal off the test goroutine ends the wrong one (go-rulebook §7).
+	// Fatal off the test goroutine ends the wrong one.
 	frames := make([]*marotte.RPCResponse, goroutines)
 	for i := range frames {
 		frames[i] = newSessionChunkMsg(string(freshBr.SessionID()), fmt.Sprintf("resp-%d", i))

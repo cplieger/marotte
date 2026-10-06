@@ -18,8 +18,8 @@ func TestParse_FoldedScalarDescription(t *testing.T) {
 	}{
 		{
 			name: "folded with >",
-			in:   "---\nname: judgement\ndescription: >\n  Read-only adversarial\n  decision-support framework.\ninclusion: manual\n---\n# Body\n",
-			want: "Read-only adversarial decision-support framework.",
+			in:   "---\nname: triage\ndescription: >\n  Read-only incident\n  triage helper.\ninclusion: manual\n---\n# Body\n",
+			want: "Read-only incident triage helper.",
 		},
 		{
 			name: "literal with |",

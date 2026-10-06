@@ -81,8 +81,7 @@ func debounceKey(kind marotte.PushKind, subject marotte.PushSubject) pushDebounc
 }
 
 // Retry timing for a retryable delivery failure (429 or 5xx). Vars, not
-// consts, so a test can collapse the ladder instead of sleeping through it
-// (the fleet's usual delay-override pattern).
+// consts, so a test can collapse the ladder instead of sleeping through it.
 //
 // The budget is the notification's USEFULNESS window, not a generous transport
 // allowance: a permission ask is moot once answered and "agent finished" is
