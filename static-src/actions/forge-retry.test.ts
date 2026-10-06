@@ -1,4 +1,4 @@
-// Tests for retry behavior of forge actions post round-2 changes:
+// Retry behaviour of the forge actions:
 // - signOut: NOT retryable (destructive DELETE may succeed on timeout)
 // - startDeviceFlow: retryable, no auto-retry (no toast — error: false)
 // - cloneRepo: NOT retryable (an interrupted clone can leave a partial

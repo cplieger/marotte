@@ -2191,11 +2191,9 @@ describe("sub-tabs", () => {
   });
 
   // `owns: false` is the VIEW case: dismissing a view must not kill the work it was
-  // watching. Asserted on a CHAT, which is the kind that still has an ownership axis —
-  // a side conversation owns its bridge while a tab watching another chat's work does
-  // not. It used to be asserted on a run tab, and cannot be any more: a run tab is
-  // always a view now (user decision, 2026-08), so it has no owning case to compare
-  // against.
+  // watching. Asserted on a CHAT, the kind that still has an ownership axis — a side
+  // conversation owns its bridge while a tab watching another chat's work does not; a
+  // run tab is always a view, so it has no owning case to compare against.
   it("does not tear down a tab that owns nothing", async () => {
     expect.assertions(2);
     await openChat("watch", { owns: false });

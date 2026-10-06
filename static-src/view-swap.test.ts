@@ -1,5 +1,5 @@
 // view-swap.test.ts — the synchronous-swap + one-slot WAAPI entry-fade
-// contract (design §A4): the caller's DOM update is final before any animation
+// contract: the caller's DOM update is final before any animation
 // frame, a new swap cancels the previous handle, and the animation — never the
 // swap — is skipped under reduced motion, a hidden document, and pre-boot.
 //
@@ -196,8 +196,8 @@ describe("swapViews", () => {
 
     // elementFromPoint IS the engine's hit test: under a document view
     // transition the snapshot pseudo-layer would win these lookups (captured
-    // content is non-hittable by spec §4.2); under the WAAPI opacity fade the
-    // live elements must win them while the fade plays.
+    // content is non-hittable, CSS View Transitions Module Level 1 §4.2); under the
+    // WAAPI opacity fade the live elements must win them while the fade plays.
     const c = control.getBoundingClientRect();
     const hitControl = document.elementFromPoint(c.x + c.width / 2, c.y + c.height / 2);
     expect(hitControl).toBe(control);

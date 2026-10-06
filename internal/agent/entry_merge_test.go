@@ -921,12 +921,8 @@ func mergedAsRecord(turns []MergedTurn) []RecordTurn {
 // record's ORDER, and that order is the read's own — file order — not the stored n. A
 // revert reuses an ordinal, so two turns can carry one n and a sort over it is ambiguous;
 // this output is also groupByTurn's input, so an order invented here is the order the
-// rewritten file takes.
-//
-// RE-KEYED from an n-ordered oracle, out loud: the case's subject was "turns in stored-n
-// order", which §2.3's ordinal reuse deletes. Its surviving oracles are the two below
-// (entries seq-sorted within a turn, the turn_open leading), and the order assertion now
-// pins file order in the direction that can tell the two rules apart.
+// rewritten file takes. Entries are seq-sorted within a turn with the turn_open leading,
+// and the order assertion runs in the direction that tells file order from n order.
 func TestRecordTurnsOf_OrdersByFileOrderAndSeq(t *testing.T) {
 	// One file's lines, interleaved as the two-open-turns registry state produces them
 	// and out of seq order within a turn. T2's line is FIRST and its n is higher, so the

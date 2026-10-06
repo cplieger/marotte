@@ -12,8 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestReportStepProgress_EveryStepFrameNamesTheRun pins the ruling that replaced the
-// per-step tool-call cap: a productive step is bounded by the run's idle window and the
+// TestReportStepProgress_EveryStepFrameNamesTheRun pins that a step has no tool-call
+// cap: a productive step is bounded by the run's idle window and the
 // backstop alone, so three hundred consecutive frames tell the host three hundred times
 // that the run is working, each naming the run. RunBoundsAccess carries no stop verb, so
 // a cancel is unrepresentable here; what a count could still do is stop REPORTING.

@@ -622,29 +622,14 @@ export function runStatusFor(
   }
 }
 
-/** The status a delegate's surfaces paint, folding in its chat's OWN turn liveness.
- *
- *  A DELEGATE THAT DIED RENDERS LIKE ONE THAT WORKS unless something else is read: a
- *  delegate's whole state is its invocation call's `ToolStatus`, so an invocation whose
- *  `tool_result` never reached this client reads `in_progress` for the life of the render.
- *  The second input is the chat's own turn: a turn that ends settles every unsettled call it
- *  held — `Turn.Close` and `EntryLog.synthesizeCloseLocked` both append
- *  `tool_result{status: aborted}` — so once the chat holds no live turn the call is folded
- *  onto THAT status rather than waiting for an entry a dead process will never append.
- *
- *  `aborted` rather than `failed` for three reasons: it is the word the server itself
- *  settles such a call with, so the fold anticipates the record instead of contradicting it;
- *  the work was not broken, it was never accounted for; and it is one status the three
- *  surfaces already have words for, so nothing gains a treatment of its own
- *  (`internal/chat/testdata/delegate_dot.json`'s `stale` row is the cross-language
- *  statement, `delegate-dot-contract.test.ts` its other reader).
- *
- *  NARROW ON PURPOSE: only `in_progress` folds. A `pending` call was dispatched and never
- *  started, which the close settles the same way — but design-2 §6.2 names the in-flight
- *  case and a wider fold is a wider claim than the evidence supports. LIVENESS IS NOT
- *  KNOWLEDGE either: every caller answers `true` for a chat it holds no row for, because a
- *  terminal verdict over a turn nobody can see is the guess this file refuses everywhere
- *  else (`turnLive`'s own doc records the same direction). */
+/** The status a delegate's surfaces paint, folding in its chat's OWN turn liveness: a
+ *  delegate's whole state is its invocation call's `ToolStatus`, so a call whose
+ *  `tool_result` never arrived reads `in_progress` forever. A turn that ends settles every
+ *  unsettled call as `aborted` (`Turn.Close`, `EntryLog.synthesizeCloseLocked`), so once
+ *  the chat holds no live turn an `in_progress` call folds onto `aborted` — the server's
+ *  own word, already rendered on all three surfaces (`delegate_dot.json`'s `stale` row).
+ *  Only `in_progress` folds, and a chat this client holds no row for answers live:
+ *  liveness is not knowledge. */
 export function delegateStatusFor(status: ToolStatus, turnLive: boolean): ToolStatus {
   return status === "in_progress" && !turnLive ? "aborted" : status;
 }

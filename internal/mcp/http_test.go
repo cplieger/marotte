@@ -152,7 +152,7 @@ func TestHandleCollection_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// Content-Type gate (SEC-u12c1-002): POST without an application/json
+// Content-Type gate: POST without an application/json
 // Content-Type should be rejected before the decoder runs.
 func TestHandleCollection_POST_wrongContentType_is400(t *testing.T) {
 	_, mux := newRoutedStore(t)
@@ -437,8 +437,7 @@ func TestHandleOne_DELETE_removes(t *testing.T) {
 	}
 }
 
-// u12c2-f3: DELETE's persist-failure branch routes through writeErr
-// (cycle 2 Q-u12c2-001 collapsed the hand-rolled 500) to 500 with
+// DELETE's persist-failure branch routes through writeErr to 500 with
 // the generic "persist failed" body. No filesystem path leaks in the
 // response; full detail stays in slog.Error via writeErr's ErrPersist
 // case. Rollback leaves the record in place so a retry is possible.
@@ -479,7 +478,7 @@ func TestHandleOne_DELETE_persistFailure_is500(t *testing.T) {
 	}
 }
 
-// u12c2-f3: writeErr's ErrPersist branch (cycle 1 q1) routes to
+// writeErr's ErrPersist branch routes to
 // 500 with a generic body, NOT a leaked err.Error() string. Provoked
 // via POST with a writable-then-read-only dir.
 func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {

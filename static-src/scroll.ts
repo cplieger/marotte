@@ -931,14 +931,11 @@ class ScrollController {
   }
 
   /**
-   * Run `mutate` without moving what the reader is looking at.
-   *
-   * THE ONE ENTRY POINT for every layout change in the transcript. §3.5's
-   * turn-level auto-collapse moves hundreds of pixels rather than tens, which is
-   * what makes this mandatory rather than incidental.
-   *
-   * While Following there is nothing to preserve — the reader is pinned to the
-   * live edge and the auto-scroll will re-pin — so the mutation runs bare.
+   * Run `mutate` without moving what the reader is looking at: THE ONE ENTRY POINT for
+   * every layout change in the transcript, mandatory because turn-level auto-collapse
+   * moves hundreds of pixels rather than tens. While Following there is nothing to
+   * preserve — the reader is pinned to the live edge and the auto-scroll will re-pin —
+   * so the mutation runs bare.
    */
   preserveReadingPosition(mutate: () => void, kind: ShiftKind): void {
     if (this.state === "following") {

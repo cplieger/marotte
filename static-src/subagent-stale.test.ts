@@ -1,24 +1,11 @@
-// A DELEGATE THAT DIED RENDERS LIKE ONE THAT WORKS, and this file is the fold that closes
-// it (design-2 §6.2). A delegate's whole state is its invocation tool call's `ToolStatus`
-// (`store.ts` says so at `subagentStatusFor`), so an invocation whose `tool_result` never
-// arrived reads `in_progress` for the life of the render — a spinner for work nobody is
-// doing. The second input is the chat's OWN turn liveness: a turn that ended settles every
-// unsettled call it held (`Turn.Close`, `synthesizeCloseLocked`, both appending
-// `tool_result{status: aborted}`), so once the chat holds no live turn the client folds the
-// call onto that same status rather than waiting for an entry that may never reach it.
-//
-// THREE SURFACES, ONE FOLD: `internal/chat/testdata/delegate_dot.json`'s `stale` row is the
-// cross-language statement of what each surface then says, and
-// `delegate-dot-contract.test.ts` is the reader that asserts it. What this file adds is the
-// two DIRECTIONS (stale folds, live does not) and the reconcile: a `busy_chats` frame that
-// clears a chat's latch has to settle that chat's delegate cards in the SAME pass, because
-// the frame is the only thing that will ever say so — `thinking` is latched from streamed
-// frames alone and a page load replays none (`handlers/system.ts` `reconcileThinking`).
-//
-// Browser placement, and every production import DYNAMIC, for the reason the delegate-dot
-// contract records: the dispatcher's graph reaches `scroll.ts`, a singleton that builds
-// itself against a real `#messages` at import, so the hosts are seeded first and nothing is
-// mocked.
+// A DELEGATE THAT DIED RENDERS LIKE ONE THAT WORKS unless its chat's OWN turn liveness is
+// read: `store.ts`'s `subagentStatusFor` folds an `in_progress` invocation onto `aborted`
+// once the chat holds no live turn. `delegate_dot.json`'s `stale` row states what each
+// surface then says; this file adds the two DIRECTIONS (stale folds, live does not) and
+// the reconcile: a `busy_chats` frame that clears a chat's latch settles its delegate
+// cards in the SAME pass, because a page load replays no streamed frame. Browser
+// placement with every production import DYNAMIC: the dispatcher's graph reaches
+// `scroll.ts`, which builds itself against a real `#messages` at import.
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type * as ModBlocks from "./messages-blocks.js";

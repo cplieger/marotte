@@ -51,8 +51,7 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
 
   it("keeps a character for exactly the two states that earn one", () => {
     // `input` is the one step state a reader must ACT on, so a `?` says that where
-    // a silhouette cannot; `skipped` means nothing happened, and a dash was never
-    // one of the marks the glyph ruling removed.
+    // a silhouette cannot; `skipped` means nothing happened, so it keeps a dash.
     expect(STATE_MARK.input).toEqual({ kind: "char", text: "?" });
     expect(STATE_MARK.skipped).toEqual({ kind: "char", text: "\u2013" });
     const chars = ALL.filter((s) => STATE_MARK[s].kind === "char");

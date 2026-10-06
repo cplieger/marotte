@@ -1620,18 +1620,11 @@ describe("what a rail row says", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE TURN'S DURATION on the rail.
-//
-// The user asked for the turn's time to move into the turn's own box on hover. On the
-// rail that value does not exist on the rail's feed: `GET /api/chats/{id}/turns`
-// carries no duration, and the number the footer renders is `turn_elapsed_ms` on a
-// turn's final assistant message, summed across the body. So the rail derives it from
-// the transcript STORE, which is a paginated window — and the honest consequence is
-// that a turn outside that window gets no slot rather than a guessed one.
-//
-// These cases pin the derivation and the gap. The reveal itself (reserved box,
-// opacity, keyboard reach, nothing else moves) is `rail-mark-css.test.ts`'s subject,
-// over real layout.
+// THE TURN'S DURATION on the rail, shown in the turn's own box on hover. The rail's feed
+// (`GET /api/chats/{id}/turns`) carries no duration, and the footer's number is
+// `turn_elapsed_ms` summed across the body, so the rail derives it from the transcript
+// STORE — a paginated window, so a turn outside it gets no slot rather than a guessed
+// one. These cases pin the derivation and the gap; the reveal is `rail-mark-css.test.ts`'s.
 // ---------------------------------------------------------------------------
 
 describe("the duration a rail marker can show", () => {

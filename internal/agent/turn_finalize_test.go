@@ -230,8 +230,7 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 
 // TestFinalizeTurn_ALostClaimAmendsNothing pins the exclusion at the coordinator:
 // two closers reaching one turn produce one turn_close, and the loser's account
-// never reaches the footer the winner wrote. A lost claim is a Debug line now,
-// not an amendment.
+// never reaches the footer the winner wrote; a lost claim logs at Debug only.
 func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")

@@ -2,7 +2,7 @@ package agent
 
 // Restart orphans: the runs marotte launched whose owning process died. TWO clearing
 // paths, answering different questions — the BOOT sweep "is this system idle", the
-// ADMISSION backstop "may this run start". No automatic relaunch (user decision).
+// ADMISSION backstop "may this run start". Neither relaunches a run.
 //
 // A run MISSING from an otherwise successful list is a third rule: absence starts a
 // persisted clock, reappearance resets it, and six continuous hours releases the lease

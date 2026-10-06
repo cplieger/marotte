@@ -216,7 +216,7 @@ func TestValidate_RejectsURLUserinfo(t *testing.T) {
 	}
 }
 
-// Regression: Command must reject control characters. Sec-u11c1-02.
+// Command must reject control characters.
 func TestValidate_CommandRejectsControlChars(t *testing.T) {
 	for _, c := range []string{"bash\nrogue", "bash\rfoo", "bash\x00"} {
 		err := Validate(&Server{Transport: TransportStdio, Name: "x", Command: c})
@@ -268,8 +268,8 @@ func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
 	}
 }
 
-// Regression: DisabledTools entries must reject control chars and respect
-// length caps. Sec-u11c1-03.
+// DisabledTools entries must reject control chars and respect
+// length caps.
 func TestValidate_DisabledToolsRejectsBadEntries(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -292,11 +292,9 @@ func TestValidate_DisabledToolsRejectsBadEntries(t *testing.T) {
 	}
 }
 
-// F1 (test-review u12c1): nine length-cap + cross-transport-field
-// error branches that were 0% covered. Each asserts on the concrete
-// error substring so a reword that weakens the check (e.g.
-// "too long" → "invalid") would still be caught by the outer
-// len-error assertion.
+// Nine length-cap + cross-transport-field error branches. Each asserts on the
+// concrete error substring, so a reword that weakens the check (e.g. "too long"
+// → "invalid") fails here.
 func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 	cases := []struct {
 		srv        *Server
@@ -407,9 +405,8 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 	}
 }
 
-// u12c2-f2: remaining error branches in validate that cycle 1's F1
-// table did not cover. Each exercises a distinct production-code
-// line that coverage showed at 0% after cycle 1.
+// The remaining error branches in validate, each a distinct
+// production-code line.
 func TestValidate_MoreErrorBranches(t *testing.T) {
 	// Helpers build N unique KeyPairs so the length cap fires before
 	// the duplicate-name detection inside the shared helper.

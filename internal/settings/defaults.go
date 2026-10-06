@@ -27,36 +27,13 @@ const (
 	KeyNotificationsEnabled = "notifications_enabled"
 
 	// KeyLastEffortByModel is the reasoning-effort level the user picked last, PER
-	// MODEL: a map from model id to level, and the twin of KeyLastModel used the
-	// same way — a NEW chat on a model this map names opens on that level instead
-	// of on the model's default tier.
-	//
-	// Keyed by MODEL because an explicit tier is a judgement about one model's
-	// speed/quality trade, so carrying it onto a different model made every new
-	// pick inherit the previous model's choice (user report, 2026-08-31 —
-	// "switching models must select the new model's default; the same model keeps
-	// what was selected"). One level plus the model it was picked under cannot
-	// hold that for more than one model at a time: a pick on ANY chat retracts the
-	// seed for every other model, so the only level remembered anywhere is the one
-	// chosen most recently. Both readers look the CHAT's own model up:
-	// BridgeCoordinator.effortSeedFor and the client's getLastEffortFor. A model
-	// with no entry has no seed; a key naming a model that no longer exists is
-	// simply never looked up, and the map is bounded by the model catalog.
-	//
-	// A seed, never a store. The chat record still owns the level (Chat.Effort),
-	// this value is only consulted when a chat has chosen nothing, and it is never
-	// written onto the record — a chat that follows the seed has to keep following
-	// it, and stamping today's value on would freeze that chat there forever. The
-	// two readers have to agree or the pill lies about what the session runs:
-	// BridgeCoordinator.effortFor resolves StartOpts.Effort, and the client's
-	// effortVocabulary marks the tier.
-	//
-	// Not the old model_effort key returning. That one was a single global
-	// `{last_model, effort}` pair keyed by the LAST model, so two chats could not
-	// disagree and switching models discarded the previous model's choice. This is
-	// a bare level per model with per-chat storage intact, reconciled against the
-	// current model's own tier list at both readers, so a level the new model does
-	// not offer falls through to that model's default rather than being sent.
+	// MODEL: a map from model id to level, the twin of KeyLastModel — a NEW chat on a
+	// model this map names opens on that level instead of on the model's default tier.
+	// Keyed by model because a tier is a judgement about one model, so a new model opens
+	// on its own default while the same model keeps its pick. A seed, never a store: the
+	// chat record owns the level (Chat.Effort) and this is never written onto it. Both
+	// readers (BridgeCoordinator.effortSeedFor, the client's getLastEffortFor) reconcile it
+	// against the chat's model's tier list, so a level that model lacks is not sent.
 	KeyLastEffortByModel = "last_effort_by_model"
 
 	// KeyLastMergeMethod is the PR merge method the user picked last, in the

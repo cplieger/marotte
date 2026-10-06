@@ -886,8 +886,8 @@ func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) st
 // catalog, else "" (KAS reconciles on its own).
 //
 // Deliberately NOT effortFor: the chat's stored choice was made under the model
-// being left, so honouring it here is what carried `max` from one model onto the
-// next (user report, 2026-08-31). Explicit, because KAS KEEPS a fitting level.
+// being left, so honouring it here would carry `max` from one model onto the
+// next. Explicit, because KAS KEEPS a fitting level.
 func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, model string) string {
 	if level := bc.effortSeedFor(ctx, model); level != "" {
 		return level

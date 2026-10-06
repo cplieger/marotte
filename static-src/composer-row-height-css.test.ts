@@ -93,14 +93,10 @@ describe("the height's declarations, read from source", () => {
 
   it("declares one control height for the box, and it takes ONE rung on touch", () => {
     const form = ruleContaining(css, '[id="prompt-form"]', "top");
-    // THIS PIN HAS MOVED TWICE, and the two moves are opposite halves of one rule.
-    // It was `max(var(--ctl-h-dense), var(--hit-floor))`, which put the 44px TARGET
-    // floor into the PAINTED box — 44px of button around a 20px glyph, the "grown
-    // buttons look empty" report (amendment §B, 2026-09-10). That went to a flat
-    // `2rem`, and 32-on-a-finger was reported as the controls not looking great
-    // (2026-09-12), so the box now takes ONE rung up on the coarse tier through
-    // `--ctl-h-sm` — 32 under a mouse, 36 under a finger — and still stops well
-    // short of the floor.
+    // The painted box takes ONE rung up on the coarse tier through `--ctl-h-sm` — 32
+    // under a mouse, 36 under a finger — and stops well short of the 44px TARGET floor:
+    // the floor in the PAINTED box puts 44px of button around a 20px glyph, which reads
+    // as empty, while a flat 32 on a finger is too small to look right.
     expect(form.body).toMatch(/--composer-ctl-h:\s*max\(2rem,\s*var\(--ctl-h-sm\)\)/);
     // The floor must NOT be read here, or the box takes the TARGET's measure again
     // and both reports come back. This is the half that survived both moves.
@@ -117,10 +113,10 @@ describe("the height's declarations, read from source", () => {
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
     const input = ruleContaining(css, '[id="prompt-input"]', "top");
-    // The inset term MOVED with the same amendment: the row's padding now pays for
-    // the expander's block reach (`--composer-pill-pad`, 6px on coarse against
-    // `--pill-inset`'s 4), so reading the old term here left the textarea 44px
-    // under a 45px pill row — the disagreement this whole file exists to pin.
+    // The inset term is the row's padding, which pays for the expander's block reach
+    // (`--composer-pill-pad`, 6px on coarse against `--pill-inset`'s 4); reading
+    // `--pill-inset` here leaves the textarea 44px under a 45px pill row — the
+    // disagreement this whole file exists to pin.
     expect(input.body).toMatch(
       /--composer-rest-h:\s*calc\(var\(--composer-ctl-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
     );
@@ -157,7 +153,7 @@ describe("the height's declarations, read from source", () => {
     expect(own).toMatch(/block-size:\s*var\(--composer-ctl-h\)/);
     // No literal width, and no `aspect-ratio` re-squaring it.
     expect(own, "no literal inline size").not.toMatch(/inline-size:\s*\d/);
-    expect(own, "the square is overturned, not re-stated").not.toMatch(/aspect-ratio/);
+    expect(own, "no aspect-ratio re-squaring it").not.toMatch(/aspect-ratio/);
     // Both icon-only controls derive their inline padding from ONE token, which is what
     // makes "Send is the same box as its sibling" structural rather than two numbers
     // that happen to agree. Send adds half its glyph deficit on top, so the expression
@@ -270,10 +266,9 @@ describe("the composer, measured at real viewport sizes", () => {
     // The reported defect: 40px of textarea over a 52px pill row, because the
     // controls take the coarse hit floor and the band was a fine-tier literal.
     //
-    // THE THREE NUMBERS MOVED DELIBERATELY (amendment §B): 44 -> 32 for the control
-    // and 52 -> 44 for both bands, because the painted box no longer carries the
-    // target's measure. What this case is ABOUT is unchanged and is why it still
-    // exists — the two rows agree, on the tier a width query cannot see.
+    // 32 for the control and 44 for both bands, because the painted box does not carry
+    // the target's measure. The case pins that the two rows agree, on the tier a width
+    // query cannot see.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
     expect(control, "one rung up on a coarse pointer, still short of the 44px floor").toBe(36);
     expect(textarea).toBe(44);
@@ -288,19 +283,16 @@ describe("the composer, measured at real viewport sizes", () => {
   });
 
   it("matches them on a phone", async () => {
-    // 52 -> 44 with the amendment, for the reason above.
     const { textarea, band } = await bandsAt(390, 844, "coarse");
     expect(textarea).toBe(44);
     expect(band).toBe(44);
   });
 
   it("holds every control's TARGET at the hit floor, and lets none reach the textarea", async () => {
-    // THE HALF THE PAINTED-BOX CHANGE IS ONLY SAFE WITH, and the reason it is a hit
-    // test rather than a style read: amendment §B1 makes the 44px target
-    // non-negotiable and §B2 forbids a target overhanging into its neighbour's box,
-    // which is the D4 bug. Both are properties of what `elementFromPoint` answers,
-    // and item 18's own history is what says a declaration read cannot stand in for
-    // one — that defect survived precisely because the source assertion looked right.
+    // The half the painted-box size is only safe with, and why it is a hit test rather
+    // than a style read: the 44px target is non-negotiable and no target may overhang
+    // into its neighbour's box. Both are properties of what `elementFromPoint` answers,
+    // which a declaration read cannot stand in for.
     await bandsAt(390, 844, "coarse");
     const row = document.querySelector<HTMLElement>(".prompt-pills");
     const input = document.getElementById("prompt-input");
@@ -461,20 +453,12 @@ describe("the composer, measured at real viewport sizes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The staged-attachment chip is the box's THIRD row, and it was the one control
-// left out of amendment §B.
-//
-// Its height came from its CHILDREN, and both children are `<button>`s, so the
-// zero-specificity hit floor put the 44px TARGET in the painted box: measured at
-// 390x844 coarse, a 50.78px chip around a 15px label, against the pill row's own
-// controls beside it and 30.78px for the same chip on a mouse. That is the same
-// "grown buttons look empty" shape §B closed for `.pill` and `.send-btn`, reached
-// through the one selector that does not declare a height.
-//
-// Both halves again, for the reasons the two blocks above give: the source read says
-// the height is the box's derived term and that the floor is opted out of PHYSICALLY,
-// and the measurement says the chip agrees with the row under it while every one of
-// its targets still clears the floor without reaching into a neighbour's.
+// The staged-attachment chip is the box's THIRD row. Its children are `<button>`s, so a
+// height derived from them would put the zero-specificity 44px TARGET floor into the
+// painted box: a 50px chip around a 15px label beside the pill row's smaller controls.
+// So the source read pins the height to the box's derived term with the floor opted out
+// PHYSICALLY, and the measurement pins that the chip agrees with the row under it while
+// every target still clears the floor without reaching into a neighbour's.
 // ---------------------------------------------------------------------------
 
 describe("the attachment chip's declarations, read from source", () => {
@@ -618,8 +602,8 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   });
 
   it("holds every chip button's TARGET at the floor, and lets none reach a neighbour", async () => {
-    // The half the painted-box change is only safe with, and a hit test rather than a
-    // style read for §B's own reason: the target and the overhang are both properties
+    // The half the painted-box size is only safe with, and a hit test rather than a
+    // style read because the target and the overhang are both properties
     // of what `elementFromPoint` answers.
     const { floor } = await chipsAt(390, 844, "coarse");
     const input = document.getElementById("prompt-input");

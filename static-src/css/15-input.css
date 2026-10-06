@@ -747,7 +747,7 @@
     flex-shrink: 0;
     /* Secondary, not tertiary: this readout also renders on the pill's accent
        fill (expanded/selected), where tertiary measures under the 4.5:1 text
-       floor (axe color-contrast, phone pass 2026-08-31). */
+       floor (axe color-contrast). */
     color: var(--c-text-secondary);
   }
 
@@ -1437,12 +1437,10 @@
   background: var(--c-text-primary);
   cursor: grab;
 
-  /* Its own edge, and since 2026-09 its ONLY separation from the fill: the two drop
-     shadows here were the app's one persistent lift, and the user's call is that a
-     border is what every other surface uses. The PAGE colour rather than a mix of it,
-     because with the shadows gone this 1px is carrying the separation alone — and it
-     is the one value that works in both themes, being darker than the handle in dark
-     mode and lighter in light mode. */
+  /* Its own edge and its ONLY separation from the fill, the border every other surface
+     uses rather than a drop shadow. The PAGE colour, because this 1px carries the
+     separation alone and it is the one value that works in both themes: darker than the
+     handle in dark mode and lighter in light mode. */
   border: 1px solid var(--c-bg-primary);
 
   /* THE POSITION, factored out so every state below restates it verbatim. */
@@ -1539,20 +1537,10 @@
   margin-inline: calc(-1 * var(--card-inset));
   padding-block: var(--sp-1);
 
-  /* A TARGET, and the app-wide floor DOES reach it: 61-mcp-tools.css matches
-     `:where(a[href], button, select, summary)`, and that file's own comment records
-     the ruling ("A LINK IS A TARGET, so `a[href]` is IN"). Its prose exemption is
-     `:where(p, li, td, dd, blockquote, .msg-body, .message) :where(a[href])` and a
-     popup card is none of those, so it does not reach here either.
-
-     PHYSICAL, not logical, and for READABILITY rather than cascade: the floor is
-     zero-specificity, so a (0,1,0) `min-block-size` here would win on SPECIFICITY
-     and source order never enters. Spelling the same property the floor spells is
-     what makes the pair legible to the next reader, and it is `.code-refs-link`'s
-     form (13-messages.css). The restatement is DEFENSIVE rather than load-bearing:
-     nothing zeroes the floor here today, so it exists to survive a change that ever
-     puts these rows inside an `<li>`. The floor's `min-width` lands here too and is
-     harmless: the card's own `min-inline-size: 14rem` is already past it. */
+  /* A TARGET, so it keeps the app-wide floor (61-mcp-tools.css): a popup card is in none
+     of the floor's prose exemptions. Restated PHYSICALLY, as `.code-refs-link` does, so
+     the pair reads as one property; it survives a later move inside an `<li>`, which
+     would otherwise zero the floor. */
   min-height: var(--hit-floor);
   justify-content: space-between;
 
@@ -1958,13 +1946,10 @@
 
   /* THE TARGET, the same expander `.pill` carries and for the same reason: the
      painted box is 32 at every tier and this is what holds the hit region at
-     --hit-floor on a coarse pointer. Since Send stopped being square (above) its box
-     is wider than the floor like every other control here, so the inline term is
-     positive, `min()` clamps it to 0 and only the BLOCK axis grows — the extra width
-     the ruling authorised is real box rather than expander, which is why it counts as
-     touch area. The inline half of this expander is now inert on every control in the
-     row and stays for the reason the block half does: one idiom, sized off the token,
-     so a later narrow control needs no second declaration. */
+     --hit-floor on a coarse pointer. Send's box is wider than the floor, so the inline
+     term is positive, `min()` clamps it to 0 and only the BLOCK axis grows — the width
+     is real box and counts as touch area. The inline half stays so the idiom is one,
+     sized off the token, and a later narrow control needs no second declaration. */
   &::after {
     content: "";
     position: absolute;

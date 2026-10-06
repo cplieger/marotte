@@ -181,11 +181,10 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	}
 }
 
-// TestSequence_MCPStatus_RoutesDisabledToTheRecorder pins the amendment: the
-// "disabled" status reaches the recorder instead of falling into the default arm
-// that discarded it. Whether it produces a row is the recorder's call (only an
-// unconfigured server gets one) — but the frame has to arrive for that call to
-// be possible at all.
+// TestSequence_MCPStatus_RoutesDisabledToTheRecorder: the "disabled" status reaches the
+// recorder rather than the default arm, which discards. Whether it produces a row is the
+// recorder's call (only an unconfigured server gets one) — but the frame has to arrive for
+// that call to be possible at all.
 func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var disabled []string

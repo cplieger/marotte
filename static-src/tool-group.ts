@@ -266,12 +266,10 @@ function markAutoCollapsed(group: HTMLElement): void {
 /** How many settled members of a group failed, how many refused, and how many
  *  were stopped. ONE walk, because the roll-up needs all three and the FOLD needs
  *  only `failures` — a stopped OR refused member must keep folding, since both
- *  are settles, which is the ruling the delegate card already carries.
- *
- *  `denied` is deliberately in none of them, and the asymmetry with `declined` is
- *  the reason rather than an omission: a policy refusal means the command never
- *  RAN, so it contributes nothing to what this group did, while a declined call
- *  ran and answered. */
+ *  are settles, as the delegate card already treats them. `denied` is in none of
+ *  them, unlike `declined`: a policy refusal means the command never RAN, so it
+ *  contributes nothing to what this group did, while a declined call ran and
+ *  answered. */
 interface GroupCounts {
   readonly failures: number;
   readonly declined: number;
@@ -599,7 +597,7 @@ export function autoCollapseGroup(group: HTMLElement): void {
     }
   }
   // An AUTO collapse removes height ABOVE the reader, so it is compensated.
-  // This is the one ANIMATED height change of the three §3.4 names, via
+  // This is the one ANIMATED height change of the three layout-change cases, via
   // createDisclosure.
   preserveReadingPosition(() => {
     markAutoCollapsed(group);

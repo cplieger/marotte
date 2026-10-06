@@ -99,32 +99,14 @@ export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdic
   return "canonicalized";
 }
 
-/** Settle a deep-linked chat id the store has no row for, by ASKING the server.
- *
- *  Four outcomes, and each one is a different piece of evidence:
- *
- *   - the chat EXISTS, so the link works and its tab opens;
- *   - the SERVER says it is gone, which is the only thing that licenses saying so;
- *   - nobody answered, so the URL is held and the reader gets a NON-terminal
- *     notice with a retry that re-asks;
- *   - nobody answered and the reader has already been told the server is
- *     unreachable, so nothing is raised.
- *
- *  THE ASK GATE IS EVIDENCE THE SERVER CANNOT ANSWER, not the absence of a chat
- *  list — see `serverMayAnswer`. Its false arm is round 3's fix and is preserved
- *  exactly: a reload of any `/chat/<id>` against a restarting server holds the URL
- *  and stays quiet, because boot has already raised "Couldn't load your chats."
- *  with a Reload and a second notice would be the same failure reported twice.
- *
- *  THE NOTICE GATE IS `chatListLoaded()`, and it is a different question from the
- *  ask gate rather than a duplicate of it. Boot toasts whenever its list load
- *  failed, and a load that failed did not latch — so an unlatched list means the
- *  reader is already holding a notice about this server, and an `unresolved` here
- *  would be the second one. A list that HAS landed means nothing has told them
- *  anything, and then this notice is the only signal a pasted link produces at all.
- *
- *  Never rejects: every path returns an outcome. The router voids the promise, and
- *  the retry re-enters through the same door. */
+/** Settle a deep-linked chat id the store has no row for, by ASKING the server: the chat
+ *  EXISTS and its tab opens; the SERVER says it is gone, the only thing that licenses
+ *  saying so; or nobody answered, so the URL is held with a retry notice — unless the
+ *  reader already holds a notice about this server. The ask gate is evidence the server
+ *  cannot answer (`serverMayAnswer`): against a restarting server it stays quiet, because
+ *  boot already raised "Couldn't load your chats.". The notice gate is `chatListLoaded()`:
+ *  an unlatched list means boot's toast is already showing. Never rejects; the retry
+ *  re-enters through the same door. */
 export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome> {
   if (!serverMayAnswer()) {
     return "held";

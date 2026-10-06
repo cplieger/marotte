@@ -93,8 +93,8 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("answers only for a model that has an entry", () => {
-    // A tier is a judgement about one model; carried onto another it overrode
-    // that model's own default (user report, 2026-08-31).
+    // A tier is a judgement about one model; carried onto another it would override
+    // that model's own default.
     restoreLastEffort({ "claude-opus-5": "max" });
     expect(getLastEffortFor("gpt-luna")).toBe("");
     expect(getLastEffortFor("")).toBe("");

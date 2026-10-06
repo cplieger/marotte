@@ -473,29 +473,13 @@ export const ICON_TAB_AGENT = svg(
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
 // --- Subagent header icons (SubagentBlock in the chat transcript) ---
-// One distinct glyph per bundled kiro-cli subagent, mirroring the mode
-// picker's distinct-glyph-per-builtin convention; unknown/custom subagents
-// fall back to ICON_TAB_AGENT (the shared hexagon). Mapping: roles.ts
-// iconForSubagent.
+// One distinct glyph per bundled kiro-cli subagent; unknown/custom subagents fall back
+// to ICON_TAB_AGENT (the shared hexagon). Mapping: roles.ts iconForSubagent.
 //
-// Introspect (Lucide "graduation-cap") — answers questions about Kiro from the
-// official docs. It was Lucide's book-open, and it LEFT the book family on the ruling
-// that gave `ICON_TOOL_READ` the browser's book (2026-09): those two were one mark at
-// 16px and both render in the transcript, so the collision had to be broken on one
-// side or the other. This side moved, because the book belongs to the surface that
-// browses documents and this delegate merely consults them.
-//
-// A cap rather than a question mark, and the alternatives were rendered before
-// choosing. `circle-question` is the most direct reading and is refused: it is a ring
-// with a small central mark, which is `ICON_INFO`'s silhouette one surface away — the
-// same defect, moved from the book family to the circle family, where `ICON_TOOL_FETCH`
-// and `ICON_TAB_HISTORY` already sit. A `?` also cannot be drawn inside anything at
-// this tier (one unit is 0.667 CSS px, so a contained glyph's mark lands near 4 px and
-// its curves muddy), and drawn BARE it is a hook and a dot with no silhouette at all.
-// `library` reads as four bars, `bookmark` says saved rather than answered, `life-buoy`
-// is a fourth ring, and `scroll-text` carries interior lines 4 units apart, under the
-// ~2 CSS px clearance an interior gap needs. The cap's shapes are large, its outline is
-// unlike anything else in the set, and it is Lucide verbatim.
+// Introspect (Lucide "graduation-cap") answers questions about Kiro from its docs. Not
+// a book (one mark with `ICON_TOOL_READ` at 16px) and not a ring with a `?` (the
+// silhouette of `ICON_INFO`, `ICON_TOOL_FETCH` and `ICON_TAB_HISTORY`): the cap's
+// outline is unlike anything else in the set, and it is Lucide verbatim.
 export const ICON_SUBAGENT_INTROSPECT = svg(
   "ui",
   '<path d="M21.42 10.922a1 1 0 00-.019-1.838L12.83 5.18a2 2 0 00-1.66 0L2.6 9.08a1 1 0 000 1.832l8.57 3.908a2 2 0 001.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0012 0v-3.5"/>',

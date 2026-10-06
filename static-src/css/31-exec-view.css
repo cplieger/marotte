@@ -480,7 +480,7 @@
    that fill is the darkest rung: invisible while every row is transparent, and a
    black hairline cut across the list the moment one takes the hover wash or the
    selected fill (measured 1px, selected 2.282:1 against the box in dark). The fill
-   carries the separation on its own, which is 70-selection.css's ruling and what
+   carries the separation on its own, as 70-selection.css states and as
    `.pill-model-list` and `.fb-list` already do. */
 .ev-kids {
   display: flex;

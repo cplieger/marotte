@@ -248,15 +248,11 @@ describe("materializeTab is total over the eleven kinds", () => {
 
 // --- The run case ---
 
-// ONE shape, whatever door opened it. There used to be two — an owned tab whose ×
-// cancelled the run and a review whose × did not — and these cases pinned the
-// difference. The difference is gone (user decision, 2026-08): the subpage view is
-// universal across a parentless workflow, a chat-triggered workflow and a subagent
-// expansion, and a × that means "close this" on one door and "destroy the work" on
-// another is a gesture a reader cannot learn.
-//
-// What replaces the assertion is its inverse: a run tab NEVER carries a teardown, so
-// no door can be given one by setting a subject field.
+// ONE shape, whatever door opened it: the subpage view is universal across a parentless
+// workflow, a chat-triggered workflow and a subagent expansion, and a × that means
+// "close this" on one door and "destroy the work" on another is a gesture a reader
+// cannot learn. So a run tab NEVER carries a teardown, and no door can be given one by
+// setting a subject field.
 describe("a run tab is always a view", () => {
   it("carries no teardown, whatever the subject says", () => {
     register();

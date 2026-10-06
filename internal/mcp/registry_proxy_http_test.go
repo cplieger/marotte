@@ -446,7 +446,7 @@ func TestRegistryProxy_Search_limitClamping(t *testing.T) {
 	}
 }
 
-// SEC-u12c1-003 regression: CheckRedirect allowlist. Upstream tries
+// CheckRedirect allowlist: upstream tries
 // to redirect us to a non-registry host; http.Client must refuse
 // and the handler must surface 502.
 func TestRegistryProxy_Search_refusesNonAllowlistedRedirect(t *testing.T) {
@@ -543,7 +543,7 @@ func TestRegistryProxy_fetchSearch_differentLimitsAreDistinctKeys(t *testing.T) 
 	}
 }
 
-// F2 (test-review u12c1): singleflight coalescing. Two concurrent
+// Singleflight coalescing. Two concurrent
 // fetchSearch calls with the same (q, limit) key must coalesce to a
 // single upstream GET; the follower returns the leader's result with
 // cached=true.
@@ -626,8 +626,8 @@ func TestRegistryProxy_fetchSearch_coalescesConcurrentCallers(t *testing.T) {
 	}
 }
 
-// F2 (test-review u12c1): follower sees the leader's error when the
-// upstream fails. Coverage for the `bar.err != nil` branch in
+// A follower sees the leader's error when the
+// upstream fails: the `bar.err != nil` branch in
 // fetchSearch.
 func TestRegistryProxy_fetchSearch_followerReceivesLeaderError(t *testing.T) {
 	var hits atomic.Int32
@@ -667,7 +667,7 @@ func TestRegistryProxy_fetchSearch_followerReceivesLeaderError(t *testing.T) {
 	}
 }
 
-// F5 (test-review u12c1): doFetch body-size guards. The
+// doFetch body-size guards. The
 // declared-length path (Content-Length > cap) and the undeclared
 // length path (chunked body past cap) both terminate with a 502 via
 // the handler, never a silently-truncated "empty results" lie.
@@ -723,7 +723,7 @@ func TestRegistryProxy_doFetch_rejectsOversizeUndeclaredBody(t *testing.T) {
 	}
 }
 
-// u12c2-f4: same-host redirect under the hop cap is allowed. Pins the
+// A same-host redirect under the hop cap is allowed. Pins the
 // "return nil" branch at the bottom of the CheckRedirect func — a
 // legitimate 301/302 to a sibling path on the registry host itself
 // must still work after the allowlist check.
@@ -756,7 +756,7 @@ func TestRegistryProxy_CheckRedirect_sameHostAllowed(t *testing.T) {
 	}
 }
 
-// u12c2-f4: chain of 3+ same-host redirects is refused. Pins the
+// A chain of 3+ same-host redirects is refused. Pins the
 // "too many redirects" branch. Without the cap, a cooperative-but-
 // chatty upstream could keep the proxy chasing redirects far longer
 // than the 10s Timeout.
@@ -788,7 +788,7 @@ func TestRegistryProxy_CheckRedirect_rejectsTooManyHops(t *testing.T) {
 	}
 }
 
-// u12c2-f6: fetchSearch calls evictLocked when a successful fetch
+// fetchSearch calls evictLocked when a successful fetch
 // would push the cache over maxCacheEntries. Pins the
 // "len(p.cache.entries) >= maxCacheEntries → evictLocked" branch.
 func TestRegistryProxy_fetchSearch_triggersEvictAtCap(t *testing.T) {
@@ -832,7 +832,7 @@ func TestRegistryProxy_fetchSearch_triggersEvictAtCap(t *testing.T) {
 	}
 }
 
-// u12c2-f7: follower waiting on the inflight barrier aborts cleanly
+// A follower waiting on the inflight barrier aborts cleanly
 // when its own ctx is cancelled; leader still completes untainted.
 // Pins the ctx.Done() branch of the follower select in fetchSearch.
 func TestRegistryProxy_fetchSearch_followerRespectsCtxCancel(t *testing.T) {

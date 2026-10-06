@@ -1,21 +1,10 @@
 // ---------------------------------------------------------------------------
 // Tests for the run tab: its control row, its structure, its outputs and its
-// empty-step notes.
-//
-// The FLAVOUR gate these cases used to pin is gone (user decision, 2026-08). It said
-// which door you came through decided whether the run was actionable — an owned tab
-// from the Workflows launcher carried the live verbs, a History review carried only
-// retry — and it existed because the owned tab's × was the stop. The × no longer
-// stops anything: the subpage view is universal across a parentless workflow, a
-// chat-triggered workflow and a subagent expansion, so its × closes a view. With the
-// × disarmed, gating Cancel by door would leave a live run readable from History and
-// unstoppable, so the verbs are the STATUS's wherever the run is read from.
-//
-// NO gate is left in this module (2026-09): the row is the SERVER's answer
-// (`GET /api/runs/{id}/controls`), so these cases drive that answer rather than a
-// status and the verb rule itself is pinned in Go. What the page still decides for
-// itself is what an empty step body says and whether the door beside it is offered,
-// and that turns on the RUN's own `parentSessionId`, never on a door.
+// empty-step notes. The control row is the SERVER's answer
+// (`GET /api/runs/{id}/controls`), so these cases drive that answer and the verb rule is
+// pinned in Go. The page decides only what an empty step body says and whether the door
+// beside it is offered, from the RUN's own `parentSessionId`, never from the tab it was
+// opened through.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from "vitest";

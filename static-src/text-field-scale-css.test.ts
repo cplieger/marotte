@@ -47,13 +47,9 @@ const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".rule-fo
 
 describe("the declarations, read from source", () => {
   it("declares the 16px text-entry floor, in both tier arms", () => {
-    // THIS PIN IS INVERTED, DELIBERATELY (amendment §D, 2026-09-10). It used to
-    // assert the floor ABSENT, on the premise stated in this file's header: that
-    // `static/index.html` ships `maximum-scale=1.0`, which suppresses iOS's
-    // focus auto-zoom, so the floor defended against behaviour the document could
-    // not exhibit. THAT CLAUSE IS GONE — the viewport meta lost it for WCAG 1.4.4
-    // and 02-reset.css now allows `pinch-zoom` to match — so the premise is false
-    // on disk and the zoom is live again for any focused control under 16px.
+    // The floor is PRESENT: `static/index.html` ships no `maximum-scale`, which the
+    // viewport meta drops for WCAG 1.4.4 (02-reset.css allows `pinch-zoom` to match),
+    // so iOS's focus auto-zoom is live for any focused control under 16px, and
     // `#prompt-input` carries `autofocus`, so the app would load already zoomed.
     const floors = allRules(loadCSS("61-mcp-tools.css")).filter(
       (r) => /:is\(input, textarea, select\)/.test(r.selector) && /font-size:/.test(r.body),
@@ -244,12 +240,10 @@ describe("the controls, measured over the shipped markup", () => {
     expect(offScale()).toEqual([]);
   });
 
-  // THE COARSE ARMS LEFT THIS CASE (amendment §D). The 16px floor is deliberately
-  // ABOVE the body rung — 16 against `--fs-md`'s 14 — because 16 is iOS's
-  // auto-zoom threshold rather than a rung of this app's scale, and the cost is
-  // stated at the rule in 61-mcp-tools.css. What the case still pins is the tier
-  // where no floor applies: nothing there may outsize the transcript, which is the
-  // reported defect the type scale exists to answer.
+  // The coarse arms are not in this case: their 16px floor sits ABOVE the body rung
+  // (16 against `--fs-md`'s 14) because 16 is iOS's auto-zoom threshold rather than a
+  // rung of this app's scale. What the case pins is the tier where no floor applies:
+  // nothing there may outsize the transcript, the defect the type scale answers.
   // THE POINTER decides the floor, never the width — so a WIDE coarse viewport (an
   // iPad in landscape) is a floored arm, and an unresolved tier is floored only
   // below the 48rem no-JS fallback.
@@ -268,8 +262,7 @@ describe("the controls, measured over the shipped markup", () => {
     ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
     ["a phone with no pointer tier resolved yet", 390, 844, null],
   ])("floors every text control at 16px on %s", async (_l, w, h, pointer) => {
-    // The other half of amendment §D, and the five controls it names by hand are
-    // asserted as a POPULATION instead: every text-entry control on the shipped
+    // The coarse floor asserted as a POPULATION: every text-entry control on the shipped
     // page, so a field added later joins the case without an edit here. The box
     // controls are excluded — a checkbox paints at its own `rem` size and the floor
     // reaches its label, not its box (the last case in this file measures that).
@@ -286,7 +279,7 @@ describe("the controls, measured over the shipped markup", () => {
       }
     }
     expect(under, "iOS zooms the page for a focused control under 16px").toEqual([]);
-    // The five the amendment names, asserted by id so a failure says which.
+    // Five named controls, asserted by id so a failure says which.
     for (const id of ["prompt-input", "fb-path", "tool-search", "tool-sort"]) {
       const el = document.getElementById(id);
       expect(el, `#${id} is not in the shipped markup`).not.toBeNull();
@@ -501,17 +494,13 @@ describe("the controls, measured over the shipped markup", () => {
   });
 
   it("moves no box control, because the box controls carry a rem size of their own", async () => {
-    // The premise for a reset selector that excludes no input type: a native
-    // checkbox and radio paint at a font-relative size and would move under a
-    // type-scale change, but both carry an explicit `rem` box (02-reset.css and
-    // 61-mcp-tools.css). Pushing the RUNG to 3rem is deliberately absurd — a
-    // control whose box tracked the font would triple, and these do not move at
-    // all. The rung rather than the root font size, because a `rem` box is
-    // root-relative: moving the root would move the boxes for a reason that has
-    // nothing to do with the type scale.
-    // ON THE FINE TIER, because amendment §D's 16px floor pins a coarse control's
-    // font-size outright — which would make the rung override below reach nothing
-    // and the case pass for a reason that says nothing about the box.
+    // The premise for a reset selector that excludes no input type: a native checkbox
+    // and radio paint at a font-relative size, but both carry an explicit `rem` box
+    // (02-reset.css and 61-mcp-tools.css). Pushing the RUNG to 3rem is deliberately
+    // absurd — a box that tracked the font would triple — and the rung rather than the
+    // root, because a `rem` box is root-relative. ON THE FINE TIER, because the coarse
+    // 16px floor pins a control's font-size outright, so the rung override would reach
+    // nothing and the case would pass for a reason that says nothing about the box.
     await mountPage(1280, 800, "fine");
     const boxes = [...document.querySelectorAll<HTMLElement>('[type="checkbox"], [type="radio"]')];
     expect(boxes.length).toBeGreaterThan(10);

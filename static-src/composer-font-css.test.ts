@@ -152,13 +152,10 @@ describe("the composer, measured at real viewport sizes", () => {
     // of --fs-md moves both and this case keeps meaning "the two agree". The
     // absolute value is pinned once, below.
     //
-    // THE COARSE ARMS ARE EXCLUDED FROM THE AGREEMENT, deliberately (amendment §D,
-    // 2026-09-10): the 16px iOS text-entry floor is restored in 61-mcp-tools.css
-    // and beats this control's (0,1,0) declaration on that tier, so the composer
-    // reads 16px there against the transcript's 14. This file's own header states
-    // the premise that changed — `static/index.html` no longer ships
-    // `maximum-scale=1.0`, so the auto-zoom it suppressed is live and
-    // `#prompt-input` carries `autofocus`. The next case pins that side.
+    // THE COARSE ARMS ARE EXCLUDED FROM THE AGREEMENT: the 16px iOS text-entry floor in
+    // 61-mcp-tools.css beats this control's (0,1,0) declaration on that tier, because
+    // `static/index.html` ships no `maximum-scale` and `#prompt-input` carries
+    // `autofocus`, so auto-zoom is live. The next case pins that side.
     if (pointer === "coarse" || (pointer === null && w <= 768)) {
       expect(fontPx(input), "the coarse floor is in force").toBe(16);
       return;
@@ -179,10 +176,9 @@ describe("the composer, measured at real viewport sizes", () => {
     expect(fontPx(input)).toBe(16);
   });
 
-  // The coarse pair moved 52/53 -> 44/45 with amendment §B, which took the painted
-  // control box off the 44px target floor; composer-row-height-css.test.ts owns that
-  // relationship and its own pins carry the reasoning. What this case is about is
-  // unchanged: the FONT does not move the box.
+  // The coarse pair is 44/45 because the painted control box sits below the 44px target
+  // floor; composer-row-height-css.test.ts owns that relationship. What this case pins is
+  // that the FONT does not move the box.
   it.each([
     [390, 844, "coarse" as const, 44, 45],
     [1280, 800, "fine" as const, 40, 41],

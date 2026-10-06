@@ -346,14 +346,13 @@ func TestSearch_MatchCapStopsTheWalk(t *testing.T) {
 }
 
 // TestSearch_MatchCapClampsTheAnswer is the `results()` site, and the pin for the
-// RANK-AWARE ruling. The fixture collects far more than the cap — the name hits
+// RANK-AWARE clamp. The fixture collects far more than the cap — the name hits
 // stop the walk, and the candidates already accepted are then read, so their
 // content rows arrive AFTER the budget is spent — and the clamp cuts the SORTED
 // tail, so every surviving row is a name row and no content row survives at all.
 //
 // Content-bearing files are named to sort BEFORE the name matches, so path order
-// alone would keep them: only `nameFirst` leading the comparator can produce
-// this answer. Red-checked by reverting it out.
+// alone would keep them: only `nameFirst` leading the comparator can produce this answer.
 func TestSearch_MatchCapClampsTheAnswer(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	const (

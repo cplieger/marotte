@@ -360,18 +360,13 @@ func nodePathOf(t *testing.T, lg *EntryLog, turn string) string {
 	return open.NodePath
 }
 
-// Property 6 (REPLACING "Truncate at a turn is exact"): a revert is a RECORD, and the
-// range it names is unreadable through every surface but the merge's own.
-//
-// The generator is the COMPOSITION rather than one revert: k turns with bodies, one of
-// which may STRADDLE the revert (its turn_open before the reverted turn's, its
-// turn_close after it, an unsettled tool_call inside it), a revert at j — j at the
-// oldest turn is among the drawn cases, so the no-survivor path is covered rather than
-// assumed — further turns, then a SECOND revert whose j is drawn from the SURVIVING
-// view, so the two-record composition is generated rather than hand-written.
-//
-// The model beside it applies design-2 §2.2's rule independently of the index, so an
-// implementation that merely agrees with itself still fails.
+// Property 6: a revert is a RECORD, and the range it names is unreadable through every
+// surface but the merge's own. The generator is the COMPOSITION: k turns with bodies, one
+// of which may STRADDLE the revert (open before it, closed after, an unsettled tool_call
+// inside), a revert at j — the oldest turn included, so the no-survivor path is drawn —
+// further turns, then a SECOND revert drawn from the SURVIVING view. The model beside it
+// applies the skip rule independently of the index, so an implementation that merely
+// agrees with itself still fails.
 func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 	ctx := t.Context()
 	base := t.TempDir()
@@ -428,7 +423,7 @@ func TestEntryLogARevertIsARecordAndTheRangeIsUnreadable(t *testing.T) {
 }
 
 // revertScene is one generated log beside the MODEL property 6 reads it against: every
-// turn in FILE order, the ordinal each took at its open, the reverted set §2.2's rule
+// turn in FILE order, the ordinal each took at its open, the reverted set the skip rule
 // produces, and the record ids appended so far.
 type revertScene struct {
 	rt       *rapid.T
@@ -656,7 +651,7 @@ func (s *revertScene) revert(idx int) {
 	}
 }
 
-// betweenTurns is §9 item 34's arm: after a revert the newest turn in FILE order is
+// betweenTurns is the between-turns arm: after a revert the newest turn in FILE order is
 // inside the window, so a lane-less append must land in the newest SURVIVING turn and
 // continue THAT turn's seq.
 func (s *revertScene) betweenTurns(tag string) {
@@ -825,8 +820,7 @@ func (s *revertScene) checkStraddlerSurvivedWhole(when, turn string) {
 }
 
 // checkNoSynthesizedCloser reads the FILE rather than the index: a rewind leaves no
-// closer behind anywhere, which is the same absence §9 item 33 states from the
-// reconcile signal's side.
+// closer behind anywhere, which is why it raises no reconcile signal.
 func (s *revertScene) checkNoSynthesizedCloser(when string) {
 	for _, line := range readLogLines(s.rt, filepath.Join(s.root, entriesFileName)) {
 		var e marotte.Entry

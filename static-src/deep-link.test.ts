@@ -183,7 +183,7 @@ describe("settleDeepLinkedChat", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The ask gate. Round 3's fix, preserved exactly: a reload of any `/chat/<id>`
+  // The ask gate: a reload of any `/chat/<id>`
   // against a restarting server holds the URL and stays quiet, and does not spend a
   // round trip to be told what boot's own toast already said.
   // -------------------------------------------------------------------------

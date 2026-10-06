@@ -549,9 +549,8 @@ describe("turn card header affordance", () => {
 
   it("the whole band is the marked surface, open and folded alike", async () => {
     // One gesture wherever the reader clicks it, matching the tool and
-    // delegate cards. It used to admit only the meta row while open, which
-    // read as the target shrinking when a turn was expanded (user report,
-    // 2026-08-31).
+    // delegate cards: admitting only the meta row while open reads as the
+    // target shrinking when a turn is expanded.
     for (const state of ["open", "folded"] as const) {
       const card = await turn(state);
       expect(css(card.querySelector(".turn-header")!, "cursor"), state).toBe("pointer");

@@ -441,84 +441,13 @@
   background: var(--c-accent);
 }
 
-/* THE HIT-TARGET FLOOR, over every interactive element rather than a named list.
- *
- * `--hit-floor` is 24px on the fine tier (WCAG 2.5.8, Level AA) and 44px on the
- * coarse one (Apple HIG, and WCAG 2.5.5 Level AAA); 01-tokens.css owns the tier.
- *
- * WHAT THIS REPLACED, because the SHAPE was the defect rather than the values: a
- * hand-kept allow-list of 25 class names, which means a control missing from it
- * had no floor on ANY device. Measured 2026-09 across the whole stylesheet set,
- * 43 interactive surfaces sat under 44px on a phone and 23 under 24px on desktop,
- * every one of them absent from that list — `.attachment-close` at 16px,
- * `.elicitation-checkbox` at 17.6px, `.fb-check` at 20px, `.shell-resize` at
- * 23px. Entries had been appended on three separate occasions, each after
- * somebody noticed one control, which is the ratchet a list guarantees. It also
- * carried a SECOND breakpoint (40rem) while the control heights moved at 48rem,
- * so the 640-768px band got 44px controls beside a 24px floor.
- *
- * FOUR properties of this rule are load-bearing:
- *
- * 1. `:where()` scores ZERO, so this may only set `min-*`. A control keeps its
- *    own declared `height` and the floor lifts the BOX around it, which is how
- *    `.pill` has always reached its touch size.
- * 2. A class declaring its own `min-width` BEATS this (0,1,0 against 0,0,0), and
- *    that is relied upon: `.send-btn` opts out of both axes (`min-width: 0`,
- *    `min-height: 0`) so its painted box stays the composer's one control height —
- *    32px on a mouse, 36px on a finger, square at both — and holds the TARGET at
- *    this floor through its own `::after` expander instead. The properties stay
- *    PHYSICAL for this reason — a logical `min-inline-size` here would be a
- *    DIFFERENT property, resolved against the physical one by cascade ORDER rather
- *    than by specificity, so that override would silently stop working.
- *    (This used to read "stays 36px wide against 44px tall", which was true before
- *    the square amendment and describes no rule now.)
- * 3. A floor-widened icon button must also centre its glyph or it renders
- *    visibly off-centre; `.icon-btn` and `.list-row-btn` carry
- *    `justify-content: center` for exactly that.
- * 4. `.tool-toggle` needed naming here and no longer does. It is the Tools row
- *    switch and this floor is only its HIT box: the painted track carries its own
- *    declared size and centres inside it (18-pages.css `.toggle-slider`), so
- *    growing the label does not grow the switch.
- *
- * A control that must stay visually small grows its TARGET rather than its box,
- * with an absolutely positioned `::after` expander sized by `inset` off
- * `--hit-floor`, so it follows the tier with no second declaration. One named
- * member, `.shell-resize` (21-shell-panel.css), plus the native box controls below.
- * `.status-dot` used to be the second: it is a decorative SPAN inside
- * `.account-btn` now, so it is not a control and takes no target at all.
- *
- * `all: unset` ESCAPES this floor, and it is the trap worth knowing. It resets
- * `min-width`/`min-height` to their initial `auto` at whatever specificity the
- * declaring selector carries, which for a single class is (0,1,0) against this
- * rule's zero — so the control is not overriding the floor, it is invisible to
- * it. `.status-dot` WAS the live case, an 8px button at every tier and the one
- * undersize the desktop audit still reported after this rule landed; it is a
- * decorative span now and its whole 60-line phone treatment went with the button.
- * The trap stands: a control built that way needs an expander, not a list entry.
- *
- * A LINK IS A TARGET, so `a[href]` is IN, and the ruling is recorded here the way
- * the focus ring records its own (40-a11y.css:45 includes `a[href]`) and the press
- * floor records the opposite one (03-base.css:41-45 excludes it, because a wash
- * across a word is not a press). WCAG 2.5.8 is about the TARGET a pointer has to
- * hit, and an anchor styled as a row or a button is exactly that; the standard's
- * own INLINE exception is what carves prose back out, and that exemption is stated
- * once below (`:where(p, li, td, dd, …) :where(a[href])`). Two prose exemptions
- * that were inert until this line landed therefore become LIVE: that rule, and
- * `.tool-file-link` (14-tools.css:751-753), which already declares a physical
- * `min-height: 0` and says why. `a.subagent-header` declares its own
- * `min-height: var(--btn-h)` and so needs nothing.
- *
- * ONE ANCHOR TAKES THE EXEMPTION AND THEN DECLINES IT, and it is the shape to
- * expect again: `.code-refs-link` (13-messages.css) is a licence-attribution link
- * inside an `<li>`, so the exemption reaches it and zeroes the floor — but it owns
- * its row rather than sitting in a sentence, so the line-height argument the
- * exception rests on does not describe it. It restates `min-height: var(--hit-floor)`
- * at (0,1,0), which is the only way past a zero-specificity rule that a
- * zero-specificity rule has already answered.
- *
- * Split into three rules with identical declarations only to stay under
- * stylelint's `selector-max-attribute` of 2. They are one rule conceptually;
- * edit all three together. */
+/* THE HIT-TARGET FLOOR over every interactive element: `--hit-floor` (01-tokens.css) is
+ * 24px fine (WCAG 2.5.8) and 44px coarse (WCAG 2.5.5). `:where()` scores zero, so it sets
+ * only `min-*` and any class's own `min-*` beats it; the properties stay PHYSICAL because
+ * a logical one would cascade by order instead. A link is a target; prose links are
+ * exempt below. A small control grows a `::after` expander instead, and `all: unset`
+ * escapes the floor entirely. A widened icon button must centre its glyph. Split in
+ * three only for stylelint's `selector-max-attribute`; edit all three together. */
 :where(a[href], button, select, summary) {
   min-width: var(--hit-floor);
   min-height: var(--hit-floor);

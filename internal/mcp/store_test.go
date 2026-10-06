@@ -761,8 +761,8 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	}
 }
 
-// Regression: load() must re-enforce 0600 when the file arrives with
-// looser perms. Sec-u11c1-01.
+// load() must re-enforce 0600 when the file arrives with
+// looser perms.
 func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
@@ -819,7 +819,7 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	}
 }
 
-// F3 (test-review u12c1): persist-failure rollback. Every mutator
+// Persist-failure rollback. Every mutator
 // (Create / Update / SetEnabled / Delete) pairs an in-memory change
 // with a persist call; if persist fails, the in-memory state must
 // roll back so callers don't see ghost records. Provoke a failure by
@@ -911,7 +911,7 @@ func TestDelete_RollsBackOnPersistFailure(t *testing.T) {
 	}
 }
 
-// F6 (test-review u12c1): load() corrupt-file rename-failure fallback.
+// load() corrupt-file rename-failure fallback.
 // When rename aside fails, load() must still return nil (store comes
 // up empty) and must leave the corrupt file in place. Triggered by
 // making the parent dir read-only so os.Rename returns EACCES.

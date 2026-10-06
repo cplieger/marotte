@@ -57,39 +57,14 @@
   }
 }
 
-/* FORCED COLORS: a drawn box needs an EDGE, because its fill is not its own.
- *
- * `.skeleton`'s only paint is a background, and forced-colors mode forces an
- * author background to `Canvas` — so every bar in the app paints invisibly
- * against the canvas and the loading state renders as blank space. Measured on
- * the same construction one file over: 40-a11y.css's caret rule records
- * "measured white-on-white" for a drawn box with no glyph and no border, which
- * is exactly this element.
- *
- * A 1px `CanvasText` border rather than a `CanvasText` FILL, and rather than
- * `forced-color-adjust: none`. It says the right thing: a bar outlined against
- * the canvas reads as a RESERVED SLOT, where a solid CanvasText bar would read
- * as text that has already arrived. The caret one file over takes the fill, and
- * it stands in for the INSERTION POINT rather than for content, so it has no
- * reserved-slot reading to lose. Opting out of the forcing entirely would
- * override the reader's own palette, which is the one thing this mode exists to
- * protect.
- *
- * The pulse is deliberately left running: forced colours and reduced motion are
- * independent preferences, so a forced-colours reader has not asked to lose the
- * ambient loading signal, and `opacity` applies normally here — so §2.2's arm
- * must not be read as making the bar visible in this mode.
- *
- * This arm lives beside the rule it modifies rather than in 40-a11y.css, which
- * owns the app's other forced-colors block. Both files are position-33-and-34
- * neighbours in the MANIFEST, so a competing `.skeleton` rule added there would
- * WIN an equal-specificity tie: `skeleton-forced-colors.test.ts` asserts that
- * file declares none, and the answer to a collision is a conversation, not a
- * specificity bump.
- *
- * No layout shift: `box-sizing: border-box` is app-wide (02-reset.css), so the
- * border comes out of the content box and the bar's outer box is unchanged in
- * either mode. The radius is `.skeleton`'s own and the border traces it. */
+/* FORCED COLORS: `.skeleton`'s only paint is a background, which forced-colors mode
+ * forces to `Canvas`, so every bar would render as blank space. A 1px `CanvasText`
+ * border reads as a RESERVED SLOT, where a CanvasText fill would read as text already
+ * arrived, and `forced-color-adjust: none` would override the reader's palette. The
+ * pulse keeps running: reduced motion is a separate preference. This arm sits beside the
+ * rule it modifies; `skeleton-forced-colors.test.ts` asserts 40-a11y.css declares no
+ * competing `.skeleton` rule, which would win the equal-specificity tie. Border-box
+ * sizing (02-reset.css) keeps the bar's outer box unchanged. */
 @media (forced-colors: active) {
   .skeleton {
     border: 1px solid CanvasText;

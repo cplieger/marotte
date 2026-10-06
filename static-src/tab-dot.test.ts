@@ -2140,10 +2140,10 @@ describe("a list refetch paints the verdict the header carries", () => {
   });
 
   it("stays IDLE only for the LEGACY record, never for a turn that was stopped", async () => {
-    // The two halves of the ruling, side by side on one fetch. A cancelled turn
+    // Both halves of the rule, side by side on one fetch. A cancelled turn
     // RAN, so the hollow ring — which means the chat has not initiated — would be
     // wrong for it. A record written before the outcome existed carries nothing to
-    // read, and that is the case the ruling exempts: no state to pull.
+    // read, and that case is exempt: no state to pull.
     const { loadList } = await import("./store-load.js");
     setSessions([]);
     mockApiGetTyped.mockResolvedValue({

@@ -81,10 +81,10 @@ func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDet
 	return raw
 }
 
-// The pause a step inside a PARALLEL BRANCH produces, both halves, verbatim from run
-// wf_b724fd55e6cea1e7 (2026-09-04) and re-read off the stock KAS 2.21.0 bundle. The
-// sentence matches NONE of the reason arms and the detail is byte-identical to a plain
-// step's, because `executeParallel` composes the sentence FROM the branch's detail.
+// The pause a step inside a PARALLEL BRANCH produces, both halves, verbatim from a run on
+// the stock KAS 2.21.0 bundle. The sentence matches NONE of the reason arms and the detail
+// is byte-identical to a plain step's, because `executeParallel` composes the sentence
+// FROM the branch's detail.
 const branchWrapperReason = "Parallel 'phase1' is waiting on branch 'live-verify' " +
 	"(branch paused on transient error EAI_AGAIN)."
 
@@ -983,9 +983,8 @@ func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
 // TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame: a lease is released on
 // the live path by exactly one event, a terminal `run_complete` on a bridge this process
 // still reads, and a cancel is a node-boundary verb — so a run with no in-flight node has
-// no boundary to reach and no such frame follows. wf_5fa90abea7328028 was cancelled at
-// 2026-09-03T16:36:21Z, reached `aborted`, and 27 hours later was still on /api/runs/live
-// holding its chat exempt from the client's eviction sweep.
+// no boundary to reach and no such frame follows. Without the release such a run stays on
+// /api/runs/live indefinitely, holding its chat exempt from the client's eviction sweep.
 func TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{

@@ -664,12 +664,9 @@ describe("history: a run's state is its leading slot", () => {
     expect(rowOf("r:wf_1").querySelector(".entry-lead")?.childElementCount).toBe(0);
   });
 
-  // OVERTURNED. This used to assert the glyph was scoped to a PARENTLESS run, on
-  // "an agent-parented run's outcome is the agent's to handle". The server lists
-  // these rows now precisely because that is false once the launching chat's
-  // transcript is closed or evicted — retry is offered for them, and this page is
-  // the only door left — so a blank outcome would leave the reader no reason to
-  // open the one door there is.
+  // The server lists agent-parented runs whose launching chat's transcript is closed
+  // or evicted, and retry is offered for them, so this page is the only door left: a
+  // blank outcome would leave the reader no reason to open it.
   it("states the verdict on an agent-parented run too", async () => {
     await render({
       sessions: [],

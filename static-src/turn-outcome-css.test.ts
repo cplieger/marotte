@@ -173,7 +173,7 @@ describe("hue comes off the severity table, on every surface", () => {
 
   it("keeps the header dot breathing, since motion is its second channel", () => {
     // The dot renders only below 48rem, where the tab strip is off-canvas, so it
-    // is the off-screen-work case the pulsing-dot ruling carves out
+    // is the off-screen-work case the pulsing-dot rule carves out
     // (13-messages.css). Motion is also what separates `running` from a still
     // outcome without relying on hue.
     const dot = ruleContaining(turns, '.turn-header[data-severity="running"] .turn-dot');
@@ -230,17 +230,12 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
   });
 
   it("leaves `unknown` as the ONLY per-outcome colour rule, and states its ink", () => {
-    // The one stated exception, and it is an exception because the table cannot
-    // express it: `unknown` and `cancelled` are both `stopped`, and a pure partition
-    // would paint an unreadable end the same yellow a user's own cancel gets. That
-    // overturns a ruling this stylesheet already made — an end marotte could not read
-    // has no honest hue.
-    //
-    // FIVE rules, one per surface, which is the cost of keeping it. Uniform for the
-    // first time: `unknown` was neutral on three surfaces, ABSENT on the footer wash
-    // (so its footer was byte-identical to a clean turn's) and yellow on the notice.
-    // The rail's surfaces are ONE — its markers — since a marker is now the only kind
-    // of node the rail draws that carries an outcome.
+    // The one stated exception, because the table cannot express it: `unknown` and
+    // `cancelled` are both `stopped`, and a pure partition would paint an unreadable end
+    // the same yellow a user's own cancel gets, while an end marotte could not read has
+    // no honest hue. FIVE rules, one per surface, uniform across all of them; the rail's
+    // surfaces are ONE — its markers — the only node the rail draws that carries an
+    // outcome.
     const rules = outcomeColourRules();
     expect(
       [...new Set(rules.map((r) => r.outcome))].sort(),

@@ -23,9 +23,8 @@ class SessionContextController {
   /** The level last picked under each model. A model with no entry has nothing
    *  for a new chat to open with and falls through to that model's own default
    *  tier. PER MODEL because a tier is a judgement about one model's
-   *  speed/quality trade, so one level for the whole app retracted every other
-   *  model's remembered pick the moment a tier was chosen anywhere (user report,
-   *  2026-08-31). */
+   *  speed/quality trade, so one level for the whole app would retract every other
+   *  model's remembered pick the moment a tier was chosen anywhere. */
   private lastEffortByModel: Record<string, string> = {};
 
   getCurrentModel(): string {

@@ -13,7 +13,7 @@ import (
 )
 
 // The header policy is total, so the log holds no nil check over the collaborator
-// that carries it (design 2 §3.1). The census is a source read rather than a
+// that carries it. The census is a source read rather than a
 // behavioural arm because the property is an ABSENCE: the guard that comes back is
 // the one nobody has written yet, and a run root supplied noHeader behaves
 // identically whether the call site is guarded or not.

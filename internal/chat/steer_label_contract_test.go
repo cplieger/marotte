@@ -16,24 +16,12 @@ import (
 
 // steerLabelFixture is the envelope of testdata/steer_label.json: every
 // (origin, state, reason) triple production can stamp on a steer entry, with the words
-// the client has to render for it.
-//
-// The triple set is SCANNED from the producers rather than listed, because listing it is
-// what the fixture exists to stop: four producer sites were named in the design and the
-// tree holds eight, so a hand-kept enumeration was already two sites short of the code.
-// The scan reads every non-test .go file under internal/, finds each construction of
-// marotte.EntrySteer and each mutation of one, and resolves Origin, State and Reason
-// against the constants internal/marotte declares. An origin that comes from data
-// expands to both members of the closed enum; a state or reason expression the scan
-// cannot resolve is a STOP rather than a widened set, so the instrument can never
-// silently cover less than the code.
-//
-// The LABEL column is this side's statement of the contract, not a derivation: the
-// server cannot ask the client for words. steer-label-contract.test.ts renders each row
-// through the real buildSteerNote in a real DOM and asserts the words match. So a reason
-// a producer writes and the client has no wording for fails HERE (no contract words) or
-// THERE (the render disagrees), which is the class design-2 §1.3 (b) mints the fixture to
-// close.
+// the client has to render for it. The triples are SCANNED from every non-test .go file
+// under internal/ rather than listed, so the fixture cannot fall behind the producers; an
+// expression the scan cannot resolve is a STOP rather than a widened set. The LABEL column
+// is this side's statement of the contract: steer-label-contract.test.ts renders each row
+// through the real buildSteerNote, so a reason the client has no words for fails here
+// (no contract words) or there (the render disagrees).
 type steerLabelFixture struct {
 	Comment []string         `json:"_comment"`
 	Origins []string         `json:"origins"`

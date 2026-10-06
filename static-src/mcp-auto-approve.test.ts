@@ -238,12 +238,11 @@ describe("the two tool lists", () => {
 
 describe("the suspension the security profile can put on that list", () => {
   it("names the rungs where the list is suspended and says nothing about annotations", () => {
-    // The ruling's copy, pinned on the surface a reader actually meets. It states
+    // The panel's copy, pinned on the surface a reader actually meets. It states
     // the exception as the COMPLEMENT — three rungs honour the list, two suspend
     // it, and naming the two cannot go stale when a permissive rung is added. The
-    // annotations half is a REFUSAL: an MCP tool's own annotations were
-    // considered as a permission source and rejected, so the panel must not
-    // imply marotte reads them.
+    // annotations half is a REFUSAL: marotte does not read an MCP tool's own
+    // annotations as a permission source, so the panel must not imply it does.
     const hint = document.querySelector("#mcp-auto-approve .section-hint")?.textContent ?? "";
     expect(hint).toContain("suspended on the Guarded and Read-only");
     expect(hint.toLowerCase()).not.toContain("annotation");

@@ -603,7 +603,7 @@ describe("the spec route", () => {
 // The git `#pr=` fragment, stated rather than sampled.
 //
 // The property above covers the round trip over generated identities; these three
-// are the rulings a reader should be able to check by eye.
+// are the rules a reader should be able to check by eye.
 // ---------------------------------------------------------------------------
 
 describe("the git #pr= fragment", () => {

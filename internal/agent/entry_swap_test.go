@@ -177,10 +177,9 @@ func (f *swapFixture) oneClosedTurn(say string) string {
 	return turn
 }
 
-// armReconcileSignal appends the empty-text steer entry §2.6 row 4 writes: the record
-// of a steer KAS persisted that this process never received. It is one of the three
-// conditions EntryLog.NeedsReconcile reads off the log, and it is what a test arms
-// where the deleted header flag used to be marked by hand.
+// armReconcileSignal appends the empty-text steer entry a reconcile records for a steer
+// KAS persisted that this process never received. It is one of the three conditions
+// EntryLog.NeedsReconcile reads off the log.
 func (f *swapFixture) armReconcileSignal(turn string) {
 	f.t.Helper()
 	f.append(turn, marotte.EntryKindSteer, "steer-unread", marotte.EntrySteer{
@@ -578,7 +577,7 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 	}
 
 	// No projected turns at all: KAS replayed nothing this record lacks, which is the
-	// case §2.6 exists for.
+	// case the reconcile signal exists for.
 	changed, err := SwapMerged(t.Context(), &Swap{
 		Log: f.log, Header: f.header, Record: f.record(),
 		Projected: nil, SessionID: "sid-1", Snapshot: f.snapshot(),
@@ -602,8 +601,8 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 	}
 }
 
-// TestSwapMerged_ARewriteRecordsWhatItCouldNotFix is the REWRITE branch's half of
-// §2.6: a merge that changed the log still has to record the signals its own output
+// TestSwapMerged_ARewriteRecordsWhatItCouldNotFix is the REWRITE branch's half of the
+// reconcile rule: a merge that changed the log still records the signals its own output
 // left standing, in the SAME write. A rewrite that clears nothing leaves a chat whose
 // every later resume re-runs a whole-file merge over an orphan KAS has no account of.
 func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
@@ -840,18 +839,12 @@ func swapReconciled(t *testing.T, f *swapFixture, turn string) []marotte.EntryRe
 	return out
 }
 
-// TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged is property 10's other half:
-// a rewind is a RECORD, so the rewrite a merge ends with carries the reverted material
-// through untouched. The merge is therefore fed the whole file plus the reverted set,
-// never the surviving view — that input makes Rewrite a physical compaction, the
-// reverted turns and the turn_revert that hides them leave the file, and no reader can
-// undo it. Decision 2 places compaction out of scope.
-//
-// It also pins the two halves that make the preservation observable: the reverted turn
-// keeps the n it had, because under §2.3 an n is not a coordinate any reader reads and
-// renumbering over every turn would renumber a hidden one into a surviving one's slot;
-// and the surviving view is the same across a reopen, so the skip rule survives the
-// rescan the rewrite ends with.
+// TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged: a rewind is a RECORD, so the
+// rewrite a merge ends with carries the reverted material through untouched. The merge is
+// fed the whole file plus the reverted set, never the surviving view, which would make
+// Rewrite an irreversible compaction. The reverted turn keeps its n, since renumbering
+// every turn would put a hidden one in a survivor's slot; and the surviving view is the
+// same across a reopen, so the skip rule survives the rewrite's rescan.
 func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
 	f := newSwapFixture(t)
 	survivor := f.oneClosedTurn("S0")

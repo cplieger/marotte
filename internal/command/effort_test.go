@@ -138,9 +138,9 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	}
 }
 
-// TestCmdSetEffort_SeedsOnlyThePickedModel pins the per-model scope of the write.
-// One slot for the whole app made a pick on any chat retract every other model's
-// remembered level, which is the user report the map shape exists for.
+// TestCmdSetEffort_SeedsOnlyThePickedModel pins the per-model scope of the write: one
+// slot for the whole app would make a pick on any chat retract every other model's
+// remembered level.
 func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `{"theme":"dark","last_effort_by_model":{"opus-5":"low","gpt-luna":"high"}}`)
