@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -64,7 +65,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSON(w, stale)
 			return
 		}
-		slog.Warn("account usage fetch failed", "error", err)
+		slog.Warn("account usage fetch failed", "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return
 	}

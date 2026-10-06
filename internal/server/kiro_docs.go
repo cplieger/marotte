@@ -49,6 +49,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/webhttp/v3"
@@ -428,7 +429,7 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		base, file := a.Base, a.File
 		data, verdict, rErr := readGuardedFS(root, "agents/"+file, guard)
 		if rErr != nil {
-			slog.Warn("kiro docs: read agent", "name", file, "error", rErr)
+			slog.Warn("kiro docs: read agent", "name", logsafe.Field(file), "error", logsafe.Field(rErr.Error()))
 			data = nil
 		}
 		fm := steering.Parse(data)
@@ -516,7 +517,7 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGua
 		}
 		data, verdict, rErr := readGuardedFS(root, "hooks/"+e.Name(), guard)
 		if rErr != nil {
-			slog.Warn("kiro docs: read hook", "name", e.Name(), "error", rErr)
+			slog.Warn("kiro docs: read hook", "name", logsafe.Field(e.Name()), "error", logsafe.Field(rErr.Error()))
 			continue
 		}
 		rows := hookRows(data, prefix, e.Name(), verdict.deleteProtected)
@@ -562,7 +563,7 @@ func walkMarkdown(
 	w := &mdWalker{ctx: ctx, root: root, sub: sub, category: category, guard: guard, mk: mk}
 	err := fs.WalkDir(root, sub, w.step)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		slog.Warn("kiro docs: walk", "category", category, "error", err)
+		slog.Warn("kiro docs: walk", "category", category, "error", logsafe.Field(err.Error()))
 	}
 	return w.sc
 }
@@ -608,7 +609,7 @@ func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 	}
 	data, verdict, err := readGuardedFS(w.root, p, w.guard)
 	if err != nil {
-		slog.Warn("kiro docs: read", "category", w.category, "path", p, "error", err)
+		slog.Warn("kiro docs: read", "category", w.category, "path", logsafe.Field(p), "error", logsafe.Field(err.Error()))
 		return nil
 	}
 	doc := w.mk(rel, steering.Parse(data), data, verdict)

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -106,6 +108,28 @@ func TestPolicyProfile_ARenderFailureStillAnswers200(t *testing.T) {
 	}
 	if len(eng.events) == 0 {
 		t.Error("no events broadcast: a render failure must not silence the fan-out the client refetches on")
+	}
+}
+
+// TestPolicyProfile_ARenderFailureIsLoggedBounded: the renderer's error text is not
+// marotte's own, so its log attribute goes through logsafe and is capped rather
+// than echoed whole.
+func TestPolicyProfile_ARenderFailureIsLoggedBounded(t *testing.T) {
+	s, _, _, _, _ := profileFixture(t, nil)
+	long := strings.Repeat("x", 4*logsafe.MaxFieldBytes)
+	s.mcpRender = &fakeMCPRender{configDir: s.configDir, err: errors.New(long)}
+	logs := captureLogs(t)
+
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusOK {
+		t.Fatalf("POST profile = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	out := logs.String()
+	if !strings.Contains(out, "re-rendering the MCP config failed") {
+		t.Fatalf("render failure not logged; logs:\n%s", out)
+	}
+	if strings.Contains(out, strings.Repeat("x", logsafe.MaxFieldBytes+1)) {
+		t.Errorf("render error logged past logsafe.MaxFieldBytes (%d): the attribute was not routed through logsafe.Field",
+			logsafe.MaxFieldBytes)
 	}
 }
 

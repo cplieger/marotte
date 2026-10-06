@@ -45,7 +45,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		// 502, not 200-with-an-error-body: this route has no 200-with-error wire
 		// contract to honour, and the client's action framework classifies by
 		// STATUS — kiro-cli is the upstream here and it declined.
-		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
+		slog.Warn("diagnostics: kiro-cli exec failed", "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("diagnostic command failed"))
 		return

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/procout"
 )
 
@@ -25,8 +26,8 @@ const (
 	// this is dropped and the report is marked "[truncated]".
 	diagnosticsMaxBytes = 256 * 1024 // 256 KiB
 
-	// cliStderrCap bounds stderr capture in RunStdoutCapped. stderr is logged for
-	// diagnosis and never returned, so a tail is enough to bound a hostile child.
+	// cliStderrCap bounds a hostile child's stderr in memory. stderr is never
+	// returned, and its log line carries only logsafe.Field's MaxFieldBytes prefix.
 	cliStderrCap = 32 * 1024 // 32 KiB
 
 	// settingsListMaxBytes caps the `settings list` document. The whole object is
@@ -87,7 +88,7 @@ func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...
 	cmd.Stderr = stderr
 	err = cmd.Run()
 	if stderr.Len() > 0 {
-		slog.Debug("cli stderr captured", "args", args, "stderr", stderr.String())
+		slog.Debug("cli stderr captured", "args", args, "stderr", logsafe.Field(stderr.String()))
 	}
 	return stdout.Bytes(), stdout.Truncated(), err
 }

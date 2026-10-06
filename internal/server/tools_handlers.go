@@ -10,6 +10,7 @@ import (
 	"os/exec"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/webhttp/v3"
@@ -71,7 +72,7 @@ func (s *Server) handleToolReconcile(w http.ResponseWriter, r *http.Request) {
 		// Reconcile loads the manifest before it enqueues, so a hand-edited
 		// tools.json is a caller-triggerable refusal rather than a fault: 400
 		// carrying the reason, as every neighbouring /api/tools mutation gives.
-		slog.Warn("tools: reconcile refused", "error", err)
+		slog.Warn("tools: reconcile refused", "error", logsafe.Field(err.Error()))
 		httpreply.BadRequest(w, err.Error())
 		return
 	}

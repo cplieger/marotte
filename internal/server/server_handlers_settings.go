@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
@@ -169,7 +170,7 @@ func publishSteeringETag(w http.ResponseWriter, r *http.Request, path string) st
 	_, etag, err := steeringDoc(r.Context(), path)
 	if err != nil {
 		slog.Warn("steering: saved, but the validator token could not be read back",
-			"path", path, "error", err)
+			"path", path, "error", logsafe.Field(err.Error()))
 		return ""
 	}
 	w.Header().Set(headerETag, etag)
@@ -266,7 +267,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 func handleSettingsGet(w http.ResponseWriter, path string) {
 	stored, err := readStoredSettings(path)
 	if err != nil {
-		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", err)
+		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSON(w, settings.EffectiveDefaults())
 		return
 	}
@@ -579,7 +580,7 @@ func (l *lazySettings) lookup(key string) (json.RawMessage, bool) {
 		doc, err := readStoredSettings(l.path)
 		if err != nil {
 			slog.Warn("settings: notification preferences fell back to defaults; config.json could not be read",
-				"error", err)
+				"error", logsafe.Field(err.Error()))
 		}
 		l.doc = doc
 	}
