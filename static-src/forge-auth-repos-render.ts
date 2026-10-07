@@ -8,6 +8,7 @@ import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { partialWhy } from "./forge-types.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import {
@@ -117,7 +118,7 @@ export function updateAccountReposDetails(
       list = el("ul", { className: "forge-account-repos-list" });
       foot.before(list);
     }
-    reconcile(list, sortRepos(repos, deps), deps.repoSpec);
+    reconcile(list, sortRepos(repos), deps.repoSpec);
   }
   refreshFooter(foot, a, l, deps);
 }
@@ -142,38 +143,25 @@ function refreshFooter(
   }
   status.textContent = deps.listNotes.get(a.id) ?? "";
 
-  for (const line of foot.querySelectorAll(":scope > p")) {
-    line.remove();
-  }
-  const lines: HTMLElement[] = [];
+  const lines: [className: string, text: string][] = [];
   if (l.unread) {
-    lines.push(
-      el(
-        "p",
-        { className: "forge-account-error" },
-        "Could not list the repositories on this account.",
-      ),
-    );
+    lines.push(["forge-account-error", "Could not list the repositories on this account."]);
   } else if (l.stale) {
-    lines.push(
-      el(
-        "p",
-        { className: "forge-account-error" },
-        "Could not refresh the repositories on this account. The list is from the last read.",
-      ),
-    );
+    lines.push([
+      "forge-account-error",
+      "Could not refresh the repositories on this account. The list is from the last read.",
+    ]);
   }
   const why = partialWhy(l.partial, l.next);
   if (why !== "") {
-    lines.push(
-      el(
-        "p",
-        { className: "section-hint" },
-        `Not every repository on this account was read: ${why}.`,
-      ),
-    );
+    lines.push(["section-hint", `Not every repository on this account was read: ${why}.`]);
   }
-  foot.prepend(...lines);
+  if (sigChanged(foot, lines.flat())) {
+    for (const line of foot.querySelectorAll(":scope > p")) {
+      line.remove();
+    }
+    foot.prepend(...lines.map(([className, text]) => el("p", { className }, text)));
+  }
 
   let more = foot.querySelector<HTMLButtonElement>(":scope > .forge-account-repos-load-more");
   if (l.next === "" && more?.getAttribute("aria-busy") !== "true") {
@@ -205,16 +193,9 @@ function makeLoadMoreButton(
   return btn;
 }
 
-function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
-  // Cloned first, then by full_name. Reconcile preserves identity when one repo moves between groups.
-  return [...repos].sort((x, y) => {
-    const xc = deps.lastLocalNames.has(x.name);
-    const yc = deps.lastLocalNames.has(y.name);
-    if (xc !== yc) {
-      return xc ? -1 : 1;
-    }
-    return x.full_name.localeCompare(y.full_name);
-  });
+/** Alphabetical by full name and nothing else, so a clone or a removal never moves a row. */
+function sortRepos(repos: Repo[]): Repo[] {
+  return [...repos].sort((x, y) => x.full_name.localeCompare(y.full_name));
 }
 
 function setAccountSummaryLabel(
@@ -239,7 +220,8 @@ function setAccountSummaryLabel(
 
 /**
  * Skips a button mid-async (`aria-busy="true"`) so withAsyncFeedback's textContent updates are not clobbered; the
- * next bumpState after it completes refreshes it.
+ * next bumpState after it completes refreshes it. A button whose repos did not change is kept, so an unrelated
+ * repaint leaves its focus and hover in place.
  */
 function refreshAccountSummaryButtons(
   actions: HTMLElement,
@@ -253,21 +235,44 @@ function refreshAccountSummaryButtons(
   );
   const clonedRepos = repos.filter((r) => deps.lastLocalNames.has(r.name));
 
-  const oldCloneAll = actions.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
-  if (oldCloneAll?.getAttribute("aria-busy") !== "true") {
-    oldCloneAll?.remove();
-    if (cloneable.length > 0) {
-      actions.prepend(makeCloneAllButton(a, cloneable, deps));
-    }
+  const cloneAll = keepOrBuild(
+    actions.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all"),
+    cloneable,
+    () => makeCloneAllButton(a, cloneable, deps),
+  );
+  if (cloneAll !== null && !cloneAll.isConnected) {
+    actions.prepend(cloneAll);
   }
+  const deleteAll = keepOrBuild(
+    actions.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all"),
+    clonedRepos,
+    () => makeDeleteAllButton(a, clonedRepos, deps),
+  );
+  if (deleteAll !== null && !deleteAll.isConnected) {
+    actions.appendChild(deleteAll);
+  }
+}
 
-  const oldDeleteAll = actions.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
-  if (oldDeleteAll?.getAttribute("aria-busy") !== "true") {
-    oldDeleteAll?.remove();
-    if (clonedRepos.length > 0) {
-      actions.appendChild(makeDeleteAllButton(a, clonedRepos, deps));
-    }
+function keepOrBuild(
+  old: HTMLButtonElement | null,
+  repos: readonly Repo[],
+  build: () => HTMLButtonElement,
+): HTMLButtonElement | null {
+  if (old?.getAttribute("aria-busy") === "true") {
+    return old;
   }
+  const parts = repos.map((r) => wireSignature(r));
+  if (repos.length === 0) {
+    old?.remove();
+    return null;
+  }
+  if (old !== null && !sigChanged(old, parts)) {
+    return old;
+  }
+  const fresh = build();
+  sigChanged(fresh, parts);
+  old?.replaceWith(fresh);
+  return fresh;
 }
 
 /** Run one list-wide batch with `btn`'s feedback. A sentence it answers is the

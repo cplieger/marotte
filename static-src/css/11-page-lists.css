@@ -185,18 +185,18 @@ button.entry-open {
     outline: var(--focus-ring);
     outline-offset: var(--focus-offset-inset);
   }
+}
 
-  /* The app's one row-hover wash, gated so a tap does not latch it. */
-  @media (any-hover: hover) {
-    &:hover {
-      background: var(--c-hover);
-    }
+/* The app's one row-hover wash, on the whole row of a row that opens something, so
+   it covers the row's inset, lead and actions too. Gated so a tap does not latch it. */
+@media (any-hover: hover) {
+  .entry:has(> button.entry-open):hover {
+    background: var(--c-hover);
   }
 }
 
-/* ONE TEXT LINE TALL WHATEVER SITS IN IT: a badge (19px) is taller than the
-   title's line box (16.9px fine) and would drop a badged row's subtitle 1px below
-   its neighbours'. The badge centres on the text and overhangs the line instead. */
+/* ONE TEXT LINE TALL WHATEVER SITS IN IT: a chip beside the title centres on the
+   text rather than growing the line, so every row's subtitle keeps one offset. */
 .entry-line {
   display: flex;
   align-items: center;
@@ -206,8 +206,8 @@ button.entry-open {
 }
 
 /* THE NAME GROUP IS THE LINE'S ONE GROWER and the title shrinks inside it, so the
-   git letter sits one gap after the name's last glyph while the badges and the
-   time keep the trailing edge; a title at `flex: 1` put it beside the badges. */
+   git letter sits one gap after the name's last glyph while the time keeps the
+   trailing edge; a title at `flex: 1` would push the letter to the far end. */
 .entry-name {
   flex: 1;
   min-width: 0;

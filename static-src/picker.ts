@@ -27,10 +27,11 @@ export const RETRY_LABEL = "Retry loading the model list";
 const RETRY_STARTED = "Reloading the model list…";
 const RETRY_LOADED = "Model list loaded.";
 
-/** The model to offer for `s`, or "" when the picker has no business showing. */
-function pickerModelFor(s: Session | undefined): string {
+/** The model to offer for `s` (`""` when none is chosen yet), or null when the picker has no
+ *  business showing. */
+function pickerModelFor(s: Session | undefined): string | null {
   if (s === undefined || !isEmptyChat(s) || s.thinking) {
-    return "";
+    return null;
   }
   return s.model;
 }
@@ -50,7 +51,7 @@ class ModelPickerController {
   }
 
   /** Bind visibility to store state. The callback is registered once here rather than per
-   *  show(), because nothing calls show() from outside now. Keyed on a computed STRING so the
+   *  show(), because nothing calls show() from outside. Keyed on a computed primitive so the
    *  effect dedups by value: `activeSession` re-derives on every streaming chunk, and show()
    *  reconciles the grid and moves focus, which must not happen on each frame of a turn. */
   bindVisibility(onSelect: (modelId: string) => void): void {
@@ -58,7 +59,7 @@ class ModelPickerController {
     const wanted = computed(() => pickerModelFor(activeSession.value));
     effect(() => {
       const modelID = wanted.value;
-      if (modelID === "") {
+      if (modelID === null) {
         this.hide();
         return;
       }

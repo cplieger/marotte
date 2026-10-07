@@ -69,8 +69,21 @@ describe("entryRow: the title line", () => {
     const name = [...(line[0]?.children ?? [])];
     expect(name[0]?.classList.contains("entry-title")).toBe(true);
     expect(name[1]).toBe(mark);
-    expect(line[1]?.classList.contains("entry-badges")).toBe(true);
+    expect(row.querySelector(".entry-line .entry-badges")).toBeNull();
     expect(row.querySelector(".entry-badges")?.children).toHaveLength(2);
+  });
+
+  it("seats the badges beside the actions, outside the body", () => {
+    const action = document.createElement("button");
+    const row = entryRow({
+      key: "k",
+      title: "t",
+      badges: [badge("fileMatch")],
+      actions: [action],
+      open: { name: "t", onOpen: () => undefined },
+    });
+    const slots = [...row.children].map((c) => c.className);
+    expect(slots).toEqual(["entry-open", "entry-badges", "entry-actions"]);
   });
 
   it("mounts no badge slot when there are none", () => {

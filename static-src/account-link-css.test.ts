@@ -149,32 +149,51 @@ describe("the link's target", () => {
 });
 
 describe("the link's corner and box", () => {
-  it.each(TIERS)("is flush with the card's padding box on BOTH inline edges at %s", (tier) => {
-    document.documentElement.dataset["pointer"] = tier;
+  function lengthIn(card: HTMLElement, value: string): number {
+    const probe = document.createElement("div");
+    card.appendChild(probe);
+    probe.style.setProperty("inline-size", value);
+    const px = probe.getBoundingClientRect().width;
+    probe.remove();
+    return px;
+  }
+
+  it.each(TIERS)(
+    "sits one --sp-1 inside the card's padding box on BOTH inline edges at %s",
+    (tier) => {
+      document.documentElement.dataset["pointer"] = tier;
+      const { card, link, btn } = mountFooter();
+      open(btn, card);
+      const gap = lengthIn(card, "var(--sp-1)");
+      expect(gap).toBeGreaterThan(0);
+      const c = card.getBoundingClientRect();
+      const cs = getComputedStyle(card);
+      const l = link.getBoundingClientRect();
+      const left = l.left - (c.left + parseFloat(cs.borderLeftWidth));
+      const right = c.right - parseFloat(cs.borderRightWidth) - l.right;
+      expect(left, `leading edge is ${left}px inside the padding box`).toBeCloseTo(gap, 1);
+      expect(right, `trailing edge is ${right}px inside the padding box`).toBeCloseTo(gap, 1);
+    },
+  );
+
+  it("keeps its text on the card's own inset, in line with the rows above it", () => {
     const { card, link, btn } = mountFooter();
     open(btn, card);
     const c = card.getBoundingClientRect();
     const cs = getComputedStyle(card);
-    const l = link.getBoundingClientRect();
-    // The clip box is the card's PADDING box, so the row is flush with the border, per edge.
-    const left = l.left - (c.left + parseFloat(cs.borderLeftWidth));
-    const right = c.right - parseFloat(cs.borderRightWidth) - l.right;
-    expect(left, `leading edge is ${left}px inside the padding box`).toBeCloseTo(0, 1);
-    expect(right, `trailing edge is ${right}px inside the padding box`).toBeCloseTo(0, 1);
+    const lines = link.querySelector(".pill-account-lines")!.getBoundingClientRect();
+    expect(lines.left - c.left - parseFloat(cs.borderLeftWidth)).toBeCloseTo(
+      lengthIn(card, "var(--card-inset)"),
+      1,
+    );
   });
 
-  it("takes the card family's derived inner corner", () => {
-    // `--card-radius` = `--r-lg` − 1px − `--card-inset` = 3px, concentric only while the row
-    // is flush on both edges.
+  it("takes the corner concentric with the card at that gap", () => {
     const { card, link, btn } = mountFooter();
     open(btn, card);
-    const probe = document.createElement("div");
-    card.appendChild(probe);
-    probe.style.setProperty("inline-size", "var(--card-radius)");
-    const token = probe.getBoundingClientRect().width;
-    probe.remove();
-    expect(token, "--card-radius resolves inside the card").toBeGreaterThan(0);
-    expect(parseFloat(getComputedStyle(link).borderTopLeftRadius)).toBeCloseTo(token, 1);
+    const want = lengthIn(card, "calc(var(--r-lg) - 1px - var(--sp-1))");
+    expect(want).toBeGreaterThan(0);
+    expect(parseFloat(getComputedStyle(link).borderTopLeftRadius)).toBeCloseTo(want, 1);
   });
 });
 

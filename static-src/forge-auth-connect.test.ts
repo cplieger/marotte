@@ -333,6 +333,139 @@ describe("forge-auth: the connect dialog", () => {
     answer(refused());
   });
 
+  function connectedPanel(
+    id: string,
+    kind: string,
+    host: string,
+  ): { land: (repos: unknown) => void } {
+    let land!: (v: unknown) => void;
+    const held = new Promise((r) => {
+      land = r;
+    });
+    mockedApiGet.mockImplementation(((url: string, decode: (v: unknown) => unknown) => {
+      if (url === "/api/forges") {
+        return Promise.resolve({
+          forges: [{ id, kind, host, username: "bot", connected: true, reconnect_required: false }],
+          kinds: KINDS,
+          oauth: { github: true },
+        });
+      }
+      if (url === "/api/git/repos") {
+        return Promise.resolve({ repos: [] });
+      }
+      if (url === `/api/forges/${encodeURIComponent(id)}/repos`) {
+        return held.then(decode);
+      }
+      return Promise.resolve(null);
+    }) as typeof apiGetTyped);
+    return { land };
+  }
+
+  function repoPage(owner: string, name: string): unknown {
+    const none = { support: "unknown", source: "unknown", detail: "" };
+    return {
+      repos: [
+        {
+          repo_id: `id:${owner}/${name}`,
+          owner,
+          name,
+          full_name: `${owner}/${name}`,
+          clone_url: `https://example.com/${owner}/${name}.git`,
+          affordances: {
+            has_issues: none,
+            can_push: none,
+            merge_train: none,
+            default_branch: "",
+            merge_strategies: [],
+          },
+        },
+      ],
+    };
+  }
+
+  function accountRow(id: string): HTMLElement | null {
+    return panel().querySelector<HTMLElement>(`.forge-account-row[data-id='${id}']`);
+  }
+
+  it("closes the pane on a token connect and shows the account's repositories loading until they land", async () => {
+    const slot = await openPane("gitlab");
+    const add = panel().querySelector<HTMLButtonElement>(
+      ".forge-kind-section[data-kind='gitlab'] [data-forge-add]",
+    )!;
+    const { answer } = deferredFetch();
+    typeToken(slot, "glpat-x");
+    connectButton(slot).click();
+    const { land } = connectedPanel("gitlab:gitlab.com", "gitlab", "gitlab.com");
+    answer(json({ status: "complete" }));
+
+    const pending = await vi.waitFor(() => {
+      const p = accountRow("gitlab:gitlab.com")?.querySelector<HTMLElement>(
+        ".forge-account-repos[data-pending] .forge-account-repos-pending",
+      );
+      expect(p).toBeTruthy();
+      return p!;
+    });
+    expect(slot.childElementCount).toBe(0);
+    expect(add.getAttribute("aria-expanded")).toBe("false");
+    expect(pending.getAttribute("role")).toBe("status");
+    expect(pending.textContent).toBe("Loading repositories…");
+
+    land(repoPage("bot", "tool"));
+    await vi.waitFor(() =>
+      expect(
+        accountRow("gitlab:gitlab.com")?.querySelector(".forge-account-repo-name")?.textContent,
+      ).toBe("bot/tool"),
+    );
+    const row = accountRow("gitlab:gitlab.com")!;
+    expect(row.querySelector("[data-pending]")).toBeNull();
+    expect(row.querySelector(".forge-account-repos-summary")?.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it("closes the pane once a device sign-in connects", async () => {
+    vi.useFakeTimers();
+    try {
+      const slot = await openPane("github", { github: true });
+      const add = panel().querySelector<HTMLButtonElement>(
+        ".forge-kind-section[data-kind='github'] [data-forge-add]",
+      )!;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>((url) =>
+          Promise.resolve(
+            String(url).endsWith("/start")
+              ? json({
+                  user_code: "WXYZ-1234",
+                  verification_uri: "https://github.com/login/device",
+                  grant_id: "0123456789abcdef0123456789abcdef",
+                  interval: 5,
+                  expires_in: 900,
+                })
+              : json({ status: "complete" }),
+          ),
+        ),
+      );
+      const { land } = connectedPanel("github:github.com", "github", "github.com");
+
+      slot.querySelector<HTMLButtonElement>("[data-forge-device-start]")!.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(slot.querySelector(".forge-device-code")?.textContent).toBe("WXYZ-1234");
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(slot.childElementCount).toBe(0);
+      expect(add.getAttribute("aria-expanded")).toBe("false");
+      expect(
+        accountRow("github:github.com")?.querySelector(".forge-account-repos[data-pending]"),
+      ).not.toBeNull();
+      land(repoPage("bot", "tool"));
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("Another server", () => {
     function queuedFetch(): {
       spy: ReturnType<typeof vi.fn<typeof fetch>>;

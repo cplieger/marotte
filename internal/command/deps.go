@@ -625,8 +625,9 @@ type LiveRunRef struct {
 // which BridgeAccess's lifecycle job does not.
 type EffortRecorder interface {
 	// PersistEffortChange appends the entry for a tier the session accepted. It
-	// writes nothing for an empty model, and reports no error: the level is already
-	// on the chat record, so a failed append costs the record and not the change.
+	// writes nothing for an empty model or a chat no prompt has reached, and reports
+	// no error: the level is already on the chat record, so a failed append costs the
+	// record and not the change.
 	PersistEffortChange(ctx context.Context, chatID marotte.ChatID, model string, level marotte.EffortLevel)
 	// ThinkingDefaultOff reports whether the model runs with thinking off when the
 	// chat has not chosen, which decides whether a tier pick must turn it back on.
@@ -636,9 +637,9 @@ type EffortRecorder interface {
 // ModeRecorder is what set_mode needs to leave a transcript record: one write of the mode_switched
 // entry a mode change produces; a role is named for the command that needs it.
 type ModeRecorder interface {
-	// PersistModeSwitch appends the entry for a mode the chat took. It reports no
-	// error: the mode is already on the chat record, so a failed append costs the
-	// record and not the change.
+	// PersistModeSwitch appends the entry for a mode the chat took, and nothing on a
+	// chat no prompt has reached. It reports no error: the mode is already on the chat
+	// record, so a failed append costs the record and not the change.
 	PersistModeSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModeSwitched)
 }
 

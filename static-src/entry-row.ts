@@ -37,7 +37,7 @@ export interface EntryRowSpec {
   readonly data?: Readonly<Record<string, string>> | undefined;
 }
 
-/** A third badge is dropped, not wrapped: the title line is one line. */
+/** A third badge is dropped, not wrapped: the badge column beside the actions is one line. */
 const MAX_BADGES = 2;
 
 function subNode(sub: EntrySub): HTMLElement {
@@ -89,9 +89,6 @@ export function entryRow(spec: EntryRowSpec): HTMLElement {
       el("span", { className: "entry-title" }, spec.title),
       spec.mark ?? null,
     ),
-    spec.badges !== undefined && spec.badges.length > 0
-      ? el("span", { className: "entry-badges" }, ...spec.badges.slice(0, MAX_BADGES))
-      : null,
     spec.time !== undefined ? timeNode(spec.time) : null,
   );
   const sub = subNode(spec.sub ?? { kind: "line", text: "" });
@@ -121,6 +118,9 @@ export function entryRow(spec: EntryRowSpec): HTMLElement {
     },
     spec.lead ?? null,
     body,
+    spec.badges !== undefined && spec.badges.length > 0
+      ? el("span", { className: "entry-badges" }, ...spec.badges.slice(0, MAX_BADGES))
+      : null,
     spec.actions !== undefined && spec.actions.length > 0
       ? el("span", { className: "entry-actions" }, ...spec.actions)
       : null,

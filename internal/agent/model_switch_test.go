@@ -118,6 +118,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // An idle live chat switches at once, records one model_switched entry and resets usage; context_size is kept.
 func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	h, cs, _ := newTestHub()
+	finishedTurn(t, h, "c1")
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"

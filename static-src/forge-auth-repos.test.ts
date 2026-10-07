@@ -36,6 +36,7 @@ import {
   renderRepoActions,
   renderRepoIdentity,
   renderRepoRow,
+  updateRepoRow,
   type RepoDeps,
 } from "./forge-auth-repos.js";
 import { error as toastError } from "./toast.js";
@@ -150,6 +151,76 @@ describe("repo row clone feedback", () => {
     });
     expect(note()).toBe("");
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("a repository row's repaint", () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+    mocks.cloneDispatch.mockReset();
+  });
+
+  /** Identity per element: `toEqual` passes for a rebuilt node with the same markup. */
+  function expectSameElements(after: readonly Element[], before: readonly Element[]): void {
+    expect(after).toHaveLength(before.length);
+    before.forEach((node, i) => {
+      expect(after[i]).toBe(node);
+    });
+  }
+
+  function mounted(d: RepoDeps): HTMLElement {
+    const li = renderRepoRow(KIRO, d);
+    document.body.appendChild(li);
+    return li;
+  }
+
+  it("keeps every part and the focus when nothing the row shows moved", () => {
+    const d = deps();
+    const li = mounted(d);
+    const before = [...li.children];
+    const clone = li.querySelector<HTMLButtonElement>("[data-repo-act='clone']")!;
+    clone.focus();
+
+    updateRepoRow(li, KIRO, d);
+
+    expectSameElements([...li.children], before);
+    expect(document.activeElement).toBe(clone);
+  });
+
+  it("repaints the state and actions on a clone flip and keeps the identity", () => {
+    const d = deps();
+    const li = mounted(d);
+    const [state, identity, actions] = [...li.children];
+    vi.mocked(d.isCloned).mockReturnValue(true);
+
+    updateRepoRow(li, KIRO, d);
+
+    const [state2, identity2, actions2] = [...li.children];
+    expect(identity2).toBe(identity);
+    expect(state2).not.toBe(state);
+    expect(actions2).not.toBe(actions);
+    expect(actions2?.querySelector("[data-repo-act='remove']")).not.toBeNull();
+  });
+
+  it("keeps a running clone's busy button through a repaint", async () => {
+    let finish!: (v: unknown) => void;
+    mocks.cloneDispatch.mockReturnValue({
+      outcome: new Promise((r) => {
+        finish = r;
+      }),
+    });
+    const d = deps();
+    const li = mounted(d);
+    const clone = li.querySelector<HTMLButtonElement>("[data-repo-act='clone']")!;
+    clone.click();
+    await vi.waitFor(() => expect(mocks.cloneDispatch).toHaveBeenCalledOnce());
+
+    updateRepoRow(li, KIRO, d);
+
+    expect(li.querySelector("[data-repo-act='clone']")).toBe(clone);
+    expect(clone.getAttribute("aria-busy")).toBe("true");
+    finish({ status: "success", value: {} });
+    await vi.waitFor(() => expect(d.addCloned).toHaveBeenCalledWith(".kiro"));
   });
 });
 

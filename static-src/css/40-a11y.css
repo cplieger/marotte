@@ -133,13 +133,10 @@
 a.subagent-header:focus-visible,
 .subagent-container.has-disclosure > .subagent-header:focus-visible,
 .subagent-foot > .subagent-footer > .turn-ledger-summary:focus-visible,
-/* The status card's account link, which is the card's one LINK and is deliberately
-   flush with its clipper's padding box on both inline edges to buy the concentric
-   `--card-radius` corner. `.pill-expand-content` is `overflow: auto`
-   (15-input.css), so it clips at that box and the floor's OUTSIDE ring lands
-   entirely inside the clip. The row's own `padding-inline: var(--card-inset)` (8px)
-   and `padding-block: var(--sp-1)` (4px) clear the band's [0, 2px] reach on all
-   four edges. */
+/* The status card's account link, which sits 4px inside its clipper's padding box
+   (15-input.css). `.pill-expand-content` is `overflow: auto`, so it clips at that
+   box and the floor's OUTSIDE ring would be cut. The row's own 4px inline and
+   block padding clear the band's [0, 2px] reach on all four edges. */
 .pill-account:focus-visible,
 .run-head:focus-visible,
 a.run-step-head:focus-visible,

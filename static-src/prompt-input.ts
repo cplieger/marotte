@@ -14,7 +14,7 @@ import { setComposerValue } from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
-import { computed, effect, touch } from "@cplieger/reactive";
+import { computed, effect, el, touch } from "@cplieger/reactive";
 
 /** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint
  *  the button. */
@@ -43,6 +43,14 @@ const STATE_ICON: Record<SendKind, string> = {
   idle: ICON_SEND,
   streaming: ICON_CANCEL,
   error: ICON_ALERT,
+};
+
+/** The face's word, shown beside the glyph where the row has room. Each is a word of the
+ *  state's accessible name, so the visible label stays inside it (WCAG 2.5.3). */
+const STATE_LABEL: Record<SendKind, string> = {
+  idle: "Send",
+  streaming: "Cancel",
+  error: "Retry",
 };
 
 const DEFAULT_TOOLTIP: Record<SendKind, string> = {
@@ -183,7 +191,10 @@ class PromptInputController {
   private applyButtonState(): void {
     const k = this.state.kind;
     const reason = reasonOf(this.state);
-    $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
+    $.sendBtn.replaceChildren(
+      el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
+      iconEl(STATE_ICON[k]),
+    );
     const tooltip = reason !== "" ? `${reason} ${RETRY_HINT}` : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);

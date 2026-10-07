@@ -255,6 +255,8 @@ function inkRight(node: HTMLElement): number {
   return range.getBoundingClientRect().right;
 }
 
+const r = (row: HTMLElement): DOMRect => row.getBoundingClientRect();
+
 describe("the name group", () => {
   function mountMarked(title: string): HTMLElement {
     document.documentElement.setAttribute("data-pointer", "fine");
@@ -274,31 +276,37 @@ describe("the name group", () => {
     return host.querySelector<HTMLElement>('[data-key="m"]') as HTMLElement;
   }
 
-  it("seats the mark one gap after a short title's last glyph, badges on the trailing edge", () => {
+  it("seats the mark one gap after a short title's last glyph", () => {
     // The git letter sits beside the name, not at the line's far end.
     const row = mountMarked("environment");
     const title = row.querySelector<HTMLElement>(".entry-title") as HTMLElement;
     const mark = (row.querySelector(".docs-git-letter") as HTMLElement).getBoundingClientRect();
     const line = (row.querySelector(".entry-line") as HTMLElement).getBoundingClientRect();
-    const badges = (row.querySelector(".entry-badges") as HTMLElement).getBoundingClientRect();
     // `--sp-2`, the name group's gap.
     expect(mark.left - inkRight(title)).toBeCloseTo(8, 0);
     expect(mark.right).toBeLessThan(line.left + line.width / 2);
-    expect(badges.right).toBeCloseTo(line.right, 0);
+  });
+
+  it("centres the badges on the row beside the actions, right of the title and description", () => {
+    const row = mountMarked("environment");
+    const box = r(row);
+    const body = (row.querySelector(".entry-open") as HTMLElement).getBoundingClientRect();
+    const badges = (row.querySelector(".entry-badges") as HTMLElement).getBoundingClientRect();
+    expect(badges.left).toBeGreaterThanOrEqual(body.right);
+    expect(badges.top + badges.height / 2).toBeCloseTo(box.top + box.height / 2, 0);
   });
 
   it("keeps the mark whole and the badges in place when the title overflows", () => {
     const row = mountMarked("a-name-long-enough-to-run-off-the-line-".repeat(6));
     const title = row.querySelector<HTMLElement>(".entry-title") as HTMLElement;
     const mark = (row.querySelector(".docs-git-letter") as HTMLElement).getBoundingClientRect();
-    const line = (row.querySelector(".entry-line") as HTMLElement).getBoundingClientRect();
+    const body = (row.querySelector(".entry-open") as HTMLElement).getBoundingClientRect();
     const badges = (row.querySelector(".entry-badges") as HTMLElement).getBoundingClientRect();
-    // The title yields (ellipsis); the chip stays whole.
     expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
     expect(mark.width).toBe(16);
     expect(mark.left - title.getBoundingClientRect().right).toBeCloseTo(8, 0);
-    expect(badges.left - mark.right).toBeCloseTo(8, 0);
-    expect(badges.right).toBeCloseTo(line.right, 0);
+    expect(badges.left).toBeGreaterThanOrEqual(body.right);
+    expect(badges.right).toBeCloseTo(r(row).right - 16, 0);
   });
 });
 

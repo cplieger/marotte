@@ -9,7 +9,14 @@ import type { Decoder } from "./validators.js";
 import { asObject, decodeArray } from "./validators.js";
 import { decodeRepoList } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { FORGE_ICONS, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_UI } from "./icons.js";
+import {
+  FORGE_ICONS,
+  ICON_CLOSE_UI,
+  ICON_EXTERNAL,
+  ICON_GLOBE,
+  ICON_PLUS_UI,
+  ICON_SPINNER,
+} from "./icons.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { listRepoPage, probeForge, signOut } from "./actions/forge.js";
@@ -27,9 +34,7 @@ import {
   readFirstPage,
   readNextPage,
   renderRepoRow,
-  renderRepoState,
-  renderRepoIdentity,
-  renderRepoActions,
+  updateRepoRow,
   type RepoDeps,
   type RepoListing,
 } from "./forge-auth-repos.js";
@@ -146,14 +151,17 @@ function manageAccountURL(kind: ForgeKind, host: string): string {
 /**
  * Render the full forges panel. Idempotent; call after every list mutation. `revalidate` (default true) re-probes
  * connected accounts after the first paint, since tokens can be revoked or expire silently. `skipRepos` skips the
- * local-repos fetch so an optimistic in-memory mutation is not overwritten by a stale answer.
+ * local-repos fetch so an optimistic in-memory mutation is not overwritten by a stale answer. `fresh` reads every
+ * repository list from its forge rather than the server's cache. Resolves false when a read failed, true otherwise,
+ * a render a newer one superseded included: the panel names a failed forge listing, and a failed workspace read keeps
+ * the clone state the panel last read.
  */
 export async function renderForgesPanel(
-  opts: { revalidate?: boolean; skipRepos?: boolean } = {},
-): Promise<void> {
+  opts: { revalidate?: boolean; skipRepos?: boolean; fresh?: boolean } = {},
+): Promise<boolean> {
   const root = document.getElementById("forges-panel");
   if (root === null) {
-    return;
+    return true;
   }
 
   ensurePanelEffect();
@@ -166,35 +174,39 @@ export async function renderForgesPanel(
   // stale answer harmless.
   const data = await refreshForges();
   if (signal.aborted || myGen !== renderGen) {
-    return;
+    return true;
   }
   if (data === null) {
     lastForgesError = true;
     bumpState();
-    return;
+    return false;
   }
 
-  if (opts.skipRepos !== true) {
-    const [localNames, reposByForge] = await Promise.all([
-      refreshLocalNames(signal),
-      refreshReposByForge(data.forges, signal),
-    ]);
-    if (signal.aborted || myGen !== renderGen) {
-      return;
-    }
-    lastLocalNames = localNames;
-    lastReposByForge = reposByForge;
-  } else {
-    const reposByForge = await refreshReposByForge(data.forges, signal);
-    if (signal.aborted || myGen !== renderGen) {
-      return;
-    }
-    lastReposByForge = reposByForge;
-  }
-
+  // The accounts paint before their repositories are read, so an account with no listing yet shows that read.
   lastForgesError = false;
   lastForgesData = data;
   oauthByKind = data.oauth ?? {};
+  bumpState();
+
+  let localRead = true;
+  if (opts.skipRepos !== true) {
+    const [localNames, reposByForge] = await Promise.all([
+      refreshLocalNames(signal),
+      refreshReposByForge(data.forges, signal, opts.fresh === true),
+    ]);
+    if (signal.aborted || myGen !== renderGen) {
+      return true;
+    }
+    localRead = localNames !== null;
+    lastLocalNames = localNames ?? lastLocalNames;
+    lastReposByForge = reposByForge;
+  } else {
+    const reposByForge = await refreshReposByForge(data.forges, signal, opts.fresh === true);
+    if (signal.aborted || myGen !== renderGen) {
+      return true;
+    }
+    lastReposByForge = reposByForge;
+  }
   bumpState();
 
   if (opts.revalidate !== false) {
@@ -203,16 +215,20 @@ export async function renderForgesPanel(
       void revalidateInBackground(ids);
     }
   }
+  // Every listing was just read, so a stale or unread one is this read failing.
+  return localRead && Object.values(lastReposByForge).every((l) => !l.stale && !l.unread);
 }
 
-async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string>> {
+/** The workspace's clone names; null when the read failed. */
+async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string> | null> {
   const r = await apiGetTyped("/api/git/repos", decodeLocalReposResponse, signal);
-  return new Set((r?.repos ?? []).filter((n) => n !== "."));
+  return r === null ? null : new Set(r.repos.filter((n) => n !== "."));
 }
 
 async function refreshReposByForge(
   forges: ConfiguredForge[],
   signal?: AbortSignal,
+  fresh = false,
 ): Promise<Record<string, RepoListing>> {
   const map: Record<string, RepoListing> = {};
   await Promise.all(
@@ -220,7 +236,7 @@ async function refreshReposByForge(
       .filter((f) => f.connected)
       .map(async (f) => {
         const page = await apiGetTyped(
-          `/api/forges/${encodeURIComponent(f.id)}/repos`,
+          `/api/forges/${encodeURIComponent(f.id)}/repos${fresh ? "?refresh=1" : ""}`,
           decodeRepoList,
           signal,
         );
@@ -282,7 +298,7 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   if (myGen !== renderGen) {
     return;
   }
-  lastLocalNames = localNames;
+  lastLocalNames = localNames ?? lastLocalNames;
   lastReposByForge = reposByForge;
   lastForgesData = data;
   oauthByKind = data.oauth ?? {};
@@ -348,12 +364,7 @@ const repoSpec: ReconcileSpec<Repo> = {
   key: (r) => r.repo_id,
   mount: (r) => renderRepoRow(r, repoDeps),
   update: (li, r) => {
-    const cloned = lastLocalNames.has(r.name);
-    li.querySelector(":scope > .forge-account-repo-state")?.replaceWith(renderRepoState(cloned));
-    li.querySelector(":scope > .forge-account-repo-identity")?.replaceWith(renderRepoIdentity(r));
-    li.querySelector(":scope > .forge-account-repo-actions")?.replaceWith(
-      renderRepoActions(r, cloned, repoDeps),
-    );
+    updateRepoRow(li, r, repoDeps);
   },
 };
 
@@ -398,6 +409,7 @@ function buildSectionShell(
       className: "btn-small forge-kind-add-btn",
       "data-forge-add": key,
       "aria-label": "Add an account",
+      "aria-expanded": "false",
       "data-tooltip": "Add an account",
     },
     iconEl(ICON_PLUS_UI),
@@ -460,14 +472,21 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
 
   const oldDetails = li.querySelector<HTMLElement>(":scope > .forge-account-repos");
   const listing = lastReposByForge[a.id];
-  if (a.connected && listing !== undefined) {
+  if (!a.connected) {
+    oldDetails?.remove();
+  } else if (listing === undefined) {
     if (oldDetails === null) {
-      top.after(buildAccountReposDetails(a, listing));
+      top.after(buildReposPending());
+    }
+  } else if (oldDetails === null || oldDetails.hasAttribute("data-pending")) {
+    const details = buildAccountReposDetails(a, listing);
+    if (oldDetails === null) {
+      top.after(details);
     } else {
-      updateAccountReposDetails(oldDetails, a, listing);
+      oldDetails.replaceWith(details);
     }
   } else {
-    oldDetails?.remove();
+    updateAccountReposDetails(oldDetails, a, listing);
   }
 
   const oldOwners = li.querySelector<HTMLElement>(":scope > .forge-account-owners");
@@ -723,8 +742,25 @@ function openReconnect(li: HTMLElement, a: ConfiguredForge): void {
   if (section === null) {
     return;
   }
-  slotOf(section).dataset["mode"] = "add";
+  setPaneOpen(slotOf(section), true);
   showAddPane(section, a.kind, a.host);
+}
+
+function buildReposPending(): HTMLElement {
+  return el(
+    "div",
+    { className: "forge-account-repos", "data-pending": "" },
+    el(
+      "div",
+      { className: "forge-account-repos-pending", role: "status" },
+      el(
+        "span",
+        { className: "forge-account-repos-icon", "aria-hidden": "true" },
+        iconEl(ICON_SPINNER),
+      ),
+      el("span", { className: "forge-account-repos-label" }, "Loading repositories…"),
+    ),
+  );
 }
 
 function buildAccountReposDetails(a: ConfiguredForge, l: RepoListing): HTMLElement {
@@ -771,12 +807,7 @@ const ownerDeps: OwnerScopesDeps = {
 
 const patDeps: PATFormDeps = {
   closeSlot,
-  expandOnNextPaint: (id) => {
-    expandOnNextPaint.add(id);
-  },
-  renderForgesPanel: () => {
-    void renderForgesPanel();
-  },
+  connected: onConnected,
 };
 
 /**
@@ -789,7 +820,7 @@ function onAddAccount(section: HTMLElement, showPane: (section: HTMLElement) => 
     closeSlot(slot);
     return;
   }
-  slot.dataset["mode"] = "add";
+  setPaneOpen(slot, true);
   showPane(section);
 }
 
@@ -831,11 +862,8 @@ function showAddPane(section: HTMLElement, kind: ForgeKind, host?: string): void
       oauthBody,
       { kind: deviceKind, hostInput: target.hostInput, options: target.options },
       {
-        expandOnNextPaint: (id) => {
-          expandOnNextPaint.add(id);
-        },
-        renderForgesPanel: () => {
-          void renderForgesPanel();
+        connected: (id) => {
+          onConnected(slot, id);
         },
       },
     );
@@ -882,9 +910,33 @@ function showDetectPane(section: HTMLElement): void {
   renderDetectForm(body, slot, target, patDeps);
 }
 
+function onConnected(slot: HTMLElement, id: string): void {
+  closeSlot(slot);
+  expandOnNextPaint.add(id);
+  void renderForgesPanel();
+}
+
 function closeSlot(slot: HTMLElement): void {
   emptySlot(slot);
-  delete slot.dataset["mode"];
+  setPaneOpen(slot, false);
+}
+
+function setPaneOpen(slot: HTMLElement, open: boolean): void {
+  if (open) {
+    slot.dataset["mode"] = "add";
+  } else {
+    delete slot.dataset["mode"];
+  }
+  const btn = slot.closest(".forge-kind-section")?.querySelector<HTMLElement>("[data-forge-add]");
+  if (btn === null || btn === undefined) {
+    return;
+  }
+  btn.setAttribute("aria-expanded", String(open));
+  // The tooltip is the visible label, so the name carries the same word (WCAG 2.5.3).
+  const label = open ? "Close" : "Add an account";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("data-tooltip", label);
+  btn.replaceChildren(iconEl(open ? ICON_CLOSE_UI : ICON_PLUS_UI));
 }
 
 /** Empty a slot, ending any device sign-in its pane was waiting on. */
