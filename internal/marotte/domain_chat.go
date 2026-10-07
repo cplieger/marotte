@@ -564,8 +564,8 @@ type Chat struct {
 	// last reported, empty when the model offers no thinking option.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
-	// LastTurnOutcome is how the newest finished turn ended, written by the closer
-	// that appends a turn_close in the same header rewrite as TurnCount.
+	// LastTurnOutcome is how the newest finished non-carrier turn ended, written by
+	// the closer that appends a turn_close in the same header rewrite as TurnCount.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// PendingModel is a model pick awaiting its apply between turns; empty when
 	// none is pending.
@@ -783,7 +783,8 @@ type ChatHeader struct {
 	// LastTurnOutcome is how this chat's NEWEST finished turn ended, the stored
 	// header field the turn_close writer keeps. Here because the header is the
 	// only projection reaching every chat, which is what the tab dot needs.
-	// Empty for a chat with no finished turn. Never `running`.
+	// Carriers (EntryTurnClose.Carrier) are skipped, so it is empty until a
+	// non-carrier turn finishes. Never `running`.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header.

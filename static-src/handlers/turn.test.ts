@@ -831,6 +831,79 @@ describe("the agent-finished notification reads the severity", () => {
   });
 });
 
+// The server mints an `event` or `revert` turn to hold a record (an effort pick on an empty chat,
+// a rewind's carrier) and closes it at once, marking the close `carrier`. No agent ran it, so its
+// close says nothing about one.
+
+describe("turn_closed for a carrier turn no agent ran", () => {
+  beforeEach(() => {
+    notifyGate.agentFinished = true;
+  });
+  afterEach(() => {
+    notifyGate.agentFinished = false;
+  });
+
+  function openCarrierOn(chatID: string, source: "event" | "revert"): void {
+    openTurn(chatID, {
+      id: "t1",
+      turn: "t1",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source, n: 1 },
+    });
+  }
+
+  for (const source of ["event", "revert"] as const) {
+    it(`takes the chat off working without an agent-finished cue (${source})`, () => {
+      const chatID = `carrier-${source}`;
+      setSessions([makeSession(chatID)]);
+      openCarrierOn(chatID, source);
+      expect(tabStatusFor(get(chatID)), "the open carrier reads working").toBe("working");
+
+      fireClose(chatID, { payload: { outcome: "completed", carrier: true } });
+
+      expect(tabStatusFor(get(chatID))).toBe("idle");
+      expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+      expect(mockClearAgentDown).not.toHaveBeenCalled();
+    });
+  }
+
+  it("stays silent when the carrier's turn_opened never reached this client", () => {
+    // The close lands as a hole and its range read is asynchronous, so the frame alone decides.
+    setSessions([makeSession("carrier-unseen")]);
+    setActive("carrier-unseen");
+    fireClose("carrier-unseen", {
+      turnID: "unseen",
+      payload: { outcome: "completed", carrier: true },
+    });
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(mockClearAgentDown).not.toHaveBeenCalled();
+  });
+
+  it("cues for a replayed `event` turn KAS ran, whose close is not a carrier's", () => {
+    setSessions([makeSession("replayed-event")]);
+    openCarrierOn("replayed-event", "event");
+    fireClose("replayed-event");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
+      kind: "chat",
+      chatID: "replayed-event",
+    });
+    expect(mockClearAgentDown).toHaveBeenCalled();
+  });
+
+  it("still cues for the agent's own turn, or the rows above pass vacuously", () => {
+    setSessions([makeSession("agent-turn")]);
+    openTurnOn("agent-turn");
+    fireClose("agent-turn");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
+      kind: "chat",
+      chatID: "agent-turn",
+    });
+    expect(mockClearAgentDown).toHaveBeenCalled();
+  });
+});
+
 // A chat that launched a workflow must not raise the cue when `run_workflow` returns, only when the
 // work is done; the handler hands one fact to `agent-finished-cue.ts`. The real live-run inventory.
 

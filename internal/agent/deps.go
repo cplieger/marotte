@@ -38,7 +38,7 @@ type bridgeChatRecords interface {
 	// Sink is the chat's log as the accumulator's sink.
 	Sink(chatID marotte.ChatID) chat.EntrySink
 	// AppendBetweenTurns files a lane-less entry after the newest turn's close.
-	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error)
+	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 	// WriteCounters rewrites the header's turn_count and last_turn_outcome, outside every registry lock.
 	WriteCounters(ctx context.Context, chatID marotte.ChatID) error
 }
@@ -60,7 +60,7 @@ type chatRecords interface {
 	// Delete removes the chat directory; only cmdDeleteChat calls it.
 	Delete(ctx context.Context, id marotte.ChatID) error
 	// Revert and the other log reads are command.ChatStore's and translate.ChatRecords'.
-	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error)
+	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
 	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
 	PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error)

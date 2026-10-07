@@ -321,11 +321,11 @@ func TestEntryLog_HeaderCountersAreRecomputedOnOpen(t *testing.T) {
 	}
 }
 
-// A lane-less entry with no open turn joins the newest turn after its turn_close; on an empty log it opens
-// turn_open{source: event}.
+// A lane-less entry with no open turn joins the newest turn after its turn_close; on an empty log it mints a closed
+// turn_open{source: event} to carry it.
 func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 	ctx := t.Context()
-	t.Run("an empty log opens a headerless event turn", func(t *testing.T) {
+	t.Run("an empty log mints a closed event turn", func(t *testing.T) {
 		f := newLogFixture(t)
 		e := entryOf("", "", "switch-1", marotte.EntryKindModelSwitched,
 			marotte.EntryModelSwitched{From: "a", To: "b"})
@@ -333,17 +333,36 @@ func TestEntryLog_BetweenTurnsAppend(t *testing.T) {
 			t.Fatalf("between-turns append: %v", err)
 		}
 		rows := f.log.RailRows()
-		if len(rows) != 1 || !rows[0].AgentInitiated || rows[0].N != 1 {
-			t.Fatalf("rail rows are %+v, want one agent-initiated row at n 1", rows)
+		if len(rows) != 1 || !rows[0].AgentInitiated || rows[0].N != 1 || rows[0].Outcome != marotte.TurnOutcomeCompleted {
+			t.Fatalf("rail rows are %+v, want one completed agent-initiated row at n 1", rows)
 		}
 		entries := mustRange(t, f, e.Turn)
-		wantShapes(t, entries, []string{"0:/turn_open", "1:/model_switched"}, "the event turn")
+		wantShapes(t, entries, []string{"0:/turn_open", "1:/turn_close", "2:/model_switched"}, "the event turn")
 		var open marotte.EntryTurnOpen
 		if err := json.Unmarshal(entries[0].Payload, &open); err != nil {
 			t.Fatalf("parse turn_open: %v", err)
 		}
 		if open.Source != marotte.TurnOpenNameEvent {
 			t.Errorf("source is %q, want event", open.Source)
+		}
+		var closer marotte.EntryTurnClose
+		if err := json.Unmarshal(entries[1].Payload, &closer); err != nil {
+			t.Fatalf("parse turn_close: %v", err)
+		}
+		if !closer.Carrier {
+			t.Errorf("turn_close is %+v, want carrier set: no agent ran this turn", closer)
+		}
+
+		// A carrier left open would be closed unterminated here, raising a reconcile no session can answer.
+		f.reopen()
+		wantShapes(t, mustRange(t, f, e.Turn), []string{"0:/turn_open", "1:/turn_close", "2:/model_switched"},
+			"the event turn after a reopen")
+		if f.log.NeedsReconcile() {
+			t.Error("NeedsReconcile() = true after a reopen, want false: the carrier was closed when it was minted")
+		}
+		// The hollow ring: a chat whose only turn is a carrier has initiated nothing.
+		if count, last := f.log.Counters(); last != "" {
+			t.Errorf("Counters() after a reopen = (%d, %q), want last_turn_outcome \"\"", count, last)
 		}
 	})
 

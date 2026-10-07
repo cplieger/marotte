@@ -160,28 +160,32 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 // The envelope carries the chat's display name, cut to the page's bound, so a page
 // that has dropped the chat's row can still name it.
 func TestSend_TheEnvelopeCarriesTheBoundedChatName(t *testing.T) {
-	for _, tc := range []struct{ name, want string }{
-		{"Fix the parser", "Fix the parser"},
-		{strings.Repeat("é", 100), strings.Repeat("é", 78) + pushTruncMarker},
+	for _, tc := range []struct{ desc, name, want string }{
+		{"short", "Fix the parser", "Fix the parser"},
+		{"over_the_bound", strings.Repeat("é", 100), strings.Repeat("é", 78) + pushTruncMarker},
 	} {
-		deferredOn(t)
-		h := &payloadHandler{}
-		s, _ := filteredService(t, h)
-		s.Unsubscribe(goneEP)
-		s.presence.Observe(connected(TagOf(presentEP)))
+		// A subtest per case: each service's Close cleanup must run before deferredOn restores deferPoll, which the
+		// service's re-arming timer reads.
+		t.Run(tc.desc, func(t *testing.T) {
+			deferredOn(t)
+			h := &payloadHandler{}
+			s, _ := filteredService(t, h)
+			s.Unsubscribe(goneEP)
+			s.presence.Observe(connected(TagOf(presentEP)))
 
-		s.Send(t.Context(), "Marotte", "Agent finished", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), tc.name)
-		key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindAgentFinished, subject: "c1"}
-		s.deferred.mu.Lock()
-		held := s.deferred.held[key]
-		s.deferred.mu.Unlock()
-		var p pushPayload
-		if err := json.Unmarshal(held.payload, &p); err != nil {
-			t.Fatalf("held payload is not the envelope: %v", err)
-		}
-		if p.ChatName != tc.want {
-			t.Errorf("chat_name = %q, want %q", p.ChatName, tc.want)
-		}
+			s.Send(t.Context(), "Marotte", "Agent finished", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), tc.name)
+			key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindAgentFinished, subject: "c1"}
+			s.deferred.mu.Lock()
+			held := s.deferred.held[key]
+			s.deferred.mu.Unlock()
+			var p pushPayload
+			if err := json.Unmarshal(held.payload, &p); err != nil {
+				t.Fatalf("held payload is not the envelope: %v", err)
+			}
+			if p.ChatName != tc.want {
+				t.Errorf("chat_name = %q, want %q", p.ChatName, tc.want)
+			}
+		})
 	}
 }
 

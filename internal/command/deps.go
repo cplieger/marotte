@@ -118,8 +118,9 @@ type ChatStore interface {
 	// Revert appends the log's record of a rewind: turn and everything after it
 	// become unreadable rather than absent, so nothing is cut and nothing is
 	// re-closed. It answers the appended record, and the carrier's own turn_open
-	// when no turn survived the window and the log minted one to hold it.
-	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error)
+	// and turn_close when no turn survived the window and the log minted one to
+	// hold it.
+	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	// RewindTarget resolves the prompt id a rewind addresses to the turn that
 	// prompt opened and the id KAS holds the prompt under. False when no turn's
 	// prompt carries that id.

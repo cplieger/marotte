@@ -761,6 +761,8 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
   if (elapsedMs !== undefined) out.elapsed_ms = elapsedMs;
   const truncated = o["truncated"] === null ? undefined : optBool(o, "truncated", "$.entry_turn_close");
   if (truncated !== undefined) out.truncated = truncated;
+  const carrier = o["carrier"] === null ? undefined : optBool(o, "carrier", "$.entry_turn_close");
+  if (carrier !== undefined) out.carrier = carrier;
   return out;
 };
 

@@ -1060,7 +1060,7 @@ func (bc *BridgeCoordinator) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, b
 }
 
 // AppendBetweenTurns files a lane-less entry after the newest turn's close.
-func (bc *BridgeCoordinator) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error) {
+func (bc *BridgeCoordinator) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error) {
 	return bc.chatStore.AppendBetweenTurns(ctx, chatID, e)
 }
 

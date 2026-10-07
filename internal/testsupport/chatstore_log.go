@@ -36,7 +36,7 @@ func (s *InMemoryChatStore) DepartedName(marotte.ChatID) (string, bool) { return
 func (s *RecordingChatStore) DepartedName(marotte.ChatID) (string, bool) { return "", false }
 
 // Revert refuses: an empty log holds no turn to revert to.
-func (s *InMemoryChatStore) Revert(_ context.Context, id marotte.ChatID, turn, _ string) (record, opened *marotte.Entry, err error) {
+func (s *InMemoryChatStore) Revert(_ context.Context, id marotte.ChatID, turn, _ string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	return nil, nil, fmt.Errorf("testsupport: chat %s holds no turn %q", id, turn)
 }
 

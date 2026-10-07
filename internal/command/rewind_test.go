@@ -138,9 +138,9 @@ type rewindStore struct {
 	*testsupport.InMemoryChatStore
 	targets  map[string]marotte.RewindTarget
 	reverted []string
-	// carrier, when set, is the turn_open the store reports as freshly minted, which
-	// the command must announce ahead of the record.
-	carrier   *marotte.Entry
+	// minted, when set, is the carrier's turn_open and turn_close the store reports
+	// as freshly written, which the command must announce ahead of the record.
+	minted    []*marotte.Entry
 	revertErr error
 	// order, when set, interleaves the store's record with the bridge's call.
 	order *[]string
@@ -151,7 +151,7 @@ func (s *rewindStore) RewindTarget(_ context.Context, _ marotte.ChatID, promptID
 	return target, ok, nil
 }
 
-func (s *rewindStore) Revert(_ context.Context, _ marotte.ChatID, turn, _ string) (*marotte.Entry, *marotte.Entry, error) {
+func (s *rewindStore) Revert(_ context.Context, _ marotte.ChatID, turn, _ string) (*marotte.Entry, []*marotte.Entry, error) {
 	if s.order != nil {
 		*s.order = append(*s.order, "revert")
 	}
@@ -159,7 +159,7 @@ func (s *rewindStore) Revert(_ context.Context, _ marotte.ChatID, turn, _ string
 		return nil, nil, s.revertErr
 	}
 	s.reverted = append(s.reverted, turn)
-	return &marotte.Entry{ID: turn + ":revert", Turn: "carrier", Kind: marotte.EntryKindTurnRevert}, s.carrier, nil
+	return &marotte.Entry{ID: turn + ":revert", Turn: "carrier", Kind: marotte.EntryKindTurnRevert}, s.minted, nil
 }
 
 // rewindRuns is the run registry as a rewind sees it: live holds the runs still
@@ -572,7 +572,7 @@ func TestCmdRewindChat_ARecordFailureIsA500(t *testing.T) {
 func TestCmdRewindChat_LogsTheTurnAndWhetherACarrierWasMinted(t *testing.T) {
 	logs := captureLogs(t)
 	store := seedRewindChat(t, false)
-	store.carrier = &marotte.Entry{ID: "t-carrier", Turn: "t-carrier", Kind: marotte.EntryKindTurnOpen}
+	store.minted = mintedCarrier("t-carrier")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
@@ -581,6 +581,35 @@ func TestCmdRewindChat_LogsTheTurnAndWhetherACarrierWasMinted(t *testing.T) {
 	}
 	if got := logs.String(); !strings.Contains(got, "turn=t2") || !strings.Contains(got, "carrier_minted=true") {
 		t.Errorf("log does not report turn=t2 carrier_minted=true: %s", got)
+	}
+}
+
+// A minted carrier is announced whole before the record: a client holding its turn_open
+// without the turn_close reads a running turn, and the chat's tab dot pulses until a reload.
+func TestCmdRewindChat_AnnouncesAMintedCarrierOpenedAndClosedBeforeTheRecord(t *testing.T) {
+	store := seedRewindChat(t, false)
+	store.minted = mintedCarrier("t-carrier")
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := idleHost(store, b, b)
+	bus := &recordingBus{}
+
+	if _, err := CmdRewindChat(t.Context(), host, host, host, host, bus, rewindReq(t, "c1", "u2")); err != nil {
+		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
+	}
+	var got []string
+	for _, e := range bus.events {
+		got = append(got, string(e.Type))
+	}
+	if want := "turn_opened,turn_closed,entry_appended"; strings.Join(got, ",") != want {
+		t.Errorf("CmdRewindChat announced %v, want %s", got, want)
+	}
+}
+
+// mintedCarrier is the pair the store writes when no turn survives a revert's window.
+func mintedCarrier(turn string) []*marotte.Entry {
+	return []*marotte.Entry{
+		{ID: turn, Turn: turn, Kind: marotte.EntryKindTurnOpen},
+		{ID: turn + ":close", Turn: turn, Seq: 1, Kind: marotte.EntryKindTurnClose},
 	}
 }
 

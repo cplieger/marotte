@@ -73,6 +73,8 @@ onSSE("turn_closed", (chatID, p) => {
   const close = payloadOf(p.entry, "turn_close");
   const outcome = close?.outcome;
   const settles = !anotherTurnOpen(chatID, p.entry.turn);
+  // Read off the close itself: its turn_open may not be resident, and the repair read is async.
+  const agentRan = close?.carrier !== true;
   // Every ask this turn raised is over; a workflow run's survives, since it outlives the
   // turn that launched it. Gated with the rest because the sweep keeps only RUN-scoped asks,
   // so on a close leaving another turn open it would strand a live JSON-RPC request.
@@ -87,12 +89,14 @@ onSSE("turn_closed", (chatID, p) => {
   // This chat's turn index changed, so its rail record needs a re-read. Ungated:
   // it is the one effect that reads the server's own authoritative liveness.
   void refreshTurnRail(chatID);
-  clearAgentDown();
+  if (agentRan) {
+    clearAgentDown();
+  }
   refreshGitBadge();
 
   // Inside the `settles` branch and AFTER the writes above: the cue is a statement about a
   // turn this handler settled, and `chatSettled` reads the turn state those writes produce.
-  if (settles) {
+  if (settles && agentRan) {
     noteAgentFinished(chatID, notifyBodyFor(outcome, get(chatID)?.name ?? "Chat"));
   }
 });

@@ -163,20 +163,21 @@ func (s *Store) Append(ctx context.Context, chatID marotte.ChatID, e *marotte.En
 }
 
 // AppendBetweenTurns files a lane-less entry belonging to no open turn after the
-// newest turn's close, or opens an event turn on an empty log to land it in.
-func (s *Store) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (opened *marotte.Entry, err error) {
+// newest turn's close, or mints a closed event carrier on an empty log to land it in
+// (EntryLog.AppendBetweenTurns).
+func (s *Store) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (minted []*marotte.Entry, err error) {
 	err = s.withLog(ctx, chatID, func(l *EntryLog) error {
-		opened, err = l.AppendBetweenTurns(ctx, e)
+		minted, err = l.AppendBetweenTurns(ctx, e)
 		if err != nil {
 			return err
 		}
-		if opened != nil {
-			s.index.extend(chatID, opened)
+		for _, m := range minted {
+			s.index.extend(chatID, m)
 		}
 		s.index.extend(chatID, e)
 		return nil
 	})
-	return opened, err
+	return minted, err
 }
 
 // withLog runs op on the chat's log under its lock. A chat with no header is
@@ -449,15 +450,15 @@ func (s *Store) readLog(ctx context.Context, chatID marotte.ChatID, op func(l *E
 
 // Revert is the rewind's store half: ONE appended turn_revert, nothing cut or re-closed. It answers
 // the record for the caller's entry_appended and, when the log had to mint a carrier, the carrier's
-// turn_open, which the caller announces ahead of the record.
+// turn_open and turn_close, which the caller announces ahead of the record.
 // The header counters are a cache rebuilt from the log, so a failed counter write is a Warn and
 // never fails a durable revert. The caller holds the lifecycle mutex across the registry check and
 // this call.
-func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error) {
+func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	err = s.withLog(ctx, chatID, func(l *EntryLog) error {
 		s.index.drop(chatID)
 		var rerr error
-		record, opened, rerr = l.Revert(ctx, turn, marotte.TurnRevertCauseRewind, kasMessageID)
+		record, minted, rerr = l.Revert(ctx, turn, marotte.TurnRevertCauseRewind, kasMessageID)
 		return rerr
 	})
 	if err != nil {
@@ -468,7 +469,7 @@ func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMess
 			"chat", chatID, "turn", turn, "error", cerr)
 	}
 	s.bumpChatWindow(ctx, chatID)
-	return record, opened, nil
+	return record, minted, nil
 }
 
 // Reconcile runs the resume's merge swap over the chat's log and header under the

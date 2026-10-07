@@ -291,12 +291,12 @@ func TestRevert_CarrierIsTheNewestSurvivor(t *testing.T) {
 		f.closeTurn(id, marotte.TurnOutcomeCompleted)
 		turns = append(turns, id)
 	}
-	record, opened, err := f.log.Revert(t.Context(), turns[2], marotte.TurnRevertCauseRewind, "kas-1")
+	record, minted, err := f.log.Revert(t.Context(), turns[2], marotte.TurnRevertCauseRewind, "kas-1")
 	if err != nil {
 		t.Fatalf("Revert(): %v", err)
 	}
-	if opened != nil {
-		t.Errorf("Revert minted a carrier %q with two turns surviving, want step 2's own choice", opened.Turn)
+	if len(minted) != 0 {
+		t.Errorf("Revert minted a carrier %q with two turns surviving, want step 2's own choice", minted[0].Turn)
 	}
 	if record.Turn != turns[1] {
 		t.Errorf("the record sits in turn %q, want the newest survivor %q", record.Turn, turns[1])
@@ -381,13 +381,14 @@ func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 		f.closeTurn(id, marotte.TurnOutcomeCompleted)
 		turns = append(turns, id)
 	}
-	record, opened, err := f.log.Revert(t.Context(), turns[0], marotte.TurnRevertCauseRewind, "")
+	record, minted, err := f.log.Revert(t.Context(), turns[0], marotte.TurnRevertCauseRewind, "")
 	if err != nil {
 		t.Fatalf("Revert(): %v", err)
 	}
-	if opened == nil {
-		t.Fatal("Revert minted no carrier with every turn inside the window, want step 3's own turn")
+	if len(minted) != 2 || minted[1].Kind != marotte.EntryKindTurnClose || minted[1].Turn != minted[0].Turn {
+		t.Fatalf("Revert minted %+v with every turn inside the window, want step 3's own turn_open and turn_close", minted)
 	}
+	opened := minted[0]
 	if record.Turn != opened.Turn {
 		t.Errorf("the record sits in %q, want the minted carrier %q", record.Turn, opened.Turn)
 	}
@@ -407,8 +408,9 @@ func TestRevert_NoSurvivorMintsAClosedCarrierAtOrdinalOne(t *testing.T) {
 		if !st.closed || st.unterminated {
 			t.Errorf("%s: the carrier is closed=%v unterminated=%v, want a completed close", when, st.closed, st.unterminated)
 		}
-		if count, _ := f.log.Counters(); count != 1 {
-			t.Errorf("%s: turn_count is %d, want 1", when, count)
+		// The carrier is the only survivor, so the chat reads as having run nothing.
+		if count, last := f.log.Counters(); count != 1 || last != "" {
+			t.Errorf("%s: Counters() = (%d, %q), want (1, \"\")", when, count, last)
 		}
 		if open := f.log.openTurnsLocked(); len(open) != 0 {
 			t.Errorf("%s: openTurnsLocked() = %v, want none: a closed carrier earns no synthesized closer", when, open)
@@ -431,12 +433,12 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 	}
 
 	e := entryOf("", "", "", marotte.EntryKindModeSwitched, marotte.EntryModeSwitched{To: "spec"})
-	opened, err := f.log.AppendBetweenTurns(t.Context(), e)
+	minted, err := f.log.AppendBetweenTurns(t.Context(), e)
 	if err != nil {
 		t.Fatalf("AppendBetweenTurns(): %v", err)
 	}
-	if opened != nil {
-		t.Errorf("AppendBetweenTurns minted turn %q with a survivor present, want it to join %q", opened.Turn, a)
+	if len(minted) != 0 {
+		t.Errorf("AppendBetweenTurns minted turn %q with a survivor present, want it to join %q", minted[0].Turn, a)
 	}
 	if e.Turn != a {
 		t.Errorf("the entry landed in turn %q, want the newest SURVIVING turn %q", e.Turn, a)
@@ -465,8 +467,8 @@ func TestRevert_BetweenTurnsAppendLandsInASurvivingTurn(t *testing.T) {
 		t.Fatalf("second Revert(): %v", err)
 	}
 	e2 := entryOf("", "", "", marotte.EntryKindModeSwitched, marotte.EntryModeSwitched{To: "vibe"})
-	if opened, err := f.log.AppendBetweenTurns(t.Context(), e2); err != nil || opened != nil {
-		t.Fatalf("AppendBetweenTurns() = (%v, %v), want it to join the surviving carrier", opened, err)
+	if minted, err := f.log.AppendBetweenTurns(t.Context(), e2); err != nil || len(minted) != 0 {
+		t.Fatalf("AppendBetweenTurns() = (%v, %v), want it to join the surviving carrier", minted, err)
 	}
 	if !found(mustAll(t, f.log)) {
 		t.Error("the second between-turns entry is invisible to All()")
@@ -650,14 +652,15 @@ func TestRevert_AnIncompleteCarrierIsRevertedAtEitherInterruptionPoint(t *testin
 			t.Cleanup(func() { syncEntries = restore })
 
 			// Reverting the oldest turn takes b too, so the carrier this arm interrupts is minted.
-			_, opened, err := f.log.Revert(t.Context(), a, marotte.TurnRevertCauseRewind, "kas-a")
+			_, minted, err := f.log.Revert(t.Context(), a, marotte.TurnRevertCauseRewind, "kas-a")
 			if !errors.Is(err, boom) {
 				t.Fatalf("Revert(%q) with sync %d failing = %v, want the write error", a, tc.failAt, err)
 			}
 			syncEntries = restore
-			if opened == nil {
+			if len(minted) == 0 {
 				t.Fatal("the failed revert answered no carrier, so its caller cannot name the turn it left on disk")
 			}
+			opened := minted[0]
 
 			for _, id := range []string{a, b} {
 				if f.log.turns[id].reverted {
@@ -775,10 +778,10 @@ func TestRevert_RewriteKeepsTheReadsOrderWhenAnOrdinalIsReused(t *testing.T) {
 		turns = append(turns, id)
 	}
 	// The window is b..c, so a carries the record.
-	if _, opened, err := f.log.Revert(t.Context(), turns[1], marotte.TurnRevertCauseRewind, "kas-1"); err != nil {
+	if _, minted, err := f.log.Revert(t.Context(), turns[1], marotte.TurnRevertCauseRewind, "kas-1"); err != nil {
 		t.Fatalf("Revert(): %v", err)
-	} else if opened != nil {
-		t.Fatalf("Revert minted a carrier %q with turn a surviving, want step 2's own choice", opened.Turn)
+	} else if len(minted) != 0 {
+		t.Fatalf("Revert minted a carrier %q with turn a surviving, want step 2's own choice", minted[0].Turn)
 	}
 	fresh := f.prompt("d")
 	f.closeTurn(fresh, marotte.TurnOutcomeCompleted)

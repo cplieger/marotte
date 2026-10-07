@@ -56,13 +56,18 @@ func drainHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	gate := &atomic.Bool{}
 	drainGates.Store(h, gate)
 	t.Cleanup(func() { drainGates.Delete(h) })
+	var reached atomic.Int32
 	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 		if gate.Load() {
 			h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
 		}
+		reached.Add(1)
 	}
 	seedQueue(t, cs, "c1")
 	runPrompt(t, h, cs, "c1", "m-first")
+	// The close's drain hook runs after runPrompt's wait; still pending, it would read the gate the test arms next
+	// and drain, taking the reservation the test is about to ask for.
+	waitFor(t, func() bool { return reached.Load() == 1 })
 	return h, cs, br
 }
 

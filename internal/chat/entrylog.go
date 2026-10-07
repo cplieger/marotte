@@ -93,6 +93,7 @@ type turnState struct {
 	plans   int
 	drawn   bool
 	closed  bool
+	carrier bool
 	// reverted means a turn_revert took this turn, so every read surface skips it. The lines stay on disk.
 	reverted bool
 	// hasRevert is whether the turn holds its own turn_revert record, which tells a complete carrier from the crash state
@@ -292,30 +293,29 @@ func (l *EntryLog) Append(ctx context.Context, e *marotte.Entry) error {
 }
 
 // AppendBetweenTurns files a lane-less entry belonging to no open turn after the newest surviving turn's turn_close,
-// with its next seq. With no survivor it opens a headerless turn_open{source: event} and returns it for the caller to
-// announce; nil otherwise. Surviving, not newest in file order: after a revert the newest is inside the reverted
-// window, where no read surface looks.
-func (l *EntryLog) AppendBetweenTurns(ctx context.Context, e *marotte.Entry) (*marotte.Entry, error) {
+// with its next seq. With no survivor it mints a closed turn_open{source: event} carrier and returns its turn_open and
+// turn_close for the caller to announce before e; nil otherwise. Surviving, not newest in file order: after a revert
+// the newest is inside the reverted window, where no read surface looks.
+func (l *EntryLog) AppendBetweenTurns(ctx context.Context, e *marotte.Entry) (minted []*marotte.Entry, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	turn, ok := l.newestSurvivingLocked(nil)
 	if !ok {
-		open, err := l.openTurnLocked(ctx, &TurnSpec{Source: marotte.TurnOpenNameEvent})
+		minted, err = l.mintCarrierLocked(ctx, marotte.TurnOpenNameEvent, l.turnCountLocked()+1)
 		if err != nil {
-			return nil, err
+			return minted, err
 		}
-		e.Turn = open.Turn
-		return open, l.appendLocked(ctx, e)
+		turn = minted[0].Turn
 	}
 	e.Turn = turn
-	return nil, l.appendLocked(ctx, e)
+	return minted, l.appendLocked(ctx, e)
 }
 
 // AppendReconciled records that a merge examined one signal and had nothing to add, the only honest way to clear it,
-// and returns the record. Exactly one of rec's fields is set: Turn (unterminated closer, empty steer) or Session. The
-// turn form files into the named turn. The session form uses the newest surviving turn, or mints one and closes it:
-// an open carrier would be synthesized unterminated, raising condition (ii). Its source is event, never revert.
-func (l *EntryLog) AppendReconciled(ctx context.Context, rec marotte.EntryReconciled) (record, opened *marotte.Entry, err error) {
+// and returns the record plus any carrier it minted (turn_open, turn_close). Exactly one of rec's fields is set: Turn
+// (unterminated closer, empty steer) or Session. The turn form files into the named turn. The session form uses the
+// newest surviving turn, or mints a closed event carrier, never a revert one.
+func (l *EntryLog) AppendReconciled(ctx context.Context, rec marotte.EntryReconciled) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	if (rec.Turn == "") == (rec.Session == "") {
 		return nil, nil, fmt.Errorf("entry log: reconciled{turn: %q, session: %q}, want exactly one of them set",
 			rec.Turn, rec.Session)
@@ -326,28 +326,25 @@ func (l *EntryLog) AppendReconciled(ctx context.Context, rec marotte.EntryReconc
 	if turn == "" {
 		var held bool
 		if turn, held = l.newestSurvivingLocked(nil); !held {
-			opened, err = l.openTurnLocked(ctx, &TurnSpec{Source: marotte.TurnOpenNameEvent})
+			minted, err = l.mintCarrierLocked(ctx, marotte.TurnOpenNameEvent, l.turnCountLocked()+1)
 			if err != nil {
-				return nil, nil, err
+				return nil, minted, err
 			}
-			if cerr := l.closeCarrierLocked(ctx, opened.Turn); cerr != nil {
-				return nil, opened, cerr
-			}
-			turn = opened.Turn
+			turn = minted[0].Turn
 		}
 	}
 	payload, merr := json.Marshal(rec)
 	if merr != nil {
-		return nil, opened, fmt.Errorf("entry log: marshal reconciled: %w", merr)
+		return nil, minted, fmt.Errorf("entry log: marshal reconciled: %w", merr)
 	}
 	record = &marotte.Entry{
 		ID: ReconciledEntryID(rec), Turn: turn,
 		Kind: marotte.EntryKindReconciled, Payload: payload,
 	}
 	if aerr := l.appendLocked(ctx, record); aerr != nil {
-		return nil, opened, aerr
+		return nil, minted, aerr
 	}
-	return record, opened, nil
+	return record, minted, nil
 }
 
 // ReconciledEntryID derives the record's id from the signal it clears, so a repeat merge mints the existing id
@@ -360,19 +357,19 @@ func ReconciledEntryID(rec marotte.EntryReconciled) string {
 	return rec.Session + ":reconciled"
 }
 
-// Revert appends this log's record of a rewind and returns it, plus a minted carrier's turn_open for the caller to
-// announce first. from is the reverted turn, resolved from the surviving view. Nothing is cut or re-closed: the range
-// stays on disk, reads skip it, and a failed append changes nothing.
-func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record, opened *marotte.Entry, err error) {
+// Revert appends this log's record of a rewind and returns it, plus a minted carrier's turn_open and turn_close for
+// the caller to announce first. from is the reverted turn, resolved from the surviving view. Nothing is cut or
+// re-closed: the range stays on disk, reads skip it, and a failed append changes nothing.
+func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.appendRevertLocked(ctx, from, cause, kasMessageID)
 }
 
 // appendRevertLocked runs the revert's ordered steps: compute the window; pick a carrier outside it and outside
-// earlier reverts; with none, mint a carrier and close it before the record; append the record with its Through; and
-// mark the index after the write returns. Not AppendBetweenTurns, whose newest survivor is inside this window.
-func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record, opened *marotte.Entry, err error) {
+// earlier reverts; with none, mint a closed carrier; append the record with its Through; and mark the index after the
+// write returns. Not AppendBetweenTurns, whose newest survivor is inside this window.
+func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	st := l.turns[from]
 	if st == nil || st.reverted {
 		return nil, nil, fmt.Errorf("%w: %q", ErrTurnNotInLog, from)
@@ -381,40 +378,36 @@ func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause ma
 	carrier, held := l.newestSurvivingLocked(window)
 	if !held {
 		// The ordinal the window leaves behind, so the carrier shares no n with a surviving turn.
-		opened, err = l.openTurnWithOrdinalLocked(ctx,
-			&TurnSpec{Source: marotte.TurnOpenNameRevert}, l.survivingHighWaterLocked(window)+1)
-		if err != nil {
-			return nil, nil, err
-		}
+		minted, err = l.mintCarrierLocked(ctx, marotte.TurnOpenNameRevert, l.survivingHighWaterLocked(window)+1)
 		// A carrier without its own record is what the scan marks reverted, so a failed revert leaves the same view in
 		// memory as the next open would.
-		defer func() {
-			if err != nil {
-				l.turns[opened.Turn].reverted = true
-			}
-		}()
-		// Closed before the record, so a crash here leaves a complete turn: an open carrier would raise the reconcile signal
-		// one restart later.
-		if cerr := l.closeCarrierLocked(ctx, opened.Turn); cerr != nil {
-			return nil, opened, cerr
+		if len(minted) > 0 {
+			defer func() {
+				if err != nil {
+					l.turns[minted[0].Turn].reverted = true
+				}
+			}()
 		}
-		carrier = opened.Turn
+		if err != nil {
+			return nil, minted, err
+		}
+		carrier = minted[0].Turn
 	}
 	payload, merr := json.Marshal(marotte.EntryTurnRevert{
 		From: from, FromN: st.n, Through: through,
 		KASMessageID: kasMessageID, Cause: cause,
 	})
 	if merr != nil {
-		return nil, opened, fmt.Errorf("entry log: marshal turn_revert: %w", merr)
+		return nil, minted, fmt.Errorf("entry log: marshal turn_revert: %w", merr)
 	}
 	record = &marotte.Entry{
 		ID: from + ":revert", Turn: carrier,
 		Kind: marotte.EntryKindTurnRevert, Payload: payload,
 	}
 	if aerr := l.appendLocked(ctx, record); aerr != nil {
-		return nil, opened, aerr
+		return nil, minted, aerr
 	}
-	return record, opened, nil
+	return record, minted, nil
 }
 
 // revertWindowLocked is the window a revert to from takes: every turn from it to the newest in file order, with the
@@ -455,17 +448,37 @@ func (l *EntryLog) newestSurvivingLocked(excluding map[string]struct{}) (string,
 	return "", false
 }
 
-// closeCarrierLocked closes a carrier this log opened: completed, no stop reason, model or elapsed. Never
-// synthesizeCloseLocked, whose closer is the reconcile signal.
-func (l *EntryLog) closeCarrierLocked(ctx context.Context, turn string) error {
-	payload, err := json.Marshal(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
+// mintCarrierLocked opens a turn to hold entries no surviving turn can, and closes it before anything lands in it:
+// left open, the store-open closer would synthesize it unterminated (a reconcile no session can answer), and a client
+// would read it as a running turn. It returns what it wrote: [turn_open, turn_close], or [turn_open] when the close
+// failed.
+func (l *EntryLog) mintCarrierLocked(ctx context.Context, source marotte.TurnOpenSourceName, ordinal uint64) ([]*marotte.Entry, error) {
+	opened, err := l.openTurnWithOrdinalLocked(ctx, &TurnSpec{Source: source}, ordinal)
 	if err != nil {
-		return fmt.Errorf("entry log: marshal carrier turn_close: %w", err)
+		return nil, err
 	}
-	return l.appendLocked(ctx, &marotte.Entry{
+	closed, err := l.closeCarrierLocked(ctx, opened.Turn)
+	if err != nil {
+		return []*marotte.Entry{opened}, err
+	}
+	return []*marotte.Entry{opened, closed}, nil
+}
+
+// closeCarrierLocked closes a carrier this log opened: completed and marked carrier, no stop reason, model or
+// elapsed. Never synthesizeCloseLocked, whose closer is the reconcile signal.
+func (l *EntryLog) closeCarrierLocked(ctx context.Context, turn string) (*marotte.Entry, error) {
+	payload, err := json.Marshal(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, Carrier: true})
+	if err != nil {
+		return nil, fmt.Errorf("entry log: marshal carrier turn_close: %w", err)
+	}
+	e := &marotte.Entry{
 		ID: turn + ":close", Turn: turn,
 		Kind: marotte.EntryKindTurnClose, Payload: payload,
-	})
+	}
+	if err := l.appendLocked(ctx, e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // appendLocked is the one write path. A refused write latches: the seq is not reused, nothing is broadcast, and later
@@ -638,6 +651,7 @@ func foldTurnClose(st *turnState, e *marotte.Entry) error {
 	}
 	st.closed = true
 	st.outcome = payload.Outcome
+	st.carrier = payload.Carrier
 	st.unterminated = payload.StopReasonRaw == string(marotte.StopReasonUnterminated)
 	return nil
 }
@@ -1082,8 +1096,8 @@ func (l *EntryLog) WriteCounters(ctx context.Context) error {
 	return l.writeCountersLocked(ctx)
 }
 
-// Counters are the header's two caches as the log states them: the newest turn's n and how the newest finished turn
-// ended.
+// Counters are the header's two caches as the log states them: the newest turn's n and how the newest finished
+// non-carrier turn ended.
 func (l *EntryLog) Counters() (turnCount uint64, last marotte.TurnOutcome) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1093,7 +1107,8 @@ func (l *EntryLog) Counters() (turnCount uint64, last marotte.TurnOutcome) {
 func (l *EntryLog) countersLocked() (uint64, marotte.TurnOutcome) {
 	var last marotte.TurnOutcome
 	for _, id := range l.survivingOrderLocked() {
-		if st := l.turns[id]; st.closed {
+		// A carrier's outcome would paint a chat that has run nothing as done.
+		if st := l.turns[id]; st.closed && !st.carrier {
 			last = st.outcome
 		}
 	}
