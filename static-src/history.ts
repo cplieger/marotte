@@ -5,7 +5,7 @@
 import { el, signal, subscribe, effect } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { $ } from "./dom.js";
-import { hasTab, setHistoryTab as setHistoryTabRoute } from "./tabs.js";
+import { hasTab, setHistoryTab as setHistoryTabRoute, tabSetVersion } from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
@@ -26,6 +26,7 @@ import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
 import type { Match } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
+import { runChatID } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { deleteRun } from "./actions/runs.js";
 import { deleteChat as deleteChatAction } from "./actions/chat.js";
@@ -145,7 +146,7 @@ type RunVerdict = "completed" | "failed" | "aborted";
  */
 const END_REASON_TEXT: Readonly<Record<string, string>> = {
   overran: "stopped: it ran past its time limit",
-  step_cap: "stopped: a step ran past its turn limit",
+  stalled: "stopped: no activity and no live shell within its idle window",
   orphaned: "stopped: the server restarted while it was running",
 };
 
@@ -219,17 +220,29 @@ const ROW_RENDER_INFO: ToolRenderInfo = {
   denial: null,
 };
 
-/**
- * "Open here" is this device's (localStorage), so the predicate is the client's and reuses the tab store's `hasTab`.
- * A chat tab's id is its chat id.
- */
+/** An open tab is one click away, so what it covers is not history. Every device projects the same server tab set. */
 function isOpenHere(s: ResumableSession): boolean {
   const chatID = s.chat_id ?? "";
   return chatID !== "" && hasTab("chat", chatID);
 }
 
+/**
+ * Status plays no part: the launching chat's tab carries the run card and bar, and a live parentless run whose view
+ * was dismissed has no other door back.
+ */
+function runOpenHere(r: WorkflowRun): boolean {
+  if (hasTab("run", r.workflow_id)) {
+    return true;
+  }
+  // Empty when the launching session is in no chat's chain; the run store learned the chat from the run's frames.
+  const listed = r.parent_chat_id ?? "";
+  const parent = listed !== "" ? listed : runChatID(r.workflow_id);
+  return parent !== "" && hasTab("chat", parent);
+}
+
 function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[] {
   const rows: HistoryRow[] = [];
+  // Over every run, hidden or not: deleting a chat also deletes a run hidden by its own open tab.
   const launched = new Map<string, number>();
   for (const r of runs) {
     const parent = r.parent_chat_id ?? "";
@@ -238,7 +251,7 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
     }
   }
   for (const s of sessions) {
-    // A chat open here is not history: its tab is one click away. Filtered here so the key never reaches reconcile.
+    // Filtered here so the key never reaches reconcile.
     if (isOpenHere(s)) {
       continue;
     }
@@ -256,6 +269,9 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
     });
   }
   for (const r of runs) {
+    if (runOpenHere(r)) {
+      continue;
+    }
     // The outcome is stated whatever launched the run: an agent-parented run's transcript may be gone.
     const endReason = r.end_reason ?? "";
     const status = classifyRunStatus(r.status);
@@ -361,24 +377,29 @@ class HistoryController {
   });
   private filterText = "";
 
-  /** Written by `derive`, never by `load` directly. */
+  /** Written by the constructor's effect, never by `load` directly. */
   private rows: HistoryRow[] = [];
 
-  /** No chats and no runs is an answer the container cannot tell from an unread list. */
+  /** Kept through a failed reload, so only the first load paints the skeleton. */
   private answered = false;
 
-  /** A signal: the rows derive from it and the dock's queue, and a plain field would leave the second unwatched. */
+  /**
+   * Null while no valid answer is held. A signal, so the effect re-deriving the rows on the dock's queue and the tab
+   * set also runs on each new answer.
+   */
   private readonly verdict = signal<SessionListResponse | null>(null);
 
   constructor() {
-    // A run's mark reads the dock's queue, and an ask emits no `runs:changed`, so a plain rebuild would leave a working
-    // mark over a parked run.
+    // A run's mark reads the dock's queue and every row reads the tab set, and neither change emits `runs:changed`, so a
+    // plain rebuild would leave a working mark over a parked run, or a closed tab's chat and runs missing.
     effect(() => {
       const d = this.verdict.value;
       if (d === null) {
         return undefined;
       }
+      tabSetVersion();
       this.rows = toRows(d.sessions, d.runs);
+      this.paintChats(d);
       this.paintRuns();
       return undefined;
     });
@@ -483,8 +504,10 @@ class HistoryController {
     if (signal.aborted) {
       return;
     }
-    // No misleading empty state on failure: offer a retry.
+    // No misleading empty state on failure: offer a retry. The held answer goes too, or the next tab-set, dock or
+    // filter change repaints it over the Retry.
     if (d === null) {
+      this.verdict.value = null;
       runs.replaceChildren(this.buildError());
       if (this.query === "") {
         chats.replaceChildren(this.buildError());
@@ -492,22 +515,28 @@ class HistoryController {
       return;
     }
     this.answered = true;
-    // The effect derives `rows` synchronously, so the paint below reads this answer's.
     this.verdict.value = d;
-    if (this.query === "") {
-      this.paintPane(
-        chats,
-        this.rows.filter((r) => r.kind === "chat"),
-        d.sessions_state === "unavailable"
-          ? "Could not read previous conversations."
-          : "No previous conversations in this workspace.",
-      );
+  }
+
+  /** Only while no search is open: the search owns the pane then. */
+  private paintChats(d: SessionListResponse): void {
+    const chats = chatsContainer();
+    if (chats === null || this.query !== "") {
+      return;
     }
+    this.paintPane(
+      chats,
+      this.rows.filter((r) => r.kind === "chat"),
+      d.sessions_state === "unavailable"
+        ? "Could not read previous conversations."
+        : "No previous conversations in this workspace.",
+    );
   }
 
   private paintRuns(): void {
     const runs = runsContainer();
-    if (runs === null || !this.answered) {
+    const d = this.verdict.peek();
+    if (runs === null || d === null) {
       return;
     }
     const all = this.rows.filter((r) => r.kind === "run");
@@ -519,7 +548,7 @@ class HistoryController {
       shown,
       this.filterText !== ""
         ? "No workflow runs match the filter."
-        : this.verdict.peek()?.runs_state === "unavailable"
+        : d.runs_state === "unavailable"
           ? "Could not read workflow runs."
           : "No previous workflow runs in this workspace.",
     );
