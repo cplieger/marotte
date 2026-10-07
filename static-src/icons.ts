@@ -22,11 +22,10 @@ const PATH_PLUS = '<path d="M12 5v14M5 12h14"/>';
 const PATH_TRASH =
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>';
 /**
- * Optically centred, which its bounding box is not: the dart's mass sits 1.93 x 2.03 units upper-right of centre, and
- * this is the largest shift the viewBox allows. Not a CSS `translate`: `icon-crisp.ts` owns that on every `.ic-*`.
+ * Feather "send" turned 45° to point right. Optically centred, which its bounding box is not: the dart's mass sits
+ * toward the tip, so it is shifted left as far as the viewBox allows (tip at x 23.25 leaves room for the stroke).
  */
-const PATH_SEND =
-  '<g transform="translate(-1.25 1.25)"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></g>';
+const PATH_SEND = '<path d="M23.25 12H7.69M23.25 12L4.16 21.19 7.69 12 4.16 2.81z"/>';
 /** Outline and filled twin share this path; `fill` is the only difference, so the state reads as the same mark. */
 const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';
 /**
