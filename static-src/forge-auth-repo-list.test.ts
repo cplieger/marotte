@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -32,6 +33,14 @@ vi.mock("./confirm.js", async (importOriginal) => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
+const mocks = vi.hoisted(() => ({ cloneDispatch: vi.fn() }));
+
+vi.mock("./actions/forge.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const orig = await importOriginal<typeof import("./actions/forge.js")>();
+  return { ...orig, cloneRepo: { ...orig.cloneRepo, dispatch: mocks.cloneDispatch } };
+});
+
 // Routed through the mocked client so each case answers the forge list first with mockResolvedValueOnce.
 vi.mock("./forge-store.js", async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
@@ -52,6 +61,7 @@ vi.mock("./forge-store.js", async (importOriginal) => {
 import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped } from "./api-client.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -80,8 +90,10 @@ describe("forge-auth: the repository list", () => {
     vi.clearAllMocks();
     resetActionFramework();
     // A panel with no account drops the listings an earlier case left.
-    mockedApiGet.mockImplementation((() =>
-      Promise.resolve({ forges: [], kinds: KINDS })) as typeof apiGetTyped);
+    mockedApiGet.mockImplementation(((url: string) =>
+      Promise.resolve(
+        url === "/api/git/repos" ? { repos: [] } : { forges: [], kinds: KINDS },
+      )) as typeof apiGetTyped);
     await renderForgesPanel({ revalidate: false });
   });
 
@@ -306,5 +318,157 @@ describe("forge-auth: the repository list", () => {
     expect(details.querySelector(".forge-account-repos-label")?.textContent).toBe(
       "Repositories not read",
     );
+  });
+
+  function rows(details: HTMLElement): HTMLElement[] {
+    return [...details.querySelectorAll<HTMLElement>(".forge-account-repo-row")];
+  }
+
+  function rowNamed(details: HTMLElement, full: string): HTMLElement {
+    const row = rows(details).find(
+      (r) => r.querySelector(".forge-account-repo-name")?.textContent === full,
+    );
+    if (row === undefined) {
+      throw new Error(`no row for ${full}`);
+    }
+    return row;
+  }
+
+  /** Identity per element: `toEqual` passes for a rebuilt node with the same markup. */
+  function expectSameElements(after: readonly Element[], before: readonly Element[]): void {
+    expect(after).toHaveLength(before.length);
+    before.forEach((node, i) => {
+      expect(after[i]).toBe(node);
+    });
+  }
+
+  function heldClone(): () => void {
+    let finish!: () => void;
+    mocks.cloneDispatch.mockReturnValue({
+      outcome: new Promise((r) => {
+        finish = () => {
+          r({ status: "success", value: {} });
+        };
+      }),
+    });
+    return () => {
+      finish();
+    };
+  }
+
+  const frame = (): Promise<void> =>
+    new Promise((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+
+  it("keeps a cloned repository in its alphabetical place and every other row's controls as they were", async () => {
+    const details = await showList({ repos: [repo("gamma"), repo("alpha"), repo("beta")] });
+    const before = rows(details);
+    const alphaClone = rowNamed(details, "alice/alpha").querySelector<HTMLButtonElement>(
+      "[data-repo-act='clone']",
+    )!;
+    const betaClone = rowNamed(details, "alice/beta").querySelector<HTMLButtonElement>(
+      "[data-repo-act='clone']",
+    )!;
+    alphaClone.focus();
+    const finish = heldClone();
+
+    rowNamed(details, "alice/gamma")
+      .querySelector<HTMLButtonElement>("[data-repo-act='clone']")!
+      .click();
+    finish();
+    await vi.waitFor(() =>
+      expect(
+        rowNamed(details, "alice/gamma").querySelector("[data-repo-act='remove']"),
+      ).not.toBeNull(),
+    );
+
+    expect(names(details)).toEqual(["alice/alpha", "alice/beta", "alice/gamma"]);
+    expectSameElements(rows(details), before);
+    expect(
+      details.querySelector(".forge-account-repos-clone-all")?.getAttribute("aria-label"),
+    ).toBe("Clone 2 uncloned repos");
+    expect(rowNamed(details, "alice/alpha").querySelector("[data-repo-act='clone']")).toBe(
+      alphaClone,
+    );
+    expect(rowNamed(details, "alice/beta").querySelector("[data-repo-act='clone']")).toBe(
+      betaClone,
+    );
+    expect(document.activeElement).toBe(alphaClone);
+  });
+
+  it("hands focus to the row's Remove once the clone pressed from its focused Clone lands", async () => {
+    const details = await showList({ repos: [repo("alpha"), repo("beta")] });
+    const row = rowNamed(details, "alice/beta");
+    const clone = row.querySelector<HTMLButtonElement>("[data-repo-act='clone']")!;
+    clone.focus();
+    const finish = heldClone();
+
+    clone.click();
+    finish();
+
+    const remove = await vi.waitFor(() => {
+      const r = row.querySelector<HTMLButtonElement>("[data-repo-act='remove']");
+      expect(r).not.toBeNull();
+      return r!;
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(remove));
+  });
+
+  it("keeps the list's batch buttons through a repaint that leaves their repositories as they were", async () => {
+    const details = await showList({ repos: [repo("one"), repo("two")] }, ["one"]);
+    const cloneAll = details.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all")!;
+    const deleteAll = details.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all")!;
+    cloneAll.focus();
+
+    await renderForgesPanel({ revalidate: false });
+
+    expect(details.querySelector(".forge-account-repos-clone-all")).toBe(cloneAll);
+    expect(details.querySelector(".forge-account-repos-delete-all")).toBe(deleteAll);
+    expect(document.activeElement).toBe(cloneAll);
+  });
+
+  it("moves neither the pressed row nor the scroll position while a clone runs or after it lands", async () => {
+    const style = mountAppCSS();
+    try {
+      // The app's own scroller and panel; a real pointer press, so the pressed button takes focus.
+      document.body.innerHTML = `
+        <div id="git-view"><div data-git-panel="sources" class="git-panel">
+          <div id="git-sources-mount"><div id="forges-panel"></div></div>
+        </div></div>`;
+      const scroller = document.getElementById("git-view")!;
+      scroller.style.cssText = "position: relative; height: 300px";
+      const many = Array.from({ length: 40 }, (_, i) => repo(`r${String(i).padStart(2, "0")}`));
+      const details = await showList({ repos: many });
+      // The list opens with a height transition; the reader scrolls a list that has finished opening.
+      await Promise.all(document.getAnimations().map((a) => a.finished));
+      const target = rowNamed(details, "alice/r20");
+      scroller.scrollTop = target.offsetTop - 120;
+      await frame();
+      const top = scroller.scrollTop;
+      const rowTop = target.getBoundingClientRect().top;
+      expect(top, "the list scrolls in this fixture").toBeGreaterThan(0);
+      const finish = heldClone();
+
+      const clone = target.querySelector<HTMLButtonElement>("[data-repo-act='clone']")!;
+      await userEvent.click(clone);
+      await frame();
+      expect(target.querySelector("[data-repo-act='clone']"), "during the request").toBe(clone);
+      expect(scroller.scrollTop, "during the request").toBe(top);
+      expect(target.getBoundingClientRect().top, "during the request").toBe(rowTop);
+
+      finish();
+      await vi.waitFor(() =>
+        expect(target.querySelector("[data-repo-act='remove']")).not.toBeNull(),
+      );
+      await frame();
+      expect(scroller.scrollTop, "after the clone landed").toBe(top);
+      expect(target.getBoundingClientRect().top, "after the clone landed").toBe(rowTop);
+      expect(rowNamed(details, "alice/r20")).toBe(target);
+    } finally {
+      style.remove();
+    }
   });
 });

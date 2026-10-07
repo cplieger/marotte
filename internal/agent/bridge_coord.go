@@ -879,20 +879,23 @@ func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, model string) 
 }
 
 // PersistModelSwitch records a landed switch: the model_switched entry into the open turn
-// (lanes sealed first) or after the newest close, then the header takes the pick, drops the
-// old tier and resets usage. Detached context. Takes the payload because From, To and
-// Effort are adjacent strings.
+// (lanes sealed first) or after the newest close, none on an unstarted chat, then the header
+// takes the pick, drops the old tier and resets usage. Detached context. Takes the payload
+// because From, To and Effort are adjacent strings.
 func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModelSwitched, contextSize int) {
 	ctx = durable.Context(ctx)
-	if log, ok := bc.turns.foldTarget(chatID); ok {
+	switch log, ok := bc.turns.foldTarget(chatID); {
+	case ok:
 		sealed, err := log.ModelSwitched(ctx, sw)
 		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
 		if err != nil {
 			slog.Error("switch_model: record the switch in the turn", "chat_id", chatID, "error", err)
 		}
-	} else if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
-		marotte.EntryKindModelSwitched, "", sw); err != nil {
-		slog.Error("switch_model: record the switch between turns", "chat_id", chatID, "error", err)
+	case bc.conversationStarted(ctx, chatID):
+		if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+			marotte.EntryKindModelSwitched, "", sw); err != nil {
+			slog.Error("switch_model: record the switch between turns", "chat_id", chatID, "error", err)
+		}
 	}
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
@@ -916,7 +919,7 @@ func (bc *BridgeCoordinator) ThinkingDefaultOff(model string) bool {
 
 // PersistEffortChange records a reader-asked tier change as a model_switched entry with
 // From == To (marotte.EntryModelSwitched). Writes no header field. An empty model writes
-// nothing: the renderer reads an empty To as `Context reset`.
+// nothing (the renderer reads an empty To as `Context reset`), nor does an unstarted chat.
 func (bc *BridgeCoordinator) PersistEffortChange(ctx context.Context, chatID marotte.ChatID, model string, level marotte.EffortLevel) {
 	if model == "" {
 		return
@@ -931,14 +934,25 @@ func (bc *BridgeCoordinator) PersistEffortChange(ctx context.Context, chatID mar
 		}
 		return
 	}
+	if !bc.conversationStarted(ctx, chatID) {
+		return
+	}
 	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
 		marotte.EntryKindModelSwitched, "", sw); err != nil {
 		slog.Error("set_effort: record the change between turns", "chat_id", chatID, "error", err)
 	}
 }
 
+// A between-turns append before the first prompt mints an event turn, which makes the empty chat
+// render as a conversation; the header alone carries a switch made before then.
+func (bc *BridgeCoordinator) conversationStarted(ctx context.Context, chatID marotte.ChatID) bool {
+	c, ok := bc.chatStore.Get(ctx, chatID)
+	return ok && c.TurnCount > 0
+}
+
 // PersistModeSwitch records a landed mode switch as a mode_switched entry, into the open
-// turn (lanes sealed first) or after the newest close. Writes no header field. Detached context.
+// turn (lanes sealed first) or after the newest close; an unstarted chat gets none. Writes no
+// header field. Detached context.
 func (bc *BridgeCoordinator) PersistModeSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModeSwitched) {
 	ctx = durable.Context(ctx)
 	if log, ok := bc.turns.foldTarget(chatID); ok {
@@ -947,6 +961,9 @@ func (bc *BridgeCoordinator) PersistModeSwitch(ctx context.Context, chatID marot
 		if err != nil {
 			slog.Error("set_mode: record the switch in the turn", "chat_id", chatID, "error", err)
 		}
+		return
+	}
+	if !bc.conversationStarted(ctx, chatID) {
 		return
 	}
 	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,

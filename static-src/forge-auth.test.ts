@@ -52,6 +52,8 @@ vi.mock("./forge-store.js", async (importOriginal) => {
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_CLOSE_UI, ICON_PLUS_UI } from "./icons.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
@@ -385,6 +387,31 @@ describe("forge-auth: 4-section layout", () => {
     expect(slot.dataset["mode"]).toBeUndefined();
   });
 
+  it("turns the + into a close mark while its pane is open, and back once it closes", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='gitlab']")!;
+    const btn = section.querySelector<HTMLButtonElement>("[data-forge-add]")!;
+    const glyph = (svg: string): string => iconEl(svg).outerHTML;
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.innerHTML).toBe(glyph(ICON_PLUS_UI));
+
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(btn.getAttribute("data-tooltip")).toBe("Close");
+    expect(btn.getAttribute("aria-label")).toBe("Close");
+    expect(btn.innerHTML).toBe(glyph(ICON_CLOSE_UI));
+
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.getAttribute("data-tooltip")).toBe("Add an account");
+    expect(btn.getAttribute("aria-label")).toBe("Add an account");
+    expect(btn.innerHTML).toBe(glyph(ICON_PLUS_UI));
+  });
+
   it("re-probes connected accounts in the background on page open", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
@@ -407,10 +434,7 @@ describe("forge-auth: 4-section layout", () => {
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
+    mockedApiGet.mockResolvedValueOnce({ repos: [] });
     await renderForgesPanel();
     // Flushes the void revalidateInBackground microtasks.
     await Promise.resolve();

@@ -41,10 +41,7 @@ function started(value: DeviceFlowResponse): Promise<DeviceFlowResponse> & {
 describe("renderDeviceSignIn", () => {
   let body: HTMLElement;
   let hostInput: HTMLInputElement;
-  let deps: {
-    expandOnNextPaint: ReturnType<typeof vi.fn<(id: string) => void>>;
-    renderForgesPanel: ReturnType<typeof vi.fn<() => void>>;
-  };
+  let deps: { connected: ReturnType<typeof vi.fn<(id: string) => void>> };
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -55,7 +52,7 @@ describe("renderDeviceSignIn", () => {
     hostInput = document.createElement("input");
     hostInput.value = "github.com";
     document.body.append(hostInput, body);
-    deps = { expandOnNextPaint: vi.fn(), renderForgesPanel: vi.fn() };
+    deps = { connected: vi.fn() };
   });
 
   afterEach(() => {
@@ -85,7 +82,26 @@ describe("renderDeviceSignIn", () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
-    expect(deps.renderForgesPanel).toHaveBeenCalledOnce();
+    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("github:github.com");
+  });
+
+  it("closing the pane of a grant that connected cancels nothing on the server", async () => {
+    // The pane closes from inside `connected`, which ends every grant left in it.
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    deps.connected.mockImplementation(() => {
+      endGrantsIn(document.body);
+    });
+
+    await signIn();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(deps.connected).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("says the sign-in ended when the grant is denied", async () => {
@@ -125,7 +141,7 @@ describe("renderDeviceSignIn", () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
-    expect(deps.expandOnNextPaint).toHaveBeenCalledWith("gitlab:gitlab.example.com");
+    expect(deps.connected).toHaveBeenCalledExactlyOnceWith("gitlab:gitlab.example.com");
   });
 
   it("names on a self-managed GitLab every setting its OAuth application needs", () => {

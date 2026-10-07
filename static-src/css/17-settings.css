@@ -284,7 +284,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3) var(--sp-3);
+  padding: var(--sp-3);
 }
 
 .forge-account-repos-summary {
@@ -324,6 +324,18 @@
 .forge-account-repos-label {
   flex: 1;
   min-width: 0;
+}
+
+/* The list's place while its first page is read: the toggle's row box, so the
+   list lands without moving the row. */
+.forge-account-repos-pending {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
 }
 
 .forge-account-repos-summary::-webkit-details-marker {
@@ -556,9 +568,11 @@
   font-size: var(--fs-sm);
 }
 
+/* The code box and its Copy button are one control row: `stretch` gives both the
+   taller box, and the code's floor is the button's `--btn-h` at every tier. */
 .forge-device-code-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: var(--sp-2);
 }
 
@@ -712,15 +726,18 @@
 
 /* GitHub OAuth device-flow display: user code + status line. */
 .forge-device-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--btn-h);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   font-weight: 700;
   letter-spacing: 0.1em;
-  padding: var(--sp-2) var(--sp-3);
+  padding: 0 var(--sp-3);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  text-align: center;
   -webkit-user-select: all;
   user-select: all;
 }

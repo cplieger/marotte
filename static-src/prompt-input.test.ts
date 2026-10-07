@@ -356,4 +356,19 @@ describe("the send button's state", () => {
     expect(sendBtn().type).toBe("submit");
     expect(sendBtn().getAttribute("aria-label")).toBe("Send");
   });
+
+  // The visible word sits left of the glyph and is a word of the accessible name (matched
+  // case-insensitively, as WCAG 2.5.3 does), so speech input can say what the reader sees.
+  it.each([
+    [{ kind: "idle" } as const, "Send"],
+    [{ kind: "streaming" } as const, "Cancel"],
+    [{ kind: "error", reason: "The bridge exited." } as const, "Retry"],
+  ])("labels the %o face with its word before the glyph", (state, word) => {
+    setSendState(state);
+    const [first, second] = sendBtn().children;
+    expect(first?.classList.contains("send-btn-label")).toBe(true);
+    expect(first?.textContent).toBe(word);
+    expect(second?.tagName.toLowerCase()).toBe("svg");
+    expect(sendBtn().getAttribute("aria-label")?.toLowerCase()).toContain(word.toLowerCase());
+  });
 });

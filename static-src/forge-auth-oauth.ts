@@ -20,10 +20,9 @@ export interface DeviceSignInTarget {
 }
 
 export interface OAuthFlowDeps {
-  /** Mark a forge ID for expansion on next paint. */
-  expandOnNextPaint: (id: string) => void;
-  /** Trigger a full panel re-render. */
-  renderForgesPanel: () => void;
+  /** The grant completed and connected the account `id`. Called after the grant
+   *  is forgotten, so closing the pane cancels nothing on the server. */
+  connected: (id: string) => void;
 }
 
 interface LiveGrant {
@@ -198,7 +197,13 @@ function beginGrant(
       { keepLabel: true },
     );
   });
-  void pollDevice(body, target.kind, host, start, poll.signal, deps).finally(forget);
+  void pollDevice(body, target.kind, start, poll.signal)
+    .finally(forget)
+    .then((connected) => {
+      if (connected) {
+        deps.connected(`${target.kind}:${host}`);
+      }
+    });
 }
 
 /**
@@ -271,11 +276,9 @@ export function renderDevicePrompt(
 async function pollDevice(
   host: HTMLElement,
   kind: DeviceKind,
-  forgeHost: string,
   start: DeviceFlowResponse,
   signal: AbortSignal,
-  deps: OAuthFlowDeps,
-): Promise<void> {
+): Promise<boolean> {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
   // The caller aborts `signal` on host teardown, and every status write also checks host.isConnected.
   const setStatus = (text: string): void => {
@@ -306,26 +309,24 @@ async function pollDevice(
   );
 
   if (outcome.status === "aborted") {
-    return;
+    return false;
   }
   if (outcome.status === "timeout") {
     setStatus("Timed out waiting for approval. Try again.");
-    return;
+    return false;
   }
   const res = outcome.result;
   if (res.status === "complete") {
-    setStatus("Connected.");
-    deps.expandOnNextPaint(`${kind}:${forgeHost}`);
-    deps.renderForgesPanel();
-    return;
+    return true;
   }
   if (res.status === "expired") {
     setStatus("Device code expired. Try again.");
-    return;
+    return false;
   }
   if (res.status === "error" || res.status === "denied") {
     setStatus(`Error: ${res.error ?? "unknown"}`);
   }
+  return false;
 }
 
 function setLine(status: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {

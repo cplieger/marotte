@@ -672,7 +672,8 @@
   [id="ctx-model-pill"],
   .pill-role-label,
   .pill-model-effort,
-  .pill-model-item > span
+  .pill-model-item > span,
+  .send-btn-label
 ) {
   text-box: trim-both cap alphabetic;
 }
@@ -1516,15 +1517,16 @@
   background: color-mix(in srgb, var(--c-border) 50%, transparent);
 }
 
-/* The account row is the card's one LINK (plan, credit meter, opens the account
- * page); a real <a> is legal here because the card is the trigger's SIBLING. Shape
- * is `.pill-model-item`'s, with inline padding spelled `--card-inset` because it
- * must EQUAL the card's inset: `--card-radius` is concentric only while the row is
- * flush inside that inset on BOTH edges (`align-self: stretch` plus the negative
- * margins; `width: 100%` would cross-align the margin and leave the end 16px short).
- * `color: inherit` is load-bearing: the reset layer's `a { color: var(--c-link) }`
- * would otherwise paint the row in link ink. */
+/* The account row is the card's one LINK. Its fill sits `--account-gap` inside the
+ * card's border on the inline and block-end edges while its text keeps the card's
+ * inset; the radius is concentric for that gap (outer − border − gap). `align-self:
+ * stretch` plus the negative margins, because `width: 100%` would cross-align the
+ * margin and leave the end short. `color: inherit` is load-bearing: the reset
+ * layer's `a { color: var(--c-link) }` would otherwise paint the row in link ink. */
 .pill-account {
+  --account-gap: var(--sp-1);
+  --account-reach: calc(var(--card-inset) - var(--account-gap));
+
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1532,10 +1534,14 @@
   inline-size: auto;
   color: inherit;
   text-decoration: none;
-  border-radius: var(--card-radius);
-  padding-inline: var(--card-inset);
-  margin-inline: calc(-1 * var(--card-inset));
+  border-radius: calc(var(--r-lg) - 1px - var(--account-gap));
+  padding-inline: var(--account-reach);
+  margin-inline: calc(-1 * var(--account-reach));
   padding-block: var(--sp-1);
+
+  &:last-child {
+    margin-block-end: calc(-1 * var(--account-reach));
+  }
 
   /* A TARGET, so it keeps the app-wide floor (61-mcp-tools.css): a popup card is in none
      of the floor's prose exemptions. Restated PHYSICALLY, as `.code-refs-link` does, so
@@ -1577,19 +1583,17 @@
      across a word is not a press"), so a link styled as a row declares its own.
      `--c-press` is one step past `--c-hover` on the same ramp, and the ink stays
      lifted: on touch there is no hover rule at all, so this is the ONLY feedback a
-     finger gets and it has to carry both channels by itself.
-
-     NO `&:focus-visible` BLOCK HERE. `.pill-expand-content` is `overflow: auto`, so
-     it clips descendant painting at its padding box, and this rule deliberately makes
-     the row flush with that box on both inline edges to buy the concentric corner —
-     which puts the floor's OUTSIDE ring entirely inside the clip.
-     `.pill-account:focus-visible` is a member of 40-a11y.css's inset-offset list
-     instead, so the band lands INSIDE the border box where this row's own padding
-     clears it. */
+     finger gets and it has to carry both channels by itself. */
   &:active {
     background: var(--c-press);
     color: var(--c-text-primary);
   }
+
+  /* NO `&:focus-visible` BLOCK HERE. `.pill-expand-content` is `overflow: auto`, so
+     it clips descendant painting at its padding box, and this row sits closer to
+     that box than the floor's OUTSIDE ring reaches. `.pill-account:focus-visible`
+     is in 40-a11y.css's inset-offset list instead, so the band lands INSIDE the
+     border box where this row's own padding clears it. */
 }
 
 /* The plan and the meter stack; the external mark sits beside the stack rather than
@@ -1955,13 +1959,16 @@
   color: var(--c-text-primary);
   cursor: pointer;
 
-  /* THE SAME BOX AS THE ROW'S OTHER ICON-ONLY CONTROL: block axis `--composer-ctl-h`,
-     inline axis the glyph plus `.pill`'s inline padding, so Send matches
-     `#chat-options-btn` and differs by COLOUR alone. Wider than tall on purpose: a
-     square read as a different size class, and the width comes from the shared
-     padding rather than a second literal. `min-width: 0`, PHYSICAL, opts out of the
-     hit floor's `min-width` (61-mcp-tools.css sorts later); the `::after` expander
-     below holds the target at --hit-floor instead. */
+  /* The label's size and spacing are `.pill`'s, so the row reads as one line. */
+  gap: 0.25rem;
+  font-size: var(--fs-xs);
+
+  /* THE SAME BLOCK SIZE AND INLINE PADDING AS `#chat-options-btn`, so on a phone-shaped
+     viewport, where the word is hidden, Send is that button's box and differs by
+     COLOUR alone. Wider than tall on purpose: a square read as a different size
+     class, and the width comes from the shared padding rather than a second literal.
+     `min-width: 0`, PHYSICAL, opts out of the hit floor's `min-width` (61-mcp-tools.css
+     sorts later); the `::after` expander below holds the target at --hit-floor. */
   block-size: var(--composer-ctl-h);
 
   /* The row's padding, or whatever keeps this button wider than tall (the ratified
@@ -1969,7 +1976,7 @@
      arm is that inequality solved for the padding, plus 1px so it is strict; it does
      not bind at either tier today, and it is what keeps the property structural if
      `--icon-ui` or `--pill-pad-inline` moves. Both terms are the row's own, so
-     neither can drift from it, and the result is the box `#chat-options-btn` has. */
+     neither can drift from it, and the result is `#chat-options-btn`'s padding. */
   padding-inline: max(
     var(--pill-pad-inline),
     calc((var(--composer-ctl-h) - 2px - var(--icon-ui)) / 2 + 1px)
@@ -2179,9 +2186,11 @@
    its long edge is mostly wider than 48rem, so the narrow arm alone leaves the tier
    on screen in landscape. No reasoning tier on a phone at any level: the row is
    already full at 390px and the tier is `flex-shrink: 0`, so the model NAME would
-   pay for it. VISUAL ONLY: the button's aria-label still names the level. */
+   pay for it. Send keeps its glyph only, for the same row budget. VISUAL ONLY: each
+   button's aria-label still names it. */
 @media (width <= 48rem), (height <= 30rem) {
-  .pill-model-effort {
+  .pill-model-effort,
+  .send-btn-label {
     display: none;
   }
 }

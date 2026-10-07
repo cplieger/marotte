@@ -50,10 +50,8 @@ const ANY_FORGE_SCOPES = `Token scopes: ${SCOPES.github} on GitHub (classic toke
 export interface PATFormDeps {
   /** Close the add-account slot. */
   closeSlot: (slot: HTMLElement) => void;
-  /** Mark a forge ID for expansion on next paint. */
-  expandOnNextPaint: (id: string) => void;
-  /** Trigger a full panel re-render. */
-  renderForgesPanel: () => void;
+  /** The token connected the account `id` from the pane in `slot`. */
+  connected: (slot: HTMLElement, id: string) => void;
 }
 
 /** Connects with the host and token read once per press. Resolves to the kind
@@ -158,9 +156,7 @@ function tokenForm(
           return;
         }
         tokenInput.value = "";
-        deps.closeSlot(slot);
-        deps.expandOnNextPaint(`${kind}:${host}`);
-        deps.renderForgesPanel();
+        deps.connected(slot, `${kind}:${host}`);
       },
       { keepLabel: true },
     );

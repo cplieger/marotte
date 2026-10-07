@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,6 +119,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // An idle live chat switches at once, records one model_switched entry and resets usage; context_size is kept.
 func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	h, cs, _ := newTestHub()
+	finishedTurn(t, h, "c1")
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
@@ -149,6 +151,33 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	}
 	if c.Usage.ContextSize != 200000 || c.Usage.ContextPct != 0 || c.Usage.Credits != 0 {
 		t.Errorf("usage = %+v, want the counters reset and context_size 200000 preserved", c.Usage)
+	}
+}
+
+// A closer's dispatch and the switch command can apply one pending pick at the same moment; the
+// pick is applied and recorded once.
+func TestApplyPendingModel_ConcurrentAppliersRecordOneSwitch(t *testing.T) {
+	for range 50 {
+		h, cs, _ := newTestHub()
+		finishedTurn(t, h, "c1")
+		if _, err := h.coord.OpenBridge(t.Context(), "c1", "m-old"); err != nil {
+			t.Fatalf("OpenBridge: %v", err)
+		}
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Model = "m-old"
+			c.PendingModel = "m-new"
+			return true
+		})
+
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(func() { h.applyPendingModel(t.Context(), "c1") })
+		}
+		wg.Wait()
+
+		if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 1 {
+			t.Fatalf("model_switched entries after 4 concurrent appliers = %+v, want exactly one", switches)
+		}
 	}
 }
 

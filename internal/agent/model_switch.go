@@ -73,9 +73,13 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 
 // applyPendingModel applies pending_model on an idle chat: through set_config_option on a live
 // bridge (model_switched entry between turns), or straight onto model with no bridge. A busy chat
-// keeps it for the closer. Idleness is read under the lifecycle mutex; the bridge call holds no lock.
+// keeps it for the closer. Idleness is read under the lifecycle mutex; the bridge call holds only
+// the chat's switch lock, so a second applier reads the pick the first already cleared.
 func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID) {
 	ctx = durable.Context(ctx)
+	lc := rt.coord.turns.lifecycleFor(chatID)
+	lc.switchMu.Lock()
+	defer lc.switchMu.Unlock()
 	if rt.coord.turns.live(chatID) {
 		return
 	}

@@ -966,14 +966,13 @@ function statusCardLink(): HTMLElement {
 }
 
 describe("the ring is painted inside the popup card that clips it", () => {
-  it("on the account link, flush on both inline edges of the card", async () => {
+  it("on the account link, closer to the card's edge than the ring reaches", async () => {
     const { clipper, link } = statusCard();
     await focusByTab(link);
     expect(getComputedStyle(link).outlineOffset, "the link takes the inset offset").toBe("-2px");
-    // Flush on both inline edges (the concentric-corner claim), with real block clearance.
     const gap = inset(link, clipper);
-    expect(gap.left, "flush with the card's padding box at the leading edge").toBeLessThan(0.5);
-    expect(gap.right, "flush at the trailing edge too").toBeLessThan(0.5);
+    expect(gap.left, "4px inside the card's padding box at the leading edge").toBeCloseTo(4, 1);
+    expect(gap.right, "and at the trailing edge").toBeCloseTo(4, 1);
     expect(gap.top, "the detail rows are above it").toBeGreaterThan(0.5);
     expect(reachOf(link), "the inset offset cancels the ring's reach").toBe(0);
     expectRingInside("account link", link, clipper);

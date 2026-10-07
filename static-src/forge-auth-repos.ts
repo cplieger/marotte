@@ -1,6 +1,7 @@
 import { el } from "@cplieger/reactive";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import type { PartialResult, Repo, RepoList } from "./wire/types.gen.js";
@@ -122,12 +123,66 @@ function setRowNote(repo: Repo, text: string, deps: RepoDeps): void {
 export function renderRepoRow(repo: Repo, deps: RepoDeps): HTMLElement {
   const li = el("li", { className: "forge-account-repo-row" });
   const cloned = deps.isCloned(repo.name);
-  li.append(
-    renderRepoState(cloned),
+  const parts = rowParts(repo, cloned);
+  const built: [HTMLElement, string[]][] = [
+    [renderRepoState(cloned), parts.state],
+    [renderRepoIdentity(repo), parts.identity],
+    [renderRepoActions(repo, cloned, deps), parts.actions],
+  ];
+  for (const [part, sig] of built) {
+    sigChanged(part, sig);
+    li.appendChild(part);
+  }
+  return li;
+}
+
+function rowParts(repo: Repo, cloned: boolean): Record<"state" | "identity" | "actions", string[]> {
+  return {
+    state: [String(cloned)],
+    identity: [wireSignature(repo), rowNotes.get(rowKey(repo)) ?? ""],
+    actions: [String(cloned), repo.name, repo.url ?? "", repo.clone_url ?? ""],
+  };
+}
+
+/** Repaint only the parts of a row whose state moved: a rebuilt part drops focus and the page's
+ *  scroll anchor, so an unrelated repaint must leave it in place. */
+export function updateRepoRow(li: HTMLElement, repo: Repo, deps: RepoDeps): void {
+  const cloned = deps.isCloned(repo.name);
+  const parts = rowParts(repo, cloned);
+  swapPart(li, ":scope > .forge-account-repo-state", parts.state, () => renderRepoState(cloned));
+  swapPart(li, ":scope > .forge-account-repo-identity", parts.identity, () =>
     renderRepoIdentity(repo),
+  );
+  const rebuilt = swapPart(li, ":scope > .forge-account-repo-actions", parts.actions, () =>
     renderRepoActions(repo, cloned, deps),
   );
-  return li;
+  if (!rebuilt) {
+    // A request another control started (Clone all) still shows on this row's button.
+    const clone = li.querySelector<HTMLButtonElement>("[data-repo-act='clone']");
+    if (clone !== null) {
+      adoptRow(clone, cloneKey(repo), deps);
+    }
+    const trash = li.querySelector<HTMLButtonElement>("[data-repo-act='remove']");
+    if (trash !== null) {
+      adoptRow(trash, removeKey(repo), deps);
+    }
+  }
+}
+
+function swapPart(
+  host: HTMLElement,
+  selector: string,
+  parts: readonly string[],
+  build: () => HTMLElement,
+): boolean {
+  const old = host.querySelector<HTMLElement>(selector);
+  if (old === null || !sigChanged(old, parts)) {
+    return false;
+  }
+  const fresh = build();
+  sigChanged(fresh, parts);
+  old.replaceWith(fresh);
+  return true;
 }
 
 /** The row's name, its tags, and what it says about its last press. */
@@ -160,7 +215,7 @@ export function renderRepoIdentity(repo: Repo): HTMLElement {
   return idEl;
 }
 
-export function renderRepoState(cloned: boolean): HTMLElement {
+function renderRepoState(cloned: boolean): HTMLElement {
   const state = el("span", { className: "forge-account-repo-state" });
   if (cloned) {
     state.appendChild(
@@ -186,16 +241,38 @@ function pressRow(
   fn: () => Promise<void>,
   deps: RepoDeps,
 ): void {
+  // Read before the feedback disables the button, which blurs it.
+  const held = document.activeElement === btn;
   const p = deps.start(key, fn);
-  if (p !== undefined) {
-    void withAsyncFeedback(btn, () => p);
+  if (p === undefined) {
+    return;
   }
+  void withAsyncFeedback(btn, () => p);
+  const row = btn.closest<HTMLElement>(".forge-account-repo-row");
+  if (held && row !== null) {
+    void p.then(
+      () => {
+        refocusRow(row, btn);
+      },
+      () => undefined,
+    );
+  }
+}
+
+/** A landed press rebuilds the row's actions (Clone becomes Remove), so focus goes to the
+ *  control that replaced the pressed one unless the reader has since moved it. */
+function refocusRow(row: HTMLElement, pressed: HTMLButtonElement): void {
+  const active = document.activeElement;
+  if (pressed.isConnected || !row.isConnected || (active !== null && active !== document.body)) {
+    return;
+  }
+  row.querySelector<HTMLButtonElement>("[data-repo-act]")?.focus({ preventScroll: true });
 }
 
 /** A control built while its request runs shows that request. */
 function adoptRow(btn: HTMLButtonElement, key: string, deps: RepoDeps): void {
   const p = deps.running(key);
-  if (p !== undefined) {
+  if (p !== undefined && btn.getAttribute("aria-busy") !== "true") {
     void withAsyncFeedback(btn, () => p);
   }
 }
@@ -225,6 +302,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
       {
         type: "button",
         className: "btn-small btn-danger icon-only",
+        "data-repo-act": "remove",
         "data-tooltip": "Remove local copy",
         "aria-label": "Remove local copy",
       },
@@ -241,6 +319,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
       {
         type: "button",
         className: "btn-small icon-only",
+        "data-repo-act": "clone",
         "data-tooltip": "Clone into workspace",
         "aria-label": "Clone into workspace",
       },

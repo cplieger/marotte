@@ -123,6 +123,7 @@ func TestWriteGitPanel(t *testing.T) {
 		`"Contributions elsewhere"`,
 		`"Undo"`,
 		`"Load more repositories"`,
+		`"Refresh accounts and repositories"`,
 		`"Sign in with GitLab"`,
 	} {
 		if !strings.Contains(out, want) {

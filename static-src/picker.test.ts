@@ -119,6 +119,14 @@ describe("model picker visibility", () => {
     expect(hidden()).toBe(false);
   });
 
+  // A chat created with no model (an install whose settings carry no last_model) is still an empty
+  // chat, and the overlay is how a model gets chosen for it.
+  it("shows for an empty idle chat that has no model chosen yet", () => {
+    setSessions([makeSession({ model: "" })]);
+    setActive("chat-1");
+    expect(hidden()).toBe(false);
+  });
+
   // The overlay must not sit over a conversation. `turn_count` is the header's session-wide count
   // and `turn_order` the paginated window; either one being non-empty means there is something to
   // read underneath.

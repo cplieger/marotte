@@ -1,5 +1,5 @@
-// The model pill's tier is hidden on a phone-shaped viewport (narrow OR short). Its own file because a resize block
-// must sit last and restore the size.
+// The model pill's tier and Send's word are hidden on a phone-shaped viewport (narrow OR short). Its own file because a
+// resize block must sit last and restore the size.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` is a stub that throws.
@@ -60,14 +60,18 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
    * The span carries the class, not `.hidden` (the JS gate's `display: none !important`), or the CSS gate goes
    * unmeasured. The resize is asserted.
    */
-  async function displayAt(width: number, height: number): Promise<string> {
+  async function displayAt(
+    width: number,
+    height: number,
+    className = "pill-model-effort",
+  ): Promise<string> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
       width,
       height,
     ]);
     const span = document.createElement("span");
-    span.className = "pill-model-effort";
+    span.className = className;
     span.textContent = "· max";
     document.body.appendChild(span);
     return getComputedStyle(span).display;
@@ -85,5 +89,16 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
   it("shows the tier on a viewport that is neither narrow nor short", async () => {
     // A landscape tablet clears both arms: measuring the short edge separates 1024x768 from 900x400.
     expect(await displayAt(1024, 768)).not.toBe("none");
+  });
+
+  it.each([
+    [360, 800],
+    [900, 400],
+  ] as const)("hides Send's word at %ix%i", async (width, height) => {
+    expect(await displayAt(width, height, "send-btn-label")).toBe("none");
+  });
+
+  it("shows Send's word on a viewport that is neither narrow nor short", async () => {
+    expect(await displayAt(1024, 768, "send-btn-label")).not.toBe("none");
   });
 });

@@ -520,12 +520,16 @@ func TestSettleTurnOnResponse_NoErrorLogOnSuccess(t *testing.T) {
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
+	finishedTurn(t, h, "c1")
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
 	h.coord.PersistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
 	if got := logs.String(); strings.Contains(got, "switch_model:") {
 		t.Errorf("unexpected switch_model error log on success: %s", got)
+	}
+	if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 1 {
+		t.Errorf("model_switched entries = %+v, want the one this switch appended", switches)
 	}
 }
 
@@ -534,6 +538,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
+	finishedTurn(t, h, "c1")
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
@@ -552,8 +557,8 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	if len(switches) != 1 || switches[0] != (marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}) {
 		t.Errorf("model_switched entries = %+v, want one {From: m-old, To: m-new, Effort: high}", switches)
 	}
-	if closes := closesOf(t, entries); len(closes) != 0 {
-		t.Errorf("the log holds %d turn_close, want 0: the switch opened and closed no turn", len(closes))
+	if closes := closesOf(t, entries); len(closes) != 1 {
+		t.Errorf("the log holds %d turn_close, want the finished turn's 1: the switch opened and closed no turn", len(closes))
 	}
 
 	c, ok := cs.Get(ctx, "c1")
@@ -574,6 +579,7 @@ func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	finishedTurn(t, h, "c1")
 
 	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMax)
 
@@ -616,6 +622,63 @@ func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
 
 	if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 0 {
 		t.Errorf("model_switched entries = %+v, want none for a modelless chat", switches)
+	}
+}
+
+func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
+	t.Helper()
+	id, _ := h.stagePromptTurn(t, chatID)
+	endTurn(t, h, chatID, id)
+	if c, ok := h.chatStore.Get(t.Context(), chatID); !ok || c.TurnCount != 1 {
+		t.Fatalf("after one finished turn the header reads %+v, want turn_count 1", c)
+	}
+}
+
+func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
+	tests := map[string]func(h *Runtime){
+		"effort": func(h *Runtime) {
+			h.coord.PersistEffortChange(t.Context(), "c1", "opus-5", marotte.EffortHigh)
+		},
+		"mode": func(h *Runtime) {
+			h.coord.PersistModeSwitch(t.Context(), "c1",
+				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
+		},
+		"model": func(h *Runtime) {
+			h.coord.PersistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+		},
+	}
+	for name, persist := range tests {
+		t.Run(name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+
+			persist(h)
+
+			if got := logOf(t, cs, "c1"); len(got) != 0 {
+				t.Errorf("log after a %s switch on an unstarted chat = %+v, want no entry", name, got)
+			}
+			if c, _ := cs.Get(t.Context(), "c1"); c.TurnCount != 0 {
+				t.Errorf("turn_count = %d after a %s switch on an unstarted chat, want 0", c.TurnCount, name)
+			}
+		})
+	}
+}
+
+func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "opus-5"
+		c.PendingModel = "sonnet-5"
+		return true
+	})
+
+	h.coord.PersistModelSwitch(t.Context(), "c1", marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5"}, 1234)
+
+	c, _ := cs.Get(t.Context(), "c1")
+	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
+		t.Errorf("header = {Model %q, PendingModel %q, ContextSize %d}, want {sonnet-5, \"\", 1234}",
+			c.Model, c.PendingModel, c.Usage.ContextSize)
 	}
 }
 

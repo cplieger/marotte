@@ -130,7 +130,8 @@ func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
 	b.WriteString("\"Add\") whose pull requests the Pull requests tab also lists, and the account's repo list with ")
 	b.WriteString("\"Clone into workspace\" per repo and \"Load more repositories\" while the forge has more; ")
 	b.WriteString("a clone lands under ")
-	b.WriteString("`" + workDir + "/<name>`\n\n")
+	b.WriteString("`" + workDir + "/<name>`. The tab's \"Refresh accounts and repositories\" button re-reads ")
+	b.WriteString("every account's repo list from its forge\n\n")
 	if !connected {
 		b.WriteString("No forge account is connected: the Pull requests and Sources tabs list nothing until ")
 		b.WriteString("the user adds one under Sources → \"Add an account\", which is also what registers marotte's ")
