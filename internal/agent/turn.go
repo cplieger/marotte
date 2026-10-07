@@ -120,6 +120,9 @@ type chatLifecycle struct {
 	reserved bool
 	state    TurnState
 	mu       sync.Mutex
+	// switchMu serializes applying pending_model: a closer's dispatch and the switch command
+	// would otherwise both read one pick and apply it twice. Held across the bridge call.
+	switchMu sync.Mutex
 }
 
 // turnRegistry holds one lifecycle per chat. Lock order registry.mu -> lifecycle.mu -> chat store: opens and
