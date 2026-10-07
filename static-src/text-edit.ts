@@ -18,7 +18,11 @@ interface ApplyOpts {
 
 /** Apply `edit` as one undo step. Falls back to `setRangeText` plus a bubbling
  *  `input` event, which costs the undo history only. */
-export function applyEdit(el: HTMLTextAreaElement, edit: Edit, opts: ApplyOpts = {}): void {
+export function applyEdit(
+  el: HTMLTextAreaElement | HTMLInputElement,
+  edit: Edit,
+  opts: ApplyOpts = {},
+): void {
   const silent = opts.silent === true;
   // On `window` in the capture phase, so it runs ahead of every other input
   // listener whatever the at-target ordering.
@@ -47,7 +51,7 @@ export function applyEdit(el: HTMLTextAreaElement, edit: Edit, opts: ApplyOpts =
 
 /** The native path, or false when the browser declined it. execCommand acts on
  *  the focused element, so an unfocused box always takes the fallback. */
-function insertNatively(el: HTMLTextAreaElement, edit: Edit): boolean {
+function insertNatively(el: HTMLTextAreaElement | HTMLInputElement, edit: Edit): boolean {
   if (document.activeElement !== el) {
     return false;
   }
