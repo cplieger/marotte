@@ -175,11 +175,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     }
   }
 
-  if (info.kind === "hook") {
-    wireFileRow(summary, info);
-  } else {
-    wireFileLink(node, info.filePath, depth1 === "diff");
-  }
+  wireFileLink(node, info.filePath, depth1 === "diff");
   syncOffloadLink(node, opts.offload);
   syncInteractionFact(node, opts.interaction);
 
@@ -342,18 +338,7 @@ function buildHeader(
     header.appendChild(badge);
   }
 
-  if (info.filePath !== "" && info.kind === "hook") {
-    // A hook card's whole claim row is the control (`wireFileRow`), so the chip is
-    // its label: a button here would nest inside a `role="button"` row.
-    header.appendChild(
-      el(
-        "span",
-        { className: "tool-file-link", "data-tooltip-anchor": "" },
-        el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
-        el("span", { className: "tool-file-name" }, info.fileBasename),
-      ),
-    );
-  } else if (info.filePath !== "") {
+  if (info.filePath !== "") {
     // The filename IS the link to the change. There used to be a second
     // "View diff" button beside the stats; depth 2 is a click on the SUBJECT,
     // and a generic button next to it was a second affordance for one intent.
@@ -375,7 +360,7 @@ function buildHeader(
         // Path-first is also what this row's tooltip is FOR — the fact the chip
         // hides — where a tooltip restating the click says nothing.
         "data-tooltip": info.filePath,
-        "aria-label": `Open the diff for ${info.fileBasename}`,
+        "aria-label": fileLinkLabel(info),
       },
       el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
       el("span", { className: "tool-file-name" }, info.fileBasename),
@@ -856,30 +841,15 @@ function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): voi
   });
 }
 
-/** Make a claim-only card's whole claim row the control that opens its file, by
- *  pointer and by keyboard. A row with no path stays inert. */
-function wireFileRow(row: HTMLElement, info: ToolRenderInfo): void {
-  const path = info.filePath;
-  if (path === "") {
-    return;
+/** The chip's accessible name: what its click opens, per `wireFileLink`. */
+function fileLinkLabel(info: ToolRenderInfo): string {
+  if (toolDepth1(info.kind) === "diff") {
+    return `Open the diff for ${info.fileBasename}`;
   }
-  row.classList.add("opens-file");
-  row.setAttribute("role", "button");
-  row.tabIndex = 0;
-  row.setAttribute("aria-label", `Open the hook file ${info.fileBasename}`);
-  // The chip shows the basename, so the full path rides the tooltip, anchored
-  // at the chip's ink rather than the row's centre.
-  row.dataset["tooltip"] = path;
-  row.addEventListener("click", (e: Event) => {
-    e.stopPropagation();
-    openAtLine(path);
-  });
-  row.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openAtLine(path);
-    }
-  });
+  if (info.kind === "hook") {
+    return `Open the hook file ${info.fileBasename}`;
+  }
+  return `Open ${info.fileBasename}`;
 }
 
 // Per-card details disclosure controllers, for external expansion
