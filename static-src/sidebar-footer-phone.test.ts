@@ -24,7 +24,6 @@ afterAll(async () => {
 
 afterEach(() => {
   delete document.documentElement.dataset["pointer"];
-  delete document.documentElement.dataset["touched"];
 });
 
 interface Footer {
@@ -209,10 +208,6 @@ describe("900x400 — the SHORT arm, which is about absence", () => {
     expect(
       document.documentElement.dataset["pointer"],
       "the short arm measures the NO-attribute tier",
-    ).toBeUndefined();
-    expect(
-      document.documentElement.dataset["touched"],
-      "and no hybrid attribute either",
     ).toBeUndefined();
     // 900px is past 48rem, so no width arm matches and nothing height-keyed reaches the footer: the
     // floor is the fine tier's 24px.

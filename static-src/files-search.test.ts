@@ -2,6 +2,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
 
+/** A non-2xx answer: what the mocked transport resolves to when the server refuses the query. */
+class HttpStatus {
+  constructor(readonly status: number) {}
+}
+
 /** Typed as the reply so a case cannot build one the decoder refuses by accident. */
 const apiGet = vi.fn<(url: string, signal?: AbortSignal) => Promise<unknown>>();
 const openAtLine = vi.fn();
@@ -24,7 +29,25 @@ vi.mock("./api-client.js", () => ({
       this.ctrl = null;
     }
   },
-  // Through the real generated decoder, so an unreadable reply collapses to null as in production.
+  // Through the real generated decoder, so an unreadable reply fails as in production.
+  apiGetTypedOrError: async (
+    url: string,
+    decoder: (v: unknown) => unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> => {
+    const raw = await apiGet(url, signal);
+    if (raw instanceof HttpStatus) {
+      return { ok: false, status: raw.status, data: null, error: "refused" };
+    }
+    if (raw === null) {
+      return { ok: false, status: 0, data: null, error: "network" };
+    }
+    try {
+      return { ok: true, status: 200, data: decoder(raw), error: "" };
+    } catch {
+      return { ok: false, status: 0, data: null, error: "decode" };
+    }
+  },
   apiGetTyped: async (
     url: string,
     decoder: (v: unknown) => unknown,
@@ -45,7 +68,12 @@ vi.mock("./navigate.js", () => ({
   openAtLine: (path: string, line?: number) => openAtLine(path, line),
 }));
 // ICON_CLOSE_UI is inert: search-shell.ts imports it.
-vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>", ICON_CLOSE_UI: "<svg></svg>" }));
+vi.mock("./icons.js", () => ({
+  fileIcon: () => "<svg></svg>",
+  ICON_CLOSE_UI: "<svg></svg>",
+  ICON_EYE_UI: "<svg></svg>",
+  ICON_FILE_TEXT_UI: "<svg></svg>",
+}));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 // The whole tab store: Browser Mode links ESM for real and tabs.ts drags a dozen modules behind it.
 vi.mock("./tabs.js", async () => ({
@@ -88,6 +116,33 @@ function input(): HTMLInputElement {
     throw new Error("search input not built");
   }
   return el;
+}
+
+function filesField(): HTMLInputElement {
+  return document.getElementById("fb-search-files") as HTMLInputElement;
+}
+
+function toggle(label: string): HTMLButtonElement {
+  const btn = _filesSearchBar()?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (btn === null || btn === undefined) {
+    throw new Error(`no ${label} toggle`);
+  }
+  return btn;
+}
+
+const CONTENTS = "Search file contents";
+const IGNORED = "Include ignored files";
+
+function contentHit(path: string, line: number, excerpt = "x"): FileMatch {
+  return { path, excerpt, kind: "content", line, ranges: [] };
+}
+
+function nameHit(
+  path: string,
+  kind: "name" | "dir" = "name",
+  ranges: FileMatch["ranges"] = [],
+): FileMatch {
+  return { path, excerpt: "", kind, line: 0, ranges };
 }
 
 function ctrlF(): KeyboardEvent {
@@ -160,10 +215,17 @@ describe("searchURL", () => {
     expect(searchURL("workspace", "x", { caseSensitive: true })).toContain("case=1");
   });
 
-  it("omits an empty glob field rather than sending a pattern nothing typed", () => {
-    const url = searchURL("workspace", "x", { include: "", exclude: "node_modules" });
-    expect(url).not.toContain("include=");
-    expect(url).toContain("exclude=node_modules");
+  it("sends mode, files and ignored only when set", () => {
+    const bare = searchURL("workspace", "x", { mode: "names", files: "", ignored: false });
+    expect(bare).toBe("/api/files/search?path=workspace&q=x");
+    const full = searchURL("workspace", "x", {
+      mode: "contents",
+      files: "*.css, !node_modules",
+      ignored: true,
+    });
+    expect(new URL(full, "http://h").searchParams.get("mode")).toBe("contents");
+    expect(new URL(full, "http://h").searchParams.get("files")).toBe("*.css, !node_modules");
+    expect(new URL(full, "http://h").searchParams.get("ignored")).toBe("1");
   });
 });
 
@@ -184,15 +246,15 @@ describe("hitLabel", () => {
 
 describe("hitKey", () => {
   it("separates two hits that differ only by line", () => {
-    const a = hitKey({ path: "/w/a.go", excerpt: "", kind: "content", line: 1 });
-    const b = hitKey({ path: "/w/a.go", excerpt: "", kind: "content", line: 2 });
+    const a = hitKey(contentHit("/w/a.go", 1));
+    const b = hitKey(contentHit("/w/a.go", 2));
     expect(a).not.toBe(b);
   });
 
   it("separates hits whose paths differ only where a colon falls", () => {
     // A colon is a legal filename character, hence keyenc.
-    const a = hitKey({ path: "/w/a:1", excerpt: "", kind: "content", line: 2 });
-    const b = hitKey({ path: "/w/a", excerpt: "", kind: "content", line: 12 });
+    const a = hitKey(contentHit("/w/a:1", 2));
+    const b = hitKey(contentHit("/w/a", 12));
     expect(a).not.toBe(b);
   });
 });
@@ -211,22 +273,23 @@ describe("the search bar", () => {
     expect(activateBrowser).toHaveBeenCalled();
   });
 
-  it("renders one row per hit and opens the editor at the line", async () => {
+  it("renders one line row per content hit and opens the editor at the line", async () => {
     apiGet.mockResolvedValue(
       result({
         scanned: 3,
         matches: [
-          { path: "/workspace/src/a.go", excerpt: "func Foo()", kind: "content", line: 12 },
-          { path: "/workspace/src/b.go", excerpt: "Foo()", kind: "content", line: 4 },
+          contentHit("/workspace/src/a.go", 12, "func Foo()"),
+          contentHit("/workspace/src/b.go", 4, "Foo()"),
         ],
       }),
     );
     openFilesSearch();
+    toggle(CONTENTS).click();
     input().value = "Foo";
     input().dispatchEvent(new Event("input"));
     await settle();
 
-    const rows = _filesSearchResults().querySelectorAll(".fb-search-hit");
+    const rows = _filesSearchResults().querySelectorAll(".fb-search-line");
     expect(rows).toHaveLength(2);
     expect(document.getElementById("fb-search-note")?.textContent).toBe(
       "2 matches; 3 files scanned",
@@ -235,11 +298,23 @@ describe("the search bar", () => {
     expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", 12);
   });
 
+  it("counts entries in names mode, the unit that mode scans", async () => {
+    apiGet.mockResolvedValue(result({ scanned: 1560, matches: [nameHit("/workspace/src/a.css")] }));
+    openFilesSearch();
+    input().value = ".css";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "1 entry; 1,560 entries scanned",
+    );
+  });
+
   // The words are copy.ts's; these pin which facts this surface hands it.
 
   async function noteFor(res: FileSearchResult): Promise<string | null | undefined> {
     apiGet.mockResolvedValue(res);
     openFilesSearch();
+    toggle(CONTENTS).click();
     input().value = "needle";
     input().dispatchEvent(new Event("input"));
     await settle();
@@ -247,21 +322,16 @@ describe("the search bar", () => {
   }
 
   it("states the cut when the server counted more lines than it sent rows", async () => {
-    const matches: FileMatch[] = Array.from({ length: 20 }, (_, i) => ({
-      path: "/workspace/src/many.txt",
-      excerpt: "needle",
-      kind: "content",
-      line: i + 1,
-    }));
+    const matches: FileMatch[] = Array.from({ length: 20 }, (_, i) =>
+      contentHit("/workspace/src/many.txt", i + 1, "needle"),
+    );
     expect(await noteFor(result({ matches, matched: 25, scanned: 1 }))).toBe(
       "20 of 25 matches shown; 1 file scanned",
     );
   });
 
   it("says a stopped scan did not read everything, beside the rows it did find", async () => {
-    const matches: FileMatch[] = [
-      { path: "/workspace/src/a.go", excerpt: "needle", kind: "content", line: 1 },
-    ];
+    const matches: FileMatch[] = [contentHit("/workspace/src/a.go", 1, "needle")];
     expect(await noteFor(result({ matches, scanned: 5000, truncated: true }))).toBe(
       "1 match; 5,000 files scanned, not everything was read",
     );
@@ -316,9 +386,7 @@ describe("the search bar", () => {
               resolve(
                 result({
                   scanned: 1,
-                  matches: [
-                    { path: "/workspace/src/stale.go", excerpt: "s", kind: "content", line: 1 },
-                  ],
+                  matches: [nameHit("/workspace/src/stale.go")],
                 }),
               );
             };
@@ -326,9 +394,7 @@ describe("the search bar", () => {
         : Promise.resolve(
             result({
               scanned: 2,
-              matches: [
-                { path: "/workspace/src/fresh.go", excerpt: "f", kind: "content", line: 3 },
-              ],
+              matches: [nameHit("/workspace/src/fresh.go")],
             }),
           ),
     );
@@ -348,13 +414,8 @@ describe("the search bar", () => {
     expect((rows[0] as HTMLElement).dataset["path"]).toBe("/workspace/src/fresh.go");
   });
 
-  it("clears the results without asking the server when the query empties", async () => {
-    apiGet.mockResolvedValue(
-      result({
-        scanned: 1,
-        matches: [{ path: "/workspace/src/a.go", excerpt: "x", kind: "content", line: 1 }],
-      }),
-    );
+  it("clears the results without asking the server when the query and the filter empty", async () => {
+    apiGet.mockResolvedValue(result({ scanned: 1, matches: [nameHit("/workspace/src/a.go")] }));
     openFilesSearch();
     input().value = "x";
     input().dispatchEvent(new Event("input"));
@@ -367,7 +428,9 @@ describe("the search bar", () => {
     await settle();
     expect(apiGet).not.toHaveBeenCalled();
     expect(_filesSearchResults().querySelectorAll(".fb-search-hit")).toHaveLength(0);
-    expect(document.getElementById("fb-search-note")?.textContent).toBe("");
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "Type a name, or a pattern like *.css",
+    );
   });
 
   it("sends case=1 once the Aa toggle is latched", async () => {
@@ -381,14 +444,224 @@ describe("the search bar", () => {
     expect(apiGet.mock.calls.at(-1)?.[0]).toContain("case=1");
   });
 
-  it("passes the glob fields through", async () => {
+  it("opens in names mode with the contents toggle unpressed", async () => {
     openFilesSearch();
     input().value = "Foo";
-    const include = document.getElementById("fb-search-include") as HTMLInputElement;
-    include.value = "*.go";
-    include.dispatchEvent(new Event("input"));
+    input().dispatchEvent(new Event("input"));
     await settle();
-    expect(apiGet.mock.calls.at(-1)?.[0]).toContain("include=*.go");
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("false");
+    expect(toggle(IGNORED).getAttribute("aria-pressed")).toBe("false");
+    expect(input().placeholder).toBe("Find files by name\u2026");
+    expect(apiGet.mock.calls.at(-1)?.[0]).not.toContain("mode=");
+  });
+
+  it("reopens in names mode with both toggles unpressed after a close", async () => {
+    openFilesSearch();
+    toggle(CONTENTS).click();
+    toggle(IGNORED).click();
+    await settle();
+    // The precondition, or the reopen below could not tell a reset from toggles never pressed.
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("true");
+    expect(toggle(IGNORED).getAttribute("aria-pressed")).toBe("true");
+    closeFilesSearch();
+
+    apiGet.mockClear();
+    openFilesSearch();
+    input().value = "Foo";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("false");
+    expect(toggle(IGNORED).getAttribute("aria-pressed")).toBe("false");
+    expect(input().placeholder).toBe("Find files by name\u2026");
+    const url = apiGet.mock.calls.at(-1)?.[0] ?? "";
+    expect(url).not.toContain("mode=");
+    expect(url).not.toContain("ignored=");
+  });
+
+  it("keeps the toggles when an open bar is only refocused", async () => {
+    openFilesSearch();
+    toggle(CONTENTS).click();
+    await settle();
+    openFilesSearch();
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("pressing the contents toggle re-runs as mode=contents and retitles the field", async () => {
+    openFilesSearch();
+    input().value = "Foo";
+    await settle();
+    apiGet.mockClear();
+    toggle(CONTENTS).click();
+    await settle();
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(apiGet.mock.calls[0]?.[0]).toContain("mode=contents");
+    expect(input().placeholder).toBe("Find text in files\u2026");
+    expect(input().getAttribute("aria-label")).toBe("Find text in files\u2026");
+  });
+
+  it("pressing the ignored toggle re-runs with ignored=1", async () => {
+    openFilesSearch();
+    input().value = "Foo";
+    await settle();
+    apiGet.mockClear();
+    toggle(IGNORED).click();
+    await settle();
+    expect(apiGet.mock.calls.at(-1)?.[0]).toContain("ignored=1");
+  });
+
+  it("an empty query with a files filter searches in names mode but not in contents mode", async () => {
+    openFilesSearch();
+    await settle();
+    apiGet.mockClear();
+    filesField().value = ".css";
+    filesField().dispatchEvent(new Event("input"));
+    await settle();
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(apiGet.mock.calls[0]?.[0]).toContain("files=.css");
+
+    apiGet.mockClear();
+    toggle(CONTENTS).click();
+    await settle();
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("renders the basename with marked ranges and the parent path beside it", async () => {
+    searchPath = "/workspace";
+    const [row] = await search([
+      nameHit("/workspace/src/css/01-tokens.css", "name", [
+        { start: 3, end: 9 },
+        { start: 9, end: 40 },
+      ]),
+    ]);
+    const base = row?.querySelector(".fb-search-base");
+    expect(base?.textContent).toBe("01-tokens.css");
+    expect(
+      [...(base?.querySelectorAll("mark.fb-search-mark") ?? [])].map((m) => m.textContent),
+    ).toEqual(["tokens"]);
+    expect(row?.querySelector(".fb-search-parent")?.textContent).toBe("src/css");
+  });
+
+  it("omits the parent path for a hit directly in the folder searched", async () => {
+    searchPath = "/workspace/src";
+    const [row] = await search([nameHit("/workspace/src/a.css")]);
+    expect(row?.querySelector(".fb-search-parent")).toBeNull();
+  });
+
+  it("groups content rows under one header per file", async () => {
+    searchPath = "/workspace";
+    apiGet.mockResolvedValue(
+      result({
+        scanned: 2,
+        matches: [
+          contentHit("/workspace/a.go", 3, "a needle"),
+          contentHit("/workspace/a.go", 9, "needle again"),
+          contentHit("/workspace/b.go", 1, "needle"),
+        ],
+      }),
+    );
+    openFilesSearch();
+    toggle(CONTENTS).click();
+    input().value = "needle";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+
+    const rows = [..._filesSearchResults().querySelectorAll<HTMLElement>(".fb-search-hit")];
+    expect(
+      rows.map((r) =>
+        r.classList.contains("fb-search-group") ? `# ${r.textContent ?? ""}` : r.textContent,
+      ),
+    ).toEqual(["# a.go2", ":3a needle", ":9needle again", "# b.go1", ":1needle"]);
+    rows[0]?.click();
+    expect(openAtLine).toHaveBeenCalledWith("/workspace/a.go", undefined);
+  });
+
+  it("ArrowDown from the query focuses the first row and ArrowUp returns", async () => {
+    await search([nameHit("/workspace/src/a.go"), nameHit("/workspace/src/b.go")]);
+    const rows = [..._filesSearchResults().querySelectorAll<HTMLElement>(".fb-search-hit")];
+    input().focus();
+    input().dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(rows[0]);
+    rows[0]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(rows[1]);
+    rows[1]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }),
+    );
+    rows[0]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(input());
+  });
+
+  it("opens a row on Enter, once", async () => {
+    const rows = await search([nameHit("/workspace/src/a.go")]);
+    rows[0]?.focus();
+    rows[0]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(openAtLine).toHaveBeenCalledTimes(1);
+    expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
+  });
+
+  it("opens a row on Space, once", async () => {
+    const rows = await search([nameHit("/workspace/src/a.go")]);
+    rows[0]?.focus();
+    rows[0]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    expect(openAtLine).toHaveBeenCalledTimes(1);
+    expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
+  });
+
+  it("ArrowDown from the files field focuses the first row", async () => {
+    await search([nameHit("/workspace/src/a.go"), nameHit("/workspace/src/b.go")]);
+    const first = _filesSearchResults().querySelector<HTMLElement>(".fb-search-hit");
+    filesField().focus();
+    filesField().dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("stays on the last row at ArrowDown rather than wrapping to the first", async () => {
+    const rows = await search([nameHit("/workspace/src/a.go"), nameHit("/workspace/src/b.go")]);
+    rows[1]?.focus();
+    rows[1]?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(rows[1]);
+  });
+
+  it("sends a contents needle verbatim, edge spaces included, and searches one made only of spaces", async () => {
+    openFilesSearch();
+    toggle(CONTENTS).click();
+    for (const q of [" needle", "needle ", "  "]) {
+      apiGet.mockClear();
+      input().value = q;
+      input().dispatchEvent(new Event("input"));
+      await settle();
+      expect(apiGet).toHaveBeenCalledTimes(1);
+      expect(new URL(String(apiGet.mock.calls[0]?.[0]), "http://h").searchParams.get("q")).toBe(q);
+    }
+  });
+
+  it("trims a names query, so spaces alone ask nothing", async () => {
+    openFilesSearch();
+    input().value = "  a.css ";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(new URL(String(apiGet.mock.calls[0]?.[0]), "http://h").searchParams.get("q")).toBe(
+      "a.css",
+    );
+
+    apiGet.mockClear();
+    input().value = "   ";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(apiGet).not.toHaveBeenCalled();
   });
 
   // Kind decides a row's shape and destination; it is a registered wire enum, so the decoder refuses an unknown value.
@@ -403,27 +676,22 @@ describe("the search bar", () => {
   }
 
   it("renders a name hit with no :line and no excerpt, because a name has neither", async () => {
-    const [row] = await search([
-      { path: "/workspace/src/cover-book.png", excerpt: "", kind: "name", line: 0 },
-    ]);
+    const [row] = await search([nameHit("/workspace/src/cover-book.png")]);
     expect(row?.querySelector(".fb-search-lineno")).toBeNull();
     expect(row?.querySelector(".fb-search-excerpt")).toBeNull();
-    // The label is hitLabel's; this search path is rootless, so the absolute form is honest.
-    expect(row?.querySelector(".fb-name")?.textContent).toBe("/workspace/src/cover-book.png");
+    expect(row?.querySelector(".fb-name")?.textContent).toBe("cover-book.png");
+    // The folder is hitLabel's; this search path is rootless, so the absolute form is honest.
+    expect(row?.querySelector(".fb-search-parent")?.textContent).toBe("/workspace/src");
   });
 
   it("opens a file name hit in the editor with NO line, so it lands at the top", async () => {
-    const [row] = await search([
-      { path: "/workspace/src/cover-book.png", excerpt: "", kind: "name", line: 0 },
-    ]);
+    const [row] = await search([nameHit("/workspace/src/cover-book.png")]);
     row?.click();
     expect(openAtLine).toHaveBeenCalledWith("/workspace/src/cover-book.png", undefined);
   });
 
   it("navigates the browser to a dir hit and closes the bar, in that order", async () => {
-    const [row] = await search([
-      { path: "/workspace/src/notebook-dir", excerpt: "", kind: "dir", line: 0 },
-    ]);
+    const [row] = await search([nameHit("/workspace/src/notebook-dir", "dir")]);
     row?.click();
     expect(openFolder).toHaveBeenCalledWith("/workspace/src/notebook-dir");
     // A folder is not a file: the editor would open a directory.
@@ -433,7 +701,9 @@ describe("the search bar", () => {
   it("refuses a reply naming a kind this bundle does not know, rather than rendering a row nothing can open", async () => {
     // An unknown kind fails the whole reply, reported as a search that could not run.
     apiGet.mockResolvedValue({
-      matches: [{ path: "/workspace/src/book.bin", excerpt: "", kind: "sigil", line: 0 }],
+      matches: [
+        { path: "/workspace/src/book.bin", excerpt: "", kind: "sigil", line: 0, ranges: [] },
+      ],
       scanned: 1,
       matched: 1,
       truncated: false,
@@ -449,9 +719,9 @@ describe("the search bar", () => {
   });
 
   it("keeps the :line row for a content hit, so the two shapes stay distinguishable", async () => {
-    const [name, content] = await search([
-      { path: "/workspace/src/book.md", excerpt: "", kind: "name", line: 0 },
-      { path: "/workspace/src/book.md", excerpt: "a book here", kind: "content", line: 7 },
+    const [name, , content] = await search([
+      nameHit("/workspace/src/book.md"),
+      contentHit("/workspace/src/book.md", 7, "a book here"),
     ]);
     // matchLines starts at 1, so a name hit's line 0 cannot collide with a content hit.
     expect(name).not.toBe(content);
@@ -467,6 +737,79 @@ describe("the search bar", () => {
     input().dispatchEvent(new Event("input"));
     await settle();
     expect(document.getElementById("fb-search-note")?.textContent).toBe("Could not search");
+  });
+
+  it("names a refused pattern as the pattern's fault, and any other refusal as a failed search", async () => {
+    apiGet.mockResolvedValue(new HttpStatus(400));
+    openFilesSearch();
+    input().value = "*.{css";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "Incomplete or invalid pattern",
+    );
+
+    apiGet.mockResolvedValue(new HttpStatus(500));
+    input().value = "*.{css}";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(document.getElementById("fb-search-note")?.textContent).toBe("Could not search");
+  });
+
+  // A kept row is the same element, so focus and hover survive; its content must still follow the reply.
+  async function reply(query: string, matches: FileMatch[]): Promise<HTMLElement[]> {
+    apiGet.mockResolvedValue(result({ scanned: 1, matches }));
+    input().value = query;
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    return [..._filesSearchResults().querySelectorAll<HTMLElement>(".fb-search-hit")];
+  }
+
+  function marks(row: HTMLElement | undefined): (string | null)[] {
+    return [...(row?.querySelectorAll("mark.fb-search-mark") ?? [])].map((m) => m.textContent);
+  }
+
+  it("repaints a kept name row when the next reply moves its marks", async () => {
+    searchPath = "/workspace";
+    openFilesSearch();
+    const [first] = await reply("tok", [
+      nameHit("/workspace/tokens.css", "name", [{ start: 0, end: 3 }]),
+    ]);
+    expect(marks(first)).toEqual(["tok"]);
+
+    const [second] = await reply("tokens", [
+      nameHit("/workspace/tokens.css", "name", [{ start: 0, end: 6 }]),
+    ]);
+    expect(second).toBe(first);
+    expect(marks(second)).toEqual(["tokens"]);
+  });
+
+  it("repaints a kept file header when the next reply changes its line count", async () => {
+    searchPath = "/workspace";
+    openFilesSearch();
+    toggle(CONTENTS).click();
+    const [header] = await reply("needle", [
+      contentHit("/workspace/a.go", 3, "a needle"),
+      contentHit("/workspace/a.go", 9, "needle again"),
+    ]);
+    expect(header?.querySelector(".fb-search-count")?.textContent).toBe("2");
+
+    const [kept, line] = await reply("needle a", [
+      { ...contentHit("/workspace/a.go", 3, "a needle"), ranges: [{ start: 2, end: 8 }] },
+    ]);
+    expect(kept).toBe(header);
+    expect(kept?.querySelector(".fb-search-count")?.textContent).toBe("1");
+    expect(marks(line)).toEqual(["needle"]);
+  });
+
+  it("opens what a kept row shows now, not what it showed when it was built", async () => {
+    openFilesSearch();
+    const [file] = await reply("book", [nameHit("/workspace/src/book")]);
+    const [folder] = await reply("books", [nameHit("/workspace/src/book", "dir")]);
+    expect(folder).toBe(file);
+    folder?.click();
+    expect(openFolder).toHaveBeenCalledWith("/workspace/src/book");
+    expect(openAtLine).not.toHaveBeenCalled();
   });
 });
 
@@ -521,19 +864,32 @@ describe("a tab switch", () => {
     expect(_filesSearchResults().children).toHaveLength(0);
   });
 
-  it("forgets the query AND the globs, so nothing narrows a later search invisibly", async () => {
+  it("reset forgets the query, the filter and both toggles", async () => {
     openFilesSearch();
     input().value = "Foo";
-    const include = document.getElementById("fb-search-include") as HTMLInputElement;
-    const exclude = document.getElementById("fb-search-exclude") as HTMLInputElement;
-    include.value = "*.go";
-    exclude.value = "node_modules";
+    filesField().value = "!node_modules";
+    toggle(CONTENTS).click();
+    toggle(IGNORED).click();
     await settle();
+    // The precondition, or a toggle left pressed by an earlier case would make the click unpress it.
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("true");
+    expect(toggle(IGNORED).getAttribute("aria-pressed")).toBe("true");
 
     leaveBrowser();
     expect(input().value).toBe("");
-    expect(include.value).toBe("");
-    expect(exclude.value, "a stale exclude silently narrows a search nobody scoped").toBe("");
+    expect(filesField().value, "a stale filter silently narrows a search nobody scoped").toBe("");
+    expect(toggle(CONTENTS).getAttribute("aria-pressed")).toBe("false");
+    expect(toggle(IGNORED).getAttribute("aria-pressed")).toBe("false");
+    expect(input().placeholder).toBe("Find files by name\u2026");
+
+    apiGet.mockClear();
+    openFilesSearch();
+    input().value = "Foo";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    const url = apiGet.mock.calls.at(-1)?.[0] ?? "";
+    expect(url).not.toContain("mode=");
+    expect(url).not.toContain("ignored=");
   });
 
   it("does NOT close when the switch is ARRIVING at the tab that owns the bar", () => {

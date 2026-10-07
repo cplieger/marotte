@@ -31,10 +31,12 @@ function buildBar(width: string, ids: readonly Tab[] = ["one", "two", "three"]):
     btn.dataset["testTab"] = id;
     btn.style.flex = "1";
     btn.style.minWidth = "0";
-    btn.style.overflow = "hidden";
+    btn.style.display = "flex";
     btn.style.whiteSpace = "nowrap";
     const label = document.createElement("span");
     label.className = "seg-label";
+    label.style.minWidth = "0";
+    label.style.overflow = "hidden";
     label.textContent = TABS.find((t) => t.id === id)?.label ?? id;
     btn.appendChild(label);
     bar.appendChild(btn);

@@ -582,12 +582,9 @@ input[type="radio"] {
  * never hover-only (touch-first). No `outline` here: 40-a11y.css's floor ring fits
  * inside the >= 8px corner inset under `.tool-call`'s `overflow: hidden`. */
 .tool-call:has(> .tool-explain-btn) {
-  /* THE CORNER INSET, a `max()` rather than --sp-2 because it also has to clear the
-     TARGET expander below. `--hit-floor` and `--ctl-h-sm` move on different tiers
-     (`:root[data-touched]` raises the floor to 44px and leaves the small-control
-     rung at 24px), so at a flat 8px the expander reaches 2px past the card's padding
-     box and the `overflow: hidden` clips away the very target it exists to grow.
-     8px on both ordinary tiers, 10px there. */
+  /* THE CORNER INSET also has to clear the TARGET expander below, or the card's
+     `overflow: hidden` clips the target it exists to grow; the `max()` keeps that
+     true whatever the two tier tokens are. */
   --explain-inset: max(var(--sp-2), calc((var(--hit-floor) - var(--ctl-h-sm)) / 2));
 
   position: relative;

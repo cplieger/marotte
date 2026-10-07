@@ -58,7 +58,7 @@ func TestChatSpawn_ResolvesTelemetryUnderTheOrganizationLock(t *testing.T) {
 		cliJSON string
 		want    bool
 	}{
-		{name: "unset is kiro-cli's default, on"},
+		{name: "unset reads off, as the boot seed and the Settings switch do", want: true},
 		{name: "switch on", cliJSON: `{"telemetry.enabled":true}`},
 		{name: "switch off", cliJSON: `{"telemetry.enabled":false}`, want: true},
 		{name: "organization off overrides the switch", cliJSON: `{"telemetry.enabled":true}`, org: new(orgTelemetry(false)), want: true},

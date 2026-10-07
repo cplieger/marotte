@@ -111,8 +111,8 @@ func sessionDisablesAutoCompaction(enabled bool, pct int) bool {
 	return !enabled || pct > settings.DefaultAutoCompactPct
 }
 
-// kiroTelemetryKey is the kiro-cli setting the Data sharing switch writes; unset is kiro-cli's
-// default, on.
+// kiroTelemetryKey is the kiro-cli setting the Data sharing switch writes. Unset reads off, as the
+// boot seed writes it and the switch shows it, so a failed seed cannot send telemetry.
 const kiroTelemetryKey = "telemetry.enabled"
 
 // telemetryDisabled resolves a spawn's telemetryEnabled: kiro-cli's own setting, overridden by an

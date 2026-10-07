@@ -9,6 +9,7 @@ import {
   currentTier,
   resolveTier,
   setPointerMode,
+  touchCapable,
 } from "./pointer-tier.js";
 import {
   cachePointerTier,
@@ -39,13 +40,11 @@ function writeBlob(patch: Record<string, unknown>): void {
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-pointer");
-  document.documentElement.removeAttribute("data-touched");
 });
 
 afterEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-pointer");
-  document.documentElement.removeAttribute("data-touched");
 });
 
 describe("resolveTier", () => {
@@ -219,95 +218,30 @@ describe("the sticky coarse-seen flag", () => {
   });
 });
 
-describe("the third tier state, data-touched", () => {
-  /** The attribute's presence on <html>. It is a bare attribute (no value), so presence is the
-   *  whole signal — 01-tokens.css matches `:root[data-touched]`. */
-  function touched(): boolean {
-    return document.documentElement.hasAttribute("data-touched");
-  }
-
-  it("is stamped at init from a stored coarse observation", () => {
-    // The backfill path: a device whose last observed pointer was coarse has been touched here, so
-    // the flag lands on the same evidence the sticky flag takes.
-    cachePointerTier("coarse");
+describe("touchCapable", () => {
+  it("answers false on fresh storage with no touch reported", () => {
     initPointerTier();
-
-    expect(touched()).toBe(true);
+    expect(touchCapable()).toBe(false);
   });
 
-  it("is stamped on a device being driven by its mouse now", () => {
-    // The case it exists for, and the only one no single tier can serve: a hybrid that has been
-    // touched before and is on its mouse this load.
-    markCoarseSeen();
-    cachePointerTier("fine");
+  it("answers true once a coarse pointer has been observed", () => {
     initPointerTier();
-
-    expect(currentTier(), "the tier itself is untouched by this flag").toBe("fine");
-    expect(touched()).toBe(true);
-  });
-
-  it("is NOT stamped by the capability guess alone", () => {
-    // Same evidence rule the sticky flag follows: `any-pointer: coarse` says a coarse pointer is
-    // AVAILABLE, which the Windows-touch-laptop and iPadOS reports in the module header make
-    // useless.
-    vi.stubGlobal("matchMedia", (query: string) => ({ media: query, matches: true }));
-    initPointerTier();
-
-    expect(currentTier(), "the guess still decides the tier").toBe("coarse");
-    expect(touched()).toBe(false);
-  });
-
-  it("is NOT stamped mid-session by a touch after a fine init", () => {
-    // The freeze, from this attribute's side. `initPointerTier` is the only writer and it reads a
-    // flag written on a PREVIOUS load, so a touch now records for the next load and re-lays out
-    // nothing under the reader.
-    initPointerTier();
-    expect(touched()).toBe(false);
-
     pointer("touch");
-    expect(coarseEverSeen(), "the touch is still RECORDED for the next load").toBe(true);
-    expect(touched(), "and the layout does not move for it").toBe(false);
-
-    document.documentElement.removeAttribute("data-pointer");
-    initPointerTier();
-    expect(touched(), "the next load is where it lands").toBe(true);
+    expect(touchCapable()).toBe(true);
   });
 
-  it("is absent when a fine choice is stored", () => {
-    // A stated preference is rung 1 of `resolveTier` and outranks every observation, so a reader
-    // who touched once and then PINNED fine asked for the dense layout — a 44px floor would
-    // overturn it.
-    markCoarseSeen();
-    setPointerModeChoice("fine");
-    initPointerTier();
-
-    expect(currentTier()).toBe("fine");
-    expect(touched()).toBe(false);
+  it("answers true on fresh storage when the platform reports touch points", () => {
+    vi.spyOn(Navigator.prototype, "maxTouchPoints", "get").mockReturnValue(5);
+    expect(touchCapable()).toBe(true);
+    expect(coarseEverSeen(), "the sticky flag stays evidence of use").toBe(false);
   });
 
-  it("is absent when a coarse choice is stored", () => {
-    // Not a special case for the same reason, but for a cheaper one: the `[data-pointer="coarse"]`
-    // arm declares the identical --hit-floor, so the flag would be a second writer of a value
-    // already in force.
-    markCoarseSeen();
-    setPointerModeChoice("coarse");
-    initPointerTier();
-
-    expect(currentTier()).toBe("coarse");
-    expect(touched()).toBe(false);
-  });
-
-  it("is cleared when the reader pins a tier and re-loads", () => {
-    // The flag is written on EVERY init rather than only set, so a choice made during one session
-    // takes the floor back on the next load. Without the clear it would be a one-way latch nothing
-    // could undo.
-    markCoarseSeen();
-    initPointerTier();
-    expect(touched()).toBe(true);
-
-    setPointerModeChoice("fine");
-    initPointerTier();
-    expect(touched()).toBe(false);
+  it("answers true on fresh storage when any pointer reports coarse", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      media: query,
+      matches: query === "(any-pointer: coarse)",
+    }));
+    expect(touchCapable()).toBe(true);
   });
 });
 
@@ -345,26 +279,6 @@ describe("applyStoredTier (the pre-paint half)", () => {
     expect(root.getAttribute("data-pointer")).toBe(want);
   });
 
-  it("raises the touched floor for a seen coarse pointer with no stated choice", () => {
-    markCoarseSeen();
-    applyStoredTier();
-    expect(root.hasAttribute("data-touched")).toBe(true);
-  });
-
-  it("raises the touched floor for a cached coarse tier with no stated choice", () => {
-    cachePointerTier("coarse");
-    applyStoredTier();
-    expect(root.hasAttribute("data-touched")).toBe(true);
-  });
-
-  it("gives no touched floor once the reader stated a tier", () => {
-    markCoarseSeen();
-    setPointerModeChoice("fine");
-    root.setAttribute("data-touched", "");
-    applyStoredTier();
-    expect(root.hasAttribute("data-touched")).toBe(false);
-  });
-
   it("writes nothing to storage, the sticky flag included", () => {
     cachePointerTier("coarse");
     const before = localStorage.getItem(LS_UI_STATE_KEY);
@@ -378,12 +292,11 @@ describe("applyStoredTier (the pre-paint half)", () => {
     cachePointerTier("coarse");
     applyStoredTier();
     const seen = new MutationObserver(() => undefined);
-    seen.observe(root, { attributes: true, attributeFilter: ["data-pointer", "data-touched"] });
+    seen.observe(root, { attributes: true, attributeFilter: ["data-pointer"] });
     initPointerTier();
     const records = seen.takeRecords();
     seen.disconnect();
     expect(records.map((r) => r.attributeName)).toEqual([]);
     expect(root.getAttribute("data-pointer")).toBe("coarse");
-    expect(root.hasAttribute("data-touched")).toBe(true);
   });
 });

@@ -40,10 +40,13 @@ export interface CreateToolRequest {
   probe?: string;
 }
 
+/** The code an /api/tools answer carries while the tools engine is down; a retry cannot change it. */
+export const TOOLS_UNAVAILABLE = "tools_unavailable";
+
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const loadTools = apiAction<void, Inventory>({
   name: "tools.load",
-  retryable: retryNetwork,
+  retryable: (err) => err.code !== TOOLS_UNAVAILABLE && retryNetwork(err),
   retry: RETRY_STANDARD,
   dedupe: true,
   request: () => ({ method: "GET", path: "/api/tools" }),

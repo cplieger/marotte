@@ -75,6 +75,41 @@ describe("tools.load", () => {
     expect(url).toBe("/api/tools");
     expect(opts.method).toBe("GET");
   });
+
+  it("does not retry an answer from a tools engine that is down", async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: "tools.json is invalid: parse: x", code: "tools_unavailable" }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const onError = vi.fn();
+    const p = loadTools.dispatch(undefined, { onError });
+    await vi.runAllTimersAsync();
+    await p;
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0]?.[0] as { code?: string; message?: string } | undefined;
+    expect(err?.code).toBe("tools_unavailable");
+    expect(err?.message).toBe("tools.json is invalid: parse: x");
+  });
+
+  it("still retries a transient 503", async () => {
+    // Real timers: the retry's sleep is armed only after the body read, which a fake clock
+    // advanced in one jump runs past.
+    vi.useRealTimers();
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "busy" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    await loadTools.dispatch(undefined, { onError: vi.fn() });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("tools.create", () => {

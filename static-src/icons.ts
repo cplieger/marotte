@@ -35,12 +35,23 @@ const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3
 const PATH_BOOK_OPEN =
   '<path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/>';
 
+/** Lucide `eye`. */
+const PATH_EYE =
+  '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
+  '<circle cx="12" cy="12" r="3"/>';
+
 // A tier pair is suffixed `_UI`, never a pixel count: `--icon-ui` varies by pointer (01-tokens.css), so a number would
 // be false.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
 export const ICON_CLOSE = svg("inline", PATH_X);
 export const ICON_CLOSE_UI = svg("ui", PATH_X);
+export const ICON_EYE_UI = svg("ui", PATH_EYE);
+export const ICON_FILE_TEXT_UI = svg(
+  "ui",
+  '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+    '<path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+);
 export const ICON_TRASH = svg("inline", PATH_TRASH);
 export const ICON_TRASH_UI = svg("ui", PATH_TRASH);
 export const ICON_PLUS_UI = svg("ui", PATH_PLUS);
@@ -473,11 +484,7 @@ export const ICON_EXEC_PARALLEL = svg(
 /** Sequence: a descending staircase, one step after another top to bottom. */
 export const ICON_EXEC_SEQUENCE = svg("ui", '<path d="M3 3h6v6h6v6h6v6"/>');
 /** Watch: Lucide `eye`, a node that observes an external condition until it holds. */
-export const ICON_EXEC_WATCH = svg(
-  "ui",
-  '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
-    '<circle cx="12" cy="12" r="3"/>',
-);
+export const ICON_EXEC_WATCH = svg("ui", PATH_EYE);
 /** Lucide `layers-2`: two layers, since three is one feature too many at 16px. */
 export const ICON_EXEC_GROUP = svg(
   "ui",

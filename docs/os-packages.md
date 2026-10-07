@@ -1,6 +1,6 @@
 # OS packages
 
-This page is for anyone who needs a Debian package the image does not ship. The tools engine installs OS packages, so there is no separate variable for them. Add one from the **Tools** tab in **Settings** the way you add anything else, or by name with an explicit source:
+This page is for anyone who needs a Debian package the image does not ship. The tools engine installs OS packages, so there is no separate variable for them. Add one from the **Tools** tab in **Settings** the way you add anything else, or by name with an explicit source in the `tools.json` that **Advanced configuration** on the same tab opens, where a save installs it:
 
 ```json
 { "tools": { "gcc": { "source": "apt:gcc" }, "libc6-dev": { "source": "apt:libc6-dev" } } }

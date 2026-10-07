@@ -98,6 +98,9 @@ type chatLifecycle struct {
 	// changed is closed and replaced on every state change, under mu. A channel, not a Cond, which would re-take the
 	// lock the finalize needs.
 	changed chan struct{}
+	// restoreSession is the session whose writes are KAS applying or rolling back reviewed changes
+	// (expectRestores), "" for none.
+	restoreSession string
 	// nextSeq is the open sequence the newest record took; openLocked increments it
 	// before assigning, so the next record takes nextSeq+1.
 	nextSeq uint64
@@ -223,6 +226,7 @@ func (lc *chatLifecycle) awaitNotFinalizing(ctx context.Context) bool {
 // nil), every other source to own. Caller holds mu and checked the slot.
 func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn) *Turn {
 	lc.nextSeq++
+	lc.restoreSession = ""
 	t := &Turn{
 		Opened: time.Now(),
 		Model:  model,
@@ -406,6 +410,46 @@ func (r *turnRegistry) requestStop(chatID marotte.ChatID) {
 	lc.mu.Lock()
 	lc.stopSeq = lc.nextSeq
 	lc.mu.Unlock()
+}
+
+// expectRestores marks session's writes on chatID as KAS putting files back until the chat's next
+// turn opens. KAS raises a turn approval once the turn's own writes are done, and refuses a rewind
+// mid-turn, so until then the session's writes are KAS applying that review or that revert. A run
+// chat opens no turns that would end the window, so it is never marked.
+func (r *turnRegistry) expectRestores(chatID marotte.ChatID, session string) {
+	r.markRestores(chatID, session, true)
+}
+
+// expectRevertRestores is expectRestores for a rewind, declined while a turn is open: KAS refuses
+// that revert, so a mark would cover the open turn's own writes.
+func (r *turnRegistry) expectRevertRestores(chatID marotte.ChatID, session string) {
+	r.markRestores(chatID, session, false)
+}
+
+func (r *turnRegistry) markRestores(chatID marotte.ChatID, session string, overOpenTurn bool) {
+	if session == "" || workflowIDOf(chatID) != "" {
+		return
+	}
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if !overOpenTurn && (lc.own != nil || lc.pending != nil) {
+		return
+	}
+	lc.restoreSession = session
+}
+
+func (r *turnRegistry) restoring(chatID marotte.ChatID, session string) bool {
+	if session == "" {
+		return false
+	}
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.restoreSession == session
 }
 
 // stoppedAfter reports whether a stop was requested after the named turn opened,

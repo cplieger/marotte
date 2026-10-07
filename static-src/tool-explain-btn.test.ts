@@ -76,7 +76,6 @@ afterAll(() => {
   style.remove();
   host.remove();
   document.documentElement.removeAttribute("data-pointer");
-  document.documentElement.removeAttribute("data-touched");
 });
 
 afterEach(() => {
@@ -84,7 +83,6 @@ afterEach(() => {
   // Browser Mode isolates per FILE, so a `:root` attribute set by one case leaks
   // into every later one.
   document.documentElement.removeAttribute("data-pointer");
-  document.documentElement.removeAttribute("data-touched");
 });
 
 /** Wait for Chromium to decide the card is near the viewport: until `content-visibility: auto`
@@ -356,26 +354,6 @@ describe("the TARGET reaches the hit floor, past the box it paints", () => {
       document.elementFromPoint(cx, box.top - reach - 2),
       `${tier}: and the target stops there — it may not reach past the floor`,
     ).not.toBe(btn);
-  });
-
-  it("survives the THIRD tier, where the floor moves and the control rung does not", async () => {
-    // `:root[data-touched]` raises `--hit-floor` to 44px ALONE (01-tokens.css), so a mouse-driven
-    // hybrid gets 24px controls with a 44px target: the one tier where a flat `--sp-2` inset lets
-    // `overflow: hidden` clip the expander.
-    document.documentElement.dataset["pointer"] = "fine";
-    document.documentElement.dataset["touched"] = "";
-    const card = await failedCard("ex-target-touched");
-    const btn = trigger(card);
-    const box = btn.getBoundingClientRect();
-    const reach = (tokenPx(card, "var(--hit-floor)") - box.height) / 2;
-    expect(reach, "the third tier has to actually widen the target").toBeGreaterThan(1);
-    const cx = box.left + box.width / 2;
-
-    expect(
-      document.elementFromPoint(cx, box.bottom + reach - 1),
-      "the expander's bottom edge is inside the card's clip, so it still hits",
-    ).toBe(btn);
-    expect(document.elementFromPoint(cx, box.top - reach + 1)).toBe(btn);
   });
 });
 

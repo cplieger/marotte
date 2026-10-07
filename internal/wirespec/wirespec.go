@@ -252,6 +252,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[chat.Match](),
 	wiregen.TypeRef[chat.SearchAllResult](),
 	// GET /api/files/search, the third search reply on the same tally.
+	wiregen.TypeRef[filebrowse.MatchRange](),
 	wiregen.TypeRef[filebrowse.FileMatch](),
 	wiregen.TypeRef[filebrowse.FileSearchResult](),
 	// GET /api/mcp/registry/search, the entry family before the reply that holds it.

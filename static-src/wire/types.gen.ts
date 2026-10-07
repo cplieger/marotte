@@ -1180,12 +1180,14 @@ export interface FileMatch {
   path: string;
   excerpt: string;
   kind: FileMatchKind;
+  /** Ranges index the BASENAME of Path for a name or dir row, and Excerpt for a content row. */
+  ranges: MatchRange[];
   line: number;
 }
 
 /**
- * FileSearchResult is GET /api/files/search's reply: the hits, cut at
- * maxSearchMatches, beside the tally over the files the walk read.
+ * FileSearchResult is GET /api/files/search's reply: the hits, cut at maxSearchMatches, beside the
+ * tally. Scanned counts entries visited in names mode and files read in contents mode.
  */
 export interface FileSearchResult {
   matches: FileMatch[];
@@ -1706,6 +1708,12 @@ export interface Match {
   score: number;
   /** UpdatedAt breaks ties toward the more recent conversation. */
   updated_at: number;
+}
+
+/** MatchRange is one highlighted span, in UTF-16 code units: the client slices a JS string with it. */
+export interface MatchRange {
+  start: number;
+  end: number;
 }
 
 /**

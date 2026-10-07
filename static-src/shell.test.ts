@@ -28,6 +28,7 @@ interface Live {
   restartDispatch: (...args: unknown[]) => Promise<unknown>;
   confirmMock: (...args: unknown[]) => Promise<boolean>;
   toastError: (...args: unknown[]) => void;
+  touchCapable: () => boolean;
   els: Record<string, HTMLElement>;
 }
 let live: Live;
@@ -57,6 +58,9 @@ vi.mock("./device-view.js", () => ({
   shellHeight: (): number => live.shellHeight(),
   setShellHeight: (px: number): void => live.setShellHeight(px),
   setShellOpen: (open: boolean): void => live.recordShellOpen(open),
+}));
+vi.mock("./pointer-tier.js", () => ({
+  touchCapable: (): boolean => live.touchCapable(),
 }));
 vi.mock("./actions/shell.js", () => ({
   restartShell: {
@@ -147,6 +151,7 @@ function ptr(
 
 async function setup(
   uiStateData: { shell_h?: number; shell_open?: boolean } = {},
+  device: { touchCapable?: boolean } = {},
 ): Promise<Harness> {
   vi.resetModules();
   bootSeq++;
@@ -156,6 +161,8 @@ async function setup(
   const shellRestartBtn = document.createElement("button");
   const shellKeysBtn = document.createElement("button");
   shellKeysBtn.setAttribute("aria-pressed", "false");
+  // The markup's pre-JS state (static/index.html).
+  shellKeysBtn.classList.add("hidden");
   const shellFullscreenBtn = document.createElement("button");
   // The real button ships a glyph in index.html and the toggle swaps its `d`, so the harness
   // carries one too — without it the icon assertions below pass vacuously against a button that has
@@ -264,6 +271,7 @@ async function setup(
     restartDispatch,
     confirmMock,
     toastError,
+    touchCapable: () => device.touchCapable ?? false,
     els: {
       shellBtn,
       shellToggleBtn,
@@ -357,6 +365,9 @@ describe("shell.ts: lazy terminal creation", () => {
       '"Web Terminal Glyphs", "Monaspace Neon NF", monospace',
     );
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
+    expect(opts.theme?.["--touch-target"], "the library's controls follow the tier").toBe(
+      "var(--ctl-h)",
+    );
     // A THUNK, not a built array (ui v5's lazy `features`), so a throw while composing the list
     // fails inside createTerminal rather than at this call site. Embedded in container layout (the
     // panel is the terminal's boundary; no page-level styling, no bridge feature).
@@ -834,6 +845,25 @@ describe("shell.ts: resize handle", () => {
 });
 
 describe("shell.ts: key-toolbar trigger", () => {
+  it("is shown at init on a touch-capable device", async () => {
+    const h = await setup({}, { touchCapable: true });
+    h.mod.initShellPanel();
+    expect(h.shellKeysBtn.classList.contains("hidden")).toBe(false);
+  });
+
+  it("stays hidden at init on a device with no touch input", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellKeysBtn.classList.contains("hidden")).toBe(true);
+  });
+
+  it("is revealed when the first coarse pointer arrives", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.mod.revealShellKeys();
+    expect(h.shellKeysBtn.classList.contains("hidden")).toBe(false);
+  });
+
   it("drives the grid and mirrors its state on aria-pressed", async () => {
     const h = await setup();
     h.mod.initShellPanel();

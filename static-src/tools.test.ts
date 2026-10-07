@@ -69,6 +69,7 @@ vi.mock("./actions/tools.js", () => ({
   refreshCatalog: { dispatch: mocks.refreshCatalogDispatch },
   cancelToolJob: { dispatch: mocks.cancelJobDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
+  TOOLS_UNAVAILABLE: "tools_unavailable",
 }));
 // Mocking the opener keeps the editor graph out of the link: a partial mock deeper in it (toast.js)
 // fails collection.
@@ -181,6 +182,15 @@ function initWith(data: Inventory): void {
   loadToolsList();
 }
 
+function failLoad(err: { message: string; status?: number; code?: string }): void {
+  mocks.loadDispatch.mockImplementation(
+    (_args: undefined, opts?: { onError?: (e: typeof err) => void }) => {
+      opts?.onError?.(err);
+      return Promise.resolve(null);
+    },
+  );
+}
+
 function rowFor(name: string): HTMLElement | null {
   for (const row of document.querySelectorAll<HTMLElement>("#tools-list .list-row")) {
     if (row.querySelector(".list-row-name")?.textContent === name) {
@@ -248,6 +258,26 @@ describe("tools list rendering", () => {
   it("renders the catalog empty state when no tools are installed", () => {
     initWith(listWith([]));
     expect(byId("tools-list").textContent).toContain("No tools installed yet");
+  });
+
+  it("says why when the tools engine is down", () => {
+    failLoad({
+      message: "tools.json is invalid: manifest version 1, want 2",
+      status: 503,
+      code: "tools_unavailable",
+    });
+    initTools();
+    loadToolsList();
+    expect(byId("tools-list").textContent).toBe(
+      "Tools are off: tools.json is invalid: manifest version 1, want 2",
+    );
+  });
+
+  it("keeps the generic failure for any other load error", () => {
+    failLoad({ message: "upstream exploded", status: 500 });
+    initTools();
+    loadToolsList();
+    expect(byId("tools-list").textContent).toBe("Failed to load tools");
   });
 });
 

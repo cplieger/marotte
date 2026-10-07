@@ -4,7 +4,7 @@ import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { PREPAINT_STEPS, applyStoredTheme, runPrepaint } from "./prepaint-steps.js";
 
 const root = document.documentElement;
-const ROOT_ATTRS = ["data-theme", "data-pointer", "data-touched", "data-shell-open"];
+const ROOT_ATTRS = ["data-theme", "data-pointer", "data-shell-open"];
 const ROOT_PROPS = ["--sidebar-w-pref", "--shell-h"];
 
 function reset(): void {

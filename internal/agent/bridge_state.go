@@ -24,6 +24,8 @@ const (
 // and state encodes the lifecycle phase.
 type sharedBridge struct {
 	bridge ACPBridge
+	// revertStarting runs before a checkpoint revert with the session it reverts; nil on a run carrier.
+	revertStarting func(session string)
 
 	// promptCancel trips the in-flight prompt: session/cancel is an unacked notification, so a
 	// silent KAS would block the Call forever. turnGen keeps an expired grace off a later turn;
@@ -104,11 +106,21 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 // never Start, Stop or SetModel behind the state machine.
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
+	sb.beforeCall(method)
 	return sb.bridge.Call(ctx, method, params)
 }
 
 func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
+	sb.beforeCall(method)
 	return sb.bridge.CallAt(ctx, method, params)
+}
+
+// beforeCall announces a checkpoint revert before it is sent, since KAS writes the files back
+// before it answers.
+func (sb *sharedBridge) beforeCall(method string) {
+	if method == marotte.MethodCheckpointRevertMultiple && sb.revertStarting != nil {
+		sb.revertStarting(string(sb.SessionID()))
+	}
 }
 
 func (sb *sharedBridge) Notify(ctx context.Context, method string, params any) error {

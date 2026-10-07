@@ -56,6 +56,32 @@ export function matchCaseButton(
     },
     "Aa",
   ) as HTMLButtonElement;
+  return latch(btn, initial, onToggle);
+}
+
+/** `className` must be listed in 70-selection.css, which owns the pressed fill. */
+export function latchedIconButton(
+  className: string,
+  label: string,
+  hint: string,
+  icon: string,
+  onToggle: (on: boolean) => void,
+): HTMLButtonElement {
+  const btn = el("button", {
+    type: "button",
+    className,
+    "aria-label": label,
+    "data-tooltip": hint,
+  }) as HTMLButtonElement;
+  btn.appendChild(iconEl(icon));
+  return latch(btn, false, onToggle);
+}
+
+function latch(
+  btn: HTMLButtonElement,
+  initial: boolean,
+  onToggle: (on: boolean) => void,
+): HTMLButtonElement {
   btn.setAttribute("aria-pressed", initial ? "true" : "false");
   btn.addEventListener("click", () => {
     const on = btn.getAttribute("aria-pressed") !== "true";

@@ -2,7 +2,10 @@ package steering
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // lookupEnv is the environment seam the runtime section reads through.
@@ -71,7 +74,7 @@ func writeRuntime(b *strings.Builder, configDir string) {
 
 // 9847 mirrors internal/server's unexported port const; steering cannot import
 // server (server imports steering).
-func writeToolsEngine(b *strings.Builder, configDir string) {
+func writeToolsEngine(b *strings.Builder, configDir, workDir string) {
 	b.WriteString("## Tools engine\n\n")
 	b.WriteString("- marotte's own HTTP server answers on `localhost:9847` inside the container (correct from ")
 	b.WriteString("in here whatever the host published). `curl -s 'localhost:9847/api/tools/search?q=<name>'` ")
@@ -94,8 +97,16 @@ func writeToolsEngine(b *strings.Builder, configDir string) {
 	b.WriteString("uninstall, keep the entry as a template), \"Add tool\" (a search over the same catalog and ")
 	b.WriteString("Debian packages), \"Update all\", \"Refresh catalog\"; \"MCP integrations\" sits below it ")
 	b.WriteString("on the same tab. \"Advanced configuration\" → \"tools.json\" opens the manifest in the editor: a save there installs or ")
-	b.WriteString("removes what changed and refuses an invalid file. A write from your own file tools is neither checked nor applied ")
-	b.WriteString("until the next boot, and an invalid manifest stops marotte from starting, so use the engine API above instead\n\n")
+	b.WriteString("removes what changed and refuses an invalid file. ")
+	if _, err := workspace.ResolveInsideAbs(workDir, filepath.Join(configDir, "tools.json")); err == nil {
+		b.WriteString("A write from your own file tools gets the same check and install: an invalid one is refused with the ")
+		b.WriteString("reason, so fix it and write again. ")
+	} else {
+		b.WriteString("Your file tools cannot write it, because `" + configDir + "` is outside the workspace. ")
+	}
+	b.WriteString("A shell write is neither checked nor applied until the next boot or the next save there. A `tools.json` the ")
+	b.WriteString("engine refuses at boot leaves the tools engine off, with the reason in Settings → Tools and the boot log, ")
+	b.WriteString("until a valid save turns it back on. Prefer the engine API above\n\n")
 }
 
 func writeGitPanel(b *strings.Builder, workDir string, connected bool) {

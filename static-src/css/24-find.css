@@ -490,15 +490,13 @@
   color: var(--c-red);
 }
 
-/* Match highlights, for EVERY surface that highlights: the transcript's find and
-   the editor's find over a diff pane or rendered markdown share one engine
-   (find-engine.ts), so they share one colour. The pair was prefixed `chat-` when
-   the engine lived in find-in-chat.ts; a chat-named mark inside a diff would be
-   the same drift the search-box audit removed everywhere else.
+/* Match highlights: every surface that marks a match joins this rule, so all of
+   them share one colour.
 
    `scroll-margin` keeps a match clear of the floating bar (and any sticky chrome)
    when scrolled into view. */
-mark.find-hit {
+mark.find-hit,
+mark.fb-search-mark {
   color: inherit;
   background: color-mix(in srgb, var(--c-accent) 32%, transparent);
   border-radius: var(--r-sm);

@@ -28,6 +28,9 @@ func NewNeedle(query string, caseSensitive bool) Needle {
 // Hit is one occurrence, addressed into the ORIGINAL text.
 type Hit struct{ Rune, Byte int }
 
+// RuneLen is how many runes of the original text every Hit spans: the fold preserves rune count.
+func (n Needle) RuneLen() int { return n.runes }
+
 // Occurrences yields non-overlapping hits in text order. An empty needle yields
 // nothing: it is no query, and strings.Index would report it at every position.
 func (n Needle) Occurrences(text string) iter.Seq[Hit] {

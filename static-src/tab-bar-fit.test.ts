@@ -22,10 +22,12 @@ function buildBar(width: string, labels: readonly string[]): HTMLElement {
     // so the load-bearing declarations are inlined.
     btn.style.flex = "1";
     btn.style.minWidth = "0";
-    btn.style.overflow = "hidden";
+    btn.style.display = "flex";
     btn.style.whiteSpace = "nowrap";
     const span = document.createElement("span");
     span.className = "seg-label";
+    span.style.minWidth = "0";
+    span.style.overflow = "hidden";
     span.textContent = label;
     btn.appendChild(span);
     bar.appendChild(btn);

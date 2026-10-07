@@ -91,29 +91,14 @@
   gap: var(--sp-2);
 }
 
-/* The bar's outer box is `--btn-h`, like the icon buttons beside it. The
-   painted segment is shorter than the hit floor, so `::after` grows each
-   TARGET on the block axis only, never into its neighbour; `overflow: visible`
-   is what keeps `.seg`'s own clip from cutting the expander away. */
+/* One row of icon segments; the bar's height and each target's expander are
+   the shared `.seg`'s (11-page-lists.css). */
 .web-viewport {
   flex-wrap: nowrap;
 
   & .seg {
     flex: none;
-    min-block-size: calc(var(--btn-h) - 2 * (var(--seg-inset) + 1px));
     min-inline-size: var(--hit-floor);
-    padding-block: 0;
-    position: relative;
-    overflow: visible;
-
-    &::after {
-      content: "";
-      position: absolute;
-      /* Anchored to the segment's PADDING box, so the bar's border and the
-         segment's own reserved border are both crossed to reach the bar's edge. */
-      inset-block: calc(-1 * (var(--seg-inset) + 2px));
-      inset-inline: 0;
-    }
   }
 }
 

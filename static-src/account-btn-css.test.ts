@@ -23,10 +23,8 @@ afterAll(() => {
 });
 
 afterEach(() => {
-  // Both attributes, in a hook, in every file that writes either: a later case's
-  // premise is their ABSENCE.
+  // In a hook, in every file that writes it: a later case's premise is its ABSENCE.
   delete document.documentElement.dataset["pointer"];
-  delete document.documentElement.dataset["touched"];
 });
 
 interface Footer {
@@ -99,13 +97,12 @@ function tokenPx(name: string): number {
 }
 
 /**
- * The four tiers. `coarse-wide` is reachable ONLY through the attribute, so a
+ * The three tiers. `coarse-wide` is reachable ONLY through the attribute, so a
  * width-keyed rule cannot see it.
  */
 const TIERS: readonly (readonly [name: string, apply: () => void])[] = [
   ["fine", () => (document.documentElement.dataset["pointer"] = "fine")],
   ["coarse-wide", () => (document.documentElement.dataset["pointer"] = "coarse")],
-  ["hybrid", () => (document.documentElement.dataset["touched"] = "")],
   ["bare", () => undefined],
 ];
 

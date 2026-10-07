@@ -188,9 +188,10 @@
   cursor: pointer;
   padding: 0;
 
-  /* Fixed square (matches .tab-close) so the three header buttons are
-     uniform and the glyph centers on both axes; every sibling icon-button
-     class centers, this one was missed. */
+  /* The tier's own square, which equals --hit-floor at both tiers, so the box is
+     the target. The class owns its box rather than the floor's `min-*`. */
+  min-width: 0;
+  min-height: 0;
   width: 1.5rem;
   height: 1.5rem;
   /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
@@ -204,35 +205,6 @@
 
 .shell-header-btn:hover {
   background: var(--c-bg-tertiary);
-}
-
-/* The key grid's trigger exists only where the grid does: the library gates every
-   .kb-* control on `@media (pointer: coarse)` (in the VENDORED package's own
-   23-toolbar.css, not this directory), so a mouse-only pointer gets no button
-   rather than one that toggles nothing.
-
-   The two gates therefore differ by design after the rekey below — the library
-   asks the media query, this panel asks the observed tier. It resolves the safe
-   way round: a device the query calls coarse but the pointer calls fine gets no
-   trigger, so the library's toolbar is never toggled into view. A trigger for a
-   grid that cannot render would be the broken direction, and it is unreachable.
-
-   RECOVERY IS A CHOICE OR THE NEXT LOAD, NOT A TOUCH. `applyTier` runs ONCE
-   (pointer-tier.ts:96) and the pointer observer after it only writes storage for
-   the next load, so touching the screen mid-session flips nothing and brings this
-   trigger back at no point in that session. The two ways back are the sidebar's
-   pointer-mode toggle (pointer-mode.ts), which writes the choice and applies it,
-   and reloading after a touch has been observed.
-
-   AND `data-touched` IS NOT A THIRD WAY BACK. That attribute (01-tokens.css) is a
-   third tier state written from the same persisted touch flag, but it moves
-   `--hit-floor` and nothing else — it does not gate this trigger, because the key
-   grid it toggles renders only under the library's own coarse media query.
-
-   An id addressed as an attribute selector ties with .shell-header-btn's
-   `display: flex`, so both halves sit after it and source order decides. */
-[id="shell-keys-btn"] {
-  display: none;
 }
 
 .shell-terminal {
@@ -327,26 +299,10 @@
   }
 }
 
-/* Touch sizing is keyed on the POINTER, never on the viewport width: an iPad in
-   desktop mode is 1024px and coarse, so the old `width <= 40rem` gate left 32px
-   rows and 24px controls on a device whose only input is a finger (Apple HIG
-   wants 44pt). A phone satisfies both conditions, so this is a strict widening.
-   2.75rem rather than --btn-h because --btn-h rides that same width-keyed axis
-   and answers 36px on exactly the device this fixes.
-
-   THE GATE IS THE OBSERVED TIER, not the `@media (pointer: coarse)` query it used
-   to be, because that query answers for the PRIMARY input only and gets this
-   device class wrong in both directions: Chromium reports coarse with
-   `any-pointer: fine` FALSE on a Windows touch laptop with a mouse attached
-   (crbug 398065927, open), and iPadOS reports coarse with a trackpad. The
-   attribute is written once per load by pointer-tier.ts from the reader's own
-   stated choice, else this device's last observed pointer, else that same query as
-   a last resort — so it is what the size tokens in 01-tokens.css already key on,
-   and leaving this block on the query would give the app two definitions of
-   "coarse" that disagree on exactly the hardware this exists for.
-
-   `:where()` keeps the gate at ZERO specificity, so every selector below scores
-   what it scored inside the media query and no rule newly outranks another. */
+/* Touch sizing is keyed on the observed tier (pointer-tier.ts), never on the
+   viewport width or a `pointer` media query, which answers for the primary input
+   only (crbug 398065927; iPadOS reports coarse with a trackpad). `:where()` keeps
+   every selector below at the specificity it has outside the block. */
 :where([data-pointer="coarse"]) {
   .shell-header {
     /* One 44px row plus the border it declares, because `box-sizing: border-box` is
@@ -364,34 +320,11 @@
     width: 1rem;
     height: 1rem;
   }
+}
 
-  [id="shell-keys-btn"] {
-    display: flex;
-  }
-
-  /* The key grid, driven from the header (shell.ts `keys`). The library's own
-     placement for externalToggle mode lives in 31-switcher.css, which the
-     component-only MANIFEST.touch bundle does not carry, so this panel restates
-     it: no in-grid toggle (the header holds it), four columns rather than five
-     (that toggle's column is empty without it), and collapsed means GONE — with
-     no in-grid toggle left to keep visible, the library's 54px collapsed pill is
-     just a box parked over the terminal. The library's top-right anchor stands:
-     #shell-terminal starts below the header, so the grid opens under it. */
-  .shell-terminal .wt-toolbar-external .kb-toggle {
-    display: none;
-  }
-
-  .shell-terminal .key-toolbar.wt-toolbar-external {
-    grid-template-columns: repeat(4, var(--touch-target));
-
-    /* --sp-3 is the header's own inline padding, so the grid's right edge lands
-       on the control column above it; the library's --sp-2 left it 4px proud.
-       `top` is deliberately not restated: the library folds --safe-top and iOS's
-       --vv-top into it, and 8px below the header is a gap, not an alignment. */
-    right: var(--sp-3);
-  }
-
-  .shell-terminal .key-toolbar.wt-toolbar-external.collapsed {
-    display: none;
-  }
+/* The key grid, driven from the header (shell.ts `keys`). --sp-3 is the
+   header's own inline padding, so the grid's right edge lands on the control
+   column above it. */
+.shell-terminal .key-toolbar.wt-toolbar-external {
+  right: var(--sp-3);
 }

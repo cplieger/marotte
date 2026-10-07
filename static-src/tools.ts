@@ -21,6 +21,7 @@ import {
   refreshCatalog,
   ensureTool,
   cancelToolJob,
+  TOOLS_UNAVAILABLE,
 } from "./actions/tools.js";
 import type { CreateToolRequest, ToolSearchResponse } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
@@ -81,6 +82,10 @@ function aptNote(d: ToolSearchResponse): string {
     case "unavailable":
       return "Debian packages are not searchable here: this host has no usable apt.";
   }
+}
+
+function loadFailureText(err: ActionErrorLike): string {
+  return err.code === TOOLS_UNAVAILABLE ? `Tools are off: ${err.message}` : "Failed to load tools";
 }
 
 /** The 409 cascade envelope both destructive mutations answer with. */
@@ -453,9 +458,8 @@ class ToolsManager {
           void this.resumeJobOutput(d.job);
         }
       },
-      onError: () => {
-        $.toolsList.replaceChildren();
-        $.toolsList.appendChild(el("div", { className: "list-empty" }, "Failed to load tools"));
+      onError: (err) => {
+        $.toolsList.replaceChildren(el("div", { className: "list-empty" }, loadFailureText(err)));
       },
     });
   }

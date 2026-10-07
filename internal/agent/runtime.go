@@ -337,7 +337,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	lc := &lifetime{
 		workDir:       workDir,
 		done:          make(chan struct{}),
-		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, true),
+		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, false),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
@@ -413,6 +413,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
 	}
 	h.coord = newBridgeCoordinator(h)
+	bridgeP.mgr.revertStarting = h.coord.turns.expectRevertRestores
 	h.coord.reconcileSessions = h.ReconcileSessionSettings
 	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription

@@ -133,6 +133,7 @@
 .turn-action-btn[aria-pressed="true"],
 .chat-find-case[aria-pressed="true"],
 .fb-search-case[aria-pressed="true"],
+.fb-search-toggle[aria-pressed="true"],
 /* The exec view's tree row and timeline lane. TWO surfaces for one selection, by
    design: the tree and the timeline are the same navigation from different angles
    and a reader clicking either must see the other agree, which is only true if both
@@ -174,6 +175,7 @@
   .turn-action-btn[aria-pressed="true"]:hover,
   .chat-find-case[aria-pressed="true"]:hover,
   .fb-search-case[aria-pressed="true"]:hover,
+  .fb-search-toggle[aria-pressed="true"]:hover,
   .ev-row.ev-selected > .ev-row-main:hover,
   .ev-tl-lane.ev-selected:hover,
   .editor-find-case[aria-pressed="true"]:hover,
@@ -212,6 +214,7 @@
 .turn-action-btn[aria-pressed="true"]:active,
 .chat-find-case[aria-pressed="true"]:active,
 .fb-search-case[aria-pressed="true"]:active,
+.fb-search-toggle[aria-pressed="true"]:active,
 /* The two exec-view rows, matching the hover list above. They were in that list and
    not this one, so a selected row pressed OUTSIDE the selected vocabulary: the
    timeline lane is a `role="button"`, so 03-base.css's wash reached it and added the

@@ -304,6 +304,19 @@
   cursor: pointer;
 }
 
+/* A finger's row and checkbox, on the observed tier (pointer-tier.ts) rather than
+   the width. `:where()` keeps both at (0,1,0), so they win by order. */
+:where([data-pointer="coarse"]) {
+  .fb-row {
+    padding: var(--sp-3);
+  }
+
+  .fb-check {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}
+
 .fb-icon {
   flex-shrink: 0;
   color: var(--c-text-secondary);
@@ -664,7 +677,7 @@
   }
 }
 
-.fb-search-globs .fb-search-field {
+.fb-search-files {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
@@ -743,6 +756,48 @@
      03-base.css:61 gives every button anyway. */
   &:active {
     box-shadow: inset 0 0 0 100vmax var(--c-press);
+  }
+}
+
+/* A name hit: the basename takes the room it needs and the folder beside it gives way, cut at
+   its START so the nearest folders stay readable. The RTL box puts the overflow and its ellipsis
+   on the left, `end` is its left edge, and the bdi keeps the path itself in LTR order. */
+.fb-search-base {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.fb-search-parent {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: end;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+.fb-search-group .fb-name {
+  font-weight: var(--fw-medium);
+}
+
+.fb-search-count {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The header's padding, icon and gap, so a line number sits under the file name. */
+.fb-search-line {
+  padding-inline-start: calc(var(--sp-3) + 1.25rem + var(--sp-2));
+
+  /* A line row has no icon, so its number takes the icon's height and the row matches the file
+     header above it. */
+  & .fb-search-lineno {
+    line-height: var(--fb-row-content);
   }
 }
 

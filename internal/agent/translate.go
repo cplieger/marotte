@@ -28,7 +28,7 @@ func (rt *Runtime) initDispatch() {
 	rt.chatHandlers = map[string]chatHandler{
 		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// Refused on a short budget for a scheduled run.
-		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.translator.HandlePermissionRequest)),
+		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.turnApprovalExpectsRestores(rt.translator.HandlePermissionRequest))),
 		marotte.MethodElicitationCreate: rt.askReportsStepProgress(rt.translator.HandleElicitationCreate),
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		marotte.MethodKiroUserInput: rt.askReportsStepProgress(rt.translator.HandleUserInput),
@@ -213,6 +213,25 @@ func (rt *Runtime) askReportsStepProgress(inner chatHandler) chatHandler {
 				attr = rt.translator.Attribute(chatID, params.SessionID, nil)
 			}
 			rt.translator.ReportStepProgress(attr)
+		}
+		inner(ctx, chatID, msg)
+	}
+}
+
+// turnApprovalExpectsRestores marks a turn approval's session as restoring before the ask reaches
+// anyone who could answer it, so no restore can arrive unmarked.
+func (rt *Runtime) turnApprovalExpectsRestores(inner chatHandler) chatHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+		var params struct {
+			SessionID string `json:"sessionId"`
+			Meta      struct {
+				Kiro struct {
+					Type string `json:"type"`
+				} `json:"kiro"`
+			} `json:"_meta"`
+		}
+		if json.Unmarshal(msg.Params, &params) == nil && params.Meta.Kiro.Type == approvalTypeTurn {
+			rt.coord.turns.expectRestores(chatID, params.SessionID)
 		}
 		inner(ctx, chatID, msg)
 	}

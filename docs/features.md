@@ -24,7 +24,7 @@ Work handed to a subagent shows as a card you can open on its own page. The agen
 
 ## Files, editor and terminal
 
-- A file browser, and a search over file contents with include and exclude patterns.
+- A file browser with a search that finds files by name, or inside files when you ask. One Files filter narrows either search (`*.css`, `src/**`, `!node_modules`), and files your `.gitignore` excludes stay out unless you include them.
 - An editor with syntax highlighting. A link can point at one line with `#L<n>`.
 - A preview tab that shows an HTML page from the workspace in a sandbox, at phone, tablet, desktop or full width. The **Open preview** button in the editor and in the file browser opens one for an `.html` file, and the tab reloads when the page's files change.
 - Diffs against the last save or against git `HEAD`.
