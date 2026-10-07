@@ -42,6 +42,7 @@ vi.mock("./tabs.js", () => ({
   hasTab: () => false,
   // The pane's route sync: a no-op here, because no tab is open to point.
   setHistoryTab: noop,
+  tabSetVersion: () => 0,
 }));
 vi.mock("./router.js", () => ({ pushRoute: noop }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({

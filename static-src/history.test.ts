@@ -5,6 +5,7 @@ import type * as ModHistory from "./history.js";
 import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { absoluteTime } from "./relative-time.js";
+import { forgetRun, noteRunChat } from "./run-store.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -77,7 +78,13 @@ vi.mock("./decision-dock.js", () => ({
 }));
 // Keyed by `(kind, ref)`: ids are opaque and server-minted, so a chat id is not a tab id.
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
-vi.mock("./tabs.js", () => ({ hasTab, setHistoryTab }));
+// A signal, since the real `tabSetVersion` is a tracked read and the page re-derives its rows on it.
+const tabsVersion = signal(0);
+vi.mock("./tabs.js", () => ({
+  hasTab,
+  setHistoryTab,
+  tabSetVersion: () => tabsVersion.value,
+}));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
 vi.mock("./router.js", () => ({ pushRoute }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
@@ -194,6 +201,7 @@ function resetAll(): void {
   bootSeq++;
   hasTab.mockReturnValue(false);
   asking.value = new Set();
+  forgetRun("wf_1");
 }
 
 describe("history: two panes behind one bar", () => {
@@ -347,6 +355,37 @@ describe("history: opening a row", () => {
       }
     });
   });
+
+  async function failReload(): Promise<void> {
+    await render({ sessions: [chatRow], runs: [runRow] });
+    dispatch.mockResolvedValue(null);
+    current!.refreshHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelectorAll(".history-error").length < 2) {
+        throw new Error("no error state");
+      }
+    });
+  }
+
+  it("keeps a failed reload's Retry on both panes when the tab set changes", async () => {
+    await failReload();
+    tabsVersion.value++;
+    expect(chatsPane().querySelector(".history-error")).not.toBeNull();
+    expect(runsPane().querySelector(".history-error")).not.toBeNull();
+    expect(document.querySelector("[data-key]")).toBeNull();
+  });
+
+  it("keeps a failed reload's Retry on the Runs pane when the filter is typed", async () => {
+    await failReload();
+    current!.forceHistoryTab("runs");
+    await openFind();
+    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    input.value = "feature";
+    // Enter runs the filter in this tick, so the pane is read after its render.
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(runsPane().querySelector(".history-error")).not.toBeNull();
+    expect(runsPane().querySelector("[data-key]")).toBeNull();
+  });
 });
 
 // The server answers 200 with an empty list whether it read nothing or failed, so `sessions_state` / `runs_state`
@@ -450,9 +489,6 @@ describe("history: which empty state each pane shows", () => {
   });
 });
 
-// A chat open here is not history. The server knows only ownership (`chat_id`); "open here" is this device's, so the
-// predicate reuses the tab store's hasTab.
-
 describe("history: chats already open in a tab here", () => {
   beforeEach(resetAll);
 
@@ -477,11 +513,127 @@ describe("history: chats already open in a tab here", () => {
     expect(document.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
     expect(hasTab).not.toHaveBeenCalled();
   });
+});
 
-  it("leaves runs alone — a run is not a chat and owns no tab", async () => {
-    hasTab.mockReturnValue(true);
-    await render({ sessions: [], runs: [runRow] });
-    expect(document.querySelector('[data-key="r:wf_1"]')).not.toBeNull();
+describe("history: runs covered by an open tab", () => {
+  beforeEach(resetAll);
+
+  const openTabs = (open: readonly (readonly [kind: string, ref: string])[]): void => {
+    hasTab.mockImplementation((kind: string, ref?: string) =>
+      open.some(([k, r]) => k === kind && r === (ref ?? "")),
+    );
+  };
+
+  it("drops a run whose launching chat is open here", async () => {
+    openTabs([["chat", "c-parent"]]);
+    await render({
+      sessions: [],
+      runs: [
+        { ...runRow, parent_chat_id: "c-parent" },
+        { ...runRow, workflow_id: "wf_solo" },
+      ],
+    });
+    expect(keysIn(runsPane())).toEqual(["r:wf_solo"]);
+  });
+
+  it("drops a run whose own run tab is open", async () => {
+    openTabs([["run", "wf_1"]]);
+    await render({ sessions: [], runs: [runRow, { ...runRow, workflow_id: "wf_2" }] });
+    expect(keysIn(runsPane())).toEqual(["r:wf_2"]);
+  });
+
+  it("drops a live run of an open chat", async () => {
+    openTabs([["chat", "c-parent"]]);
+    await render({
+      sessions: [],
+      runs: [
+        { ...runAt("running"), parent_chat_id: "c-parent" },
+        { ...runRow, workflow_id: "wf_solo" },
+      ],
+    });
+    expect(keysIn(runsPane())).toEqual(["r:wf_solo"]);
+  });
+
+  it("keeps a finished run once its chat is closed, with its outcome glyph", async () => {
+    openTabs([
+      ["chat", "c-other"],
+      ["run", "wf_other"],
+    ]);
+    await render({ sessions: [], runs: [{ ...runRow, parent_chat_id: "c-parent" }] });
+    const row = rowOf("r:wf_1");
+    expect(row.querySelector(".entry-lead .tool-icon")).not.toBeNull();
+    expect(openName(row)).toBe("Open feature-pipeline, succeeded");
+  });
+
+  it("keeps a live parentless run with no tab, with its working mark", async () => {
+    await render({ sessions: [], runs: [runAt("running")] });
+    const mark = rowOf("r:wf_1").querySelector<HTMLElement>(".entry-lead > .entry-mark");
+    expect(mark?.dataset["status"]).toBe("working");
+  });
+
+  it("falls back to the run store's launching chat when the row names none", async () => {
+    noteRunChat("wf_1", "c-parent");
+    openTabs([["chat", "c-parent"]]);
+    await render({ sessions: [], runs: [runRow, { ...runRow, workflow_id: "wf_solo" }] });
+    expect(keysIn(runsPane())).toEqual(["r:wf_solo"]);
+  });
+
+  it("still counts a run hidden by its own open tab in its chat's delete confirm", async () => {
+    confirmMock.mockResolvedValue(false);
+    openTabs([["run", "wf_2"]]);
+    await render({
+      sessions: [ownedRow],
+      runs: [
+        { ...runRow, parent_chat_id: "c-existing" },
+        { ...runRow, workflow_id: "wf_2", parent_chat_id: "c-existing" },
+      ],
+    });
+    expect(keysIn(runsPane())).toEqual(["r:wf_1"]);
+    rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
+    await vi.waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        'Delete this conversation? "Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
+        "Delete",
+        "destructive",
+      );
+    });
+  });
+
+  const launcherPayload = {
+    sessions: [chatRow, ownedRow],
+    runs: [
+      { ...runRow, parent_chat_id: "c-existing" },
+      { ...runRow, workflow_id: "wf_solo", updated_at: 100 },
+    ],
+  };
+
+  it("brings a chat and its runs back when its tab closes on screen, without a refetch", async () => {
+    openTabs([["chat", "c-existing"]]);
+    await render(launcherPayload);
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_solo"]);
+    const fetches = dispatch.mock.calls.length;
+
+    openTabs([]);
+    tabsVersion.value++;
+
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat", "s:sess_owned"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_1", "r:wf_solo"]);
+    expect(dispatch.mock.calls.length).toBe(fetches);
+  });
+
+  it("takes a chat and its runs out when its tab opens on screen, without a refetch", async () => {
+    await render(launcherPayload);
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat", "s:sess_owned"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_1", "r:wf_solo"]);
+    const fetches = dispatch.mock.calls.length;
+
+    openTabs([["chat", "c-existing"]]);
+    tabsVersion.value++;
+
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_solo"]);
+    expect(dispatch.mock.calls.length).toBe(fetches);
   });
 });
 
@@ -647,12 +799,15 @@ describe("history: an overrun reads differently from a cancel", () => {
     expect(sub(rowOf("r:wf_1"))).toContain("ran past its time limit");
   });
 
-  it("says a step's turn cap stopped the run", async () => {
+  it("says the idle window stopped the run, and settles it as aborted", async () => {
+    // `running`, so the verdict comes from the reason: the terminal frame may not have landed yet.
     await render({
       sessions: [],
-      runs: [{ ...runRow, status: "aborted", end_reason: "step_cap" }],
+      runs: [{ ...runRow, status: "running", end_reason: "stalled" }],
     });
-    expect(sub(rowOf("r:wf_1"))).toContain("a step ran past its turn limit");
+    const row = rowOf("r:wf_1");
+    expect(sub(row)).toBe("stopped: no activity and no live shell within its idle window");
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
   it("says a restart interrupted the run", async () => {
