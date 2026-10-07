@@ -58,6 +58,7 @@ import { initAwaySummary } from "./away-summary.js";
 import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
+import { guardBackspaceChars } from "./backspace-char.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
@@ -300,6 +301,7 @@ function init(): void {
   initAwaySummary();
   initTerminalStream();
   initTooltips();
+  guardBackspaceChars();
   initLoginModal(onLoginSuccess);
   initSidebarSwipe($.chatArea, $.sidebar);
   initShellViewport();
