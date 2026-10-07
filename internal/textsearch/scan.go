@@ -78,14 +78,6 @@ func (n Needle) Count(text string) int {
 	return c
 }
 
-// Contains reports whether text holds at least one occurrence.
-func (n Needle) Contains(text string) bool {
-	for range n.Occurrences(text) {
-		return true
-	}
-	return false
-}
-
 // advanceRunes returns the byte offset n runes past from in s.
 func advanceRunes(s string, from, n int) int {
 	for range n {
