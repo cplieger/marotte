@@ -121,9 +121,9 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       // Hooks.
       return import("./docs.js")
         .then(({ forceDocsTab }) => {
-          forceDocsTab(route.tab);
+          const tab = forceDocsTab(route.tab);
           void openTab({ kind: "docs" }).then(() => {
-            setDocsTab(route.tab);
+            setDocsTab(tab);
           });
         })
         .catch(() => {

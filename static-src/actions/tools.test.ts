@@ -24,7 +24,6 @@ vi.mock("../api-client.js", () => ({
   },
 }));
 
-import { success as toastSuccess } from "../toast.js";
 import {
   loadTools,
   createTool,
@@ -38,7 +37,6 @@ import {
   cancelToolJob,
   runDiagnostics,
   seedMcp,
-  applyManifest,
   getToolsStatus,
 } from "./tools.js";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
@@ -346,25 +344,6 @@ describe("tools.seed_mcp", () => {
     await Promise.all([p1, p2]);
     // Second call starts after first finishes (serialized via scope "tools")
     expect(log[1]! - log[0]!).toBeGreaterThanOrEqual(50);
-  });
-});
-
-describe("tools.apply_manifest", () => {
-  // 202 {"job": null} (already converged) produces no SSE frame or busy state: the toast is all.
-  it("says so when the run produced no job", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ job: null }), { status: 202 }));
-    await applyManifest.dispatch(undefined);
-    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/reconcile");
-    expect(vi.mocked(toastSuccess)).toHaveBeenCalledWith(
-      "Nothing to converge: the manifest and the volume already agree.",
-    );
-  });
-
-  it("stays silent when a job was enqueued", async () => {
-    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
-    const d = await applyManifest.dispatch(undefined);
-    expect(d?.job?.id).toBe("tj-1");
-    expect(vi.mocked(toastSuccess)).not.toHaveBeenCalled();
   });
 });
 

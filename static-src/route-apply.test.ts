@@ -20,6 +20,7 @@ import type * as Toast from "./toast.js";
 import type * as Transport from "./transport.js";
 import type * as ApiClient from "./api-client.js";
 import type * as TurnRail from "./turn-rail.js";
+import type * as Docs from "./docs.js";
 
 vi.mock("./router.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Router>()),
@@ -153,13 +154,19 @@ vi.mock("./turn-rail.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TurnRail>()),
   jumpToTurn: vi.fn(() => Promise.resolve(true)),
 }));
+vi.mock("./docs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Docs>()),
+  forceDocsTab: vi.fn(() => "steering"),
+  showDocsTab: vi.fn(),
+  refreshDocsView: vi.fn(),
+}));
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
   apiGet: vi.fn(() => Promise.resolve(null)),
 }));
 
-import { closeTab, tabIdFor, _resetForTest } from "./tabs.js";
+import { closeTab, getActiveTabRoute, tabIdFor, _resetForTest } from "./tabs.js";
 import { get, getActiveId } from "./store.js";
 import { switchSession } from "./chat.js";
 import { jumpToTurn as jumpToTurnFn } from "./turn-rail.js";
@@ -263,5 +270,17 @@ describe("applyRoute for a turn permalink", () => {
     await applyRoute({ kind: "chat", id: "c1" }, "deeplink");
     await new Promise((r) => setTimeout(r, 20));
     expect(jumpToTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyRoute for a docs sub-tab", () => {
+  it("records the sub-tab the docs page applied, not the one the URL asked for", async () => {
+    await applyRoute({ kind: "docs", tab: "memories" }, "deeplink");
+    await settled(() => tabIdFor("docs") !== "", "the docs tab opened");
+    await settled(
+      () =>
+        JSON.stringify(getActiveTabRoute()) === JSON.stringify({ kind: "docs", tab: "steering" }),
+      "the docs tab's route names the applied sub-tab",
+    );
   });
 });

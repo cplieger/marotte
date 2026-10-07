@@ -16,6 +16,7 @@ const H = vi.hoisted(() => ({
   mockKiroDispatch: vi.fn(),
   mockInitGitBadge: vi.fn(),
   mockInitGitPanel: vi.fn(),
+  mockOpenConfigFile: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -84,6 +85,7 @@ vi.mock("./versions.js", () => ({
   loadVersions: vi.fn(),
   getVersions: () => ({ marotte: "", kiroCli: "" }),
 }));
+vi.mock("./editor-openers.js", () => ({ openConfigFile: H.mockOpenConfigFile }));
 vi.mock("./git-tabs.js", () => ({
   getGitTab: undefined,
 }));
@@ -349,12 +351,17 @@ describe("the chat-retention row", () => {
   function seedRetentionDom(): void {
     document.body.innerHTML = `
       <div class="section-option">
-        <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
-        <input type="checkbox" id="chat-retention-forever">
+        <label class="toggle">
+          <input type="checkbox" id="chat-retention-forever">
+          <span class="toggle-slider"></span>
+        </label>
+        <div><span class="section-option-label">Keep forever</span></div>
       </div>
-      <div class="section-option" id="chat-retention-days-row">
-        <label for="chat-retention-days" class="section-option-label">Days kept</label>
-        <input type="number" id="chat-retention-days" min="0" max="90" value="1">
+      <div class="section-option section-option-fixed" id="chat-retention-days-row">
+        <div class="section-field">
+          <label for="chat-retention-days" class="section-option-label">Days kept</label>
+          <input type="number" id="chat-retention-days" class="rf-input rf-number" min="0" max="90" value="1">
+        </div>
       </div>`;
   }
 
@@ -433,6 +440,17 @@ describe("the chat-retention row", () => {
     expect(daysRow().classList.contains("hidden")).toBe(false);
     expect(daysInput().value).toBe("30");
     expect(patchSettings).toHaveBeenLastCalledWith({ chat_retention_days: 30 }, expect.anything());
+  });
+});
+
+describe("the config.json door in Settings > General", () => {
+  it("opens config.json from the config directory", () => {
+    document.body.innerHTML = `<button type="button" id="settings-open-config">config.json</button>`;
+    initGeneralPanelControls();
+
+    document.getElementById("settings-open-config")?.click();
+
+    expect(H.mockOpenConfigFile.mock.calls).toEqual([["config.json"]]);
   });
 });
 

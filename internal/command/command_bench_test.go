@@ -91,6 +91,12 @@ func (d *benchDeps) TakePendingPermissionOption(marotte.ChatID, int64, string, m
 	return true, true
 }
 
+func (d *benchDeps) PendingPermission(marotte.ChatID, int64) (marotte.PermissionNeededPayload, bool) {
+	return marotte.PermissionNeededPayload{}, false
+}
+
+func (d *benchDeps) EnsureCustomProfile(context.Context) error { return nil }
+
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
@@ -277,6 +283,7 @@ type hostDouble interface {
 	Broadcaster
 	ChatTeardown
 	PendingPermAccess
+	ProfileSwitcher
 	TerminalAccess
 	TurnStopper
 	LifecycleAccess

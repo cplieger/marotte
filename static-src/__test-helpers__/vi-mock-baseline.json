@@ -138,7 +138,6 @@
   "notify-tag.test.ts",
   "open-intent.test.ts",
   "pending-steers.test.ts",
-  "permission-always-allow.test.ts",
   "permission-card-policy.test.ts",
   "permission-mcp.test.ts",
   "permissions-policy-table.test.ts",

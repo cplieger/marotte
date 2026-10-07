@@ -156,6 +156,26 @@ func (bm *bridgeManager) retireChatBridges() (closed []marotte.ChatID, marked in
 	return closed, marked
 }
 
+// markChatBridgesForReopen flags every chat bridge so its next open stops it and opens a fresh
+// one (closeIfRetired). It stops nothing, so an idle chat keeps its agent terminals until then.
+// Run bridges are skipped: a run keeps the session it launched with.
+func (bm *bridgeManager) markChatBridgesForReopen() (marked int) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	for chatID, sb := range bm.bridges {
+		if isRunChat(chatID) {
+			continue
+		}
+		sb.mu.Lock()
+		if !sb.retire {
+			sb.retire = true
+			marked++
+		}
+		sb.mu.Unlock()
+	}
+	return marked
+}
+
 // hostsRun is hostsLiveRun with the nil case answered.
 func (bm *bridgeManager) hostsRun(chatID marotte.ChatID) bool {
 	return bm.hostsLiveRun != nil && bm.hostsLiveRun(chatID)

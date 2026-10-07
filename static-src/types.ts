@@ -120,6 +120,7 @@ export type {
   MCPFailedPayload,
   MCPOAuthPayload,
   OpenExternalURLPayload,
+  PermissionConsent,
   PermissionNeededPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,

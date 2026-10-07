@@ -54,6 +54,7 @@ var spawnMatrix = []struct {
 	{"work validation and safety check off", Spawn{WorkValidation: "off", InfraSafetyMonitor: "off"}},
 	{"shell timeout set", Spawn{TerminalCommandTimeoutMs: 300000}},
 	{"workflows on", Spawn{Workflows: true}},
+	{"telemetry off", Spawn{DisableTelemetry: true}},
 	{"every gate on", Spawn{
 		SecretStorage: true, Hooks: true,
 		Presets:   []string{"read-workspace"},
@@ -63,7 +64,7 @@ var spawnMatrix = []struct {
 		WorkValidation: "on", InfraSafetyMonitor: "on",
 		TerminalCommandTimeoutMs: 300000,
 		InlineAgents:             true, SteeringReminders: true,
-		Workflows: true,
+		Workflows: true, DisableTelemetry: true,
 	}},
 }
 

@@ -7,9 +7,7 @@ import type { PolicyExplainResult } from "../types.js";
 // projection refetched after an edit (and on permissions_changed), so it cannot drift from KAS.
 
 /** Add, remove, or update a native policy rule. "add" defaults an empty effect to "ask"; "remove"
- *  and "update" need the exact existing rule; any widening change needs confirm=true.
- *  guard_resource (add+allow only) makes the server refuse 409 when an explicit ask rule would
- *  silently shadow the allow (ask > allow). */
+ *  and "update" need the exact existing rule; any widening change needs confirm=true. */
 export interface NativeRuleArgs {
   op: "add" | "remove" | "update";
   scope: "user" | "workspace";
@@ -21,7 +19,6 @@ export interface NativeRuleArgs {
   match?: string[];
   exclude?: string[];
   confirm?: boolean;
-  guard_resource?: string;
 }
 
 export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: string }>({

@@ -12,7 +12,7 @@ import {
   RETRY_STANDARD,
   IDEMPOTENCY_HEADER,
 } from "./index.js";
-import type { ActionContext, NotificationSpec } from "./index.js";
+import type { ActionContext } from "./index.js";
 import type {
   CatalogInfo,
   Inventory,
@@ -285,22 +285,6 @@ export const refreshCatalog = apiAction<void, JobResponse>({
   scope: "tools",
   request: () => ({ method: "POST", path: "/api/tools/catalog/refresh" }),
   error: "Could not refresh the tool catalog",
-});
-
-/** Converge the volume on the on-disk manifest (Settings → Tools' Apply). A null job means
- *  "nothing to converge", not a failure. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
-export const applyManifest = apiAction<void, JobResponse>({
-  name: "tools.apply_manifest",
-  scope: "tools",
-  request: () => ({ method: "POST", path: "/api/tools/reconcile" }),
-  // A null job has no other channel, so the toast says so. The framework suppresses a null
-  // resolver answer; its type omits that arm, hence the assertion.
-  success: ((_a, r) =>
-    r.job == null
-      ? "Nothing to converge: the manifest and the volume already agree."
-      : null) as NotificationSpec<void, JobResponse>,
-  error: "Could not apply the manifest",
 });
 
 export const cancelToolJob = apiAction<{ id: string }>({

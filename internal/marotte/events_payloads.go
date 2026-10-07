@@ -85,6 +85,9 @@ type PermissionNeededPayload struct {
 	// the ask of a run it is watching even though the ask is keyed to the launching chat.
 	RunID  string `json:"run_id,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
+	// Consent names what this ask is about, present when KAS sent it; an always answer
+	// saves a rule for this capability.
+	Consent *PermissionConsent `json:"consent,omitempty"`
 	// AlwaysAllowBlocked names why the card must not offer to persist a rule for this
 	// command. Empty means the offer stands.
 	AlwaysAllowBlocked AlwaysAllowBlock   `json:"always_allow_blocked,omitempty"`
@@ -105,6 +108,20 @@ type PermissionNeededPayload struct {
 	// AcceptsRejectionReason marks an ask whose deny can carry a note for the
 	// agent: the ordinary tool approval offering a reject_once option.
 	AcceptsRejectionReason bool `json:"accepts_rejection_reason,omitempty"`
+}
+
+// PermissionConsent is what one permission ask is about. A compound command asks once per
+// part it has not approved, and Subject is that part. Subject and Folder are display-treated
+// copies of what an always answer saves, which only the server holds.
+type PermissionConsent struct {
+	Capability string `json:"capability"`
+	Subject    string `json:"subject"`
+	// Folder is the `<dir>/**` pattern over a path subject's parent, empty when there is none.
+	Folder string `json:"folder,omitempty"`
+	// Resource and FolderResource are KAS's own subject and its folder pattern, the rule keys:
+	// Subject and Folder can differ from them (controls replaced, cut at 512 bytes).
+	Resource       string `json:"-"`
+	FolderResource string `json:"-"`
 }
 
 // PermissionWatch names the workflow run and node a watch command belongs to.

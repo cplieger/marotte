@@ -64,7 +64,7 @@ Mount each folder with `volumes:` first. Credential and internal files under `/c
 
 ## Agent-started workflow runs
 
-Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page work either way. A change reaches the next chat, and an open chat picks it up when it reloads.
+Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page work either way. A change reaches new chats, and an open chat picks it up at its next message.
 
 ## Variables the agent sets (`MAROTTE_ALLOW_AGENT_ENV`)
 

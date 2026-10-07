@@ -1,16 +1,8 @@
-// Package policyfile reads and writes kiro-cli's native Cedar permission files (permissions.yaml)
-// for the user and workspace scopes. marotte is the only writer on the acp bridge; KAS hot-reloads
-// the file and emits _kiro/policy/changed, so a write reaches every live session. Load accepts
-// block YAML or JSON; Save writes block YAML (KAS 2.12):
-//
-//	rules:
-//	  - capability: fs_write        # required
-//	    effect: ask                 # required; allow | deny | ask
-//	    match: ["src/**"]           # optional glob list
-//	    exclude: ["**/secret.txt"]  # optional glob list
-//
-// Paths resolve from $HOME, not KIRO_HOME: <home>/.kiro/settings/permissions.yaml and
-// <home>/.kiro/workspace-roots/<WorkspaceHash>/permissions.yaml.
+// Package policyfile reads and writes kiro-cli's native Cedar permission files for the user and
+// workspace scopes, resolved from $HOME rather than KIRO_HOME: <home>/.kiro/settings/permissions.yaml
+// and <home>/.kiro/workspace-roots/<WorkspaceHash>/permissions.yaml. KAS also writes the user file
+// for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
+// accepts block YAML or JSON; Save writes block YAML (KAS 2.12).
 package policyfile
 
 import (

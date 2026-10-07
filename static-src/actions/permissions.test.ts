@@ -1,5 +1,4 @@
-// Native policy actions: the request wire shape, including "Always allow"'s guard_resource
-// pre-flight, and that a guard refusal fails the dispatch so the caller does NOT approve.
+// Native policy actions: the request wire shape, and that a refused write fails the dispatch.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -54,26 +53,9 @@ describe("editNativeRule wire shape", () => {
     });
   });
 
-  it("carries guard_resource for the always-allow pre-flight", async () => {
-    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await editNativeRule.dispatch({
-      op: "add",
-      scope: "workspace",
-      capability: "shell",
-      effect: "allow",
-      match: ["npm *"],
-      guard_resource: "npm install",
-    });
-    expect(requestBody()).toMatchObject({
-      effect: "allow",
-      match: ["npm *"],
-      guard_resource: "npm install",
-    });
-  });
-
-  it("fails the dispatch when the server refuses the guarded write (409)", async () => {
+  it("fails the dispatch when the server refuses the write (409)", async () => {
     mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ error: "an explicit ask rule covers this command" }), {
+      new Response(JSON.stringify({ error: "existing policy file could not be parsed" }), {
         status: 409,
       }),
     );
@@ -83,9 +65,7 @@ describe("editNativeRule wire shape", () => {
       capability: "shell",
       effect: "allow",
       match: ["rm *"],
-      guard_resource: "rm -rf x",
     });
-    // Callers treat null as "not written": the permission stays pending.
     expect(res).toBeNull();
   });
 });

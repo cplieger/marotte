@@ -45,6 +45,25 @@ func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOu
 	return out
 }
 
+// PermissionOutcomeAlways builds an allow_always or reject_always answer that saves consent
+// as a durable rule. KAS writes the rule itself and reads only scope and resource here (the
+// capability is the ask's own), the shape the kiro-cli TUI sends.
+func PermissionOutcomeAlways(optionID string, consent PermissionConsentAnswer) *PermissionOutcome {
+	out := PermissionOutcomeSelected(optionID)
+	out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{Consent: &consent}}
+	return out
+}
+
+// PermissionConsentAnswer is `_meta.kiro.consent` on an always answer.
+type PermissionConsentAnswer struct {
+	Scope      string `json:"scope"`
+	Capability string `json:"capability,omitempty"`
+	Resource   string `json:"resource"`
+}
+
+// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
+const ConsentScopeUser = "user"
+
 // PermissionOutcomeMeta is the `_meta` envelope on a permission reply.
 type PermissionOutcomeMeta struct {
 	Kiro PermissionOutcomeKiro `json:"kiro"`
@@ -52,8 +71,9 @@ type PermissionOutcomeMeta struct {
 
 // PermissionOutcomeKiro is the vendor block inside that envelope.
 type PermissionOutcomeKiro struct {
-	FileDecisions   map[string]bool `json:"fileDecisions,omitempty"`
-	RejectionReason string          `json:"rejectionReason,omitempty"`
+	FileDecisions   map[string]bool          `json:"fileDecisions,omitempty"`
+	Consent         *PermissionConsentAnswer `json:"consent,omitempty"`
+	RejectionReason string                   `json:"rejectionReason,omitempty"`
 }
 
 // PermissionOutcomeCancelled builds the ACP permission-outcome response

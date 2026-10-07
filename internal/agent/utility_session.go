@@ -68,6 +68,8 @@ type utilitySessionHooks struct {
 	// contentCollection resolves StartOpts.ContentCollection: this session sends diffs and error text, so it opts out.
 	// nil sends nothing.
 	contentCollection func(context.Context) bool
+	// telemetryOff resolves StartOpts.DisableTelemetry; nil leaves KAS's default, on.
+	telemetryOff func() bool
 }
 
 // utilitySession owns the dedicated kiro-cli subprocess and ACP session, so ambient work never pollutes a chat's
@@ -154,7 +156,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 
 	// shutdownCtx, not a request ctx: this runs under us.mu, so a session/new that never answers would hold the mutex
 	// for good. Start bounds the handshake itself.
-	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff()}); err != nil {
 		return err
 	}
 	us.bridge = bridge

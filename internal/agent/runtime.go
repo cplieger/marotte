@@ -63,10 +63,11 @@ type lifetime struct {
 	shutdownCancel context.CancelFunc
 	// workRoot is the kernel-confined handle on workDir (confineInWorkDir), never closed. nil when workDir could
 	// not be opened; the fs handlers then refuse.
-	workRoot  *os.Root
-	workDir   string
-	configDir string
-	inflight  sync.WaitGroup
+	workRoot      *os.Root
+	kiroTelemetry *cachedBoolField
+	workDir       string
+	configDir     string
+	inflight      sync.WaitGroup
 	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
 	loops sync.WaitGroup
 	mu    sync.Mutex
@@ -221,8 +222,10 @@ type Runtime struct {
 	// powersBackend is WithPowers' value, read once into powers.
 	powersBackend powersBackend
 	powers        *powersSurface
-	// acpArgs are the filtered operator launch flags (WithACPArgs), chat bridges only; last pointer-bearing field for fieldalignment.
+	// acpArgs are the filtered operator launch flags (WithACPArgs), chat bridges only.
 	acpArgs []string
+	// sessionSeen is last among the pointer-bearing fields for fieldalignment.
+	sessionSeen sessionBaseline
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
 	sessionExportMu sync.Mutex
 	ciBusy          atomic.Bool
@@ -332,8 +335,9 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
 	lc := &lifetime{
-		workDir: workDir,
-		done:    make(chan struct{}),
+		workDir:       workDir,
+		done:          make(chan struct{}),
+		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, true),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
@@ -389,7 +393,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.catalog.versions = h.versions
 	// Construction, then wiring, never interleaved: roles bind by value, so a nil at the literal stays nil.
 	// TestNew_EveryTranslateRoleIsWired pins it.
-	h.utility = &utilityLease{build: h.buildUtility}
+	h.utility = &utilityLease{build: h.buildUtility, reconcile: func() { h.ReconcileSessionSettings(lc.shutdownCtx) }}
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.powers = &powersSurface{
@@ -409,6 +413,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
 	}
 	h.coord = newBridgeCoordinator(h)
+	h.coord.reconcileSessions = h.ReconcileSessionSettings
 	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.RetractPush
@@ -459,6 +464,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		}
 	}
 	requireCollaborators(h)
+	h.sessionSeen.seen, _ = h.sessionFingerprint(lc.shutdownCtx)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
 	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
@@ -810,10 +816,6 @@ func (rt *Runtime) stopUtilityBridge() {
 		u.session.Stop()
 	}
 }
-
-// RestartUtilitySession drops the utility session so the next use rebuilds it: presets ride the session
-// door, and KAS cannot change a live session's policy.
-func (rt *Runtime) RestartUtilitySession() { rt.stopUtilityBridge() }
 
 // cullIdleUtilityBridge stops the utility session once idle past bridgeIdleTimeout, every 60 seconds.
 // Chat bridges are owned by their tabs.

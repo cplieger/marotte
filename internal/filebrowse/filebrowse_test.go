@@ -28,7 +28,7 @@ func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	t.Helper()
 	dir = t.TempDir()
 	var err error
-	h, err = New(Sensitive{}, dir)
+	h, err = New(Sensitive{}, []string{dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestFile_MethodNotAllowed(t *testing.T) {
 func TestListFiles_Root_ListsMounts(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	h, err := New(Sensitive{}, dirB, dirA)
+	h, err := New(Sensitive{}, []string{dirB, dirA})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1310,7 +1310,7 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 	swap()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/file", strings.NewReader(`{"content":"pwn"}`))
-	writeFile(rec, req, l)
+	writeFile(rec, req, l, SaveHook{})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -1581,7 +1581,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 func BenchmarkResolvePath(b *testing.B) {
 	dir := b.TempDir()
 	prefix := strings.TrimPrefix(dir, "/")
-	h, err := New(Sensitive{}, dir)
+	h, err := New(Sensitive{}, []string{dir})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1623,7 +1623,7 @@ func FuzzResolvePath(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	h, err := New(Sensitive{}, dir)
+	h, err := New(Sensitive{}, []string{dir})
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -2197,7 +2197,7 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 // write to the file it has open.
 func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	dir := t.TempDir()
-	h, err := New(Sensitive{}, dir)
+	h, err := New(Sensitive{}, []string{dir})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2294,7 +2294,7 @@ func TestAction_Touch_ExistingFileSucceedsAndKeepsContent(t *testing.T) {
 // look plausible while carrying a zero timestamp.
 func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 	dirA := t.TempDir()
-	h, err := New(Sensitive{}, dirA)
+	h, err := New(Sensitive{}, []string{dirA})
 	if err != nil {
 		t.Fatal(err)
 	}

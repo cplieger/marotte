@@ -154,8 +154,8 @@ func WithGovernanceLocks(g governanceLocks) Option {
 	return func(s *Server) { s.governance = g }
 }
 
-// WithPolicyReload wires the recycle a security-profile change needs. Optional: unwired,
-// only the policy view lags until the utility session is next recycled.
+// WithPolicyReload wires what a security-profile change needs after it persisted. Optional:
+// unwired, live sessions keep the old presets and no client is told.
 func WithPolicyReload(p policyReloader) Option {
 	return func(s *Server) { s.policyReload = p }
 }
@@ -284,15 +284,14 @@ func (s *Server) ListenAndServe() error {
 	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	// Each exact app-owned pattern wins over toolbelt's subtree for EVERY method, keeping
-	// "status" and "reconcile" out of its {name} handlers.
+	// The exact app-owned pattern wins over toolbelt's subtree for EVERY method, keeping
+	// "status" out of its {name} handlers.
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
 		mux.Handle("/api/tools/", toolsAPI)
 	}
 	mux.HandleFunc("/api/tools/status", handleToolStatus)
-	mux.HandleFunc("/api/tools/reconcile", s.handleToolReconcile)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)

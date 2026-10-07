@@ -5,13 +5,9 @@ import type { PermissionNeededPayload } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
   openSetting: vi.fn(),
-  editDispatch: vi.fn(),
 }));
 
 vi.mock("./settings-highlight.js", () => ({ openSetting: mocks.openSetting }));
-vi.mock("./actions/permissions.js", () => ({
-  editNativeRule: { dispatch: mocks.editDispatch },
-}));
 vi.mock("./navigate.js", () => ({ openChange: vi.fn() }));
 
 import { buildPermissionCard } from "./permission.js";
@@ -46,14 +42,11 @@ describe("the permission card's policy pointer", () => {
     expect(mocks.openSetting).toHaveBeenCalledWith("permissions", "security-profile-list");
   });
 
-  // Asserted rather than assumed: the pointer NAVIGATES. It must not answer the ask and must not
-  // write a rule — the user still has to pick a profile in Settings and clear its confirm there.
-  it("neither answers the ask nor writes a policy rule", () => {
+  it("does not answer the ask", () => {
     const onSelect = vi.fn();
     const card = buildPermissionCard("chat-1", ask(), onSelect);
     pointer(card)?.click();
     expect(onSelect).not.toHaveBeenCalled();
-    expect(mocks.editDispatch).not.toHaveBeenCalled();
   });
 
   it("sits outside the answer row, so it cannot read as a third option", () => {

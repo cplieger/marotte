@@ -178,18 +178,16 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 
 // policyRuleBody is the POST /api/permissions/rules request; op is "add", "remove" or
 // "update". An add's empty effect defaults to "ask". For remove and update the rule fields
-// identify the EXISTING rule; a widening change needs confirm=true. guard_resource (add+allow
-// only) refuses an allow an explicit ask rule would silently shadow.
+// identify the EXISTING rule; a widening change needs confirm=true.
 type policyRuleBody struct {
-	Op            string   `json:"op"`
-	Scope         string   `json:"scope"`
-	Capability    string   `json:"capability"`
-	Effect        string   `json:"effect"`
-	NewEffect     string   `json:"new_effect"`
-	GuardResource string   `json:"guard_resource"`
-	Match         []string `json:"match"`
-	Exclude       []string `json:"exclude"`
-	Confirm       bool     `json:"confirm"`
+	Op         string   `json:"op"`
+	Scope      string   `json:"scope"`
+	Capability string   `json:"capability"`
+	Effect     string   `json:"effect"`
+	NewEffect  string   `json:"new_effect"`
+	Match      []string `json:"match"`
+	Exclude    []string `json:"exclude"`
+	Confirm    bool     `json:"confirm"`
 }
 
 // capShell is the capability whose decisions are always resource-scoped.
@@ -258,10 +256,6 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 			"kiro-cli decides whether it loads",
 			"capability", logsafe.Field(rule.Capability), "effect", rule.Effect, "scope", body.Scope)
 	}
-	if rule.Effect == policyfile.EffectAllow && body.GuardResource != "" &&
-		!s.guardAllowRule(w, r, &rule, body.GuardResource) {
-		return
-	}
 	f, err := policyfile.Load(path)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
@@ -283,32 +277,6 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
 	webhttp.Ok(w)
-}
-
-// guardAllowRule pre-flights an allow-rule write against the LIVE policy via explain:
-// refused when an explicit ask rule would shadow it. Fails CLOSED. Returns true when the
-// write may proceed; otherwise the response has been written.
-func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *policyfile.Rule, resource string) bool {
-	if s.policy == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			httpreply.ErrorJSON("cannot verify the rule against the live policy, so the rule was not written"))
-		return false
-	}
-	res, err := s.policy.PolicyExplain(r.Context(), marotte.PolicyExplainRequest{
-		Capability: rule.Capability, Resource: resource,
-	})
-	if err != nil {
-		slog.Warn("policy rule add: guard explain failed", "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
-			httpreply.ErrorJSON("cannot verify the rule against the live policy, so the rule was not written"))
-		return false
-	}
-	if res.IsExplicitAsk {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("an explicit ask rule covers this command. The new allow rule would be shadowed and was not written"))
-		return false
-	}
-	return true
 }
 
 func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {

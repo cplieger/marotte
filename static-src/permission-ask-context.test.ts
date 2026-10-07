@@ -1,16 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as SettingsHighlight from "./settings-highlight.js";
-import type * as PermissionActions from "./actions/permissions.js";
 import type * as Navigate from "./navigate.js";
 import type { PermissionNeededPayload } from "./types.js";
 
 vi.mock("./settings-highlight.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SettingsHighlight>()),
   openSetting: vi.fn(),
-}));
-vi.mock("./actions/permissions.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof PermissionActions>()),
-  editNativeRule: { dispatch: vi.fn() },
 }));
 vi.mock("./navigate.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Navigate>()),

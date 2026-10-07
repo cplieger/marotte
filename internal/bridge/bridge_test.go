@@ -2875,9 +2875,9 @@ const initializeGoldenPath = "testdata/initialize.golden"
 // initializeGoldenCmd is the regeneration command quoted in this fixture's failure messages.
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
-// initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage sets a value, EnableHooks key
-// presence, Knowledge two values; ToolSearch must change nothing here. Presets ride the session door. The order is the
-// golden's line order.
+// initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage and DisableTelemetry set a value,
+// EnableHooks key presence, Knowledge two values; ToolSearch must change nothing here. Presets ride the session door.
+// The order is the golden's line order.
 var initGateCases = []struct {
 	name          string
 	features      marotte.AgentFeatures
@@ -2885,19 +2885,21 @@ var initGateCases = []struct {
 	enableHooks   bool
 	toolSearch    bool
 	knowledge     bool
+	telemetryOff  bool
 }{
-	{"gates off", marotte.AgentFeatures{}, false, false, false, false},
-	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false},
-	{"hooks only", marotte.AgentFeatures{}, false, true, false, false},
-	{"both gates on", marotte.AgentFeatures{}, true, true, false, false},
-	{"tool search on", marotte.AgentFeatures{}, false, false, true, false},
-	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true},
+	{"gates off", marotte.AgentFeatures{}, false, false, false, false, false},
+	{"secret storage only", marotte.AgentFeatures{}, true, false, false, false, false},
+	{"hooks only", marotte.AgentFeatures{}, false, true, false, false, false},
+	{"both gates on", marotte.AgentFeatures{}, true, true, false, false, false},
+	{"tool search on", marotte.AgentFeatures{}, false, false, true, false, false},
+	{"knowledge on", marotte.AgentFeatures{}, false, false, false, true, false},
 	// Proves spawn() copies StartOpts.Features.
 	{"agent capabilities on", marotte.AgentFeatures{
 		InlineAgents: true, SteeringReminders: true,
 		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
-	}, false, true, false, false},
-	{"every gate on", marotte.AgentFeatures{}, true, true, true, true},
+	}, false, true, false, false, false},
+	{"telemetry off", marotte.AgentFeatures{}, false, false, false, false, true},
+	{"every gate on", marotte.AgentFeatures{}, true, true, true, true, false},
 }
 
 // TestInitializeDeclaresExactly pins every initialize request's exact bytes against a golden, since each failure is
@@ -2937,13 +2939,14 @@ done
 		t.Setenv("INIT_CAPTURE", capturePath)
 		b := New(scriptPath, dir)
 		err := b.Start(t.Context(), &marotte.StartOpts{
-			Lifetime:      t.Context(),
-			Model:         "m",
-			SecretStorage: tc.secretStorage,
-			EnableHooks:   tc.enableHooks,
-			ToolSearch:    tc.toolSearch,
-			Knowledge:     tc.knowledge,
-			Features:      tc.features,
+			Lifetime:         t.Context(),
+			Model:            "m",
+			SecretStorage:    tc.secretStorage,
+			EnableHooks:      tc.enableHooks,
+			ToolSearch:       tc.toolSearch,
+			Knowledge:        tc.knowledge,
+			DisableTelemetry: tc.telemetryOff,
+			Features:         tc.features,
 		})
 		if err != nil {
 			t.Fatalf("%s: Start: %v", tc.name, err)

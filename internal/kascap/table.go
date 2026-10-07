@@ -168,6 +168,25 @@ edits the store whatever the switch says. That split is the intent — the
 switch decides what the AGENT can reach, not what a person can.`,
 	},
 	{
+		key:      "telemetryEnabled",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     true,
+		// Value-gated, always present: KAS's own default is on, so only an explicit
+		// false turns its agent telemetry off.
+		gate: func(s *Spawn) (any, bool) { return !s.DisableTelemetry, true },
+		because: `_meta.kiro.telemetryEnabled is the only switch for KAS's own agent telemetry
+(clientTelemetryEnabled, default true; an enterprise profile without usage
+analytics also turns it off). KAS under kiro-cli acp reads neither kiro-cli's
+telemetry.enabled in cli.json nor KIRO_TELEMETRY_ENABLED; the TUI forwards that
+variable through this same capability. Measured on 2.28.0: cli.json at false
+logged only "[AgentTelemetry] Initialized", while this key at false logged
+"Telemetry disabled by user preference". So marotte resolves the Data sharing
+switch (kiro-cli's telemetry.enabled, or the organization's telemetry lock)
+per spawn and sends it on every bridge. KAS reads it at initialize only, so a
+change reaches an open chat when the chat reopens.`,
+	},
+	{
 		key:      "secretStorage",
 		door:     doorConnection,
 		resolver: resolverCapability,

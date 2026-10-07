@@ -13,7 +13,6 @@ vi.mock("./editor-openers.js", () => ({
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
 }));
-vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
 // Mocked to be asserted: the attribution toast is the observable half of a card collapsing under the reader.
 const { mockToastInfo } = vi.hoisted(() => ({ mockToastInfo: vi.fn() }));
 // The canonical factory: failure-notice.ts, in this graph, imports `errorWithAction`.

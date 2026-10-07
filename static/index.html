@@ -457,7 +457,6 @@
             </nav>
           </header>
 
-          <!-- General: notifications + theme hooks (theme toggle lives in sidebar; nothing else needs a dedicated setting) -->
           <div class="settings-panel" data-settings-panel="general">
             <div class="page-section" id="general-about-section">
               <h2 class="section-title">About</h2>
@@ -551,12 +550,19 @@
               </div>
               <p class="section-hint">Closed chats stay in <strong>History</strong> for the <strong>Days kept</strong>, or for good with <strong>Keep forever</strong>. Set <strong>0</strong> to delete a chat as soon as you close it and hide History.</p>
               <div class="section-option">
-                <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
-                <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
+                <label class="toggle">
+                  <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Keep forever</span>
+                </div>
               </div>
-              <div class="section-option" id="chat-retention-days-row">
-                <label for="chat-retention-days" class="section-option-label">Days kept</label>
-                <input type="number" id="chat-retention-days" class="page-input-sm" autocomplete="off" min="0" max="90" value="1" aria-label="Chat retention days">
+              <div class="section-option section-option-fixed" id="chat-retention-days-row">
+                <div class="section-field">
+                  <label for="chat-retention-days" class="section-option-label">Days kept</label>
+                  <input type="number" id="chat-retention-days" class="rf-input rf-number" autocomplete="off" min="0" max="90" value="1" aria-label="Chat retention days">
+                </div>
               </div>
             </div>
 
@@ -579,7 +585,7 @@
 
             <div class="page-section" id="general-agent-section">
               <h2 class="section-title">Agent capabilities</h2>
-              <p class="section-hint">What the agent can use. Changes apply to new chats, and to open chats once reopened.</p>
+              <p class="section-hint">What the agent can use. Changes reach new chats, and open chats at their next message.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-knowledge" aria-label="Knowledge base search" checked>
@@ -607,7 +613,7 @@
                 </div>
               </div>
               <div class="section-option section-option-fixed">
-                <div>
+                <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="memory-mode">Memory</label>
                     <span class="settings-save-status hidden" data-save-status="memory_mode" aria-live="polite"></span>
@@ -618,7 +624,7 @@
                     <option value="read_write">Read and write when the agent decides</option>
                     <option value="learn" selected>Read and write, and also learn from conversations in the background</option>
                   </select>
-                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. The last option is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or Off to stop it. You can review and delete memories in Docs → Memories. A change applies to new chats.</p>
+                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. The last option is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or Off to stop it. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -631,11 +637,11 @@
                     <span class="section-option-label">Compact automatically</span>
                     <span class="settings-save-status hidden" data-save-status="auto_compaction_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Summarizes a long chat's older messages before it runs out of context. Off, compaction happens only when you ask, and changes here apply when a chat next opens.</p>
+                  <p class="section-hint">Summarizes a long chat's older messages before it runs out of context. Off, compaction happens only when you ask.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed" id="auto-compact-row">
-                <div>
+                <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="auto-compact-pct">Compact at</label>
                     <output id="auto-compact-pct-value" for="auto-compact-pct">80%</output>
@@ -646,7 +652,7 @@
                 </div>
               </div>
               <div class="section-option section-option-fixed">
-                <div>
+                <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="spec-planning">Spec planning</label>
                     <span class="settings-save-status hidden" data-save-status="spec_planning" aria-live="polite"></span>
@@ -708,7 +714,7 @@
                     <span class="section-option-label">Work validation</span>
                     <span class="settings-save-status hidden" data-save-status="work_validation" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Gives the agent a reviewer it can call to challenge a large change before calling it done. Off by default, and a change applies to new chats.</p>
+                  <p class="section-hint">Gives the agent a reviewer it can call to challenge a large change before calling it done. Off by default.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -721,7 +727,7 @@
                     <span class="section-option-label">AWS CloudFormation safety check</span>
                     <span class="settings-save-status hidden" data-save-status="cloudformation_safety_check" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When the agent edits a CloudFormation template or runs a CDK deploy or destroy, Kiro warns you if the change breaks one of your account's safety rules, but never blocks it. Off by default and applies to new chats. The check sends the template and recent chat to Kiro's service.</p>
+                  <p class="section-hint">When the agent edits a CloudFormation template or runs a CDK deploy or destroy, Kiro warns you if the change breaks one of your account's safety rules, but never blocks it. Off by default. The check sends the template and recent chat to Kiro's service.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -734,11 +740,11 @@
                     <span class="section-option-label">Workflows</span>
                     <span class="settings-save-status hidden" data-save-status="workflows_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets the agent start and manage multi-step workflow runs. Runs you start from Docs &gt; Workflows work either way. On by default, and a change reaches new chats and an open chat when it reloads.</p>
+                  <p class="section-hint">Lets the agent start and manage multi-step workflow runs. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
-                <div>
+                <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="output-style">Output style</label>
                     <span class="settings-save-status hidden" data-save-status="output_style" aria-live="polite"></span>
@@ -751,12 +757,12 @@
                 </div>
               </div>
               <div class="section-option section-option-fixed">
-                <div>
+                <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="shell-command-timeout">Shell command timeout</label>
                     <span class="settings-save-status hidden" data-save-status="terminal_command_timeout_ms" aria-live="polite"></span>
                   </div>
-                  <input type="number" id="shell-command-timeout" class="page-input-sm" autocomplete="off" min="1" max="1800" step="1" inputmode="numeric" placeholder="120" aria-describedby="shell-command-timeout-hint">
+                  <input type="number" id="shell-command-timeout" class="rf-input rf-number" autocomplete="off" min="1" max="1800" step="1" inputmode="numeric" placeholder="120" aria-describedby="shell-command-timeout-hint">
                   <p class="section-hint" id="shell-command-timeout-hint">How many seconds a shell command may run when the agent sets no limit of its own: empty means 2 minutes, at most 30 minutes. Raise it if your builds or tests often take longer than 2 minutes.</p>
                 </div>
               </div>
@@ -788,14 +794,14 @@
                     <span class="section-option-label">kiro-cli telemetry</span>
                     <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Sends anonymous kiro-cli usage data to the Kiro team. It does not affect how Marotte works.</p>
+                  <p class="section-hint">Sends anonymous usage data from kiro-cli and the chats it runs to the Kiro team. Open chats switch at their next message; a workflow already running may keep the old setting until it finishes.</p>
                 </div>
               </div>
             </div>
 
             <div class="page-section" id="general-experimental-section">
               <h2 class="section-title">Experimental features</h2>
-              <p class="section-hint">Optional kiro-cli features. Changes apply to new chats.</p>
+              <p class="section-hint">Optional kiro-cli features.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-hooks-status" aria-label="Show hook status" checked>
@@ -819,7 +825,7 @@
                     <span class="section-option-label">Exclude default resources from custom agents</span>
                     <span class="settings-save-status hidden" data-save-status="chat.disableInheritingDefaultResources" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, custom agents stop loading the default steering docs, skills and <code>AGENTS.md</code>, and start with only what their own definition includes.</p>
+                  <p class="section-hint">When on, custom agents in kiro-cli's terminal chat stop loading the default steering docs, skills and <code>AGENTS.md</code>, and start with only what their own definition includes. Marotte chats do not read this setting.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -836,23 +842,22 @@
                 </div>
               </div>
             </div>
+
+            <div class="page-section" id="general-advanced-section">
+              <h2 class="section-title">Advanced</h2>
+              <div class="section-option">
+                <button type="button" id="settings-open-config" class="btn btn-small" aria-label="Open config.json in the editor">config.json</button>
+                <p class="section-hint">Every setting on these pages, as one file. Reload the page after editing it.</p>
+              </div>
+            </div>
           </div>
 
-          <!-- Tools: installed CLIs + MCP integrations (MCP UI added in a later step) -->
           <div class="settings-panel hidden" data-settings-panel="tools">
 
             <div class="page-section">
               <h2 class="section-title">Tools &amp; runtimes</h2>
               <p class="section-hint">Languages, language servers and CLIs the agent can use, installed into persistent storage. The pin keeps a tool at its current version.</p>
               <div class="section-actions-row">
-                <!-- Update all and Refresh catalog each OWN a job kind: while
-                     their work is live the pill itself becomes the control that
-                     cancels it, spinner and all (tools.ts `JobPill`, which reads
-                     the idle glyph and label straight off this markup — so this
-                     is still the one place either is written). The Cancel pill
-                     below is the residual case: a job launched from a tool row
-                     (install, remove, disable) or by the server's own boot
-                     reconcile has no pill of its own to turn into. -->
                 <div class="action-bar action-bar-inline">
                   <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
                     <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
@@ -879,16 +884,9 @@
 
             <div class="page-section">
               <h2 class="section-title">Advanced configuration</h2>
-              <p class="section-hint">Edit <strong>tools.json</strong> and click <strong>Apply</strong> to install or remove tools, keeping it valid because a broken file stops Marotte from starting. Reload the page after editing <strong>config.json</strong>.</p>
-              <div class="section-actions-row">
-                <div class="action-bar action-bar-inline">
-                  <button type="button" id="tool-open-manifest" class="btn btn-small" aria-label="Open tools.json in the editor">tools.json</button>
-                  <button type="button" id="tool-open-config" class="btn btn-small" aria-label="Open config.json in the editor">config.json</button>
-                  <button type="button" id="tool-apply-btn" class="action-pill" aria-label="Apply the manifest">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                    <span>Apply</span>
-                  </button>
-                </div>
+              <div class="section-option">
+                <button type="button" id="tool-open-manifest" class="btn btn-small" aria-label="Open tools.json in the editor">tools.json</button>
+                <p class="section-hint">Changes install or remove tools when you save. An invalid file is refused.</p>
               </div>
             </div>
 
@@ -919,7 +917,7 @@
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
-              <p class="section-hint">How much the agent may do here without asking. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile. A change reaches a chat when its session next starts.</p>
+              <p class="section-hint">How much the agent may do here without asking. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile. Open chats switch at their next message.</p>
               <p id="security-profile-admin" class="section-hint governance-reason hidden">Your administrator has rules on this machine that apply under every profile and win over it.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
@@ -993,10 +991,15 @@
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
               <p class="section-hint">Pauses each turn so you can review its file changes: every file starts ticked, and any you untick is undone. This sets the default for new chats, which you can change per chat from the chat-actions menu, and the changes are already on disk during review, so a running dev server may pick them up.</p>
-              <label class="perm-mode">
-                <input type="checkbox" id="supervised-default-checkbox">
-                <span>Turn on Supervised mode for new conversations</span>
-              </label>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="supervised-default-checkbox" aria-label="Turn on Supervised mode for new conversations">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Turn on Supervised mode for new conversations</span>
+                </div>
+              </div>
             </div>
 
             <div class="page-section">
@@ -1005,10 +1008,15 @@
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
               <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules.</p>
-              <label class="perm-mode">
-                <input type="checkbox" id="scheduled-auto-approve-checkbox">
-                <span>Approve tool requests in scheduled runs instead of refusing them</span>
-              </label>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="scheduled-auto-approve-checkbox" aria-label="Approve tool requests in scheduled runs instead of refusing them">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Approve tool requests in scheduled runs instead of refusing them</span>
+                </div>
+              </div>
             </div>
 
             <div class="page-section">

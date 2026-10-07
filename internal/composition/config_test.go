@@ -66,6 +66,32 @@ func TestConfigFromEnv_Overrides(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnv_RelativeDirsBecomeAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Setup: Getwd: %v", err)
+	}
+	t.Setenv("KIRO_CONFIG_DIR", "data/")
+	t.Setenv("KIRO_WORK_DIR", "./work")
+
+	cfg := ConfigFromEnv()
+
+	wantConfig, wantWork := filepath.Join(cwd, "data"), filepath.Join(cwd, "work")
+	if cfg.ConfigDir != wantConfig {
+		t.Errorf("ConfigFromEnv() ConfigDir = %q, want %q", cfg.ConfigDir, wantConfig)
+	}
+	if cfg.WorkDir != wantWork {
+		t.Errorf("ConfigFromEnv() WorkDir = %q, want %q", cfg.WorkDir, wantWork)
+	}
+	if want := filepath.Join(wantConfig, "tools"); cfg.ToolsDir != want {
+		t.Errorf("ConfigFromEnv() ToolsDir = %q, want %q", cfg.ToolsDir, want)
+	}
+	if !slices.Contains(cfg.BrowseRoots, wantConfig) || !slices.Contains(cfg.BrowseRoots, wantWork) {
+		t.Errorf("ConfigFromEnv() BrowseRoots = %q, want both %q and %q", cfg.BrowseRoots, wantConfig, wantWork)
+	}
+}
+
 // TestConfigFromEnv_RemovedOverridesAreIgnored pins that the catalog refresh and
 // sign-in timeout variables are inert: set, they change nothing.
 func TestConfigFromEnv_RemovedOverridesAreIgnored(t *testing.T) {

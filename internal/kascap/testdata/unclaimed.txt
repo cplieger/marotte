@@ -14,7 +14,6 @@ capability findFiles
 capability helpDocs
 capability specLinks
 capability telemetry
-capability telemetryEnabled
 capability textSearch
 setting c2s
 setting cascade

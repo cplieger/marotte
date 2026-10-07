@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -78,9 +79,11 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		}
 	}
 	mcpTool := mcpToolIdentity(&req.Meta.Kiro)
+	consent := permissionConsent(&req.Meta.Kiro.Consent)
 
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
+		Consent:    consent,
 		RequestID:  reqID,
 		ToolCallID: req.ToolCall.ToolCallID,
 		// THE TITLE IS A DECISION SURFACE, the one string here that is defused: a Bidi override in it
@@ -146,6 +149,25 @@ func mcpToolIdentity(k *ACPPermissionKiroBlock) *marotte.MCPToolIdentity {
 		return nil
 	}
 	return &marotte.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
+}
+
+// permissionConsent is what an ask is about, nil when KAS named no capability. The subject
+// and folder are decision surfaces like the title, so the shown copies are defused the same
+// way while the raw ones stay the rule keys; the capability is an identifier the answer echoes.
+func permissionConsent(c *ACPConsentMeta) *marotte.PermissionConsent {
+	if c.Capability == "" {
+		return nil
+	}
+	subject := c.Subject()
+	out := &marotte.PermissionConsent{Capability: c.Capability, Subject: displayText(subject), Resource: subject}
+	if i := strings.LastIndex(subject, "/"); strings.HasPrefix(c.Capability, "fs_") && i > 0 {
+		// A folder whose shown copy reads the same as the subject's would be two identical
+		// choices that save different rules.
+		if folder := subject[:i] + "/**"; displayText(folder) != out.Subject {
+			out.Folder, out.FolderResource = displayText(folder), folder
+		}
+	}
+	return out
 }
 
 // consentScopeAdministration is the consent scope of an ask the administrator's

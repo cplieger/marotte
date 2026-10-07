@@ -57,8 +57,8 @@
 .decision-dock {
   /* The advance overlays two cards, so the outgoing one positions against
      this. No dock card holds a `position: fixed` descendant — pill-expand
-     popups and tooltips are hosted into <body>, and the always-allow
-     expansion is a plain <details>. */
+     popups and tooltips are hosted into <body>, and the always chooser
+     is in flow. */
   position: relative;
   display: flex;
   flex-direction: column;
@@ -234,8 +234,16 @@
    because the region is a scroller and the question inside it is pinned (see
    `.dock-ask-question` below). Measured with 10 options at 390px: the question's
    region 26px scrolling over its four pinned lines, the options 212, the answer box
-   and Skip untouched. */
-.dock-card > :where(.approval-body, .elicitation-body, .dock-ask-body, .user-input-options) {
+   and Skip untouched. The always chooser's patterns scroll the same way, or an open
+   chooser would squeeze the ask it answers to nothing. */
+.dock-card
+  > :where(
+    .approval-body,
+    .elicitation-body,
+    .dock-ask-body,
+    .user-input-options,
+    .always-choice-slot
+  ) {
   max-block-size: 14rem;
   overflow: hidden auto;
 }
@@ -595,7 +603,14 @@
      (four clamped lines, the step line and the opener measure 140px at 390px), or
      the resting card carries a scrollbar for 11px of overflow — a scroll affordance
      for content the clamp has already folded away. */
-  .dock-card > :where(.approval-body, .elicitation-body, .dock-ask-body, .user-input-options) {
+  .dock-card
+    > :where(
+      .approval-body,
+      .elicitation-body,
+      .dock-ask-body,
+      .user-input-options,
+      .always-choice-slot
+    ) {
     max-block-size: 10rem;
   }
 }

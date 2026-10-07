@@ -41,7 +41,9 @@ func (rt *Runtime) PushContentCollection(ctx context.Context) {
 			}
 		})
 	}
-	wg.Go(func() { rt.utility.get().session.pushContentCollection(cctx) })
+	if u := rt.utility.peek(); u != nil {
+		wg.Go(func() { u.session.pushContentCollection(cctx) })
+	}
 	wg.Wait()
 }
 
@@ -62,6 +64,7 @@ func (us *utilitySession) pushContentCollection(ctx context.Context) {
 
 func (rt *Runtime) onGovernanceLocksChanged(ctx context.Context) {
 	rt.PushContentCollection(ctx)
+	rt.reconcileSessionSettings(ctx, "organization locks")
 	rt.powers.requestSync()
 	if rt.locksHook != nil {
 		rt.locksHook(ctx)

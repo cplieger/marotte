@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -232,5 +234,80 @@ func TestSettingsWrite_ContentCollectionPushesLive(t *testing.T) {
 	patchSettings(t.Context(), t, s, `{"`+settings.KeyFBPath+`":"/workspace"}`)
 	if eng.ccPushes != 1 {
 		t.Errorf("an unrelated PATCH pushed content collection (%d pushes)", eng.ccPushes)
+	}
+}
+
+func TestSettingsWrite_ReopensOpenChatsWhenASessionSettingMoved(t *testing.T) {
+	dir := t.TempDir()
+	eng := &fakeEngine{sessionSettings: func(ctx context.Context) string {
+		var mode string
+		settings.FieldInto(ctx, dir, settings.KeyMemoryMode, &mode)
+		return mode
+	}}
+	s := &Server{agent: eng, push: &testPush{}, configDir: dir}
+	eng.settle(t.Context())
+
+	patchSettings(t.Context(), t, s, `{"`+settings.KeyMemoryMode+`":"off"}`)
+	if eng.reopens != 1 {
+		t.Errorf("a PATCH that moved a session setting reopened %d times, want 1", eng.reopens)
+	}
+	patchSettings(t.Context(), t, s, `{"`+settings.KeyMemoryMode+`":"off"}`)
+	if eng.reopens != 1 {
+		t.Errorf("a PATCH that rewrote the same value reopened (%d reopens)", eng.reopens)
+	}
+}
+
+func telemetryEngine(runner *argsRunner) *fakeEngine {
+	return &fakeEngine{sessionSettings: func(context.Context) string { return runner.value("telemetry.enabled") }}
+}
+
+func TestWriteKiroSetting_ReopensOpenChatsWhenTheSwitchMoved(t *testing.T) {
+	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "true"}}
+	eng := telemetryEngine(runner)
+	eng.settle(t.Context())
+	s := &Server{cliRunner: runner, cliTimeouts: defaultCLITimeouts(), agent: eng}
+
+	if rec := putKiroSetting(t, s, `{"key":"telemetry.enabled","value":"false"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT telemetry false = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if eng.reopens != 1 {
+		t.Errorf("turning telemetry off reopened open chats %d times, want 1", eng.reopens)
+	}
+	runner.failWrites = true
+	if rec := putKiroSetting(t, s, `{"key":"telemetry.enabled","value":"true"}`); rec.Code != http.StatusBadGateway {
+		t.Fatalf("PUT refused by kiro-cli = %d, want 502: %s", rec.Code, rec.Body)
+	}
+	if eng.reopens != 1 {
+		t.Errorf("a write kiro-cli refused reopened open chats (%d reopens)", eng.reopens)
+	}
+}
+
+// Lifting a lock writes the user's own value back after the agent reconciled the lock change,
+// so the restore itself must reopen chats still on the organization's value.
+func TestApplyGovernanceLocks_ReopensOpenChatsWhenALiftRestoresTheUserValue(t *testing.T) {
+	runner := &argsRunner{store: map[string]string{"telemetry.enabled": "false"}}
+	gov := &liveLocks{m: map[string]marotte.GovernanceLock{marotte.LockTelemetry: {Value: true}}}
+	eng := telemetryEngine(runner)
+	eng.settle(t.Context())
+	s := &Server{cliRunner: runner, cliTimeouts: defaultCLITimeouts(), governance: gov, agent: eng}
+	s.ApplyGovernanceLocks(t.Context())
+	reopensUnderLock := eng.reopens
+
+	gov.set(nil)
+	s.ApplyGovernanceLocks(t.Context())
+
+	if eng.reopens != reopensUnderLock+1 {
+		t.Errorf("restoring the user's telemetry off reopened open chats %d times, want 1", eng.reopens-reopensUnderLock)
+	}
+}
+
+// internal/agent's kiroCLIWrites routes each of these to open chats; a new key needs a row there.
+func TestAllowedKiroSettings_EachHasARouteToOpenChats(t *testing.T) {
+	want := []string{
+		"chat.disableInheritingDefaultResources", "chat.enableKnowledge", "chat.enablePromptHints",
+		"chat.enableSubagent", "hooks.showStatus", "telemetry.enabled",
+	}
+	if got := slices.Sorted(maps.Keys(allowedKiroSettings)); !slices.Equal(got, want) {
+		t.Errorf("allowedKiroSettings = %v, want %v (classify a new key in internal/agent's kiroCLIWrites)", got, want)
 	}
 }

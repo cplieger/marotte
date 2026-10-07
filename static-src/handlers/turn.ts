@@ -7,14 +7,24 @@ import { payloadOf } from "../turns.js";
 import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 import { askTarget } from "../push-subject.js";
 import { noteAgentFinished } from "../agent-finished-cue.js";
-import { pushDecision, collapseSettledDecision, dropTurnDecisions } from "../decision-dock.js";
+import {
+  pushDecision,
+  collapseSettledDecision,
+  dropTurnDecisions,
+  type Decision,
+} from "../decision-dock.js";
 import { setAgentDown, clearAgentDown } from "../send-state.js";
 import { reportFailure } from "../failure-notice.js";
 import { refreshGitBadge } from "../git.js";
 import type { ToastRetry } from "../toast.js";
 import { openSetting } from "../settings-highlight.js";
 import { showLoginModal } from "../modals.js";
-import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
+import {
+  ALWAYS_RULE_NOT_SAVED,
+  respondPermission,
+  respondElicitation,
+  respondUserInput,
+} from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
@@ -112,16 +122,26 @@ onSSE("permission_needed", (chatID, p) => {
       : "Permission needed",
     askTarget(chatID, p.run_id),
   );
-  pushDecision({
+  const decision: Extract<Decision, { kind: "permission" }> = {
     kind: "permission",
     chatID,
     runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
     submit: (answer) => {
-      void respondPermission.dispatch({ chatID, requestID: p.request_id, ...answer });
+      void respondPermission.dispatch(
+        { chatID, requestID: p.request_id, ...answer },
+        {
+          onError: (err) => {
+            if (err.code === ALWAYS_RULE_NOT_SAVED) {
+              pushDecision(decision);
+            }
+          },
+        },
+      );
     },
-  });
+  };
+  pushDecision(decision);
 });
 
 onSSE("elicitation_needed", (chatID, p) => {

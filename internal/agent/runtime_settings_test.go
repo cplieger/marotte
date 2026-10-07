@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // setKiroSettings writes a kiro-cli settings file under a throwaway HOME, returned for extension.
@@ -59,6 +61,42 @@ func TestIsHookStatusEnabled_cases(t *testing.T) {
 			h, _, _ := newTestHub()
 			if got := h.hookStatus.IsHookStatusEnabled(); got != tc.want {
 				t.Errorf("content %q: got %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTranslateV3_HookUpdateFollowsKiroCliHookStatus(t *testing.T) {
+	cases := map[string]struct {
+		content   string
+		wantCards int
+	}{
+		"switch_off": {content: `{"hooks.showStatus":false}`, wantCards: 0},
+		"switch_on":  {content: `{"hooks.showStatus":true}`, wantCards: 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			setKiroSettings(t, tc.content)
+			h, cs, _ := newTestHub()
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+			before := h.bus.fanout.Position().Head
+
+			h.translateACPEvent("c1", newSessionInfoMsg(map[string]any{
+				"kind": "hook_update",
+				"hook": map[string]any{
+					"hookId": "h1", "operationId": "op-1", "name": "probe-save",
+					"status": "completed", "actionType": "runCommand",
+				},
+			}))
+
+			cards := 0
+			for _, p := range payloadsOfType[marotte.EntryAppendedPayload](t, bufferedSince(h, before), marotte.EventEntryAppended) {
+				if p.Entry.Kind == marotte.EntryKindToolCall {
+					cards++
+				}
+			}
+			if cards != tc.wantCards {
+				t.Errorf("cli.json %s: Hook fired cards broadcast = %d, want %d", tc.content, cards, tc.wantCards)
 			}
 		})
 	}

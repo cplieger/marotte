@@ -2,9 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { PermissionNeededPayload } from "./types.js";
 
 vi.mock("./settings-highlight.js", () => ({ openSetting: vi.fn() }));
-vi.mock("./actions/permissions.js", () => ({
-  editNativeRule: { dispatch: vi.fn() },
-}));
 vi.mock("./navigate.js", () => ({ openChange: vi.fn() }));
 
 import { buildPermissionCard } from "./permission.js";

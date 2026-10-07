@@ -18,6 +18,8 @@ vi.mock("./git-tabs.js", () => ({ getGitTab: vi.fn(() => "changes") }));
 vi.mock("./files.js", () => ({ noteDefaultBrowsePath: vi.fn() }));
 vi.mock("./shell.js", () => ({ restoreShell: vi.fn() }));
 vi.mock("./tools.js", () => ({ initTools: vi.fn(), loadToolsList: vi.fn() }));
+// The General panel's config.json door; the real opener links the editor graph, past this file's mocks.
+vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openConfigFile: vi.fn() }));
 vi.mock("./notify.js", () => ({ restoreNotifications: vi.fn() }));
 vi.mock("./permissions-ui.js", () => ({
   initPermissionsUI: vi.fn(),

@@ -131,6 +131,9 @@ type Spawn struct {
 	// Workflows gives the agent its workflow tools; value-gated, always sent on
 	// both session doors.
 	Workflows bool
+	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value
+	// is KAS's own default, on.
+	DisableTelemetry bool
 }
 
 // decl is one capability key marotte can put on the wire, with everything a

@@ -93,7 +93,9 @@ func writeToolsEngine(b *strings.Builder, configDir string) {
 	b.WriteString("- UI path for users: Settings → Tools → \"Tools & runtimes\": a switch per row (off = ")
 	b.WriteString("uninstall, keep the entry as a template), \"Add tool\" (a search over the same catalog and ")
 	b.WriteString("Debian packages), \"Update all\", \"Refresh catalog\"; \"MCP integrations\" sits below it ")
-	b.WriteString("on the same tab\n\n")
+	b.WriteString("on the same tab. \"Advanced configuration\" → \"tools.json\" opens the manifest in the editor: a save there installs or ")
+	b.WriteString("removes what changed and refuses an invalid file. A write from your own file tools is neither checked nor applied ")
+	b.WriteString("until the next boot, and an invalid manifest stops marotte from starting, so use the engine API above instead\n\n")
 }
 
 func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
@@ -183,8 +185,8 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("\"AWS CloudFormation safety check\", \"Workflows\", \"Output style\", \"Shell command timeout\"), ")
 	b.WriteString("\"Data sharing\" (\"Share content with AWS for service improvement\", \"kiro-cli telemetry\"), ")
 	b.WriteString("\"Experimental features\" (\"Show hook status in chat\", \"Exclude ")
-	b.WriteString("default resources from custom agents\", \"Debug logs\")\n")
-	b.WriteString("- Settings → Tools: \"Tools & runtimes\" (see Tools engine in the environment steering doc) and \"MCP integrations\" ")
+	b.WriteString("default resources from custom agents\", \"Debug logs\"), \"Advanced\" (\"config.json\" opens every setting as one file in the editor)\n")
+	b.WriteString("- Settings → Tools: \"Tools & runtimes\" (see Tools engine in the environment steering doc), \"Advanced configuration\" (\"tools.json\") and \"MCP integrations\" ")
 	b.WriteString("(\"Connect integration\", per-server status, OAuth)\n")
 	b.WriteString("- Settings → Permissions: \"Security profile\" (guarded, read-only, trusted, unrestricted, ")
 	b.WriteString("custom; \"Customize\"), \"Active policy\" with \"Add a rule\" and \"Test a decision (why?)\", ")
@@ -192,8 +194,9 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("runs), \"Agent ignore files\"\n")
 	b.WriteString("- Settings → Custom instructions: \"Global instructions\" (the textarea IS `custom.md`, ")
 	b.WriteString("autosaved) and \"Knowledge bases\"\n")
-	b.WriteString("- \"Kiro docs\" (`/docs`): Steering, Skills, Agents, Specs, Hooks (enable/disable toggle, ")
-	b.WriteString("open, delete), Workflows (\"Run\" ⇄ \"Cancel\" a recipe with its inputs, \"Schedule\" it)\n")
+	b.WriteString("- \"Kiro docs\" (`/docs`): Steering, Skills, Prompts, Agents, Specs, Hooks (enable/disable toggle, ")
+	b.WriteString("open, delete), Workflows (\"Run\" ⇄ \"Cancel\" a recipe with its inputs, \"Schedule\" it), Memories ")
+	b.WriteString("(review and delete; hidden while the Memory setting is Off, and `/memories` then says so), Powers\n")
 	b.WriteString("- \"History\" (`/history`): previous chats and workflow runs from kiro-cli's own inventory, ")
 	b.WriteString("a \"Search conversations…\" box that searches every chat file, open to resume, \"Delete\"\n")
 	b.WriteString("- \"File browser\" (`/files`, Ctrl+Shift+F): mounts `/workspace`, `/config` and the uploads ")

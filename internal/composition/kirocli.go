@@ -3,6 +3,7 @@ package composition
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cplieger/pinstall/v3"
@@ -39,9 +40,9 @@ type kiroRuntime struct {
 	// rescan re-derives the active version from disk without downloading, or nil when there
 	// is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
-	// installed is closed once a version is ACTIVE (success, not "gave up"), nil when no install
-	// can complete: a utility bridge cannot start before it. A channel because nothing can wake on
-	// the manager's poll.
+	// installed is closed once a version is ACTIVE, by the install or by a rescan repairing one
+	// that gave up; nil when no install can complete: a utility bridge cannot start before it. A
+	// channel because nothing can wake on the manager's poll.
 	installed <-chan struct{}
 	// stop cancels the background install AND waits, so a caller reshaping the tools tree
 	// afterwards cannot race a cancelled attempt's final writes.
@@ -89,22 +90,34 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 			"hint", "this is an image defect: check the KIRO_CLI_VERSION / KIRO_CLI_SHA256 / KIRO_CLI_SHA256_ARM64 literals in entrypoint.sh")
 		return unavailableKiroRuntime()
 	}
+	return managedKiroRuntime(ctx, mgr)
+}
+
+func managedKiroRuntime(ctx context.Context, mgr *pinstall.Manager) kiroRuntime {
 	ensureCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	installed := make(chan struct{})
+	// Once: the install and every successful rescan each report activation.
+	activated := sync.OnceFunc(func() { close(installed) })
 	go func() {
 		defer close(done)
 		// Not acted on, but read: the one signal separating "a version is active" from "the
 		// installer gave up".
 		if err := mgr.EnsureWithRetry(ensureCtx); err == nil {
-			close(installed)
+			activated()
 		}
 	}()
 	return kiroRuntime{
-		cliPath:   mgr.Path,
-		env:       mgr.PathEnv,
-		ready:     mgr.Ready,
-		rescan:    mgr.Rescan,
+		cliPath: mgr.Path,
+		env:     mgr.PathEnv,
+		ready:   mgr.Ready,
+		rescan: func(rctx context.Context) (bool, error) {
+			ok, err := mgr.Rescan(rctx)
+			if ok {
+				activated()
+			}
+			return ok, err
+		},
 		installed: installed,
 		stop: func() {
 			cancel()
@@ -163,21 +176,26 @@ func kiroLegacyPurge() *pinstall.Purge {
 	}
 }
 
-// kiroSettings is marotte's kiro-cli settings set, re-asserted on every boot, best-effort. A key
-// belongs here only with a kiro-cli-SIDE role: KAS's ACP path reads no kiro-cli setting.
-// app.disableAutoupdates is absent because kirocli.Release() declares it Mandatory.
+// kiroSettings is the kiro-cli settings marotte owns, re-asserted on every start, best-effort. A
+// key the user can change must never be here, or every restart overwrites the choice: those are
+// seeded where unset (server.SeedKiroSettings). app.disableAutoupdates is absent because
+// kirocli.Release() declares it Mandatory.
 func kiroSettings() []pinstall.Assertion {
 	return []pinstall.Assertion{
-		kirocli.Setting("chat.enableKnowledge", true),
-		kirocli.Setting("chat.enableSubagent", true),
-		kirocli.Setting("chat.enablePromptHints", true),
-		kirocli.Setting("hooks.showStatus", true),
-		// Off: telemetry, and the resource-inheritance switch seeded so the Settings UI
-		// reflects reality rather than an unset-means-on fallback.
-		kirocli.Setting("telemetry.enabled", false),
-		kirocli.Setting("chat.disableInheritingDefaultResources", false),
 		// marotte owns chat retention end to end, so kiro-cli's competing purge is pinned
 		// off: 0 = never. Raw because the value is not a boolean.
 		kirocli.SettingRaw("cleanup.periodDays", "0"),
 	}
+}
+
+// startKiroSettingsSeed never seeds without a managed install (installed nil), so a developer's
+// own kiro-cli settings stay untouched.
+func startKiroSettingsSeed(ctx context.Context, installed <-chan struct{}, seed func(context.Context)) (stop func()) {
+	return runBackground(ctx, "kiro-cli settings seed", func(bctx context.Context) {
+		select {
+		case <-installed:
+			seed(bctx)
+		case <-bctx.Done():
+		}
+	})
 }

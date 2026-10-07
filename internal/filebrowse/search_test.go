@@ -427,7 +427,7 @@ func TestSearch_RootFansOutOverMounts(t *testing.T) {
 	b := t.TempDir()
 	writeTree(t, a, map[string]string{"in-a.txt": "needle\n"})
 	writeTree(t, b, map[string]string{"in-b.txt": "needle\n"})
-	h, err := New(Sensitive{}, a, b)
+	h, err := New(Sensitive{}, []string{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1420,7 +1420,7 @@ func TestSearch_SearchRootIsNotItsOwnNameMatch(t *testing.T) {
 			}
 			writeTree(t, root, map[string]string{"inner.txt": "no match inside\n"})
 		}
-		h, err := New(Sensitive{}, a, b)
+		h, err := New(Sensitive{}, []string{a, b})
 		if err != nil {
 			t.Fatal(err)
 		}

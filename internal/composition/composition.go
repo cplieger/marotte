@@ -56,6 +56,8 @@ type App struct {
 	// stopOrphanSweep stops the boot orphan sweep and WAITS: a sweep in flight issues
 	// one `inspect` per lease over the utility bridge the teardown below is about to close.
 	stopOrphanSweep func()
+	// stopKiroSeed stops the kiro-cli settings seed and waits for its goroutine.
+	stopKiroSeed func()
 	// stopPRPoller stops the PR-status poller and waits for its goroutine.
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
@@ -215,7 +217,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
-	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots...)
+	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
+		filebrowse.WithSaveHook(filepath.Join(cfg.ConfigDir, toolsManifestName), toolsManifestSaveHook(toolsEngine)))
 	if err != nil {
 		return nil, err
 	}
@@ -326,6 +329,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithOnListen(sync.OnceFunc(func() { close(listenerBound) })),
 	)
 	lockedSettings.bind(appCtx, srv.ApplyGovernanceLocks)
+	stopKiroSeed := startKiroSettingsSeed(appCtx, kiro.installed, srv.SeedKiroSettings)
 
 	built = true
 	return &App{
@@ -336,6 +340,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		tools:           toolsEngine,
 		stopKiro:        kiro.stop,
 		stopOrphanSweep: stopOrphanSweep,
+		stopKiroSeed:    stopKiroSeed,
 		stopPRPoller:    stopPRPoller,
 		stopForgeKeeper: stopForgeKeeper,
 		stopApp:         stopApp,
@@ -365,6 +370,7 @@ func (a *App) Shutdown() {
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the utility bridge
 	// the kiro teardown is about to close, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
+	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
 	if a.purgeScheduler != nil {
 		a.purgeScheduler.Stop()

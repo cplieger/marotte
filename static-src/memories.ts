@@ -11,7 +11,6 @@ import { ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { deleteMemory, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
-import { loadSettings } from "./persist.js";
 import { forceReflow } from "./dom.js";
 
 interface MemoryRecord {
@@ -83,7 +82,6 @@ function decodeMemoryOne(v: unknown): MemoryRecord {
 let memories: MemoryRecord[] = [];
 let cap = 1000;
 let state: LoadState = { kind: "loading" };
-let memoryOff = false;
 let filterText = "";
 let container: HTMLElement | null = null;
 /** Pruned to the ids the last list still holds. */
@@ -126,15 +124,9 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
 
 async function refresh(): Promise<void> {
   const gen = ++generation;
-  const [res, settings] = await Promise.all([
-    apiGetTypedOrError("/api/memory", decodeMemoryList),
-    loadSettings(),
-  ]);
+  const res = await apiGetTypedOrError("/api/memory", decodeMemoryList);
   if (gen !== generation) {
     return;
-  }
-  if (settings !== null) {
-    memoryOff = settings.memory_mode === "off";
   }
   if (res.ok && res.data !== null) {
     memories = res.data.memories;
@@ -288,13 +280,6 @@ function headStrip(): HTMLElement {
       count,
       el("span", { className: "memories-head-actions" }, delSel, delAll),
     ),
-    memoryOff
-      ? el(
-          "p",
-          { className: "memories-off-note" },
-          "Memory is off, so new chats neither read nor save these. Chats you already had keep the access they started with, except background learning, which stops when you reopen them. A chat from before this update stops using memory when you reopen it. Turn memory on in Settings > General.",
-        )
-      : null,
   );
 }
 
@@ -627,7 +612,6 @@ export function _resetMemoriesForTest(): void {
   memories = [];
   cap = 1000;
   state = { kind: "loading" };
-  memoryOff = false;
   filterText = "";
   container = null;
   selected.clear();
