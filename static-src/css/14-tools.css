@@ -378,21 +378,9 @@
   user-select: none;
 }
 
-/* A hook card's claim row opens its file (`tool-card.ts` `wireFileRow`), so it
-   takes the same pointer treatment. `box-shadow` is listed for the base press wash. */
-.tool-summary.opens-file {
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
-}
-
 /* The shared recipe; gated for `.tool-group-header`'s reason. */
 @media (any-hover: hover) {
-  .tool-summary.has-disclosure:hover,
-  .tool-summary.opens-file:hover {
+  .tool-summary.has-disclosure:hover {
     background: var(--c-hover);
   }
 }

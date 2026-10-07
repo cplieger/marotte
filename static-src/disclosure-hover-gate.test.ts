@@ -41,11 +41,6 @@ const TRIGGERS: readonly Trigger[] = [
     what: "a tool card's summary row",
   },
   {
-    file: "14-tools.css",
-    selector: ".tool-summary.opens-file:hover",
-    what: "a hook card's file-opening claim row",
-  },
-  {
     // Shares its rule with the leaf below; listed twice because a split leaving one behind would pass on the other.
     file: "14-tools.css",
     selector: ".subagent-container.has-disclosure > .subagent-header:hover",

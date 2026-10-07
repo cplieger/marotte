@@ -853,6 +853,18 @@ describe("tool card: whole-header disclosure", () => {
     expect(link.getAttribute("aria-label")).toBe("Open the diff for turn-footer.ts");
   });
 
+  it("names a read card's chip for the file it opens, not a diff", () => {
+    const card = buildToolCard({
+      id: "hdr5-read",
+      title: "Read File",
+      kind: "read",
+      status: "completed",
+      input: { path: "/workspace/a.txt" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-file-link")?.getAttribute("aria-label")).toBe("Open a.txt");
+  });
+
   it("a claim-only card has no toggle and its header stays inert", () => {
     // `readFile` resolves to kind `read`, whose depth 1 is "none": no toggle and
     // no details region, so the header must not become a control that opens an
@@ -1816,54 +1828,30 @@ describe("a hook card", () => {
   const click = (target: Element | null | undefined): void => {
     target?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
   };
-  const press = (target: Element | null | undefined, key: string): void => {
-    target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
-  };
 
-  it("makes the claim row the one control that opens the hook's file", () => {
+  it("makes the file chip the one control that opens the hook's file", () => {
     const card = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" });
-    const row = card.querySelector<HTMLElement>(".tool-summary");
-    expect(row?.getAttribute("role")).toBe("button");
-    expect(row?.tabIndex).toBe(0);
-    expect(row?.getAttribute("aria-label")).toBe("Open the hook file lint.kiro.hook");
-    expect(row?.dataset["tooltip"]).toBe(".kiro/hooks/lint.kiro.hook");
-    // The chip is the row's label, not a second control nested inside it.
-    expect(row?.querySelector("button, a, [role='button'], [tabindex]")).toBeNull();
-    expect(row?.querySelector(".tool-file-link")?.hasAttribute("data-tooltip-anchor")).toBe(true);
+    const chip = card.querySelector<HTMLElement>(".tool-file-link");
+    expect(chip?.tagName).toBe("BUTTON");
+    expect(chip?.getAttribute("aria-label")).toBe("Open the hook file lint.kiro.hook");
+    expect(chip?.dataset["tooltip"]).toBe(".kiro/hooks/lint.kiro.hook");
+    expect(card.querySelectorAll("button, a, [role='button'], [tabindex]")).toHaveLength(1);
   });
 
-  it("opens the hook's file read-only from anywhere on the row", () => {
+  it("opens the hook's file from the chip and nowhere else on the row", () => {
     setWorkspaceRoot("/workspace");
     const card = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" });
     opened.length = 0;
     click(card.querySelector(".tool-title"));
-    expect(opened).toEqual(["file:/workspace/.kiro/hooks/lint.kiro.hook"]);
-    opened.length = 0;
+    click(card.querySelector(".tool-summary"));
+    expect(opened, "the title and the row are inert").toEqual([]);
     click(card.querySelector(".tool-file-link"));
-    expect(opened, "the chip opens it once, through the row").toEqual([
-      "file:/workspace/.kiro/hooks/lint.kiro.hook",
-    ]);
-  });
-
-  it("opens the hook's file from the keyboard on Enter and Space", () => {
-    setWorkspaceRoot("/workspace");
-    const row = hookCall({ source_path: ".kiro/hooks/lint.kiro.hook" }).querySelector(
-      ".tool-summary",
-    );
-    opened.length = 0;
-    press(row, "Enter");
-    press(row, " ");
-    press(row, "a");
-    expect(opened).toEqual([
-      "file:/workspace/.kiro/hooks/lint.kiro.hook",
-      "file:/workspace/.kiro/hooks/lint.kiro.hook",
-    ]);
+    expect(opened).toEqual(["file:/workspace/.kiro/hooks/lint.kiro.hook"]);
   });
 
   it("offers no control when KAS named no file", () => {
     const card = hookCall();
     expect(card.querySelector("button, a, [role='button'], [tabindex]")).toBeNull();
-    expect(card.querySelector(".tool-summary")?.classList.contains("opens-file")).toBe(false);
     opened.length = 0;
     click(card.querySelector(".tool-summary"));
     expect(opened).toEqual([]);

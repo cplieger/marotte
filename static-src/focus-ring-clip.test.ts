@@ -17,7 +17,6 @@ const MEMBERS = [
   "a.run-step-head",
   ".run-open",
   ".tool-group-header",
-  ".tool-summary.opens-file",
   ".code-act-btn",
   ".git-repo-section-header",
   ".git-repo-section-header-toggle",
@@ -276,21 +275,6 @@ function toolGroup(): { clipper: HTMLElement; head: HTMLElement } {
   const clipper = node("div", "tool-group");
   clipper.append(head, body);
   return { clipper: mount(clipper), head };
-}
-
-/** The claim row spans the card, whose clip sits 1px out at its border. */
-function hookRow(): { clipper: HTMLElement; row: HTMLElement; header: HTMLElement } {
-  const header = node("div", "tool-header");
-  header.append(
-    node("span", "tool-icon"),
-    span("tool-title", "Hook fired: lint"),
-    span("tool-file-link", "lint.kiro.hook"),
-  );
-  const row = node("div", "tool-summary opens-file", { role: "button", tabindex: "0" });
-  row.appendChild(header);
-  const clipper = node("div", "tool-call tool-depth1-none");
-  clipper.appendChild(row);
-  return { clipper: mount(clipper), row, header };
 }
 
 /** `.code-head`'s 2px block padding is the only thing between an action button and the clip. */
@@ -686,12 +670,6 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("tool group header", head, clipper);
   });
 
-  it("on a hook card's file-opening claim row, flush on every edge", async () => {
-    const { clipper, row } = hookRow();
-    await focusByTab(row);
-    expectRingInside("hook row", row, clipper);
-  });
-
   it("on a code block's action buttons, which are 2px inside rather than flush", async () => {
     // The mildest member: 2px block padding against 3px reach.
     const { clipper, copy, run } = codeBlock();
@@ -790,31 +768,6 @@ describe("the inset band clears the content it now sits over", () => {
         far.right,
         `${name}: the band reaches its last child at inline-end`,
       ).toBeGreaterThanOrEqual(depth);
-    }
-  });
-});
-
-describe("the inset band clears the content it now sits over, on a hook card's row", () => {
-  // The row's only child, `.tool-header`, carries the padding.
-  it("clears the glyph and the file chip on all four edges", async () => {
-    const { row, header } = hookRow();
-    await focusByTab(row);
-    const depth = -px(getComputedStyle(row).outlineOffset);
-    expect(depth, "offset is not the inset token").toBeGreaterThan(0);
-    const first = header.firstElementChild;
-    const last = header.lastElementChild;
-    if (first === null || last === null) {
-      throw new Error("the fixture built no child to clear");
-    }
-    const near = inset(first, row);
-    const far = inset(last, row);
-    for (const [label, gap] of [
-      ["glyph at block-start", near.top],
-      ["glyph at inline-start", near.left],
-      ["chip at block-end", far.bottom],
-      ["chip at inline-end", far.right],
-    ] as const) {
-      expect(gap, `the band reaches the ${label}`).toBeGreaterThanOrEqual(depth);
     }
   });
 });
