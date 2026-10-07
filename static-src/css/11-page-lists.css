@@ -62,6 +62,10 @@
   border: 1px solid var(--c-border);
   border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
   padding: var(--seg-inset);
+
+  /* A stacking context, so the segments' expanders (negative z-index) sit above
+     the bar's own fill and under every segment's painted box. */
+  isolation: isolate;
 }
 
 .seg {
@@ -71,7 +75,13 @@
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+
+  /* THE BAR IS --btn-h AT EACH TIER: the segment is that minus the bar's inset
+     and border on both sides. Coarse, the painted segment is under the hit
+     floor, so the expanders below grow the target on the block axis. */
+  min-block-size: calc(var(--btn-h) - 2 * (var(--seg-inset) + 1px));
+  padding: 0 var(--sp-3);
+  position: relative;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--seg-radius);
@@ -81,12 +91,30 @@
   font-family: var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
   transition:
     background var(--dur-micro),
     color var(--dur-micro),
     border-color var(--dur-micro) var(--ease-standard);
+
+  /* Two expanders on the PADDING box: `::before` reaches the bar's edge,
+     `::after` half the row gap and stacks above every `::before`, so in a wrapped
+     bar (the MCP modal's) each row owns the half of the gap nearest to it. */
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+  }
+
+  &::before {
+    z-index: -2;
+    inset-block: calc(-1 * (var(--seg-inset) + 2px));
+  }
+
+  &::after {
+    z-index: -1;
+    inset-block: calc(-1 * (var(--seg-inset) / 2 + 1px));
+  }
 
   /* Scoped away from the selected segment, or hover repaints the selected fill.
      The SELECTION-TINTED wash every tab-shaped control shares (01-tokens.css),
@@ -118,6 +146,14 @@
 .seg-icon {
   display: block;
   flex-shrink: 0;
+}
+
+/* The label clips, not the segment, whose expander has to reach past its box;
+   tab-bar-fit.ts measures the truncation here. */
+.seg-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .seg-bar-icons .seg {

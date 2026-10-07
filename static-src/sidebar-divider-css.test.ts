@@ -19,7 +19,6 @@ afterAll(() => {
 afterEach(() => {
   delete document.documentElement.dataset["theme"];
   delete document.documentElement.dataset["pointer"];
-  delete document.documentElement.dataset["touched"];
 });
 
 /** The panel's two ends, each with its own identity element and trailing button — the shape the

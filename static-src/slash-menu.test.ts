@@ -358,6 +358,71 @@ describe("the # context menu", () => {
     expect(input.value).toBe("#[[file:src/a.go:3-4]] ");
   });
 
+  it("asks for the typed fragment as one literal, so a bracket in a name is not a pattern", async () => {
+    mockApiGetTyped.mockImplementation(() =>
+      Promise.resolve({ matches: [], scanned: 0, matched: 0, truncated: false }),
+    );
+    type("#file:a[1");
+    await vi.waitFor(() => {
+      expect(mockApiGetTyped.mock.calls.some(([p]) => p.startsWith("/api/files/search"))).toBe(
+        true,
+      );
+    });
+    const [url] = mockApiGetTyped.mock.calls.find(([p]) => p.startsWith("/api/files/search")) ?? [
+      "",
+    ];
+    expect(new URL(url, "http://h").searchParams.get("q")).toBe('"a[1"');
+  });
+
+  it("escapes a quote and a backslash in the fragment, so a name holding either stays one literal", async () => {
+    mockApiGetTyped.mockImplementation(() =>
+      Promise.resolve({ matches: [], scanned: 0, matched: 0, truncated: false }),
+    );
+    type('#file:a"[b\\c');
+    await vi.waitFor(() => {
+      expect(mockApiGetTyped.mock.calls.some(([p]) => p.startsWith("/api/files/search"))).toBe(
+        true,
+      );
+    });
+    const [url] = mockApiGetTyped.mock.calls.find(([p]) => p.startsWith("/api/files/search")) ?? [
+      "",
+    ];
+    expect(new URL(url, "http://h").searchParams.get("q")).toBe('"a\\"[b\\\\c"');
+  });
+
+  it("offers a gitignored work file, asking past the ignore rules but not into node_modules", async () => {
+    mockApiGetTyped.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("/api/files/search")
+          ? {
+              matches: [
+                {
+                  path: "/workspace/.agents/tasks/plan.md",
+                  excerpt: "",
+                  kind: "name",
+                  line: 0,
+                  ranges: [],
+                },
+              ],
+              scanned: 1,
+              matched: 1,
+              truncated: false,
+            }
+          : null,
+      ),
+    );
+    type("#file:plan");
+    await vi.waitFor(() => {
+      expect(rowNames()).toEqual([".agents/tasks/plan.md"]);
+    });
+    const [url] = mockApiGetTyped.mock.calls.find(([p]) => p.startsWith("/api/files/search")) ?? [
+      "",
+    ];
+    const params = new URL(url, "http://h").searchParams;
+    expect(params.get("ignored")).toBe("1");
+    expect(params.get("files")).toBe("!node_modules");
+  });
+
   it("writes a whole-file token for a name that itself ends like a line range", async () => {
     mockApiGetTyped.mockImplementation((path: string) =>
       Promise.resolve(

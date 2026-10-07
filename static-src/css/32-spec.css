@@ -411,10 +411,8 @@
   border-color: var(--c-yellow);
 }
 
-/* --- Mobile ---------------------------------------------------------------- */
+/* --- Touch ----------------------------------------------------------------- */
 
-@media (width <= 40rem) {
-  .spec-node-row {
-    padding-block: var(--sp-2);
-  }
+:where([data-pointer="coarse"]) .spec-node-row {
+  padding-block: var(--sp-2);
 }

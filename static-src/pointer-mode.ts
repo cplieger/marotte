@@ -1,10 +1,10 @@
 // The touch/mouse toggle in the sidebar header. This module owns the button, `pointer-tier.ts` owns
-// the tier, one-way. Two gates hide it — `coarseEverSeen()` here and the viewport in
+// the tier, one-way. Two gates hide it — `touchCapable()` here and the viewport rule in
 // `50-mobile.css` — so neither can reveal what the other hid.
 
-import { coarseEverSeen, type PointerTier } from "./device-view.js";
+import type { PointerTier } from "./device-view.js";
 import { $, forceReflow } from "./dom.js";
-import { currentTier, setPointerMode } from "./pointer-tier.js";
+import { currentTier, setPointerMode, touchCapable } from "./pointer-tier.js";
 
 /** The accessible NAME, stable in both states, because `aria-pressed` is the state channel and
  *  the two must not both carry it (ARIA APG). */
@@ -97,7 +97,7 @@ export function revealPointerModeToggle(): void {
  *  since the button reports the tier that is in force. */
 export function initPointerModeToggle(): void {
   const btn = $.pointerModeBtn;
-  btn.classList.toggle("hidden", !coarseEverSeen());
+  btn.classList.toggle("hidden", !touchCapable());
   shown = null;
   // No attribute means no tier applied yet, which 01-tokens.css reads as compact.
   paint(currentTier() ?? "fine");

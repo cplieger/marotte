@@ -666,10 +666,9 @@
 
 .steer-row {
   /* ONE owner of the control's size, read by the button that takes it and by the
-     column that reserves room for it. The used height is the LARGER of this and
-     the hit-target floor (61-mcp-tools.css floors every button), so the two
-     readers must agree on both terms or the reservation is the wrong height. */
-  --steer-act-size: 1.5rem;
+     column that reserves room for it. The painted button IS the target, so it is
+     the tier's hit floor: 24px fine, 44px coarse. */
+  --steer-act-size: var(--hit-floor);
 
   /* state | message | actions. minmax(0, 1fr) on the middle track is what lets
      the clamp below actually clamp: an auto track would size to the text and
@@ -677,7 +676,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
 
-  /* Centred at every message length, never `start`: the 1.5rem action button is
+  /* Centred at every message length, never `start`: the action button is
      the tallest item, so a top-aligned row hangs the state word and a one-line
      message ~4px above the row's own middle. */
   align-items: center;
@@ -838,7 +837,7 @@
   flex: none;
   align-items: center;
   gap: var(--sp-1);
-  min-block-size: max(var(--steer-act-size), var(--hit-floor));
+  min-block-size: var(--steer-act-size);
 }
 
 .steer-act {

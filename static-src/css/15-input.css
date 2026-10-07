@@ -65,9 +65,7 @@
 
   /* THE ROW'S INLINE PADDING, one declaration per tier, read by BOTH icon-only
      controls so their boxes cannot drift apart rather than agreeing by coincidence.
-     Wider on a phone because the labelled pills need the room; it moves at 48rem
-     rather than on the pointer tier, which is a product call the mobile block
-     records rather than a height defect. */
+     Wider on the coarse tier (the block after the phone rules). */
   --pill-pad-inline: var(--sp-2);
 
   /* ONE CONTROL HEIGHT FOR THIS BOX: the pill row's controls and the textarea's
@@ -91,10 +89,6 @@
      and stops well short of the floor: `--ctl-h-sm` is 1.5rem on a fine pointer
      and 2.25rem on a coarse one, so the `max()` yields 32 under a mouse
      (unchanged) and 36 under a finger.
-     Reading the TOKEN rather than a second selector is what keeps this one
-     declaration: `data-touched` deliberately moves --hit-floor alone
-     (01-tokens.css), so a mouse-driven touch laptop keeps the dense 32px box and
-     gains only the 44px target, which is that tier's whole point.
      Measured at 390 coarse: painted 32 -> 36, glyph clear 5 -> 7px matching the
      labelled controls, ink 39.1 -> 30.9% on Send and 27.2 -> 24.2% on `+`. The ROW
      does not move, because --composer-pill-pad gives back exactly what the box
@@ -2080,23 +2074,11 @@
   }
 }
 
-/* Touch sizing for the prompt row, HERE rather than in 50-mobile.css: a
-   surface's mobile overrides live beside the surface (the house pattern;
-   50-mobile.css carries only the cross-surface shell rules). The heights come
-   from the hit-target floor (61-mcp-tools.css) and are deliberately absent. */
+/* The prompt row's phone LAYOUT, HERE rather than in 50-mobile.css: a surface's
+   mobile overrides live beside the surface (the house pattern; 50-mobile.css
+   carries only the cross-surface shell rules). Its touch SIZES are on the tier,
+   in the block after this one. */
 @media (width <= 48rem) {
-  /* The token, not one control's padding: `.pill` and `.send-btn` both derive from
-     `--pill-pad-inline` (declared on `#prompt-form`), so moving it here moves the two
-     icon-only controls together. Overriding `.pill`'s `padding` alone is exactly how
-     Send ended up 32 wide against a 46px `#chat-options-btn`. */
-  [id="prompt-form"] {
-    --pill-pad-inline: var(--sp-3);
-  }
-
-  .pill {
-    font-size: var(--fs-sm);
-  }
-
   /* NO `.send-btn { min-width: var(--btn-h) }` here any more, and it must not come
      back on a width query. It existed to make Send 44 wide on a phone, which the
      app-wide floor already did on the POINTER tier — and it broke squareness in
@@ -2141,17 +2123,6 @@
     max-block-size: min(var(--pill-max-block, 26rem), 55dvh);
   }
 
-  /* Rows a finger picks take the pill row's own floor. */
-  .pill-model-item,
-  .pill-role-item,
-  .chat-opt-btn {
-    min-block-size: var(--btn-h);
-  }
-
-  .pill-ctx-row {
-    padding-block: var(--sp-1);
-  }
-
   /* NO tier rule beside this one, and no block-size: the rail line reads
      `--hit-floor`, which is the same 44px the hit floor already gave every tier
      button on a finger, so the KNOB's height does not move on either tier.
@@ -2179,6 +2150,32 @@
      14rem floor is what binds. The gap is the caption-to-rail one on this tier. */
   .effort-row {
     gap: var(--sp-2);
+  }
+}
+
+/* The prompt row's touch sizes, on the observed tier (pointer-tier.ts) because a
+   width query cannot reach an iPad. `:where()` keeps each selector at its base
+   specificity, so these win by coming later. */
+:where([data-pointer="coarse"]) {
+  /* The token, not one control's padding: `.pill` and `.send-btn` both derive from
+     `--pill-pad-inline`, so the two icon-only controls move together. */
+  [id="prompt-form"] {
+    --pill-pad-inline: var(--sp-3);
+  }
+
+  .pill {
+    font-size: var(--fs-sm);
+  }
+
+  /* Rows a finger picks take the pill row's own floor. */
+  .pill-model-item,
+  .pill-role-item,
+  .chat-opt-btn {
+    min-block-size: var(--btn-h);
+  }
+
+  .pill-ctx-row {
+    padding-block: var(--sp-1);
   }
 }
 

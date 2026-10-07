@@ -9,13 +9,7 @@ import indexHtml from "../static/index.html?raw";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initPointerTier, currentTier } from "./pointer-tier.js";
 import { markCoarseSeen, pointerModeChoice, setPointerModeChoice } from "./device-view.js";
-import {
-  allRules,
-  loadCSS,
-  mountAppCSS,
-  ruleBody,
-  ruleContaining,
-} from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 /** The real button, lifted out of the page by id. */
 function markupFor(anchor: string): string {
@@ -85,6 +79,29 @@ describe("the toggle's visibility", () => {
     initPointerTier();
     initPointerModeToggle();
 
+    expect(btn.classList.contains("hidden")).toBe(false);
+  });
+
+  it("is shown on fresh storage when the platform reports touch points", () => {
+    vi.spyOn(Navigator.prototype, "maxTouchPoints", "get").mockReturnValue(5);
+    const btn = mountButton();
+    initPointerTier();
+    initPointerModeToggle();
+
+    expect(btn.classList.contains("hidden")).toBe(false);
+  });
+
+  it("is shown on fresh storage when any pointer reports coarse, in mouse mode too", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      media: query,
+      matches: query === "(any-pointer: coarse)",
+    }));
+    setPointerModeChoice("fine");
+    const btn = mountButton();
+    initPointerTier();
+    initPointerModeToggle();
+
+    expect(currentTier()).toBe("fine");
     expect(btn.classList.contains("hidden")).toBe(false);
   });
 
@@ -236,34 +253,6 @@ describe("the toggle's click", () => {
   });
 });
 
-/** The one rule in the mobile stylesheet that hides the toggle. Spelled in full because
- *  `ruleContaining` keys on an exact selector-list MEMBER, and stating it here is what lets the
- *  scope checks ("inside the query that names each arm, exactly once") do their work. */
-const MOBILE_HIDE = '[id="pointer-mode-btn"]';
-
-describe("the phone-shaped arm of the visibility rule", () => {
-  it("is display:none inside ONE query naming both the narrow and the short arm", () => {
-    // The viewport condition is CSS's, in the one file that owns the definition of mobile — so it
-    // tracks a rotation and a window resize for free and cannot disagree with `.mobile-only`.
-    const narrow = ruleContaining(loadCSS("50-mobile.css"), MOBILE_HIDE, "48rem");
-    const short = ruleContaining(loadCSS("50-mobile.css"), MOBILE_HIDE, "30rem");
-    expect(narrow.body).toMatch(/display:\s*none/);
-    expect(short.body, "one rule, two arms").toBe(narrow.body);
-  });
-
-  it("hides the toggle on a phone-shaped viewport whatever the tier is", () => {
-    // The phone layout is touch-only in either orientation, so a control that revokes the enlarged
-    // tier has nothing to offer there.
-    const reaching = allRules(loadCSS("50-mobile.css")).filter((r) =>
-      r.selector.includes('[id="pointer-mode-btn"]'),
-    );
-    expect(
-      reaching.map((r) => r.selector),
-      "mobile rules reaching the toggle",
-    ).toEqual([MOBILE_HIDE]);
-  });
-});
-
 describe("the toolbar row at phone width", () => {
   // Nullable and cleaned up conditionally, so a failure BEFORE the fixture is built reports itself
   // rather than being replaced by a hook error on undefined.
@@ -360,9 +349,8 @@ describe("the toolbar row at phone width", () => {
 });
 
 describe("the phone-shaped gate, measured at real viewport sizes", () => {
-  // A media query answers about the VIEWPORT, so the only honest test of this gate resizes one — no
-  // amount of DOM setup can stand in for it. The block sits LAST in the file and restores the size
-  // in `afterAll`, because the toolbar case above reads the browser project's own width.
+  // A media query answers about the VIEWPORT, so the only honest test of this gate resizes one. The
+  // block restores the size in `afterAll`, because the toolbar cases above read the project's own.
   let entry: { readonly width: number; readonly height: number } | null = null;
   let styleEl: HTMLStyleElement | null = null;
 
@@ -378,86 +366,33 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
     }
   });
 
-  /** The button's computed `display` at one viewport size. `.hidden` is cleared first: it is the
-   *  JS gate's channel and carries `display: none !important`, so leaving the authored class on
-   *  would answer "none" for every case and the CSS gate — the subject here — would go
-   *  unmeasured. */
-  async function displayAt(width: number, height: number): Promise<string> {
+  /** The toggle's painted box on a touch-capable device in touch mode, both gates applied. This
+   *  project's page has a mouse, so `any-pointer: fine` holds; the touch-only half is in
+   *  `pointer-mode.touch.test.ts`. */
+  async function paintedAt(width: number, height: number): Promise<DOMRect> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
       width,
       height,
     ]);
+    vi.spyOn(Navigator.prototype, "maxTouchPoints", "get").mockReturnValue(5);
+    setPointerModeChoice("coarse");
     const btn = mountButton();
-    btn.classList.remove("hidden");
-    return getComputedStyle(btn).display;
+    initPointerTier();
+    initPointerModeToggle();
+    expect(currentTier()).toBe("coarse");
+    return btn.getBoundingClientRect();
   }
 
-  it("hides the toggle on a narrow, tall viewport — a phone in portrait", async () => {
-    expect(await displayAt(360, 800)).toBe("none");
-  });
-
-  it("hides the toggle on a wide, SHORT viewport — the same phone rotated", async () => {
-    // One tap here pinned `fine`, and portrait then had no control to undo it with.
-    expect(await displayAt(900, 400)).toBe("none");
-  });
-
-  it("offers the toggle on a viewport that is neither narrow nor short", async () => {
-    // A tablet in landscape clears both arms, which is what measuring the SHORT edge buys over
-    // measuring the width: 1024x768 is wide and tall, 900x400 is wide and short, and only the first
-    // is a device with a pointer to choose.
-    expect(await displayAt(1024, 768)).not.toBe("none");
-  });
-});
-
-describe("the phone-shaped gate, measured at real viewport sizes", () => {
-  // A media query answers about the VIEWPORT, so the only honest test of this gate resizes one — no
-  // amount of DOM setup can stand in for it. The block sits LAST in the file and restores the size
-  // in `afterAll`, because the toolbar case above reads the browser project's own width.
-  let entry: { readonly width: number; readonly height: number } | null = null;
-  let styleEl: HTMLStyleElement | null = null;
-
-  beforeAll(() => {
-    entry = { width: window.innerWidth, height: window.innerHeight };
-    styleEl = mountAppCSS();
-  });
-
-  afterAll(async () => {
-    styleEl?.remove();
-    if (entry !== null) {
-      await page.viewport(entry.width, entry.height);
-    }
-  });
-
-  /** The button's computed `display` at one viewport size. `.hidden` is cleared first: it is the
-   *  JS gate's channel and carries `display: none !important`, so leaving the authored class on
-   *  would answer "none" for every case and the CSS gate — the subject here — would go
-   *  unmeasured. */
-  async function displayAt(width: number, height: number): Promise<string> {
-    await page.viewport(width, height);
-    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
-      width,
-      height,
-    ]);
-    const btn = mountButton();
-    btn.classList.remove("hidden");
-    return getComputedStyle(btn).display;
-  }
-
-  it("hides the toggle on a narrow, tall viewport — a phone in portrait", async () => {
-    expect(await displayAt(360, 800)).toBe("none");
-  });
-
-  it("hides the toggle on a wide, SHORT viewport — the same phone rotated", async () => {
-    // One tap here pinned `fine`, and portrait then had no control to undo it with.
-    expect(await displayAt(900, 400)).toBe("none");
-  });
-
-  it("offers the toggle on a viewport that is neither narrow nor short", async () => {
-    // A tablet in landscape clears both arms, which is what measuring the SHORT edge buys over
-    // measuring the width: 1024x768 is wide and tall, 900x400 is wide and short, and only the first
-    // is a device with a pointer to choose.
-    expect(await displayAt(1024, 768)).not.toBe("none");
+  it.each([
+    ["a phone-sized portrait window", 360, 800],
+    ["an iPad mini in portrait", 744, 1133],
+    ["a short landscape window", 900, 400],
+    ["a tablet in landscape", 1024, 768],
+  ] as const)("paints the toggle on %s with a fine pointer attached", async (_, width, height) => {
+    const box = await paintedAt(width, height);
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
   });
 });
 

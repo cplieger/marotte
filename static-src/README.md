@@ -26,11 +26,15 @@ npm run typecheck:tests # tsc type-check (tests)
 
 ## Test environment
 
-Two vitest projects, and the DEFAULT is the browser:
+Four vitest projects, and the DEFAULT is the browser (the fourth, `e2e-sse`, skips unless `SSE_FIXTURE` is set; see CONTRIBUTING.md "Checks"):
 
 - **browser** — headless Chromium via `@vitest/browser-playwright`. Every test
   runs here unless its filename opts out. No `environment` option and no
   per-file pragma: Browser Mode is a runner, not an environment.
+- **browser-touch** — the `*.touch.test.ts` suffix, for a test that needs a
+  touch-only device: the same Chromium, with pages that are touch devices from
+  creation and no mouse. Touch emulation cannot be switched off inside a page
+  without leaving it with no pointer at all, so it gets its own project.
 - **node** — the `*.node.test.ts` suffix, for a test that needs genuine Node
   capabilities (spawning a process, walking a directory) or needs the DOM to be
   ABSENT. The reason goes in the stem, the placement in the suffix:

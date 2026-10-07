@@ -75,7 +75,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 
 func TestWriteToolsEngine(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg")
+	writeToolsEngine(&b, "/cfg", "/w")
 	out := b.String()
 	for _, want := range []string{
 		"localhost:9847/api/tools/search?q=<name>",
@@ -98,6 +98,42 @@ func TestWriteToolsEngine(t *testing.T) {
 	// The button text is "Refresh catalog"; the longer string is its aria-label.
 	if strings.Contains(out, `"Refresh the tool catalog"`) {
 		t.Errorf("writeToolsEngine quoted an aria-label as the on-screen label:\n%s", out)
+	}
+}
+
+func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarotte(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "/w")
+	out := b.String()
+	if !strings.Contains(out, "leaves the tools engine off, with the reason in Settings → Tools") {
+		t.Errorf("writeToolsEngine does not say a refused tools.json leaves the tools engine off:\n%s", out)
+	}
+	if strings.Contains(out, "stops marotte from starting") {
+		t.Errorf("writeToolsEngine still says an invalid manifest stops marotte:\n%s", out)
+	}
+}
+
+func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "/w")
+	out := b.String()
+	if !strings.Contains(out, "Your file tools cannot write it, because `/cfg` is outside the workspace") {
+		t.Errorf("writeToolsEngine(/cfg, /w) does not say file tools cannot reach tools.json:\n%s", out)
+	}
+	if strings.Contains(out, "gets the same check") {
+		t.Errorf("writeToolsEngine(/cfg, /w) promises a check file tools never reach:\n%s", out)
+	}
+}
+
+func TestWriteToolsEngine_ConfigInsideTheWorkspaceGetsTheEditorCheck(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/w/.cfg", "/w")
+	out := b.String()
+	if !strings.Contains(out, "A write from your own file tools gets the same check and install") {
+		t.Errorf("writeToolsEngine(/w/.cfg, /w) does not say file-tool writes are checked:\n%s", out)
+	}
+	if strings.Contains(out, "cannot write it") {
+		t.Errorf("writeToolsEngine(/w/.cfg, /w) says file tools cannot reach a manifest inside the workspace:\n%s", out)
 	}
 }
 

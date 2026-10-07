@@ -70,8 +70,7 @@ describe("the height's declarations, read from source", () => {
     expect(form.body).toMatch(/--composer-ctl-h:\s*max\(2rem,\s*var\(--ctl-h-sm\)\)/);
     // The floor must not be read here, or the painted box takes the 44px target's measure ("grown buttons look empty").
     expect(form.body).not.toMatch(/--composer-ctl-h:[^;]*--hit-floor/);
-    // One declaration, so no second selector re-decides the tier, and `data-touched` (which moves `--hit-floor`) cannot
-    // grow the painted box on a touch laptop.
+    // One declaration, so no second selector re-decides the tier.
     const writers = allRules(css)
       .filter((r) => /--composer-ctl-h:/.test(r.body))
       .map((r) => r.selector);

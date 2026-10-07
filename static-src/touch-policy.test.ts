@@ -158,43 +158,6 @@ function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }
 
-/** One token's value in px at the tier currently set, read the way `hitFloorPx`
- *  reads the floor: through a real box, so the whole cascade decides it. */
-function tokenPx(name: string): number {
-  const probe = document.createElement("div");
-  probe.style.inlineSize = `var(${name})`;
-  boxHost.appendChild(probe);
-  const px = probe.getBoundingClientRect().width;
-  probe.remove();
-  return px;
-}
-
-describe("the third tier state moves the hit floor and nothing else", () => {
-  // `pointer-tier.test.ts` pins WHEN `data-touched` is written; this pins what it buys: fine-tier
-  // heights with a 44px target grown by the floor's zero-specificity `min-*` rules.
-  afterEach(() => {
-    document.documentElement.removeAttribute("data-touched");
-  });
-
-  it("takes the coarse floor on a fine pointer that has been touched", () => {
-    tier("fine");
-    expect(hitFloorPx(), "the control, without the flag").toBe(24);
-
-    document.documentElement.setAttribute("data-touched", "");
-    expect(hitFloorPx()).toBe(44);
-  });
-
-  it("leaves every control-height token at the fine tier's value", () => {
-    // "That token only": `--ctl-h`, its siblings and `--icon-ui` must not follow a past touch.
-    tier("fine");
-    document.documentElement.setAttribute("data-touched", "");
-    expect(tokenPx("--ctl-h")).toBe(36);
-    expect(tokenPx("--ctl-h-dense")).toBe(32);
-    expect(tokenPx("--ctl-h-sm")).toBe(24);
-    expect(tokenPx("--icon-ui")).toBe(16);
-  });
-});
-
 describe("a native box control paints its own size and grows only its target", () => {
   it.each(Object.entries(PERM_ROWS))("%s", (_name, html) => {
     mount(html);

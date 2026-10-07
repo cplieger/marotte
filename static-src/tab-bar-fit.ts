@@ -20,7 +20,9 @@ function measure(bar: HTMLElement): void {
     // mode. The ResizeObserver fires again when the view shows and the bar
     // gains real geometry, so hidden bars self-correct on reveal. A withdrawn
     // segment reports 0/0 the same way, so only visible segments count.
-    if (seg.scrollWidth > seg.clientWidth) {
+    // The label is the clipping box (11-page-lists.css); a label-less segment measures itself.
+    const text = seg.querySelector<HTMLElement>(".seg-label") ?? seg;
+    if (text.scrollWidth > text.clientWidth) {
       overflows = true;
       break;
     }

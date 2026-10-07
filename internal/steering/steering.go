@@ -141,7 +141,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 		writeTools(&b, data)
 	}
 	writeRuntime(&b, g.configDir)
-	writeToolsEngine(&b, g.configDir)
+	writeToolsEngine(&b, g.configDir, g.workDir)
 	if hasMCP {
 		writeMCP(&b, mcp)
 	}

@@ -1125,15 +1125,15 @@ a.git-pr-row-title:hover {
   padding-block: 0;
 }
 
-@media (width <= 48rem) {
-  /* A 44px touch target in a header whose own height is a 43px toggle leaves
-     the pill wall-to-wall (measured: 0px above, 1px below). The inset goes on
-     the BUTTON rather than as padding on the header, so the toggle's hover fill
-     still reaches the section's top edge. */
-  .git-repo-section-header-row > .btn-small {
-    margin-block: var(--sp-1);
-  }
+/* A 44px touch target in a header whose own height is a 43px toggle leaves the
+   pill wall-to-wall (measured: 0px above, 1px below). The inset goes on the
+   BUTTON rather than as padding on the header, so the toggle's hover fill still
+   reaches the section's top edge. */
+:where([data-pointer="coarse"]) .git-repo-section-header-row > .btn-small {
+  margin-block: var(--sp-1);
+}
 
+@media (width <= 48rem) {
   .git-pr-row {
     grid-template-columns: 1fr;
     grid-template-areas: "title" "sub" "actions";

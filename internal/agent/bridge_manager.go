@@ -17,7 +17,9 @@ type bridgeManager struct {
 	// hostsLiveRun reports whether the chat's bridge hosts an open step turn of a chat-parented
 	// run; such a bridge is busy to a retire, since steps never take the prompt slot. Nil: never busy.
 	hostsLiveRun func(marotte.ChatID) bool
-	mu           sync.Mutex
+	// revertStarting is told of every checkpoint revert a chat's bridge sends. Nil: nobody listens.
+	revertStarting func(chatID marotte.ChatID, session string)
+	mu             sync.Mutex
 }
 
 func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
@@ -43,6 +45,9 @@ func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, exis
 		return existing, true
 	}
 	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting}
+	if notify := bm.revertStarting; notify != nil {
+		sb.revertStarting = func(session string) { notify(chatID, session) }
+	}
 	bm.bridges[chatID] = sb
 	bm.mu.Unlock()
 	slog.Info("bridge spawned", "chat_id", chatID)

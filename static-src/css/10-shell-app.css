@@ -543,16 +543,20 @@ body.sidebar-resizing {
 
 /* The in-place rename field. It takes the name's flex slot, and resets the row's
  * `user-select: none` so the caret and a selection work; paired, because WebKit
- * inherits the prefixed form. */
+ * inherits the prefixed form. Its box is its own line plus a hair, never the hit
+ * floor, so the row keeps its height while renaming at both tiers: the row is
+ * already the target, and the coarse tier's 16px text-entry floor (61-mcp-tools.css)
+ * still fits inside a coarse row's content box. */
 .tab-name-input {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   font: inherit;
   color: inherit;
   background: var(--c-bg-primary);
   border: 1px solid var(--c-accent);
   border-radius: var(--r-sm);
-  padding: 0 var(--sp-1);
+  padding: 1px var(--sp-1);
   -webkit-user-select: text;
   user-select: text;
 }
@@ -571,6 +575,23 @@ body.sidebar-resizing {
   cursor: pointer;
   padding: var(--sp-1);
   flex-shrink: 0;
+
+  /* THE × PAINTS 24px AND ITS TARGET IS --hit-floor, through an expander centred
+     on the glyph, so a coarse row stays the New chat button's height. Neither
+     this rule nor `.tab` may declare `overflow`, which would clip it;
+     `.tab.exiting` may, being `pointer-events: none`. */
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: 50%;
+    inline-size: var(--hit-floor);
+    block-size: var(--hit-floor);
+    translate: -50% -50%;
+  }
+
   /* The ladder's rung for a 16-24px box is --r-sm, and this is 24px. It shipped
      --r (6px), which is the TAB's own radius, so the close button's arc was
      identical to the row containing it — the one relationship a nested corner may

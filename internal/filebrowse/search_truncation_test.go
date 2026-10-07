@@ -46,7 +46,7 @@ func TestSearch_UnreadableDirectoryMarksTruncated(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(closed, 0o700) })
 
-	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
+	res := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": prefix, "q": "needle"}))
 
 	if !res.Truncated {
 		t.Error("truncated = false with a subtree the walk could not open; the reply claims to have covered it")
@@ -73,7 +73,7 @@ func TestSearch_UnreadableFileMarksTruncated(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(walled, 0o600) })
 
-	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
+	res := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": prefix, "q": "needle"}))
 
 	if !res.Truncated {
 		t.Error("truncated = false with an admitted file the walk could not open")
@@ -104,7 +104,8 @@ func TestSearch_DeliberateSkipsDoNotMarkTruncated(t *testing.T) {
 	}
 
 	res := decodeSearch(t, searchReq(t, h, map[string]string{
-		"path": prefix, "q": "needle", "exclude": "node_modules",
+		"mode": "contents",
+		"path": prefix, "q": "needle",
 	}))
 
 	if res.Truncated {
@@ -129,20 +130,48 @@ func TestReadCandidate_VanishedFileIsCoveredNotLost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
-	got := sc.readCandidate(dir, cand)
+	v := newContentVisitor(t.Context(), "needle", false)
+	got := v.readCandidate(dir, cand)
 	if got.unread {
 		t.Error("readCandidate reported a vanished file as unread; a file that is gone was not refused to the search")
 	}
 	if len(got.hits) != 0 {
 		t.Errorf("readCandidate returned %d hits from a file that no longer exists", len(got.hits))
 	}
-	sc.fold(got)
-	if sc.files != 1 {
-		t.Errorf("scanned = %d after folding a vanished file, want 1: a covered skip stays scanned", sc.files)
+	v.fold(got)
+	if v.files != 1 {
+		t.Errorf("scanned = %d after folding a vanished file, want 1: a covered skip stays scanned", v.files)
 	}
-	if sc.truncated {
+	if v.truncated {
 		t.Error("truncated = true after folding a vanished file: a covered skip is not a hole")
+	}
+}
+
+// A batch admitted before the search's context died is never dispatched, and none of it may
+// count as read: the deadline's reply is written, so its tally is what the reader sees.
+func TestContentVisitor_UndispatchedBatchIsNotScanned(t *testing.T) {
+	h, backing := searchHandlerAt(t, "/workspace")
+	const files = 3 * searchWorkers
+	for i := range files {
+		writeTree(t, backing, map[string]string{fmt.Sprintf("f%02d.txt", i): "needle\n"})
+	}
+	dir := searchDirAt(t, h, "/workspace")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	v := newContentVisitor(ctx, "needle", false)
+	for i := range files {
+		name := fmt.Sprintf("f%02d.txt", i)
+		v.pending = append(v.pending, searchCandidate{name: name, abs: "/workspace/" + name})
+	}
+	cancel()
+	v.flush(&walkDir{f: dir, abs: "/workspace"})
+
+	res := v.result(false)
+	if res.Scanned != 0 || len(res.Matches) != 0 {
+		t.Errorf("scanned = %d rows = %d, want 0 and 0: no file of the batch was opened", res.Scanned, len(res.Matches))
+	}
+	if !res.Truncated {
+		t.Error("truncated = false, want true: the batch's files went unread")
 	}
 }
 
@@ -220,11 +249,11 @@ func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
-	if !sc.walkDir(searchDir{f: f, abs: dir}) {
-		t.Error("walkDir returned false (stop the whole scan) on one unenumerable directory; the other roots must still answer")
+	walk, v := contentWalk(t.Context(), "needle", false)
+	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
+		t.Error("walk returned false (stop the whole scan) on one unenumerable directory; the other roots must still answer")
 	}
-	if !sc.results().Truncated {
+	if !v.result(walk.truncated).Truncated {
 		t.Error("truncated = false after a directory listing failed; the unread remainder is unreported")
 	}
 }
@@ -241,11 +270,11 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
-	if !sc.walkDir(searchDir{f: f, abs: dir}) {
-		t.Fatal("walkDir stopped the scan on an ordinary directory")
+	walk, v := contentWalk(t.Context(), "needle", false)
+	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
+		t.Fatal("walk stopped the scan on an ordinary directory")
 	}
-	res := sc.results()
+	res := v.result(walk.truncated)
 	if res.Truncated {
 		t.Error("truncated = true after a directory was fully enumerated")
 	}
@@ -254,62 +283,22 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 	}
 }
 
-// TestSearch_NameMatchSpendsNoFileOrDirBudget is the NARROW claim, and its name
-// says which budgets it is about so nobody reads it as "the name path never
-// truncates". Under the match cap, a tree of matching names is free: the same
-// tree searched for a needle nothing holds reports the same `scanned` and the
-// same `truncated`.
-func TestSearch_NameMatchSpendsNoFileOrDirBudget(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	for i := range 5 {
-		sub := filepath.Join(dir, fmt.Sprintf("needle-dir-%02d", i))
-		if err := os.MkdirAll(sub, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		writeTree(t, sub, map[string]string{
-			fmt.Sprintf("needle-file-%02d.txt", i): "nothing matching inside\n",
-		})
-	}
-
-	hits := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
-	control := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "zzz-absent"}))
-
-	if len(hits.Matches) != 10 {
-		t.Fatalf("matches = %d, want 10 (five directories and five files by name)", len(hits.Matches))
-	}
-	if len(control.Matches) != 0 {
-		t.Fatalf("control matches = %d, want none: the fixture holds the needle in no file's bytes", len(control.Matches))
-	}
-	if hits.Scanned != control.Scanned {
-		t.Errorf("scanned = %d with name hits and %d without; a name hit must open nothing",
-			hits.Scanned, control.Scanned)
-	}
-	if hits.Truncated != control.Truncated {
-		t.Errorf("truncated = %v with name hits and %v without", hits.Truncated, control.Truncated)
-	}
-	if hits.Truncated {
-		t.Error("truncated = true on a tree well under every cap")
-	}
-}
-
-// TestSearch_MatchCapStopsTheWalk is the `capped()` site: the match budget is
-// read at the TOP of each entry iteration, so enough name hits stop the walk
-// mid-tree. `Scanned` BELOW the tree's own file count is what proves the walk
-// stopped rather than the tail being cut — the clamp cannot lower it.
+// TestSearch_MatchCapStopsTheWalk: a full reply stops the walk at the entry in hand, so `scanned`
+// below the tree's file count proves the walk stopped rather than its tail being cut.
 func TestSearch_MatchCapStopsTheWalk(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	const files = maxSearchMatches + 100
 	for i := range files {
-		name := filepath.Join(dir, fmt.Sprintf("needle-%04d.txt", i))
-		if err := os.WriteFile(name, []byte("nothing matching inside\n"), 0o600); err != nil {
+		name := filepath.Join(dir, fmt.Sprintf("hit-%04d.txt", i))
+		if err := os.WriteFile(name, []byte("needle\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
+	res := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": prefix, "q": "needle"}))
 
 	if !res.Truncated {
-		t.Error("truncated = false with more matching names than the match budget")
+		t.Error("truncated = false with more matching files than the reply holds")
 	}
 	if res.Scanned >= files {
 		t.Errorf("scanned = %d with %d files in the tree; the walk was meant to stop, not to have its tail cut",
@@ -317,47 +306,5 @@ func TestSearch_MatchCapStopsTheWalk(t *testing.T) {
 	}
 	if len(res.Matches) != maxSearchMatches {
 		t.Errorf("matches = %d, want exactly the cap %d", len(res.Matches), maxSearchMatches)
-	}
-}
-
-// TestSearch_MatchCapClampsTheAnswer pins the rank-aware cut at results(): far more hits than the
-// cap, clamped by rank.
-func TestSearch_MatchCapClampsTheAnswer(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	const (
-		contentFiles = 15
-		nameFiles    = maxSearchMatches + 10
-	)
-	body := strings.Repeat("the needle is on this line\n", maxFileMatches)
-	for i := range contentFiles {
-		name := filepath.Join(dir, fmt.Sprintf("aaa-%02d.txt", i))
-		if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for i := range nameFiles {
-		name := filepath.Join(dir, fmt.Sprintf("needle-%04d.txt", i))
-		if err := os.WriteFile(name, []byte("nothing matching inside\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
-
-	if len(res.Matches) != maxSearchMatches {
-		t.Fatalf("matches = %d, want exactly the cap %d", len(res.Matches), maxSearchMatches)
-	}
-	if res.Matched <= len(res.Matches) {
-		t.Errorf("matched = %d with %d rows, want more: the count is what reports the cut", res.Matched, len(res.Matches))
-	}
-	if !res.Truncated {
-		t.Error("truncated = false after the reply cap stopped the walk")
-	}
-	for _, m := range res.Matches {
-		if m.Kind != MatchKindName {
-			t.Errorf("%s: kind = %q line %d survived the clamp; the clamp cuts the SORTED tail, so a content row must not outrank a name row",
-				m.Path, m.Kind, m.Line)
-			break
-		}
 	}
 }

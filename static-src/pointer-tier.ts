@@ -14,12 +14,6 @@ import {
 
 const ATTR = "data-pointer";
 
-/** The THIRD tier state, a second attribute beside `data-pointer` on <html>. It means "this
- *  screen has been touched at least once and the reader has not pinned a tier", and
- *  01-tokens.css spends it on `--hit-floor` ALONE — targets grow through the floor's
- *  zero-specificity `min-*` rules, so no painted box or glyph moves. */
-const ATTR_TOUCHED = "data-touched";
-
 /** A pen is COARSE: a stylus on a touchscreen has no hover and its target wants finger-sized
  *  affordances, whatever its pixel precision. */
 function tierFor(pointerType: string): PointerTier {
@@ -40,6 +34,10 @@ export function resolveTier(): PointerTier {
   if (observed !== null) {
     return observed;
   }
+  return touchReported() ? "coarse" : "fine";
+}
+
+function touchReported(): boolean {
   // A NULLABLE view of the global, not the DOM lib's: read through that type,
   // `no-unnecessary-condition` proves these two guards dead and offers to cut them.
   const g = globalThis as {
@@ -47,8 +45,14 @@ export function resolveTier(): PointerTier {
     readonly navigator?: { readonly maxTouchPoints?: number };
   };
   const coarse = g.matchMedia?.("(any-pointer: coarse)").matches ?? false;
-  const touch = (g.navigator?.maxTouchPoints ?? 0) > 0;
-  return coarse || touch ? "coarse" : "fine";
+  return coarse || (g.navigator?.maxTouchPoints ?? 0) > 0;
+}
+
+/** Whether this device can be driven by touch: a coarse pointer has been observed here, or the
+ *  platform reports one. The gate for controls only a touch-capable device needs, so a device
+ *  whose storage is fresh (an installed web app has its own partition) has them before any tap. */
+export function touchCapable(): boolean {
+  return coarseEverSeen() || touchReported();
 }
 
 /** The tier currently applied to the document, or null before `initPointerTier`. */
@@ -65,29 +69,10 @@ function applyTier(tier: PointerTier): void {
   document.documentElement.setAttribute(ATTR, tier);
 }
 
-/** Write or clear the third-tier flag. Guarded for `applyTier`'s reason: an attribute write on
- *  <html> forces a style recalc, a compare does not. */
-function applyTouched(on: boolean): void {
-  const has = document.documentElement.hasAttribute(ATTR_TOUCHED);
-  if (has === on) {
-    return;
-  }
-  if (on) {
-    document.documentElement.setAttribute(ATTR_TOUCHED, "");
-  } else {
-    document.documentElement.removeAttribute(ATTR_TOUCHED);
-  }
-}
-
-/** Lay the document out for the stored tier and the third-tier flag, from storage alone: reads,
- *  never writes, so prepaint.js can run it before any module. */
+/** Lay the document out for the stored tier, from storage alone: reads, never writes, so
+ *  prepaint.js can run it before any module. */
 export function applyStoredTier(): void {
   applyTier(resolveTier());
-  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which preserves the freeze: its inputs are facts
-  // from a PREVIOUS load, so nothing re-lays-out mid-session.
-  applyTouched(
-    pointerModeChoice() === null && (coarseEverSeen() || cachedPointerTier() === "coarse"),
-  );
 }
 
 /** Kept so a repeat init detaches its listener rather than stacking a second. */

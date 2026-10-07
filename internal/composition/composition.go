@@ -50,7 +50,7 @@ type App struct {
 	Server         *server.Server
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
-	tools          *toolbelt.Engine
+	tools          *toolsSlot
 	// stopKiro cancels the background kiro-cli install, so shutdown need not wait it out.
 	stopKiro func()
 	// stopOrphanSweep stops the boot orphan sweep and WAITS: a sweep in flight issues
@@ -208,7 +208,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		_ = refreshErr
 	}
 
-	toolsEngine, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
+	tools, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
-		filebrowse.WithSaveHook(filepath.Join(cfg.ConfigDir, toolsManifestName), toolsManifestSaveHook(toolsEngine)))
+		wireToolsManifestHook(tools, h))
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
 		server.WithPreview(preview.New(cfg.WorkDir, previewSigner, slog.Default())),
-		server.WithTools(toolsEngine),
+		server.WithTools(tools),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
@@ -337,7 +337,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		Server:          srv,
 		purgeScheduler:  purgeScheduler,
 		mcpPrewarm:      mcpPrewarm,
-		tools:           toolsEngine,
+		tools:           tools,
 		stopKiro:        kiro.stop,
 		stopOrphanSweep: stopOrphanSweep,
 		stopKiroSeed:    stopKiroSeed,
@@ -361,9 +361,8 @@ func (a *App) Run() error {
 	return err
 }
 
-// Shutdown stops background services in reverse order. Every member is treated as optional (tools
-// is nil on the degraded boot): a panic on a service never started would abort the teardown of the
-// rest.
+// Shutdown stops background services in reverse order. Every member is treated as optional: a
+// panic on a service never started would abort the teardown of the rest.
 func (a *App) Shutdown() {
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
@@ -599,26 +598,24 @@ func repoNamesFor(ctx context.Context, forgesManager *forges.Manager, id string)
 	return names
 }
 
-// wireToolsEngine builds the tools engine and, when the root is intact, wires its
-// consumers. A nil engine is the degraded verdict rather than an error, and the dependent
-// wiring is SKIPPED whole rather than nil-guarded: no toolbelt method is nil-safe.
+// wireToolsEngine starts the tools engine in its slot. An error is a failure the boot stops on;
+// a survivable one leaves the slot down with its reason.
 func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
-) (*toolbelt.Engine, error) {
-	toolsEngine, err := buildToolsEngine(appCtx, cfg, h, githubToken)
-	if err != nil {
+) (*toolsSlot, error) {
+	tools := newToolsSlot(filepath.Join(cfg.ConfigDir, toolsManifestName), func() (*toolbelt.Engine, error) {
+		return buildToolsEngine(appCtx, cfg, h, githubToken)
+	})
+	if err := tools.start(); err != nil {
 		return nil, err
 	}
-	if toolsEngine != nil {
-		warnIfNoLSPEnabled(toolsEngine)
-	}
-	return toolsEngine, nil
+	return tools, nil
 }
 
 // buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and enqueues
 // the boot jobs, reconcile first; a failed enqueue only logs, since installed tools persist on the
-// volume. (nil, nil) is the root-integrity DEGRADED verdict; any other New failure stops the boot.
-// githubToken is the engine's only GitHub credential.
+// volume. A toolbelt.New failure is returned as is, for the slot to classify. githubToken is the
+// engine's only GitHub credential.
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
@@ -631,7 +628,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 		ConfigDir: cfg.ConfigDir,
 		ToolsDir:  cfg.ToolsDir,
 		// The engine EXECUTES what it finds here and this dir leads PATH, over a volume
-		// the operator reshapes by hand. The refusal must NOT be fatal — see below.
+		// the operator reshapes by hand. The refusal must NOT be fatal: survivableToolsFailure.
 		VerifyRootIntegrity: true,
 		CatalogPath:         cfg.ToolCatalogPath,
 		Refresh:             catalogRefresh,
@@ -657,7 +654,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 		},
 	})
 	if err != nil {
-		return nil, toolsEngineFailure(err)
+		return nil, err
 	}
 	// The gate agent/code_intel.go consults; the boot fire below covers a volume that
 	// already has servers but no lsp.json, later fires ride the job callback above.
@@ -717,20 +714,8 @@ func warnIfGitHubRateLimited(j *toolbelt.Job) {
 		"secondary", j.RateLimit.Secondary, "resets_at", resets, "hint", hint)
 }
 
-// toolsEngineFailure decides what a toolbelt.New failure costs: nil (degraded) only for the
-// root-integrity refusal, because an unfit root is volume state this process cannot repair and
-// refusing to boot removes the way in; every other failure stays fatal.
-func toolsEngineFailure(err error) error {
-	if !errors.Is(err, toolbelt.ErrRootIntegrity) {
-		return fmt.Errorf("tools engine: %w", err)
-	}
-	logRootIntegrityRefusal(err)
-	return nil
-}
-
 // logRootIntegrityRefusal reports a refusal one line per offending path, then the consequence. It
-// does not touch /api/health: the condition never self-heals, so readiness would stay red with no
-// repair path.
+// does not touch /api/health: only the tools subsystem is off, and the Tools tab says why.
 func logRootIntegrityRefusal(err error) {
 	refusal, ok := errors.AsType[*toolbelt.RootIntegrityError](err)
 	if !ok {
@@ -743,10 +728,11 @@ func logRootIntegrityRefusal(err error) {
 			"path", f.Path, "reason", f.Reason)
 	}
 	slog.Warn("tools engine disabled: marotte is running without the tools subsystem; "+
-		"Settings -> Tools is unavailable",
+		"Settings -> Tools says why",
 		"finding_count", len(refusal.Findings),
 		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
-			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then restart it")
+			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then save "+
+			"tools.json in Settings -> Tools or restart")
 }
 
 // warnIfNoLSPEnabled nudges when no language server is enabled: kiro-cli scans PATH at

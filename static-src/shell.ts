@@ -28,6 +28,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
+import { touchCapable } from "./pointer-tier.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -50,6 +51,8 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
   "--accent": "var(--c-accent)",
   "--surface": "var(--c-bg-tertiary)",
   "--border": "var(--c-border)",
+  // The library sizes its key grid, scroll button and menu rows at one touch size on every tier.
+  "--touch-target": "var(--ctl-h)",
 };
 
 const encoder = new TextEncoder();
@@ -229,6 +232,10 @@ function wireFullscreenToggle(): void {
   });
 }
 
+export function revealShellKeys(): void {
+  $.shellKeysBtn.classList.remove("hidden");
+}
+
 /** Wire the shell panel's host controls. Called once from app.ts on boot. The terminal itself is
  *  NOT created here — it is built lazily on first open (see ensureTerminal), so a session that
  *  never opens the shell opens no WebSocket. */
@@ -250,6 +257,7 @@ export function initShellPanel(): void {
     void hostRestart();
   });
   // Key-toolbar button drives the grid; the library draws no toggle for it.
+  $.shellKeysBtn.classList.toggle("hidden", !touchCapable());
   $.shellKeysBtn.addEventListener("click", () => {
     toggleKeys();
   });

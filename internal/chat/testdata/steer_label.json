@@ -108,7 +108,7 @@
       "compared": true,
       "sites": [
         "internal/agent/entry_merge.go:493",
-        "internal/agent/runtime.go:649"
+        "internal/agent/runtime.go:650"
       ]
     },
     {
@@ -171,7 +171,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:649",
+      "site": "internal/agent/runtime.go:650",
       "form": "literal",
       "origin": "user",
       "state": "dropped",

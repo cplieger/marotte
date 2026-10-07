@@ -37,7 +37,7 @@ import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
 import { refreshRuntimeLine } from "./status.js";
-import { initShellPanel } from "./shell.js";
+import { initShellPanel, revealShellKeys } from "./shell.js";
 import { initSidebarResize } from "./sidebar-resize.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
@@ -127,7 +127,12 @@ function init(): void {
   // FIRST: `data-pointer` on <html> decides every control height, hit target and icon size.
   // This re-applies what prepaint.js set (the only apply when it failed); the reveal is
   // registered here so a coarse pointer arriving during boot is not missed.
-  initPointerTier({ onCoarseSeen: revealPointerModeToggle });
+  initPointerTier({
+    onCoarseSeen: () => {
+      revealPointerModeToggle();
+      revealShellKeys();
+    },
+  });
   initPointerModeToggle();
 
   // AFTER the tier, which sizes the bar's action buttons this fit measures against.

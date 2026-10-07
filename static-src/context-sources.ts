@@ -48,7 +48,15 @@ async function searchPaths(needle: string, kind: "name" | "dir"): Read<string[]>
   if (root === "" || needle.trim() === "") {
     return [];
   }
-  const params = new URLSearchParams({ path: root, q: needle });
+  // Quoted and escaped, so the name search reads the typed fragment as one literal rather than as terms and globs.
+  // Ignored files stay mentionable (a gitignored `.agents/` holds task reports); node_modules stays pruned, which
+  // also keeps the walk inside the endpoint's entry budget.
+  const params = new URLSearchParams({
+    path: root,
+    q: `"${needle.replace(/[\\"]/g, "\\$&")}"`,
+    ignored: "1",
+    files: "!node_modules",
+  });
   const res = await apiGetTyped(`/api/files/search?${params.toString()}`, decodeFileSearchResult);
   if (res === null) {
     return null;

@@ -1,11 +1,11 @@
-// Vitest 5 configuration. Two projects, and the DEFAULT is the browser: a file runs in real
-// headless Chromium unless named `.node.test.ts`. No `environment` option on the
-// browser side and no per-file `@vitest-environment` pragma: Browser Mode is not
-// an environment but a runner. The suffix is load-bearing: a misplaced Node-needing test throws on
+// The DEFAULT is the browser: a file runs in real headless Chromium unless named `.node.test.ts`
+// (Node) or `.touch.test.ts` (a touch-device page). No `environment` option on the browser side
+// and no per-file `@vitest-environment` pragma: Browser Mode is not an environment but a
+// runner. The suffix is load-bearing: a misplaced Node-needing test throws on
 // import, but one needing the DOM ABSENT passes vacuously (`attention-no-dom.node.test.ts`
 // asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
-import { configDefaults, defineConfig } from "vitest/config";
+import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { resolve } from "node:path";
 
 import { alwaysOnInterception } from "./__test-helpers__/always-on-interception.js";
@@ -14,14 +14,14 @@ import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
 
 // Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
-// copy from being collected twice (its fixtures are missing, so it fails). Both projects need the
-// whole list: a project's `exclude` REPLACES the root one.
+// copy from being collected twice (its fixtures are missing, so it fails). Every unit project needs
+// the whole list: a project's `exclude` REPLACES the root one.
 const sharedExclude = [
   ...configDefaults.exclude,
   "../static/**",
   "**/.stryker-tmp/**",
-  // The third project's files: node, but against a spawned marotte binary rather
-  // than a fake, so neither of the two unit projects may collect them.
+  // The `e2e-sse` project's files: node, but against a spawned marotte binary rather
+  // than a fake, so no unit project may collect them.
   "e2e-sse/**",
 ];
 
@@ -31,6 +31,76 @@ const sharedExclude = [
 //   then open .vitest/index.html
 // Off by default: the snapshots cost time on every browser file and CI has nowhere to publish them.
 const traceView = process.env["VITEST_TRACE"] === "1";
+
+// A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
+// touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
+// reporting no pointer at all, not the mouse a page starts with, and every later file inherits it.
+function browserProject(
+  name: string,
+  include: string[],
+  exclude: string[],
+  hasTouch = false,
+): TestProjectInlineConfiguration {
+  return {
+    extends: true,
+    test: {
+      name,
+      include,
+      exclude,
+      // A later group, so touch never runs beside `browser`: a bail that lands while the other project
+      // is resolving a `vi.mock` factory can end the vitest process
+      // (https://github.com/vitest-dev/vitest/issues/11467).
+      ...(hasTouch ? { sequence: { groupOrder: 1 } } : {}),
+      // Merged with the root list (`extends: true` merges arrays). Browser-only: the gate reads `window`,
+      // and a `ResizeObserver` loop is a real engine's verdict.
+      setupFiles: ["./ro-loop-gate.ts"],
+      // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
+      // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
+      // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). The anchor route below
+      // closes the zero-crossing; drop this only after a parallel run measures clean.
+      fileParallelism: false,
+      browser: {
+        enabled: true,
+        headless: true,
+        traceView,
+        provider: alwaysOnInterception({
+          ...(hasTouch ? { contextOptions: { hasTouch } } : {}),
+          launchOptions: {
+            channel: "chromium",
+            // Past ~49 test files in one browser session Chromium drops animation-frame
+            // delivery to ~1Hz; `frame-budget.ts` owns the per-file budgets.
+            args: ["--disable-frame-rate-limit"],
+          },
+        }),
+        instances: [{ browser: "chromium" }],
+        // Fixed viewport so layout-dependent assertions are reproducible; a
+        // real browser computes real boxes, unlike the emulator this
+        // replaced.
+        viewport: { width: 1280, height: 720 },
+        // A failure screenshot per failing test is noise in CI and cannot
+        // be read from a job log; the assertion diff is the artifact.
+        screenshotFailures: false,
+        // `commands` is a `test.browser` option and NOT a `test` option; the
+        // two nest one line apart and the wrong one type-checks nowhere.
+        commands: {
+          /** Emulate the two accessibility media features this app has arms for, per page and per test:
+           *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
+           *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
+           *  call takes both, so a test can hold all four combinations. */
+          async emulateA11yMedia(
+            { page },
+            features: {
+              reducedMotion?: "reduce" | "no-preference";
+              forcedColors?: "active" | "none";
+            },
+          ) {
+            await page.emulateMedia(features);
+          },
+        },
+      },
+    },
+  };
+}
 
 export default defineConfig({
   // cmd/bundle injects the SSE worker's content-hashed URL into the page bundle; a test
@@ -104,60 +174,12 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
-      {
-        extends: true,
-        test: {
-          name: "browser",
-          include: ["**/*.test.ts"],
-          exclude: [...sharedExclude, "**/*.node.test.ts"],
-          // Merged with the root list (`extends: true` merges arrays). Browser-only: the gate reads `window`,
-          // and a `ResizeObserver` loop is a real engine's verdict.
-          setupFiles: ["./ro-loop-gate.ts"],
-          // One test file at a time: the mocker's routes live on the shared Playwright CONTEXT and are
-          // unrouted at each file end, so a still-resolving mock gets auto-continued (`route.fulfill: Route
-          // is already handled!`, https://github.com/vitest-dev/vitest/issues/8339). The anchor route below
-          // closes the zero-crossing; drop this only after a parallel run measures clean.
-          fileParallelism: false,
-          browser: {
-            enabled: true,
-            headless: true,
-            traceView,
-            provider: alwaysOnInterception({
-              launchOptions: {
-                channel: "chromium",
-                // Past ~49 test files in one browser session Chromium drops animation-frame
-                // delivery to ~1Hz; `frame-budget.ts` owns the per-file budgets.
-                args: ["--disable-frame-rate-limit"],
-              },
-            }),
-            instances: [{ browser: "chromium" }],
-            // Fixed viewport so layout-dependent assertions are reproducible; a
-            // real browser computes real boxes, unlike the emulator this
-            // replaced.
-            viewport: { width: 1280, height: 720 },
-            // A failure screenshot per failing test is noise in CI and cannot
-            // be read from a job log; the assertion diff is the artifact.
-            screenshotFailures: false,
-            // `commands` is a `test.browser` option and NOT a `test` option; the
-            // two nest one line apart and the wrong one type-checks nowhere.
-            commands: {
-              /** Emulate the two accessibility media features this app has arms for, per page and per test:
-               *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
-               *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
-               *  call takes both, so a test can hold all four combinations. */
-              async emulateA11yMedia(
-                { page },
-                features: {
-                  reducedMotion?: "reduce" | "no-preference";
-                  forcedColors?: "active" | "none";
-                },
-              ) {
-                await page.emulateMedia(features);
-              },
-            },
-          },
-        },
-      },
+      browserProject(
+        "browser",
+        ["**/*.test.ts"],
+        [...sharedExclude, "**/*.node.test.ts", "**/*.touch.test.ts"],
+      ),
+      browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
     ],
 
     // Fail loudly if the include pattern matches nothing.

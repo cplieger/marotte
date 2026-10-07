@@ -18,8 +18,6 @@ import (
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -61,7 +59,7 @@ type Server struct {
 	cliRunner     CLIRunner
 	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
 	kiroDocs *docsCache
-	tools    *toolbelt.Engine
+	tools    toolsSource
 	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
 	kiroReady func() (bool, pinstall.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
@@ -129,8 +127,8 @@ func WithPreview(r routeHandler) Option { return func(s *Server) { s.preview = r
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
 func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r } }
 
-// WithTools sets the tools engine backing the /api/tools surface.
-func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
+// WithTools sets the source of the tools engine backing the /api/tools surface.
+func WithTools(src toolsSource) Option { return func(s *Server) { s.tools = src } }
 
 // WithUtilityPrompt sets the utility prompter used for AI-assisted tasks.
 func WithUtilityPrompt(p utilityPrompter) Option {
@@ -287,9 +285,9 @@ func (s *Server) ListenAndServe() error {
 	// The exact app-owned pattern wins over toolbelt's subtree for EVERY method, keeping
 	// "status" out of its {name} handlers.
 	if s.tools != nil {
-		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
-		mux.Handle("/api/tools", toolsAPI)
-		mux.Handle("/api/tools/", toolsAPI)
+		api := &toolsAPI{src: s.tools}
+		mux.Handle(toolsAPIPrefix, api)
+		mux.Handle(toolsAPIPrefix+"/", api)
 	}
 	mux.HandleFunc("/api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)

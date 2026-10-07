@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -116,9 +115,9 @@ func mkdirMode(t *testing.T, path string, mode os.FileMode) {
 	}
 }
 
-// TestBuildToolsEngineDegradesOnRootIntegrityRefusal asserts that an unfit managed root leaves marotte running
+// TestWireToolsEngineDegradesOnRootIntegrityRefusal asserts that an unfit managed root leaves marotte running
 // without the tools subsystem.
-func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
+func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	tests := map[string]struct {
 		// plant introduces the defect and returns the paths the check must
 		// name, in any order.
@@ -186,12 +185,16 @@ func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
+			engine, reason := tools.Engine()
 			if engine != nil {
 				t.Fatal("an engine was constructed over an unfit root; the integrity check is not enabled on the real config literal")
+			}
+			if !errors.Is(reason, errToolsRootUnfit) {
+				t.Errorf("Engine() reason over an unfit root = %v, want %v", reason, errToolsRootUnfit)
 			}
 			if got := loggedUnfitPaths(t, logs); !slices.Equal(got, want) {
 				t.Errorf("findings named %v, want %v; logs:\n%s", got, want, logs.String())
@@ -209,9 +212,12 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
-	if err != nil || engine != nil {
-		t.Fatalf("buildToolsEngine = (%v, %v), want the degraded (nil, nil)", engine, err)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over an unfit root = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("Setup: an engine came up over an unfit root")
 	}
 
 	chatStore, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
@@ -222,32 +228,28 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
 		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
-		tools:          engine,
+		tools:          tools,
 		stopKiro:       func() {},
 	}
 	app.Shutdown()
 }
 
-// TestBuildToolsEngineKeepsNonIntegrityFailuresFatal asserts that degrading on any New error would turn an
+// TestWireToolsEngineKeepsOtherFailuresFatal asserts that degrading on any New error would turn an
 // unrelated regression into a tool-less boot.
-func TestBuildToolsEngineKeepsNonIntegrityFailuresFatal(t *testing.T) {
-	configDir, toolsDir := fitTree(t)
-	doc := fmt.Sprintf(`{"version":%d,"tools":{}}`, toolbelt.ManifestVersion+1)
-	if err := os.WriteFile(filepath.Join(configDir, "tools.json"), []byte(doc), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestWireToolsEngineKeepsOtherFailuresFatal(t *testing.T) {
+	configDir, _ := fitTree(t)
 	logs := captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir}, testRuntime(t), nil)
 
 	if err == nil {
-		t.Fatal("a manifest-version failure was absorbed into a tool-less boot; only the root-integrity refusal may degrade")
+		t.Fatal("a missing tools dir was absorbed into a tool-less boot; only an unfit root or an unusable tools.json may degrade")
 	}
-	if engine != nil {
-		t.Error("an engine was returned alongside a fatal error")
+	if tools != nil {
+		t.Error("a slot was returned alongside a fatal error")
 	}
 	if errors.Is(err, toolbelt.ErrRootIntegrity) {
-		t.Errorf("a manifest failure classified as a root-integrity refusal: %v", err)
+		t.Errorf("a configuration failure classified as a root-integrity refusal: %v", err)
 	}
 	if !strings.Contains(err.Error(), "tools engine:") {
 		t.Errorf("error wrapping changed to %q; callers and logs read this prefix", err)

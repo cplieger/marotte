@@ -2,34 +2,62 @@
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { $, byId } from "./dom.js";
-import { apiGetTyped } from "./api-client.js";
+import { apiGetTypedOrError } from "./api-client.js";
 import { openAtLine } from "./navigate.js";
 import { reconcile } from "./reconcile.js";
-import { fileIcon } from "./icons.js";
+import { paintIfChanged, wireSignature } from "./paint-sig.js";
+import { fileIcon, ICON_EYE_UI, ICON_FILE_TEXT_UI } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { caseParam, createSearchShell, searchField, wireSearchKeys } from "./search-shell.js";
+import {
+  caseParam,
+  createSearchShell,
+  latchedIconButton,
+  searchField,
+  wireSearchKeys,
+} from "./search-shell.js";
 import type { SearchShell } from "./search-shell.js";
 import { FB_ROOT } from "./files-shared.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { getActiveTabId, getActiveTabKind } from "./tabs.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
+import type { FileMatch, FileSearchResult, MatchRange } from "./wire/types.gen.js";
 import { decodeFileSearchResult } from "./wire/decoders.gen.js";
 
-/** A match is a row (a line, or a name); the scan reads files. */
-const NOUNS: Nouns = {
-  match: { one: "match", many: "matches" },
-  scanned: { one: "file", many: "files" },
+type SearchMode = "names" | "contents";
+
+const NOUNS: Record<SearchMode, Nouns> = {
+  names: {
+    match: { one: "entry", many: "entries" },
+    scanned: { one: "entry", many: "entries" },
+  },
+  contents: {
+    match: { one: "match", many: "matches" },
+    scanned: { one: "file", many: "files" },
+  },
 };
 
-/** A `*` does not cross a `/`; stated where the user meets the convention. */
-const GLOB_HINT =
-  "One or more patterns, comma separated. " +
-  "A pattern without a slash matches the file name at any depth, for example *.go. " +
-  "A pattern with a slash matches the path under the folder searched, for example src/*.go. " +
-  "Exclude also skips a whole folder, for example node_modules.";
+const FIELD_COPY: Record<SearchMode, string> = {
+  names: "Find files by name\u2026",
+  contents: "Find text in files\u2026",
+};
+
+const NAMES_HINT = "Type a name, or a pattern like *.css";
+const INVALID_NOTE = "Incomplete or invalid pattern";
+
+/** A 400 is the pattern's fault, which the reader fixes by typing on, so it is told apart from a
+ *  search that could not run. */
+type SearchAnswer =
+  | { readonly kind: "result"; readonly result: FileSearchResult }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "failed" };
+
+/** The filter grammar, stated where the user meets it; `internal/filebrowse/searchglob.go` is the authority. */
+const FILES_HINT =
+  "Comma-separated. A bare name matches that file or folder at any depth, and .md matches that extension. " +
+  "* and ? stay within a folder, ** crosses folders, ! excludes.";
 
 export interface FilesSearchCtx {
   /** The folder the browser is showing, which is the search ROOT. */
@@ -43,32 +71,39 @@ export interface FilesSearchCtx {
 let ctx: FilesSearchCtx | null = null;
 let barEl: HTMLElement | null = null;
 let resultsEl: HTMLElement | null = null;
-let includeEl: HTMLInputElement | null = null;
-let excludeEl: HTMLInputElement | null = null;
+let filesEl: HTMLInputElement | null = null;
+let contentsBtn: HTMLButtonElement | null = null;
+let ignoredBtn: HTMLButtonElement | null = null;
+let rowNav: RovingFocusController | null = null;
 /** Its own abort signal: sharing the browser's would cancel searches and directory loads against each other. */
 let shell: SearchShell | null = null;
+let mode: SearchMode = "names";
+let includeIgnored = false;
 let lastMatches: FileMatch[] = [];
 /** Unsubscribe for the tab teardown, so a rebuilt module does not stack subscribers. */
 let unsubTab: (() => void) | null = null;
 /** The files tab the open bar belongs to, "" when closed or opened on an empty strip (the teardown never fires for ""). */
 let searchOwnerID = "";
 
-/** The search URL. `case=1` only when asked: the server reads absence as insensitive, as for the transcript search. */
+/** Every optional parameter is sent only when set: the server reads absence as the default. */
 export function searchURL(
   path: string,
   query: string,
-  opts: { caseSensitive?: boolean; include?: string; exclude?: string } = {},
+  opts: { caseSensitive?: boolean; mode?: SearchMode; files?: string; ignored?: boolean } = {},
 ): string {
   const q = new URLSearchParams({ path, q: query });
+  if (opts.mode === "contents") {
+    q.set("mode", "contents");
+  }
   const flag = caseParam(opts.caseSensitive === true);
   if (flag !== "") {
     q.set("case", flag);
   }
-  if ((opts.include ?? "") !== "") {
-    q.set("include", opts.include ?? "");
+  if ((opts.files ?? "") !== "") {
+    q.set("files", opts.files ?? "");
   }
-  if ((opts.exclude ?? "") !== "") {
-    q.set("exclude", opts.exclude ?? "");
+  if (opts.ignored === true) {
+    q.set("ignored", "1");
   }
   return `/api/files/search?${q.toString()}`;
 }
@@ -88,26 +123,91 @@ export function hitKey(m: FileMatch): string {
   return join("hit", m.path, String(m.line));
 }
 
-function globField(id: string, placeholder: string, label: string): HTMLInputElement {
-  return searchField({
-    id,
-    className: "fb-search-field",
-    label,
-    placeholder,
-    title: GLOB_HINT,
-  });
+/** A range out of order or past the text is dropped rather than trusted. */
+function markedText(text: string, ranges: readonly MatchRange[]): Node[] {
+  const out: Node[] = [];
+  let at = 0;
+  for (const r of ranges) {
+    if (r.start < at || r.end <= r.start || r.end > text.length) {
+      continue;
+    }
+    if (r.start > at) {
+      out.push(document.createTextNode(text.slice(at, r.start)));
+    }
+    out.push(el("mark", { className: "fb-search-mark" }, text.slice(r.start, r.end)));
+    at = r.end;
+  }
+  if (at < text.length) {
+    out.push(document.createTextNode(text.slice(at)));
+  }
+  return out;
+}
+
+function splitPath(abs: string): { parent: string; base: string } {
+  const cut = abs.lastIndexOf("/");
+  return { parent: abs.slice(0, cut), base: abs.slice(cut + 1) };
+}
+
+/** The query as the server reads it: a contents needle is literal, spaces included, while names-mode spaces only
+ *  separate terms. */
+function wireQuery(query: string): string {
+  return mode === "contents" ? query : query.trim();
+}
+
+function isIdle(query: string): boolean {
+  if (wireQuery(query) !== "") {
+    return false;
+  }
+  return mode === "contents" || (filesEl?.value.trim() ?? "") === "";
+}
+
+function applyMode(next: SearchMode): void {
+  mode = next;
+  contentsBtn?.setAttribute("aria-pressed", next === "contents" ? "true" : "false");
+  if (shell !== null) {
+    shell.input.placeholder = FIELD_COPY[next];
+    shell.input.setAttribute("aria-label", FIELD_COPY[next]);
+  }
+}
+
+function idleNote(): string {
+  return mode === "names" ? NAMES_HINT : "";
 }
 
 function ensureBuilt(): void {
   if (barEl !== null) {
     return;
   }
-  includeEl = globField("fb-search-include", "Include: *.go", "Include patterns");
-  excludeEl = globField("fb-search-exclude", "Exclude: node_modules", "Exclude patterns");
-  const globRow = el("div", { className: "fb-search-row fb-search-globs" }, includeEl, excludeEl);
+  contentsBtn = latchedIconButton(
+    "fb-search-btn fb-search-toggle",
+    "Search file contents",
+    "Search inside files",
+    ICON_FILE_TEXT_UI,
+    (on) => {
+      applyMode(on ? "contents" : "names");
+      // Forced, as `Aa` is: the query text did not change.
+      shell?.run();
+    },
+  );
+  ignoredBtn = latchedIconButton(
+    "fb-search-btn fb-search-toggle",
+    "Include ignored files",
+    "Include files .gitignore excludes, and node_modules",
+    ICON_EYE_UI,
+    (on) => {
+      includeIgnored = on;
+      shell?.run();
+    },
+  );
+  filesEl = searchField({
+    id: "fb-search-files",
+    className: "fb-search-field fb-search-files",
+    label: "Files to include or exclude",
+    placeholder: "Files: *.css, src/**, !node_modules",
+    title: FILES_HINT,
+  });
 
-  // The glob row is this surface's alone, so it arrives through `compose`; the rest is the shell's.
-  const built = createSearchShell<FileSearchResult>({
+  const built = createSearchShell<SearchAnswer>({
     id: "fb-search",
     regionClass: "fb-search hidden",
     inputClass: "fb-search-field",
@@ -115,44 +215,59 @@ function ensureBuilt(): void {
     caseClass: "fb-search-case",
     noteClass: "fb-search-note",
     label: "Find in files",
-    placeholder: "Find in files\u2026",
+    placeholder: FIELD_COPY.names,
     inputTitle: "Find in files. Press Ctrl+F again to use the browser's find.",
     matchCase: true,
     note: true,
     closeButton: true,
     compose: ({ input, caseButton, closeButton, note }) => [
-      el("div", { className: "fb-search-row" }, input, caseButton, closeButton),
-      globRow,
+      el("div", { className: "fb-search-row" }, input, caseButton, contentsBtn, closeButton),
+      el("div", { className: "fb-search-row" }, filesEl, ignoredBtn),
       note,
     ],
     query: async (query, qctx) => {
-      const trimmed = query.trim();
       // An empty root means no browser is bound.
-      if (trimmed === "" || ctx === null || ctx.getSearchPath() === "") {
+      if (isIdle(query) || ctx === null || ctx.getSearchPath() === "") {
         return null;
       }
-      return apiGetTyped(
-        searchURL(ctx.getSearchPath(), trimmed, {
+      const res = await apiGetTypedOrError(
+        searchURL(ctx.getSearchPath(), wireQuery(query), {
           caseSensitive: qctx.caseSensitive,
-          include: includeEl?.value.trim() ?? "",
-          exclude: excludeEl?.value.trim() ?? "",
+          mode,
+          files: filesEl?.value.trim() ?? "",
+          ignored: includeIgnored,
         }),
         decodeFileSearchResult,
         qctx.signal,
       );
+      if (res.ok && res.data !== null) {
+        return { kind: "result", result: res.data };
+      }
+      if (res.status === 400) {
+        return { kind: "invalid" };
+      }
+      if (!qctx.signal.aborted) {
+        console.warn("files search failed", res.status, res.error);
+      }
+      return { kind: "failed" };
     },
-    render: (res, query) => {
+    render: (answer, query) => {
       const searchPath = ctx?.getSearchPath() ?? "";
-      if (query.trim() === "") {
+      if (isIdle(query)) {
         lastMatches = [];
         renderResults(searchPath);
-        built.setNote("");
+        built.setNote(idleNote());
         return;
       }
-      if (res === null) {
-        built.setNote(emptyNote({ kind: "failed" }, NOUNS));
+      if (answer === null || answer.kind === "failed") {
+        built.setNote(emptyNote({ kind: "failed" }, NOUNS[mode]));
         return;
       }
+      if (answer.kind === "invalid") {
+        built.setNote(INVALID_NOTE);
+        return;
+      }
+      const res = answer.result;
       lastMatches = res.matches;
       renderResults(searchPath);
       if (res.matches.length === 0) {
@@ -165,12 +280,12 @@ function ensureBuilt(): void {
               scanned: res.scanned,
               truncated: res.truncated,
             }),
-            NOUNS,
+            NOUNS[mode],
           ),
         );
         return;
       }
-      built.setNote(scanNote(res, res.matches.length, NOUNS));
+      built.setNote(scanNote(res, res.matches.length, NOUNS[mode]));
     },
     onDismiss: () => {
       closeFilesSearch();
@@ -187,20 +302,35 @@ function ensureBuilt(): void {
     role: "list",
   });
 
-  // The glob fields share wireSearchKeys, so Escape means the same in all three.
-  for (const target of [includeEl, excludeEl]) {
-    target.addEventListener("input", () => {
-      built.schedule();
-    });
-    wireSearchKeys(target, {
-      onDismiss: () => {
-        closeFilesSearch();
-      },
-      onSubmit: () => {
-        built.run();
-      },
+  // Registered before rovingFocus's own keydown, so the first row hands focus back to the field.
+  results.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "ArrowUp" && e.target === results.querySelector(".fb-search-hit")) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      built.input.focus();
+    }
+  });
+  rowNav = rovingFocus(results, ".fb-search-hit", { wrap: false });
+
+  for (const field of [built.input, filesEl]) {
+    field.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown" && lastMatches.length > 0) {
+        e.preventDefault();
+        rowNav?.focusFirst();
+      }
     });
   }
+  filesEl.addEventListener("input", () => {
+    built.schedule();
+  });
+  wireSearchKeys(filesEl, {
+    onDismiss: () => {
+      closeFilesSearch();
+    },
+    onSubmit: () => {
+      built.run();
+    },
+  });
 
   $.fbList.insertAdjacentElement("beforebegin", built.region);
   $.fbList.insertAdjacentElement("afterend", results);
@@ -216,49 +346,124 @@ function ensureBuilt(): void {
   });
 }
 
-/** Line decides shape (content hit: `:N` + excerpt; name hit: icon + label). Kind decides the click's destination. */
-function hitRow(m: FileMatch, label: string): HTMLElement {
-  const isDir = m.kind === "dir";
-  const isName = m.line === 0;
-  const row = el(
-    "div",
-    {
-      className: "fb-row fb-search-hit",
-      role: "listitem",
-      tabindex: "0",
-      "data-path": m.path,
-      "data-line": String(m.line),
-      "data-kind": m.kind,
-    },
-    el("span", { className: "fb-icon" }, iconEl(fileIcon(m.path, isDir))),
-    el("span", { className: "fb-name fb-name-link" }, label),
-    ...(isName
-      ? []
-      : [
-          el("span", { className: "fb-search-lineno" }, `:${String(m.line)}`),
-          el("span", { className: "fb-search-excerpt" }, m.excerpt),
-        ]),
-  );
-  const open = (): void => {
-    switch (m.kind) {
-      case "dir":
-        ctx?.openFolder(m.path);
-        return;
-      case "name":
-        openAtLine(m.path);
-        return;
-      case "content":
-        openAtLine(m.path, m.line);
-        return;
+type ResultItem =
+  | { readonly kind: "name"; readonly match: FileMatch }
+  | { readonly kind: "group"; readonly path: string; readonly count: number }
+  | { readonly kind: "line"; readonly match: FileMatch };
+
+/** Relies on the server's path order: one file's content rows arrive together. */
+function groupItems(matches: readonly FileMatch[]): ResultItem[] {
+  const items: ResultItem[] = [];
+  // A hit's path is container-absolute, so the empty path never names a real file.
+  let group = { kind: "group" as const, path: "", count: 0 };
+  for (const m of matches) {
+    if (m.kind !== "content") {
+      items.push({ kind: "name", match: m });
+      group = { kind: "group", path: "", count: 0 };
+      continue;
     }
-  };
-  row.addEventListener("click", open);
-  row.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      open();
+    if (group.path !== m.path) {
+      group = { kind: "group", path: m.path, count: 0 };
+      items.push(group);
+    }
+    group.count++;
+    items.push({ kind: "line", match: m });
+  }
+  return items;
+}
+
+function itemKey(item: ResultItem): string {
+  return item.kind === "group" ? join("group", item.path) : hitKey(item.match);
+}
+
+/** The item a row shows NOW: a key outlives a reply, so a kept row is repainted, never re-bound. */
+const rowItems = new WeakMap<HTMLElement, ResultItem>();
+
+function openItem(item: ResultItem): void {
+  switch (item.kind) {
+    case "group":
+      openAtLine(item.path);
+      return;
+    case "line":
+      openAtLine(item.match.path, item.match.line);
+      return;
+    case "name":
+      if (item.match.kind === "dir") {
+        ctx?.openFolder(item.match.path);
+        return;
+      }
+      openAtLine(item.match.path);
+      return;
+  }
+}
+
+function rowClass(item: ResultItem): string {
+  switch (item.kind) {
+    case "name":
+      return "";
+    case "group":
+      return "fb-search-group";
+    case "line":
+      return "fb-search-line";
+  }
+}
+
+function nameChildren(m: FileMatch, searchPath: string): Node[] {
+  const { parent, base } = splitPath(m.path);
+  const where = hitLabel(searchPath, `${parent}/`).replace(/\/$/, "");
+  return [
+    el("span", { className: "fb-icon" }, iconEl(fileIcon(m.path, m.kind === "dir"))),
+    el("span", { className: "fb-name fb-name-link fb-search-base" }, ...markedText(base, m.ranges)),
+    ...(where === ""
+      ? []
+      : [el("span", { className: "fb-search-parent" }, el("bdi", { dir: "ltr" }, where))]),
+  ];
+}
+
+function rowChildren(item: ResultItem, searchPath: string): Node[] {
+  switch (item.kind) {
+    case "name":
+      return nameChildren(item.match, searchPath);
+    case "group":
+      return [
+        el("span", { className: "fb-icon" }, iconEl(fileIcon(item.path, false))),
+        el("span", { className: "fb-name fb-name-link" }, hitLabel(searchPath, item.path)),
+        el("span", { className: "fb-search-count" }, String(item.count)),
+      ];
+    case "line":
+      return [
+        el("span", { className: "fb-search-lineno" }, `:${String(item.match.line)}`),
+        el(
+          "span",
+          { className: "fb-search-excerpt" },
+          ...markedText(item.match.excerpt, item.match.ranges),
+        ),
+      ];
+  }
+}
+
+function paintRow(row: HTMLElement, item: ResultItem, searchPath: string): void {
+  rowItems.set(row, item);
+  const data = item.kind === "group" ? { path: item.path, line: 0, kind: "file" } : item.match;
+  row.dataset["path"] = data.path;
+  row.dataset["line"] = String(data.line);
+  row.dataset["kind"] = data.kind;
+  paintIfChanged(row, [wireSignature(item), searchPath], () => rowChildren(item, searchPath));
+}
+
+function mountRow(item: ResultItem, searchPath: string): HTMLElement {
+  const row = el("div", {
+    className: `fb-row fb-search-hit ${rowClass(item)}`.trim(),
+    role: "listitem",
+    tabindex: "-1",
+  });
+  row.addEventListener("click", () => {
+    const current = rowItems.get(row);
+    if (current !== undefined) {
+      openItem(current);
     }
   });
+  paintRow(row, item, searchPath);
   return row;
 }
 
@@ -266,12 +471,14 @@ function renderResults(searchPath: string): void {
   if (resultsEl === null) {
     return;
   }
-  reconcile(resultsEl, lastMatches, {
-    key: hitKey,
-    mount: (m: FileMatch) => hitRow(m, hitLabel(searchPath, m.path)),
-    // A re-run produces a new hit set; an unchanged row shows the same line.
-    update: () => undefined,
+  reconcile(resultsEl, groupItems(lastMatches), {
+    key: itemKey,
+    mount: (item: ResultItem) => mountRow(item, searchPath),
+    update: (row, item: ResultItem) => {
+      paintRow(row, item, searchPath);
+    },
   });
+  rowNav?.refresh();
 }
 
 /**
@@ -292,6 +499,9 @@ export function openFilesSearch(): void {
   ensureBuilt();
   if (barEl === null || shell === null || resultsEl === null) {
     return;
+  }
+  if (!isOpen()) {
+    resetToggles();
   }
   // Read after activateBrowser, so it records the tab the bar opens over.
   searchOwnerID = getActiveTabId();
@@ -318,7 +528,7 @@ export function closeFilesSearch(): void {
   shell?.setNote("");
 }
 
-/** Drop the search: close it and forget the query and globs. */
+/** Unlike `closeFilesSearch`, also forgets the query, the filter and both toggles. */
 export function resetFilesSearch(): void {
   closeFilesSearch();
   // Unconditional: `closeFilesSearch` early-returns on a closed bar.
@@ -326,12 +536,16 @@ export function resetFilesSearch(): void {
   if (shell !== null) {
     shell.input.value = "";
   }
-  if (includeEl !== null) {
-    includeEl.value = "";
+  if (filesEl !== null) {
+    filesEl.value = "";
   }
-  if (excludeEl !== null) {
-    excludeEl.value = "";
-  }
+  resetToggles();
+}
+
+function resetToggles(): void {
+  applyMode("names");
+  includeIgnored = false;
+  ignoredBtn?.setAttribute("aria-pressed", "false");
 }
 
 /** @internal Test seam: whether the bar is open. */

@@ -154,7 +154,7 @@ func TestOccurrences_StopsWhenTheConsumerBreaks(t *testing.T) {
 	}
 }
 
-func TestCountAndContains_AgreeWithOccurrences(t *testing.T) {
+func TestCount_AgreesWithOccurrences(t *testing.T) {
 	cases := []struct {
 		text, needle string
 		want         int
@@ -170,9 +170,6 @@ func TestCountAndContains_AgreeWithOccurrences(t *testing.T) {
 		n := NewNeedle(tc.needle, false)
 		if got := n.Count(tc.text); got != tc.want {
 			t.Errorf("Count(%q) with needle %q = %d, want %d", tc.text, tc.needle, got, tc.want)
-		}
-		if got := n.Contains(tc.text); got != (tc.want > 0) {
-			t.Errorf("Contains(%q) with needle %q = %v, want %v", tc.text, tc.needle, got, tc.want > 0)
 		}
 	}
 }

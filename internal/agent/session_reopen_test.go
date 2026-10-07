@@ -247,7 +247,7 @@ var kiroCLIWrites = []struct {
 	reach settingReach
 	value bool
 }{
-	{key: kiroTelemetryKey, value: false, reach: reachReopen},
+	{key: kiroTelemetryKey, value: true, reach: reachReopen},
 	{key: "hooks.showStatus", value: false, reach: reachLive},
 	{key: "chat.enableKnowledge", value: true, reach: reachNoChat},
 	{key: "chat.enableSubagent", value: true, reach: reachNoChat},
@@ -400,7 +400,7 @@ func TestEnsureCustomProfile_IsANoOpOnCustom(t *testing.T) {
 }
 
 func TestReconcileSessionSettings_TelemetrySwitchReopensOpenChats(t *testing.T) {
-	cliJSON := withKiroTelemetry(t, "")
+	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	h, _ := reopenFixture(t)
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
@@ -434,7 +434,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 		wantRestart bool
 	}{
 		{name: "organization_turns_usage_analytics_off", lock: orgAnalytics(false), wantReopen: true, wantRestart: true},
-		{name: "organization_keeps_the_default_on", lock: orgAnalytics(true)},
+		{name: "organization_on_matches_the_switch", lock: orgAnalytics(true)},
 		{name: "denied_subagents_turn_workflows_off", lock: denySubagents, wantReopen: true},
 		{
 			name:   "denied_subagents_turn_inline_agents_off",
@@ -448,7 +448,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			withKiroTelemetry(t, "")
+			withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 			settled := make(chan struct{}, 1)
 			h, configDir := reopenFixture(t, WithGovernanceLocksHook(func(context.Context) { settled <- struct{}{} }))
 			for key, value := range tc.stored {
@@ -482,7 +482,7 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenASpawnMoves(t *testing.T) 
 }
 
 func TestUtilitySession_AShellEditOfTelemetryRestartsItAtItsNextUse(t *testing.T) {
-	cliJSON := withKiroTelemetry(t, "")
+	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	h, _ := reopenFixture(t)
 	held := acquireUtility(t, h)
 	writeKiroCLISettings(t, cliJSON, `{"telemetry.enabled":false}`)
@@ -684,7 +684,7 @@ func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
 }
 
 func TestOpenBridge_AShellEditOfTelemetryReopensTheChatAtItsNextOpen(t *testing.T) {
-	cliJSON := withKiroTelemetry(t, "")
+	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	h, _ := reopenFixture(t)
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
