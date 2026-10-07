@@ -138,25 +138,26 @@ func appendFailed(sc entryScope, what string, err error) {
 // BetweenTurnsAppender is the store's between-turns append, as AppendBetweenTurns
 // reaches it.
 type BetweenTurnsAppender interface {
-	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error)
+	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 }
 
 // AppendBetweenTurns files a chat's lane-less entry after its newest turn's close
-// and announces it, with the event turn_open first when the log was empty: the
-// one owner of that pair for the translator and the agent's closers alike. id is
-// "" for a kind whose id the store derives from its position.
+// and announces it, preceded by the minted carrier's turn_open and turn_close when
+// the log was empty: the one owner of that sequence for the translator and the
+// agent's closers alike. id is "" for a kind whose id the store derives from its
+// position.
 func AppendBetweenTurns(ctx context.Context, bus Broadcaster, store BetweenTurnsAppender, chatID marotte.ChatID, kind marotte.EntryKind, id string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	e := marotte.Entry{Kind: kind, ID: id, Payload: raw}
-	opened, err := store.AppendBetweenTurns(ctx, chatID, &e)
+	minted, err := store.AppendBetweenTurns(ctx, chatID, &e)
 	if err != nil {
 		return err
 	}
-	if opened != nil {
-		PublishAppended(ctx, bus, chatID, "", opened)
+	for _, m := range minted {
+		PublishAppended(ctx, bus, chatID, "", m)
 	}
 	PublishAppended(ctx, bus, chatID, "", &e)
 	return nil

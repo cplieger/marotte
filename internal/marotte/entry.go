@@ -408,6 +408,9 @@ type EntryTurnClose struct {
 	Credits   float64  `json:"credits,omitempty"`
 	ElapsedMs float64  `json:"elapsed_ms,omitempty"`
 	Truncated bool     `json:"truncated,omitempty"`
+	// Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
+	// source cannot say so: a replayed `event` turn can be one KAS ran.
+	Carrier bool `json:"carrier,omitempty"`
 }
 
 // TurnThroughput is KAS's estimate of a turn's streamed model output: tokens

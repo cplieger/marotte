@@ -42,12 +42,12 @@ func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) 
 		t.Errorf("session target = %q, want none: this header names no session", session)
 	}
 
-	record, opened, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Turn: first})
+	record, minted, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Turn: first})
 	if err != nil {
 		t.Fatalf("append reconciled{turn}: %v", err)
 	}
-	if opened != nil {
-		t.Errorf("the turn form opened turn %q, want none: it files into the turn it names", opened.Turn)
+	if len(minted) != 0 {
+		t.Errorf("the turn form minted turn %q, want none: it files into the turn it names", minted[0].Turn)
 	}
 	if record.Turn != first {
 		t.Errorf("record.Turn = %q, want %q, the turn its payload names", record.Turn, first)
@@ -84,13 +84,15 @@ func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 		t.Fatalf("targets = (%q, %q), want the session alone on an empty log", turns, session)
 	}
 
-	record, opened, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Session: "sess-1"})
+	record, minted, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Session: "sess-1"})
 	if err != nil {
 		t.Fatalf("append reconciled{session}: %v", err)
 	}
-	if opened == nil {
-		t.Fatal("no carrier was opened, and an empty log holds no turn the record could name")
+	if len(minted) != 2 || minted[1].Kind != marotte.EntryKindTurnClose {
+		t.Fatalf("minted %+v, want a carrier's turn_open and turn_close: an empty log holds no turn the record could name",
+			minted)
 	}
+	opened := minted[0]
 	if record.Turn != opened.Turn {
 		t.Errorf("record.Turn = %q, want the carrier %q", record.Turn, opened.Turn)
 	}
@@ -126,12 +128,12 @@ func TestAppendReconciled_SessionFormJoinsTheNewestSurvivingTurn(t *testing.T) {
 	turn := f.prompt("one")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	record, opened, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Session: "sess-1"})
+	record, minted, err := f.log.AppendReconciled(t.Context(), marotte.EntryReconciled{Session: "sess-1"})
 	if err != nil {
 		t.Fatalf("append reconciled{session}: %v", err)
 	}
-	if opened != nil {
-		t.Errorf("a carrier was minted at %q while turn %q survives", opened.Turn, turn)
+	if len(minted) != 0 {
+		t.Errorf("a carrier was minted at %q while turn %q survives", minted[0].Turn, turn)
 	}
 	if record.Turn != turn {
 		t.Errorf("record.Turn = %q, want the surviving turn %q", record.Turn, turn)
@@ -246,12 +248,12 @@ func TestAppendReconciled_RefusesUnlessExactlyOneFieldIsSet(t *testing.T) {
 		{Turn: turn, Session: "sess-1"},
 		{},
 	} {
-		record, opened, err := f.log.AppendReconciled(t.Context(), rec)
+		record, minted, err := f.log.AppendReconciled(t.Context(), rec)
 		if err == nil {
 			t.Errorf("AppendReconciled(%+v) = %+v, want a refusal", rec, record)
 		}
-		if record != nil || opened != nil {
-			t.Errorf("AppendReconciled(%+v) wrote record %+v and opened %+v, want neither", rec, record, opened)
+		if record != nil || len(minted) != 0 {
+			t.Errorf("AppendReconciled(%+v) wrote record %+v and minted %+v, want neither", rec, record, minted)
 		}
 	}
 	if got := reconciledOf(t, mustRange(t, f, turn)); len(got) != 0 {

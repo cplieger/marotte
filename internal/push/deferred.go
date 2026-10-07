@@ -115,7 +115,8 @@ func (s *Service) releaseHeld() {
 			}{key, h})
 		}
 	}
-	if len(s.deferred.held) == 0 {
+	// Close cancels the lifetime before stop takes the lock, so a poll that raced Close never re-arms past it.
+	if len(s.deferred.held) == 0 || s.lifetime.Err() != nil {
 		s.deferred.timer = nil
 	} else {
 		s.deferred.timer = time.AfterFunc(deferPoll, s.releaseHeld)

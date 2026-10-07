@@ -266,15 +266,18 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	// Between turns on an empty log, the compaction opens the event turn it joins.
+	// Between turns on an empty log, the compaction joins the closed event carrier the store mints.
 	entries := logOf(t, cs, "c1")
-	if len(entries) != 2 {
-		t.Fatalf("entries = %d, want 2 (an event turn_open, then the compaction): %+v", len(entries), entries)
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want 3 (an event turn_open, its turn_close, then the compaction): %+v", len(entries), entries)
 	}
 	if opens := opensOf(t, entries); len(opens) != 1 || opens[0].Source != marotte.TurnOpenNameEvent {
 		t.Errorf("turn_opens = %+v, want one event turn", opens)
 	}
-	compaction := entries[1]
+	if entries[1].Kind != marotte.EntryKindTurnClose {
+		t.Errorf("entries[1] kind = %q, want the carrier's turn_close", entries[1].Kind)
+	}
+	compaction := entries[2]
 	if compaction.Kind != marotte.EntryKindCompaction {
 		t.Fatalf("kind = %q, want %q", compaction.Kind, marotte.EntryKindCompaction)
 	}

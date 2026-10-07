@@ -798,6 +798,7 @@ const arbModel = fc.letrec<{
       credits: fc.double({ noNaN: true, noDefaultInfinity: true }),
       elapsed_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),
       truncated: fc.boolean(),
+      carrier: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),

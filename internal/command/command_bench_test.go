@@ -48,7 +48,7 @@ func (d *benchDeps) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, 
 	return "", nil
 }
 
-func (d *benchDeps) Revert(context.Context, marotte.ChatID, string, string) (*marotte.Entry, *marotte.Entry, error) {
+func (d *benchDeps) Revert(context.Context, marotte.ChatID, string, string) (*marotte.Entry, []*marotte.Entry, error) {
 	return &marotte.Entry{Kind: marotte.EntryKindTurnRevert}, nil, nil
 }
 

@@ -30,7 +30,7 @@ func (d *storeDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*maro
 	return d.store.Mutate(ctx, id, fn)
 }
 
-func (d *storeDeps) Revert(ctx context.Context, id marotte.ChatID, turn, kasMessageID string) (*marotte.Entry, *marotte.Entry, error) {
+func (d *storeDeps) Revert(ctx context.Context, id marotte.ChatID, turn, kasMessageID string) (*marotte.Entry, []*marotte.Entry, error) {
 	return d.store.Revert(ctx, id, turn, kasMessageID)
 }
 

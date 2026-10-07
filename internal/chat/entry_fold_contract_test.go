@@ -126,11 +126,11 @@ func entryFoldLog(t *testing.T) []marotte.Entry {
 	// record lands in the newest survivor, so the boundary renders in a surviving turn.
 	gone := f.openTurn(&TurnSpec{Source: marotte.TurnOpenNameEvent})
 	f.closeTurn(gone, marotte.TurnOutcomeCompleted)
-	_, opened, err := f.log.Revert(t.Context(), gone, marotte.TurnRevertCauseRewind, "kas-revert")
+	_, minted, err := f.log.Revert(t.Context(), gone, marotte.TurnRevertCauseRewind, "kas-revert")
 	if err != nil {
 		t.Fatalf("revert %s: %v", gone, err)
 	}
-	if opened != nil {
+	if len(minted) != 0 {
 		t.Fatalf("the revert minted a carrier; a surviving turn is what this fixture " +
 			"reverts into, so step 3 must not fire")
 	}

@@ -561,18 +561,20 @@ func (s *revertScene) revert(idx int) {
 	wantCarrier, held := s.newestOutside(window)
 	wantN := s.highWater(window) + 1
 
-	record, opened, err := s.log.Revert(s.ctx, from, marotte.TurnRevertCauseRewind, "kas-"+from)
+	record, minted, err := s.log.Revert(s.ctx, from, marotte.TurnRevertCauseRewind, "kas-"+from)
 	if err != nil {
 		s.rt.Fatalf("Revert(%q): %v", from, err)
 	}
 	if held {
-		if opened != nil {
-			s.rt.Fatalf("Revert(%q) minted carrier %q, want the surviving turn %q", from, opened.Turn, wantCarrier)
+		if len(minted) != 0 {
+			s.rt.Fatalf("Revert(%q) minted carrier %q, want the surviving turn %q", from, minted[0].Turn, wantCarrier)
 		}
 	} else {
-		if opened == nil {
-			s.rt.Fatalf("Revert(%q) minted no carrier, want one: its window takes every surviving turn", from)
+		if len(minted) != 2 || minted[1].Kind != marotte.EntryKindTurnClose {
+			s.rt.Fatalf("Revert(%q) minted %+v, want a carrier's turn_open and turn_close: its window takes every surviving turn",
+				from, minted)
 		}
+		opened := minted[0]
 		s.observeOpen(opened, wantN, "the carrier")
 		if n := s.ordinal[opened.Turn]; n != 1 {
 			s.rt.Fatalf("the no-survivor carrier took n %d, want 1 over a log of %d turns — never k+1",
@@ -628,13 +630,13 @@ func (s *revertScene) betweenTurns(tag string) {
 	}
 	before, _ := s.log.NewestSeq(turn)
 	e := entryOf("", "", "compaction-"+tag, marotte.EntryKindCompaction, marotte.EntryCompaction{Summary: tag})
-	opened, err := s.log.AppendBetweenTurns(s.ctx, e)
+	minted, err := s.log.AppendBetweenTurns(s.ctx, e)
 	if err != nil {
 		s.rt.Fatalf("%s: AppendBetweenTurns: %v", tag, err)
 	}
-	if opened != nil {
+	if len(minted) != 0 {
 		s.rt.Fatalf("%s: AppendBetweenTurns minted turn %q, want the surviving %q: every revert leaves its carrier",
-			tag, opened.Turn, turn)
+			tag, minted[0].Turn, turn)
 	}
 	if e.Turn != turn {
 		s.rt.Fatalf("%s: the between-turns entry landed in turn %q, want the newest SURVIVING turn %q", tag, e.Turn, turn)

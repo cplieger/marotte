@@ -590,6 +590,39 @@ func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	}
 }
 
+// When a started chat's log holds no turn to append after, the event turn minted to carry the change is closed on
+// disk and on the wire: a client reads a turn with no turn_close as running, so the dot would pulse.
+func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "opus-5"
+		c.TurnCount = 1
+		return true
+	})
+
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMedium)
+
+	var kinds []string
+	for _, e := range logOf(t, cs, "c1") {
+		kinds = append(kinds, string(e.Kind))
+	}
+	if want := "turn_open,turn_close,model_switched"; strings.Join(kinds, ",") != want {
+		t.Errorf("log kinds = %v, want %s", kinds, want)
+	}
+	var wire []string
+	for _, typ := range extractTypes(t, bufferedSince(h, 0)) {
+		switch marotte.EventType(typ) {
+		case marotte.EventTurnOpened, marotte.EventTurnClosed, marotte.EventEntryAppended:
+			wire = append(wire, typ)
+		}
+	}
+	if want := "turn_opened,turn_closed,entry_appended"; strings.Join(wire, ",") != want {
+		t.Errorf("announced %v, want %s", wire, want)
+	}
+}
+
 // Picked during a turn, it folds into that turn.
 func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()

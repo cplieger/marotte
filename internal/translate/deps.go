@@ -22,9 +22,9 @@ type TurnAccess interface {
 	// bracket, the one a turn_bind joins; false when none is open.
 	PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool)
 	// AppendBetweenTurns files a chat's lane-less entry after its newest turn's
-	// turn_close, opening a headerless event turn on an empty log. The opened
-	// turn_open, when there was one, comes back for the announcement.
-	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error)
+	// turn_close, minting a closed event carrier on an empty log. The carrier's
+	// turn_open and turn_close, when it minted one, come back for the announcement.
+	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error)
 }
 
 // RunAppender is the run registry as the content handlers reach it for a step's

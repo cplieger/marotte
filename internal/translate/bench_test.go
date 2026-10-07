@@ -217,7 +217,7 @@ func (d *baseDeps) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return t, t != nil
 }
 
-func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error) {
+func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error) {
 	if d.turns.appendErr != nil {
 		return nil, d.turns.appendErr
 	}

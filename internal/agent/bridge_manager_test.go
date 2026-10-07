@@ -124,12 +124,7 @@ func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
 
 func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	cs := newTestChatStore()
-	var made []*fakeBridge
-	h := New(t.Context(), "/tmp/retire-busy", func() ACPBridge {
-		br := newFakeBridge()
-		made = append(made, br)
-		return br
-	}, cs)
+	h := New(t.Context(), "/tmp/retire-busy", func() ACPBridge { return newFakeBridge() }, cs)
 	cs.wire(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
@@ -139,14 +134,17 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	if !first.tryAcquireForPrompt() {
 		t.Fatal("first bridge did not enter the prompting state")
 	}
+	// The chat's own bridge, not the factory's first product: a background run resume starts the utility bridge
+	// through the same factory.
+	firstFake := first.bridge.(*fakeBridge)
 
 	h.RetireBridges("identity changed")
 	if h.bridge.mgr.get("c1") != first {
 		t.Fatal("RetireBridges removed a busy bridge before its turn ended")
 	}
-	made[0].mu.Lock()
-	stoppedDuringTurn := made[0].stopped
-	made[0].mu.Unlock()
+	firstFake.mu.Lock()
+	stoppedDuringTurn := firstFake.stopped
+	firstFake.mu.Unlock()
 	if stoppedDuringTurn {
 		t.Fatal("RetireBridges stopped a busy bridge mid-turn")
 	}
@@ -159,9 +157,9 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	if second == first {
 		t.Error("OpenBridge reused a bridge marked for retirement")
 	}
-	made[0].mu.Lock()
-	stoppedAfterTurn := made[0].stopped
-	made[0].mu.Unlock()
+	firstFake.mu.Lock()
+	stoppedAfterTurn := firstFake.stopped
+	firstFake.mu.Unlock()
 	if !stoppedAfterTurn {
 		t.Error("OpenBridge did not stop the retired bridge before replacing it")
 	}

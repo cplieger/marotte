@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // reasonRunsInCut is the 409 refusal class for a cut holding a live run's launch
@@ -80,7 +81,7 @@ func CmdRewindChat(
 	// KAS slices from the addressed prompt inclusive, so the record is AT the turn. It is an
 	// append, so a failed revert loses nothing and a later record can answer one that failed after
 	// this landed.
-	record, opened, err := chats.Revert(ctx, cmd.ChatID, target.Turn, target.KASMessageID)
+	record, minted, err := chats.Revert(ctx, cmd.ChatID, target.Turn, target.KASMessageID)
 	if err != nil {
 		slog.Error("rewind: record the revert", "chat", cmd.ChatID, "turn", target.Turn, keyError, err)
 		return nil, StatusError(http.StatusInternalServerError, err)
@@ -88,16 +89,14 @@ func CmdRewindChat(
 	// The carrier goes out FIRST when the log minted one: the record names it as its
 	// turn, and a client that meets the record first answers a turn it does not hold
 	// as a hole.
-	if opened != nil {
-		bus.Broadcast(ctx, marotte.NewEvent(marotte.EventTurnOpened, cmd.ChatID,
-			marotte.TurnOpenedPayload{Entry: *opened}))
+	for _, m := range minted {
+		translate.PublishAppended(ctx, bus, cmd.ChatID, "", m)
 	}
-	bus.Broadcast(ctx, marotte.NewEvent(marotte.EventEntryAppended, cmd.ChatID,
-		marotte.EntryAppendedPayload{Entry: *record}))
+	translate.PublishAppended(ctx, bus, cmd.ChatID, "", record)
 
 	slog.Info("chat rewound",
 		"chat", cmd.ChatID, "message", p.MessageID, "turn", target.Turn,
-		"carrier", record.Turn, "carrier_minted", opened != nil,
+		"carrier", record.Turn, "carrier_minted", len(minted) > 0,
 		"restored_files", len(result.AffectedFiles), "total_files", result.TotalFiles)
 	return responseWith(map[string]any{
 		"restored_files": result.AffectedFiles,

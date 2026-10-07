@@ -294,7 +294,8 @@ export interface ChatHeader {
  * LastTurnOutcome is how this chat's NEWEST finished turn ended, the stored
  * header field the turn_close writer keeps. Here because the header is the
  * only projection reaching every chat, which is what the tab dot needs.
- * Empty for a chat with no finished turn. Never `running`.
+ * Carriers (EntryTurnClose.Carrier) are skipped, so it is empty until a
+ * non-carrier turn finishes. Never `running`.
  */
   last_turn_outcome?: TurnOutcome;
   /**
@@ -1075,6 +1076,11 @@ export interface EntryTurnClose {
   credits?: number;
   elapsed_ms?: number;
   truncated?: boolean;
+  /**
+ * Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
+ * source cannot say so: a replayed `event` turn can be one KAS ran.
+ */
+  carrier?: boolean;
 }
 
 /**
