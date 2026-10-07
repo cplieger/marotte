@@ -19,7 +19,6 @@ import {
   getToolsJobs,
   getCatalogInfo,
   refreshCatalog,
-  applyManifest,
   ensureTool,
   cancelToolJob,
 } from "./actions/tools.js";
@@ -27,7 +26,7 @@ import type { CreateToolRequest, ToolSearchResponse } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
-import { openFile } from "./editor-openers.js";
+import { openConfigFile } from "./editor-openers.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile, KEY_ATTR } from "./reconcile.js";
@@ -118,17 +117,11 @@ type ListEntry =
   | { kind: "system"; name: string; installed: boolean }
   | { kind: "apt"; pkg: AptPackage };
 
-// The three toolbelt job kinds a reader launches from a named pill. The other
-// three — install, uninstall, disable — are launched from a tool row, so they
-// are the residual case in `pillOwns` and are never named here.
+// The two toolbelt job kinds a reader launches from a named pill. The rest — install, uninstall,
+// disable and reconcile — come from a tool row, a tools.json save or the boot, so they are the
+// residual case in `pillOwns` and are never named here.
 const JOB_UPDATE = "update";
 const JOB_CATALOG_REFRESH = "catalog-refresh";
-const JOB_RECONCILE = "reconcile";
-
-/** The two files the Advanced-configuration door opens, assuming the default `KIRO_CONFIG_DIR`
- *  (`/config`, the image's volume mount). A moved dir leaves these opening a generic load failure. */
-const MANIFEST_PATH = "/config/tools.json";
-const SETTINGS_PATH = "/config/config.json";
 
 /** Whether a job is still queued or running. One predicate, because every
  *  control's face and the output panel's headline read the same answer. */
@@ -136,12 +129,11 @@ function jobIsLive(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
 }
 
-/** Whether a pill carries the cancel for a job KIND, whoever launched it (a boot reconcile has no
- *  pill behind it). Three kinds have a named pill; install, uninstall and disable cancel through the
- *  shared Cancel pill, exhaustive over toolbelt's six kinds. A per-tool Update rides Update all.
- *  Apply enqueues a reconcile AND an update, so Cancel here stops only the install pass. */
+/** Whether a pill carries the cancel for a job KIND, whoever launched it. Two kinds have a named
+ *  pill; install, uninstall, disable and reconcile cancel through the shared Cancel pill, exhaustive
+ *  over toolbelt's six kinds. A per-tool Update rides Update all. */
 function pillOwns(kind: string): boolean {
-  return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH || kind === JOB_RECONCILE;
+  return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH;
 }
 
 interface JobPillSpec {
@@ -227,14 +219,8 @@ const f = {
   get catalogRefresh(): HTMLButtonElement {
     return byId("tool-catalog-refresh-btn");
   },
-  get apply(): HTMLButtonElement {
-    return byId("tool-apply-btn");
-  },
   get openManifest(): HTMLButtonElement {
     return byId("tool-open-manifest");
-  },
-  get openConfig(): HTMLButtonElement {
-    return byId("tool-open-config");
   },
   get catalogMeta(): HTMLParagraphElement {
     return byId("tool-catalog-meta");
@@ -280,7 +266,6 @@ class ToolsManager {
   private rateLimitReported = "";
   private updatePill: JobPill | null = null;
   private refreshPill: JobPill | null = null;
-  private applyPill: JobPill | null = null;
   private unsubscribes: (() => void)[] = [];
   /** The last search response, kept so the order picker and the name-match
    *  filter re-paint without a round trip. Null means the request failed,
@@ -325,24 +310,8 @@ class ToolsManager {
       busyAria: "Cancel the running catalog refresh",
     });
     bindLoadingState("tools.refresh_catalog", f.catalogRefresh);
-    this.applyPill = new JobPill(f.apply, {
-      start: () => {
-        void applyManifest.dispatch(undefined);
-      },
-      cancel: () => {
-        this.cancelLiveJob();
-      },
-      busyAria: "Cancel the install pass",
-    });
-    bindLoadingState("tools.apply_manifest", f.apply);
-    // The Advanced-configuration door. The editor is the surface, so this module
-    // owns no form: it hands over a path and the file browser's own gate decides
-    // whether the path is readable at all.
     f.openManifest.addEventListener("click", () => {
-      openFile(MANIFEST_PATH);
-    });
-    f.openConfig.addEventListener("click", () => {
-      openFile(SETTINGS_PATH);
+      void openConfigFile("tools.json");
     });
     // The residual Cancel pill, for a job kind no pill above owns.
     f.cancel.addEventListener("click", () => {
@@ -447,7 +416,6 @@ class ToolsManager {
     const kind = job?.kind ?? "";
     this.updatePill?.setBusy(kind === JOB_UPDATE);
     this.refreshPill?.setBusy(kind === JOB_CATALOG_REFRESH);
-    this.applyPill?.setBusy(kind === JOB_RECONCILE);
     f.cancel.classList.toggle("hidden", job === null || pillOwns(kind));
   }
 

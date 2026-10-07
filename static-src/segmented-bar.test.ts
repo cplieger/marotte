@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { initSegmentedBar } from "./segmented-bar.js";
+import { initSegmentedBar, setSegmentHidden } from "./segmented-bar.js";
 
 type Tab = "one" | "two" | "three";
 const TABS: readonly { id: Tab; label: string }[] = [
@@ -158,5 +158,51 @@ describe("initSegmentedBar", () => {
 
     seg(bar, "one").click();
     expect(onSelect).toHaveBeenCalledWith("one");
+  });
+});
+
+describe("setSegmentHidden", () => {
+  /** The app's `.hidden` utility (40-a11y.css), since the stylesheet is not loaded here. */
+  function hiddenUtility(): HTMLStyleElement {
+    const style = document.createElement("style");
+    style.textContent = ".hidden { display: none !important; }";
+    document.head.appendChild(style);
+    return style;
+  }
+
+  it("refits the labels to the segments that remain, both ways", () => {
+    const style = hiddenUtility();
+    try {
+      const bar = buildBar("240px");
+      wire(bar);
+      expect(bar.classList.contains("seg-bar-icons"), "three labels in 240px").toBe(true);
+
+      setSegmentHidden(bar, "data-test-tab", "three", true);
+      expect(seg(bar, "three").classList.contains("hidden")).toBe(true);
+      expect(bar.classList.contains("seg-bar-icons"), "two labels in 240px").toBe(false);
+
+      setSegmentHidden(bar, "data-test-tab", "three", false);
+      expect(bar.classList.contains("seg-bar-icons"), "three again").toBe(true);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("takes a withdrawn segment out of the arrow-key order", () => {
+    const style = hiddenUtility();
+    try {
+      const bar = buildBar("600px");
+      const { paint } = wire(bar);
+      paint("one");
+      setSegmentHidden(bar, "data-test-tab", "two", true);
+
+      seg(bar, "one").focus();
+      seg(bar, "one").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      );
+      expect(document.activeElement).toBe(seg(bar, "three"));
+    } finally {
+      style.remove();
+    }
   });
 });

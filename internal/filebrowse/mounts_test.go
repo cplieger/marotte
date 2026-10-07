@@ -43,21 +43,21 @@ func TestParseBrowseRoots(t *testing.T) {
 
 func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 	good := t.TempDir()
-	h, err := New(Sensitive{}, "/does-not-exist-marotte-test", "/", good)
+	h, err := New(Sensitive{}, []string{"/does-not-exist-marotte-test", "/", good})
 	if err != nil {
 		t.Fatalf("New with one good root: %v", err)
 	}
 	if len(h.mounts) != 1 || h.mounts[0].dir != good {
 		t.Fatalf("mounts = %+v, want exactly the good root", h.mounts)
 	}
-	if _, err := New(Sensitive{}, "/does-not-exist-marotte-test"); err == nil {
+	if _, err := New(Sensitive{}, []string{"/does-not-exist-marotte-test"}); err == nil {
 		t.Fatal("New with zero usable roots = nil error, want failure")
 	}
 }
 
 func TestNew_DedupesGrants(t *testing.T) {
 	dir := t.TempDir()
-	h, err := New(Sensitive{}, dir, dir, dir+"/")
+	h, err := New(Sensitive{}, []string{dir, dir, dir + "/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestMountFor_NestedGrantWins(t *testing.T) {
 	if err := os.Mkdir(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Sensitive{}, outer, inner)
+	h, err := New(Sensitive{}, []string{outer, inner})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 	if err := os.Mkdir(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Sensitive{}, inner)
+	h, err := New(Sensitive{}, []string{inner})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	h, err := New(Sensitive{}, dirA, dirB)
+	h, err := New(Sensitive{}, []string{dirA, dirB})
 	if err != nil {
 		t.Fatal(err)
 	}

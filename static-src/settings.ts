@@ -22,6 +22,7 @@ import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
+import { openConfigFile } from "./editor-openers.js";
 import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
@@ -213,6 +214,9 @@ export function initGeneralPanelControls(): void {
   initChatRetentionControls();
   initAgentCapabilityControls();
   initPanelSwitchControls();
+  document.getElementById("settings-open-config")?.addEventListener("click", () => {
+    void openConfigFile("config.json");
+  });
 }
 
 // kiro-cli's cleanup.periodDays is pinned to 0/never — marotte owns retention end to end. The
@@ -565,10 +569,6 @@ function setAuthLine(text: string): void {
   $.stAuthSep.hidden = text === "";
 }
 
-// kiro-cli experimental features gated by settings keys (see the experimentalFlags registry below
-// for the full set). Marotte seeds them at container boot (entrypoint.sh); this UI lets the user
-// flip each one.
-
 /** What GET /api/kiro-settings answers: the requested keys and their values, as one document.
  *  ONE REQUEST FOR EVERY FLAG, because the server reads them all in one `kiro-cli settings list`
  *  subprocess. */
@@ -582,9 +582,9 @@ interface KiroSettingsPayload {
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
-  /** What the control shows when the endpoint answers "" for this key. Per row, because the
-   *  three polarities are not uniform and the entrypoint's seed is best-effort — a boot whose
-   *  seed spawn failed, and any read failure, both arrive as "". */
+  /** What the control shows when the endpoint answers "" for this key; must match the key's
+   *  Seed in the server's allowedKiroSettings, because a failed seed and a failed read both
+   *  arrive as "". Per row, because the three polarities are not uniform. */
   defaultOn: boolean;
   inverted?: boolean;
 }[] = [

@@ -88,15 +88,16 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	if sErr := bridge.Start(cctx, &marotte.StartOpts{
 		Lifetime: rs.lifecycle.shutdownCtx,
 		// Named explicitly, so a buildACPArgs default change cannot start a legacy-engine run bridge.
-		AgentEngine:     resolveAgentEngine(),
-		EnableHooks:     true,
-		Presets:         securityPresets(cctx, rs.lifecycle.configDir),
-		IgnoreFiles:     func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
-		TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
-		ToolSearch:      toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:       knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:          memoryPreference(cctx, rs.lifecycle.configDir),
-		Features:        agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
+		AgentEngine:      resolveAgentEngine(),
+		EnableHooks:      true,
+		Presets:          securityPresets(cctx, rs.lifecycle.configDir),
+		IgnoreFiles:      func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
+		TerminalTimeout:  func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
+		ToolSearch:       toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:        knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:           memoryPreference(cctx, rs.lifecycle.configDir),
+		Features:         agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
+		DisableTelemetry: rs.lifecycle.telemetryDisabled(rs.locks),
 		// A run's step sessions share the process, so they inherit it.
 		ContentCollection: contentCollectionResolver(rs.lifecycle.configDir, rs.locks),
 		// Nothing renders a step session's title.
@@ -963,17 +964,18 @@ func (rs *Runs) startRunCarrier(
 	defer cancel()
 	rs.coord.goForward(chatID, sb.bridge)
 	if err := sb.bridge.Start(cctx, &marotte.StartOpts{
-		Lifetime:        rs.lifecycle.shutdownCtx,
-		SessionID:       session,
-		AgentEngine:     resolveAgentEngine(),
-		EnableHooks:     true,
-		Presets:         securityPresets(cctx, rs.lifecycle.configDir),
-		IgnoreFiles:     func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
-		TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
-		ToolSearch:      toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:       knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:          memoryPreference(cctx, rs.lifecycle.configDir),
-		Features:        agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
+		Lifetime:         rs.lifecycle.shutdownCtx,
+		SessionID:        session,
+		AgentEngine:      resolveAgentEngine(),
+		EnableHooks:      true,
+		Presets:          securityPresets(cctx, rs.lifecycle.configDir),
+		IgnoreFiles:      func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
+		TerminalTimeout:  func(c context.Context) int { return terminalCommandTimeoutMs(c, rs.lifecycle.configDir) },
+		ToolSearch:       toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:        knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:           memoryPreference(cctx, rs.lifecycle.configDir),
+		Features:         agentFeatures(cctx, rs.lifecycle.configDir, currentLocks(rs.locks)),
+		DisableTelemetry: rs.lifecycle.telemetryDisabled(rs.locks),
 		// A run's step sessions share the process, so they inherit it.
 		ContentCollection: contentCollectionResolver(rs.lifecycle.configDir, rs.locks),
 		// Nothing renders a step session's title.

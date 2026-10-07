@@ -3,7 +3,7 @@
 // projection, and nothing else — no route, no panel, no subtitle, no store.
 
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
-import { fitTabBar } from "./tab-bar-fit.js";
+import { fitTabBar, refitTabBar } from "./tab-bar-fit.js";
 
 interface SegmentedTab<T extends string> {
   readonly id: T;
@@ -55,7 +55,8 @@ export function initSegmentedBar<T extends string>(
 
   // Drop every label only when one cannot fit.
   fitTabBar(bar);
-  rovingFocus(bar, `[${attr}]`, { orientation: "horizontal" });
+  // A withdrawn segment cannot take focus, so arrow keys skip it rather than stall on it.
+  rovingFocus(bar, `[${attr}]:not(.hidden)`, { orientation: "horizontal" });
 
   return (active: T): void => {
     for (const { id } of tabs) {
@@ -66,4 +67,20 @@ export function initSegmentedBar<T extends string>(
       btn?.setAttribute("tabindex", on ? "0" : "-1");
     }
   };
+}
+
+/** Withdraw one segment from the bar, or bring it back, and refit the labels to what remains.
+ *  The caller moves the selection off a segment it withdraws. */
+export function setSegmentHidden(
+  bar: HTMLElement,
+  attr: string,
+  tab: string,
+  hidden: boolean,
+): void {
+  const btn = bar.querySelector<HTMLElement>(`[${attr}="${CSS.escape(tab)}"]`);
+  if (btn === null || btn.classList.contains("hidden") === hidden) {
+    return;
+  }
+  btn.classList.toggle("hidden", hidden);
+  refitTabBar(bar);
 }

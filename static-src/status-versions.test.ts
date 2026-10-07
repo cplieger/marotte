@@ -141,3 +141,46 @@ describe("the status card's version lines", () => {
     expect(getVersions().kiroCli).toBe("2.99.0-rc1");
   });
 });
+
+describe("configFilePath", () => {
+  it("names a file under the config directory the server answers", async () => {
+    const { configFilePath } = await import("./versions.js");
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", config_dir: "/data/marotte/" });
+    await expect(configFilePath("tools.json")).resolves.toBe("/data/marotte/tools.json");
+  });
+
+  it("waits for the read already in flight instead of guessing", async () => {
+    const { configFilePath } = await import("./versions.js");
+    let answer: (v: unknown) => void = () => undefined;
+    mocks.apiGet.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const boot = loadVersions();
+    const path = configFilePath("config.json");
+    answer({ config_dir: "/data/marotte" });
+    await boot;
+
+    await expect(path).resolves.toBe("/data/marotte/config.json");
+    expect(mocks.apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries after a failed read and answers once the server does", async () => {
+    const { configFilePath } = await import("./versions.js");
+    mocks.apiGet.mockResolvedValueOnce(null).mockResolvedValueOnce({ config_dir: "/data/marotte" });
+    await loadVersions();
+
+    await expect(configFilePath("tools.json")).resolves.toBe("/data/marotte/tools.json");
+    expect(mocks.apiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["the read fails", null],
+    ["the server names no directory", { marotte: "v0.5.61" }],
+  ])("answers null when %s", async (_desc, body) => {
+    const { configFilePath } = await import("./versions.js");
+    mocks.apiGet.mockResolvedValue(body);
+    await expect(configFilePath("config.json")).resolves.toBeNull();
+  });
+});

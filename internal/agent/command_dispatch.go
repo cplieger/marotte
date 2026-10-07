@@ -21,6 +21,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Modes:     rt.coord,
 		Teardown:  rt,
 		Perms:     rt.bus,
+		Profiles:  rt,
 		Terminals: rt.agentTerms,
 		Stops:     rt,
 		Workspace: command.Workspace{

@@ -339,6 +339,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		s.agent.PushContentCollection(durable.Context(r.Context()))
 	}
 	s.renderMCPForPatch(durable.Context(r.Context()), patch)
+	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 }
 
 // renderMCPForPatch re-renders KAS's MCP config when the patch touched the MCP

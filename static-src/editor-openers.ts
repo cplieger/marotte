@@ -35,6 +35,8 @@ import { restoreUI } from "./editor-modes.js";
 import { captureSelection, restoreEditorView } from "./editor-scroll.js";
 import { registerCleanup } from "./actions/index.js";
 import { BUS_EDITOR_FILE_LOADED, emitBus } from "./bus.js";
+import { configFilePath } from "./versions.js";
+import { error as toastError } from "./toast.js";
 
 // --- Active-load cancellation ---
 
@@ -58,6 +60,19 @@ export function openFile(path: string, line?: number): void {
     opts.line = line;
   }
   open(path, opts);
+}
+
+/** Open a file in the server's config directory, or say why not when that directory is unknown.
+ *  Whether the file is readable is the file browser's gate, not this opener's. */
+export async function openConfigFile(name: "tools.json" | "config.json"): Promise<void> {
+  const path = await configFilePath(name);
+  if (path === null) {
+    toastError(
+      `Could not open ${name}: the server did not say where its config directory is. Try again.`,
+    );
+    return;
+  }
+  openFile(path);
 }
 
 export function openFileDiff(

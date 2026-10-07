@@ -80,7 +80,7 @@ func decisionCases(t *testing.T) []struct {
 		run  func(hostDouble) (any, error)
 	}{
 		{name: "permission", run: func(host hostDouble) (any, error) {
-			return CmdPermission(t.Context(), host, host, perm)
+			return CmdPermission(t.Context(), host, host, host, perm)
 		}},
 		{name: "elicitation", run: func(host hostDouble) (any, error) {
 			return CmdElicitationResponse(t.Context(), host, host, elicit)
@@ -138,6 +138,54 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			// bridge, so a chatless claim would resolve another chat's card.
 			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
+			}
+		})
+	}
+}
+
+// liveCtxBridge refuses an answer on a done context, as Bridge.Respond does.
+type liveCtxBridge struct {
+	countingBridge
+}
+
+func (b *liveCtxBridge) Respond(ctx context.Context, id int64, result any, err error) error {
+	if cErr := ctx.Err(); cErr != nil {
+		return cErr
+	}
+	return b.countingBridge.Respond(ctx, id, result, err)
+}
+
+// A claimed ask whose answer never reaches kiro-cli wedges the turn while every surface shows it settled.
+func TestDecisionHandlers_AClaimedAnswerOutlivesTheRequest(t *testing.T) {
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		run  func(BridgeAccess, PendingPermAccess, ProfileSwitcher) (any, error)
+		name string
+	}{
+		{name: "permission", run: func(b BridgeAccess, p PendingPermAccess, s ProfileSwitcher) (any, error) {
+			return CmdPermission(gone, b, p, s, decisionCommand(t, marotte.CmdPermissionResponse,
+				marotte.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"}))
+		}},
+		{name: "elicitation", run: func(b BridgeAccess, p PendingPermAccess, _ ProfileSwitcher) (any, error) {
+			return CmdElicitationResponse(gone, b, p, decisionCommand(t, marotte.CmdElicitationResponse,
+				marotte.ElicitationResponseCommand{RequestID: decisionRequestID, Action: marotte.ElicitationActionDecline}))
+		}},
+		{name: "user_input", run: func(b BridgeAccess, p PendingPermAccess, _ ProfileSwitcher) (any, error) {
+			return CmdUserInputResponse(gone, b, p, decisionCommand(t, marotte.CmdUserInputResponse,
+				marotte.UserInputResponseCommand{RequestID: decisionRequestID, Action: marotte.UserInputActionDismissed}))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bridge := &liveCtxBridge{}
+			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
+
+			if _, err := tc.run(deps, deps, deps); err != nil {
+				t.Fatalf("%s on a request whose client left = %v", tc.name, err)
+			}
+
+			if len(bridge.responds) != 1 {
+				t.Errorf("%s answered kiro-cli %d times after its claim, want 1", tc.name, len(bridge.responds))
 			}
 		})
 	}

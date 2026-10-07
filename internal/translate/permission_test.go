@@ -2,6 +2,8 @@ package translate
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -253,6 +255,86 @@ func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
 		t.Errorf("AlwaysAllowBlocked = %q, want empty: an absent consent object means PERSISTABLE, "+
 			"and reading it as blocked suppresses the Always-allow row on every 2.19.0 request",
 			got.AlwaysAllowBlocked)
+	}
+}
+
+var (
+	longPart = "python3 -c '" + strings.Repeat("x", 600) + "'"
+	longDir  = strings.Repeat("d", 600)
+)
+
+func TestHandlePermissionRequest_ConsentNamesThePartAsked(t *testing.T) {
+	for _, tc := range []struct {
+		consent map[string]any
+		want    *marotte.PermissionConsent
+		name    string
+	}{
+		{
+			name: "a compound command's round names its part",
+			consent: map[string]any{
+				"capability": "shell", "resource": "echo a | head -1", "triggeringResource": "head -1",
+				"askType": "implicit",
+			},
+			want: &marotte.PermissionConsent{Capability: "shell", Subject: "head -1", Resource: "head -1"},
+		},
+		{
+			name:    "a single command is its own subject",
+			consent: map[string]any{"capability": "fs_write", "resource": "/w/notes.md"},
+			want: &marotte.PermissionConsent{
+				Capability: "fs_write", Subject: "/w/notes.md", Resource: "/w/notes.md",
+				Folder: "/w/**", FolderResource: "/w/**",
+			},
+		},
+		{
+			name:    "a path's folder keeps its raw name in the rule key",
+			consent: map[string]any{"capability": "fs_read", "resource": "/w/a\tb/notes.md"},
+			want: &marotte.PermissionConsent{
+				Capability: "fs_read", Subject: "/w/a b/notes.md", Resource: "/w/a\tb/notes.md",
+				Folder: "/w/a b/**", FolderResource: "/w/a\tb/**",
+			},
+		},
+		{
+			name:    "a folder that would read the same as the cut subject is not offered",
+			consent: map[string]any{"capability": "fs_read", "resource": "/" + longDir + "/notes.md"},
+			want: &marotte.PermissionConsent{
+				Capability: "fs_read", Subject: ("/" + longDir + "/notes.md")[:512] + "...", Resource: "/" + longDir + "/notes.md",
+			},
+		},
+		{
+			name:    "a shell part has no folder",
+			consent: map[string]any{"capability": "shell", "resource": "cat /w/notes.md"},
+			want:    &marotte.PermissionConsent{Capability: "shell", Subject: "cat /w/notes.md", Resource: "cat /w/notes.md"},
+		},
+		{
+			name:    "a bidi override in the shown subject is defused",
+			consent: map[string]any{"capability": "shell", "resource": "rm -rf /w\u202e"},
+			want:    &marotte.PermissionConsent{Capability: "shell", Subject: "rm -rf /w ", Resource: "rm -rf /w\u202e"},
+		},
+		{
+			name:    "a multi-line part keeps its newline in the rule key",
+			consent: map[string]any{"capability": "shell", "triggeringResource": "git commit -m 'a\nb'"},
+			want:    &marotte.PermissionConsent{Capability: "shell", Subject: "git commit -m 'a b'", Resource: "git commit -m 'a\nb'"},
+		},
+		{
+			name:    "a part over the display cap keeps its whole text in the rule key",
+			consent: map[string]any{"capability": "shell", "triggeringResource": longPart},
+			want:    &marotte.PermissionConsent{Capability: "shell", Subject: longPart[:512] + "...", Resource: longPart},
+		},
+		{name: "no consent, no subject"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			id := int64(3010)
+			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: consentParams(t, tc.consent)})
+			got, ok := findPermissionNeeded(t, events)
+			if !ok {
+				t.Fatal("no permission_needed event broadcast")
+			}
+			if !reflect.DeepEqual(got.Consent, tc.want) {
+				t.Errorf("Consent = %+v, want %+v", got.Consent, tc.want)
+			}
+		})
 	}
 }
 

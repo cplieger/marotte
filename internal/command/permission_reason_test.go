@@ -58,7 +58,7 @@ func TestCmdPermission_RejectionReason(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, tc.payload)
 
-			_, err := CmdPermission(t.Context(), deps, deps, cmd)
+			_, err := CmdPermission(t.Context(), deps, deps, deps, cmd)
 
 			if got := statusOf(err); got != tc.wantStatus {
 				t.Fatalf("CmdPermission(%+v) status = %d, want %d (err %v)", tc.payload, got, tc.wantStatus, err)

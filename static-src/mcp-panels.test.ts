@@ -4,6 +4,7 @@ import fc from "fast-check";
 // `tools.ts` reaches the editor openers and their whole graph; cut at that edge, since no case opens a file.
 vi.mock("./editor-openers.js", () => ({
   openFile: vi.fn(),
+  openConfigFile: vi.fn(),
   openFileDiff: vi.fn(),
   openFileInBackground: vi.fn(),
   openFileGitDiff: vi.fn(),

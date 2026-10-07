@@ -52,6 +52,7 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 				return spawnIgnoreFiles(ctx, rt.lifecycle.configDir)
 			},
 			contentCollection: contentCollectionResolver(rt.lifecycle.configDir, rt.config.GovernanceLocks),
+			telemetryOff:      func() bool { return rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks) },
 		},
 		rt.secrets,
 		true, // enableHooks

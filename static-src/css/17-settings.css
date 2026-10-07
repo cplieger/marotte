@@ -1651,11 +1651,7 @@ select.native-rule-effect:focus-visible {
 /* --- Permissions rule forms (.rule-form) --------------------------------
  * One shared labeled-field-grid vocabulary for the four adders on the
  * Permissions panel (Active policy, Test a decision, Command rules, Agent
- * ignore). Replaces the chat-surface chip-input/chip-mode-select reuse
- * (11px, ~22px tall, unlabeled) that sat below the design system's 24px
- * desktop hit floor. Do NOT restyle .chip-input/.chip-mode-select here —
- * those still serve the MCP disabled-tools adder and the in-dialog
- * always-allow row, where compact is intentional. */
+ * ignore), sized to the design system's 24px desktop hit floor. */
 .rule-form {
   display: grid;
   gap: var(--sp-2) var(--sp-3);
@@ -1706,9 +1702,11 @@ select.native-rule-effect:focus-visible {
   opacity: 0.7;
 }
 
+/* `max()` for the reason `.rf-submit` below gives: the zero-specificity hit floor loses to this
+   rule, and the dense tier is 40px against a 44px floor on a coarse pointer. */
 .rf-select,
 .rf-input {
-  block-size: var(--ctl-h-dense);
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
   padding-inline: var(--sp-2);
   font-size: var(--fs-sm); /* 12px, up from the chip surfaces' 11px */
   font-family: var(--font-sans);
@@ -1724,6 +1722,14 @@ select.native-rule-effect:focus-visible {
 
 .rf-mono {
   font-family: var(--font-mono);
+}
+
+/* A small whole number. The native spin arrows stay: these are small-integer tweaks, and
+   browsers hide them on type=number unless asked. */
+.rf-number {
+  inline-size: 7rem;
+  font-variant-numeric: tabular-nums;
+  appearance: auto;
 }
 
 .rf-select:focus-visible,

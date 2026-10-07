@@ -1,6 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type * as ApiClient from "./api-client.js";
-import type * as Persist from "./persist.js";
 import type * as Confirm from "./confirm.js";
 import type * as MemoryActions from "./actions/memory.js";
 
@@ -14,7 +13,6 @@ interface ListReply {
 
 let listReply: ListReply;
 let oneReply: ListReply;
-let settingsReply: { memory_mode: string } | null;
 let confirmAnswer = true;
 const deleted: string[] = [];
 const updated: { id: string; edit: unknown }[] = [];
@@ -25,10 +23,6 @@ vi.mock("./api-client.js", async (importOriginal) => ({
     const r = path === "/api/memory" ? listReply : oneReply;
     return r.ok ? { ...r, data: decode(r.data) } : r;
   }),
-}));
-vi.mock("./persist.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Persist>()),
-  loadSettings: vi.fn(async () => settingsReply),
 }));
 vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Confirm>()),
@@ -113,7 +107,6 @@ beforeEach(() => {
   updated.length = 0;
   confirmAnswer = true;
   vi.mocked(confirm).mockClear();
-  settingsReply = { memory_mode: "learn" };
   listReply = ok({
     memories: [
       record("a", "repo:org/one", "Older", 1_700_000_000),
@@ -146,16 +139,6 @@ describe("the list", () => {
     await mount("newer");
     expect(seen.at(-1)).toEqual({ total: 5, shown: 1 });
     expect(titlesIn("repo:org/one")).toEqual(["Newer"]);
-  });
-
-  it("still lists stored memories when the setting is Off, and says so", async () => {
-    settingsReply = { memory_mode: "off" };
-    await mount();
-    const note = panel.querySelector(".memories-off-note")?.textContent ?? "";
-    expect(note).toContain("new chats neither read nor save");
-    expect(note).toContain("Chats you already had keep the access they started with");
-    expect(note).toContain("A chat from before this update stops using memory when you reopen it");
-    expect(panel.querySelectorAll(".entry")).toHaveLength(5);
   });
 
   it("says when the account is not eligible", async () => {

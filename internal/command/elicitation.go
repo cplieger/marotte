@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -44,7 +45,8 @@ func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms Pen
 	if p.Action == marotte.ElicitationActionAccept {
 		result.Content = p.Content
 	}
-	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
+	// Claimed, so it must be answered whether or not the client is still there.
+	if err := sb.Respond(durable.Context(ctx), p.RequestID, result, nil); err != nil {
 		slog.Error("elicitation response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	return responseOK, nil

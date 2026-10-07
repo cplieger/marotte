@@ -1,15 +1,13 @@
-// The build versions: ONE owner of GET /api/version, fetched ONCE per page load (both are fixed for
-// the container's life). Signal-backed: the status card paints before `--version` answers.
-
 import { signal, type Signal } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 
-/** The wire shape of GET /api/version (internal/server/cli_handlers.go). Both
- *  fields are optional: `kiro_cli` is omitted when the `--version` probe fails
+/** The wire shape of GET /api/version (internal/server/cli_handlers.go). Every
+ *  field is optional: `kiro_cli` is omitted when the `--version` probe fails
  *  or times out, which is a normal state while the install is still running. */
 interface VersionPayload {
   marotte?: string;
   kiro_cli?: string;
+  config_dir?: string;
 }
 
 /** A version pair. `""` means "not known", never "absent" — a reader renders
@@ -31,6 +29,7 @@ function bareKiroVersion(raw: string): string {
 }
 
 const versions: Signal<Versions> = signal<Versions>(EMPTY);
+let configDir = "";
 
 /** The pair, as a signal, so a reader inside an `effect` repaints when it lands. */
 export function versionsSignal(): Signal<Versions> {
@@ -42,28 +41,50 @@ export function getVersions(): Versions {
   return versions.peek();
 }
 
-let started = false;
+let inflight: Promise<boolean> | null = null;
+let loaded = false;
 
-/** Read the pair once and publish it; idempotent. Never throws or reports: `apiGet` logs failures,
- *  and an unknown version is a missing suffix. */
+function load(): Promise<boolean> {
+  if (loaded) {
+    return Promise.resolve(true);
+  }
+  inflight ??= apiGet<VersionPayload>("/api/version").then((v) => {
+    inflight = null;
+    if (v === null) {
+      return false;
+    }
+    loaded = true;
+    configDir = (v.config_dir ?? "").replace(/\/+$/u, "");
+    versions.value = {
+      marotte: (v.marotte ?? "").trim(),
+      kiroCli: bareKiroVersion(v.kiro_cli ?? ""),
+    };
+    return true;
+  });
+  return inflight;
+}
+
+/** Read the pair and publish it. Concurrent callers share one request; once it has answered no
+ *  caller asks again, and a failed read is retried by the next caller. Never throws or reports:
+ *  `apiGet` logs failures, and an unknown version is a missing suffix. */
 export async function loadVersions(): Promise<void> {
-  if (started) {
-    return;
+  await load();
+}
+
+/** The absolute path of a file in the server's config directory, or null while GET /api/version
+ *  cannot be read or names none. Waits for a read in flight and retries a failed one. */
+export async function configFilePath(name: "tools.json" | "config.json"): Promise<string | null> {
+  if (!(await load()) || configDir === "") {
+    return null;
   }
-  started = true;
-  const v = await apiGet<VersionPayload>("/api/version");
-  if (v === null) {
-    return;
-  }
-  versions.value = {
-    marotte: (v.marotte ?? "").trim(),
-    kiroCli: bareKiroVersion(v.kiro_cli ?? ""),
-  };
+  return `${configDir}/${name}`;
 }
 
 /** Reset for tests. Not part of the app's own lifecycle — the pair is read once
  *  per page load and a page load is the reset. */
 export function _resetVersionsForTest(): void {
-  started = false;
+  inflight = null;
+  loaded = false;
   versions.value = EMPTY;
+  configDir = "";
 }

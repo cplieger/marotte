@@ -23,6 +23,7 @@ import type { Session } from "../types.js";
 import type { Entry, EntryTurnClose, TurnOutcome } from "../wire/types.gen.js";
 import { severityOf } from "../turn-severity.js";
 import type * as ApiClient from "../api-client.js";
+import { getActionLog } from "@cplieger/actions";
 
 // Spread, so other consumers keep the real module. `vi.hoisted`: the static run-store import
 // resolves this factory during linking, before plain consts initialize.
@@ -141,6 +142,7 @@ const { ERROR_ROUTES } = await import("./turn.js");
 // so a STATIC import here links it against the real module before the mocker is ready
 // and the whole file dies in module linking.
 const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
+const { pushDecision } = await import("../decision-dock.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -732,6 +734,53 @@ describe("the permission-class asks always notify", () => {
     });
   });
 });
+
+describe("a refused always answer", () => {
+  function answerWith(
+    requestID: number,
+    status: number,
+    body: Record<string, string>,
+  ): PermissionDecisionLike {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status }))),
+    );
+    fireSSE("permission_needed", "chat-1", { request_id: requestID, options: [] });
+    const decision = vi.mocked(pushDecision).mock.calls.at(-1)?.[0] as PermissionDecisionLike;
+    decision.submit({ optionID: "always-accept", alwaysResource: "head *" });
+    return decision;
+  }
+
+  it("offers the same card again when the rule was not saved", async () => {
+    const decision = answerWith(21, 409, {
+      error: "no rule was saved",
+      reason: "always_rule_not_saved",
+    });
+    await vi.waitFor(() => {
+      expect(vi.mocked(pushDecision)).toHaveBeenCalledTimes(2);
+    });
+    expect(vi.mocked(pushDecision).mock.calls[1]?.[0]).toBe(decision);
+  });
+
+  it("does not offer it again on another refusal", async () => {
+    answerWith(22, 400, { error: "always_resource_invalid" });
+    await vi.waitFor(() => {
+      expect(
+        getActionLog().some(
+          (a) =>
+            a.name === "chat.respond_permission" &&
+            a.status === "error" &&
+            (a.args as { requestID?: number }).requestID === 22,
+        ),
+      ).toBe(true);
+    });
+    expect(vi.mocked(pushDecision)).toHaveBeenCalledTimes(1);
+  });
+});
+
+interface PermissionDecisionLike {
+  submit: (answer: { optionID: string; alwaysResource?: string }) => void;
+}
 
 // The off-screen notification reads the close entry's SEVERITY, so a failed or refused turn never
 // says "Agent finished". A distinct chat id per case: the cue dedups per chat.

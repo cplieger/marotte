@@ -76,6 +76,14 @@ func (t *pendingPermsTracker) TakePermissionOption(chatID marotte.ChatID, id int
 	return evt, true, true
 }
 
+// Peek returns one chat's unanswered permission ask without claiming it.
+func (t *pendingPermsTracker) Peek(chatID marotte.ChatID, id int64) (marotte.PermissionNeededPayload, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	payload, ok := t.perms[permKey{chat: chatID, id: id}].Payload.(marotte.PermissionNeededPayload)
+	return payload, ok
+}
+
 // TakeForToolCall claims the chat's pending ask for toolCallID; should two be outstanding, the newest request id is the awaited one.
 func (t *pendingPermsTracker) TakeForToolCall(chatID marotte.ChatID, toolCallID string) (marotte.ServerEvent, int64, bool) {
 	if toolCallID == "" {
@@ -234,6 +242,11 @@ func (b *bus) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) boo
 	}
 	b.announceDecisionSettled(evt, requestID, marotte.SettledByMoot)
 	return true
+}
+
+// PendingPermission reads an unanswered permission ask without claiming it.
+func (b *bus) PendingPermission(chatID marotte.ChatID, requestID int64) (marotte.PermissionNeededPayload, bool) {
+	return b.pendingPerms.Peek(chatID, requestID)
 }
 
 // TakePendingPermissionOption validates and claims a permission response.

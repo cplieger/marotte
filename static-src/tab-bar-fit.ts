@@ -18,7 +18,8 @@ function measure(bar: HTMLElement): void {
   for (const seg of bar.querySelectorAll<HTMLElement>(".seg")) {
     // A hidden bar (display: none view) reports 0/0 — no overflow, label
     // mode. The ResizeObserver fires again when the view shows and the bar
-    // gains real geometry, so hidden bars self-correct on reveal.
+    // gains real geometry, so hidden bars self-correct on reveal. A withdrawn
+    // segment reports 0/0 the same way, so only visible segments count.
     if (seg.scrollWidth > seg.clientWidth) {
       overflows = true;
       break;
@@ -53,5 +54,11 @@ export function fitTabBar(bar: HTMLElement): void {
     });
   });
   ro.observe(bar);
+  measure(bar);
+}
+
+/** Re-measure now, for a change the width-only observer cannot see: a segment shown or hidden
+ *  moves its siblings' widths while the bar's own width stays put. */
+export function refitTabBar(bar: HTMLElement): void {
   measure(bar);
 }

@@ -7,11 +7,15 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/securityprofile"
 )
 
 // CancelGrace is how long a cooperative session/cancel gets to end the turn before marotte unblocks
@@ -176,8 +180,10 @@ func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms Pending
 	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopTabClosed)
 }
 
-// CmdPermission forwards the user's permission dialog choice to kiro-cli.
-func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
+// CmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer
+// saves its rule at user scope: the profile is switched to Custom first (Customize), and only
+// once that write landed does kiro-cli get the answer, whose rule it writes into the same file.
+func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, profiles ProfileSwitcher, cmd *marotte.ClientCommand) (any, error) {
 	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
@@ -192,6 +198,15 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 		(reason != "" && len(p.FileDecisions) > 0) {
 		return nil, StatusError(http.StatusBadRequest, errRejectionReasonInvalid)
 	}
+	always, err := alwaysConsent(perms, cmd.ChatID, &p)
+	if err != nil {
+		return nil, err
+	}
+	if always != nil {
+		if err := profiles.EnsureCustomProfile(ctx); err != nil {
+			return nil, customizeRefusal(err)
+		}
+	}
 	// Claim the request before answering it: two tabs on one chat can both
 	// see the card, and kiro-cli silently discards the second answer for a
 	// request id already resolved.
@@ -205,12 +220,96 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	// A turn approval answers on the same reply, with per-file decisions in
 	// _meta; built through one helper so the omitted-id-means-reject rule
 	// lives in one place.
-	outcome := marotte.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
-	if len(p.FileDecisions) == 0 {
+	var outcome *marotte.PermissionOutcome
+	switch {
+	case always != nil:
+		outcome = marotte.PermissionOutcomeAlways(p.OptionID, *always)
+	case len(p.FileDecisions) > 0:
+		outcome = marotte.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
+	default:
 		outcome = marotte.PermissionOutcomeWithRejectionReason(p.OptionID, reason)
 	}
-	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
+	// A claimed ask must be answered or the turn waits forever, and Respond refuses a done
+	// context: the client may have gone during the switch to Custom.
+	if err := sb.Respond(durable.Context(ctx), p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	return responseOK, nil
+}
+
+// alwaysConsent is the user-scope rule an always answer saves, nil for any other answer. A
+// chosen pattern other than the ask's own subject is checked against the rule format before
+// anything is claimed or written; an unknown request or option is left to the claim.
+func alwaysConsent(perms PendingPermAccess, chatID marotte.ChatID, p *marotte.PermissionResponseCommand) (*marotte.PermissionConsentAnswer, error) {
+	ask, ok := perms.PendingPermission(chatID, p.RequestID)
+	if !ok {
+		return nil, nil
+	}
+	i := slices.IndexFunc(ask.Options, func(o marotte.PermissionOption) bool { return o.OptionID == p.OptionID })
+	if i < 0 {
+		return nil, nil
+	}
+	effect, isAlways := alwaysEffects[ask.Options[i].Kind]
+	resource := strings.TrimSpace(p.AlwaysResource)
+	switch {
+	case !isAlways && resource == "":
+		return nil, nil
+	case !isAlways, ask.Consent == nil, len(p.FileDecisions) > 0, strings.TrimSpace(p.RejectionReason) != "":
+		return nil, StatusError(http.StatusBadRequest, errAlwaysResourceInvalid)
+	}
+	rule := policyfile.Rule{Capability: ask.Consent.Capability, Effect: effect}
+	raw, fromSubject := subjectResource(ask.Consent, resource)
+	if !fromSubject {
+		rule.Match = []string{resource}
+	}
+	clean, err := policyfile.SanitizeRule(&rule)
+	if err != nil || (!fromSubject && len(clean.Match) != 1) {
+		return nil, StatusError(http.StatusBadRequest, errAlwaysResourceInvalid)
+	}
+	if !fromSubject {
+		raw = clean.Match[0]
+	}
+	return &marotte.PermissionConsentAnswer{
+		Scope: marotte.ConsentScopeUser, Capability: clean.Capability, Resource: raw,
+	}, nil
+}
+
+// subjectResource maps a pattern the card offered from the ask itself (its subject, or the
+// folder over a path) onto the raw key the server kept for it, so the saved rule matches what
+// KAS asked about. ok is false for any other pattern, which is saved as chosen.
+func subjectResource(c *marotte.PermissionConsent, chosen string) (string, bool) {
+	switch {
+	case chosen == "":
+		return "", false
+	case c.Resource != "" && chosen == strings.TrimSpace(c.Subject):
+		return c.Resource, true
+	case c.FolderResource != "" && chosen == strings.TrimSpace(c.Folder):
+		return c.FolderResource, true
+	}
+	return "", false
+}
+
+// reasonAlwaysRuleNotSaved marks an always answer refused before its rule was saved: the ask
+// is still pending, which is what the client offers again on.
+const reasonAlwaysRuleNotSaved = "always_rule_not_saved"
+
+var alwaysEffects = map[string]string{
+	"allow_always":  policyfile.EffectAllow,
+	"reject_always": policyfile.EffectDeny,
+}
+
+// customizeRefusal answers an always answer whose switch to Custom failed. The ask stays
+// pending and every refusal carries one reason, so the client offers the card again.
+func customizeRefusal(err error) error {
+	msg := "the rule could not be saved, so the request is still waiting. Allow it once instead, or try again"
+	switch {
+	case errors.Is(err, securityprofile.ErrNoLivePolicy):
+		msg = "the current profile's rules could not be read to switch Permissions to Custom, so no rule was saved. Allow it once instead, or try again"
+	case errors.Is(err, securityprofile.ErrUserFileUnreadable):
+		msg = "the user permissions file could not be read, so no rule was saved. Fix the file by hand, or allow it once instead"
+	case errors.Is(err, securityprofile.ErrUserFileFull):
+		msg = "the user permissions file is at its rule limit, so no rule was saved. Remove a rule in Permissions, or allow it once instead"
+	}
+	slog.Warn("an always answer was refused because Permissions could not switch to Custom", keyError, err)
+	return StatusErrorReason(http.StatusConflict, reasonAlwaysRuleNotSaved, errors.New(msg))
 }

@@ -8,6 +8,9 @@ type utilityLease struct {
 	// build constructs the runtime. Supplied by the Runtime because its hooks point back into runtime services, an edge
 	// that must stay visible at the wiring site.
 	build func() *utilityRuntime
+	// reconcile runs before every get and outside mu, because it may take a runtime spawned under settings that have
+	// since moved: no writer sees a hand edit, so the utility session must check at use the way a chat open does.
+	reconcile func()
 	// rt is nil until first use.
 	rt *utilityRuntime `wiring:"optional"`
 	mu sync.Mutex
@@ -15,6 +18,9 @@ type utilityLease struct {
 
 // get returns the utility runtime, building it on first use. A mutex around a nil check, so readers are ordered too.
 func (l *utilityLease) get() *utilityRuntime {
+	if l.reconcile != nil {
+		l.reconcile()
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.rt == nil {

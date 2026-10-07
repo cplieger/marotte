@@ -114,6 +114,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.SpecChangedPayload](),
 	wiregen.TypeRef[marotte.SpecApprovedPayload](),
 	wiregen.TypeRef[marotte.MCPToolIdentity](),
+	wiregen.TypeRef[marotte.PermissionConsent](),
 	wiregen.TypeRef[marotte.PermissionNeededPayload](),
 	wiregen.TypeRef[marotte.ErrorPayload](),
 	wiregen.TypeRef[marotte.MCPConnectedPayload](),

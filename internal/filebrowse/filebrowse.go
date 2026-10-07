@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"syscall"
 
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -39,16 +40,52 @@ const (
 
 // Handler serves /api/file/* and /api/files/*.
 type Handler struct {
-	toolOutputs string  // AllowToolOutputs; "" grants nothing
-	mounts      []mount // sorted longest-dir-first (see openMounts)
+	saveHooks   map[string]SaveHook // keyed by the path as configured, resolved per save
+	toolOutputs string              // AllowToolOutputs; "" grants nothing
+	mounts      []mount             // sorted longest-dir-first (see openMounts)
 	sensitive   Sensitive
+}
+
+// Option is an argument to New, which applies options in argument order after the browse
+// roots open, so where two set the same thing the later one wins.
+type Option func(*Handler)
+
+// SaveHook governs editor saves (PUT /api/file) of one file. Either func may be nil.
+type SaveHook struct {
+	// Check runs before anything is written; a non-nil error refuses the save with a 400 whose
+	// message is the error's text, so it must read as an answer to the person saving.
+	Check func(content []byte) error
+	// Saved runs after the content is on disk, on the request goroutine, before the response.
+	Saved func()
+}
+
+// WithSaveHook runs hook on every save whose target resolves to wherever path, an absolute path,
+// points at the time of that save. A later hook for the same cleaned path replaces this one.
+func WithSaveHook(path string, hook SaveHook) Option {
+	return func(h *Handler) {
+		if h.saveHooks == nil {
+			h.saveHooks = make(map[string]SaveHook)
+		}
+		h.saveHooks[filepath.Clean(path)] = hook
+	}
+}
+
+// saveHookFor resolves each hook's path per save, so a symlink swapped in after New cannot
+// route a save around its hook.
+func (h *Handler) saveHookFor(l loc) SaveHook {
+	for path, hook := range h.saveHooks {
+		if resolved, err := resolveRealPath(path); err == nil && resolved == l.abs {
+			return hook
+		}
+	}
+	return SaveHook{}
 }
 
 // New creates a file handler whose browsable surface is exactly rootDirs,
 // minus what sensitive blocks inside them. Each granted directory gets its
 // own os.Root (TOCTOU-free). A grant that cannot be opened is skipped with a
 // warning; zero usable mounts is a hard error.
-func New(sensitive Sensitive, rootDirs ...string) (*Handler, error) {
+func New(sensitive Sensitive, rootDirs []string, opts ...Option) (*Handler, error) {
 	mounts, errs := openMounts(rootDirs)
 	for _, err := range errs {
 		slog.Warn("filebrowse: skipping browse root", "error", err)
@@ -56,7 +93,11 @@ func New(sensitive Sensitive, rootDirs ...string) (*Handler, error) {
 	if len(mounts) == 0 {
 		return nil, fmt.Errorf("filebrowse: no usable browse roots in %q", rootDirs)
 	}
-	return &Handler{mounts: mounts, sensitive: sensitive}, nil
+	h := &Handler{mounts: mounts, sensitive: sensitive}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h, nil
 }
 
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
@@ -125,7 +166,7 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		readFile(r.Context(), w, l, reqPath)
 	case http.MethodPut:
-		writeFile(w, r, l)
+		writeFile(w, r, l, h.saveHookFor(l))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}

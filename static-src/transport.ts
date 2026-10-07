@@ -62,6 +62,7 @@ export type TypedCommand =
         option_id: string;
         file_decisions?: Record<string, boolean>;
         rejection_reason?: string;
+        always_resource?: string;
       };
     }
   | {

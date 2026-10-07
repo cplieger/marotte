@@ -37,6 +37,9 @@ type chatEngine interface {
 	// PushContentCollection sets the resolved content-collection value on every
 	// live bridge; kiro-cli holds it per process and persists none of it.
 	PushContentCollection(ctx context.Context)
+	// ReconcileSessionSettings reopens open chats when a write moved a setting a session reads
+	// only at open; call it once the write has landed.
+	ReconcileSessionSettings(ctx context.Context)
 }
 
 // governanceLocks is the administrator's lock map as this package reads it, to
@@ -75,11 +78,11 @@ type policyProvider interface {
 	PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error)
 }
 
-// policyReloader recycles the utility session whose policy presets a profile change
-// invalidated. Separate from the read-only policyProvider because it mutates process state.
-// A chat picks up a new profile when its session next starts or loads.
+// policyReloader applies a profile change the server persisted: it recycles the sessions whose
+// presets the change invalidated and tells every client. Separate from the read-only
+// policyProvider because it mutates process state.
 type policyReloader interface {
-	RestartUtilitySession()
+	SecurityProfileChanged(ctx context.Context)
 }
 
 // mcpRenderer re-renders KAS's MCP config file, so the MCP wait setting reaches

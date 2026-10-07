@@ -30,7 +30,7 @@ type writeBody struct {
 	ExpectedHash string `json:"expected_hash"`
 }
 
-func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
+func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	webhttp.LimitBody(w, r, MaxFileSize)
 	var body writeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -51,6 +51,9 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		return
 	}
 	if !staleWriteAllowed(w, r, l, body) {
+		return
+	}
+	if refusedBySaveHook(w, l, hook, []byte(body.Content)) {
 		return
 	}
 	// A rename publishes a new inode, so an existing regular file's bits are
@@ -77,7 +80,24 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		}
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(body.Content))
+	if hook.Saved != nil {
+		hook.Saved()
+	}
 	webhttp.Ok(w)
+}
+
+func refusedBySaveHook(w http.ResponseWriter, l loc, hook SaveHook, content []byte) (answered bool) {
+	if hook.Check == nil {
+		return false
+	}
+	err := hook.Check(content)
+	if err == nil {
+		return false
+	}
+	slog.Info("filebrowse: save refused by its hook",
+		"path", logsafe.Field(l.abs), "reason", logsafe.Field(err.Error()))
+	httpreply.BadRequest(w, err.Error())
+	return true
 }
 
 // writeFileError maps a confined-write failure onto the HTTP status the client needs, off

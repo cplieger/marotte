@@ -115,4 +115,35 @@ describe("answering an ask: the three outcomes", () => {
     const opts = mockSend.mock.calls[0]?.[1];
     expect(opts?.reportSendState).toBe(false);
   });
+
+  it("sends an always answer's pattern as always_resource", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    await respondPermission.dispatch({
+      chatID: "c1",
+      requestID: 10,
+      optionID: "always-accept",
+      alwaysResource: "head *",
+    });
+    expect(mockSend.mock.calls[0]?.[0]).toMatchObject({
+      type: "permission_response",
+      payload: { request_id: 10, option_id: "always-accept", always_resource: "head *" },
+    });
+  });
+
+  it("carries a refusal's reason as the error code", async () => {
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "no rule was saved",
+      reason: "always_rule_not_saved",
+    });
+    const handle = respondPermission.dispatch({
+      chatID: "c1",
+      requestID: 11,
+      optionID: "always-accept",
+      alwaysResource: "head *",
+    });
+    const outcome = await handle.outcome;
+    expect(outcome.status === "error" ? outcome.error.code : "").toBe("always_rule_not_saved");
+  });
 });

@@ -389,12 +389,6 @@
   gap: var(--sp-2);
 }
 
-.memories-off-note {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
 /* The checkbox sits in the row's lead slot, centred on the title line. */
 .memories-lead {
   display: flex;

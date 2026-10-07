@@ -110,3 +110,13 @@ func autoCompactionPolicy(ctx context.Context, configDir string) (enabled bool, 
 func sessionDisablesAutoCompaction(enabled bool, pct int) bool {
 	return !enabled || pct > settings.DefaultAutoCompactPct
 }
+
+// kiroTelemetryKey is the kiro-cli setting the Data sharing switch writes; unset is kiro-cli's
+// default, on.
+const kiroTelemetryKey = "telemetry.enabled"
+
+// telemetryDisabled resolves a spawn's telemetryEnabled: kiro-cli's own setting, overridden by an
+// organization's telemetry lock. KAS reads neither, so the spawn carries it.
+func (lt *lifetime) telemetryDisabled(locks func() map[string]marotte.GovernanceLock) bool {
+	return !lockedBool(currentLocks(locks), marotte.LockTelemetry, lt.kiroTelemetry.get())
+}

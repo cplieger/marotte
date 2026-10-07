@@ -54,7 +54,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdSetAttachments, bind2(r.Chats, r.Bus, CmdSetAttachments))
 	d.Register(marotte.CmdDeleteChat, bind1(mem, CmdDeleteChat))
 
-	d.Register(marotte.CmdPermissionResponse, bind2(r.Bridges, r.Perms, CmdPermission))
+	d.Register(marotte.CmdPermissionResponse, bind3(r.Bridges, r.Perms, r.Profiles, CmdPermission))
 	d.Register(marotte.CmdElicitationResponse, bind2(r.Bridges, r.Perms, CmdElicitationResponse))
 	d.Register(marotte.CmdUserInputResponse, bind2(r.Bridges, r.Perms, CmdUserInputResponse))
 	d.Register(marotte.CmdRewindChat, bind5(r.Bridges, r.Chats, r.Admission, r.RunCutter, r.Bus, CmdRewindChat))

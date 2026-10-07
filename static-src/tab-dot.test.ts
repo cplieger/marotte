@@ -323,7 +323,6 @@ vi.mock("./editor-openers.js", () => ({
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
 }));
-vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 /** The tab strip's real render target, so renderDOM runs for real. */

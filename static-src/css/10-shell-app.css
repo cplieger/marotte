@@ -674,7 +674,7 @@ body.sidebar-resizing {
 
   /* A <button>'s UA `text-align: center` would centre a short address in the
      row's slack. `start` is the house idiom for a button that holds a row of
-     text (14-tools.css `.always-allow-preset`, 15-input.css
+     text (14-tools.css `.always-choice-option`, 15-input.css
      `.chat-options-card`). */
   text-align: start;
   display: flex;

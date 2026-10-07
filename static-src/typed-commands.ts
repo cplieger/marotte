@@ -5,6 +5,7 @@
 import { compactChat } from "./actions/chat.js";
 import { get, isEmptyChat, isThinking, setThinking } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
+import { loadSettings } from "./persist.js";
 
 /** Handles a typed command. Returns true when it consumed the input, so the
  *  caller must NOT also send it as a prompt. */
@@ -28,11 +29,8 @@ const HANDLERS: Readonly<Record<string, Verb>> = {
   drop: { description: "Stop waiting on a turn that is not answering", run: dropTurn },
   memories: {
     description: "Open the agent's memories",
-    run: () => {
-      // Lazy: route-apply reaches the whole page graph.
-      void import("./route-apply.js").then(({ applyRoute }) =>
-        applyRoute({ kind: "docs", tab: "memories" }),
-      );
+    run: (chatID) => {
+      void openMemories(chatID);
       return true;
     },
   },
@@ -61,6 +59,19 @@ export interface MarotteCommand {
 export const MAROTTE_COMMANDS: readonly MarotteCommand[] = Object.entries(HANDLERS).map(
   ([name, v]) => ({ name, description: v.description }),
 );
+
+/** `/memories`: Docs withdraws the tab while Memory is Off, so the verb says why instead of landing
+ *  on another tab. An unread setting opens it, as Docs does. */
+async function openMemories(chatID: string): Promise<void> {
+  const settings = await loadSettings();
+  if (settings?.memory_mode === "off") {
+    chatNotice(chatID, "Memory is off. Turn it on in Settings > General to review memories.");
+    return;
+  }
+  // Lazy: route-apply reaches the whole page graph.
+  const { applyRoute } = await import("./route-apply.js");
+  await applyRoute({ kind: "docs", tab: "memories" });
+}
 
 /** `/rewind`: the newest prompt turn, through the footer's own confirm. */
 function rewindLatest(chatID: string): boolean {

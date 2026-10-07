@@ -93,7 +93,7 @@ func TestSensitive_NonDefaultConfigRootBlocksTheStoreAndTheRecord(t *testing.T) 
 		}
 	}
 	sens := NewSensitive(root)
-	h, err := New(sens, root)
+	h, err := New(sens, []string{root})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -108,8 +108,14 @@ const (
 // Fails to compile if a settingKind is added without updating safeKiroSettingValueFor.
 var _ = [1]struct{}{}[_settingKindCount-2]
 
+const (
+	kiroTrue  = "true"
+	kiroFalse = "false"
+)
+
 // settingMeta carries validation metadata for an allowed kiro-cli setting.
 type settingMeta struct {
+	Seed string
 	Kind settingKind
 }
 
@@ -117,13 +123,13 @@ type settingMeta struct {
 // kiro-cli-SIDE role belong: KAS's ACP path reads no kiro-cli setting, so a chat change
 // goes through internal/kascap's table instead.
 var allowedKiroSettings = map[string]settingMeta{
-	"chat.enableKnowledge":   {Kind: settingBool},
-	"chat.enableSubagent":    {Kind: settingBool},
-	"chat.enablePromptHints": {Kind: settingBool},
-	"hooks.showStatus":       {Kind: settingBool},
-	"telemetry.enabled":      {Kind: settingBool},
+	"chat.enableKnowledge":   {Kind: settingBool, Seed: kiroTrue},
+	"chat.enableSubagent":    {Kind: settingBool, Seed: kiroTrue},
+	"chat.enablePromptHints": {Kind: settingBool, Seed: kiroTrue},
+	"hooks.showStatus":       {Kind: settingBool, Seed: kiroTrue},
+	"telemetry.enabled":      {Kind: settingBool, Seed: kiroFalse},
 	// cleanup.periodDays is NOT here: marotte owns chat retention and pins kiro-cli's purge off.
-	"chat.disableInheritingDefaultResources": {Kind: settingBool},
+	"chat.disableInheritingDefaultResources": {Kind: settingBool, Seed: kiroFalse},
 }
 
 func safeKiroSetting(k string) string {
@@ -136,7 +142,7 @@ func safeKiroSetting(k string) string {
 func safeKiroSettingValueFor(v string, kind settingKind) string {
 	switch kind {
 	case settingBool:
-		if v == "true" || v == "false" {
+		if v == kiroTrue || v == kiroFalse {
 			return v
 		}
 		return ""

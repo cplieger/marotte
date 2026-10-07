@@ -20,17 +20,20 @@ func newContentCollectionHub(t *testing.T, factory ACPBridgeFactory, opts ...Opt
 	return h, cs
 }
 
-// Every kiro-cli process gets the one resolver, the utility session included.
-func TestSpawnSites_CarryContentCollection(t *testing.T) {
+type spawnSite struct {
+	spawn func(t *testing.T, h *Runtime, cs *testChatStore, br *fakeBridge)
+	name  string
+}
+
+// spawnSites is kept by hand and nothing checks it is complete: a new production spawn site is
+// covered by the per-spawn resolver tests only once it is added here.
+func spawnSites() []spawnSite {
 	workflowReplies := map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
 		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
-	sites := []struct {
-		spawn func(t *testing.T, h *Runtime, cs *testChatStore, br *fakeBridge)
-		name  string
-	}{
+	return []spawnSite{
 		{name: "chat_new", spawn: func(t *testing.T, h *Runtime, cs *testChatStore, _ *fakeBridge) {
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -73,7 +76,10 @@ func TestSpawnSites_CarryContentCollection(t *testing.T) {
 			}
 		}},
 	}
-	for _, site := range sites {
+}
+
+func TestSpawnSites_CarryContentCollection(t *testing.T) {
+	for _, site := range spawnSites() {
 		t.Run(site.name, func(t *testing.T) {
 			br := newFakeBridge()
 			h, cs := newContentCollectionHub(t, func() ACPBridge { return br })

@@ -117,8 +117,6 @@ const PERM_ROWS = {
     <label class="perm-mode profile-row"><input type="radio"><span>Guarded</span>
       <p class="section-hint profile-desc">Confined reads, and it asks before anything else.</p></label>
   </div>`,
-  "the Supervised-default checkbox": `<label class="perm-mode"><input type="checkbox">
-    <span>Turn on Supervised mode for new conversations</span></label>`,
 } as const;
 
 const boxHost = document.createElement("div");

@@ -83,8 +83,8 @@ type Config struct {
 // ConfigFromEnv reads configuration from environment variables with
 // sensible defaults.
 func ConfigFromEnv() Config {
-	configDir := cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config")
-	workDir := cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace")
+	configDir := absDir("KIRO_CONFIG_DIR", cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config"))
+	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
 	return Config{
 		WorkDir:             workDir,
 		ConfigDir:           configDir,
@@ -106,6 +106,19 @@ func ConfigFromEnv() Config {
 		AuthConfig:          auth.DefaultConfig,
 		KiroAPIKeySet:       os.Getenv(bridge.KiroAPIKeyVar) != "",
 	}
+}
+
+// absDir makes a configured directory absolute against the startup cwd. The browse roots, the file
+// API's root namespace and the client's config-file doors all treat it as an absolute identity, so a
+// relative value would name one directory to the os calls and another to them. A failed Getwd
+// leaves the value cleaned and relative, and validateConfig reports it.
+func absDir(envVar, dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		slog.Warn("config: cannot make the directory absolute", "env", envVar, "dir", dir, "error", err)
+		return filepath.Clean(dir)
+	}
+	return abs
 }
 
 // logBridgeEnvPosture warns once at boot when an allowlisted API key reaches

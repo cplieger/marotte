@@ -145,7 +145,10 @@ type PermissionResponseCommand struct {
 	// RejectionReason is the user's note on a deny, at most
 	// MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
 	RejectionReason string `json:"rejection_reason,omitempty"`
-	RequestID       int64  `json:"request_id"`
+	// AlwaysResource is the pattern an allow_always or reject_always answer saves as a
+	// user rule, required with those options and refused with any other.
+	AlwaysResource string `json:"always_resource,omitempty"`
+	RequestID      int64  `json:"request_id"`
 }
 
 // MaxRejectionReasonRunes caps a deny note, matching the TUI's own cap.

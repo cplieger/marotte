@@ -21,10 +21,13 @@ import (
 
 // fakeEngine records what was broadcast, so a test can assert the client was told.
 type fakeEngine struct {
-	events         []marotte.ServerEvent
-	pushes         int
-	terminalPushes int
-	ccPushes       int
+	sessionSettings func(context.Context) string
+	seen            string
+	events          []marotte.ServerEvent
+	pushes          int
+	terminalPushes  int
+	ccPushes        int
+	reopens         int
 }
 
 func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
@@ -41,10 +44,25 @@ func (f *fakeEngine) PushTerminalSettings(context.Context) { f.terminalPushes++ 
 
 func (f *fakeEngine) PushContentCollection(context.Context) { f.ccPushes++ }
 
-// fakeReload records whether the profile change asked for a session recycle.
-type fakeReload struct{ restarts int }
+func (f *fakeEngine) fingerprint(ctx context.Context) string {
+	if f.sessionSettings == nil {
+		return ""
+	}
+	return f.sessionSettings(ctx)
+}
 
-func (f *fakeReload) RestartUtilitySession() { f.restarts++ }
+func (f *fakeEngine) settle(ctx context.Context) { f.seen = f.fingerprint(ctx) }
+
+func (f *fakeEngine) ReconcileSessionSettings(ctx context.Context) {
+	if now := f.fingerprint(ctx); now != f.seen {
+		f.seen = now
+		f.reopens++
+	}
+}
+
+type fakeReload struct{ profileChanges int }
+
+func (f *fakeReload) SecurityProfileChanged(context.Context) { f.profileChanges++ }
 
 // profileFixture stages a HOME and a workspace and returns the server plus both policy paths.
 // t.Setenv because policyfile.PathFor reads os.UserHomeDir, so this file is not parallel.
@@ -136,7 +154,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		policyfile.ProfileUnrestricted, policyfile.ProfileCustom,
 	} {
 		t.Run(id+"/staged files are left byte for byte", func(t *testing.T) {
-			s, eng, reload, userPath, wsPath := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
+			s, _, reload, userPath, wsPath := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 			for _, path := range []string{userPath, wsPath} {
 				if err := policyfile.Save(t.Context(), path, &policyfile.File{Rules: staged}); err != nil {
 					t.Fatalf("Setup: stage %s: %v", path, err)
@@ -156,13 +174,8 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 			if !settings.FieldInto(t.Context(), s.configDir, settings.KeySecurityProfile, &persisted) || persisted != id {
 				t.Errorf("selecting %q persisted %q", id, persisted)
 			}
-			if reload.restarts != 1 {
-				t.Errorf("selecting %q: utility restarts = %d, want 1", id, reload.restarts)
-			}
-			if !slices.ContainsFunc(eng.events, func(e marotte.ServerEvent) bool {
-				return e.Type == marotte.EventPermissionsChanged
-			}) {
-				t.Errorf("selecting %q broadcast no permissions_changed", id)
+			if reload.profileChanges != 1 {
+				t.Errorf("selecting %q: profile changes applied = %d, want 1", id, reload.profileChanges)
 			}
 		})
 		t.Run(id+"/absent files stay absent", func(t *testing.T) {
@@ -201,11 +214,15 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	live := []marotte.PolicyRule{
 		seedRule("fs_read", "read-workspace"),
 		seedRule("shell", "dev-shell"),
-		// Neither is the profile's: a session consent and a baseline scope.
+		// None is the profile's: a session consent, a baseline scope, another profile's preset.
 		{Capability: "mcp", Effect: "allow", Scope: "session", Source: "consent"},
 		{Capability: "fs_write", Effect: "ask", Scope: "kiro", Source: "kiro-scope"},
+		seedRule("all", policyfile.PresetAllowAll),
 	}
 	s, _, reload, userPath, wsPath := profileFixture(t, live)
+	if err := s.profiles().Select(t.Context(), policyfile.ProfileTrusted); err != nil {
+		t.Fatalf("Setup: select trusted: %v", err)
+	}
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "power", Effect: policyfile.EffectAsk},
 	}}); err != nil {
@@ -227,8 +244,8 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 		persisted != policyfile.ProfileCustom {
 		t.Errorf("persisted %q, want %q", persisted, policyfile.ProfileCustom)
 	}
-	if reload.restarts != 1 {
-		t.Errorf("utility restarts = %d, want 1", reload.restarts)
+	if reload.profileChanges != 1 {
+		t.Errorf("profile changes applied = %d, want 1", reload.profileChanges)
 	}
 }
 
@@ -246,7 +263,7 @@ func blockConfigDir(t *testing.T, s *Server) {
 // TestPolicyProfile_SeedPersistFailureRestoresTheUserFile pins that a failed persist takes
 // the copied preset rules back out.
 func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
-	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("all", "allow-all")})
+	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
@@ -261,8 +278,8 @@ func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 	if got := ruleCapabilities(loadRules(t, userPath)); !slices.Equal(got, []string{"shell"}) {
 		t.Errorf("the user file holds %v after a failed Customize, want only the staged shell rule", got)
 	}
-	if reload.restarts != 0 {
-		t.Errorf("utility restarts = %d; a selection that failed must not recycle a session", reload.restarts)
+	if reload.profileChanges != 0 {
+		t.Errorf("profile changes applied = %d; a selection that failed must not recycle a session", reload.profileChanges)
 	}
 }
 
@@ -270,7 +287,7 @@ func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 // the state Customize found, so a file that did not exist is removed again rather
 // than left behind empty.
 func TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("all", "allow-all")})
+	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	blockConfigDir(t, s)
 
 	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
@@ -283,7 +300,7 @@ func TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent(t *testing
 }
 
 // cancelOnceCopied reads as cancelled from the moment the user file holds a copied
-// `all` rule: a client that walks away right after Customize's first write lands.
+// `fs_read` rule: a client that walks away right after Customize's first write lands.
 type cancelOnceCopied struct {
 	context.Context
 	done chan struct{}
@@ -297,7 +314,7 @@ func (c *cancelOnceCopied) cancelled() bool {
 		return false
 	}
 	for i := range f.Rules {
-		if f.Rules[i].Capability == "all" {
+		if f.Rules[i].Capability == "fs_read" {
 			c.once.Do(func() { close(c.done) })
 			return true
 		}
@@ -320,7 +337,7 @@ func (c *cancelOnceCopied) Err() error {
 // TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite: Customize's two files
 // must agree whenever the client leaves. Both written, or the user file as it was.
 func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("all", "allow-all")})
+	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
@@ -334,11 +351,11 @@ func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 
 	profile := s.activeProfile(t.Context())
 	rules := ruleCapabilities(loadRules(t, userPath))
-	both := profile == policyfile.ProfileCustom && slices.Equal(rules, []string{"all", "shell"})
+	both := profile == policyfile.ProfileCustom && slices.Equal(rules, []string{"fs_read", "shell"})
 	neither := profile != policyfile.ProfileCustom && slices.Equal(rules, []string{"shell"})
 	if !both && !neither {
 		t.Errorf("after a disconnect the profile is %q and the user file holds %v (status %d), "+
-			"want custom with [all shell] or the old profile with [shell]", profile, rules, rec.Code)
+			"want custom with [fs_read shell] or the old profile with [shell]", profile, rules, rec.Code)
 	}
 }
 
@@ -350,8 +367,8 @@ func TestPolicyProfile_NamedPersistFailureAnswers500(t *testing.T) {
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
 	}
-	if reload.restarts != 0 {
-		t.Errorf("utility restarts = %d; a selection that failed must not recycle a session", reload.restarts)
+	if reload.profileChanges != 0 {
+		t.Errorf("profile changes applied = %d; a selection that failed must not recycle a session", reload.profileChanges)
 	}
 }
 
@@ -379,8 +396,8 @@ func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
 		t.Errorf("the user file was rewritten after a refusal (%d bytes, comment kept: %t), want it untouched",
 			len(got), bytes.Contains(got, []byte("# hand-edited")))
 	}
-	if reload.restarts != 0 {
-		t.Errorf("utility restarts = %d; a refused selection must not recycle a session", reload.restarts)
+	if reload.profileChanges != 0 {
+		t.Errorf("profile changes applied = %d; a refused selection must not recycle a session", reload.profileChanges)
 	}
 }
 
@@ -408,8 +425,8 @@ func TestPolicyProfile_SeedRefusesAnUnparseableUserFile(t *testing.T) {
 	if settings.FieldInto(t.Context(), s.configDir, settings.KeySecurityProfile, &persisted) && persisted != "" {
 		t.Errorf("persisted %q on a refused selection", persisted)
 	}
-	if reload.restarts != 0 {
-		t.Errorf("utility restarts = %d; a refused selection recycled a session", reload.restarts)
+	if reload.profileChanges != 0 {
+		t.Errorf("profile changes applied = %d; a refused selection recycled a session", reload.profileChanges)
 	}
 }
 
@@ -444,7 +461,7 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 			if settings.FieldInto(t.Context(), s.configDir, settings.KeySecurityProfile, &persisted) && persisted != "" {
 				t.Errorf("persisted %q on a refused switch", persisted)
 			}
-			if reload.restarts != 0 {
+			if reload.profileChanges != 0 {
 				t.Errorf("recycled a session for a switch that did not happen")
 			}
 		})
@@ -469,7 +486,7 @@ func TestPolicyProfile_Refusals(t *testing.T) {
 			if _, err := os.Stat(userPath); err == nil {
 				t.Error("a refused request wrote a policy file")
 			}
-			if reload.restarts != 0 {
+			if reload.profileChanges != 0 {
 				t.Error("a refused request recycled a session")
 			}
 		})

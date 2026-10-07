@@ -154,6 +154,8 @@ type Bridge struct {
 	// two knowledge rows. Both immutable after Start: KAS freezes them at session creation.
 	toolSearch bool
 	knowledge  bool
+	// disableTelemetry drives kascap's telemetryEnabled row; immutable after Start.
+	disableTelemetry bool
 	// supervised records that the session accepted `autopilot: off`, not that the chat asked; the request lives on the
 	// chat record. False covers refused and unasked, so the coordinator reads it with the chat's request.
 	supervised bool
@@ -457,6 +459,7 @@ func (b *Bridge) spawn() *kascap.Spawn {
 		InlineAgents:             b.features.InlineAgents,
 		SteeringReminders:        b.features.SteeringReminders,
 		Workflows:                b.features.Workflows,
+		DisableTelemetry:         b.disableTelemetry,
 	}
 }
 

@@ -1898,6 +1898,18 @@ export interface PendingSnapshotPayload {
   items: unknown[];
 }
 
+/**
+ * PermissionConsent is what one permission ask is about. A compound command asks once per
+ * part it has not approved, and Subject is that part. Subject and Folder are display-treated
+ * copies of what an always answer saves, which only the server holds.
+ */
+export interface PermissionConsent {
+  capability: string;
+  subject: string;
+  /** Folder is the `<dir>/**` pattern over a path subject's parent, empty when there is none. */
+  folder?: string;
+}
+
 /** PermissionNeededPayload is the payload for type="permission_needed". */
 export interface PermissionNeededPayload {
   mcp_tool?: MCPToolIdentity;
@@ -1921,6 +1933,11 @@ export interface PermissionNeededPayload {
  */
   run_id?: string;
   node_id?: string;
+  /**
+ * Consent names what this ask is about, present when KAS sent it; an always answer
+ * saves a rule for this capability.
+ */
+  consent?: PermissionConsent;
   /**
  * AlwaysAllowBlocked names why the card must not offer to persist a rule for this
  * command. Empty means the offer stands.

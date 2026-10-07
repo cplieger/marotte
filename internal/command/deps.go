@@ -203,6 +203,15 @@ type PendingPermAccess interface {
 	// pending but not offered. A successful result validates and claims in one
 	// operation, so another surface cannot answer between those steps.
 	TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, optionID string, settledBy marotte.SettledBy) (pending, offered bool)
+	// PendingPermission reads an unanswered permission ask without claiming it.
+	PendingPermission(chatID marotte.ChatID, requestID int64) (marotte.PermissionNeededPayload, bool)
+}
+
+// ProfileSwitcher moves the security profile to Custom before an always answer saves a rule.
+type ProfileSwitcher interface {
+	// EnsureCustomProfile is a no-op on Custom; otherwise it runs Customize and returns once
+	// the user permissions file is written. Errors are securityprofile's.
+	EnsureCustomProfile(ctx context.Context) error
 }
 
 // TerminalAccess is the interrupt's process half: a turn cancel must reach
@@ -663,6 +672,7 @@ type Roles struct {
 	Bus       Broadcaster
 	Teardown  ChatTeardown
 	Perms     PendingPermAccess
+	Profiles  ProfileSwitcher
 	Terminals TerminalAccess
 	Stops     TurnStopper
 	// Tabs is the open-tab set, and it may be nil: a build with no config

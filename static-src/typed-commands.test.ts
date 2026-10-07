@@ -2,6 +2,7 @@
 // everything the table does not claim must fall through untouched, or marotte
 // starts silently swallowing text KAS itself parses.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as Persist from "./persist.js";
 
 const dispatch = vi.fn();
 vi.mock("./actions/chat.js", () => ({
@@ -21,6 +22,16 @@ vi.mock("./notice-subject.js", () => ({
     return () => undefined;
   },
 }));
+
+const memoryMode = vi.hoisted(() => ({ value: "off" as string | null }));
+vi.mock("./persist.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Persist>()),
+  loadSettings: vi.fn(() =>
+    Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
+  ),
+}));
+const applyRoute = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("./route-apply.js", () => ({ applyRoute }));
 
 const { handleTypedCommand } = await import("./typed-commands.js");
 const store = await import("./store.js");
@@ -81,6 +92,36 @@ describe("handleTypedCommand", () => {
   it("refuses without a chat", () => {
     expect(handleTypedCommand("", "/compact")).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleTypedCommand /memories", () => {
+  beforeEach(() => {
+    applyRoute.mockClear();
+  });
+
+  it("says Memory is off instead of opening Docs", async () => {
+    memoryMode.value = "off";
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(toasts).toEqual([
+        "Memory is off. Turn it on in Settings > General to review memories.",
+      ]);
+    });
+    expect(toastChats).toEqual(["c1"]);
+    expect(applyRoute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Memory is on", "learn"],
+    ["the settings cannot be read", null],
+  ])("opens Docs on Memories when %s", async (_desc, mode) => {
+    memoryMode.value = mode;
+    expect(handleTypedCommand("c1", "/memories")).toBe(true);
+    await vi.waitFor(() => {
+      expect(applyRoute).toHaveBeenCalledWith({ kind: "docs", tab: "memories" });
+    });
+    expect(toasts).toEqual([]);
   });
 });
 

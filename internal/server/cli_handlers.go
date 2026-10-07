@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -22,6 +23,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := map[string]string{"marotte": version.Build}
+	// The client opens the editable config files under it, so a moved KIRO_CONFIG_DIR is honoured.
+	if s.configDir != "" {
+		payload["config_dir"] = s.configDir
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Version)
 	defer cancel()
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {
@@ -191,6 +196,9 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	// a lifted lock must not write the older choice over it.
 	delete(s.heldKiroPrefs.held, key)
 	webhttp.Ok(w)
+	if s.agent != nil {
+		s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
+	}
 }
 
 // kiroSettingLocks maps a lock to the kiro-cli setting it pins.
@@ -241,6 +249,10 @@ func (s *Server) ApplyGovernanceLocks(ctx context.Context) {
 	for lockKey, setting := range kiroSettingLocks {
 		l, locked := locks[lockKey]
 		s.applyKiroSettingLock(ctx, setting, l, locked)
+	}
+	// A lifted lock's restore moves what a spawn resolves after the agent's own lock check ran.
+	if s.agent != nil {
+		s.agent.ReconcileSessionSettings(ctx)
 	}
 }
 

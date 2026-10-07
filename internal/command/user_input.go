@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -43,7 +44,8 @@ func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms Pendi
 	if p.Action == marotte.UserInputActionAnswered {
 		result.Answer = p.Answer
 	}
-	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
+	// Claimed, so it must be answered whether or not the client is still there.
+	if err := sb.Respond(durable.Context(ctx), p.RequestID, result, nil); err != nil {
 		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	return responseOK, nil

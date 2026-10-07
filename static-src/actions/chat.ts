@@ -764,6 +764,10 @@ export const sendPrompt = defineAction<
  *  constant exists for a command error body. */
 const ALREADY_ANSWERED = "already_answered";
 
+/** The refusal code of an always answer whose rule could not be saved: the ask is still
+ *  pending server-side, so its card is offered again. */
+export const ALWAYS_RULE_NOT_SAVED = "always_rule_not_saved";
+
 /** Answered, `superseded` (another surface answered first; the server takes one answer per id,
  *  so intent was met; silent, as decision-dock.ts announces it), or failed. A custom runner,
  *  because `transportAction`'s `run()` throws on every `!ok`. */
@@ -786,9 +790,10 @@ async function answerDecision(
   if (r.status === 409 && r.error === ALREADY_ANSWERED) {
     return "superseded";
   }
+  const code = r.reason ?? r.code;
   throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, {
     status: r.status,
-    ...(r.code !== undefined ? { code: r.code } : {}),
+    ...(code !== undefined ? { code } : {}),
   });
 }
 
@@ -803,6 +808,8 @@ export const respondPermission = defineAction<
     fileDecisions?: Record<string, boolean>;
     /** The deny note, on a reject_once answer only. */
     rejectionReason?: string;
+    /** The pattern an always answer saves as a rule, on an always answer only. */
+    alwaysResource?: string;
   },
   DecisionAnswer
 >({
@@ -811,7 +818,11 @@ export const respondPermission = defineAction<
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  run: ({ chatID, requestID, optionID, fileDecisions, rejectionReason }, signal, ctx) =>
+  run: (
+    { chatID, requestID, optionID, fileDecisions, rejectionReason, alwaysResource },
+    signal,
+    ctx,
+  ) =>
     answerDecision(
       {
         type: "permission_response",
@@ -821,6 +832,7 @@ export const respondPermission = defineAction<
           option_id: optionID,
           ...(fileDecisions !== undefined ? { file_decisions: fileDecisions } : {}),
           ...(rejectionReason !== undefined ? { rejection_reason: rejectionReason } : {}),
+          ...(alwaysResource !== undefined ? { always_resource: alwaysResource } : {}),
         },
       },
       signal,

@@ -3,17 +3,12 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type * as SettingsHighlight from "./settings-highlight.js";
-import type * as PermissionActions from "./actions/permissions.js";
 import type * as Navigate from "./navigate.js";
 import type { PermissionNeededPayload } from "./types.js";
 
 vi.mock("./settings-highlight.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SettingsHighlight>()),
   openSetting: vi.fn(),
-}));
-vi.mock("./actions/permissions.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof PermissionActions>()),
-  editNativeRule: { dispatch: vi.fn() },
 }));
 vi.mock("./navigate.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Navigate>()),
@@ -28,6 +23,7 @@ function ask(over: Partial<PermissionNeededPayload> = {}): PermissionNeededPaylo
     title: "Write src/main.go",
     kind: "edit",
     accepts_rejection_reason: true,
+    consent: { capability: "fs_write", subject: "src/main.go" },
     options: [
       { option_id: "a", name: "Allow", kind: "allow_once" },
       { option_id: "r", name: "Reject", kind: "reject_once" },
@@ -103,6 +99,10 @@ describe("the permission card's deny note", () => {
     box.value = "wrong directory";
     click(card, "Allow");
     click(card, "Always reject");
-    expect(onSelect.mock.calls).toEqual([[{ optionID: "a" }], [{ optionID: "ra" }]]);
+    card.querySelector<HTMLButtonElement>(".always-choice-option")?.click();
+    expect(onSelect.mock.calls).toEqual([
+      [{ optionID: "a" }],
+      [{ optionID: "ra", alwaysResource: "src/main.go" }],
+    ]);
   });
 });

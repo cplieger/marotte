@@ -264,8 +264,7 @@ describe("Test a decision", () => {
     expect(out).toContain("scope: kiro");
   });
 
-  // The distinction `guardAllowRule` refuses an allow against: an ask a rule STATES, as opposed to
-  // the implicit ask that means nothing matched.
+  // An ask a rule STATES, as opposed to the implicit ask that means nothing matched.
   it("distinguishes an explicit ask from an implicit one", async () => {
     await mount(view([]));
     mocks.explainDispatch.mockResolvedValue({

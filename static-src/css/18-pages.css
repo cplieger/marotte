@@ -67,42 +67,6 @@
   width: 100%;
 }
 
-.page-input-sm {
-  background: var(--c-bg-secondary);
-  color: var(--c-text-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-sm);
-  width: 6rem;
-  min-height: var(--btn-h);
-  font-variant-numeric: tabular-nums;
-
-  /* Native number-spin arrows are useful here (keep-N and buffer-%
-   * are both small-integer tweaks); browsers hide them by default on
-   * type=number — forcing them on improves discoverability. */
-  appearance: auto;
-}
-
-.page-input-sm:focus {
-  outline: none;
-  border-color: var(--c-accent);
-}
-
-/* Mobile: scale number inputs up for 44px touch targets. One step up to the
-   field rung the composer reads, not to 1rem — that literal was the last of the
-   app's 16px iOS-zoom floors (61-mcp-tools.css records why they all went) and
-   after their removal it left the settings pages' number inputs as the only
-   16px text in the app. The target itself comes from the padding plus
-   --hit-floor, not from the type size. */
-@media (width <= 40rem) {
-  .page-input-sm {
-    width: 7rem;
-    padding: var(--sp-3);
-    font-size: var(--fs-md);
-  }
-}
-
 .textarea-wrap {
   position: relative;
 }
@@ -135,15 +99,26 @@
   padding-inline-start: calc(2.25rem + var(--sp-3));
 }
 
-/* The compaction slider's row: indented under its switch like the row above, and
-   the column takes the row's width so the range has room to travel. */
-[id="auto-compact-row"] > div {
+.section-field {
+  display: flex;
   flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
   min-width: 0;
+
+  & > .section-hint {
+    flex-basis: 100%;
+  }
+
+  & > :where(select, input) {
+    max-inline-size: 100%;
+  }
 }
 
+/* 10rem: at 12rem the slider wraps under its label on a 390px phone. */
 [id="auto-compact-pct"] {
-  inline-size: 100%;
+  flex: 1 1 10rem;
   max-inline-size: 20rem;
   accent-color: var(--c-accent);
 }
@@ -172,14 +147,6 @@
   font-size: var(--fs-form-label);
   color: var(--c-text-secondary);
   font-weight: var(--fw-medium);
-}
-
-/* Tool permissions (settings panel) */
-.perm-mode-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-block-start: var(--sp-2);
 }
 
 .perm-mode {
@@ -357,11 +324,27 @@
   position: relative;
   display: inline-flex;
 
-  /* Adjacent bordered controls need breathing room — zero gap rendered
-     them butted edge-to-edge (borders touching). The permissions-panel
-     adders moved to .rule-form; the remaining users (MCP disabled-tools
-     adder, in-dialog rows) stay compact but separated. */
+  /* At zero gap the field's border butts the pill's. */
   gap: var(--sp-2);
+}
+
+/* The adder's field takes `--btn-h`, the height of the `.action-pill` beside it, on
+   both pointer tiers. */
+.chip-input {
+  flex: 1;
+  min-block-size: var(--btn-h);
+  padding: var(--sp-1) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  color: var(--c-text-primary);
+}
+
+.chip-input:focus {
+  border-color: var(--c-accent);
+  outline: none;
 }
 
 .chip-menu {

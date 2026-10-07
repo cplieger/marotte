@@ -28,8 +28,7 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastWithAction: vi.fn(),
   openGitView: vi.fn(() => Promise.resolve()),
-  applyManifestDispatch: vi.fn(),
-  openFile: vi.fn(),
+  openConfigFile: vi.fn(() => Promise.resolve()),
   sseHandlers: new Map<string, (chatID: string, payload: unknown) => void>(),
 }));
 
@@ -68,13 +67,12 @@ vi.mock("./actions/tools.js", () => ({
   getToolsJobs: { dispatch: mocks.jobsDispatch },
   getCatalogInfo: { dispatch: mocks.catalogInfoDispatch },
   refreshCatalog: { dispatch: mocks.refreshCatalogDispatch },
-  applyManifest: { dispatch: mocks.applyManifestDispatch },
   cancelToolJob: { dispatch: mocks.cancelJobDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
 }));
 // Mocking the opener keeps the editor graph out of the link: a partial mock deeper in it (toast.js)
 // fails collection.
-vi.mock("./editor-openers.js", () => ({ openFile: mocks.openFile }));
+vi.mock("./editor-openers.js", () => ({ openConfigFile: mocks.openConfigFile }));
 // The rate-limit notice's door into Git -> Sources.
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
@@ -107,9 +105,7 @@ function mountToolsDOM(): void {
   addPill("tool-update-btn", "Update all", "Update all tools");
   add("button", "tool-cancel-btn");
   addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
-  addPill("tool-apply-btn", "Apply", "Apply the manifest");
   add("button", "tool-open-manifest");
-  add("button", "tool-open-config");
   add("p", "tool-catalog-meta").classList.add("hidden");
   add("div", "tool-update-output");
   // Both list hosts carry the classes index.html gives them, because the
@@ -1088,41 +1084,25 @@ describe("a job-owning pill becomes its own cancel control", () => {
     expect(faceOf("tool-update-btn").label).toBe("Update all");
   });
 
-  it("Apply owns the reconcile job, whoever launched it", () => {
-    mountToolsDOM();
-    initTools();
-    const btn = byId<HTMLButtonElement>("tool-apply-btn");
-    btn.click();
-    expect(mocks.applyManifestDispatch).toHaveBeenCalledTimes(1);
-
-    const sse = mocks.sseHandlers.get("tool_job_changed");
-    // The job id is not correlated with the click, so any reconcile job takes
-    // this pill, the boot one included.
-    sse?.("", live("tj-r", "reconcile"));
-    expect(faceOf("tool-apply-btn")).toEqual({
-      label: "Cancel",
-      aria: "Cancel the install pass",
-      tip: "Cancel the install pass",
-      busy: true,
-    });
-    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
-    expect(faceOf("tool-update-btn").busy).toBe(false);
-
-    btn.click();
-    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-r" });
-
-    sse?.("", settled("tj-r", "reconcile"));
-    expect(faceOf("tool-apply-btn").label).toBe("Apply");
-  });
-
-  it("opens each advanced-configuration file in the editor", () => {
+  it("opens tools.json from the config directory", () => {
     mountToolsDOM();
     initTools();
     byId<HTMLButtonElement>("tool-open-manifest").click();
-    byId<HTMLButtonElement>("tool-open-config").click();
-    expect(mocks.openFile.mock.calls).toEqual([["/config/tools.json"], ["/config/config.json"]]);
-    // A door is not a mutation: neither click enqueues anything.
-    expect(mocks.applyManifestDispatch).not.toHaveBeenCalled();
+    expect(mocks.openConfigFile.mock.calls).toEqual([["tools.json"]]);
+  });
+
+  it("leaves a reconcile job to the shared Cancel pill, a tools.json save's included", () => {
+    mountToolsDOM();
+    initTools();
+    const sse = mocks.sseHandlers.get("tool_job_changed");
+
+    sse?.("", live("tj-r", "reconcile"));
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(false);
+    expect(faceOf("tool-update-btn").busy).toBe(false);
+    expect(faceOf("tool-catalog-refresh-btn").busy).toBe(false);
+
+    byId<HTMLButtonElement>("tool-cancel-btn").click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-r" });
   });
 
   it("falls back to the shared Cancel pill for a job no pill owns", () => {
@@ -1184,9 +1164,7 @@ describe("the shipped page declares the ids the Tools panel looks up", () => {
     // mountToolsDOM is a fixture, so a rename in the page alone leaves the
     // suite green while byId throws on the reader's first visit.
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
-    expect(doc.getElementById("tool-apply-btn")).not.toBeNull();
     expect(doc.getElementById("tool-open-manifest")).not.toBeNull();
-    expect(doc.getElementById("tool-open-config")).not.toBeNull();
   });
 });
 

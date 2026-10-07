@@ -5,12 +5,12 @@
 import type {
   AlwaysAllowBlock,
   ApprovalFile,
+  PermissionConsent,
   PermissionNeededPayload,
   PermissionOption,
 } from "./types.js";
 import { el } from "@cplieger/reactive";
 import { formatMCPToolName } from "./tool-schema.js";
-import { editNativeRule } from "./actions/permissions.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";
 import { get } from "./store.js";
@@ -21,11 +21,13 @@ import { iconEl } from "./icon-el.js";
 const PREVIEW_CHAR_CAP = 500;
 
 /** One answer to a permission ask. `fileDecisions` rides only a turn approval; `rejectionReason`
- *  only a deny of an ask that accepts a note. */
+ *  only a deny of an ask that accepts a note; `alwaysResource` only an always answer, as the
+ *  pattern its saved rule matches. */
 export interface PermissionAnswer {
   readonly optionID: string;
   readonly fileDecisions?: Record<string, boolean>;
   readonly rejectionReason?: string;
+  readonly alwaysResource?: string;
 }
 
 /** The deny note's cap, the server's `MaxRejectionReasonRunes`. */
@@ -137,7 +139,21 @@ function buildToolPermissionCard(
   }
 
   const round = payload.consent_round ?? 0;
-  if (round > 1) {
+  const subject = payload.consent?.subject ?? "";
+  if (subject !== "" && subject !== title) {
+    // A compound command asks once per part it has not approved; naming the part is what tells
+    // one round from the last.
+    body.appendChild(
+      el(
+        "div",
+        { className: "approval-origin approval-subject" },
+        round > 1
+          ? `Approval ${String(round)} for this command, about `
+          : "This approval is about ",
+        el("code", null, subject),
+      ),
+    );
+  } else if (round > 1) {
     body.appendChild(
       el(
         "div",
@@ -173,7 +189,14 @@ function buildToolPermissionCard(
 
   const note = payload.accepts_rejection_reason === true ? buildRejectionNote() : null;
   const actions = el("div", { className: "approval-actions" });
+  const chooserSlot = el("div", { className: "always-choice-slot" });
+  const consent = payload.consent;
   for (const opt of payload.options) {
+    const always = ALWAYS_KINDS.has(opt.kind);
+    if (always && consent === undefined) {
+      // A saved rule needs to know what it is about, and KAS offers one only with consent.
+      continue;
+    }
     const btn = el(
       "button",
       {
@@ -184,34 +207,34 @@ function buildToolPermissionCard(
       },
       opt.name,
     );
-    btn.addEventListener("click", () => {
-      // Only a reject_once answer carries the note: KAS ignores one anywhere else.
-      const reason = opt.kind === "reject_once" ? (note?.value.trim() ?? "") : "";
-      onSelect(
-        reason !== ""
-          ? { optionID: opt.option_id, rejectionReason: reason }
-          : { optionID: opt.option_id },
-      );
-    });
+    if (always && consent !== undefined) {
+      btn.setAttribute("aria-expanded", "false");
+      btn.addEventListener("click", () => {
+        toggleAlwaysChooser(chooserSlot, btn, opt, consent, onSelect);
+      });
+    } else {
+      btn.addEventListener("click", () => {
+        // Only a reject_once answer carries the note: KAS ignores one anywhere else.
+        const reason = opt.kind === "reject_once" ? (note?.value.trim() ?? "") : "";
+        onSelect(
+          reason !== ""
+            ? { optionID: opt.option_id, rejectionReason: reason }
+            : { optionID: opt.option_id },
+        );
+      });
+    }
     actions.appendChild(btn);
   }
 
-  if (kind === "execute" && !isModeSwitch && !adminAsk) {
-    const alwaysRow = buildAlwaysAllowRow(
-      title,
-      payload.options,
-      payload.always_allow_blocked,
-      onSelect,
-    );
-    if (alwaysRow !== null) {
-      actions.appendChild(alwaysRow);
-    }
+  const blocked = payload.always_allow_blocked;
+  if (blocked !== undefined && !isModeSwitch && !adminAsk) {
+    actions.appendChild(buildAlwaysAllowNote(blocked));
   }
 
   const card =
     note === null
-      ? el("div", { className: "dock-card dock-permission" }, body, actions)
-      : el("div", { className: "dock-card dock-permission" }, body, note, actions);
+      ? el("div", { className: "dock-card dock-permission" }, body, actions, chooserSlot)
+      : el("div", { className: "dock-card dock-permission" }, body, note, actions, chooserSlot);
   if (isModeSwitch) {
     card.classList.add("mode-switch");
   }
@@ -434,133 +457,117 @@ const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
     "Always allow is unavailable. kiro-cli cannot parse this command, so a saved rule would never match it.",
 };
 
-/** The Always-allow slot when a saved rule could never match. */
+/** The note standing in for an always answer when a saved rule could never match. */
 function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
   return el("div", { className: "always-allow-unavailable" }, ALWAYS_ALLOW_UNAVAILABLE[blocked]);
 }
 
-/** Characters that make a token unusable as the source of a pattern. */
-const PATTERN_UNSAFE_RE = /[*?[\]{}!]/;
+const ALWAYS_KINDS = new Set(["allow_always", "reject_always"]);
 
-/** The preset patterns for one command's argv: base, base + flags, exact. Each is dropped when
- *  the tokens it is derived FROM carry glob syntax, which is why this is per preset rather than
- *  per row: the row, the Allow-once button and the custom-pattern input all survive, so refusing
- *  a derivation never dead-ends the reader. */
-function derivePresets(effective: readonly string[]): string[] {
-  const derivable = (tokens: readonly string[]): boolean =>
-    !tokens.some((t) => PATTERN_UNSAFE_RE.test(t));
-  const base = effective[0] ?? "";
-  const presets: string[] = [];
-  if (derivable([base])) {
-    presets.push(`${base} *`);
-  }
-  if (effective.length > 1) {
-    const flags = effective.slice(0, -1);
-    const withFlags = flags.join(" ") + " *";
-    if (derivable(flags) && withFlags !== `${base} *`) {
-      presets.push(withFlags);
-    }
-    if (derivable(effective)) {
-      presets.push(effective.join(" "));
-    }
-  }
-  return presets;
+/** First words a pattern must not generalise from: the command they run is the next word. */
+const WRAPPER_COMMANDS = new Set(["sudo", "doas", "env"]);
+
+interface AlwaysPattern {
+  readonly resource: string;
+  readonly covers: string;
 }
 
-/** Build the "Always allow..." expansion for shell commands: each preset persists a
- *  workspace-scope native allow rule (the same permissions.yaml Returns null when there is no
- *  allow option to approve with (the offer was never there to withdraw), and the note above when
- *  `blocked` says a saved rule could never match. */
-function buildAlwaysAllowRow(
-  command: string,
-  options: readonly PermissionOption[],
-  blocked: AlwaysAllowBlock | undefined,
-  onSelect: SelectFn,
-): HTMLElement | null {
-  const allowOpt = options.find((o) => o.kind.startsWith("allow"));
-  if (allowOpt === undefined) {
-    return null;
+/** What `*` covers: a rule matches on capability and resource only, so a wildcard reaches every
+ *  tool asking for that capability, not only the one asking now. */
+const WILDCARD_COVERS = new Map([
+  ["shell", "any command"],
+  ["fs_read", "any file read, by any tool"],
+  ["fs_write", "any file write, by any tool"],
+]);
+
+/** KAS saves a resource as a Cedar `like` pattern whose one wildcard is `*` (2.28's `qFc`), so a
+ *  subject carrying one grants every match, not only the command or path asked about now. */
+function isPattern(resource: string): boolean {
+  return resource.includes("*");
+}
+
+/** The patterns an always answer can save for one ask, narrowest first: the exact subject, the
+ *  kiro-cli TUI's `<first word> *` for a shell command or the server's folder for a path, then
+ *  the whole capability. A resource two of these produce is offered once, under the broader
+ *  name. The subject and folder are sent back verbatim: the server maps them to the raw text KAS
+ *  asked about, which these display copies may have cut or defused. */
+function alwaysPatterns(consent: PermissionConsent): AlwaysPattern[] {
+  const subject = consent.subject.trim();
+  const covers = new Map<string, string>();
+  if (subject !== "" && subject !== "*") {
+    covers.set(subject, isPattern(subject) ? "anything this pattern matches" : "only this");
   }
-  if (blocked !== undefined) {
-    return buildAlwaysAllowNote(blocked);
+  const shell = consent.capability === "shell";
+  const words = subject.split(/\s+/);
+  const first = words[0] ?? "";
+  if (
+    shell &&
+    words.length > 1 &&
+    !isPattern(first) &&
+    !first.includes("=") &&
+    !WRAPPER_COMMANDS.has(first)
+  ) {
+    covers.set(`${first} *`, `any ${first} command`);
   }
-
-  const trimmed = command.trim();
-  const parts = trimmed.split(/\s+/);
-  // Mirror the IDE: derive patterns from the real command, not the sudo wrapper (a `sudo *` allow
-  // would be far broader than intended).
-  const baseIdx = parts[0] === "sudo" && parts.length > 1 ? 1 : 0;
-  const base = parts[baseIdx] ?? "";
-  if (base === "") {
-    return null;
+  const folder = consent.folder?.trim() ?? "";
+  if (folder !== "") {
+    covers.set(folder, "anything in this folder");
   }
-  const presets = derivePresets(parts.slice(baseIdx));
-
-  const body = el("div", { className: "always-allow-body" });
-
-  // Persist the allow rule, then approve. The approval WAITS for the rule write: guard_resource
-  // makes the server refuse when an explicit ask rule covers this command (the allow would be
-  // shadowed), and a failed write leaves the ask standing — the user can still Allow once.
-  const persistThenApprove = async (pattern: string): Promise<void> => {
-    const buttons = body.querySelectorAll("button");
-    for (const b of buttons) {
-      b.disabled = true;
-    }
-    const res = await editNativeRule.dispatch({
-      op: "add",
-      scope: "workspace",
-      capability: "shell",
-      effect: "allow",
-      match: [pattern],
-      guard_resource: trimmed,
-    });
-    if (res === null || res.error !== undefined) {
-      // Write failed (or was refused): the action's toast explains why. Leave the permission
-      // pending; re-enable for another choice.
-      for (const b of buttons) {
-        b.disabled = false;
-      }
-      return;
-    }
-    onSelect({ optionID: allowOpt.option_id });
-  };
-
-  for (const pattern of presets) {
-    const row = el(
-      "button",
-      { type: "button", className: "always-allow-preset" },
-      el("code", null, pattern),
-    );
-    row.addEventListener("click", () => {
-      void persistThenApprove(pattern);
-    });
-    body.appendChild(row);
-  }
-
-  // Custom pattern input.
-  const input = el("input", {
-    type: "text",
-    className: "chip-input",
-    // The first surviving preset, never `${base} *`: with a metacharacter in the base that string
-    // is the pattern the derivation just refused, and offering it as a placeholder hands the reader
-    // the grant it declined to derive.
-    placeholder: presets[0] ?? "command *",
-    "aria-label": "Custom command pattern",
-  }) as HTMLInputElement;
-  const addBtn = el("button", { type: "button", className: "action-pill" }, "Add");
-  addBtn.addEventListener("click", () => {
-    const val = input.value.trim();
-    if (val === "") {
-      return;
-    }
-    void persistThenApprove(val);
-  });
-  body.appendChild(el("div", { className: "always-allow-custom" }, input, addBtn));
-
-  return el(
-    "details",
-    { className: "always-allow-details" },
-    el("summary", { className: "always-allow-summary" }, "Always allow\u2026"),
-    body,
+  covers.set(
+    "*",
+    WILDCARD_COVERS.get(consent.capability) ?? `any ${consent.capability} request, by any tool`,
   );
+  return [...covers].map(([resource, label]) => ({ resource, covers: label }));
+}
+
+/** Open or close the pattern chooser an always option leads to. Saving is the second click, on a
+ *  pattern, so a rule is never saved for a scope the reader did not see. */
+function toggleAlwaysChooser(
+  slot: HTMLElement,
+  trigger: HTMLElement,
+  opt: PermissionOption,
+  consent: PermissionConsent,
+  onSelect: SelectFn,
+): void {
+  const openFor = slot.dataset["option"];
+  for (const other of trigger.parentElement?.querySelectorAll("[aria-expanded]") ?? []) {
+    other.setAttribute("aria-expanded", "false");
+  }
+  slot.replaceChildren();
+  delete slot.dataset["option"];
+  if (openFor === opt.option_id) {
+    return;
+  }
+  trigger.setAttribute("aria-expanded", "true");
+  slot.dataset["option"] = opt.option_id;
+  const allow = opt.kind.startsWith("allow");
+  const list = el("div", {
+    className: "always-choice",
+    role: "group",
+    "aria-label": allow ? "Always allow" : "Always deny",
+  });
+  list.appendChild(
+    el("div", { className: "always-choice-title" }, allow ? "Always allow:" : "Always deny:"),
+  );
+  for (const p of alwaysPatterns(consent)) {
+    const choice = el(
+      "button",
+      { type: "button", className: "always-choice-option" },
+      el("code", null, p.resource),
+      el("span", { className: "always-choice-covers" }, p.covers),
+    );
+    choice.addEventListener("click", () => {
+      onSelect({ optionID: opt.option_id, alwaysResource: p.resource });
+    });
+    list.appendChild(choice);
+  }
+  list.appendChild(
+    el(
+      "p",
+      { className: "always-choice-hint" },
+      "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
+        "not only these chats. Switches Permissions to Custom if another profile is selected.",
+    ),
+  );
+  slot.appendChild(list);
 }

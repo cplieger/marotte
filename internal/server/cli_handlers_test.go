@@ -242,3 +242,18 @@ func TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleVersion_NamesTheConfigDir(t *testing.T) {
+	s := &Server{cliRunner: &fakeCLIRunner{stdout: "kiro-cli 2.0.0"}, cliTimeouts: defaultCLITimeouts(), configDir: "/data/marotte"}
+	rec := httptest.NewRecorder()
+
+	s.handleVersion(rec, httptest.NewRequest(http.MethodGet, "/api/version", nil))
+
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	if body["config_dir"] != "/data/marotte" {
+		t.Errorf("GET /api/version config_dir = %q, want %q", body["config_dir"], "/data/marotte")
+	}
+}

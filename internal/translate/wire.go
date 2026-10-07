@@ -3,6 +3,7 @@
 package translate
 
 import (
+	"cmp"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -179,15 +180,38 @@ type ACPRefusalMeta struct {
 	RecommendedModel string `json:"recommendedModel"`
 }
 
-// ACPConsentMeta is the _meta.kiro.consent object on a session/request_permission, sent
-// ONLY when persisting a rule for this command would NOT work. PersistableConsent is a
-// pointer because absent means yes: a bool would hide Always-allow on every request.
-// The reason string is dropped at the seam.
+// ACPConsentMeta is the _meta.kiro.consent object on a session/request_permission: what the
+// ask is about, present whenever KAS offers to persist an answer. PersistableConsent is a
+// pointer because absent means yes. One compound command asks once per unapproved part, and
+// TriggeringResource names that part; Resource is the whole command.
 type ACPConsentMeta struct {
 	PersistableConsent       *bool  `json:"persistableConsent"`
 	PersistableConsentReason string `json:"persistableConsentReason"`
 	// Scope is the policy scope that asked; "administration" (managed settings) needs a person.
-	Scope string `json:"scope"`
+	Scope              string `json:"scope"`
+	Capability         string `json:"capability"`
+	Resource           string `json:"resource"`
+	TriggeringResource string `json:"triggeringResource"`
+}
+
+type acpConsentMetaShadow ACPConsentMeta
+
+// UnmarshalJSON decodes the block and reports any member it does not read. askType needs no
+// reader (KAS offers no Always allow on an explicit ask); matchedRule and source name the rule
+// that asked, which the card does not show; KAS falls back to the request's own workspaceRoot
+// when an answer omits it.
+func (c *ACPConsentMeta) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*acpConsentMetaShadow)(c)); err != nil {
+		return err
+	}
+	censusMeta("session/request_permission._meta.kiro.consent", data, reflect.TypeFor[acpConsentMetaShadow](),
+		"askType", "matchedRule", "source", "workspaceRoot")
+	return nil
+}
+
+// Subject is the part of the command this ask is about.
+func (c *ACPConsentMeta) Subject() string {
+	return cmp.Or(c.TriggeringResource, c.Resource)
 }
 
 // ACPPermissionMeta is the `_meta` on a session/request_permission, named because it
@@ -202,8 +226,7 @@ type ACPPermissionKiroBlock struct {
 	// WorkflowWatch names the run and node a watch command polls for; the ask arrives on the
 	// LAUNCHING session, so the step registry cannot name them.
 	WorkflowWatch *ACPWorkflowWatch `json:"workflowWatch"`
-	// Consent is 2.19.1's persistability verdict; absent before 2.19.1 and whenever a rule
-	// WOULD match.
+	// Consent names what the ask is about and whether an always answer can persist.
 	Consent ACPConsentMeta `json:"consent"`
 	// MCPTool carries the identity KAS verified for an MCP-backed tool.
 	MCPTool ACPMCPToolWire `json:"mcpTool"`

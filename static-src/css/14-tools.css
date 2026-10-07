@@ -2075,98 +2075,73 @@ a.subagent-header {
   background: color-mix(in srgb, var(--c-green) 15%, transparent);
 }
 
-/* Always-allow expansion in the permission dialog */
-.always-allow-details {
-  width: 100%;
-  margin-block-start: var(--sp-2);
+/* The pattern chooser an always option opens on the permission card
+   (permission.ts toggleAlwaysChooser). In flow below the answer row, never an
+   overlay: it is part of the decision, not a gesture-summoned surface. */
+.always-choice-slot:empty {
+  display: none;
 }
 
-.always-allow-summary {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.always-allow-body {
+.always-choice {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   margin-block-start: var(--sp-2);
-  padding-inline-start: var(--sp-2);
 }
 
-.always-allow-preset {
-  display: block;
+.always-choice-title {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.always-choice-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   width: 100%;
+  min-block-size: var(--btn-h);
   text-align: start;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-sm);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-primary);
   cursor: pointer;
 }
 
-.always-allow-preset:hover {
-  background: color-mix(in srgb, var(--c-green) 10%, var(--c-bg-secondary));
-  border-color: var(--c-green);
+.always-choice-option code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
-.always-allow-custom {
-  display: flex;
-  gap: var(--sp-1);
-  align-items: center;
+.always-choice-covers {
+  margin-inline-start: auto;
+  color: var(--c-text-secondary);
+  white-space: nowrap;
 }
 
-/* The Always-allow slot when kiro-cli says a saved rule could never match
-   (permission.ts buildAlwaysAllowNote). Same box as .always-allow-details, which
-   it replaces, and the same register as .approval-policy-pointer — tertiary, xs
-   — because like that pointer it is a STATEMENT about the policy rather than a
-   third way to answer the ask. A disabled button here would be a control that
-   does nothing. */
+@media (any-hover: hover) {
+  .always-choice-option:hover {
+    background-image: var(--layer-hover);
+  }
+}
+
+.always-choice-hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* The note standing in for an always answer when kiro-cli says a saved rule could
+   never match (permission.ts buildAlwaysAllowNote), in the register of
+   .approval-policy-pointer: a statement about the policy, not a third way to
+   answer the ask. A disabled button here would be a control that does nothing. */
 .always-allow-unavailable {
   width: 100%;
   margin-block-start: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-}
-
-.chip-input {
-  flex: 1;
-  min-block-size: var(--btn-h);
-  padding: var(--sp-1) var(--sp-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  color: var(--c-text-primary);
-}
-
-.chip-input:focus {
-  border-color: var(--c-accent);
-  outline: none;
-}
-
-.chip-mode-select {
-  min-block-size: var(--btn-h);
-  padding: var(--sp-1) var(--sp-2);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  color: var(--c-text-primary);
-  cursor: pointer;
-}
-
-.chip-mode-select:focus {
-  border-color: var(--c-accent);
-  outline: none;
 }
 
 /* Per-rule mode badge inside a chip. Click toggles allow<->deny in

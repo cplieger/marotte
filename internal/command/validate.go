@@ -48,6 +48,9 @@ var (
 	// errRejectionReasonInvalid refuses a deny note over the cap or one paired
 	// with turn-approval decisions, which KAS would ignore.
 	errRejectionReasonInvalid = errors.New("rejection_reason_invalid")
+	// errAlwaysResourceInvalid refuses an always answer with no pattern, a pattern the rule
+	// format cannot hold, or a pattern on an answer that saves no rule.
+	errAlwaysResourceInvalid = errors.New("always_resource_invalid")
 	// errChatNotCreated is the 409 for a chat absent after a Mutate that
 	// reported no error — a client-supplied id naming a tombstoned chat.
 	errChatNotCreated = errors.New("chat could not be created")

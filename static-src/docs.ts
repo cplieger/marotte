@@ -29,14 +29,15 @@ import type { EntryRowSpec, EntrySub } from "./entry-row.js";
 import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { paintPlaceholder } from "./skeleton.js";
-import { pushRoute } from "./router.js";
-import type { DocsTab } from "./route-path.js";
+import { pushRoute, replaceRoute } from "./router.js";
+import { buildPath, type DocsTab } from "./route-path.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { agentRunButton } from "./agent-run.js";
 import { renderMemoriesPanel, setMemoryCountsListener } from "./memories.js";
+import { loadSettings } from "./persist.js";
 import { renderPowersPanel, setPowerCountsListener } from "./powers.js";
 import { setDocsTab as setTabRoute } from "./tabs.js";
-import { initSegmentedBar } from "./segmented-bar.js";
+import { initSegmentedBar, setSegmentHidden } from "./segmented-bar.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -194,7 +195,12 @@ const EMPTY_TEXT: Readonly<Record<Exclude<DocsTab, RpcTab>, string>> = {
   hooks: "No hooks in .kiro/hooks/.",
 };
 
-const activeTab = signal<DocsTab>("steering");
+const FIRST_TAB: DocsTab = "steering";
+
+const activeTab = signal<DocsTab>(FIRST_TAB);
+/** The Memory setting is Off, which withdraws the Memories tab. Null until the settings answer, so
+ *  a Memories deep link waits rather than opening a panel it may have to withdraw. */
+const memoryOff = signal<boolean | null>(null);
 /** Kept so a tab switch repaints from memory. */
 let docs: KiroDoc[] = [];
 /** Separate from `docs`: different invalidation triggers (`settings_updated` vs `hooks_changed`). */
@@ -244,10 +250,46 @@ export function refreshDocsView(): void {
 }
 
 /** Set the active tab without pushing a URL — the router's entry point when
- *  back/forward lands on /docs/<tab>. */
-export function forceDocsTab(tab: DocsTab): void {
-  setTabRoute(tab);
-  activeTab.value = tab;
+ *  back/forward lands on /docs/<tab>. Returns the tab applied: a withdrawn one lands on the first. */
+export function forceDocsTab(tab: DocsTab): DocsTab {
+  const applied = tab === "memories" && memoryOff.peek() === true ? FIRST_TAB : tab;
+  // Replaced, not left for the tab's own push, so Back cannot land on the withdrawn tab again.
+  if (applied !== tab && location.pathname === buildPath({ kind: "docs", tab })) {
+    replaceRoute({ kind: "docs", tab: applied });
+  }
+  setTabRoute(applied);
+  activeTab.value = applied;
+  return applied;
+}
+
+/** Numbers each settings read so only the newest answer lands: reads overlap and resolve in any order. */
+let memoryRead = 0;
+
+function refreshMemoryAvailability(): void {
+  const read = ++memoryRead;
+  void loadSettings().then((s) => {
+    if (read !== memoryRead) {
+      return;
+    }
+    if (s !== null) {
+      memoryOff.value = s.memory_mode === "off";
+    } else if (memoryOff.peek() === null) {
+      // Never answered: offer the tab rather than leave a segment whose panel never renders.
+      memoryOff.value = false;
+    }
+  });
+}
+
+/** The route is replaced only while this page is on screen; otherwise the URL belongs to another tab. */
+function withdrawMemories(): void {
+  if (activeTab.peek() !== "memories") {
+    return;
+  }
+  if ($.docsView.offsetParent !== null) {
+    replaceRoute({ kind: "docs", tab: FIRST_TAB });
+  }
+  setTabRoute(FIRST_TAB);
+  activeTab.value = FIRST_TAB;
 }
 
 /** Fetch (or refetch) the inventory and repaint. */
@@ -343,6 +385,15 @@ function initDocsView(): void {
     syncTabChrome(tab, paintBar);
     renderActive();
   });
+  subscribe(memoryOff, (off) => {
+    setSegmentHidden(bar, "data-docs-tab", "memories", off === true);
+    if (off === true) {
+      withdrawMemories();
+    } else if (off === false && activeTab.peek() === "memories") {
+      renderActive();
+    }
+  });
+  refreshMemoryAvailability();
 
   // Git letters ride the shared status store; subscribing starts it.
   registerCleanup(
@@ -352,6 +403,7 @@ function initDocsView(): void {
   );
   registerCleanup(
     onSSE("settings_updated", () => {
+      refreshMemoryAvailability();
       if ($.docsView.offsetParent !== null) {
         loadDocs();
       }
@@ -563,7 +615,10 @@ function renderActive(): void {
     return;
   }
   if (tab === "memories") {
-    renderMemoriesPanel(container, filterText);
+    // Before the settings answer, the memoryOff subscription renders or withdraws the panel.
+    if (memoryOff.peek() === false) {
+      renderMemoriesPanel(container, filterText);
+    }
     return;
   }
   if (tab === "powers") {
