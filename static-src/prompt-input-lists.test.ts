@@ -64,6 +64,7 @@ beforeAll(() => {
     <form id="prompt-form" action="javascript:void 0">
       <ul id="slash-menu" hidden></ul>
       <textarea id="prompt-input" aria-controls="slash-menu"></textarea>
+      <button id="midturn-send-btn" type="button" hidden></button>
       <button id="send-btn" type="submit"></button>
     </form>`;
   initPromptInput((text) => submitted.push(text), vi.fn());

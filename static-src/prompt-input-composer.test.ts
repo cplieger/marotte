@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import type * as Store from "./store.js";
+import type * as Attachments from "./attachments.js";
 import type * as ComposerState from "./composer-state.js";
 import type * as PromptInput from "./prompt-input.js";
 import type * as ShareTarget from "./share-target.js";
@@ -93,6 +94,7 @@ function makeSession(id: string, prompts: string[]): Session {
 
 interface Mounted {
   store: typeof Store;
+  attachments: typeof Attachments;
   composerState: typeof ComposerState;
   promptInput: typeof PromptInput;
   shareTarget: typeof ShareTarget;
@@ -111,14 +113,15 @@ async function mount(): Promise<Mounted> {
         <div id="prompt-box">
           <textarea id="prompt-input"></textarea>
           <ul id="attachment-row" class="hidden"></ul>
+          <button id="midturn-send-btn" type="button" hidden></button>
           <button id="send-btn" type="submit"></button>
         </div>
       </form>
     </div>`;
   const store = await import("./store.js");
   const composerState = await import("./composer-state.js");
-  // composer-state is NOT busted: prompt-input imports it, and a busted copy here would be a SECOND
-  // instance holding a different drafts map from the one the module under test writes.
+  const attachments = await import("./attachments.js");
+  // Reset rather than busted: nothing it holds outlives the reset.
   composerState._resetComposerStateForTest();
   const promptInput = (await import(
     /* @vite-ignore */ `./prompt-input.ts?boot=${bootSeq}`
@@ -130,10 +133,11 @@ async function mount(): Promise<Mounted> {
   store.setActive("c1");
   // The order app.ts uses: the draft layer is listening before anything writes.
   composerState.initComposerState();
-  promptInput.initPromptInput(mockSubmit, () => undefined);
+  promptInput.initPromptInput(mockSubmit, () => undefined, attachments.stagedAttachment);
   composerState.restoreComposerState("c1");
   return {
     store,
+    attachments,
     composerState,
     promptInput,
     shareTarget,
@@ -267,5 +271,47 @@ describe("a prompt arriving from the share sheet", () => {
     composerState.saveComposerState();
     composerState.restoreComposerState("c1");
     expect(input.value).toBe("fix the flaky test");
+  });
+});
+
+// The draft layer writes the box without an `input` event, so the mid-turn Send learns of those
+// writes some other way or shows the wrong face after a switch.
+describe("the mid-turn Send across the draft layer's own writes", () => {
+  function midTurn(): HTMLButtonElement {
+    return document.getElementById("midturn-send-btn") as HTMLButtonElement;
+  }
+
+  it("follows a restored draft on a chat switch made mid-turn", async () => {
+    const { input, composerState, promptInput } = await mount();
+    promptInput.setSendState({ kind: "streaming" });
+    type(input, "steer c1 later");
+    composerState.saveComposerState();
+    composerState.restoreComposerState("c2");
+    expect(input.value).toBe("");
+    expect(midTurn().hidden).toBe(true);
+
+    composerState.saveComposerState();
+    composerState.restoreComposerState("c1");
+    expect(input.value).toBe("steer c1 later");
+    expect(midTurn().hidden).toBe(false);
+  });
+
+  it("follows a failed send put back into the box", async () => {
+    const { input, composerState, promptInput } = await mount();
+    promptInput.setSendState({ kind: "streaming" });
+    expect(midTurn().hidden).toBe(true);
+    composerState.restoreFailedSend("c1", "the steer that bounced");
+    expect(input.value).toBe("the steer that bounced");
+    expect(midTurn().hidden).toBe(false);
+  });
+
+  it("follows a file staged and unstaged while the box stays blank", async () => {
+    const { attachments, promptInput } = await mount();
+    promptInput.setSendState({ kind: "streaming" });
+    expect(midTurn().hidden).toBe(true);
+    attachments.addAttachment("docs/plan.md");
+    expect(midTurn().hidden).toBe(false);
+    attachments.removeAttachmentFrom("c1", "docs/plan.md");
+    expect(midTurn().hidden).toBe(true);
   });
 });

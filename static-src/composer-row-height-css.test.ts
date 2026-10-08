@@ -227,8 +227,10 @@ describe("the composer, measured at real viewport sizes", () => {
 
   it("holds every control's TARGET at the hit floor, and lets none reach the textarea", async () => {
     // A hit test, not a style read: the 44px target and the no-overhang rule are properties of what `elementFromPoint`
-    // answers, and a source assertion that looked right is how the earlier defect survived.
+    // answers, and a source assertion that looked right is how the earlier defect survived. The row is at its fullest:
+    // mid-turn, with the second Send shown beside Cancel.
     await bandsAt(390, 844, "coarse");
+    withMidTurnSend();
     const row = document.querySelector<HTMLElement>(".prompt-pills");
     const input = document.getElementById("prompt-input");
     if (row === null || input === null) {
@@ -291,6 +293,56 @@ describe("the composer, measured at real viewport sizes", () => {
     send.replaceChildren(iconEl(ICON_SEND));
     return send;
   }
+
+  function withMidTurnSend(): { midTurn: HTMLElement; cancel: HTMLElement } {
+    const cancel = withSendGlyph();
+    const midTurn = document.getElementById("midturn-send-btn");
+    if (midTurn === null) {
+      throw new Error("the composer subtree did not mount");
+    }
+    midTurn.replaceChildren(iconEl(ICON_SEND));
+    midTurn.hidden = false;
+    return { midTurn, cancel };
+  }
+
+  it("fits the mid-turn Send beside Cancel at phone widths, with Cancel keeping its corner", async () => {
+    // The row does not wrap, so a control that does not fit would overflow the box. The worst case carries the task-list
+    // pill and a model name long enough to need its ellipsis.
+    for (const [w, h, tier] of [
+      [320, 568, "coarse"],
+      [360, 740, "coarse"],
+      [390, 844, "coarse"],
+      [1440, 900, "fine"],
+    ] as const) {
+      await bandsAt(w, h, tier);
+      document.getElementById("task-list-pill")?.classList.remove("hidden");
+      const model = document.getElementById("ctx-model-pill");
+      if (model !== null) {
+        model.textContent = "claude-opus-4.5-thinking";
+      }
+      const row = document.querySelector<HTMLElement>(".prompt-pills");
+      if (row === null) {
+        throw new Error("the composer subtree did not mount");
+      }
+      const at = `${String(w)}x${String(h)} ${tier}`;
+      const before = row.getBoundingClientRect().height;
+      const { midTurn, cancel } = withMidTurnSend();
+      const m = midTurn.getBoundingClientRect();
+      const c = cancel.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      expect(row.scrollWidth, `${at}: nothing overflows the row`).toBeLessThanOrEqual(
+        row.clientWidth,
+      );
+      expect(r.height, `${at}: the row keeps its height`).toBe(before);
+      expect(m.right, `${at}: the second Send sits left of Cancel`).toBeLessThanOrEqual(c.left);
+      expect(c.right, `${at}: Cancel keeps the row's end`).toBeCloseTo(
+        r.right - Number.parseFloat(getComputedStyle(row).paddingRight),
+        0,
+      );
+      expect(m.height, `${at}: one control height`).toBe(c.height);
+      expect(m.width, `${at}: the same box as Cancel`).toBeCloseTo(c.width, 1);
+    }
+  });
 
   it("keeps Send wider than tall on every tier and width", async () => {
     // Send is not square: a square read as a different size class. Only the height is compared to the sibling (box-identical
