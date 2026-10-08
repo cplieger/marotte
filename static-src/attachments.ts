@@ -4,7 +4,13 @@
 // The list is the draft's twin: persisted per chat through `set_attachments` on the
 // draft's debounce, silent, no retry, with the LOCAL collection authoritative for the UI.
 
-import { createCollection, bindList, effect } from "@cplieger/reactive";
+import {
+  createCollection,
+  bindList,
+  computed,
+  effect,
+  type ReadonlySignal,
+} from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { setAttachments } from "./actions/chat.js";
@@ -177,9 +183,15 @@ function removeAttachment(path: string): void {
   persistLive();
 }
 
-/** Whether the visible row holds a staged attachment. */
+/** Whether the visible row holds a staged attachment; an effect reading it follows staging and
+ *  removal. */
+export const stagedAttachment: ReadonlySignal<boolean> = computed(
+  () => attached.ids.value.length > 0,
+);
+
+/** An untracked read of `stagedAttachment`. */
 export function hasAttachments(): boolean {
-  return attached.items().length > 0;
+  return stagedAttachment.peek();
 }
 
 /** The paths staged while the composer belongs to no chat, which the next

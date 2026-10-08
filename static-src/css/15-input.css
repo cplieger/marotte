@@ -2012,6 +2012,11 @@
     inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 
+  /* The `display` above beats the UA's `[hidden]`; `#midturn-send-btn` sits hidden. */
+  &[hidden] {
+    display: none;
+  }
+
   &:hover {
     --send-depth: 46%;
   }

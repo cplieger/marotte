@@ -3,6 +3,7 @@
 // while Escape, which saved to a local first, worked.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setSessions, setActive, setChatInterruptMode } from "./store.js";
@@ -11,6 +12,7 @@ import type { Session } from "./types.js";
 const CHAT = "c1";
 
 const submitted: string[] = [];
+const cancelled = vi.fn();
 
 function makeSession(prompts: string[]): Session {
   return {
@@ -62,7 +64,7 @@ function makeSession(prompts: string[]): Session {
 }
 
 /** Whether the composer reports staged attachments; reset per test. */
-let staged = false;
+const staged = signal(false);
 
 /** The prompt bar is a module singleton bound to these three elements at init, so the DOM is
  *  staged once and every test reuses it. Replacing the nodes between tests would leave the
@@ -74,6 +76,7 @@ beforeAll(() => {
   document.body.innerHTML = `
     <form id="prompt-form" action="javascript:void 0">
       <textarea id="prompt-input"></textarea>
+      <button id="midturn-send-btn" type="button" hidden></button>
       <button id="send-btn" type="submit"></button>
     </form>
     <button id="switch-model-btn">
@@ -94,8 +97,8 @@ beforeAll(() => {
     (text: string) => {
       submitted.push(text);
     },
-    vi.fn(),
-    () => staged,
+    cancelled,
+    staged,
   );
 });
 
@@ -118,11 +121,14 @@ function press(key: string): void {
 }
 
 beforeEach(() => {
+  setSendState({ kind: "idle" });
+  cancelled.mockClear();
   // Newest prompt first is what userPrompts() produces, so ArrowUp reaches "newest" on the first
   // press and "oldest" on the second.
   setSessions([makeSession(["oldest", "newest"])]);
   setActive(CHAT);
   type("");
+  staged.value = false;
   submitted.length = 0;
 });
 
@@ -264,12 +270,8 @@ describe("send", () => {
     type("");
     sendComposer();
     expect(submitted).toEqual([]);
-    staged = true;
-    try {
-      sendComposer();
-    } finally {
-      staged = false;
-    }
+    staged.value = true;
+    sendComposer();
     expect(submitted).toEqual([""]);
   });
 
@@ -370,5 +372,131 @@ describe("the send button's state", () => {
     expect(first?.textContent).toBe(word);
     expect(second?.tagName.toLowerCase()).toBe("svg");
     expect(sendBtn().getAttribute("aria-label")?.toLowerCase()).toContain(word.toLowerCase());
+  });
+});
+
+// Under a finger Return is a new line, so while a turn runs this button is the only way to send
+// what the box holds. Cancel keeps its own button beside it.
+describe("the mid-turn Send", () => {
+  function midTurn(): HTMLButtonElement {
+    return document.getElementById("midturn-send-btn") as HTMLButtonElement;
+  }
+
+  function sendBtn(): HTMLButtonElement {
+    return document.getElementById("send-btn") as HTMLButtonElement;
+  }
+
+  it("stays hidden mid-turn while the box is empty or blank", () => {
+    setSendState({ kind: "streaming" });
+    expect(midTurn().hidden).toBe(true);
+    type("   \n ");
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("appears mid-turn for a staged attachment in a blank box, and leaves when it is unstaged", () => {
+    setSendState({ kind: "streaming" });
+    staged.value = true;
+    expect(midTurn().hidden).toBe(false);
+    staged.value = false;
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("stays hidden when idle whatever is staged", () => {
+    staged.value = true;
+    expect(midTurn().hidden).toBe(true);
+    type("hello");
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("appears mid-turn once the box holds text, and leaves when it is cleared", () => {
+    setSendState({ kind: "streaming" });
+    type("look at the tests first");
+    expect(midTurn().hidden).toBe(false);
+    type("");
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("appears for text that was already in the box when the turn started", () => {
+    type("queued thought");
+    expect(midTurn().hidden).toBe(true);
+    setSendState({ kind: "streaming" });
+    expect(midTurn().hidden).toBe(false);
+  });
+
+  it("follows a recalled prompt, which fires no input event", () => {
+    setSendState({ kind: "streaming" });
+    press("ArrowUp");
+    expect(input().value).toBe("newest");
+    expect(midTurn().hidden).toBe(false);
+    press("Escape");
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("is hidden when idle and leaves when the turn ends, giving Send back to the one button", () => {
+    type("hello");
+    expect(midTurn().hidden).toBe(true);
+    setSendState({ kind: "streaming" });
+    expect(midTurn().hidden).toBe(false);
+    setSendState({ kind: "idle" });
+    expect(midTurn().hidden).toBe(true);
+    expect(sendBtn().getAttribute("aria-label")).toBe("Send");
+  });
+
+  it("is hidden on the error face", () => {
+    type("hello");
+    setSendState({ kind: "error", reason: "The bridge exited." });
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("names a steer in steer mode, apart from Cancel", () => {
+    setChatInterruptMode(CHAT, "steer");
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
+    expect(midTurn().getAttribute("data-tooltip")).toBe("Steer the running turn");
+    expect(midTurn().querySelector(".send-btn-label")?.textContent).toBe("Steer");
+    expect(sendBtn().getAttribute("aria-label")).toBe("Cancel this turn");
+  });
+
+  it("names a queued follow-up in queue mode, and repaints when the mode changes", () => {
+    setChatInterruptMode(CHAT, "queue");
+    setSendState({ kind: "streaming" });
+    type("hello");
+    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
+    expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after this turn");
+    expect(midTurn().querySelector(".send-btn-label")?.textContent).toBe("Queue");
+
+    setChatInterruptMode(CHAT, "steer");
+    expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
+  });
+
+  it("sends the box through the composer's send path, then empties it and hides", () => {
+    setSendState({ kind: "streaming" });
+    type("  steer this  ");
+    midTurn().click();
+    expect(submitted).toEqual(["steer this"]);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(input().value).toBe("");
+    expect(midTurn().hidden).toBe(true);
+  });
+
+  it("leaves Cancel cancelling while it is shown", () => {
+    setSendState({ kind: "streaming" });
+    type("not yet");
+    expect(midTurn().hidden).toBe(false);
+    sendBtn().click();
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("not yet");
+  });
+
+  it("hands keyboard focus back to the box when its own send hides it", () => {
+    setSendState({ kind: "streaming" });
+    type("hello");
+    input().focus();
+    midTurn().focus();
+    expect(midTurn().matches(":focus-visible"), "precondition: keyboard-style focus").toBe(true);
+    midTurn().click();
+    expect(document.activeElement).toBe(input());
   });
 });

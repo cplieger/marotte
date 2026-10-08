@@ -1,20 +1,22 @@
 // Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS viewport fix.
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
-// turn's own divider.
+// turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
+// second button beside Cancel sends it, because a touch Return is a new line.
 
-import { $ } from "./dom.js";
+import { $, byId } from "./dom.js";
 import { activeSession, getActive, getActiveId } from "./store.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
+import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
-import { setComposerValue } from "./composer-value.js";
+import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
-import { computed, effect, el, touch } from "@cplieger/reactive";
+import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
+import type { InterruptMode } from "./types.js";
 
 /** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint
  *  the button. */
@@ -26,13 +28,19 @@ const BUSY_PLACEHOLDER = {
   queue: "Queue a follow-up for after this turn...",
 } as const;
 
+/** The mid-turn Send's face per mode. The word is a word of the name (WCAG 2.5.3). */
+const MIDTURN_FACE: Record<InterruptMode, { label: string; name: string; icon: string }> = {
+  steer: { label: "Steer", name: "Steer the running turn", icon: ICON_SEND },
+  queue: { label: "Queue", name: "Queue for after this turn", icon: ICON_HOURGLASS },
+};
+
 /** Appended to every error tooltip. A fixed suffix rather than a test against the reason's
  *  wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
-type HasStaged = () => boolean;
+type Staged = ReadonlySignal<boolean>;
 
 export type SendState =
   { kind: "idle" } | { kind: "streaming" } | { kind: "error"; reason: string };
@@ -87,15 +95,16 @@ class PromptInputController {
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
   private onSubmit: Submit = () => undefined;
-  private hasStaged: HasStaged = () => false;
+  private staged: Staged = signal(false);
+  private midTurn: HTMLButtonElement | null = null;
+  private midTurnFace: InterruptMode | "" = "";
 
-  /** Send whatever is in the composer. THE send path: the form's submit handler, Enter and the
-   *  keyboard shortcut all call this, and submit.ts decides what a send means. Neither of the
-   *  two ways of going through the form works. */
+  /** Send whatever is in the composer. THE send path: the form's submit handler, Enter, the
+   *  mid-turn Send and the keyboard shortcut all call this, and submit.ts decides what a send
+   *  means. Neither of the two ways of going through the form works. */
   sendComposer(): void {
     const text = $.promptInput.value.trim();
-    // Staged attachments are a prompt on their own: the user need not type text.
-    if (text === "" && !this.hasStaged()) {
+    if (!isSendable(text, this.staged.peek())) {
       return;
     }
     this.exitCycling();
@@ -186,6 +195,37 @@ class PromptInputController {
    *  back. */
   private setInputValue(el: HTMLTextAreaElement, v: string): void {
     applyEdit(el, { start: 0, end: el.value.length, text: v, caret: v.length }, { silent: true });
+    syncComposerText();
+  }
+
+  /** `hidden`, not opacity, so a hidden one leaves the tab order and the accessibility tree. */
+  private applyMidTurnSend(): void {
+    const btn = this.midTurn;
+    if (btn === null) {
+      return;
+    }
+    const hide =
+      this.state.kind !== "streaming" || !isSendable(composerText.peek(), this.staged.peek());
+    if (hide) {
+      // Its own send or the turn's end hides it under a keyboard user, who keeps their place in
+      // the composer rather than falling to <body>. A tap's focus is left to the platform.
+      const keyboard = !btn.hidden && btn.matches(":focus-visible");
+      btn.hidden = true;
+      if (keyboard) {
+        $.promptInput.focus();
+      }
+      return;
+    }
+    btn.hidden = false;
+    const mode = busyMode.peek();
+    if (this.midTurnFace === mode) {
+      return;
+    }
+    this.midTurnFace = mode;
+    const face = MIDTURN_FACE[mode];
+    btn.replaceChildren(el("span", { className: "send-btn-label" }, face.label), iconEl(face.icon));
+    btn.setAttribute("data-tooltip", face.name);
+    btn.setAttribute("aria-label", face.name);
   }
 
   private applyButtonState(): void {
@@ -209,6 +249,7 @@ class PromptInputController {
     $.promptInput.disabled = false;
     $.promptInput.placeholder =
       k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()] : "Message Kiro...";
+    this.applyMidTurnSend();
   }
 
   setSendState(next: SendState): void {
@@ -219,7 +260,7 @@ class PromptInputController {
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel, hasStaged: HasStaged): void {
+  init(onSubmit: Submit, onCancel: Cancel, staged: Staged): void {
     if (initialized) {
       return;
     }
@@ -230,7 +271,7 @@ class PromptInputController {
 
     this.onCancel = onCancel;
     this.onSubmit = onSubmit;
-    this.hasStaged = hasStaged;
+    this.staged = staged;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       if (this.state.kind === "streaming") {
         e.preventDefault();
@@ -239,11 +280,22 @@ class PromptInputController {
       }
     });
 
+    this.midTurn = byId<HTMLButtonElement>("midturn-send-btn");
+    this.midTurn.addEventListener("click", () => {
+      this.sendComposer();
+    });
+
+    syncComposerText();
     // Follows the active chat's mode; setSendState() paints the other input directly, because
     // `state` is not a signal.
     effect(() => {
       touch(busyMode);
       this.applyButtonState();
+    });
+    effect(() => {
+      touch(composerText);
+      touch(staged);
+      this.applyMidTurnSend();
     });
 
     form.addEventListener("submit", (e: Event) => {
@@ -352,6 +404,7 @@ class PromptInputController {
     });
 
     input.addEventListener("input", () => {
+      syncComposerText();
       if (this.idx !== -1) {
         this.exitCycling();
       }
@@ -392,14 +445,14 @@ export function setSendState(next: SendState): void {
   instance.setSendState(next);
 }
 
-/** `hasStaged` reports staged attachments, which make an empty box sendable. It is injected
- *  because importing attachments.ts here would close an import cycle. */
+/** `staged` tracks the pill row for `isSendable`. It is injected because importing
+ *  attachments.ts here would close an import cycle. */
 export function initPromptInput(
   onSubmit: Submit,
   onCancel: Cancel,
-  hasStaged: HasStaged = () => false,
+  staged: Staged = signal(false),
 ): void {
-  instance.init(onSubmit, onCancel, hasStaged);
+  instance.init(onSubmit, onCancel, staged);
 }
 
 /** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter

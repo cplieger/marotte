@@ -83,7 +83,7 @@ import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
 import { initSlashMenu } from "./slash-menu.js";
-import { hasAttachments } from "./attachments.js";
+import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
@@ -463,7 +463,7 @@ function setupInput(): void {
       }
       void cancelTurn.dispatch({ chatID: getActiveId() });
     },
-    hasAttachments,
+    stagedAttachment,
   );
 
   const doCreate = guardDuplicateActivation(() => {

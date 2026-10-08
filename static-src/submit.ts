@@ -17,6 +17,7 @@ import { queuePrompt, steerChat } from "./actions/chat.js";
 import type { ActionOutcome } from "./actions/index.js";
 import { clearAgentDown, reportSendRefused } from "./send-state.js";
 import { restoreFailedSend } from "./composer-state.js";
+import { isSendable } from "./composer-value.js";
 import { invokesCatalogCommand } from "./slash-menu.js";
 import { carriesContextMention } from "./context-mentions.js";
 import { chatNotice } from "./notice-subject.js";
@@ -47,7 +48,7 @@ function messageIDFor(chatID: string, text: string): string {
  *  both ways (409-busy → busy verb, `no_turn` → prompt) on a shared budget; a hard failure
  *  restores text and attachments under the same message id. */
 export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
-  if (chatID === "" || (text === "" && !hasAttachments())) {
+  if (chatID === "" || !isSendable(text, hasAttachments())) {
     return "failed";
   }
   // A new attempt IS the retry, so a stale "no agent" verdict goes now (nothing on the failure path

@@ -4,6 +4,7 @@
 // (`seedComposerState`), except for a chat this device is not typing in (`adoptRemoteComposerState`).
 
 import { $ } from "./dom.js";
+import { writeComposerSilently } from "./composer-value.js";
 import { get } from "./store.js";
 import { setDraft } from "./actions/chat.js";
 import { debouncedDispatch, registerCleanup, type DebouncedDispatch } from "./actions/index.js";
@@ -105,7 +106,7 @@ export function saveComposerState(): void {
 /** Put `chatID`'s composer contents on screen; a chat with no draft gets an empty box, never the previous one's. */
 export function restoreComposerState(chatID: string): void {
   liveChatID = chatID;
-  $.promptInput.value = drafts.get(chatID) ?? "";
+  writeComposerSilently(drafts.get(chatID) ?? "");
   restoreAttachments(chatID);
 }
 
@@ -134,7 +135,7 @@ export function seedComposerState(chatID: string): void {
     return;
   }
   if ($.promptInput.value === "") {
-    $.promptInput.value = text;
+    writeComposerSilently(text);
   }
 }
 
@@ -152,7 +153,7 @@ export function restoreFailedSend(chatID: string, text: string): void {
   drafts.set(chatID, text);
   debouncedSave?.({ chatID, text });
   if (chatID === liveChatID && $.promptInput.value === "") {
-    $.promptInput.value = text;
+    writeComposerSilently(text);
   }
 }
 
@@ -172,7 +173,7 @@ export function restoreRefusedEdit(chatID: string, taken: string, before: string
   if (chatID === liveChatID) {
     debouncedSave?.({ chatID, text: before });
     if ($.promptInput.value === taken) {
-      $.promptInput.value = before;
+      writeComposerSilently(before);
     }
     return;
   }
@@ -202,7 +203,7 @@ export function dropComposerState(chatID: string): void {
   dropAttachments(chatID);
   if (chatID === liveChatID) {
     liveChatID = "";
-    $.promptInput.value = "";
+    writeComposerSilently("");
   }
 }
 

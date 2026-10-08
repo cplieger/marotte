@@ -79,6 +79,7 @@ beforeEach(async () => {
       <div id="prompt-box">
         <textarea id="prompt-input"></textarea>
       </div>
+      <button id="midturn-send-btn" type="button" hidden></button>
       <button id="send-btn" type="submit"></button>
     </form>`;
   const mod = (await import(
