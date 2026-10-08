@@ -46,9 +46,11 @@ type StartOpts struct {
 	// ContentCollection RESOLVES whether model requests from this process may be used
 	// for service improvement. KAS holds the value per PROCESS and persists none of it,
 	// so the bridge asserts it on BOTH session doors, read when the session exists
-	// rather than at spawn, so a save landing mid-spawn is not overwritten. Nil sends
-	// nothing.
-	ContentCollection func(context.Context) bool
+	// rather than at spawn, so a save landing mid-spawn is not overwritten. readable
+	// false means the settings could not be read: a session door still sends enabled
+	// (kiro-cli starts opted in), a live refresh keeps a value KAS confirmed and sends
+	// enabled when none is confirmed. Nil sends nothing.
+	ContentCollection func(context.Context) (enabled, readable bool)
 	SessionID         string
 	Model             string
 	Effort            string

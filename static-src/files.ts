@@ -12,16 +12,16 @@ import {
   openFilesView,
   toggleFilesView,
 } from "./tabs.js";
-import { openFile, openFileInBackground } from "./editor-openers.js";
-import { openChange } from "./navigate.js";
+import { openFileInBackground } from "./editor-openers.js";
+import { openChange, openFileOrPage } from "./navigate.js";
 import { fileDownloadURL } from "./utils-url.js";
 import { onGitStatusChange, statusForPath, statusUnder } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { confirm as confirmDialog } from "./confirm.js";
 // The browser's path is a workspace preference in config.json, so another device lands where this one looked.
 import { patchSettings } from "./persist.js";
-import { fileIcon, FILE_ICONS, ICON_TAB_WEB } from "./icons.js";
-import { isWorkspacePage } from "./preview-card.js";
+import { fileIcon, FILE_ICONS } from "./icons.js";
+import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
 import { attachPathsToActiveChat } from "./chat.js";
@@ -207,13 +207,6 @@ export function initFileBrowser(): void {
   $.fbDownload.addEventListener("click", downloadSelected);
   $.fbUpload.addEventListener("click", uploadViaDialog);
   $.fbAddToChat.addEventListener("click", addSelectedToChat);
-  $.fbPreview.replaceChildren(iconEl(ICON_TAB_WEB));
-  $.fbPreview.addEventListener("click", () => {
-    const path = selectedPreviewPath();
-    if (path !== null) {
-      openWebPreview(path);
-    }
-  });
 
   initPathInput();
   trackListScroll();
@@ -410,7 +403,7 @@ function settleOnParent(file: string, open: boolean): void {
   publishRoute(boundRef, dir);
   updateNavButtons();
   if (open) {
-    openFile(file);
+    openFileOrPage(file);
   }
   loadDir();
 }
@@ -497,19 +490,7 @@ function updateActionButtons(): void {
   $.fbRename.disabled = !single || !cur().dirWritable;
   $.fbDelete.disabled = !any || !cur().dirWritable;
   $.fbAddToChat.disabled = !any;
-  $.fbPreview.disabled = selectedPreviewPath() === null;
   updateWriteButtons();
-}
-
-function selectedPreviewPath(): string | null {
-  const state = cur();
-  if (state.selected.size !== 1) {
-    return null;
-  }
-  const name = [...state.selected][0] ?? "";
-  const entry = state.entries.find((e) => e.name === name);
-  const path = joinPath(state.currentPath, name);
-  return entry !== undefined && !entry.isDir && isWorkspacePage(path) ? path : null;
 }
 
 /** Mobile toolbar priority: navigation while browsing, selection actions with a selection. */
@@ -724,7 +705,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
     if (entry.isDir) {
       navigate(joinPath(cur().currentPath, entry.name));
     } else {
-      openFile(joinPath(cur().currentPath, entry.name));
+      openFileOrPage(joinPath(cur().currentPath, entry.name));
     }
   });
 
@@ -758,6 +739,8 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   wireBackgroundOpen(row, () => {
     if (entry.isDir) {
       void openTab({ kind: "files", ref: normalizeDirPath(abs), activate: false });
+    } else if (isPreviewablePage(abs)) {
+      openWebPreview(abs, { activate: false });
     } else {
       openFileInBackground(abs);
     }

@@ -381,8 +381,8 @@ func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 }
 
 // TestSettingsRoundTrip_RunOutcomeToggle drives a click's whole sequence over HTTP (read the
-// default, write the opposite, read it back, check the file) plus the push gate, since GET
-// and PATCH resolve the value through different code.
+// default, write the opposite, read it back, check the file), since GET and PATCH resolve the
+// value through different code.
 func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	dir := seedConfig(t, "")
 	path := filepath.Join(dir, settings.Filename)
@@ -392,19 +392,13 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 		t.Fatal("GET on a fresh config dir = notify_run_outcome false, want true (the registry row is DefaultOn)")
 	}
 
-	mp := &testPush{}
-	s := &Server{agent: &fakeEngine{}, push: mp, configDir: dir}
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 	req := httptest.NewRequest(http.MethodPatch, "/api/settings",
 		bytes.NewReader([]byte(`{"notify_run_outcome":false}`)))
 	rec := httptest.NewRecorder()
 	s.handleSettingsWrite(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH notify_run_outcome=false = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-
-	// The gate: preflightSend drops a kind whose preference is false.
-	if on, known := mp.prefs[marotte.PushKindRunOutcome]; !known || on {
-		t.Errorf("prefs[run_outcome] = (%v, known=%v) after the patch, want (false, true)", on, known)
 	}
 
 	// The value round-trips on the next read...
@@ -436,9 +430,6 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	}
 	if !getEffective(t, dir).NotifyRunOutcome {
 		t.Error("GET after re-enabling = notify_run_outcome false, want true")
-	}
-	if !mp.prefs[marotte.PushKindRunOutcome] {
-		t.Error("prefs[run_outcome] = false after re-enabling, want true")
 	}
 }
 

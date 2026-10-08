@@ -18,17 +18,18 @@ import (
 var levelVar = new(slog.LevelVar)
 
 // Install wires the shared LevelVar into slog's default logger and reads the initial level from
-// configDir/config.json; call once at startup, before any slog call that matters. Anything but a
-// readable true debug_logs leaves it at info, so a broken settings file never drops into debug.
+// configDir/config.json (settings.DebugLogs); call once at startup, before any slog call that matters.
 func Install(ctx context.Context, configDir string) {
 	levelVar = slogx.Setup(slogx.Options{})
-	if on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs); on && ok {
+	if settings.DebugLogs(ctx, configDir) {
 		levelVar.Set(slog.LevelDebug)
 	}
 }
 
-// SetDebug flips the active log level at runtime. Called by the
-// settings PATCH handler when the user toggles Debug logs.
+// Debug reports whether the active log level is debug.
+func Debug() bool { return levelVar.Level() <= slog.LevelDebug }
+
+// SetDebug flips the active log level at runtime.
 func SetDebug(on bool) {
 	if on {
 		levelVar.Set(slog.LevelDebug)

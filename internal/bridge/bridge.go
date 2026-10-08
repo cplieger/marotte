@@ -105,7 +105,7 @@ type Bridge struct {
 	envAllow map[string]struct{}
 	// contentCollection is StartOpts.ContentCollection, immutable after Start. contentCollectionMu spans a resolve and
 	// its send, so KAS always ends on the newest resolution.
-	contentCollection func(context.Context) bool
+	contentCollection func(context.Context) (enabled, readable bool)
 	cliPath           string
 	modelID           marotte.ModelID
 	workDir           string
@@ -126,6 +126,8 @@ type Bridge struct {
 	// presets are the KAS policy-preset ids this session opens with, immutable after Start. KAS does not persist them,
 	// so both session doors must send the same set or a resumed chat silently changes posture.
 	presets []string
+	// startIgnoreFiles and startTerminalTimeoutMs are what Start left KAS holding (StartLive). Guarded by mu.
+	startIgnoreFiles []string
 	// memory is the session-door memory preference; its reflection half is re-asserted after session/load. Immutable
 	// after Start.
 	memory marotte.MemoryPreference
@@ -136,6 +138,8 @@ type Bridge struct {
 	// loadSeq is the read-loop position the session/load response arrived at (SessionLoadSeq). Guarded by b.mu: written
 	// by the loading goroutine, read wherever a decision is ordered against the replay.
 	loadSeq uint64
+	// startTerminalTimeoutMs: see startIgnoreFiles.
+	startTerminalTimeoutMs int
 	// summarizationPct is the summarization threshold the session reported; 0 until a session/load result carries one.
 	summarizationPct float64
 	nextID           atomic.Int64
@@ -159,6 +163,10 @@ type Bridge struct {
 	// supervised records that the session accepted `autopilot: off`, not that the chat asked; the request lives on the
 	// chat record. False covers refused and unasked, so the coordinator reads it with the chat's request.
 	supervised bool
+	// contentCollectionApplied is the value KAS last confirmed; contentCollectionKnown is false until an assert lands
+	// and again after one fails, since a failed send may or may not have reached KAS.
+	contentCollectionApplied bool
+	contentCollectionKnown   bool
 	// disableSessionTitles writes KIRO_DISABLE_SESSION_TITLE_LLM=true (run bridges).
 	disableSessionTitles bool
 	// disableAutoCompaction is the value this bridge sent on the session door, immutable after Start. KAS froze it, so
@@ -237,6 +245,23 @@ func (b *Bridge) SupervisedApplied() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.supervised
+}
+
+// ContentCollectionApplied reports the content-collection value KAS last confirmed on this process; known is false
+// until an assert lands and after one fails, so a caller re-asserts.
+func (b *Bridge) ContentCollectionApplied() (enabled, known bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.contentCollectionApplied, b.contentCollectionKnown
+}
+
+// StartLive reports what Start left KAS holding of the two connection-scoped live settings: the ignore list its
+// send delivered, nil when none was sent or the send failed, and the shell timeout initialize carried, or the one
+// sent after it once that send landed.
+func (b *Bridge) StartLive() (ignoreFiles []string, terminalTimeoutMs int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startIgnoreFiles, b.startTerminalTimeoutMs
 }
 
 // SessionTitle returns KAS's title for the live session (flat `_meta.title`): "New Session" on creation, the stored

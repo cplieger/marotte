@@ -123,9 +123,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
-		mcp.WithWaitForReady(func(ctx context.Context) bool {
-			v, ok := settings.Field[bool](ctx, cfg.ConfigDir, settings.KeyMCPWaitForReady)
-			return ok && v
+		mcp.WithWaitForReady(func(ctx context.Context) (bool, bool) {
+			return settings.MCPWaitForReady(ctx, cfg.ConfigDir)
 		}))
 	if err != nil {
 		return nil, err
@@ -154,6 +153,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	lockedSettings := new(lateLockSink)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
+		agent.WithKASMCPRenderer(mcpStore),
+		agent.WithDebugLogs(logctl.Debug, logctl.SetDebug),
 		agent.WithPresence(presence),
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithPowers(powersMgr),
@@ -310,9 +311,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// The recycle a security-profile change needs, or the policy view describes the
 		// profile that was in force before it.
 		server.WithPolicyReload(h),
-		// The re-render an MCP wait setting change needs, or open chats keep the
-		// previous setting until the next MCP mutation.
-		server.WithMCPRenderer(mcpStore),
 		server.WithStaticFS(static),
 		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),

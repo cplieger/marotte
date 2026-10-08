@@ -88,6 +88,9 @@ type FileMatch struct {
 type FileSearchResult struct {
 	Matches []FileMatch `json:"matches"`
 	textsearch.Tally
+	// RootIgnored says the ignore rules hide every root searched, so nothing was walked; a search
+	// that includes ignored files never sets it.
+	RootIgnored bool `json:"root_ignored"`
 }
 
 type searchMode int
@@ -161,7 +164,9 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	webhttp.WriteJSON(w, v.result(walk.truncated || ctx.Err() != nil))
+	res := v.result(walk.truncated || ctx.Err() != nil)
+	res.RootIgnored = len(roots) > 0 && walk.hiddenRoots == len(roots)
+	webhttp.WriteJSON(w, res)
 }
 
 // When answered, newSearchVisitor has written the reply itself and the caller must not walk.
@@ -276,6 +281,7 @@ type searchWalk struct {
 	entries       int
 	dirs          int
 	maxDirs       int
+	hiddenRoots   int
 	caseSensitive bool
 	// ignoreRules applies .gitignore, .git/info/exclude and the node_modules prune.
 	ignoreRules bool
@@ -304,11 +310,18 @@ func (w *searchWalk) addRoot(l loc) bool {
 	switch {
 	case hidden:
 		_ = f.Close()
+		w.hiddenRoots++
 		return true
 	case !info.IsDir():
 		defer func() { _ = f.Close() }()
 		e, admitted := w.admit(parent, fs.FileInfoToDirEntry(info))
-		if !admitted || !e.inFilter {
+		if !admitted {
+			if name := info.Name(); parent.pruneGit && w.ignoredByRules(parent, path.Join(parent.rrel, name), name, false) {
+				w.hiddenRoots++
+			}
+			return true
+		}
+		if !e.inFilter {
 			return true
 		}
 		return w.v.rootFile(f, l.abs, info)

@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -60,7 +62,7 @@ func TestRenderKASConfig_ResolvesWaitForReadyPerWrite(t *testing.T) {
 	kasPath := filepath.Join(dir, "kas", "mcp.json")
 	var on atomic.Bool
 	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
-		WithWaitForReady(func(context.Context) bool { return on.Load() }))
+		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -76,6 +78,45 @@ func TestRenderKASConfig_ResolvesWaitForReadyPerWrite(t *testing.T) {
 	}
 	if v := readKASServers(t, kasPath)["local"]["waitForReady"]; v != true {
 		t.Errorf("after the flip, waitForReady = %v, want true: the resolver must be read per write", v)
+	}
+	if wait, known := s.RenderedWaitForReady(); !wait || !known {
+		t.Errorf("RenderedWaitForReady after the flip = (%t, %t), want (true, true): the file holds true", wait, known)
+	}
+}
+
+func TestRenderedWaitForReady_IsUnknownUntilAWriteLands(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	kasPath := filepath.Join(blocker, "mcp.json")
+	var on atomic.Bool
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if wait, known := s.RenderedWaitForReady(); known {
+		t.Fatalf("RenderedWaitForReady after a failed boot render = (%t, true), want unknown", wait)
+	}
+	on.Store(true)
+	if err := s.RenderKASConfig(t.Context()); err == nil {
+		t.Fatal("Setup: RenderKASConfig into a path under a file succeeded")
+	}
+	if wait, known := s.RenderedWaitForReady(); known {
+		t.Errorf("RenderedWaitForReady after a failed re-render = (%t, true), want unknown", wait)
+	}
+
+	if err := os.Remove(blocker); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := s.RenderKASConfig(t.Context()); err != nil {
+		t.Fatalf("RenderKASConfig once the path is writable: %v", err)
+	}
+	on.Store(false)
+	if wait, known := s.RenderedWaitForReady(); !wait || !known {
+		t.Errorf("RenderedWaitForReady after a landed render of true = (%t, %t), want (true, true)", wait, known)
 	}
 }
 
@@ -110,5 +151,100 @@ func TestWriteKASConfig_PerServerWaitForReadySurvivesReRender(t *testing.T) {
 	entry := readKASServers(t, kasPath)["pasted"]
 	if entry["waitForReady"] != true || entry["timeout"] != float64(90_000) {
 		t.Errorf("after the boot re-render, entry = %v, want waitForReady true and timeout 90000", entry)
+	}
+}
+
+func TestRenderedWaitForReady_FollowsAPowersWriteThatReplacedAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	kasDir := filepath.Join(dir, "kas")
+	kasPath := filepath.Join(kasDir, "mcp.json")
+	if err := os.WriteFile(kasDir, nil, 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	var on atomic.Bool
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := os.Remove(kasDir); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := os.Mkdir(kasDir, 0o700); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := os.WriteFile(kasPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	on.Store(true)
+
+	if _, err := s.WritePowersServers(t.Context(), map[string]json.RawMessage{"p": json.RawMessage(`{"command":"npx"}`)}); err != nil {
+		t.Fatalf("WritePowersServers: %v", err)
+	}
+
+	if wait, known := s.RenderedWaitForReady(); !wait || !known {
+		t.Errorf("RenderedWaitForReady after a powers write re-rendered mcpServers with the wait on = (%t, %t), want (true, true)", wait, known)
+	}
+}
+
+type waitSetting struct {
+	on, unreadable atomic.Bool
+}
+
+func (w *waitSetting) resolve(context.Context) (bool, bool) {
+	if w.unreadable.Load() {
+		return false, false
+	}
+	return w.on.Load(), true
+}
+
+func TestRenderKASConfig_AnUnreadableSettingWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	kasPath := filepath.Join(dir, "kas", "mcp.json")
+	var setting waitSetting
+	setting.on.Store(true)
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	before, err := os.Stat(kasPath)
+	if err != nil {
+		t.Fatalf("Setup: stat the boot render: %v", err)
+	}
+	setting.unreadable.Store(true)
+
+	if err := s.RenderKASConfig(t.Context()); err != nil {
+		t.Fatalf("RenderKASConfig over an unreadable setting: %v", err)
+	}
+
+	after, err := os.Stat(kasPath)
+	if err != nil {
+		t.Fatalf("stat after the render: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("RenderKASConfig over an unreadable setting rewrote KAS's file, want no write: off is no answer")
+	}
+	if wait, known := s.RenderedWaitForReady(); !wait || !known {
+		t.Errorf("RenderedWaitForReady after the refused render = (%t, %t), want the boot render's (true, true)", wait, known)
+	}
+}
+
+func TestWriteKASConfig_AnUnreadableSettingKeepsTheRenderedWait(t *testing.T) {
+	dir := t.TempDir()
+	kasPath := filepath.Join(dir, "kas", "mcp.json")
+	var setting waitSetting
+	setting.on.Store(true)
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	setting.unreadable.Store(true)
+
+	if _, err := s.Create(t.Context(), waitServers()[0]); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if v := readKASServers(t, kasPath)["local"]["waitForReady"]; v != true {
+		t.Errorf("a server added while the setting is unreadable rendered waitForReady = %v, want the rendered true kept", v)
 	}
 }

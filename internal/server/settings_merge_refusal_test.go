@@ -234,3 +234,55 @@ func TestExistingSettingsForMerge_DoesNotBlockOnAFIFO(t *testing.T) {
 		t.Fatal("readStoredSettings blocked on a FIFO at config.json; every settings GET would strand a goroutine there")
 	}
 }
+
+// TestExistingSettingsForMerge_SizeCapIsInclusive pins that a file exactly at the cap merges
+// and one past it is an ERROR, not an empty map.
+func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
+	// Trailing whitespace keeps the padded document parseable.
+	seed := func(t *testing.T, size int) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.json")
+		doc := `{"theme":"dark"}`
+		if len(doc) > size {
+			t.Fatalf("seed document is %d bytes, over the %d target", len(doc), size)
+		}
+		data := append([]byte(doc), bytes.Repeat([]byte(" "), size-len(doc))...)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name      string
+		size      int
+		wantErr   bool
+		wantKeys  int
+		wantTheme string
+	}{
+		{name: "at_the_cap", size: maxSettingsBytes, wantKeys: 1, wantTheme: `"dark"`},
+		{name: "one_past_the_cap", size: maxSettingsBytes + 1, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readStoredSettings(seed(t, tt.size))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("readStoredSettings of a %d-byte file = (%d keys, nil), want an error",
+						tt.size, len(got))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readStoredSettings of a %d-byte file: err = %v, want nil", tt.size, err)
+			}
+			if len(got) != tt.wantKeys {
+				t.Fatalf("readStoredSettings of a %d-byte file returned %d keys, want %d",
+					tt.size, len(got), tt.wantKeys)
+			}
+			if tt.wantTheme != "" && string(got["theme"]) != tt.wantTheme {
+				t.Errorf("theme = %s, want %s", got["theme"], tt.wantTheme)
+			}
+		})
+	}
+}

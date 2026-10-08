@@ -108,6 +108,11 @@ func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpen
 	return rt.coord.TryReserveTurn(chatID, source)
 }
 
+// TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
+func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	return rt.coord.TryReserveIdleTurn(chatID, source)
+}
+
 // TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
 // opened after the fenced one.
 func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {

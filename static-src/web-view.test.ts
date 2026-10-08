@@ -4,6 +4,7 @@ import type { PreviewHint, PreviewStamp } from "./wire/types.gen.js";
 import type { GrantOutcome } from "./actions/preview.js";
 import type * as Tabs from "./tabs.js";
 import type * as PreviewActions from "./actions/preview.js";
+import type * as Navigate from "./navigate.js";
 
 const kind = signal<string | null>("web");
 
@@ -11,6 +12,11 @@ vi.mock("./tabs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Tabs>()),
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabKind: () => kind.value,
+}));
+
+vi.mock("./navigate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Navigate>()),
+  openAtLine: vi.fn(),
 }));
 
 const grants = vi.hoisted(() => ({
@@ -63,6 +69,7 @@ vi.mock("./actions/preview.js", async (importOriginal) => ({
 }));
 
 import { grantPreview } from "./actions/preview.js";
+import { openAtLine } from "./navigate.js";
 import { _resetForTest, releaseWebTab, showWebTab } from "./web-view.js";
 import { LS_WEB_VIEWPORT_KEY, clearDeviceKeys } from "./ls-keys.js";
 
@@ -79,6 +86,7 @@ function mountView(): void {
           <div id="web-viewport" class="seg-bar web-viewport" role="radiogroup" aria-label="Preview width"></div>
           <button type="button" id="web-scale-btn" class="icon-btn web-scale-btn" aria-pressed="true" aria-label="Scale to fit"><span class="web-scale-readout">100%</span></button>
           <button type="button" id="web-reload-btn" class="icon-btn" aria-label="Reload preview"></button>
+          <button type="button" id="web-edit-btn" class="icon-btn" aria-label="Edit"></button>
         </div>
       </div></div>
     </div>`,
@@ -257,6 +265,35 @@ describe("mounting", () => {
     expect(after).not.toBe(before);
     expect(after.parentElement).toBe(wrapper);
     expect(after.getAttribute("src")).toBe("/preview/tok2/index.html");
+  });
+});
+
+describe("Edit", () => {
+  const edit = (): HTMLButtonElement =>
+    document.getElementById("web-edit-btn") as HTMLButtonElement;
+
+  it("opens the shown page's source in the editor", async () => {
+    showWebTab("/workspace/demo/index.html");
+    await flush();
+    showWebTab("/workspace/other/index.html");
+    await flush();
+    edit().click();
+    expect(openAtLine).toHaveBeenCalledTimes(1);
+    expect(openAtLine).toHaveBeenCalledWith("/workspace/other/index.html");
+  });
+
+  it("opens the source while the preview shows a refusal", async () => {
+    grants.refuse = "Put the page in its own folder";
+    showWebTab("/workspace/demo/index.html");
+    await flush();
+    expect(stage().textContent).toContain("Put the page in its own folder");
+    edit().click();
+    expect(openAtLine).toHaveBeenCalledWith("/workspace/demo/index.html");
+  });
+
+  it("draws its glyph from the icon registry", () => {
+    showWebTab("/workspace/demo/index.html");
+    expect(edit().querySelector("svg")).not.toBeNull();
   });
 });
 

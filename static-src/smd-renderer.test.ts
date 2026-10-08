@@ -656,9 +656,8 @@ describe("markdown links to served files", () => {
     },
   );
 
-  // A query belongs to a URL and a trailing slash names a directory, so neither is a file the
-  // editor can open.
-  it.each(["/workspace/a.md?download=1", "/workspace/marotte/", "/uploads/"])(
+  // A trailing slash names a directory, which the editor cannot open.
+  it.each(["/workspace/marotte/", "/uploads/", "/workspace/marotte/?x=1"])(
     "leaves %s to the browser",
     (dest) => {
       const link = render(`[x](${dest})`);
@@ -666,6 +665,16 @@ describe("markdown links to served files", () => {
       expect(link.getAttribute("target")).toBe("_blank");
     },
   );
+
+  it.each([
+    ["/workspace/a.md?download=1", "/file//workspace/a.md", undefined],
+    ["/workspace/a.md?v=1#L4", "/file//workspace/a.md#L4", 4],
+  ] as const)("drops the query from %s and opens the file", (dest, href, line) => {
+    const link = render(`[a](${dest})`);
+    expect(link.getAttribute("href")).toBe(href);
+    click(link);
+    expect(opened).toEqual([["/workspace/a.md", line]]);
+  });
 
   it("leaves a dot segment to the browser", () => {
     const link = render("[a](/workspace/./a.md)");

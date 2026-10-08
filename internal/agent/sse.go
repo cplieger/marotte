@@ -95,9 +95,10 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	slog.Info("SSE connected", "client", client,
 		"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 
-	// A reconnect reloads push preferences from disk.
-	if r.Header.Get("Last-Event-ID") != "" && rt.push != nil {
-		rt.push.ReloadPreferences(r.Context())
+	// A reconnect brings the server's own live settings, notification toggles included, up to a hand edit made while
+	// the stream was down.
+	if r.Header.Get("Last-Event-ID") != "" {
+		rt.syncProcessLive(r.Context())
 	}
 
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,

@@ -10,6 +10,7 @@ class HttpStatus {
 /** Typed as the reply so a case cannot build one the decoder refuses by accident. */
 const apiGet = vi.fn<(url: string, signal?: AbortSignal) => Promise<unknown>>();
 const openAtLine = vi.fn();
+const openFileOrPage = vi.fn();
 const activateBrowser = vi.fn();
 const openFolder = vi.fn();
 const shortcutsSheet = vi.fn();
@@ -66,6 +67,7 @@ vi.mock("./api-client.js", () => ({
 }));
 vi.mock("./navigate.js", () => ({
   openAtLine: (path: string, line?: number) => openAtLine(path, line),
+  openFileOrPage: (path: string, line?: number) => openFileOrPage(path, line),
 }));
 // ICON_CLOSE_UI is inert: search-shell.ts imports it.
 vi.mock("./icons.js", () => ({
@@ -107,7 +109,14 @@ const {
 
 function result(over: Partial<FileSearchResult> = {}): FileSearchResult {
   const matches = over.matches ?? [];
-  return { matches, scanned: 0, matched: matches.length, truncated: false, ...over };
+  return {
+    matches,
+    scanned: 0,
+    matched: matches.length,
+    truncated: false,
+    root_ignored: false,
+    ...over,
+  };
 }
 
 function input(): HTMLInputElement {
@@ -186,6 +195,7 @@ beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue(result());
   openAtLine.mockReset();
+  openFileOrPage.mockReset();
   activateBrowser.mockReset();
   openFolder.mockReset();
   searchPath = "workspace/src";
@@ -340,6 +350,12 @@ describe("the search bar", () => {
   it("says a stopped scan did not read everything when it found NOTHING, so an empty answer cannot imply the text is nowhere", async () => {
     expect(await noteFor(result({ scanned: 5000, truncated: true }))).toBe(
       "No matches in 5,000 files, but not everything was searched",
+    );
+  });
+
+  it("says the folder is ignored, and names the toggle that searches it, when the ignore rules hid the root", async () => {
+    expect(await noteFor(result({ root_ignored: true }))).toBe(
+      "This folder is ignored. Turn on Include ignored files to search it.",
     );
   });
 
@@ -602,8 +618,8 @@ describe("the search bar", () => {
     rows[0]?.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
     );
-    expect(openAtLine).toHaveBeenCalledTimes(1);
-    expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
+    expect(openFileOrPage).toHaveBeenCalledTimes(1);
+    expect(openFileOrPage).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
   });
 
   it("opens a row on Space, once", async () => {
@@ -612,8 +628,8 @@ describe("the search bar", () => {
     rows[0]?.dispatchEvent(
       new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
     );
-    expect(openAtLine).toHaveBeenCalledTimes(1);
-    expect(openAtLine).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
+    expect(openFileOrPage).toHaveBeenCalledTimes(1);
+    expect(openFileOrPage).toHaveBeenCalledWith("/workspace/src/a.go", undefined);
   });
 
   it("ArrowDown from the files field focuses the first row", async () => {
@@ -684,10 +700,18 @@ describe("the search bar", () => {
     expect(row?.querySelector(".fb-search-parent")?.textContent).toBe("/workspace/src");
   });
 
-  it("opens a file name hit in the editor with NO line, so it lands at the top", async () => {
+  it("opens a file name hit with NO line, so it lands at the top", async () => {
     const [row] = await search([nameHit("/workspace/src/cover-book.png")]);
     row?.click();
-    expect(openAtLine).toHaveBeenCalledWith("/workspace/src/cover-book.png", undefined);
+    expect(openFileOrPage).toHaveBeenCalledWith("/workspace/src/cover-book.png", undefined);
+    expect(openAtLine).not.toHaveBeenCalled();
+  });
+
+  it("opens a page's name hit by its role, with no line", async () => {
+    const [row] = await search([nameHit("/workspace/demo/index.html")]);
+    row?.click();
+    expect(openFileOrPage).toHaveBeenCalledWith("/workspace/demo/index.html", undefined);
+    expect(openAtLine).not.toHaveBeenCalled();
   });
 
   it("navigates the browser to a dir hit and closes the bar, in that order", async () => {
@@ -695,7 +719,7 @@ describe("the search bar", () => {
     row?.click();
     expect(openFolder).toHaveBeenCalledWith("/workspace/src/notebook-dir");
     // A folder is not a file: the editor would open a directory.
-    expect(openAtLine).not.toHaveBeenCalled();
+    expect(openFileOrPage).not.toHaveBeenCalled();
   });
 
   it("refuses a reply naming a kind this bundle does not know, rather than rendering a row nothing can open", async () => {
@@ -707,6 +731,7 @@ describe("the search bar", () => {
       scanned: 1,
       matched: 1,
       truncated: false,
+      root_ignored: false,
     });
     openFilesSearch();
     input().value = "book";
@@ -716,6 +741,7 @@ describe("the search bar", () => {
     expect(document.getElementById("fb-search-note")?.textContent).toBe("Could not search");
     expect(openFolder).not.toHaveBeenCalled();
     expect(openAtLine).not.toHaveBeenCalled();
+    expect(openFileOrPage).not.toHaveBeenCalled();
   });
 
   it("keeps the :line row for a content hit, so the two shapes stay distinguishable", async () => {
@@ -809,7 +835,7 @@ describe("the search bar", () => {
     expect(folder).toBe(file);
     folder?.click();
     expect(openFolder).toHaveBeenCalledWith("/workspace/src/book");
-    expect(openAtLine).not.toHaveBeenCalled();
+    expect(openFileOrPage).not.toHaveBeenCalled();
   });
 });
 

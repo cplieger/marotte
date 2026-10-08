@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,5 +79,41 @@ func TestStart_SendsNoIgnoreFilesFrameWithoutAList(t *testing.T) {
 					tc.name, marotte.MethodPolicyIgnoreFilesChanged, raw)
 			}
 		})
+	}
+}
+
+func TestStartLive_ReportsTheListSentAndTheTimeoutReappliedAfterInitialize(t *testing.T) {
+	dir := t.TempDir()
+	b := New(configOptionFake(t, filepath.Join(dir, "requests.log")), dir)
+	t.Cleanup(b.Stop)
+	reads := 0
+	opts := &marotte.StartOpts{
+		Lifetime:    t.Context(),
+		IgnoreFiles: func(context.Context) []string { return []string{".kiroignore", ".gitignore"} },
+		TerminalTimeout: func(context.Context) int {
+			reads++
+			return []int{1000, 300000}[min(reads-1, 1)]
+		},
+	}
+	if err := b.Start(t.Context(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	files, ms := b.StartLive()
+	if !slices.Equal(files, []string{".kiroignore", ".gitignore"}) || ms != 300000 {
+		t.Errorf("StartLive() = %v, %d, want [.kiroignore .gitignore], 300000", files, ms)
+	}
+}
+
+// An unstarted bridge refuses every write (errBridgeNotStarted), which is a failed send.
+func TestStartSends_AFailedSendLeavesWhatKASAlreadyHeld(t *testing.T) {
+	b := New("/nonexistent/kiro-cli", t.TempDir())
+	b.features.TerminalCommandTimeoutMs = 1000
+
+	if got := b.applyIgnoreFiles(t.Context(), func(context.Context) []string { return []string{".gitignore"} }); got != nil {
+		t.Errorf("applyIgnoreFiles over a failed send = %v, want nil: nothing reached KAS", got)
+	}
+	if got := b.reapplyTerminalTimeout(t.Context(), func(context.Context) int { return 300000 }); got != 1000 {
+		t.Errorf("reapplyTerminalTimeout over a failed send = %d, want 1000, the value initialize carried", got)
 	}
 }

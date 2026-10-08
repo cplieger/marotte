@@ -658,3 +658,35 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 		t.Errorf("turn_close = %+v, want the earlier cause kept", closes)
 	}
 }
+
+// A wire turn holds no reservation, so only a reserve that reads every holder in the same acquisition keeps a
+// rewind from reserving beside it.
+func TestTryReserveIdleTurn_RefusesBesideAWireTurnTheBareReserveAdmits(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	h.translateACPEvent("c1", newTurnStartMsg())
+	if _, open := ownID(h, "c1"); !open {
+		t.Fatal("setup: a turn_start with nothing pending opened no wire turn")
+	}
+
+	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+		t.Error("TryReserveIdleTurn(c1) reserved beside an open wire turn, want refused")
+	}
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
+		t.Fatal("setup: TryReserveTurn refused, so this chat does not show a wire turn holding no reservation")
+	}
+}
+
+func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceLocalShell) {
+		t.Fatal("TryReserveIdleTurn(c1) refused an idle chat")
+	}
+	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceLocalShell {
+		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want local_shell", src, held)
+	}
+	if h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt) {
+		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
+	}
+}

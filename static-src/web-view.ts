@@ -5,6 +5,7 @@ import { grantPreview, previewStamp } from "./actions/preview.js";
 import { $ } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import {
+  ICON_EDIT_UI,
   ICON_REFRESH,
   ICON_VIEWPORT_DESKTOP,
   ICON_VIEWPORT_FILL,
@@ -12,6 +13,7 @@ import {
   ICON_VIEWPORT_TABLET,
 } from "./icons.js";
 import { LS_WEB_VIEWPORT_KEY } from "./ls-keys.js";
+import { openAtLine } from "./navigate.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
 import { getActiveTabKind } from "./tabs.js";
 import {
@@ -213,6 +215,13 @@ function ensureInit(): void {
     const tab = shownTab();
     if (tab !== undefined) {
       void load(tab);
+    }
+  });
+  $.webEditBtn.replaceChildren(iconEl(ICON_EDIT_UI));
+  $.webEditBtn.addEventListener("click", () => {
+    const tab = shownTab();
+    if (tab !== undefined) {
+      openAtLine(tab.path);
     }
   });
   $.webScaleBtn.addEventListener("click", () => {

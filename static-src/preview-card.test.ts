@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildPreviewCard, isPreviewHref, setPreviewOpener } from "./preview-card.js";
+import { buildPreviewCard, previewHrefPage, setPreviewOpener } from "./preview-card.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
@@ -21,41 +21,34 @@ function render(md: string): HTMLElement {
   return host;
 }
 
-describe("isPreviewHref", () => {
-  it.each(["/workspace/demo/index.html", "/workspace/demo/PAGE.HTM", "/workspace/root.html"])(
-    "accepts %s",
-    (href) => {
-      expect(isPreviewHref(href)).toBe(true);
-    },
-  );
+describe("previewHrefPage", () => {
+  it.each(["/workspace/demo/index.html", "/workspace/demo/PAGE.HTM"])("accepts %s", (href) => {
+    expect(previewHrefPage(href)).toBe(href);
+  });
 
   it.each([
     "demo/index.html",
     "/workspace/demo/index.html?x=1",
     "/workspace/demo/index.html#top",
+    "/workspace/root.html",
+    "/workspace/.uploads/x.html",
     "/config/index.html",
     "/workspace-old/index.html",
     "/workspace/demo/logo.svg",
     "https://example.com/index.html",
   ])("refuses %s", (href) => {
-    expect(isPreviewHref(href)).toBe(false);
+    expect(previewHrefPage(href)).toBeNull();
+  });
+
+  it("decodes a percent-escaped destination once", () => {
+    expect(previewHrefPage("/workspace/my%20demo/index.html")).toBe(
+      "/workspace/my demo/index.html",
+    );
   });
 
   it("falls back to /workspace before the handshake names the root", () => {
     resetWorkspace();
-    expect(isPreviewHref("/workspace/demo/index.html")).toBe(true);
-  });
-
-  it("accepts a page under a root published with a trailing slash", () => {
-    setWorkspaceRoot("/custom/work/");
-    expect(isPreviewHref("/custom/work/demo/index.html")).toBe(true);
-    expect(isPreviewHref("/custom/work-old/index.html")).toBe(false);
-  });
-
-  it("accepts a page under the filesystem root", () => {
-    setWorkspaceRoot("/");
-    expect(isPreviewHref("/demo/index.html")).toBe(true);
-    expect(isPreviewHref("demo/index.html")).toBe(false);
+    expect(previewHrefPage("/workspace/demo/index.html")).toBe("/workspace/demo/index.html");
   });
 });
 
@@ -97,6 +90,40 @@ describe("the markdown renderer", () => {
   it("turns a link title into the card's tooltip", () => {
     const host = render('[Demo](/workspace/demo/index.html "The demo")');
     expect(host.querySelector(".preview-card")?.getAttribute("data-tooltip")).toBe("The demo");
+  });
+
+  it("leaves a link to a page directly in the workspace root a file link", () => {
+    const host = render("[root](/workspace/root.html)");
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/file//workspace/root.html");
+    expect(host.querySelector(".preview-card")).toBeNull();
+  });
+
+  it("opens the decoded page from a percent-escaped link", () => {
+    render("[Demo](/workspace/my%20demo/index.html)")
+      .querySelector<HTMLElement>(".preview-card")
+      ?.click();
+    expect(opened).toHaveBeenCalledWith("/workspace/my demo/index.html");
+  });
+
+  it("renders a card for a page under a root published with a trailing slash", () => {
+    setWorkspaceRoot("/custom/work/");
+    render("[Demo](/custom/work/demo/index.html)")
+      .querySelector<HTMLElement>(".preview-card")
+      ?.click();
+    expect(opened).toHaveBeenCalledWith("/custom/work/demo/index.html");
+  });
+
+  it("leaves a page beside a custom root, not beneath it, without a card", () => {
+    setWorkspaceRoot("/custom/work");
+    expect(
+      render("[x](/custom/work-old/demo/index.html)").querySelector(".preview-card"),
+    ).toBeNull();
+  });
+
+  it("renders a card for a page under the filesystem root", () => {
+    setWorkspaceRoot("/");
+    render("[Demo](/demo/index.html)").querySelector<HTMLElement>(".preview-card")?.click();
+    expect(opened).toHaveBeenCalledWith("/demo/index.html");
   });
 
   it("leaves a non-HTML workspace link a link", () => {

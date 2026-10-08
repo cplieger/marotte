@@ -255,8 +255,8 @@ func TestHandlePowerInstall_RunsTheVerbRefreshesLiveProcessesAndBroadcasts(t *te
 	if !slices.Equal(backend.installed, []string{"postman"}) {
 		t.Errorf("installed = %v, want [postman]", backend.installed)
 	}
-	if !slices.Equal(chat.notifyLog(), []string{methodKiroPowersRefresh}) {
-		t.Errorf("chat bridge notifications = %v, want one refresh", chat.notifyLog())
+	if got := chat.notified(methodKiroPowersRefresh); len(got) != 1 {
+		t.Errorf("chat bridge powers refreshes = %v, want one", got)
 	}
 	if utility.startCount() != 0 || len(utility.notifyLog()) != 0 {
 		t.Errorf("a stopped utility session was started (%d) or notified (%v)", utility.startCount(), utility.notifyLog())
@@ -377,8 +377,8 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 			if strings.Contains(rec.Body.String(), "/secret/path") {
 				t.Errorf("an internal error reached the client: %s", rec.Body.String())
 			}
-			if !slices.Equal(chat.notifyLog(), []string{methodKiroPowersRefresh}) {
-				t.Errorf("chat bridge notifications = %v, want one refresh", chat.notifyLog())
+			if got := chat.notified(methodKiroPowersRefresh); len(got) != 1 {
+				t.Errorf("chat bridge powers refreshes = %v, want one", got)
 			}
 			if n := powersChangedCount(t, h); n != 1 {
 				t.Errorf("powers_changed broadcast %d times, want 1", n)

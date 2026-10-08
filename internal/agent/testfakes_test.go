@@ -26,14 +26,16 @@ type fakeBridge struct {
 	callErrs    map[string]error
 	// callRPCErrs is KAS refusing in band; callErrs is the transport failing.
 	callRPCErrs  map[string]*marotte.RPCError
+	notifyErrs   map[string]error
 	lastParams   map[string]map[string]any
 	callDeadline map[string]bool
 	chunksOnCall map[string][]string
 	// notifsOnCall are whole frames delivered after a named Call, unstamped (a replay); chunksOnCall stamps its
 	// own id, which the own-session screen drops.
 	notifsOnCall map[string][]*marotte.RPCResponse
-	// blockOn parks Call, after recording it, until the method's channel is closed.
-	blockOn map[string]chan struct{}
+	// blockOn parks Call, after recording it, until the method's channel is closed; blockNotifyOn parks Notify.
+	blockOn       map[string]chan struct{}
+	blockNotifyOn map[string]chan struct{}
 	// onCall answers a Call instead of the scripted result, delivering its frames before returning, as KAS does.
 	onCall    func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
 	sessionID string
@@ -45,25 +47,33 @@ type fakeBridge struct {
 	observedThinking string
 	currentMode      string
 	// summarizationPct is 0 by default, a fresh bridge's answer for an omitted threshold.
-	summarizationPct        float64
-	catalog                 []marotte.SessionModel
-	modes                   []marotte.SessionMode
-	models                  []marotte.SessionModel
-	sessionTitle            string
-	sessionTitleSetByUser   bool
-	calls                   []string
-	notifies                []string
+	summarizationPct      float64
+	catalog               []marotte.SessionModel
+	modes                 []marotte.SessionMode
+	models                []marotte.SessionModel
+	sessionTitle          string
+	sessionTitleSetByUser bool
+	calls                 []string
+	notifies              []string
+	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
+	notifyParams            []string
 	contentCollectionWrites []string
 	// startOpts records what the most recent spawn was actually handed.
 	startOpts *marotte.StartOpts
 	// startGate holds a spawn open, so a bridge-ready test is not saved by an instantaneous Start.
 	startGate chan struct{}
+	// onStart runs at the top of Start, so a test can change the world while a process spawns.
+	onStart func()
 	// startErr fails every spawn: a server fault the REST layer classifies apart (errRunHostStart).
 	startErr error
 	// loadErr fails every spawn that names a session, while session/new still starts.
 	loadErr error
 	// starts counts spawns; one factory serves utility and run bridges, so read it as a delta.
 	starts int
+	// afterInitialize runs inside Start between the timeout's initialize read and its re-read.
+	afterInitialize        func()
+	startIgnoreFiles       []string
+	startTerminalTimeoutMs int
 	// notifsOnStart is the transcript a session/load replays, pushed before Start returns.
 	notifsOnStart []*marotte.RPCResponse
 	mu            sync.Mutex
@@ -75,8 +85,10 @@ type fakeBridge struct {
 	// supervisedApplied is whether the session took `autopilot: off`, set by Start from opts.Supervised as the real bridge does.
 	supervisedApplied bool
 	// supervisedAssertFails makes Start refuse the assert, the fail-open a test observes.
-	supervisedAssertFails bool
-	stopped               bool
+	supervisedAssertFails    bool
+	stopped                  bool
+	contentCollectionApplied bool
+	contentCollectionKnown   bool
 	// streamClosed guards the channel close apart from stopped, so endStream ends the stream without claiming a teardown.
 	streamClosed bool
 	started      bool
@@ -91,6 +103,9 @@ func newFakeBridge() *fakeBridge {
 }
 
 func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
+	if b.onStart != nil {
+		b.onStart()
+	}
 	b.mu.Lock()
 	gate := b.startGate
 	startErr := b.startErr
@@ -118,7 +133,15 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	// Mirrors applySupervised recording the accepted assert; false would make every supervised chat look refused.
 	b.supervisedApplied = opts.Supervised && !b.supervisedAssertFails
 	notifs := b.notifsOnStart
+	_, doorAssertFails := b.callErrs[marotte.MethodSetConfigOption]
 	b.mu.Unlock()
+	b.startLive(ctx, opts)
+	if opts.ContentCollection != nil {
+		enabled, _ := opts.ContentCollection(ctx)
+		b.mu.Lock()
+		b.contentCollectionApplied, b.contentCollectionKnown = enabled, !doorAssertFails
+		b.mu.Unlock()
+	}
 
 	// Only a Start naming a session replays, or the utility bridge on this factory would too. Pushed before
 	// returning, or the barrier settles on frame 1.
@@ -135,19 +158,59 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	return nil
 }
 
-func (b *fakeBridge) AssertContentCollection(ctx context.Context) (bool, error) {
+func (b *fakeBridge) startLive(ctx context.Context, opts *marotte.StartOpts) {
+	var files []string
+	if opts.IgnoreFiles != nil {
+		files = opts.IgnoreFiles(ctx)
+	}
+	var ms int
+	if opts.TerminalTimeout != nil {
+		ms = opts.TerminalTimeout(ctx)
+		if b.afterInitialize != nil {
+			b.afterInitialize()
+		}
+		if again := opts.TerminalTimeout(ctx); again != ms && b.startSendLands(marotte.MethodTerminalSettingsChanged) {
+			ms = again
+		}
+	}
+	if len(files) == 0 || !b.startSendLands(marotte.MethodPolicyIgnoreFilesChanged) {
+		files = nil
+	}
+	b.mu.Lock()
+	b.startIgnoreFiles, b.startTerminalTimeoutMs = files, ms
+	b.mu.Unlock()
+}
+
+func (b *fakeBridge) startSendLands(method string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.notifyErrs[method] == nil
+}
+
+func (b *fakeBridge) StartLive() (ignoreFiles []string, terminalTimeoutMs int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startIgnoreFiles, b.startTerminalTimeoutMs
+}
+
+func (b *fakeBridge) RefreshContentCollection(ctx context.Context) (bool, error) {
 	b.mu.Lock()
 	opts := b.startOpts
 	sid := b.sessionID
+	applied, known := b.contentCollectionApplied, b.contentCollectionKnown
 	b.mu.Unlock()
 	if opts == nil || opts.ContentCollection == nil {
 		return false, nil
 	}
-	enabled := opts.ContentCollection(ctx)
+	enabled, readable := opts.ContentCollection(ctx)
+	if !readable || (known && applied == enabled) {
+		return enabled, nil
+	}
 	params := marotte.ContentCollectionParams(sid, enabled)
 	_, err := b.Call(ctx, marotte.MethodSetConfigOption, params)
 	b.mu.Lock()
 	b.contentCollectionWrites = append(b.contentCollectionWrites, params["value"].(string))
+	b.contentCollectionApplied, b.contentCollectionKnown = enabled, err == nil
 	b.mu.Unlock()
 	return enabled, err
 }
@@ -299,11 +362,42 @@ func (b *fakeBridge) callHadDeadline(method string) bool {
 	return b.callDeadline[method]
 }
 
-func (b *fakeBridge) Notify(_ context.Context, method string, _ any) error {
+func (b *fakeBridge) Notify(ctx context.Context, method string, params any) error {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
 	b.mu.Lock()
+	blocker := b.blockNotifyOn[method]
+	b.mu.Unlock()
+	if blocker != nil {
+		select {
+		case <-blocker:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	b.mu.Lock()
+	if err := b.notifyErrs[method]; err != nil {
+		b.mu.Unlock()
+		return err
+	}
 	b.notifies = append(b.notifies, method)
+	b.notifyParams = append(b.notifyParams, string(raw))
 	b.mu.Unlock()
 	return nil
+}
+
+func (b *fakeBridge) notified(method string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []string
+	for i, m := range b.notifies {
+		if m == method {
+			out = append(out, b.notifyParams[i])
+		}
+	}
+	return out
 }
 
 func (b *fakeBridge) notifyLog() []string {
@@ -354,6 +448,24 @@ func (b *fakeBridge) setCallErr(method string, err error) {
 		b.callErrs = map[string]error{}
 	}
 	b.callErrs[method] = err
+}
+
+func (b *fakeBridge) setNotifyErr(method string, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.notifyErrs == nil {
+		b.notifyErrs = map[string]error{}
+	}
+	b.notifyErrs[method] = err
+}
+
+func (b *fakeBridge) blockNotify(method string, gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.blockNotifyOn == nil {
+		b.blockNotifyOn = map[string]chan struct{}{}
+	}
+	b.blockNotifyOn[method] = gate
 }
 
 func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {

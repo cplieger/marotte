@@ -1,7 +1,7 @@
 package agent
 
 // A settings save landing mid-spawn reaches that bridge only through the spawn's own
-// send: the push is refused before `initialize`, which is why StartOpts.IgnoreFiles is a resolver.
+// send: a writer skips a spawning bridge, which is why StartOpts.IgnoreFiles is a resolver.
 
 import (
 	"context"
@@ -98,8 +98,8 @@ func writeIgnoreFiles(t *testing.T, dir string, entries []string) {
 	}
 }
 
-// TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge pins send-time resolution;
-// the refusal count proves the push could not have carried the new list.
+// TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge pins send-time resolution; no
+// write reached the bridge before Start, so only the spawn's own send can carry the new list.
 func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{"pre.ignore"})
@@ -127,15 +127,15 @@ func TestSpawnIgnoreFiles_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 	<-probe.arrival // the StartOpts literal has been evaluated
 
 	writeIgnoreFiles(t, dir, []string{"post.ignore"})
-	h.PushAgentIgnoreFiles(ctx)
+	h.ReconcileSessionSettings(ctx)
 
 	released()
 	if err := <-opened; err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := probe.refusedNotifies(); got != 1 {
-		t.Errorf("notifies refused mid-spawn = %d, want 1: the push reaches the bridge and cannot write to it, which is why the spawn's own send has to carry the new list", got)
+	if got := probe.refusedNotifies(); got != 0 {
+		t.Errorf("notifies sent to the spawning bridge before Start returned = %d, want 0: a writer skips a spawning bridge", got)
 	}
 	want := settings.AgentIgnoreList([]string{"post.ignore"})
 	if got := probe.resolvedIgnoreFiles(); !slices.Equal(got, want) {

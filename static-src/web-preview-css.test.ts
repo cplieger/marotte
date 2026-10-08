@@ -5,6 +5,7 @@ import { loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 import indexHtml from "../static/index.html?raw";
 import { iconEl } from "./icon-el.js";
 import {
+  ICON_EDIT_UI,
   ICON_REFRESH,
   ICON_VIEWPORT_DESKTOP,
   ICON_VIEWPORT_FILL,
@@ -51,6 +52,7 @@ function mount(): void {
     viewport.append(btn);
   }
   host.querySelector("#web-reload-btn")!.append(iconEl(ICON_REFRESH));
+  host.querySelector("#web-edit-btn")!.append(iconEl(ICON_EDIT_UI));
   document.body.append(host);
 }
 
@@ -97,6 +99,9 @@ describe.each([
     expect(bar.height).toBeCloseTo(reload.height, 0);
     expect(reload.height).toBeGreaterThanOrEqual(hitFloor());
     expect(reload.width).toBeGreaterThanOrEqual(hitFloor());
+    const edit = q("#web-edit-btn").getBoundingClientRect();
+    expect(edit.height).toBeCloseTo(reload.height, 0);
+    expect(edit.width).toBeCloseTo(reload.width, 0);
     const scale = q("#web-scale-btn").getBoundingClientRect();
     expect(scale.height).toBeGreaterThanOrEqual(hitFloor());
     for (const seg of segs()) {
@@ -129,14 +134,41 @@ describe("the toolbar's shell", () => {
   });
 });
 
+describe("the path box", () => {
+  const path = (): HTMLElement => q("#web-path");
+  const text = (): DOMRect => path().querySelector("bdi")!.getBoundingClientRect();
+  const padding = (side: "Left" | "Right"): number =>
+    px(getComputedStyle(path())[`padding${side}`]) +
+    px(getComputedStyle(path())[`border${side}Width`]);
+
+  afterEach(() => {
+    path().querySelector("bdi")!.textContent = "demo/index.html";
+  });
+
+  it("starts a path that fits at its left edge, where the editor's file name sits", async () => {
+    await at(1440, 900, "fine");
+    expect(text().left).toBeCloseTo(path().getBoundingClientRect().left + padding("Left"), 0);
+  });
+
+  it("keeps the file name of a path too long to fit in view", async () => {
+    await at(390, 844, "coarse");
+    path().querySelector("bdi")!.textContent = `${"very-long-folder/".repeat(12)}index.html`;
+    expect(path().scrollWidth).toBeGreaterThan(path().clientWidth);
+    expect(text().right).toBeCloseTo(path().getBoundingClientRect().right - padding("Right"), 0);
+  });
+});
+
 describe("the toolbar on a phone-shaped screen", () => {
-  it("hides the switcher and the scale toggle and keeps the path and Reload", async () => {
+  it("hides the switcher and the scale toggle and keeps the path, Reload and Edit", async () => {
     await at(390, 844, "coarse");
     expect(getComputedStyle(q(".web-viewport")).display).toBe("none");
     expect(getComputedStyle(q("#web-scale-btn")).display).toBe("none");
     expect(getComputedStyle(q("#web-path")).display).not.toBe("none");
     const reload = q("#web-reload-btn").getBoundingClientRect();
     expect(reload.width).toBeGreaterThanOrEqual(hitFloor());
+    const edit = q("#web-edit-btn").getBoundingClientRect();
+    expect(edit.width).toBeGreaterThanOrEqual(hitFloor());
+    expect(edit.right).toBeLessThanOrEqual(window.innerWidth);
   });
 });
 

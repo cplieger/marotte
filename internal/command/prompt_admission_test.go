@@ -147,6 +147,10 @@ func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID
 
 func (a *scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
+func (a *scriptedAdmission) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
+	return a.TryReserveTurn(c, s)
+}
+
 func (a *scriptedAdmission) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
 	return a.TryReserveTurn(c, s)
 }

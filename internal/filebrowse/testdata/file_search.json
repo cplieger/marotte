@@ -57,7 +57,8 @@
       ],
       "scanned": 6,
       "matched": 3,
-      "truncated": false
+      "truncated": false,
+      "root_ignored": false
     }
   },
   "contents": {
@@ -336,7 +337,8 @@
       ],
       "scanned": 5,
       "matched": 23,
-      "truncated": false
+      "truncated": false,
+      "root_ignored": false
     }
   }
 }

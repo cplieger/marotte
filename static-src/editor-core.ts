@@ -33,7 +33,7 @@ import {
 import type { FileState } from "./editor-types.js";
 import { markGitDirty } from "./git.js";
 import { onWorkspaceRoot, relToWorkspace } from "./workspace.js";
-import { isWorkspacePage } from "./preview-card.js";
+import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_GIT_COMMIT, ICON_TAB_WEB } from "./icons.js";
@@ -135,7 +135,7 @@ export function initEditor(): void {
 }
 
 function paintPreviewBtn(): void {
-  $.editorPreviewBtn.classList.toggle("hidden", !isWorkspacePage(previewPath()));
+  $.editorPreviewBtn.classList.toggle("hidden", !isPreviewablePage(previewPath()));
 }
 
 /** The server's ServeMux collapses `/file//workspace/x` to `/file/workspace/x` on a

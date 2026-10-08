@@ -81,16 +81,21 @@ export function rewriteServedImageSrc(src: string): string {
   return fileDownloadURL(path);
 }
 
+/** A markdown destination, trimmed and percent-decoded once; a malformed escape is kept literally. */
+export function decodeDestination(dest: string): string {
+  const raw = dest.trim();
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    // A bare `%` is a literal character of the filename.
+    return raw;
+  }
+}
+
 /** The file path a markdown destination names under SERVED_ROOTS, else null. Percent-decoded once.
  *  A `.` or `..` segment answers null: `/workspace/../config/x` passes the prefix test. */
 export function servedPath(dest: string): string | null {
-  const raw = dest.trim();
-  let path = raw;
-  try {
-    path = decodeURIComponent(raw);
-  } catch {
-    // A bare `%` is a literal character of the filename.
-  }
+  const path = decodeDestination(dest);
   if (!isServedPath(path) || path.split("/").some((seg) => seg === "." || seg === "..")) {
     return null;
   }
@@ -99,14 +104,16 @@ export function servedPath(dest: string): string | null {
 
 /** The editor route a link destination names, else null. A `#L<line>`
  *  fragment, or a `:line[:col]` suffix when there is no fragment, becomes the
- *  line; any other fragment is dropped, since the editor has no anchors.
+ *  line; any other fragment is dropped, since the editor has no anchors. A
+ *  query is dropped too: left on the link, it would send the SPA to a chat.
  *
- *  A query or a trailing `/` answers null: neither names a file. */
+ *  A trailing `/` answers null: it names a directory, not a file. */
 export function servedFileRoute(dest: string): Extract<Route, { kind: "file" }> | null {
   const trimmed = dest.trim();
   const hashAt = trimmed.indexOf("#");
   const beforeHash = hashAt < 0 ? trimmed : trimmed.slice(0, hashAt);
-  const decoded = beforeHash.includes("?") ? null : servedPath(beforeHash);
+  const queryAt = beforeHash.indexOf("?");
+  const decoded = servedPath(queryAt < 0 ? beforeHash : beforeHash.slice(0, queryAt));
   if (decoded === null) {
     return null;
   }

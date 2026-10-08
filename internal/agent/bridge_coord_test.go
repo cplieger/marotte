@@ -57,8 +57,6 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 // name, read only after a body arrives.
 type recordingPush struct {
 	sends chan string
-	// reloads counts ReloadPreferences calls; atomic because the caller may be another goroutine.
-	reloads atomic.Int32
 	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
 	noSubs   atomic.Bool
 	subject  marotte.PushSubject
@@ -70,7 +68,7 @@ func (p *recordingPush) Subscribe(marotte.PushSubscription)       {}
 func (p *recordingPush) Unsubscribe(string)                       {}
 func (p *recordingPush) HasSubscribers() bool                     { return !p.noSubs.Load() }
 func (p *recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
+func (p *recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (p *recordingPush) Close()                                   {}
 func (p *recordingPush) Retract(marotte.PushSubject)              {}
 func (p *recordingPush) Send(_ context.Context, _, body string, _ marotte.PushKind, subject marotte.PushSubject, chatName string) {

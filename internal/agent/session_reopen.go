@@ -22,7 +22,7 @@ func (rt *Runtime) ReopenChatSessions(reason string) {
 // SecurityProfileChanged applies a persisted profile change: presets ride the session door and
 // KAS has no live setter, so the utility session restarts and open chats reopen.
 func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
-	rt.reconcileSessionSettings(ctx, "security profile")
+	rt.reconcileSettingsWrite(ctx, "security profile")
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
 		marotte.PermissionsChangedPayload{Status: "success"}))
@@ -119,26 +119,37 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (fingerprints session
 }
 
 // ReconcileSessionSettings reopens open chats when a setting they only read at open moved since
-// the last reconcile, and restarts the utility session when one it spawns with did. Every writer
-// calls it after its write lands; OpenBridge and every utility access call it too, which is how a
-// hand edit reaches them.
+// the last reconcile, restarts the utility session when one it spawns with did, and pushes every
+// live process each live setting it has not confirmed. Every writer calls it after its write
+// lands, and it returns once each push landed or failed. A hand edit has no writer to call it:
+// the next chat open or utility use syncs its own process, then every other one in the background.
 func (rt *Runtime) ReconcileSessionSettings(ctx context.Context) {
-	rt.reconcileSessionSettings(ctx, "session settings")
+	rt.reconcileSettingsWrite(ctx, "session settings")
 }
 
-// reconcileSessionSettings marks the chats under the baseline lock, so a caller that returns has
-// them marked; the utility process stops outside it.
-func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string) {
-	rt.sessionSeen.mu.Lock()
-	now, ok := rt.sessionFingerprint(ctx)
-	reopen := ok && now.chat != rt.sessionSeen.seen.chat
-	restart := ok && now.utility != rt.sessionSeen.seen.utility
-	if !reopen && !restart {
-		rt.sessionSeen.mu.Unlock()
-		return
+func (rt *Runtime) reconcileSettingsWrite(ctx context.Context, reason string) {
+	rt.reconcileSessionSettings(ctx, reason)
+	rt.pushLiveToAll(ctx)
+}
+
+func (rt *Runtime) reconcileUtilityUse(ctx context.Context) {
+	rt.reconcileSessionSettings(ctx, "session settings")
+	if u := rt.utility.peek(); u != nil {
+		u.session.syncLive(ctx, rt.liveSettings)
 	}
+	rt.fanOutLive(liveSurface{utility: true})
+}
+
+// reconcileSessionSettings marks chats for reopen and restarts the utility session as the
+// fingerprints moved, and syncs what this server applies itself; it pushes to no chat process.
+func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string) {
+	b := &rt.sessionSeen
+	b.mu.Lock()
+	now, ok := rt.sessionFingerprint(ctx)
+	reopen := ok && now.chat != b.seen.chat
+	restart := ok && now.utility != b.seen.utility
 	if ok {
-		rt.sessionSeen.seen = now
+		b.seen = now
 	}
 	var utility *utilityRuntime
 	if restart {
@@ -147,8 +158,11 @@ func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string) 
 	if reopen {
 		rt.ReopenChatSessions(reason)
 	}
-	rt.sessionSeen.mu.Unlock()
+	b.mu.Unlock()
+	rt.syncProcessLive(ctx)
 	if utility != nil {
+		// It serves the leases it holds until Stop.
+		utility.session.syncLive(ctx, rt.liveSettings)
 		utility.session.Stop()
 	}
 }

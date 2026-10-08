@@ -67,7 +67,7 @@ type utilitySessionHooks struct {
 	ignoreFiles func(context.Context) []string
 	// contentCollection resolves StartOpts.ContentCollection: this session sends diffs and error text, so it opts out.
 	// nil sends nothing.
-	contentCollection func(context.Context) bool
+	contentCollection func(context.Context) (enabled, readable bool)
 	// telemetryOff resolves StartOpts.DisableTelemetry; nil leaves KAS's default, on.
 	telemetryOff func() bool
 }
@@ -90,8 +90,12 @@ type utilitySession struct {
 	bridge       utilityBridge
 	responseCh   chan utilityChunkPayload
 	forwardDone  chan struct{}
-	gen          uint64
-	mu           sync.Mutex
+	// liveIgnore is the ignore list this process last confirmed, guarded by mu.
+	liveIgnore []string
+	// liveLock, not mu, serializes the live pushes to this process (syncLive).
+	liveLock surfaceLock
+	gen      uint64
+	mu       sync.Mutex
 
 	// enableHooks opts into KAS's v2 hook engine (true in production) for the hooks list/setEnabled RPCs.
 	enableHooks bool
@@ -159,6 +163,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff()}); err != nil {
 		return err
 	}
+	us.liveIgnore = startedLive(bridge).ignoreFiles
 	us.bridge = bridge
 	us.started = true
 	us.lastActiveAt = time.Now()

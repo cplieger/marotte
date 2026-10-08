@@ -101,6 +101,19 @@ func RetentionEnabled(ctx context.Context, configDir string) bool {
 	return days != 0
 }
 
+// MCPWaitForReady reports whether KAS's rendered MCP file carries waitForReady; anything but a
+// stored true is off. readable is false over an unreadable config.json, where off is no answer.
+func MCPWaitForReady(ctx context.Context, configDir string) (on, readable bool) {
+	return FieldOr(ctx, configDir, KeyMCPWaitForReady, false)
+}
+
+// DebugLogs reports whether the process logs at debug level; anything but a readable true is
+// info, so a broken settings file never drops into debug.
+func DebugLogs(ctx context.Context, configDir string) bool {
+	on, ok := Field[bool](ctx, configDir, KeyDebugLogs)
+	return ok && on
+}
+
 // EffectiveFrom resolves the stored document into the client's view: EffectiveDefaults with
 // every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit. Value
 // validity is the client's (theme "purple" passes). A nil or empty map yields the defaults.

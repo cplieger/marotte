@@ -224,19 +224,6 @@ func TestReadKiroSettings_ReportsTheHeldUserValue(t *testing.T) {
 	}
 }
 
-func TestSettingsWrite_ContentCollectionPushesLive(t *testing.T) {
-	eng := &fakeEngine{}
-	s := &Server{agent: eng, push: &testPush{}, configDir: t.TempDir()}
-	patchSettings(t.Context(), t, s, `{"`+settings.KeyContentCollectionEnabled+`":true}`)
-	if eng.ccPushes != 1 {
-		t.Errorf("PATCH content_collection_enabled pushed %d times, want 1", eng.ccPushes)
-	}
-	patchSettings(t.Context(), t, s, `{"`+settings.KeyFBPath+`":"/workspace"}`)
-	if eng.ccPushes != 1 {
-		t.Errorf("an unrelated PATCH pushed content collection (%d pushes)", eng.ccPushes)
-	}
-}
-
 func TestSettingsWrite_ReopensOpenChatsWhenASessionSettingMoved(t *testing.T) {
 	dir := t.TempDir()
 	eng := &fakeEngine{sessionSettings: func(ctx context.Context) string {

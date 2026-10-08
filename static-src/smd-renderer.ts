@@ -43,7 +43,8 @@ import { formPayloadLink, linkAnchor } from "./link-guard.js";
 import { buildPath } from "./route-path.js";
 import { bindFileLink } from "./linkify.js";
 import { mediaElementFor } from "./media-block.js";
-import { buildPreviewCard, isPreviewHref } from "./preview-card.js";
+import { buildPreviewCard, previewHrefPage } from "./preview-card.js";
+import { fileOpenRoute } from "./preview-page.js";
 import { latexToMathML } from "./mathml.js";
 import { el } from "@cplieger/reactive";
 
@@ -315,11 +316,11 @@ function add_text_dom(data: DomRendererData, text: string): void {
 
 /** A bracket link's href arrives after its label, so the label's nodes exist and are MOVED into
  *  the card; the node stack and the caret follow them. */
-function swapForPreviewCard(data: DomRendererData, link: Element, href: string): void {
+function swapForPreviewCard(data: DomRendererData, link: Element, page: string): void {
   for (const span of link.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
     span.setAttribute(CHUNK_SETTLED_ATTR, "");
   }
-  const card = buildPreviewCard(href, [...link.childNodes]);
+  const card = buildPreviewCard(page, [...link.childNodes]);
   link.replaceWith(card);
   data.nodes[data.index] = card;
   if (data.caretEl === link) {
@@ -350,8 +351,9 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
     node.setAttribute(attrName, "#");
     return;
   }
-  if (attrName === "href" && node.tagName === "A" && isPreviewHref(value)) {
-    swapForPreviewCard(data, node, value);
+  const page = attrName === "href" && node.tagName === "A" ? previewHrefPage(value) : null;
+  if (page !== null) {
+    swapForPreviewCard(data, node, page);
     return;
   }
   if (attrName === "title" && node.classList.contains("preview-card")) {
@@ -414,8 +416,9 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if (attrName === "href" && node.tagName === "A") {
     const file = servedFileRoute(value);
     if (file !== null) {
-      // The browser would ask the SPA for `/workspace/...` and land on a chat.
-      node.setAttribute("href", buildPath(file));
+      // The browser would ask the SPA for `/workspace/...` and land on a chat. The href names the
+      // tab the bound click opens, so a modified click or a copied link reaches the same one.
+      node.setAttribute("href", buildPath(fileOpenRoute(file.path, file.line)));
       node.removeAttribute("target");
       node.removeAttribute("rel");
       bindFileLink(node as HTMLAnchorElement, file.path, file.line);

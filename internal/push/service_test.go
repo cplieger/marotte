@@ -2,6 +2,7 @@ package push
 
 import (
 	"encoding/base64"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -275,4 +276,73 @@ func TestClose_IsIdempotent(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	s.Close()
 	s.Close()
+}
+
+func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want map[marotte.PushKind]bool
+	}{
+		{
+			name: "no_file_takes_each_registry_default",
+			want: map[marotte.PushKind]bool{
+				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
+				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: true,
+			},
+		},
+		{
+			name: "each_stored_toggle_moves_only_its_kind",
+			body: `{"notify_run_outcome":false,"notify_pr_status":true}`,
+			want: map[marotte.PushKind]bool{
+				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
+				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: false,
+			},
+		},
+		{
+			name: "a_malformed_toggle_takes_its_kind_default",
+			body: `{"notify_agent_finished":"nonsense","notify_pr_status":"nonsense"}`,
+			want: map[marotte.PushKind]bool{
+				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
+				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: true,
+			},
+		},
+		{
+			name: "the_master_switch_off_silences_every_registered_kind",
+			body: `{"notifications_enabled":false,"notify_agent_finished":true,"notify_pr_status":true}`,
+			want: map[marotte.PushKind]bool{
+				marotte.PushKindAgentFinished: false, marotte.PushKindPermission: false,
+				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: false,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolvePreferences(t.Context(), seedConfig(t, tc.body))
+			if !maps.Equal(got, tc.want) {
+				t.Errorf("ResolvePreferences over %q = %v, want %v", tc.body, got, tc.want)
+			}
+			if len(got) != len(Kinds()) {
+				t.Errorf("ResolvePreferences carries %d kinds, want the registry's %d", len(got), len(Kinds()))
+			}
+		})
+	}
+}
+
+func TestPreferences_ReportsTheTogglesInForceAsACopy(t *testing.T) {
+	s := New(t.Context(), seedConfig(t, `{"notify_pr_status":true}`), "mailto:test@example.com")
+	t.Cleanup(s.Close)
+	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindRunOutcome: false})
+
+	got := s.Preferences()
+	want := map[marotte.PushKind]bool{
+		marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
+		marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: false,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("Preferences() over notify_pr_status true then run_outcome set off = %v, want %v", got, want)
+	}
+	got[marotte.PushKindAgentFinished] = false
+	if !s.Preferences()[marotte.PushKindAgentFinished] {
+		t.Error("a write to the map Preferences returned changed the service's toggles")
+	}
 }

@@ -115,9 +115,16 @@ type Store struct {
 	// waitForReady answers the global mcp_wait_for_ready setting. Read on every
 	// write rather than captured at construction, because the user changes it
 	// while the store is alive.
-	waitForReady func(context.Context) bool
+	waitForReady func(context.Context) (waitForReady, readable bool)
 	servers      []*Server
+	rendered     renderedWait
 	mu           sync.RWMutex
+}
+
+// renderedWait is the wait value KAS's config file holds; known is false while no write has landed.
+type renderedWait struct {
+	waitForReady bool
+	known        bool
 }
 
 // New loads the file (or initialises empty) and returns a ready store. onChange runs on a fresh
@@ -170,14 +177,24 @@ func WithKASConfigPath(path string) Option {
 
 // WithWaitForReady supplies the resolver for the global MCP wait setting, which
 // renders `waitForReady: true` on every server. Unwired means off, KAS's own
-// default. The resolver must not call back into the store: writeKASConfig runs
-// it with the store's write lock held.
-func WithWaitForReady(fn func(context.Context) bool) Option {
+// default. readable false means the setting has no answer: a write keeps the
+// value the last write rendered, and RenderKASConfig writes nothing. The resolver
+// must not call back into the store: writeKASConfig runs it with the store's
+// write lock held.
+func WithWaitForReady(fn func(context.Context) (waitForReady, readable bool)) Option {
 	return func(s *Store) { s.waitForReady = fn }
 }
 
-func (s *Store) waitsForReady(ctx context.Context) bool {
-	return s.waitForReady != nil && s.waitForReady(ctx)
+// renderPolicy runs under s.mu held for writing, or before New returns.
+func (s *Store) renderPolicy(ctx context.Context) (policy kasRenderPolicy, readable bool) {
+	if s.waitForReady == nil {
+		return kasRenderPolicy{}, true
+	}
+	wait, readable := s.waitForReady(ctx)
+	if !readable {
+		wait = s.rendered.known && s.rendered.waitForReady
+	}
+	return kasRenderPolicy{waitAll: wait}, readable
 }
 
 // SetOnChange replaces the change callback.

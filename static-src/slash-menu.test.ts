@@ -39,7 +39,7 @@ import {
   menuEntries,
   slashQuery,
 } from "./slash-menu.js";
-import type { SlashCommand } from "./wire/types.gen.js";
+import type { FileMatch, FileSearchResult, SlashCommand } from "./wire/types.gen.js";
 import { dispatch } from "./bus.js";
 import { setActive } from "./store.js";
 import { _setReposForTest } from "./git-status-store.js";
@@ -52,6 +52,20 @@ const CATALOG: SlashCommand[] = [
   { name: "goal", description: "Set a goal", kind: "goal" },
   { name: "compact", description: "a prompt named compact", kind: "prompt" },
 ];
+
+function fileHit(path: string, kind: FileMatch["kind"] = "name"): FileMatch {
+  return { path, excerpt: "", kind, ranges: [], line: 0 };
+}
+
+function searchReply(matches: FileMatch[]): FileSearchResult {
+  return {
+    matches,
+    scanned: matches.length,
+    matched: matches.length,
+    truncated: false,
+    root_ignored: false,
+  };
+}
 
 describe("menuEntries", () => {
   it("lists marotte's verbs, then the catalog with a verb-named entry hidden", () => {
@@ -338,15 +352,7 @@ describe("the # context menu", () => {
     mockApiGetTyped.mockImplementation((path: string) =>
       Promise.resolve(
         path.startsWith("/api/files/search")
-          ? {
-              matches: [
-                { path: "/workspace/src/a.go", excerpt: "", kind: "name", line: 0 },
-                { path: "/workspace/src", excerpt: "", kind: "dir", line: 0 },
-              ],
-              scanned: 2,
-              matched: 2,
-              truncated: false,
-            }
+          ? searchReply([fileHit("/workspace/src/a.go"), fileHit("/workspace/src", "dir")])
           : null,
       ),
     );
@@ -359,9 +365,7 @@ describe("the # context menu", () => {
   });
 
   it("asks for the typed fragment as one literal, so a bracket in a name is not a pattern", async () => {
-    mockApiGetTyped.mockImplementation(() =>
-      Promise.resolve({ matches: [], scanned: 0, matched: 0, truncated: false }),
-    );
+    mockApiGetTyped.mockImplementation(() => Promise.resolve(searchReply([])));
     type("#file:a[1");
     await vi.waitFor(() => {
       expect(mockApiGetTyped.mock.calls.some(([p]) => p.startsWith("/api/files/search"))).toBe(
@@ -375,9 +379,7 @@ describe("the # context menu", () => {
   });
 
   it("escapes a quote and a backslash in the fragment, so a name holding either stays one literal", async () => {
-    mockApiGetTyped.mockImplementation(() =>
-      Promise.resolve({ matches: [], scanned: 0, matched: 0, truncated: false }),
-    );
+    mockApiGetTyped.mockImplementation(() => Promise.resolve(searchReply([])));
     type('#file:a"[b\\c');
     await vi.waitFor(() => {
       expect(mockApiGetTyped.mock.calls.some(([p]) => p.startsWith("/api/files/search"))).toBe(
@@ -394,20 +396,7 @@ describe("the # context menu", () => {
     mockApiGetTyped.mockImplementation((path: string) =>
       Promise.resolve(
         path.startsWith("/api/files/search")
-          ? {
-              matches: [
-                {
-                  path: "/workspace/.agents/tasks/plan.md",
-                  excerpt: "",
-                  kind: "name",
-                  line: 0,
-                  ranges: [],
-                },
-              ],
-              scanned: 1,
-              matched: 1,
-              truncated: false,
-            }
+          ? searchReply([fileHit("/workspace/.agents/tasks/plan.md")])
           : null,
       ),
     );
@@ -427,12 +416,7 @@ describe("the # context menu", () => {
     mockApiGetTyped.mockImplementation((path: string) =>
       Promise.resolve(
         path.startsWith("/api/files/search")
-          ? {
-              matches: [{ path: "/workspace/report:1-2", excerpt: "", kind: "name", line: 0 }],
-              scanned: 1,
-              matched: 1,
-              truncated: false,
-            }
+          ? searchReply([fileHit("/workspace/report:1-2")])
           : null,
       ),
     );
@@ -662,12 +646,7 @@ describe("the # context menu", () => {
           }
         }),
     );
-    const hit = {
-      matches: [{ path: "/workspace/src/a.go", excerpt: "", kind: "name", line: 0 }],
-      scanned: 1,
-      matched: 1,
-      truncated: false,
-    };
+    const hit = searchReply([fileHit("/workspace/src/a.go")]);
     type("#file:a.go");
     await vi.waitFor(() => {
       expect(searchCalls()).toBe(1);

@@ -13,42 +13,14 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/pinstall/v3"
 )
 
-func TestSyncPushPreferences(t *testing.T) {
-	mp := &testPush{}
-	// A config dir with no config.json, rather than the cwd.
-	s := &Server{push: mp, configDir: t.TempDir()}
+type testPush struct{}
 
-	s.syncPushPreferences(map[string]json.RawMessage{})
-	if !mp.prefs[marotte.PushKindAgentFinished] || !mp.prefs[marotte.PushKindPermission] {
-		t.Error("defaults should be true")
-	}
-
-	s.syncPushPreferences(map[string]json.RawMessage{
-		"notify_agent_finished": json.RawMessage(`false`),
-	})
-	if mp.prefs[marotte.PushKindAgentFinished] {
-		t.Error("agent_finished should be false")
-	}
-	if !mp.prefs[marotte.PushKindPermission] {
-		t.Error("permission should be true")
-	}
-}
-
-type testPush struct {
-	prefs map[marotte.PushKind]bool
-}
-
-var _ pushService = (*testPush)(nil)
-
-// RegisterRoutes and SetPreferences: the two methods pushService declares.
-func (p *testPush) RegisterRoutes(*http.ServeMux)                  {}
-func (p *testPush) SetPreferences(prefs map[marotte.PushKind]bool) { p.prefs = prefs }
+func (*testPush) RegisterRoutes(*http.ServeMux) {}
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {
@@ -634,33 +606,6 @@ func TestDefaultCLITimeouts(t *testing.T) {
 	}
 	if s := got.Settings.Seconds(); s != 3 {
 		t.Errorf("defaultCLITimeouts().Settings = %v (%.0fs), want 3s", got.Settings, s)
-	}
-}
-
-// TestSyncPushPreferences_permissionIsAFloor pins that a body still carrying
-// notify_permission cannot silence a turn-blocking ask.
-func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
-	bodies := map[string]string{
-		"BareFalse":             `{"notify_permission":false}`,
-		"FalseBesideAnotherKey": `{"notify_permission":false,"notify_agent_finished":false}`,
-		"WrongType":             `{"notify_permission":"nonsense"}`,
-		"NullValue":             `{"notify_permission":null}`,
-	}
-	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			mp := &testPush{}
-			s := &Server{push: mp, configDir: t.TempDir()}
-			var patch map[string]json.RawMessage
-			if err := json.Unmarshal([]byte(body), &patch); err != nil {
-				t.Fatalf("unmarshal %s: %v", body, err)
-			}
-
-			s.syncPushPreferences(patch)
-
-			if !mp.prefs[marotte.PushKindPermission] {
-				t.Errorf("syncPushPreferences(%s) -> prefs[Permission] = false, want true (the ask is a floor)", body)
-			}
-		})
 	}
 }
 

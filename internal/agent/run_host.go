@@ -120,11 +120,13 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	}
 
 	// Register before invoke: the first lifecycle frame follows immediately.
-	launched := &sharedBridge{bridge: bridge, state: bridgeIdle}
+	launched := &sharedBridge{bridge: bridge, state: bridgeIdle, live: startedLive(bridge)}
 	if !rs.bridges.insert(runChatID(wfID), launched) {
 		bridge.Stop()
 		return "", "", fmt.Errorf("workflow %s already has a run bridge", wfID)
 	}
+	// A settings write between Start and the insert found no bridge to push to.
+	launched.syncLive(cctx, runChatID(wfID), rs.readLiveSettings)
 	// The run's envelope, before anything can execute (runlease.Lease).
 	rs.grantLease(cctx, wfID, recipe.Name, o)
 	rs.coord.goForward(runChatID(wfID), bridge)
@@ -985,8 +987,15 @@ func (rs *Runs) startRunCarrier(
 		sb.bridge.Stop()
 		return err
 	}
+	sb.adoptSpawn()
 	sb.setIdle()
+	// A settings write during the spawn skipped this bridge (syncLive).
+	sb.syncLive(cctx, chatID, rs.readLiveSettings)
 	return nil
+}
+
+func (rs *Runs) readLiveSettings(ctx context.Context) liveSettings {
+	return readLiveSettings(ctx, rs.lifecycle.configDir, readLiveFields)
 }
 
 // carrierUse counts the run verbs holding each carrier, keyed by carrier since one holds several verbs in turn.

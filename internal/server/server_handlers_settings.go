@@ -18,10 +18,8 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/logctl"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -314,7 +312,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	merged, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(patch))
+	_, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(patch))
 	if err != nil {
 		// Two 500 bodies: an unreadable document is the user's file, a failed write is ours.
 		if errors.Is(err, settings.ErrUnreadable) {
@@ -326,34 +324,8 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	webhttp.Ok(w)
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
-	s.syncPushPreferences(merged)
-	syncDebugLogs(merged)
-	if _, touched := patch[settings.KeyAgentIgnoreFiles]; touched {
-		// Durable: the write landed, so a closed tab must not leave bridges on the old list.
-		s.agent.PushAgentIgnoreFiles(durable.Context(r.Context()))
-	}
-	if _, touched := patch[settings.KeyTerminalCommandTimeoutMs]; touched {
-		s.agent.PushTerminalSettings(durable.Context(r.Context()))
-	}
-	if _, touched := patch[settings.KeyContentCollectionEnabled]; touched {
-		s.agent.PushContentCollection(durable.Context(r.Context()))
-	}
-	s.renderMCPForPatch(durable.Context(r.Context()), patch)
+	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
 	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
-}
-
-// renderMCPForPatch re-renders KAS's MCP config when the patch touched the MCP
-// wait setting, which the render reads. ctx must be durable: the write has
-// already landed. A failure still answers 200, because the setting has landed,
-// so the log names the consequence instead.
-func (s *Server) renderMCPForPatch(ctx context.Context, patch map[string]json.RawMessage) {
-	if _, touched := patch[settings.KeyMCPWaitForReady]; !touched || s.mcpRender == nil {
-		return
-	}
-	if err := s.mcpRender.RenderKASConfig(ctx); err != nil {
-		slog.Error("settings: re-rendering the MCP config failed; the previous MCP wait setting stands until the next MCP change or restart",
-			"error", err)
-	}
 }
 
 // agentIgnorePatchRefusal reports whether a patch's agent_ignore_files is one kiro-cli will
@@ -374,91 +346,4 @@ func agentIgnorePatchRefusal(patch map[string]json.RawMessage) (msg string, ok b
 		}
 	}
 	return "", true
-}
-
-// syncPushPreferences forwards the patch's notification toggles to the push service. The
-// kind set is DERIVED from push.Kinds(). A key the patch lacks resolves against the PERSISTED
-// settings before the registry default: seeding defaults would re-enable a kind the user
-// turned off. PushKindPermission has no settings key, so nothing here can lower it.
-func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
-	kinds := push.Kinds()
-	prefs := make(map[marotte.PushKind]bool, len(kinds))
-	persisted := lazySettings{path: filepath.Join(s.configDir, settings.Filename)}
-	for _, k := range kinds {
-		prefs[k.Kind] = k.DefaultOn
-		if k.SettingsKey == "" {
-			continue // an unconfigurable floor: no key, so nothing to read
-		}
-		v, ok := patch[k.SettingsKey]
-		if !ok {
-			if v, ok = persisted.lookup(k.SettingsKey); !ok {
-				continue
-			}
-		}
-		var on bool
-		if json.Unmarshal(v, &on) == nil {
-			prefs[k.Kind] = on
-		}
-	}
-	// The MASTER switch, resolved patch -> persisted and applied LAST so nothing re-widens it;
-	// it is enforced here, not only by the browser deleting its subscription. Only an explicit
-	// false zeroes: its default is off while each kind has its own, so absent is not a decision.
-	if notificationsRefused(patch, &persisted) {
-		for kind := range prefs {
-			prefs[kind] = false
-		}
-	}
-	s.push.SetPreferences(prefs)
-}
-
-// notificationsRefused reports whether the master switch is explicitly OFF, patch first,
-// then persisted. Absent or malformed is not a refusal.
-func notificationsRefused(patch map[string]json.RawMessage, persisted *lazySettings) bool {
-	raw, ok := patch[settings.KeyNotificationsEnabled]
-	if !ok {
-		if raw, ok = persisted.lookup(settings.KeyNotificationsEnabled); !ok {
-			return false
-		}
-	}
-	var enabled bool
-	if json.Unmarshal(raw, &enabled) != nil {
-		return false
-	}
-	return !enabled
-}
-
-// lazySettings reads a settings document at most once, only when a key is asked for. A read
-// failure answers absent for every key, leaving the caller's default. Single-goroutine.
-type lazySettings struct {
-	doc  map[string]json.RawMessage
-	path string
-	read bool
-}
-
-func (l *lazySettings) lookup(key string) (json.RawMessage, bool) {
-	if !l.read {
-		l.read = true
-		doc, err := readStoredSettings(l.path)
-		if err != nil {
-			slog.Warn("settings: notification preferences fell back to defaults; config.json could not be read",
-				"error", logsafe.Field(err.Error()))
-		}
-		l.doc = doc
-	}
-	v, ok := l.doc[key]
-	return v, ok
-}
-
-// syncDebugLogs flips the process-wide slog level when the user
-// toggles the Debug logs setting.
-func syncDebugLogs(patch map[string]json.RawMessage) {
-	v, ok := patch[settings.KeyDebugLogs]
-	if !ok {
-		return
-	}
-	var on bool
-	if err := json.Unmarshal(v, &on); err != nil {
-		return
-	}
-	logctl.SetDebug(on)
 }

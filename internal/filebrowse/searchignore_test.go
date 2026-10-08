@@ -424,12 +424,12 @@ func TestSearch_IgnoredFileRootIsHiddenUnlessAsked(t *testing.T) {
 	} {
 		root := filepath.Join(prefix, tc.file)
 		hidden := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": root, "q": "needle"}))
-		if len(hidden.Matches) != tc.want {
-			t.Errorf("%s by default: matches = %d, want %d", tc.file, len(hidden.Matches), tc.want)
+		if len(hidden.Matches) != tc.want || hidden.RootIgnored != (tc.want == 0) {
+			t.Errorf("%s by default: matches = %d, root_ignored = %v; want %d, %v", tc.file, len(hidden.Matches), hidden.RootIgnored, tc.want, tc.want == 0)
 		}
 		shown := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": root, "q": "needle", "ignored": "1"}))
-		if len(shown.Matches) != 1 {
-			t.Errorf("%s with ignored=1: matches = %d, want 1", tc.file, len(shown.Matches))
+		if len(shown.Matches) != 1 || shown.RootIgnored {
+			t.Errorf("%s with ignored=1: matches = %d, root_ignored = %v; want 1, false", tc.file, len(shown.Matches), shown.RootIgnored)
 		}
 	}
 }
@@ -466,12 +466,15 @@ func TestSearch_IgnoredDirectoryRootIsHiddenUnlessAsked(t *testing.T) {
 	} {
 		for _, mode := range []string{"names", "contents"} {
 			params := map[string]string{"mode": mode, "path": filepath.Join(prefix, tc.root), "q": "needle"}
-			if got := len(decodeSearch(t, searchReq(t, h, params)).Matches); got != tc.want {
-				t.Errorf("%s root %s by default: matches = %d, want %d", mode, tc.root, got, tc.want)
+			hidden := decodeSearch(t, searchReq(t, h, params))
+			if got := len(hidden.Matches); got != tc.want || hidden.RootIgnored != (tc.want == 0) {
+				t.Errorf("%s root %s by default: matches = %d, root_ignored = %v; want %d, %v",
+					mode, tc.root, got, hidden.RootIgnored, tc.want, tc.want == 0)
 			}
 			params["ignored"] = "1"
-			if got := len(decodeSearch(t, searchReq(t, h, params)).Matches); got != 1 {
-				t.Errorf("%s root %s with ignored=1: matches = %d, want 1", mode, tc.root, got)
+			shown := decodeSearch(t, searchReq(t, h, params))
+			if got := len(shown.Matches); got != 1 || shown.RootIgnored {
+				t.Errorf("%s root %s with ignored=1: matches = %d, root_ignored = %v; want 1, false", mode, tc.root, got, shown.RootIgnored)
 			}
 		}
 	}
@@ -515,5 +518,24 @@ func TestGitignore_SymlinkedGitignoreIsNotFollowed(t *testing.T) {
 
 	if got, want := listing(t, h, prefix, dir, nil), []string{".gitignore", "a.log", "rules.txt"}; !slices.Equal(got, want) {
 		t.Errorf("listing = %v, want %v: a symlinked .gitignore is not read", got, want)
+	}
+}
+
+func TestSearch_AVisibleRootWithNoMatchIsNotReportedIgnored(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	repoAt(t, dir, "")
+	writeTree(t, dir, map[string]string{
+		".gitignore":    "build/\n",
+		"src/plain.txt": "nothing here\n",
+		"notes.txt":     "nothing here\n",
+		"build/hit.txt": "needle\n",
+	})
+	for _, root := range []string{"src", "notes.txt"} {
+		for _, mode := range []string{"names", "contents"} {
+			res := decodeSearch(t, searchReq(t, h, map[string]string{"mode": mode, "path": filepath.Join(prefix, root), "q": "needle"}))
+			if len(res.Matches) != 0 || res.RootIgnored {
+				t.Errorf("%s search of visible root %s: matches = %d, root_ignored = %v; want 0, false", mode, root, len(res.Matches), res.RootIgnored)
+			}
+		}
 	}
 }

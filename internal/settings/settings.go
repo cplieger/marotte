@@ -66,53 +66,51 @@ func getCache(configDir string) *cache {
 	return c
 }
 
-type result struct {
+// generation is one read of the cache: the bytes and the generation number they were stored
+// under, so a parse of them is never tagged with a generation a later store bumped to.
+type generation struct {
 	err  error
 	data []byte
+	gen  uint64
 }
 
-func (c *cache) load() ([]byte, error) {
+func (c *cache) load() generation {
 	v, _, _ := c.sfGroup.Do("load", func() (any, error) {
-		data, err := c.reload()
-		return result{data: data, err: err}, nil
+		return c.reload(), nil
 	})
-	//nolint:errcheck // sfGroup.Do's closure always returns a `result` value.
-	r := v.(result)
-	return r.data, r.err
+	//nolint:errcheck // sfGroup.Do's closure always returns a `generation` value.
+	return v.(generation)
 }
 
 // reload is the body of the singleflight slot: resolve the path, take the mtime/size fast
 // path, otherwise read and cache.
-func (c *cache) reload() ([]byte, error) {
+func (c *cache) reload() generation {
 	// Absolute because atomicfile.OpenRegular requires it.
 	path, err := filepath.Abs(filepath.Join(c.configDir, filename))
 	if err != nil {
-		return nil, err
+		return generation{err: err}
 	}
 	// os.Stat never blocks on a FIFO, so the fast path stays one syscall.
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
-			c.forget()
-			return nil, nil
+			return generation{gen: c.forget()}
 		}
-		return nil, statErr
+		return generation{err: statErr}
 	}
 	if cached, ok := c.hit(info); ok {
-		return cached, nil
+		return cached
 	}
 	data, readInfo, err := readRegular(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			c.forget()
-			return nil, nil
+			return generation{gen: c.forget()}
 		}
-		return nil, err
+		return generation{err: err}
 	}
 	// readInfo, not the stat above: the identity must describe the generation these bytes came
 	// from, which a concurrent publish may already have replaced.
-	c.store(data, readInfo)
-	return data, nil
+	return generation{data: data, gen: c.store(data, readInfo)}
 }
 
 // readRegular reads path under MaxBytes, refusing anything but a regular file (and a final
@@ -133,44 +131,53 @@ func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 
 // hit reports the cached bytes when info matches what they were read from; a zero identity
 // reports Changed.
-func (c *cache) hit(info os.FileInfo) ([]byte, bool) {
+func (c *cache) hit(info os.FileInfo) (generation, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.id.Changed(info) || info.Size() != c.size {
-		return nil, false
+		return generation{}, false
 	}
-	return c.data, true
+	return generation{data: c.data, gen: c.gen}, true
 }
 
 // store records freshly read bytes under the identity they were read at.
-func (c *cache) store(data []byte, info os.FileInfo) {
+func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data = data
 	c.id = atomicfile.Identify(info)
 	c.size = info.Size()
 	c.gen++
+	return c.gen
 }
 
-// forget drops the cached bytes for a vanished file and bumps the generation so parsedMap
-// re-derives.
-func (c *cache) forget() {
+// forget drops the cached bytes for a vanished file. The generation moves only when the cache
+// held one, so an absent file reads as one generation for as long as it stays absent.
+func (c *cache) forget() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data = nil
-	c.id = atomicfile.FileIdentity{}
-	c.size = 0
-	c.gen++
+	if c.data != nil || c.id != (atomicfile.FileIdentity{}) {
+		c.data = nil
+		c.id = atomicfile.FileIdentity{}
+		c.size = 0
+		c.gen++
+	}
+	return c.gen
 }
 
 // readBytes returns the raw config.json content for configDir, cached; (nil, nil) when the
 // file is missing or configDir is empty. UNEXPORTED: the slice IS the shared cache's own.
 func readBytes(ctx context.Context, configDir string) ([]byte, error) {
+	g := readGeneration(ctx, configDir)
+	return g.data, g.err
+}
+
+func readGeneration(ctx context.Context, configDir string) generation {
 	if configDir == "" {
-		return nil, nil
+		return generation{}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return generation{err: err}
 	}
 	return getCache(configDir).load()
 }
@@ -201,6 +208,15 @@ func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, fo
 	return out, true, nil
 }
 
+// Generation identifies the config.json generation every reader currently sees, and reports
+// whether it is readable (absent or parsing). Equal numbers from two calls mean every read
+// between them saw the same document; an absent file is one generation while it stays absent.
+func Generation(ctx context.Context, configDir string) (gen uint64, readable bool) {
+	g := readGeneration(ctx, configDir)
+	_, err := parsedOf(configDir, g)
+	return g.gen, err == nil
+}
+
 // Field reads config.json and decodes the named key into T, returning the zero value and
 // false when the file is missing, the key is absent, or parsing fails (logged at Warn
 // naming the key). It wraps FieldStrict for callers whose fallback is a display default.
@@ -213,6 +229,24 @@ func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 		slog.Warn("settings: read config.json for "+key, "error", err)
 	}
 	return out, ok
+}
+
+// FieldOr is Field for a reader with a default: an absent key, or one that does not decode into T,
+// reads as def. readable is false only when config.json exists and could not be read or parsed, so a
+// live push can tell "the document says def" from "there is no answer".
+func FieldOr[T any](ctx context.Context, configDir, key string, def T) (value T, readable bool) {
+	out, ok, err := FieldStrict[T](ctx, configDir, key)
+	switch {
+	case errors.Is(err, errKeyParse):
+		slog.Warn("settings: parse "+key, "error", err)
+	case err != nil:
+		slog.Warn("settings: read config.json for "+key, "error", err)
+		return def, false
+	}
+	if !ok {
+		return def, true
+	}
+	return out, true
 }
 
 // FieldInto is the pointer-target variant of Field: it decodes the named key into out and
@@ -240,31 +274,33 @@ func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 // parsedMap returns the cached parsed map[string]json.RawMessage for configDir, invalidated
 // when the bytes change.
 func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
-	data, err := readBytes(ctx, configDir)
-	if err != nil {
-		return nil, err
+	return parsedOf(configDir, readGeneration(ctx, configDir))
+}
+
+func parsedOf(configDir string, g generation) (map[string]json.RawMessage, error) {
+	if g.err != nil {
+		return nil, g.err
 	}
-	if data == nil {
+	if g.data == nil {
 		return nil, nil
 	}
 	c := getCache(configDir)
 	c.mu.Lock()
-	if c.parsed != nil && c.parsedGen == c.gen {
+	if c.parsed != nil && c.parsedGen == g.gen {
 		m := c.parsed
 		c.mu.Unlock()
 		return m, nil
 	}
-	curGen := c.gen
 	c.mu.Unlock()
 
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(g.data, &raw); err != nil {
 		return nil, err
 	}
 
 	c.mu.Lock()
 	c.parsed = raw
-	c.parsedGen = curGen
+	c.parsedGen = g.gen
 	c.mu.Unlock()
 	return raw, nil
 }

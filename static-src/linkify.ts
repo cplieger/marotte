@@ -29,7 +29,7 @@ const PATH_EXEC_RX = new RegExp(PATH_PATTERN, "g");
 const SKIP_TAGS = "code, pre, a, button";
 
 /**
- * Injected, like `initAttachmentPillCallbacks`: importing `openAtLine` would close a ring through the editor. A no-op
+ * Injected, like `initAttachmentPillCallbacks`: importing the opener would close a ring through the editor. A no-op
  * default so a test link renders unwired.
  */
 let _open: (path: string, line?: number) => void = () => {
@@ -40,7 +40,7 @@ export function initLinkifyCallbacks(cbs: { open: (path: string, line?: number) 
   _open = cbs.open;
 }
 
-/** Open `path` in the editor on a plain primary click; a modified or non-primary click follows the anchor's href. */
+/** Open `path` through the injected opener on a plain primary click; a modified or non-primary click follows the anchor's href. */
 export function bindFileLink(a: HTMLAnchorElement, path: string, line?: number): void {
   a.addEventListener("click", (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
