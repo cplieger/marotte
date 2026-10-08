@@ -221,7 +221,8 @@
 
    Do NOT set this card's `.fb-path` size with two classes: (0,2,0) beats the floor
    and silently reintroduces the zoom. */
-.filepicker-list .fb-row {
+.filepicker-list .fb-row,
+.filepicker-list .fb-notice {
   font-size: var(--fs-popup);
 }
 
@@ -282,8 +283,10 @@
     border-block-end-color: transparent;
   }
 
-  &:hover {
-    background: var(--c-bg-tertiary);
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-bg-tertiary);
+    }
   }
 
   /* Selected: 70-selection.css, with every other selected surface. */
@@ -297,6 +300,18 @@
   }
 }
 
+/* A status line inside a listing (an error, "Empty"): the row's box without the row's
+   hover, separator or entry animation, because it is not something to pick. */
+.fb-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h);
+  font-size: var(--fs-sm);
+}
+
 .fb-check {
   width: 1rem;
   height: 1rem;
@@ -307,7 +322,8 @@
 /* A finger's row and checkbox, on the observed tier (pointer-tier.ts) rather than
    the width. `:where()` keeps both at (0,1,0), so they win by order. */
 :where([data-pointer="coarse"]) {
-  .fb-row {
+  .fb-row,
+  .fb-notice {
     padding: var(--sp-3);
   }
 
@@ -342,10 +358,6 @@
 
 .fb-name-link {
   cursor: pointer;
-}
-
-.fb-name-link:hover {
-  color: var(--c-text-primary);
 }
 
 /* No per-row add-to-chat control. `.fb-add-to-chat` styled one as an inline

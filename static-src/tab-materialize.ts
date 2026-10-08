@@ -8,7 +8,7 @@ import { get, subagentStatusFor, turnLive } from "./store.js";
 import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
-// Acyclic: files-shared.ts imports only api-client.js and @cplieger/reactive.
+// Acyclic: files-shared.ts imports only @cplieger/reactive.
 import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 
 // --- The injected half ---

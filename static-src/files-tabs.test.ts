@@ -31,6 +31,8 @@ const h = vi.hoisted(() => {
     renameTab: vi.fn(),
     openFile: vi.fn(),
     openFileInBackground: vi.fn(),
+    /** Paint the rows placeholder at once instead of never, for the cases that read the loading cue. */
+    paintSkeleton: false,
   };
 });
 
@@ -102,7 +104,10 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
-  skeletonTiming: () => ({ cancel: vi.fn(), commit: (r: () => void) => r() }),
+  skeletonTiming: (show: () => (() => void) | undefined) => {
+    const teardown = h.paintSkeleton ? show() : undefined;
+    return { cancel: () => teardown?.(), commit: (r: () => void) => r() };
+  },
 }));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
@@ -121,7 +126,7 @@ vi.mock("./store.js", () => ({
 }));
 
 import { $ } from "./dom.js";
-import { apiGet } from "./api-client.js";
+import { apiGetOrError } from "./api-client.js";
 import { FB_CHECK, FB_NAME } from "./files-shared.js";
 import {
   bindFilesTab,
@@ -141,9 +146,34 @@ function listing(): { files: { name: string; isDir: boolean }[]; writable: boole
   };
 }
 
+function okAnswer(body: unknown): unknown {
+  return { ok: true, status: 200, data: body, error: "" };
+}
+
+/** Per-path answers, each path's queue consumed in order and its last entry repeated; unlisted paths list. */
+const answers = new Map<string, unknown[]>();
+
+function answerFor(url: string): unknown {
+  const path = new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path") ?? "";
+  const queue = answers.get(path);
+  if (queue === undefined || queue.length === 0) {
+    return okAnswer(listing());
+  }
+  return queue.length > 1 ? queue.shift() : queue[0];
+}
+
 async function show(ref: string): Promise<void> {
   showFilesTab(ref);
   await new Promise((r) => setTimeout(r, 0));
+}
+
+/** A request that stays pending until `release` answers it, so another load can supersede it first. */
+function held(): { answer: Promise<unknown>; release: (v: unknown) => void } {
+  let release: (v: unknown) => void = () => undefined;
+  const answer = new Promise<unknown>((r) => {
+    release = r;
+  });
+  return { answer, release };
 }
 
 /** Narrows without a `!`. */
@@ -175,12 +205,30 @@ function middleClick(target: HTMLElement): MouseEvent {
 beforeEach(() => {
   releaseFilesTab("/a");
   releaseFilesTab("/b");
+  releaseFilesTab("/w");
   h.els.clear();
+  h.paintSkeleton = false;
   vi.clearAllMocks();
-  vi.mocked(apiGet).mockImplementation(() => Promise.resolve(listing()));
+  answers.clear();
+  vi.mocked(apiGetOrError).mockImplementation((url: string) =>
+    Promise.resolve(answerFor(url) as never),
+  );
 });
 
 describe("two browsers over one view element", () => {
+  it("acts on nothing from a closed browser's late answer", async () => {
+    const late = held();
+    answers.set("/a", [late.answer]);
+    showFilesTab("/a");
+    releaseFilesTab("/a");
+    late.release({ ok: false, status: 404, data: null, error: "not found" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.setFilesRoute, "no route is written for a tab that is gone").not.toHaveBeenCalled();
+    expect(vi.mocked(apiGetOrError), "and nothing is fetched on its behalf").toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
   it("gives each tab its own directory, and a switch re-points rather than merging", async () => {
     expect.assertions(2);
     await show("/a");
@@ -342,7 +390,7 @@ describe("each browser keeps its own scroll position over the shared list", () =
   }
 
   it("lands A, then B, then A each where it was left", async () => {
-    vi.mocked(apiGet).mockImplementation(() => Promise.resolve(tall()));
+    vi.mocked(apiGetOrError).mockImplementation(() => Promise.resolve(okAnswer(tall()) as never));
     const wrap = mountScroller();
     initFileBrowser();
     try {
@@ -365,7 +413,7 @@ describe("each browser keeps its own scroll position over the shared list", () =
 
   // The offset belongs to the folder.
   it("brings a browser back at the top of a folder it moved to and was not scrolled in", async () => {
-    vi.mocked(apiGet).mockImplementation(() => Promise.resolve(tall()));
+    vi.mocked(apiGetOrError).mockImplementation(() => Promise.resolve(okAnswer(tall()) as never));
     const wrap = mountScroller();
     initFileBrowser();
     try {
@@ -380,5 +428,293 @@ describe("each browser keeps its own scroll position over the shared list", () =
     } finally {
       wrap.remove();
     }
+  });
+});
+
+describe("the path field and the listing error", () => {
+  const notADirectory = {
+    ok: false,
+    status: 400,
+    data: null,
+    error: "not a directory",
+    code: "not_a_directory",
+  };
+  const notFound = { ok: false, status: 404, data: null, error: "not found" };
+
+  function typePath(path: string): void {
+    const input = $.fbPath as HTMLInputElement;
+    input.click();
+    input.value = path;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  }
+
+  function notices(): HTMLElement[] {
+    return [...$.fbList.querySelectorAll<HTMLElement>(".fb-notice")];
+  }
+
+  function buttonLabels(notice: HTMLElement): string[] {
+    return [...notice.querySelectorAll("button")].map((b) => b.textContent);
+  }
+
+  function clickButton(label: string): void {
+    const btn = [...$.fbList.querySelectorAll("button")].find((b) => b.textContent === label);
+    must(btn).click();
+  }
+
+  async function showFailedListing(): Promise<void> {
+    answers.set("/w/gone", [notFound]);
+    initFileBrowser();
+    await show("/w");
+    typePath("/w/gone");
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+  }
+
+  it("opens a FILE typed in the field and shows its folder, with no file in the trail", async () => {
+    answers.set("/a/note.txt", [notADirectory]);
+    initFileBrowser();
+    await show("/w");
+    typePath("/a/note.txt");
+    await vi.waitFor(() => {
+      expect(($.fbPath as HTMLInputElement).value).toBe("/a");
+      expect(rowFor("note.txt")).toBeDefined();
+    });
+    expect(h.openFile.mock.calls).toEqual([["/a/note.txt"]]);
+    expect(notices()).toEqual([]);
+    expect(h.setFilesRoute.mock.calls.at(-1)?.[1]).toBe("/a");
+    expect(h.setFilesRoute.mock.calls.map((c) => c[1] as string)).not.toContain("/a/note.txt");
+
+    ($.fbBack as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(($.fbPath as HTMLInputElement).value).toBe("/w");
+    expect(($.fbBack as HTMLButtonElement).disabled, "Back now sits at the trail's start").toBe(
+      true,
+    );
+  });
+
+  it("lands an outside pointer at a file on its folder without opening it", async () => {
+    answers.set("/a/note.txt", [notADirectory]);
+    await show("/a");
+    pointFilesTab("/a", "/a/note.txt");
+    await vi.waitFor(() => {
+      expect(h.setFilesRoute.mock.calls.at(-1)?.[1]).toBe("/a");
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(($.fbPath as HTMLInputElement).value).toBe("/a");
+    expect(rowFor("note.txt")).toBeDefined();
+    expect(h.openFile).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's own words for a failed listing, with Retry and Go to root", async () => {
+    await showFailedListing();
+    const [notice] = notices();
+    expect(must(notice).textContent).toContain("not found");
+    expect(must(notice).textContent).not.toContain("fetch failed");
+    expect(buttonLabels(must(notice))).toEqual(["Retry", "Go to root"]);
+    expect($.fbList.children, "the notice replaces every row").toHaveLength(1);
+    expect($.fbList.hasAttribute("role"), "a notice is not a list").toBe(false);
+  });
+
+  it("leaves no error behind after Go to root", async () => {
+    await showFailedListing();
+    clickButton("Go to root");
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+    expect(notices()).toEqual([]);
+    expect($.fbList.getAttribute("role")).toBe("list");
+    expect(($.fbPath as HTMLInputElement).value).toBe("/");
+  });
+
+  it("takes the error down the moment Go to root is pressed, before the root answers", async () => {
+    await showFailedListing();
+    const root = held();
+    answers.set("/", [root.answer]);
+    clickButton("Go to root");
+    await vi.waitFor(() => {
+      expect(notices()).toEqual([]);
+    });
+    expect(($.fbPath as HTMLInputElement).value).toBe("/");
+    expect($.fbList.getAttribute("role")).toBe("list");
+    root.release(okAnswer(listing()));
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+  });
+
+  it("shows a typed folder's error even when the opening folder had not answered yet", async () => {
+    const origin = held();
+    answers.set("/w", [origin.answer]);
+    answers.set("/w/gone", [notFound]);
+    initFileBrowser();
+    showFilesTab("/w");
+    typePath("/w/gone");
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    expect(must(notices()[0]).textContent).toContain("not found");
+    expect(buttonLabels(must(notices()[0]))).toEqual(["Retry", "Go to root"]);
+    expect(($.fbPath as HTMLInputElement).value).toBe("/w/gone");
+    expect(h.setFilesRoute.mock.calls.map((c) => c[1] as string)).not.toContain("/");
+    origin.release(okAnswer(listing()));
+  });
+
+  it("takes the error down the moment Retry is pressed, showing the loading rows until the answer", async () => {
+    await showFailedListing();
+    h.paintSkeleton = true;
+    const again = held();
+    answers.set("/w/gone", [again.answer]);
+    clickButton("Retry");
+    expect(notices()).toEqual([]);
+    expect($.fbList.getAttribute("role")).toBe("list");
+    expect($.fbList.querySelector(".fb-skeleton")).not.toBeNull();
+    again.release(okAnswer(listing()));
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+    expect($.fbList.querySelector(".fb-skeleton")).toBeNull();
+  });
+
+  it("takes the error down the moment the failed path is entered again, showing the loading rows", async () => {
+    await showFailedListing();
+    h.paintSkeleton = true;
+    const again = held();
+    answers.set("/w/gone", [again.answer]);
+    typePath("/w/gone");
+    expect(notices()).toEqual([]);
+    expect($.fbList.getAttribute("role")).toBe("list");
+    expect($.fbList.querySelector(".fb-skeleton")).not.toBeNull();
+    again.release(okAnswer(listing()));
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+  });
+
+  it("shows the loading rows beside .. while Back leaves a failed folder", async () => {
+    await showFailedListing();
+    h.paintSkeleton = true;
+    const back = held();
+    answers.set("/w", [back.answer]);
+    ($.fbBack as HTMLButtonElement).click();
+    expect(notices()).toEqual([]);
+    expect($.fbList.querySelector('[data-reconcile-key="__parent__"]')).not.toBeNull();
+    expect($.fbList.querySelector(".fb-skeleton")).not.toBeNull();
+    back.release(okAnswer(listing()));
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+    expect($.fbList.querySelector(".fb-skeleton")).toBeNull();
+  });
+
+  it("shows the loading rows on a Retry after a failed refresh of a folder it had read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))),
+    );
+    answers.set("/w", [okAnswer(listing()), notFound]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    h.paintSkeleton = true;
+    const again = held();
+    answers.set("/w", [again.answer]);
+    clickButton("Retry");
+    expect($.fbList.querySelector(".fb-skeleton")).not.toBeNull();
+    again.release(okAnswer(listing()));
+  });
+
+  it("leaves no error behind after a Retry that succeeds", async () => {
+    answers.set("/w/gone", [notFound, okAnswer(listing())]);
+    initFileBrowser();
+    await show("/w");
+    typePath("/w/gone");
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    clickButton("Retry");
+    await vi.waitFor(() => {
+      expect(rowFor("sub")).toBeDefined();
+    });
+    expect(notices()).toEqual([]);
+    expect($.fbList.getAttribute("role")).toBe("list");
+  });
+
+  it("keeps the error with its own browser across a tab switch", async () => {
+    answers.set("/a/gone", [notFound]);
+    initFileBrowser();
+    await show("/a");
+    typePath("/a/gone");
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    await show("/b");
+    expect(notices(), "the healthy browser shows its rows").toEqual([]);
+    expect(rowFor("sub")).toBeDefined();
+    bindFilesTab("/a");
+    expect(notices(), "the failed browser still shows its error").toHaveLength(1);
+  });
+
+  it("still opens a typed file after another browser superseded its request", async () => {
+    const first = held();
+    answers.set("/a/note.txt", [first.answer, notADirectory]);
+    initFileBrowser();
+    await show("/a");
+    typePath("/a/note.txt");
+    await show("/b");
+    first.release(notADirectory);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.openFile, "the superseded answer paints nothing").not.toHaveBeenCalled();
+
+    await show("/a");
+    await vi.waitFor(() => {
+      expect(h.openFile.mock.calls).toEqual([["/a/note.txt"]]);
+    });
+    expect(($.fbPath as HTMLInputElement).value).toBe("/a");
+    expect(h.renameTab.mock.calls.map((c) => c[1] as string)).not.toContain("note.txt");
+  });
+
+  it("publishes a typed folder once a load after a supersession answers it", async () => {
+    const first = held();
+    answers.set("/a/sub", [first.answer, okAnswer(listing())]);
+    initFileBrowser();
+    await show("/a");
+    typePath("/a/sub");
+    await show("/b");
+    first.release(okAnswer(listing()));
+    h.setFilesRoute.mockClear();
+
+    await show("/a");
+    await vi.waitFor(() => {
+      expect(h.setFilesRoute.mock.calls).toEqual([["/a", "/a/sub"]]);
+    });
+  });
+
+  it("shows the server's words when the refresh after a create fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))),
+    );
+    answers.set("/w", [okAnswer(listing()), notFound]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    expect(must(notices()[0]).textContent).toContain("not found");
+  });
+
+  it("treats Enter on the unchanged path as a reload, not a move", async () => {
+    initFileBrowser();
+    await show("/a");
+    vi.mocked(apiGetOrError).mockClear();
+    typePath("/a");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(($.fbBack as HTMLButtonElement).disabled).toBe(true);
+    expect(vi.mocked(apiGetOrError)).toHaveBeenCalledTimes(1);
   });
 });

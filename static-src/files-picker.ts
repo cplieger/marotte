@@ -4,29 +4,29 @@ import { closeModal, openModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
-  fetchDir,
   joinPath,
   parentPath,
   FB_ROOT,
   normalizeDirPath,
-  errorRow,
+  listNotice,
   sortEntries,
   initEditablePath,
-  type FetchDirOpts,
   FB_ROW,
   FB_NAME,
   FB_NAME_LINK,
   FB_CHECK,
-  FB_META,
 } from "./files-shared.js";
+import { fetchDir, type FetchDirOpts } from "./files-fetch.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { screenUploads } from "./upload-policy.js";
 import * as toast from "./toast.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { reconcile } from "./reconcile.js";
+import { KEY_ATTR, reconcile } from "./reconcile.js";
+import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
 import { el } from "@cplieger/reactive";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 
 type DirEntry = { kind: "up" } | { kind: "file"; name: string; isDir: boolean };
 
@@ -132,25 +132,35 @@ function loadDir(): void {
   const pathEl = byId<HTMLInputElement>("filepicker-path");
   pathEl.value = currentPath;
   pathEl.readOnly = true;
+  // Before the fetch, so a notice (an error, "Empty") goes the moment a move or a Retry starts.
+  for (const child of [...list.children]) {
+    if (child.getAttribute(KEY_ATTR) === null) {
+      child.remove();
+    }
+  }
+  const skeleton = skeletonTiming(() =>
+    paintPlaceholder(list, () => fileRowsSkeleton({ meta: false })),
+  );
 
   void fetchDir(currentPath, pickerFetchHolder).then((d) => {
-    // Drop non-keyed siblings (error row, placeholder) before reconciling.
-    for (const child of [...list.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
-        child.remove();
-      }
+    skeleton.cancel();
+    if (d.kind === "stale") {
+      return;
     }
 
-    if (d.error !== undefined) {
-      if (d.error === "stale") {
-        return;
-      }
+    if (d.kind === "not-dir") {
+      const name = currentPath.split("/").pop() ?? "";
+      currentPath = parentPath(currentPath);
+      selected.clear();
+      selected.add(name);
+      syncAttachBtn();
+      loadDir();
+      return;
+    }
+
+    if (d.kind === "error") {
       reconcile(list, [], { key: () => "", mount: () => el("div") });
-      list.appendChild(
-        errorRow(d.error, () => {
-          loadDir();
-        }),
-      );
+      list.appendChild(listNotice(d.message, [{ label: "Retry", run: loadDir }]));
       return;
     }
 
@@ -177,9 +187,7 @@ function loadDir(): void {
     });
 
     if (sorted.length === 0 && currentPath === FB_ROOT) {
-      list.appendChild(
-        el("div", { className: FB_ROW }, el("span", { className: FB_META }, "Empty")),
-      );
+      list.appendChild(listNotice("Empty"));
     }
   });
 }
