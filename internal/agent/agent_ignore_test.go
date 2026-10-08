@@ -95,14 +95,14 @@ func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatI
 	return h, probes
 }
 
-// TestPushAgentIgnoreFiles_ReachesEveryLiveBridge asserts each probe individually: an
+// TestSettingsWrite_PushesTheIgnoreListToEveryLiveBridge asserts each probe individually: an
 // aggregate count passes a loop that sent one bridge two frames and the other none.
-func TestPushAgentIgnoreFiles_ReachesEveryLiveBridge(t *testing.T) {
+func TestSettingsWrite_PushesTheIgnoreListToEveryLiveBridge(t *testing.T) {
 	dir := t.TempDir()
-	writeIgnoreFiles(t, dir, []string{".gitignore"})
 	h, probes := twoLiveBridges(t, dir)
+	writeIgnoreFiles(t, dir, []string{".gitignore"})
 
-	h.PushAgentIgnoreFiles(t.Context())
+	h.ReconcileSessionSettings(t.Context())
 
 	want := []string{settings.AgentIgnoreFloor, ".gitignore"}
 	for id, p := range probes {
@@ -117,9 +117,9 @@ func TestPushAgentIgnoreFiles_ReachesEveryLiveBridge(t *testing.T) {
 	}
 }
 
-// TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable pins the absence of a
+// TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument pins the absence of a
 // frame: `{files: []}` would clear enforcement in KAS for every open chat.
-func TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable(t *testing.T) {
+func TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument(t *testing.T) {
 	logs := captureLogs(t)
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
@@ -129,7 +129,7 @@ func TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable(t *testing
 	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
 	}
-	h.PushAgentIgnoreFiles(t.Context())
+	h.ReconcileSessionSettings(t.Context())
 
 	for id, p := range probes {
 		if frames := p.ignoreFrames(); len(frames) != 0 {
@@ -142,9 +142,9 @@ func TestPushAgentIgnoreFiles_SendsNothingWhenTheDocumentIsUnreadable(t *testing
 	}
 }
 
-// TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable pins the broadcast that
+// TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable pins the broadcast that
 // shows the reader why their edit did nothing.
-func TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable(t *testing.T) {
+func TestSettingsWrite_TellsTheClientTheIgnoreListIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
 	h, _ := twoLiveBridges(t, dir)
@@ -152,7 +152,7 @@ func TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable(t *testing.T
 	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
 	}
-	h.PushAgentIgnoreFiles(t.Context())
+	h.ReconcileSessionSettings(t.Context())
 
 	var got []marotte.PolicyErrorItem
 	for _, e := range h.bus.fanout.Snapshot() {
@@ -173,8 +173,10 @@ func TestPushAgentIgnoreFiles_TellsTheClientTheDocumentIsUnreadable(t *testing.T
 	if got[0].Source != settings.Filename {
 		t.Errorf("policy error names source %q, want %q: the reader has to know WHICH document to fix", got[0].Source, settings.Filename)
 	}
-	if !strings.Contains(got[0].Message, "kiro-cli keeps enforcing the previous one") {
-		t.Errorf("policy error message %q does not say the previous list is still in force; a reader who assumes the list was cleared would edit the wrong thing", got[0].Message)
+	if msg := got[0].Message; !strings.Contains(msg, "already running keep enforcing their previous list") ||
+		!strings.Contains(msg, "enforces only "+settings.AgentIgnoreFloor) {
+		t.Errorf("policy error message %q does not name both populations: running chats keep their list, a chat started "+
+			"meanwhile enforces only %s", msg, settings.AgentIgnoreFloor)
 	}
 }
 

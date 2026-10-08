@@ -45,7 +45,7 @@ import { activateFile, closeEditorFile, refreshFile } from "./editor-openers.js"
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
-import { openAtLine } from "./navigate.js";
+import { openFileOrPage } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initLinkifyCallbacks } from "./linkify.js";
 import { setPreviewOpener } from "./preview-card.js";
@@ -259,10 +259,10 @@ function init(): void {
   initChatAttach();
   // One opener for BOTH pill homes. Injected because attachment-pill.ts is a leaf and
   // one of its consumers is a pure `fundamentals/` view.
-  initAttachmentPillCallbacks({ open: openAtLine });
+  initAttachmentPillCallbacks({ open: openFileOrPage });
   // Injected one rung out: markdown reaches linkify and `editor-markdown` reaches markdown,
   // so linkify importing the opener closed a ring.
-  initLinkifyCallbacks({ open: openAtLine });
+  initLinkifyCallbacks({ open: openFileOrPage });
   setPreviewOpener(openWebPreview);
   initTaskListPill();
   // Through the same dispatcher as Ctrl-F, so the two cannot mean different things. A

@@ -33,9 +33,12 @@ type sharedBridge struct {
 	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
 
-	turnGen uint64
-	mu      sync.Mutex
-	state   bridgeState
+	// liveLock serializes every live push to this process and guards live (syncLive).
+	liveLock surfaceLock
+	live     bridgeLive
+	turnGen  uint64
+	mu       sync.Mutex
+	state    bridgeState
 	// effortHealed latches the one reactive effort repair (BridgeCoordinator.healEffort).
 	effortHealed bool
 	retire       bool

@@ -165,6 +165,41 @@ func TestGrant_Refusals(t *testing.T) {
 	}
 }
 
+// testdata/page-shapes.json is the page-shape contract preview-page.test.ts reads too: the client
+// offers a preview only for a path this handler grants. Its paths are rooted at /workspace.
+func TestGrant_PageShapesMatchTheFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/page-shapes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Path        string `json:"path"`
+		Previewable bool   `json:"previewable"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t)
+	for i, row := range rows {
+		p := row.Path
+		if rest, ok := strings.CutPrefix(p, "/workspace"); ok {
+			p = f.ws + rest
+		}
+		t.Run("row"+strconv.Itoa(i), func(t *testing.T) {
+			if row.Previewable {
+				write(t, p, "<p>page")
+			}
+			got, body := f.grantStatus(p)
+			switch {
+			case row.Previewable && got != http.StatusOK:
+				t.Errorf("grant(%q) = %d %s, want 200", row.Path, got, body)
+			case !row.Previewable && got != http.StatusBadRequest && got != http.StatusForbidden:
+				t.Errorf("grant(%q) = %d %s, want a 400 or 403 shape refusal", row.Path, got, body)
+			}
+		})
+	}
+}
+
 func TestGrant_EscapedNamesRoundTrip(t *testing.T) {
 	f := newFixture(t)
 	for _, name := range []string{"my page.html", "a#b?.html", "100%.html", "x+y&z=1@$:,;.html", "café-日本.html", "a%2fb.html"} {

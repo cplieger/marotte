@@ -6,14 +6,13 @@ package agent
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// ignorePushTimeout is a wedged-pipe ceiling for one Notify; bridge.Notify carries no deadline.
+// ignorePushTimeout is a wedged-pipe ceiling for one live push; bridge.Notify carries no deadline.
 const ignorePushTimeout = 10 * time.Second
 
 // readAgentIgnoreFiles resolves the list sent to KAS and reports whether the settings
@@ -21,8 +20,6 @@ const ignorePushTimeout = 10 * time.Second
 func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string, ok bool) {
 	list, _, err := settings.FieldStrict[[]string](ctx, configDir, settings.KeyAgentIgnoreFiles)
 	if err != nil {
-		slog.Warn("agent ignore files: settings unreadable; the list marotte could send is a guess",
-			"key", settings.KeyAgentIgnoreFiles, "error", err)
 		return []string{settings.AgentIgnoreFloor}, false
 	}
 	return settings.AgentIgnoreList(list), true
@@ -31,44 +28,31 @@ func readAgentIgnoreFiles(ctx context.Context, configDir string) (files []string
 // spawnIgnoreFiles resolves StartOpts.IgnoreFiles for every spawn site. An unreadable
 // document yields the FLOOR: sending nothing would leave `.kiroignore` unenforced for the session.
 func spawnIgnoreFiles(ctx context.Context, configDir string) []string {
-	files, _ := readAgentIgnoreFiles(ctx, configDir)
+	files, ok := readAgentIgnoreFiles(ctx, configDir)
+	if !ok {
+		slog.Warn("agent ignore files: settings unreadable; this spawn enforces only the floor",
+			"key", settings.KeyAgentIgnoreFiles)
+	}
 	return files
 }
 
-// PushAgentIgnoreFiles fans the ignore list out to every live bridge after a settings
-// write; KAS applies it hot. Per-bridge failures are logged. On an unreadable document it
-// sends NOTHING and reports it: an empty list would CLEAR enforcement in KAS.
-func (rt *Runtime) PushAgentIgnoreFiles(ctx context.Context) {
-	bridges := rt.bridge.mgr.all()
-	if len(bridges) == 0 {
-		return
+// reportIgnoreFilesUnreadable tells the operator and the client what is enforced while the list cannot be read: a
+// running process keeps its previous list, because an empty push would CLEAR enforcement in KAS, and a process spawned
+// meanwhile gets only the floor (spawnIgnoreFiles). It reports whether it did; with no chat process there is nothing
+// to report.
+func (rt *Runtime) reportIgnoreFilesUnreadable(ctx context.Context) bool {
+	bridges := rt.bridge.mgr.count()
+	if bridges == 0 {
+		return false
 	}
-	files, ok := readAgentIgnoreFiles(ctx, rt.lifecycle.configDir)
-	if !ok {
-		slog.Error("agent ignore files not pushed; kiro-cli keeps enforcing the previous list",
-			"key", settings.KeyAgentIgnoreFiles, "bridges", len(bridges))
-		rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPolicyError, "", marotte.PolicyErrorPayload{
-			Errors: []marotte.PolicyErrorItem{{
-				Source:  settings.Filename,
-				Message: "The agent ignore file list could not be read, so kiro-cli keeps enforcing the previous one.",
-			}},
-		}))
-		return
-	}
-
-	cctx, cancel := context.WithTimeout(ctx, ignorePushTimeout)
-	defer cancel()
-
-	var wg sync.WaitGroup
-	for chatID, sb := range bridges {
-		wg.Go(func() {
-			if err := sb.Notify(cctx, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{
-				marotte.ParamIgnoreFiles: files,
-			}); err != nil {
-				slog.Warn("agent ignore files: bridge notify failed",
-					"chat_id", chatID, "files", files, "error", err)
-			}
-		})
-	}
-	wg.Wait()
+	slog.Error("agent ignore files not pushed; running chats keep their previous list, a chat started before the file is fixed enforces only the floor",
+		"key", settings.KeyAgentIgnoreFiles, "floor", settings.AgentIgnoreFloor, "bridges", bridges)
+	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPolicyError, "", marotte.PolicyErrorPayload{
+		Errors: []marotte.PolicyErrorItem{{
+			Source: settings.Filename,
+			Message: "The agent ignore file list could not be read. Chats already running keep enforcing their previous list; " +
+				"a chat started before the file is fixed enforces only " + settings.AgentIgnoreFloor + ".",
+		}},
+	}))
+	return true
 }

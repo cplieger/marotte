@@ -5,7 +5,7 @@ import { join } from "@cplieger/keyenc";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { $, byId } from "./dom.js";
 import { apiGetTypedOrError } from "./api-client.js";
-import { openAtLine } from "./navigate.js";
+import { openAtLine, openFileOrPage } from "./navigate.js";
 import { reconcile } from "./reconcile.js";
 import { paintIfChanged, wireSignature } from "./paint-sig.js";
 import { fileIcon, ICON_EYE_UI, ICON_FILE_TEXT_UI } from "./icons.js";
@@ -46,6 +46,7 @@ const FIELD_COPY: Record<SearchMode, string> = {
 
 const NAMES_HINT = "Type a name, or a pattern like *.css";
 const INVALID_NOTE = "Incomplete or invalid pattern";
+const IGNORED_ROOT_NOTE = "This folder is ignored. Turn on Include ignored files to search it.";
 
 /** A 400 is the pattern's fault, which the reader fixes by typing on, so it is told apart from a
  *  search that could not run. */
@@ -270,6 +271,10 @@ function ensureBuilt(): void {
       const res = answer.result;
       lastMatches = res.matches;
       renderResults(searchPath);
+      if (res.matches.length === 0 && res.root_ignored) {
+        built.setNote(IGNORED_ROOT_NOTE);
+        return;
+      }
       if (res.matches.length === 0) {
         // A stopped scan is stated, or an empty result reads as "nowhere".
         built.setNote(
@@ -392,7 +397,7 @@ function openItem(item: ResultItem): void {
         ctx?.openFolder(item.match.path);
         return;
       }
-      openAtLine(item.match.path);
+      openFileOrPage(item.match.path);
       return;
   }
 }

@@ -30,7 +30,7 @@ func (p *runOutcomePush) Subscribe(marotte.PushSubscription)       {}
 func (p *runOutcomePush) Unsubscribe(string)                       {}
 func (p *runOutcomePush) HasSubscribers() bool                     { return true }
 func (p *runOutcomePush) SetPreferences(map[marotte.PushKind]bool) {}
-func (p *runOutcomePush) ReloadPreferences(context.Context)        {}
+func (p *runOutcomePush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (p *runOutcomePush) Close()                                   {}
 func (p *runOutcomePush) Retract(marotte.PushSubject)              {}
 func (p *runOutcomePush) Send(

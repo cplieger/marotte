@@ -58,6 +58,15 @@ function decorate(block: HTMLElement): HTMLElement {
   return block;
 }
 
+/** `parser_end` leaves the last top-level block open, so no per-block callback reaches it; a fence
+ *  there is `decorateCodeBlocks`'s. Idempotent, because `linkifyPaths` skips its own buttons. */
+function linkifyTail(host: HTMLElement): void {
+  const tail = host.lastElementChild;
+  if (tail instanceof HTMLElement && tail.tagName !== "PRE") {
+    linkifyPaths(tail);
+  }
+}
+
 function decorateAndAnimate(block: HTMLElement): void {
   // The tag goes on what decorate left in the document, or a replaced `<pre>` animates detached and the diagram does not.
   decorate(block).setAttribute("data-vk-block-enter", "");
@@ -177,6 +186,7 @@ export function createMarkdownStream(
       }
       draining = false;
       parser_end(p);
+      linkifyTail(host);
       // parser_end does not close an open fence, so finalize it here: highlighting and Run are withheld while streaming.
       decorateCodeBlocks(host);
     },
@@ -188,6 +198,7 @@ export function renderMarkdownInto(host: HTMLElement, md: string): void {
   const p = parser(domRenderer(host, { onBlockComplete: decorate }));
   parser_write(p, md);
   parser_end(p);
+  linkifyTail(host);
   // An unterminated fence in stored content never reaches the per-block callback either.
   decorateCodeBlocks(host);
 }

@@ -181,8 +181,33 @@ func (b *Bridge) AssertContentCollection(ctx context.Context) (bool, error) {
 	}
 	b.contentCollectionMu.Lock()
 	defer b.contentCollectionMu.Unlock()
-	enabled := b.contentCollection(ctx)
-	return enabled, b.setContentCollection(ctx, enabled)
+	enabled, _ := b.contentCollection(ctx)
+	return enabled, b.sendContentCollection(ctx, enabled)
+}
+
+// RefreshContentCollection is AssertContentCollection for a live process: it sends only a value KAS has not
+// confirmed. Over unreadable settings it keeps a confirmed value and sends the resolved one when none is confirmed,
+// as a session door would.
+func (b *Bridge) RefreshContentCollection(ctx context.Context) (bool, error) {
+	if b.contentCollection == nil {
+		return false, nil
+	}
+	b.contentCollectionMu.Lock()
+	defer b.contentCollectionMu.Unlock()
+	enabled, readable := b.contentCollection(ctx)
+	if applied, known := b.ContentCollectionApplied(); known && (!readable || applied == enabled) {
+		return enabled, nil
+	}
+	return enabled, b.sendContentCollection(ctx, enabled)
+}
+
+// sendContentCollection runs under contentCollectionMu.
+func (b *Bridge) sendContentCollection(ctx context.Context, enabled bool) error {
+	err := b.setContentCollection(ctx, enabled)
+	b.mu.Lock()
+	b.contentCollectionApplied, b.contentCollectionKnown = enabled, err == nil
+	b.mu.Unlock()
+	return err
 }
 
 // setContentCollection sends the option and checks the reply, which carries the option KAS now holds.
@@ -263,19 +288,22 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 // applyIgnoreFiles tells KAS which ignore files to enforce, once per bridge before the first session verb: the value
 // is connection-scoped. Resolved here, since a settings write between registration and Start reaches this bridge.
 // Nil or empty sends nothing: `{files: []}` clears the list. Best-effort at Warn; KAS no-ops a malformed payload.
-func (b *Bridge) applyIgnoreFiles(ctx context.Context, resolve func(context.Context) []string) {
+// Returns the list sent, nil when none was sent or the send failed.
+func (b *Bridge) applyIgnoreFiles(ctx context.Context, resolve func(context.Context) []string) []string {
 	if resolve == nil {
-		return
+		return nil
 	}
 	names := resolve(ctx)
 	if len(names) == 0 {
-		return
+		return nil
 	}
 	if err := b.Notify(ctx, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{
 		marotte.ParamIgnoreFiles: names,
 	}); err != nil {
 		slog.Warn("apply agent ignore files", "files", names, "error", err)
+		return nil
 	}
+	return names
 }
 
 // resolveTerminalTimeout reads the shell tool's default timeout into the initialize features. Nil keeps the
@@ -287,19 +315,22 @@ func (b *Bridge) resolveTerminalTimeout(ctx context.Context, resolve func(contex
 }
 
 // reapplyTerminalTimeout re-reads the timeout after initialize and sends a changed one: the live push refuses a
-// bridge without stdin, so this is that save's only channel. Best-effort at Warn.
-func (b *Bridge) reapplyTerminalTimeout(ctx context.Context, resolve func(context.Context) int) {
+// bridge without stdin, so this is that save's only channel. Best-effort at Warn. Returns the timeout KAS holds.
+func (b *Bridge) reapplyTerminalTimeout(ctx context.Context, resolve func(context.Context) int) int {
+	held := b.features.TerminalCommandTimeoutMs
 	if resolve == nil {
-		return
+		return held
 	}
 	ms := resolve(ctx)
-	if ms == b.features.TerminalCommandTimeoutMs {
-		return
+	if ms == held {
+		return held
 	}
-	b.features.TerminalCommandTimeoutMs = ms
 	if err := b.Notify(ctx, marotte.MethodTerminalSettingsChanged, marotte.TerminalSettingsParams(ms)); err != nil {
 		slog.Warn("apply terminal settings", "command_timeout_ms", ms, "error", err)
+		return held
 	}
+	b.features.TerminalCommandTimeoutMs = ms
+	return ms
 }
 
 func (b *Bridge) loadSession(ctx context.Context, opts *marotte.StartOpts) error {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -690,5 +691,115 @@ func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
 	}
 	if body := errText(err); strings.Contains(body, "no id for this turn in the agent's current session") {
 		t.Errorf("response %s blames id capture for a mid-turn refusal", body)
+	}
+}
+
+type slotAdmission struct {
+	*benchDeps
+	mu       sync.Mutex
+	reserved bool
+	source   marotte.TurnOpenSource
+}
+
+func newSlotAdmission() *slotAdmission { return &slotAdmission{benchDeps: &benchDeps{}} }
+
+func (a *slotAdmission) TryReserveTurn(_ marotte.ChatID, source marotte.TurnOpenSource) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.reserved {
+		return false
+	}
+	a.reserved, a.source = true, source
+	return true
+}
+
+func (a *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	return a.TryReserveTurn(chatID, source)
+}
+
+func (a *slotAdmission) ReleaseTurnReservation(marotte.ChatID) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.reserved = false
+}
+
+func (a *slotAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.source, a.reserved
+}
+
+// An admitted prompt opens a turn, and the turn ends the window in which KAS's restore writes are
+// let through; so a prompt racing the revert must not be admitted until the rewind returns.
+func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
+	store := seedRewindChat(t, false)
+	admission := newSlotAdmission()
+	inRevert, release := make(chan struct{}), make(chan struct{})
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	b.duringCall = func() {
+		close(inRevert)
+		<-release
+	}
+	host := idleHost(store, b, b)
+	req := rewindReq(t, "c1", "u2")
+	done := make(chan error, 1)
+	go func() {
+		_, err := CmdRewindChat(t.Context(), host, host, admission, host, host, req)
+		done <- err
+	}()
+
+	<-inRevert
+	holder, held := admission.AdmissionHolderSource("c1")
+	admittedDuringRevert := admission.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+	close(release)
+
+	if err := <-done; err != nil {
+		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
+	}
+	if admittedDuringRevert {
+		t.Fatal("a prompt reserved the chat's admission slot while _kiro/checkpoint/revertMultiple was in flight")
+	}
+	// ReserveTurnForPrompt answers a prompt-class holder Busy, which sends the prompt as a steer.
+	if !held || holder.PromptClass() {
+		t.Errorf("during the revert the slot holder was %v (held %t), want a non-prompt source a prompt parks behind", holder, held)
+	}
+	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		t.Error("after the rewind returned the admission slot was still held, so every later prompt is refused")
+	}
+}
+
+// The slot is released on a refusal too, or the chat refuses every prompt after one failed rewind.
+func TestCmdRewindChat_ReleasesTheAdmissionSlotWhenKASRefuses(t *testing.T) {
+	store := seedRewindChat(t, false)
+	admission := newSlotAdmission()
+	b := &recordingBridge{result: map[string]any{"success": false, "error": "refused"}, sessionID: "sess-1"}
+	host := idleHost(store, b, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, admission, host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	}
+	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+		t.Error("after a refused rewind the admission slot was still held")
+	}
+}
+
+type lostSlot struct{ *benchDeps }
+
+func (lostSlot) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
+
+func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
+	store := seedRewindChat(t, false)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := idleHost(store, b, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, lostSlot{&benchDeps{}}, host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409", statusOf(err))
+	}
+	if b.callCount != 0 || len(store.reverted) != 0 {
+		t.Errorf("called KAS %d times and recorded %v without the slot, want nothing", b.callCount, store.reverted)
 	}
 }

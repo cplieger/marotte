@@ -19,7 +19,10 @@ vi.mock("./tabs.js", () => ({
     return Promise.resolve();
   },
   activateTab: () => undefined,
-  openTab: () => Promise.resolve("failed"),
+  openTab: (args: { kind: string; ref?: string }) => {
+    calls.push(`tab:${args.kind}:${args.ref ?? ""}`);
+    return Promise.resolve("opened");
+  },
   parentChatRef: () => "",
   setTabParent: () => Promise.resolve(false),
   tabIdFor: () => "",
@@ -30,7 +33,14 @@ vi.mock("./git-tabs.js", () => ({
   },
 }));
 
-import { openChange, openCallDiff, openChangeSet, openAtLine, openExternal } from "./navigate.js";
+import {
+  openChange,
+  openCallDiff,
+  openChangeSet,
+  openAtLine,
+  openExternal,
+  openFileOrPage,
+} from "./navigate.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 beforeEach(() => {
@@ -87,6 +97,37 @@ describe("openAtLine", () => {
 
   it("does nothing for an empty path", () => {
     openAtLine("");
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("openFileOrPage", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/workspace");
+  });
+
+  it("opens a page in its Preview tab", () => {
+    openFileOrPage("/workspace/demo/index.html");
+    expect(calls).toEqual(["tab:web:/workspace/demo/index.html"]);
+  });
+
+  it("opens a page's source in the editor when a line is given", () => {
+    openFileOrPage("/workspace/demo/index.html", 12);
+    expect(calls).toEqual(["file:/workspace/demo/index.html:12"]);
+  });
+
+  it("opens any other file in the editor", () => {
+    openFileOrPage("notes.md");
+    expect(calls).toEqual(["file:/workspace/notes.md:undefined"]);
+  });
+
+  it("makes a relative page path absolute before choosing", () => {
+    openFileOrPage("demo/index.html");
+    expect(calls).toEqual(["tab:web:/workspace/demo/index.html"]);
+  });
+
+  it("does nothing for an empty path", () => {
+    openFileOrPage("");
     expect(calls).toEqual([]);
   });
 });

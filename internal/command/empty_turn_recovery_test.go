@@ -61,6 +61,10 @@ func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, 
 
 func (o *recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
+func (o *recoveryOutcome) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
+	return o.TryReserveTurn(c, s)
+}
+
 func (o *recoveryOutcome) TryReserveTurnFenced(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
 	return o.TryReserveTurn(c, s)
 }

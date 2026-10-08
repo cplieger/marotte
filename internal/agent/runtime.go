@@ -155,10 +155,15 @@ type Runtime struct {
 	push      pushService
 	chatStore chatRecords
 	mcpConfig mcpNameSets
-	lifecycle *lifetime
-	bridge    *bridges
-	bus       *bus
-	coord     *BridgeCoordinator
+	// mcpRender carries an MCP wait change to KAS; nil leaves it for the next MCP render.
+	mcpRender kasMCPRenderer
+	// debugLogs and setDebugLogs read and move the process log level; nil leaves a debug-logs change for a restart.
+	debugLogs    func() bool
+	setDebugLogs func(on bool)
+	lifecycle    *lifetime
+	bridge       *bridges
+	bus          *bus
+	coord        *BridgeCoordinator
 	// versions is the digest registry: workspace stores and the chat store mint into it, the resolver and REST envelopes read it.
 	versions *subject.Versions
 	// digestSlots bounds concurrent digest resolutions (digestConcurrency).
@@ -223,9 +228,10 @@ type Runtime struct {
 	powersBackend powersBackend
 	powers        *powersSurface
 	// acpArgs are the filtered operator launch flags (WithACPArgs), chat bridges only.
-	acpArgs []string
-	// sessionSeen is last among the pointer-bearing fields for fieldalignment.
+	acpArgs     []string
 	sessionSeen sessionBaseline
+	processLive processLive
+	fanout      liveFanout
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
 	sessionExportMu sync.Mutex
 	ciBusy          atomic.Bool
@@ -291,6 +297,17 @@ func WithPresence(p presenceTable) Option {
 // WithMCPConfig wires the MCP config store, whose name sets attribute statuses and gate live control.
 func WithMCPConfig(c mcpNameSets) Option {
 	return func(h *Runtime) { h.mcpConfig = c }
+}
+
+// WithKASMCPRenderer wires the re-render that carries the MCP wait setting to open chats.
+func WithKASMCPRenderer(r kasMCPRenderer) Option {
+	return func(h *Runtime) { h.mcpRender = r }
+}
+
+// WithDebugLogs wires the process log level a debug_logs change moves: current reports it (logctl.Debug), set
+// moves it (logctl.SetDebug).
+func WithDebugLogs(current func() bool, set func(on bool)) Option {
+	return func(h *Runtime) { h.debugLogs, h.setDebugLogs = current, set }
 }
 
 // WithAuthReadiness wires command-layer sign-in outcomes to readiness.
@@ -393,7 +410,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.catalog.versions = h.versions
 	// Construction, then wiring, never interleaved: roles bind by value, so a nil at the literal stays nil.
 	// TestNew_EveryTranslateRoleIsWired pins it.
-	h.utility = &utilityLease{build: h.buildUtility, reconcile: func() { h.ReconcileSessionSettings(lc.shutdownCtx) }}
+	h.utility = &utilityLease{build: h.buildUtility, reconcile: func() { h.reconcileUtilityUse(lc.shutdownCtx) }}
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.powers = &powersSurface{
@@ -414,7 +431,11 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	h.coord = newBridgeCoordinator(h)
 	bridgeP.mgr.revertStarting = h.coord.turns.expectRevertRestores
-	h.coord.reconcileSessions = h.ReconcileSessionSettings
+	h.coord.reconcileSessions = func(ctx context.Context) { h.reconcileSessionSettings(ctx, "session settings") }
+	h.coord.afterOpen = func(ctx context.Context, chatID marotte.ChatID) {
+		h.reportUnreadableOwed(ctx)
+		h.fanOutLive(liveSurface{chat: chatID})
+	}
 	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.RetractPush

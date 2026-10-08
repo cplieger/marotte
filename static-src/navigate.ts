@@ -2,6 +2,7 @@
 // shell panel: it is a live PTY whose next frame can interleave with anything written.
 
 import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
+import { fileOpenRoute } from "./preview-page.js";
 import {
   activateTab,
   openGitView,
@@ -11,6 +12,7 @@ import {
   tabIdFor,
 } from "./tabs.js";
 import { isSafeURL } from "./url-safety.js";
+import { openWebPreview } from "./web-open.js";
 import { absPath } from "./workspace.js";
 
 /** Open a file's change vs `ref`: the write already landed, so git holds the
@@ -43,6 +45,20 @@ export function openAtLine(path: string, line?: number): void {
     return;
   }
   openFile(absPath(path), line);
+}
+
+/** Open a file the way a click on it means (`fileOpenRoute`); a relative path is normalised as in
+ *  openChange. */
+export function openFileOrPage(path: string, line?: number): void {
+  if (path === "") {
+    return;
+  }
+  const route = fileOpenRoute(absPath(path), line);
+  if (route.kind === "web") {
+    openWebPreview(route.path);
+    return;
+  }
+  openFile(route.path, route.line);
 }
 
 /** Open `dir`'s spec tab, nested under `chatID`'s tab when given. `open_tab`

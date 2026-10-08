@@ -36,7 +36,7 @@ type Server struct {
 	gitAI         routeHandler
 	files         routeHandler
 	auth          routeHandler
-	push          pushService
+	push          routeHandler
 	mcpStatus     routeHandler
 	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
@@ -44,7 +44,6 @@ type Server struct {
 	policyReload  policyReloader
 	// governance answers the administrator's lock map; nil means nothing is locked.
 	governance  governanceLocks
-	mcpRender   mcpRenderer
 	agent       chatEngine
 	steering    SteeringGenerator
 	mcpRegistry routeHandler
@@ -110,7 +109,7 @@ func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
 func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }
 
 // WithPush sets the push service used for Web Push notification delivery.
-func WithPush(p pushService) Option { return func(s *Server) { s.push = p } }
+func WithPush(p routeHandler) Option { return func(s *Server) { s.push = p } }
 
 // WithMCPConfig sets the route handler for MCP server configuration endpoints.
 func WithMCPConfig(r routeHandler) Option { return func(s *Server) { s.mcpConfig = r } }
@@ -156,12 +155,6 @@ func WithGovernanceLocks(g governanceLocks) Option {
 // unwired, live sessions keep the old presets and no client is told.
 func WithPolicyReload(p policyReloader) Option {
 	return func(s *Server) { s.policyReload = p }
-}
-
-// WithMCPRenderer wires the KAS-config re-render an MCP wait setting change needs.
-// Optional: unwired, the setting applies at the next render.
-func WithMCPRenderer(r mcpRenderer) Option {
-	return func(s *Server) { s.mcpRender = r }
 }
 
 // WithStaticFS sets the embedded filesystem serving the compiled web UI.

@@ -1,10 +1,9 @@
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_WEB } from "./icons.js";
-import { relBeneath, relToWorkspace, workspaceRoot } from "./workspace.js";
-
-/** The root before the handshake has named it; the container's default. */
-const DEFAULT_ROOT = "/workspace";
+import { isPreviewablePage } from "./preview-page.js";
+import { decodeDestination } from "./utils-url.js";
+import { relToWorkspace } from "./workspace.js";
 
 // Injected: the markdown renderer reaching the tab system would close an import cycle.
 let opener: ((path: string) => void) | null = null;
@@ -13,15 +12,15 @@ export function setPreviewOpener(fn: (path: string) => void): void {
   opener = fn;
 }
 
-export function isWorkspacePage(path: string): boolean {
-  const root = workspaceRoot() || DEFAULT_ROOT;
-  return relBeneath(root, path) !== null && /\.html?$/i.test(path);
-}
-
-/** A link target the card replaces. A query or fragment means the author linked something other
- *  than the page itself, so it stays a link. */
-export function isPreviewHref(href: string): boolean {
-  return !/[?#]/.test(href) && isWorkspacePage(href);
+/** The page a link target names when the card replaces it, decoded once, else null. A query or
+ *  fragment means the author linked something other than the page itself, so it stays a link. */
+export function previewHrefPage(href: string): string | null {
+  if (/[?#]/.test(href)) {
+    return null;
+  }
+  // Not `servedPath`: its roots are fixed, and the page predicate follows the live workspace root.
+  const path = decodeDestination(href);
+  return isPreviewablePage(path) ? path : null;
 }
 
 /** `label` is moved in, not copied: the renderer hands over the link's own children. An empty

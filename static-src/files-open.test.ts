@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import type * as Dom from "./dom.js";
 import type * as Bus from "./bus.js";
 import type * as Tabs from "./tabs.js";
-import type * as WebOpen from "./web-open.js";
 import type * as EditorOpeners from "./editor-openers.js";
 import type * as Modals from "./modals.js";
 import type * as Confirm from "./confirm.js";
@@ -32,7 +31,7 @@ const h = vi.hoisted(() => {
     els.set(key, made);
     return made;
   }
-  return { els, stub, openWebPreview: vi.fn() };
+  return { els, stub };
 });
 
 // Each mock spreads the original, so a name the graph reaches is never missing.
@@ -54,10 +53,6 @@ vi.mock("./tabs.js", async (importOriginal) => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabKind: vi.fn(() => "files"),
   filesTabIdFor: vi.fn(() => "t-files"),
-}));
-vi.mock("./web-open.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof WebOpen>()),
-  openWebPreview: h.openWebPreview,
 }));
 vi.mock("./editor-openers.js", async (importOriginal) => ({
   ...(await importOriginal<typeof EditorOpeners>()),
@@ -120,82 +115,98 @@ vi.mock("./store.js", async (importOriginal) => ({
 
 import { $ } from "./dom.js";
 import { apiGetOrError } from "./api-client.js";
-import { FB_CHECK } from "./files-shared.js";
+import { openFile, openFileInBackground } from "./editor-openers.js";
+import { FB_NAME } from "./files-shared.js";
 import { initFileBrowser, releaseFilesTab, showFilesTab } from "./files.js";
+import { openTab } from "./tabs.js";
 import { setWorkspaceRoot } from "./workspace.js";
 
-const DIR = "/workspace/demo";
+let shown = "";
 
-async function show(): Promise<void> {
-  showFilesTab(DIR);
-  await new Promise((r) => setTimeout(r, 0));
-}
-
-function select(...names: string[]): void {
-  for (const row of $.fbList.children) {
-    const name = (row as HTMLElement).dataset["name"] ?? "";
-    const check = row.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
-    if (check !== null && names.includes(name)) {
-      check.checked = true;
-      check.dispatchEvent(new Event("change"));
-    }
+async function rowIn(dir: string, name: string): Promise<HTMLElement> {
+  if (shown !== "") {
+    releaseFilesTab(shown);
   }
+  shown = dir;
+  vi.mocked(apiGetOrError).mockResolvedValue({
+    ok: true,
+    status: 200,
+    data: { files: [{ name, isDir: false }], writable: true },
+    error: "",
+  });
+  showFilesTab(dir);
+  await new Promise((r) => setTimeout(r, 0));
+  const row = [...$.fbList.children].find((r) => (r as HTMLElement).dataset["name"] === name);
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`no row for ${name} in ${dir}`);
+  }
+  return row;
 }
 
-const preview = (): HTMLButtonElement => $.fbPreview;
+function editorPaths(): string[] {
+  return vi.mocked(openFile).mock.calls.map((c) => c[0]);
+}
+
+function clickName(row: HTMLElement): void {
+  row.querySelector<HTMLElement>(`.${FB_NAME}`)?.click();
+}
 
 beforeAll(() => {
   setWorkspaceRoot("/workspace");
   initFileBrowser();
 });
 
-beforeEach(async () => {
-  releaseFilesTab(DIR);
-  h.openWebPreview.mockClear();
-  vi.mocked(apiGetOrError).mockImplementation(() =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      data: {
-        files: [
-          { name: "assets", isDir: true },
-          { name: "index.html", isDir: false },
-          { name: "about.HTM", isDir: false },
-          { name: "notes.txt", isDir: false },
-        ],
-        writable: true,
-      },
-      error: "",
-    }),
-  );
-  await show();
+describe("clicking a file row's name", () => {
+  it("opens a page in its Preview tab, not the editor", async () => {
+    clickName(await rowIn("/workspace/demo", "index.html"));
+    expect(openTab).toHaveBeenCalledWith({ kind: "web", ref: "/workspace/demo/index.html" });
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens an upper-case .HTM page in its Preview tab", async () => {
+    clickName(await rowIn("/workspace/demo", "about.HTM"));
+    expect(openTab).toHaveBeenCalledWith({ kind: "web", ref: "/workspace/demo/about.HTM" });
+  });
+
+  it("opens a page directly in the workspace root in the editor", async () => {
+    clickName(await rowIn("/workspace", "root.html"));
+    expect(editorPaths()).toEqual(["/workspace/root.html"]);
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("opens a page under a dot folder in the editor", async () => {
+    clickName(await rowIn("/workspace/.uploads", "x.html"));
+    expect(editorPaths()).toEqual(["/workspace/.uploads/x.html"]);
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("opens any other file in the editor", async () => {
+    clickName(await rowIn("/workspace/demo", "notes.txt"));
+    expect(editorPaths()).toEqual(["/workspace/demo/notes.txt"]);
+    expect(openTab).not.toHaveBeenCalled();
+  });
 });
 
-describe("#fb-preview", () => {
-  it("is enabled for one selected HTML file and opens its preview", () => {
-    select("index.html");
-    expect(preview().disabled).toBe(false);
-    preview().click();
-    expect(h.openWebPreview).toHaveBeenCalledWith("/workspace/demo/index.html");
+describe("middle-clicking a file row", () => {
+  function middleClick(row: HTMLElement): void {
+    row
+      .querySelector(`.${FB_NAME}`)
+      ?.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+  }
+
+  it("opens a page's Preview tab in the background", async () => {
+    middleClick(await rowIn("/workspace/demo", "index.html"));
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "web",
+      ref: "/workspace/demo/index.html",
+      activate: false,
+    });
+    expect(openFileInBackground).not.toHaveBeenCalled();
   });
 
-  it("accepts an upper-case .HTM name", () => {
-    select("about.HTM");
-    expect(preview().disabled).toBe(false);
-  });
-
-  it("is disabled for two selected pages", () => {
-    select("index.html", "about.HTM");
-    expect(preview().disabled).toBe(true);
-  });
-
-  it("is disabled for a directory", () => {
-    select("assets");
-    expect(preview().disabled).toBe(true);
-  });
-
-  it("is disabled for a text file", () => {
-    select("notes.txt");
-    expect(preview().disabled).toBe(true);
+  it("opens any other file in a background editor tab", async () => {
+    middleClick(await rowIn("/workspace/demo", "notes.txt"));
+    expect(openFileInBackground).toHaveBeenCalledWith("/workspace/demo/notes.txt");
+    expect(openTab).not.toHaveBeenCalled();
   });
 });

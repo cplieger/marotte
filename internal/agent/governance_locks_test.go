@@ -251,21 +251,26 @@ func writeSettings(t *testing.T, body string) string {
 func TestContentCollectionEnabled(t *testing.T) {
 	pinned := map[string]marotte.GovernanceLock{marotte.LockContentCollection: {Value: false}}
 	tests := []struct {
-		locks map[string]marotte.GovernanceLock
-		name  string
-		body  string
-		want  bool
+		locks        map[string]marotte.GovernanceLock
+		name         string
+		body         string
+		want         bool
+		wantReadable bool
 	}{
-		{name: "absent_is_off", body: `{}`},
-		{name: "stored_on", body: `{"content_collection_enabled":true}`, want: true},
-		{name: "stored_off", body: `{"content_collection_enabled":false}`},
-		{name: "lock_wins_over_stored_on", body: `{"content_collection_enabled":true}`, locks: pinned},
-		{name: "unreadable_is_off", body: `{`},
+		{name: "absent_is_off", body: `{}`, wantReadable: true},
+		{name: "stored_on", body: `{"content_collection_enabled":true}`, want: true, wantReadable: true},
+		{name: "stored_off", body: `{"content_collection_enabled":false}`, wantReadable: true},
+		{name: "mistyped_is_off", body: `{"content_collection_enabled":"yes"}`, wantReadable: true},
+		{name: "lock_wins_over_stored_on", body: `{"content_collection_enabled":true}`, locks: pinned, wantReadable: true},
+		{name: "lock_answers_over_an_unreadable_document", body: `{`, locks: pinned, wantReadable: true},
+		{name: "unreadable_is_off_and_no_answer", body: `{`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := contentCollectionEnabled(t.Context(), writeSettings(t, tc.body), tc.locks); got != tc.want {
-				t.Errorf("contentCollectionEnabled(%s, %v) = %v, want %v", tc.body, tc.locks, got, tc.want)
+			got, readable := contentCollectionEnabled(t.Context(), writeSettings(t, tc.body), tc.locks)
+			if got != tc.want || readable != tc.wantReadable {
+				t.Errorf("contentCollectionEnabled(%s, %v) = (%v, readable %v), want (%v, readable %v)",
+					tc.body, tc.locks, got, readable, tc.want, tc.wantReadable)
 			}
 		})
 	}

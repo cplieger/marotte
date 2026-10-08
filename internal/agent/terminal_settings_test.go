@@ -73,7 +73,7 @@ func TestAgentFeatures_SpecPlanningOffSendsNoWorkflow(t *testing.T) {
 }
 
 // timeoutSpawnProbe parks in Start like initialize, then reads StartOpts.TerminalTimeout where the
-// post-initialize re-read would; Notify refuses until Start returns.
+// post-initialize re-read would; Notify counts a write before Start returns.
 type timeoutSpawnProbe struct {
 	*fakeBridge
 	arrival chan struct{}
@@ -116,7 +116,7 @@ func (b *timeoutSpawnProbe) Notify(_ context.Context, _ string, _ any) error {
 	return nil
 }
 
-// A mid-spawn timeout save reaches the bridge through its own resolver: the live push is refused.
+// A mid-spawn timeout save reaches the bridge through its own resolver: a writer skips a spawning bridge.
 func TestSpawnTerminalTimeout_ConcurrentSaveReachesASpawningBridge(t *testing.T) {
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
@@ -140,7 +140,7 @@ func TestSpawnTerminalTimeout_ConcurrentSaveReachesASpawningBridge(t *testing.T)
 
 	<-probe.arrival
 	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 300000}`)
-	h.PushTerminalSettings(ctx)
+	h.ReconcileSessionSettings(ctx)
 
 	released()
 	if err := <-opened; err != nil {
@@ -149,8 +149,8 @@ func TestSpawnTerminalTimeout_ConcurrentSaveReachesASpawningBridge(t *testing.T)
 
 	probe.mu.Lock()
 	defer probe.mu.Unlock()
-	if probe.refused != 1 {
-		t.Errorf("pushes refused mid-spawn = %d, want 1", probe.refused)
+	if probe.refused != 0 {
+		t.Errorf("pushes written to the spawning bridge before Start returned = %d, want 0", probe.refused)
 	}
 	if probe.resolved != 300000 {
 		t.Errorf("timeout the spawn resolved = %d, want 300000: StartOpts.TerminalTimeout must read at send time", probe.resolved)
@@ -185,7 +185,7 @@ func (b *terminalProbeBridge) sent() []string {
 	return append([]string(nil), b.frames...)
 }
 
-func TestPushTerminalSettings_ReachesEveryLiveBridge(t *testing.T) {
+func TestSettingsWrite_PushesTheShellTimeoutToEveryLiveBridge(t *testing.T) {
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
 	var mu sync.Mutex
@@ -210,14 +210,15 @@ func TestPushTerminalSettings_ReachesEveryLiveBridge(t *testing.T) {
 		}
 	}
 
-	h.PushTerminalSettings(t.Context())
+	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 45000}`)
+	h.ReconcileSessionSettings(t.Context())
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(made) < 2 {
 		t.Fatalf("bridges made = %d, want at least 2", len(made))
 	}
-	want := `{"terminal":{"commandTimeoutMs":30000,"enabled":true}}`
+	want := `{"terminal":{"commandTimeoutMs":45000,"enabled":true}}`
 	reached := 0
 	for _, p := range made {
 		frames := p.sent()

@@ -26,7 +26,7 @@ Work handed to a subagent shows as a card you can open on its own page. The agen
 
 - A file browser with a search that finds files by name, or inside files when you ask. One Files filter narrows either search (`*.css`, `src/**`, `!node_modules`), and files your `.gitignore` excludes stay out unless you include them.
 - An editor with syntax highlighting. A link can point at one line with `#L<n>`.
-- A preview tab that shows an HTML page from the workspace in a sandbox, at phone, tablet, desktop or full width. The **Open preview** button in the editor and in the file browser opens one for an `.html` file, and the tab reloads when the page's files change.
+- A preview tab that shows an HTML page from the workspace in a sandbox, at phone, tablet, desktop or full width. Clicking an `.html` or `.htm` page that sits in its own folder in the file browser opens it there, and so does a link to one in the chat. **Edit** in the tab's bottom bar opens the page's source in the editor, and the editor's **Open preview** button goes back to the page. The tab reloads when the page's files change.
 - Diffs against the last save or against git `HEAD`.
 - A merge-conflict view that takes ours, theirs or both for each hunk.
 - A terminal, built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine), that survives sleep and network drops.

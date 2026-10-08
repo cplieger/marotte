@@ -73,8 +73,11 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	}
 	// Between initialize and the first session verb: KAS scopes the ignore list to the connection and pushes it into
 	// every session, so the first turn already enforces it.
-	b.applyIgnoreFiles(hctx, opts.IgnoreFiles)
-	b.reapplyTerminalTimeout(hctx, opts.TerminalTimeout)
+	ignoreFiles := b.applyIgnoreFiles(hctx, opts.IgnoreFiles)
+	terminalTimeoutMs := b.reapplyTerminalTimeout(hctx, opts.TerminalTimeout)
+	b.mu.Lock()
+	b.startIgnoreFiles, b.startTerminalTimeoutMs = ignoreFiles, terminalTimeoutMs
+	b.mu.Unlock()
 	var err error
 	if opts.SessionID != "" {
 		err = b.loadSession(hctx, opts)

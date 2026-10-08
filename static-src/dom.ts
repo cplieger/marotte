@@ -294,9 +294,6 @@ class Elements {
   get fbAddToChat(): HTMLButtonElement {
     return byId("fb-add-to-chat");
   }
-  get fbPreview(): HTMLButtonElement {
-    return byId("fb-preview");
-  }
   get chatOptionsBtn(): HTMLButtonElement {
     return byId("chat-options-btn");
   }
@@ -388,6 +385,9 @@ class Elements {
   }
   get webReloadBtn(): HTMLButtonElement {
     return byId("web-reload-btn");
+  }
+  get webEditBtn(): HTMLButtonElement {
+    return byId("web-edit-btn");
   }
   get editorMarkdown(): HTMLDivElement {
     return byId("editor-markdown");

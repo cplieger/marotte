@@ -17,7 +17,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/ssrf/v4"
-	"golang.org/x/sync/singleflight"
 )
 
 // DefaultTitle is the notification title used for all Web Push messages.
@@ -79,7 +78,6 @@ type Service struct {
 	// lifetime is the service's OWN child of New's ctx: the writeLoop-liveness signal.
 	// Merging it with a caller's ctx reopens a shutdown hang (see persist.go's guarded waits).
 	lifetime      context.Context
-	prefsFlight   singleflight.Group
 	saveCh        chan saveRequest
 	writeLoopDone chan struct{}
 	cancel        context.CancelFunc
@@ -191,11 +189,18 @@ func (s *Service) Close() {
 // PublicKey returns the VAPID public key used for push subscription registration.
 func (s *Service) PublicKey() string { return s.keys.PublicKey }
 
-// SetPreferences updates the per-kind notification enabled flags.
+// SetPreferences sets the enabled flag of each kind prefs names; a kind it omits keeps its flag.
 func (s *Service) SetPreferences(prefs map[marotte.PushKind]bool) {
 	s.mu.Lock()
 	maps.Copy(s.prefs, prefs)
 	s.mu.Unlock()
+}
+
+// Preferences returns a copy of the per-kind enabled flags the service enforces now.
+func (s *Service) Preferences() map[marotte.PushKind]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.prefs)
 }
 
 // Subscribe registers a push subscription endpoint. Duplicate endpoints are silently overwritten.
@@ -292,16 +297,6 @@ func validateKindRegistry(entries []KindPref) error {
 	return nil
 }
 
-// ReloadPreferences coalesces concurrent reloads via singleflight into one disk read.
-func (s *Service) ReloadPreferences(ctx context.Context) {
-	if _, err, _ := s.prefsFlight.Do("prefs", func() (any, error) {
-		s.loadPreferences(ctx)
-		return nil, nil
-	}); err != nil {
-		slog.Debug("push: reload preferences singleflight returned error", "error", err)
-	}
-}
-
 // writeLoop drains saveCh and writes the latest snapshot; the single writer goroutine.
 func (s *Service) writeLoop() {
 	defer close(s.writeLoopDone)
@@ -327,30 +322,36 @@ func (s *Service) writeLoop() {
 	}
 }
 
-// loadPreferences reads the per-kind toggles, then the master, from config.json; missing
-// or unparseable values keep the kindRegistry defaults set in New.
 func (s *Service) loadPreferences(ctx context.Context) {
-	// Build the map without holding mu: settings.Field does disk I/O.
-	local := make(map[marotte.PushKind]bool, len(kindRegistry))
+	// Resolved without holding mu: settings.Field does disk I/O.
+	local := ResolvePreferences(ctx, s.dir)
+	s.mu.Lock()
+	s.prefs = local
+	s.mu.Unlock()
+}
+
+// ResolvePreferences resolves every registered kind's enabled flag from configDir's config.json:
+// the per-kind toggles, then the master switch. A missing or unparseable value takes the kind's
+// kindRegistry default.
+func ResolvePreferences(ctx context.Context, configDir string) map[marotte.PushKind]bool {
+	prefs := make(map[marotte.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		if kr.SettingsKey == "" {
-			local[kr.Kind] = kr.DefaultOn
+			prefs[kr.Kind] = kr.DefaultOn
 			continue
 		}
-		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey); ok {
-			local[kr.Kind] = v
+		if v, ok := settings.Field[bool](ctx, configDir, kr.SettingsKey); ok {
+			prefs[kr.Kind] = v
 		} else {
-			local[kr.Kind] = kr.DefaultOn
+			prefs[kr.Kind] = kr.DefaultOn
 		}
 	}
 	// The master switch is applied LAST so nothing re-widens it. Only an explicit false
 	// zeroes: its default is off while each kind has its own, so absent is not a decision.
-	if enabled, ok := settings.Field[bool](ctx, s.dir, settings.KeyNotificationsEnabled); ok && !enabled {
-		for kind := range local {
-			local[kind] = false
+	if enabled, ok := settings.Field[bool](ctx, configDir, settings.KeyNotificationsEnabled); ok && !enabled {
+		for kind := range prefs {
+			prefs[kind] = false
 		}
 	}
-	s.mu.Lock()
-	s.prefs = local
-	s.mu.Unlock()
+	return prefs
 }

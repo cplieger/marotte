@@ -134,6 +134,42 @@ func TestWithSaveHook_LaterHookForTheSamePathReplacesTheEarlier(t *testing.T) {
 	}
 }
 
+func TestWithSaveHook_TheFirstRegisteredOfTwoSpellingsRuns(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tools.json")
+	link := filepath.Join(t.TempDir(), "config")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	viaLink := filepath.Join(link, "tools.json")
+	viaDotDot := dir + "/sub/../tools.json"
+	for _, tc := range []struct {
+		name          string
+		first, second string
+	}{
+		{name: "symlink_first", first: viaLink, second: viaDotDot},
+		{name: "dotdot_first", first: viaDotDot, second: viaLink},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := range 50 {
+				first, second := &hookRecorder{refuse: "broken"}, &hookRecorder{}
+				h, err := New(Sensitive{}, []string{dir}, WithSaveHook(tc.first, first.hook()), WithSaveHook(tc.second, second.hook()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				code, _ := putContent(t, h, target, "broken")
+				if code != http.StatusBadRequest || len(second.checked) != 0 {
+					t.Fatalf("handler %d: PUT %s with hooks on %s then %s = %d, second hook checked %d times; want 400 from the first hook only",
+						i, target, tc.first, tc.second, code, len(second.checked))
+				}
+			}
+		})
+	}
+}
+
 func TestWithSaveHook_MatchesThroughASymlinkedRoot(t *testing.T) {
 	resolvedDir := t.TempDir()
 	link := filepath.Join(t.TempDir(), "config")

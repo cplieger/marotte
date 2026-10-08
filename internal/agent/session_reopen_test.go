@@ -26,8 +26,14 @@ func reopenFixture(t *testing.T, opts ...Option) (h *Runtime, configDir string) 
 func reopenFixtureWith(t *testing.T, seed func(*fakeBridge), opts ...Option) (h *Runtime, configDir string) {
 	t.Helper()
 	configDir = t.TempDir()
+	return reopenFixtureIn(t, configDir, seed, opts...), configDir
+}
+
+// reopenFixtureIn builds the runtime over configDir as the caller left it, so a test can seed config.json before boot.
+func reopenFixtureIn(t *testing.T, configDir string, seed func(*fakeBridge), opts ...Option) *Runtime {
+	t.Helper()
 	cs := newTestChatStore()
-	h = New(context.Background(), t.TempDir(), func() ACPBridge {
+	h := New(context.Background(), t.TempDir(), func() ACPBridge {
 		br := newFakeBridge()
 		if seed != nil {
 			seed(br)
@@ -37,7 +43,7 @@ func reopenFixtureWith(t *testing.T, seed func(*fakeBridge), opts ...Option) (h 
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	return h, configDir
+	return h
 }
 
 // fakeOf is the process sb holds. Read through the bridge, never by spawn order: a session load
@@ -223,7 +229,7 @@ var configWrites = []struct {
 	{key: settings.KeyAutoCompactPct, from: 85, value: 60, reach: reachReopen},
 	{key: settings.KeyTerminalCommandTimeoutMs, value: 300000, reach: reachLive},
 	{key: settings.KeyContentCollectionEnabled, value: true, reach: reachLive},
-	{key: settings.KeyAgentIgnoreFiles, value: []string{"secrets/**"}, reach: reachLive},
+	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
 	{key: settings.KeyOutputStyle, value: settings.OutputStyleConcise, reach: reachLive},
 	{key: settings.KeySupervisedDefault, value: true, reach: reachNewChat},

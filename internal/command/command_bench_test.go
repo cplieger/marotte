@@ -129,6 +129,11 @@ func (d *benchDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.D
 }
 
 func (d *benchDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
+
+func (d *benchDeps) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
+	return !d.holderOpen
+}
+
 func (d *benchDeps) TryReserveTurnFenced(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
 	return true
 }

@@ -1208,6 +1208,11 @@ export interface FileSearchResult {
  * a cap on files or chats, a file read partially or not at all, a dead context.
  */
   truncated: boolean;
+  /**
+ * RootIgnored says the ignore rules hide every root searched, so nothing was walked; a search
+ * that includes ignored files never sets it.
+ */
+  root_ignored: boolean;
 }
 
 /** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */

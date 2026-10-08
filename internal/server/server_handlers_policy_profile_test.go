@@ -21,13 +21,12 @@ import (
 
 // fakeEngine records what was broadcast, so a test can assert the client was told.
 type fakeEngine struct {
-	sessionSettings func(context.Context) string
-	seen            string
-	events          []marotte.ServerEvent
-	pushes          int
-	terminalPushes  int
-	ccPushes        int
-	reopens         int
+	sessionSettings            func(context.Context) string
+	seen                       string
+	events                     []marotte.ServerEvent
+	reopens                    int
+	reconciles                 int
+	reconciledOnCancellableCtx bool
 }
 
 func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
@@ -36,13 +35,6 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 }
 func (f *fakeEngine) Shutdown(context.Context) error { return nil }
 func (f *fakeEngine) Epoch() string                  { return "fake-epoch" }
-
-// PushAgentIgnoreFiles counts agent-ignore fan-outs for the settings PATCH test.
-func (f *fakeEngine) PushAgentIgnoreFiles(context.Context) { f.pushes++ }
-
-func (f *fakeEngine) PushTerminalSettings(context.Context) { f.terminalPushes++ }
-
-func (f *fakeEngine) PushContentCollection(context.Context) { f.ccPushes++ }
 
 func (f *fakeEngine) fingerprint(ctx context.Context) string {
 	if f.sessionSettings == nil {
@@ -54,6 +46,10 @@ func (f *fakeEngine) fingerprint(ctx context.Context) string {
 func (f *fakeEngine) settle(ctx context.Context) { f.seen = f.fingerprint(ctx) }
 
 func (f *fakeEngine) ReconcileSessionSettings(ctx context.Context) {
+	f.reconciles++
+	if ctx.Done() != nil {
+		f.reconciledOnCancellableCtx = true
+	}
 	if now := f.fingerprint(ctx); now != f.seen {
 		f.seen = now
 		f.reopens++

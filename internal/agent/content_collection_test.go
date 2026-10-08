@@ -89,11 +89,11 @@ func TestSpawnSites_CarryContentCollection(t *testing.T) {
 			if opts == nil || opts.ContentCollection == nil {
 				t.Fatalf("%s spawn: StartOpts.ContentCollection = nil, want the resolver", site.name)
 			}
-			if !opts.ContentCollection(t.Context()) {
+			if on, _ := opts.ContentCollection(t.Context()); !on {
 				t.Errorf("%s resolver with the switch stored on = false, want true", site.name)
 			}
 			h.config.SetGovernance(t.Context(), *enterpriseProfile())
-			if opts.ContentCollection(t.Context()) {
+			if on, _ := opts.ContentCollection(t.Context()); on {
 				t.Errorf("%s resolver under an enterprise lock = true, want false (the lock is read at each assert)", site.name)
 			}
 		})
@@ -106,36 +106,49 @@ func contentCollectionWrites(b *fakeBridge) []string {
 	return append([]string(nil), b.contentCollectionWrites...)
 }
 
-// A lock change reaches every running process with no restart.
-func TestPushContentCollection_FansOutToEveryLiveBridge(t *testing.T) {
-	utility := newFakeBridge()
-	pushed := make(chan struct{}, 1)
-	h, _ := newContentCollectionHub(t, func() ACPBridge { return utility },
-		WithGovernanceLocksHook(func(context.Context) { pushed <- struct{}{} }))
-	if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
-		t.Fatalf("acquire utility session: %v", err)
-	}
+// A lock change reaches every running process with no restart, config.json readable or not: the lock is the answer.
+func TestGovernanceLockChange_PushesContentCollectionToEveryLiveProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		document string
+	}{
+		{name: "readable_document"},
+		{name: "unreadable_document", document: "{not json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			utility := newFakeBridge()
+			pushed := make(chan struct{}, 1)
+			h, _ := newContentCollectionHub(t, func() ACPBridge { return utility },
+				WithGovernanceLocksHook(func(context.Context) { pushed <- struct{}{} }))
+			if _, err := h.utility.get().session.acquire(t.Context()); err != nil {
+				t.Fatalf("acquire utility session: %v", err)
+			}
 
-	resolver := contentCollectionResolver(h.lifecycle.configDir, h.config.GovernanceLocks)
-	live := map[marotte.ChatID]*fakeBridge{"c1": newFakeBridge(), "c2": newFakeBridge(), runChatID("wf_1"): newFakeBridge()}
-	for id, br := range live {
-		if err := br.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: resolver}); err != nil {
-			t.Fatalf("Start %s: %v", id, err)
-		}
-		h.bridge.mgr.insert(id, &sharedBridge{bridge: br, state: bridgeIdle})
-	}
-	live["utility"] = utility
+			resolver := contentCollectionResolver(h.lifecycle.configDir, h.config.GovernanceLocks)
+			live := map[marotte.ChatID]*fakeBridge{"c1": newFakeBridge(), "c2": newFakeBridge(), runChatID("wf_1"): newFakeBridge()}
+			for id, br := range live {
+				if err := br.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), ContentCollection: resolver}); err != nil {
+					t.Fatalf("Start %s: %v", id, err)
+				}
+				h.bridge.mgr.insert(id, &sharedBridge{bridge: br, state: bridgeIdle})
+			}
+			live["utility"] = utility
+			if tc.document != "" {
+				rewriteConfigByHand(t, h.lifecycle.configDir, tc.document)
+			}
 
-	h.config.SetGovernance(t.Context(), *enterpriseProfile())
-	select {
-	case <-pushed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the lock change never finished its push")
-	}
-	for id, br := range live {
-		writes := contentCollectionWrites(br)
-		if len(writes) == 0 || writes[len(writes)-1] != marotte.ConfigValueContentCollectionDisabled {
-			t.Errorf("%s contentCollection writes = %q, want the organization's %q last", id, writes, marotte.ConfigValueContentCollectionDisabled)
-		}
+			h.config.SetGovernance(t.Context(), *enterpriseProfile())
+			select {
+			case <-pushed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the lock change never finished its push")
+			}
+			for id, br := range live {
+				writes := contentCollectionWrites(br)
+				if len(writes) == 0 || writes[len(writes)-1] != marotte.ConfigValueContentCollectionDisabled {
+					t.Errorf("%s contentCollection writes = %q, want the organization's %q last", id, writes, marotte.ConfigValueContentCollectionDisabled)
+				}
+			}
+		})
 	}
 }

@@ -40,9 +40,9 @@ const (
 
 // Handler serves /api/file/* and /api/files/*.
 type Handler struct {
-	saveHooks   map[string]SaveHook // keyed by the path as configured, resolved per save
-	toolOutputs string              // AllowToolOutputs; "" grants nothing
-	mounts      []mount             // sorted longest-dir-first (see openMounts)
+	saveHooks   []savePathHook // registration order, so the first match is deterministic
+	toolOutputs string         // AllowToolOutputs; "" grants nothing
+	mounts      []mount        // sorted longest-dir-first (see openMounts)
 	sensitive   Sensitive
 }
 
@@ -59,23 +59,33 @@ type SaveHook struct {
 	Saved func()
 }
 
+type savePathHook struct {
+	hook SaveHook
+	path string
+}
+
 // WithSaveHook runs hook on every save whose target resolves to wherever path, an absolute path,
-// points at the time of that save. A later hook for the same cleaned path replaces this one.
+// points at the time of that save. A later hook for the same cleaned path replaces this one; of
+// two spellings that resolve to one file, the one registered first runs.
 func WithSaveHook(path string, hook SaveHook) Option {
 	return func(h *Handler) {
-		if h.saveHooks == nil {
-			h.saveHooks = make(map[string]SaveHook)
+		path = filepath.Clean(path)
+		for i := range h.saveHooks {
+			if h.saveHooks[i].path == path {
+				h.saveHooks[i].hook = hook
+				return
+			}
 		}
-		h.saveHooks[filepath.Clean(path)] = hook
+		h.saveHooks = append(h.saveHooks, savePathHook{path: path, hook: hook})
 	}
 }
 
 // saveHookFor resolves each hook's path per save, so a symlink swapped in after New cannot
 // route a save around its hook.
 func (h *Handler) saveHookFor(l loc) SaveHook {
-	for path, hook := range h.saveHooks {
-		if resolved, err := resolveRealPath(path); err == nil && resolved == l.abs {
-			return hook
+	for _, r := range h.saveHooks {
+		if resolved, err := resolveRealPath(r.path); err == nil && resolved == l.abs {
+			return r.hook
 		}
 	}
 	return SaveHook{}

@@ -263,3 +263,19 @@ func TestSetDebug_TogglesIdempotent(t *testing.T) {
 		t.Errorf("after SetDebug(false) twice level = %v, want %v", got, slog.LevelInfo)
 	}
 }
+
+func TestDebug_ReportsTheLevelInForce(t *testing.T) {
+	restoreDefaultLogger(t)
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"debug_logs":true}`)
+	Install(t.Context(), dir)
+	if !Debug() {
+		t.Errorf("Debug() after Install over debug_logs true = false, want true")
+	}
+
+	SetDebug(false)
+
+	if Debug() {
+		t.Errorf("Debug() after SetDebug(false) = true, want false")
+	}
+}

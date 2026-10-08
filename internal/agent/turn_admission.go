@@ -44,6 +44,17 @@ func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpen
 	return lc.fenceHoldsLocked(fence) && lc.reserveLocked(source)
 }
 
+// tryReserveIdle takes the slot iff nothing holds admission, an open wire turn included, in one acquisition.
+func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if _, held := lc.holderSourceLocked(); held {
+		return false
+	}
+	return lc.reserveLocked(source)
+}
+
 // promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
 func (r *turnRegistry) promptHolder(chatID marotte.ChatID) (string, bool) {
 	lc, ok := r.lookup(chatID)
@@ -93,10 +104,14 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 	return lc.holderSourceLocked()
 }
 
-// TryReserveTurn takes the admission slot iff free, minting no Turn: the shell door (a `!cmd` refuses at once)
-// and the empty-turn recovery (abandoned if a prompt won).
+// TryReserveTurn takes the admission slot iff free, minting no Turn and never waiting.
 func (bc *BridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	return bc.turns.tryReserve(chatID, source, command.TurnFence{})
+}
+
+// TryReserveIdleTurn takes the admission slot iff no turn is open and nothing holds it, never waiting.
+func (bc *BridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	return bc.turns.tryReserveIdle(chatID, source)
 }
 
 // TryReserveTurnFenced is TryReserveTurn for a close's drain, refused once a turn

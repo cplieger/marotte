@@ -423,6 +423,14 @@ describe("the Preview button", () => {
     expect(openWebPreview).toHaveBeenCalledWith("/workspace/demo/index.html");
   });
 
+  it.each(["/workspace/root.html", "/workspace/.uploads/page.html"])(
+    "stays hidden for %s, a page the preview refuses",
+    (path) => {
+      stage(path);
+      expect(preview()).toBe(false);
+    },
+  );
+
   it("stays hidden for an HTML file outside the workspace", () => {
     stage("/config/page.html");
     expect(preview()).toBe(false);

@@ -100,3 +100,34 @@ func TestField_KeepsBothWarnLines(t *testing.T) {
 		})
 	}
 }
+
+func TestFieldOr_IsNoAnswerOnlyOverAnUnreadableDocument(t *testing.T) {
+	tests := []struct {
+		desc         string
+		content      string
+		want         bool
+		wantReadable bool
+	}{
+		{desc: "no config.json", want: true, wantReadable: true},
+		{desc: "an absent key", content: `{}`, want: true, wantReadable: true},
+		{desc: "a key of the wrong type", content: `{"debug_logs":"yes"}`, want: true, wantReadable: true},
+		{desc: "a stored value", content: `{"debug_logs":false}`, wantReadable: true},
+		{desc: "a document that does not parse", content: `{`, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			dir := t.TempDir()
+			resetCache(t, dir)
+			if tc.content != "" {
+				writeSettings(t, dir, []byte(tc.content))
+			}
+
+			got, readable := FieldOr(t.Context(), dir, KeyDebugLogs, true)
+
+			if got != tc.want || readable != tc.wantReadable {
+				t.Errorf("FieldOr(%s, def true) over %s = (%v, readable %v), want (%v, readable %v)",
+					KeyDebugLogs, tc.desc, got, readable, tc.want, tc.wantReadable)
+			}
+		})
+	}
+}

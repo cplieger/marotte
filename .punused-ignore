@@ -285,6 +285,10 @@ method (*closeAfterWriter).Unwrap
 method (*Service).Suppressed
 method (*Service).PresenceRows
 method (*Service).PresenceTransitions
+# push.Kinds is the same surface's registry read: the tagged hook enumerates the kinds it
+# may toggle, and since settings resolve per document (ResolvePreferences) no untagged
+# production caller remains.
+function Kinds
 
 # --- 20. Observation-first decode of the initialize result's agentCapabilities
 # _meta.kiro block: no behavior may branch on it yet, so the accessor is the read

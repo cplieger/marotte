@@ -345,19 +345,19 @@ const (
 
 // TurnAdmission is the chat's admission slot as the command handlers hold it:
 // a bare per-chat reservation decided before any turn exists, plus the read
-// that says who holds it. Separate from TurnOutcomeAccess because the steer and
-// the rewind read the holder and never open a turn.
+// that says who holds it. Separate from TurnOutcomeAccess because the steer reads
+// the holder and the rewind reserves the slot, and neither opens a turn.
 type TurnAdmission interface {
 	// ReserveTurnForPrompt takes the chat's admission slot for a prompt,
 	// minting no turn — a bare per-chat reservation, decided synchronously
 	// before any bridge exists. A held slot parks the caller up to wait;
 	// the refusal is keyed on the holder's source — see AdmissionOutcome.
 	ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) AdmissionOutcome
-	// TryReserveTurn takes the admission slot iff it is free — the shell
-	// door's form (a `!cmd` during any held slot refuses immediately) and
-	// the empty-turn recovery's (a competing prompt that won the slot
-	// abandons the retry).
+	// TryReserveTurn takes the admission slot iff it is free, never waiting.
 	TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool
+	// TryReserveIdleTurn is TryReserveTurn that also refuses while a turn is open
+	// without a reservation (a wire turn), checked in the same acquisition.
+	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool
 	// TryReserveTurnFenced is TryReserveTurn for a close's drain: it also refuses
 	// once the fence no longer holds, sparing a reservation the open would refuse.
 	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) bool

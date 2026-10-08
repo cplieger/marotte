@@ -126,6 +126,7 @@ vi.mock("./store.js", () => ({
 }));
 
 import { $ } from "./dom.js";
+import { setWorkspaceRoot } from "./workspace.js";
 import { apiGetOrError } from "./api-client.js";
 import { FB_CHECK, FB_NAME } from "./files-shared.js";
 import {
@@ -471,6 +472,19 @@ describe("the path field and the listing error", () => {
     });
   }
 
+  it("opens a page typed in the field in its Preview tab", async () => {
+    setWorkspaceRoot("/w");
+    answers.set("/w/demo/index.html", [notADirectory]);
+    initFileBrowser();
+    await show("/w");
+    typePath("/w/demo/index.html");
+    await vi.waitFor(() => {
+      expect(($.fbPath as HTMLInputElement).value).toBe("/w/demo");
+    });
+    expect(h.openTab).toHaveBeenCalledWith({ kind: "web", ref: "/w/demo/index.html" });
+    expect(h.openFile).not.toHaveBeenCalled();
+  });
+
   it("opens a FILE typed in the field and shows its folder, with no file in the trail", async () => {
     answers.set("/a/note.txt", [notADirectory]);
     initFileBrowser();
@@ -480,7 +494,7 @@ describe("the path field and the listing error", () => {
       expect(($.fbPath as HTMLInputElement).value).toBe("/a");
       expect(rowFor("note.txt")).toBeDefined();
     });
-    expect(h.openFile.mock.calls).toEqual([["/a/note.txt"]]);
+    expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/a/note.txt"]);
     expect(notices()).toEqual([]);
     expect(h.setFilesRoute.mock.calls.at(-1)?.[1]).toBe("/a");
     expect(h.setFilesRoute.mock.calls.map((c) => c[1] as string)).not.toContain("/a/note.txt");
@@ -671,7 +685,7 @@ describe("the path field and the listing error", () => {
 
     await show("/a");
     await vi.waitFor(() => {
-      expect(h.openFile.mock.calls).toEqual([["/a/note.txt"]]);
+      expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/a/note.txt"]);
     });
     expect(($.fbPath as HTMLInputElement).value).toBe("/a");
     expect(h.renameTab.mock.calls.map((c) => c[1] as string)).not.toContain("note.txt");

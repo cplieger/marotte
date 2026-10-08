@@ -48,6 +48,8 @@ type BridgeCoordinator struct {
 	// reconcileSessions marks every chat for reopen when a setting read only at open moved, so it
 	// runs before this open checks the mark.
 	reconcileSessions func(context.Context)
+	// afterOpen runs once an open synced its own bridge, whose spawn may be the first chat process a report needs.
+	afterOpen func(context.Context, marotte.ChatID)
 	// retireUtility resets the utility session at the chat bridges' identity boundary.
 	retireUtility func()
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
@@ -164,10 +166,27 @@ func resolveAgentEngine() string {
 	return marotte.AgentEngineV3
 }
 
-// OpenBridge returns chatID's bridge, creating it; concurrent callers coalesce on bridgeSpawnKey.
+// OpenBridge returns chatID's bridge, creating it; concurrent callers coalesce on bridgeSpawnKey. Before it
+// returns it sends the bridge each live setting the bridge has not confirmed (sharedBridge.syncLive); a failed push
+// is resent at the next chat open or settings write. Every other live process is synced in the background, so a
+// hand edit reaches all of them from one open.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within agent use the methods on it. Exporting would leak ACP wiring outside the runtime package.
 func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
+	sb, err := bc.openBridge(ctx, chatID, modelOverride)
+	if err != nil {
+		return nil, err
+	}
+	sb.syncLive(ctx, chatID, bc.readLiveSettings)
+	bc.afterOpen(ctx, chatID)
+	return sb, nil
+}
+
+func (bc *BridgeCoordinator) readLiveSettings(ctx context.Context) liveSettings {
+	return readLiveSettings(ctx, bc.lifecycle.configDir, readLiveFields)
+}
+
+func (bc *BridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Before the fast path, so an account switch retires the existing bridge.
 	if bc.ensureIdentity != nil {
 		bc.ensureIdentity(ctx)
@@ -178,7 +197,7 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.Chat
 			if stopped {
 				bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
 			}
-			return bc.OpenBridge(ctx, chatID, modelOverride)
+			return bc.openBridge(ctx, chatID, modelOverride)
 		}
 		bc.repairEffort(ctx, chatID, sb)
 		return sb, nil
@@ -197,7 +216,7 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.Chat
 		if stopped {
 			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
 		}
-		return bc.OpenBridge(ctx, chatID, modelOverride)
+		return bc.openBridge(ctx, chatID, modelOverride)
 	}
 	return b, nil
 }
@@ -255,6 +274,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), Model: model, Mode: rec.CurrentModeID, Effort: effort, Thinking: thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: rec.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks), DisableTelemetry: bc.lifecycle.telemetryDisabled(bc.locks)}); err != nil {
 		return nil, setupErr(err)
 	}
+	sb.adoptSpawn()
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 	// The session door's half of the supervised fail-open (the assert inside Start is best-effort).
 	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, sb.bridge.SupervisedApplied())
@@ -343,6 +363,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		}
 		return false
 	}
+	sb.adoptSpawn()
 	// Record the read-loop position replay completion is measured against, with one settle
 	// attempt (MarkReplayLoadedAt).
 	if bc.replayProjection != nil {

@@ -866,8 +866,9 @@ const arbModel = fc.letrec<{
       scanned: fc.double({ noNaN: true, noDefaultInfinity: true }),
       matched: fc.double({ noNaN: true, noDefaultInfinity: true }),
       truncated: fc.boolean(),
+      root_ignored: fc.boolean(),
     },
-    { requiredKeys: ["matches", "scanned", "matched", "truncated"] },
+    { requiredKeys: ["matches", "scanned", "matched", "truncated", "root_ignored"] },
   ),
   GitHubRateLimit: fc.record(
     {

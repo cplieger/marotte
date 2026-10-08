@@ -51,9 +51,13 @@ func CmdRewindChat(
 	if !ok {
 		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
-	if _, held := admission.AdmissionHolderSource(cmd.ChatID); held {
+	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
+	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
+	// turning it into a steer.
+	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
 		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
 	}
+	defer admission.ReleaseTurnReservation(cmd.ChatID)
 	target, found, err := chats.RewindTarget(ctx, cmd.ChatID, p.MessageID)
 	if err != nil {
 		slog.Error("rewind: resolve target", "chat", cmd.ChatID, keyError, err)

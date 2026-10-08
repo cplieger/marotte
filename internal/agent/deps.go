@@ -17,6 +17,11 @@ type mcpNameSets interface {
 	ConfiguredNames(ctx context.Context) map[string]struct{}
 }
 
+type kasMCPRenderer interface {
+	RenderKASConfig(ctx context.Context) error
+	RenderedWaitForReady() (waitForReady, known bool)
+}
+
 // RouteRegistrar mounts its own routes under a sub-tree of /api/*.
 type RouteRegistrar interface {
 	RegisterRoutes(mux *http.ServeMux)
@@ -83,12 +88,14 @@ type pushNotifier interface {
 	Retract(subject marotte.PushSubject)
 }
 
-// pushService is the runtime's view of push: send plus the two lifecycle calls it owns.
+// pushService is the runtime's view of push: send plus the preference and lifecycle calls it owns.
 type pushService interface {
 	pushNotifier
 
-	// ReloadPreferences re-reads notification toggles from disk.
-	ReloadPreferences(ctx context.Context)
+	// SetPreferences sets each toggle prefs names; a kind it omits keeps its toggle.
+	SetPreferences(prefs map[marotte.PushKind]bool)
+	// Preferences returns the per-kind notification toggles in force.
+	Preferences() map[marotte.PushKind]bool
 	// Close cancels in-flight pushes so shutdown does not block on their timeout.
 	Close()
 }
@@ -166,8 +173,11 @@ type utilityBridge interface {
 	NotifCh() <-chan marotte.Notification
 	// Notify sends a JSON-RPC notification (no response expected).
 	Notify(ctx context.Context, method string, params any) error
-	// AssertContentCollection re-resolves StartOpts.ContentCollection onto the live session, returning the value; no resolver sends nothing.
-	AssertContentCollection(ctx context.Context) (bool, error)
+	// RefreshContentCollection re-resolves StartOpts.ContentCollection onto the live session when KAS has not confirmed
+	// that value, returning it; an unreadable document or no resolver sends nothing.
+	RefreshContentCollection(ctx context.Context) (bool, error)
+	// StartLive reports the ignore list (nil: none delivered) and shell timeout Start left KAS holding.
+	StartLive() (ignoreFiles []string, terminalTimeoutMs int)
 }
 
 // ACPBridge manages one kiro-cli ACP subprocess for one chat (*bridge.Bridge). Safe for

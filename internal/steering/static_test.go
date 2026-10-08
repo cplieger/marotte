@@ -269,6 +269,7 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 		`"Scale to fit"`,
 		`"Reload preview"`,
 		`"Open preview"`,
+		`"Edit", which opens the page in the editor`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeUIGuide output missing %q:\n%s", want, out)
@@ -420,6 +421,8 @@ func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 		"starting with `.`",
 		"--base=./`",
 		`<meta name="marotte-preview" content="phone">`,
+		"you cannot open the tab yourself",
+		"`#L<line>`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeAttachments output missing %q:\n%s", want, out)

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -448,25 +449,26 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	}
 }
 
-// A reconnect re-reads notification toggles (edited while SSE was down); a fresh connection does not.
-func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
+func TestHandleSSE_OnlyAReconnectAppliesNotificationTogglesEditedWhileTheStreamWasDown(t *testing.T) {
 	cases := []struct {
 		name        string
 		lastEventID bool
-		wantReloads int32
+		wantPushes  int
 	}{
-		{name: "a reconnect re-reads them", lastEventID: true, wantReloads: 1},
-		{name: "a fresh connection does not", lastEventID: false, wantReloads: 0},
+		{name: "a reconnect applies them", lastEventID: true, wantPushes: 1},
+		{name: "a fresh connection does not", lastEventID: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := newTestChatStore()
-			fp := &recordingPush{sends: make(chan string, 1)}
+			configDir := t.TempDir()
+			rec := newLiveRecorder(t)
 			h := New(context.Background(), t.TempDir(),
-				func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+				func() ACPBridge { return newFakeBridge() }, cs, WithConfigDir(configDir), WithPush(rec))
 			cs.wire(h)
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+			rewriteConfigByHand(t, configDir, `{"notify_pr_status":true}`)
 
 			ctx := hookOnlyContext(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
@@ -475,9 +477,15 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 			}
 			h.handleSSE(httptest.NewRecorder(), req)
 
-			if got := fp.reloads.Load(); got != tc.wantReloads {
-				t.Errorf("ReloadPreferences called %d times with a Last-Event-ID %v, want %d",
-					got, tc.lastEventID, tc.wantReloads)
+			rec.mu.Lock()
+			prefs := slices.Clone(rec.prefs)
+			rec.mu.Unlock()
+			if len(prefs) != tc.wantPushes {
+				t.Fatalf("handleSSE with a Last-Event-ID %v pushed notification toggles %v, want %d push(es)",
+					tc.lastEventID, prefs, tc.wantPushes)
+			}
+			if tc.wantPushes > 0 && !prefs[0][marotte.PushKindPRStatus] {
+				t.Errorf("the reconnect pushed toggles %v, want pr_status on as the hand edit set it", prefs[0])
 			}
 		})
 	}
