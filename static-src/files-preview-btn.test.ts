@@ -119,7 +119,7 @@ vi.mock("./store.js", async (importOriginal) => ({
 }));
 
 import { $ } from "./dom.js";
-import { apiGet } from "./api-client.js";
+import { apiGetOrError } from "./api-client.js";
 import { FB_CHECK } from "./files-shared.js";
 import { initFileBrowser, releaseFilesTab, showFilesTab } from "./files.js";
 import { setWorkspaceRoot } from "./workspace.js";
@@ -152,15 +152,20 @@ beforeAll(() => {
 beforeEach(async () => {
   releaseFilesTab(DIR);
   h.openWebPreview.mockClear();
-  vi.mocked(apiGet).mockImplementation(() =>
+  vi.mocked(apiGetOrError).mockImplementation(() =>
     Promise.resolve({
-      files: [
-        { name: "assets", isDir: true },
-        { name: "index.html", isDir: false },
-        { name: "about.HTM", isDir: false },
-        { name: "notes.txt", isDir: false },
-      ],
-      writable: true,
+      ok: true,
+      status: 200,
+      data: {
+        files: [
+          { name: "assets", isDir: true },
+          { name: "index.html", isDir: false },
+          { name: "about.HTM", isDir: false },
+          { name: "notes.txt", isDir: false },
+        ],
+        writable: true,
+      },
+      error: "",
     }),
   );
   await show();

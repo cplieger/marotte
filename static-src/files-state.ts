@@ -11,6 +11,8 @@ export class FileBrowserState {
   entries: FileEntry[] = [];
   /** `entries` starts as `[]`, so an empty directory and an unread one look alike; the placeholder arms only for the latter. */
   answered = false;
+  /** Why `currentPath`'s last listing failed, "" when it did not; the list renders it in place of the rows. */
+  listError = "";
   entryMap = new Map<string, FileEntry>();
   dirWritable = true;
   sortedNames: string[] = [];
@@ -19,9 +21,15 @@ export class FileBrowserState {
 
   /**
    * True until the origin folder loads, so an unreachable origin falls back to the mounts listing once. Per browser:
-   * N browsers share one fetch holder.
+   * N browsers share one fetch holder. A reader's own move retires it, or that folder's failure would heal to root.
    */
   pendingRestore = true;
+
+  /**
+   * The path field moved here and no answer has said what `currentPath` is yet: it is unpublished, and a file answer
+   * opens it. Held here, not by the request, so a superseded request leaves it for the next load; any move clears it.
+   */
+  pendingOpen = false;
 
   /** A browser opened at `at` with both nav buttons disabled (`navigate` would push and enable Back). */
   constructor(at: string = FB_ROOT) {
@@ -29,15 +37,16 @@ export class FileBrowserState {
     this.history = [at];
   }
 
-  navigate(path: string): void {
-    this.currentPath = path;
-    this.answered = false;
-    this.scrollTop = 0;
-    this.selected.clear();
-    this.lastClickedName = "";
+  /** Push `path` onto the trail; false (and nothing changes) when it is already the current folder. */
+  navigate(path: string): boolean {
+    if (path === this.currentPath) {
+      return false;
+    }
     this.history.length = this.historyIdx + 1;
     this.history.push(path);
     this.historyIdx = this.history.length - 1;
+    this.enter(path);
+    return true;
   }
 
   goBack(): boolean {
@@ -45,10 +54,7 @@ export class FileBrowserState {
       return false;
     }
     this.historyIdx--;
-    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    this.scrollTop = 0;
-    this.selected.clear();
-    this.lastClickedName = "";
+    this.enter(this.history[this.historyIdx]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     return true;
   }
 
@@ -57,11 +63,22 @@ export class FileBrowserState {
       return false;
     }
     this.historyIdx++;
-    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    this.scrollTop = 0;
-    this.selected.clear();
-    this.lastClickedName = "";
+    this.enter(this.history[this.historyIdx]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     return true;
+  }
+
+  /**
+   * Swap the current trail entry for `path` without pushing, collapsing onto an equal predecessor so the trail never
+   * holds one folder twice in a row.
+   */
+  replaceCurrent(path: string): void {
+    if (this.historyIdx > 0 && this.history[this.historyIdx - 1] === path) {
+      this.history.length = this.historyIdx;
+      this.historyIdx--;
+    } else {
+      this.history[this.historyIdx] = path;
+    }
+    this.enter(path);
   }
 
   /**
@@ -70,6 +87,7 @@ export class FileBrowserState {
    */
   pointTo(dir: string): void {
     if (dir === this.currentPath) {
+      this.pendingOpen = false;
       return;
     }
     if (this.history[this.historyIdx - 1] === dir) {
@@ -85,15 +103,11 @@ export class FileBrowserState {
 
   /** Back to the mounts listing, not the origin: the auto-heal is the one caller, and healing to an unreachable origin loops. */
   reset(): void {
-    this.currentPath = FB_ROOT;
     this.history.length = 0;
     this.history.push(FB_ROOT);
     this.historyIdx = 0;
-    this.scrollTop = 0;
-    this.selected.clear();
-    this.lastClickedName = "";
+    this.enter(FB_ROOT);
     this.entries = [];
-    this.answered = false;
     this.entryMap.clear();
     this.dirWritable = true;
     this.sortedNames = [];
@@ -111,5 +125,16 @@ export class FileBrowserState {
 
   deselectAll(): void {
     this.selected.clear();
+  }
+
+  /** What every move onto a folder resets; the listing state (`entries`) stays until the new answer lands. */
+  private enter(path: string): void {
+    this.currentPath = path;
+    this.answered = false;
+    this.listError = "";
+    this.pendingOpen = false;
+    this.scrollTop = 0;
+    this.selected.clear();
+    this.lastClickedName = "";
   }
 }

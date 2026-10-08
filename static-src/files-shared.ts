@@ -1,7 +1,7 @@
-import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 
 export const FB_ROW = "fb-row";
+export const FB_NOTICE = "fb-notice";
 export const FB_NAME = "fb-name";
 export const FB_NAME_LINK = "fb-name-link";
 export const FB_CHECK = "fb-check";
@@ -13,46 +13,6 @@ export interface FileEntry {
   size: number;
   mode: string;
   modTime: number;
-}
-
-interface DirListing {
-  files: FileEntry[];
-  writable: boolean;
-  error?: string;
-}
-
-/** Per-caller abort state for fetchDir; each caller passes its own holder so they cannot abort each other. */
-export interface FetchDirOpts {
-  controllerHolder: { current: AbortController | null };
-}
-
-/** Fetch a directory listing; on failure an empty listing with `error` set. A newer request cancels the caller's previous one. */
-export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirListing> {
-  const holder = opts.controllerHolder;
-  holder.current?.abort();
-  holder.current = new AbortController();
-  const { signal } = holder.current;
-  try {
-    const d = await apiGet<{ files?: FileEntry[]; writable?: boolean; error?: string }>(
-      `/api/files?path=${encodeURIComponent(path)}`,
-      signal,
-    );
-    if (signal.aborted) {
-      return { files: [], writable: false, error: "stale" };
-    }
-    if (d === null) {
-      return { files: [], writable: false, error: "fetch failed" };
-    }
-    if (d.error !== undefined) {
-      return { files: [], writable: false, error: d.error };
-    }
-    return { files: d.files ?? [], writable: d.writable ?? false };
-  } catch {
-    if (signal.aborted) {
-      return { files: [], writable: false, error: "stale" };
-    }
-    return { files: [], writable: false, error: "fetch failed" };
-  }
 }
 
 /** Sort directory entries: directories first, then alphabetical by name. */
@@ -145,17 +105,22 @@ export function normalizeDirPath(raw: string): string {
   return trimmed === "" || trimmed === "." ? FB_ROOT : `/${trimmed}`;
 }
 
-/** Build an error row element safely (no innerHTML with user content). */
-export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
-  const row = el(
+interface NoticeAction {
+  label: string;
+  run: () => void;
+}
+
+/** A status line inside a listing (an error, "Empty"): not a row, so it takes no row hover or selection. */
+export function listNotice(msg: string, actions: readonly NoticeAction[] = []): HTMLDivElement {
+  const notice = el(
     "div",
-    { className: FB_ROW },
+    { className: FB_NOTICE },
     el("span", { className: FB_META }, msg),
   ) as HTMLDivElement;
-  if (onRetry !== undefined) {
-    const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
-    btn.addEventListener("click", onRetry);
-    row.appendChild(btn);
+  for (const a of actions) {
+    const btn = el("button", { type: "button", className: "btn-small" }, a.label);
+    btn.addEventListener("click", a.run);
+    notice.appendChild(btn);
   }
-  return row;
+  return notice;
 }

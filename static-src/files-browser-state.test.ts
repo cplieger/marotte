@@ -93,7 +93,7 @@ vi.mock("./store.js", () => ({
 
 import { FileBrowserState, pointFilesTab, releaseFilesTab, showFilesTab } from "./files.js";
 import { FB_ROOT } from "./files-shared.js";
-import { apiGet } from "./api-client.js";
+import { apiGetOrError } from "./api-client.js";
 
 /** The mock never runs the paint closure and `$` hands out fresh elements, so the arm is the observable. */
 const armSkeleton = vi.fn(() => ({
@@ -371,12 +371,92 @@ describe("FileBrowserState", () => {
   });
 });
 
+describe("FileBrowserState trail edges", () => {
+  it("navigating to the folder already shown pushes nothing", () => {
+    const s = new FileBrowserState();
+    s.navigate("/a");
+    expect(s.navigate("/a")).toBe(false);
+    expect(s.history).toEqual(["/", "/a"]);
+    expect(s.historyIdx).toBe(1);
+  });
+
+  it("every move onto a folder clears the last listing's error", () => {
+    const s = new FileBrowserState();
+    s.listError = "not found";
+    s.navigate("/a");
+    expect(s.listError, "navigate").toBe("");
+    s.listError = "not found";
+    s.goBack();
+    expect(s.listError, "goBack").toBe("");
+    s.listError = "not found";
+    s.goForward();
+    expect(s.listError, "goForward").toBe("");
+    s.listError = "not found";
+    s.reset();
+    expect(s.listError, "reset").toBe("");
+  });
+
+  it("every move drops a typed path's pending open", () => {
+    const s = new FileBrowserState();
+    s.pendingOpen = true;
+    s.navigate("/a");
+    expect(s.pendingOpen, "navigate").toBe(false);
+    s.pendingOpen = true;
+    s.goBack();
+    expect(s.pendingOpen, "goBack").toBe(false);
+    s.pendingOpen = true;
+    s.replaceCurrent("/b");
+    expect(s.pendingOpen, "replaceCurrent").toBe(false);
+    s.pendingOpen = true;
+    s.reset();
+    expect(s.pendingOpen, "reset").toBe(false);
+  });
+
+  it("an outside pointer at the typed path itself drops its pending open", () => {
+    const s = new FileBrowserState();
+    s.navigate("/a/x.md");
+    s.pendingOpen = true;
+    s.pointTo("/a/x.md");
+    expect(s.pendingOpen).toBe(false);
+    expect(s.history).toEqual(["/", "/a/x.md"]);
+  });
+
+  it("replaceCurrent swaps the tip without pushing", () => {
+    const s = new FileBrowserState();
+    s.navigate("/a");
+    s.navigate("/a/x.md");
+    s.selected.add("y");
+    s.replaceCurrent("/b");
+    expect(s.history).toEqual(["/", "/a", "/b"]);
+    expect(s.historyIdx).toBe(2);
+    expect(s.currentPath).toBe("/b");
+    expect(s.selected.size).toBe(0);
+  });
+
+  it("replaceCurrent collapses onto an equal predecessor", () => {
+    const s = new FileBrowserState();
+    s.navigate("/a");
+    s.navigate("/a/x.md");
+    s.replaceCurrent("/a");
+    expect(s.history).toEqual(["/", "/a"]);
+    expect(s.historyIdx).toBe(1);
+    expect(s.currentPath).toBe("/a");
+  });
+
+  it("replaceCurrent at the trail's start overwrites it", () => {
+    const s = new FileBrowserState("/a/x.md");
+    s.replaceCurrent("/a");
+    expect(s.history).toEqual(["/a"]);
+    expect(s.historyIdx).toBe(0);
+  });
+});
+
 describe("pointFilesTab normalises what it is handed", () => {
   // Both callers pass outside paths (history entry, deep link), so the listing request is the observable.
   beforeEach(() => {
     releaseFilesTab(FB_ROOT);
     showFilesTab(FB_ROOT);
-    vi.mocked(apiGet).mockClear();
+    vi.mocked(apiGetOrError).mockClear();
   });
 
   const cases: [string, string][] = [
@@ -388,22 +468,29 @@ describe("pointFilesTab normalises what it is handed", () => {
   for (const [name, saved] of cases) {
     it(`fetches the absolute listing for ${name}`, () => {
       pointFilesTab(FB_ROOT, saved);
-      expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fworkspace%2Fmarotte");
+      expect(vi.mocked(apiGetOrError).mock.calls[0]?.[0]).toBe(
+        "/api/files?path=%2Fworkspace%2Fmarotte",
+      );
     });
   }
 
   it("leaves the browser where it is when handed nothing", () => {
     pointFilesTab(FB_ROOT, "");
     showFilesTab(FB_ROOT);
-    expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2F");
+    expect(vi.mocked(apiGetOrError).mock.calls[0]?.[0]).toBe("/api/files?path=%2F");
   });
 });
 
 describe("the rows placeholder's arm", () => {
   beforeEach(() => {
     armSkeleton.mockClear();
-    vi.mocked(apiGet).mockReset();
-    vi.mocked(apiGet).mockResolvedValue({ files: [], writable: true });
+    vi.mocked(apiGetOrError).mockReset();
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { files: [], writable: true },
+      error: "",
+    });
     releaseFilesTab(FB_ROOT);
   });
 

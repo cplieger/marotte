@@ -247,9 +247,9 @@ export function editorDocSkeleton(): HTMLDivElement {
   return wrap;
 }
 
-/** Placeholder rows for the file browser's listing: a name plus the size and date the meta
- *  column carries, one row per entry. */
-export function fileRowsSkeleton(): HTMLDivElement {
+/** Placeholder rows for a file listing: a name plus the size and date bars, one row per entry;
+ *  `meta: false` drops the bars for a list whose rows carry no meta column. */
+export function fileRowsSkeleton(opts?: { readonly meta?: boolean }): HTMLDivElement {
   const wrap = el("div", {
     className: "fb-skeleton",
     "aria-hidden": "true",
@@ -258,13 +258,13 @@ export function fileRowsSkeleton(): HTMLDivElement {
     const row = el("div", { className: "fb-row fb-row-skel" });
     const name = el("div", { className: "fb-skel-name" });
     name.appendChild(skelBar("skeleton-line", width));
-    row.append(
-      el("div", { className: "fb-skel-check" }),
-      skelBar("fb-skel-icon", "1.25rem"),
-      name,
-      skelBar("skeleton-line fb-skel-meta", "3rem"),
-      skelBar("skeleton-line fb-skel-meta", "9rem"),
-    );
+    row.append(el("div", { className: "fb-skel-check" }), skelBar("fb-skel-icon", "1.25rem"), name);
+    if (opts?.meta !== false) {
+      row.append(
+        skelBar("skeleton-line fb-skel-meta", "3rem"),
+        skelBar("skeleton-line fb-skel-meta", "9rem"),
+      );
+    }
     wrap.appendChild(row);
   }
   return wrap;

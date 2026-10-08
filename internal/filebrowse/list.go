@@ -20,6 +20,9 @@ import (
 
 // --- /api/files (GET directory listing) ---
 
+// codeNotADirectory tags the 400 for a path that names a file; the client's file-vs-directory test reads it.
+const codeNotADirectory = "not_a_directory"
+
 type fileEntry struct {
 	Name    string `json:"name"`
 	Mode    string `json:"mode"`
@@ -54,7 +57,8 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, syscall.ENOTDIR) {
-			httpreply.BadRequest(w, "not a directory")
+			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+				httpreply.ErrorJSONWithCode("not a directory", codeNotADirectory))
 			return
 		}
 		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))

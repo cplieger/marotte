@@ -112,6 +112,9 @@ interface ApiResult<T> {
    *  key (/api/health's 503 `reason`). Undefined on success and on a non-JSON
    *  body. Server-controlled, at `error`'s trust level. */
   body?: unknown;
+  /** A failure's machine code: the server's "code" field, or the transport's own
+   *  (`network`, `timeout`, `cancelled`, …) at status 0. Read it with the status. */
+  code?: string;
 }
 
 /**
@@ -122,7 +125,17 @@ function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
   if (r.ok) {
     return { ok: true, status: r.status, data: r.data ?? null, error: "" };
   }
-  return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
+  const out: ApiResult<T> = {
+    ok: false,
+    status: r.status,
+    data: null,
+    error: r.error,
+    body: r.body,
+  };
+  if (r.code !== undefined) {
+    out.code = r.code;
+  }
+  return out;
 }
 
 /**

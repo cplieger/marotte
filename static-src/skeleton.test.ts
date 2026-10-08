@@ -154,4 +154,10 @@ describe("fileRowsSkeleton", () => {
     expect(row?.querySelectorAll(".fb-skel-meta")).toHaveLength(2);
     expect(row?.querySelector(".fb-skel-name .skeleton")).not.toBeNull();
   });
+
+  it("drops the size and date bars for a list whose rows carry no meta column", () => {
+    const row = fileRowsSkeleton({ meta: false }).firstElementChild;
+    expect(row?.querySelectorAll(".fb-skel-meta")).toHaveLength(0);
+    expect(row?.querySelector(".fb-skel-name .skeleton")).not.toBeNull();
+  });
 });

@@ -534,6 +534,43 @@ func TestListFiles_NotFound(t *testing.T) {
 	}
 }
 
+func TestListFiles_NotADirectory(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/files?path="+prefix+"/note.md")
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["error"] != "not a directory" || resp["code"] != "not_a_directory" {
+		t.Errorf("body = %v, want error %q and code %q", resp, "not a directory", "not_a_directory")
+	}
+}
+
+// A path under a file names nothing, so it must not carry the code that makes the client open a file.
+func TestListFiles_UnderAFileCarriesNoFileCode(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/files?path="+prefix+"/note.md/x")
+	if rec.Code == 200 || rec.Code == 400 {
+		t.Errorf("status = %d, want a refusal other than the file arm's 400 (body %s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if code, ok := resp["code"]; ok {
+		t.Errorf("code = %q, want none", code)
+	}
+}
+
 func TestListFiles_MethodNotAllowed(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()

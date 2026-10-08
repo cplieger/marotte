@@ -31,23 +31,23 @@ import { screenUploads } from "./upload-policy.js";
 import * as toast from "./toast.js";
 import {
   type FileEntry,
-  fetchDir,
   formatSize,
   formatDate,
   joinPath,
   parentPath,
   FB_ROOT,
   normalizeDirPath,
-  errorRow,
+  listNotice,
+  FB_NOTICE,
   sortEntries,
   initEditablePath,
-  type FetchDirOpts,
   FB_ROW,
   FB_NAME,
   FB_NAME_LINK,
   FB_CHECK,
   FB_META,
 } from "./files-shared.js";
+import { fetchDir, type DirResult, type FetchDirOpts } from "./files-fetch.js";
 import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { setOnUploadComplete } from "./files-picker.js";
@@ -61,11 +61,17 @@ import {
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
-import { reconcile } from "./reconcile.js";
+import { join as joinKey } from "@cplieger/keyenc";
+import { KEY_ATTR, reconcile } from "./reconcile.js";
+import { replaceRoute } from "./router.js";
+import { buildPath } from "./route-path.js";
 import { FileBrowserState } from "./files-state.js";
 export { FileBrowserState } from "./files-state.js";
 
-type FbEntry = { kind: "parent" } | { kind: "entry"; entry: FileEntry };
+type FbEntry =
+  { kind: "parent" } | { kind: "entry"; entry: FileEntry } | { kind: "error"; message: string };
+
+const PARENT_KEY = "__parent__";
 
 /** One holder for every browser: a switch must abort the outgoing tab's read, or it paints into the incoming listing. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
@@ -117,7 +123,10 @@ export function bindFilesTab(ref: string): void {
   if (boundRef !== ref) {
     const st = stateFor(ref);
     boundRef = ref;
-    renameTab(filesTabIdFor(ref), filesRowName(st.currentPath));
+    // The label follows the published route, which a typed path has not reached yet.
+    if (!st.pendingOpen) {
+      renameTab(filesTabIdFor(ref), filesRowName(st.currentPath));
+    }
     updateNavButtons();
     // From cached entries, so the switch paints instantly and the fetch corrects it.
     renderList({ transition: false });
@@ -155,6 +164,8 @@ export function releaseFilesTab(ref: string): void {
   if (boundRef !== ref) {
     return;
   }
+  // Or its late answer acts for a tab that is gone: a route write, a heal's refetch.
+  browserFetchHolder.controllerHolder.current?.abort();
   boundRef = "";
   resetFilesSearch();
   // Rows kept while hidden would replay their entry animation together.
@@ -165,9 +176,7 @@ export function releaseFilesTab(ref: string): void {
 export function pointFilesTab(ref: string, dir: string): void {
   const target = normalizeDirPath(dir);
   stateFor(ref).pointTo(target);
-  recordBrowsePath(target);
-  setFilesRoute(ref, target);
-  renameTab(filesTabIdFor(ref), filesRowName(target));
+  publishRoute(ref, target);
   if (boundRef === ref) {
     updateNavButtons();
     loadWithTransition();
@@ -280,9 +289,7 @@ export function initFileBrowser(): void {
 function initPathInput(): void {
   $.fbPath.setAttribute("aria-label", "File browser path");
   initEditablePath($.fbPath, {
-    onNavigate: (target) => {
-      navigate(target);
-    },
+    onNavigate: navigateTyped,
     getCurrentPath: () => cur().currentPath,
   });
 }
@@ -300,91 +307,151 @@ function watchGitStatus(): void {
 
 function loadDir(): void {
   watchGitStatus();
-  // Only with nothing of this directory on screen and no answer yet, or a refetch would clear rows in use.
+  const path = cur().currentPath;
+  // A move or a Retry clears the error in state only; its notice would otherwise stay up, and block the placeholder,
+  // until the next answer lands.
+  if (cur().listError === "" && $.fbList.querySelector(`.${FB_NOTICE}`) !== null) {
+    renderList({ transition: false });
+  }
+  // Only with nothing of this directory on screen and no answer yet, or a refetch would clear rows in use. The ".." row
+  // is not this directory's, so the placeholder goes beside it.
   const skeleton =
     cur().entries.length === 0 && !cur().answered
-      ? skeletonTiming(() => paintPlaceholder($.fbList, fileRowsSkeleton))
+      ? skeletonTiming(() =>
+          paintPlaceholder($.fbList, fileRowsSkeleton, {
+            content: `[${KEY_ATTR}]:not([${KEY_ATTR}="${PARENT_KEY}"])`,
+            mount: "append",
+          }),
+        )
       : null;
-  void fetchDir(cur().currentPath, browserFetchHolder).then((d) => {
+  void fetchDir(path, browserFetchHolder).then((d) => {
     // Read before the cancel: the placeholder counts as content on screen.
     const onScreen = $.fbList.childElementCount > 0;
     skeleton?.cancel();
-    if (d.error !== undefined) {
-      if (d.error === "stale") {
-        return;
-      }
+    // The first populate skips the fade: a list fade would cancel the still-running view-open fade.
+    settle(path, d, onScreen);
+  });
+}
+
+/** Renders synchronously on success, so callers can chain inline rename on the new row. */
+function loadDirAsync(): Promise<void> {
+  const path = cur().currentPath;
+  return fetchDir(path, browserFetchHolder).then((d) => {
+    settle(path, d, false);
+  });
+}
+
+/** `path`'s answer, painted into the bound browser: any move or rebind loads again, which aborts this request. */
+function settle(path: string, d: DirResult, transition: boolean): void {
+  const st = cur();
+  switch (d.kind) {
+    case "stale":
+      return;
+    case "not-dir":
+      settleOnParent(path, st.pendingOpen);
+      return;
+    case "error":
       // Heal an unreachable origin to the mounts listing once. `fb_path` is not cleared.
-      if (cur().pendingRestore && cur().currentPath !== FB_ROOT) {
-        cur().pendingRestore = false;
-        cur().reset();
+      if (st.pendingRestore && path !== FB_ROOT) {
+        st.pendingRestore = false;
+        st.reset();
         setFilesRoute(boundRef, FB_ROOT);
         updateNavButtons();
         loadDir();
         return;
       }
-      cur().entries = [];
-      cur().entryMap.clear();
-      cur().dirWritable = false;
-      showError(d.error);
+      publishPending(path);
+      st.entries = [];
+      st.answered = false;
+      st.entryMap.clear();
+      st.dirWritable = false;
+      st.listError = d.message;
       updateWriteButtons();
+      renderList({ transition });
       return;
-    }
-    cur().pendingRestore = false;
-    cur().entries = d.files;
-    cur().answered = true;
-    cur().entryMap.clear();
-    for (const e of cur().entries) {
-      cur().entryMap.set(e.name, e);
-    }
-    cur().dirWritable = d.writable;
-    // The first populate skips the fade: a list fade would cancel the still-running view-open fade.
-    renderList({ transition: onScreen });
-  });
-}
-
-function loadDirAsync(): Promise<void> {
-  return fetchDir(cur().currentPath, browserFetchHolder).then((d) => {
-    if (d.error !== undefined) {
+    case "ok":
+      publishPending(path);
+      st.pendingRestore = false;
+      applyListing(d.files, d.writable);
+      renderList({ transition });
       return;
-    }
-    cur().entries = d.files;
-    cur().answered = true;
-    cur().entryMap.clear();
-    for (const e of cur().entries) {
-      cur().entryMap.set(e.name, e);
-    }
-    cur().dirWritable = d.writable;
-    // Synchronous, so callers can chain inline rename on the new row.
-    renderList({ transition: false });
-  });
-}
-
-function showError(msg: string): void {
-  $.fbList.replaceChildren();
-  const row = errorRow(msg, loadDir);
-  // Off the root, offer the way back (a nested granted root's parent is not browsable; a deleted directory).
-  if (cur().currentPath !== FB_ROOT) {
-    const home = el("button", { type: "button", className: "btn-small" }, "Go to root");
-    home.addEventListener("click", () => {
-      navigate(FB_ROOT);
-    });
-    row.appendChild(home);
   }
-  $.fbList.appendChild(row);
+}
+
+function publishPending(path: string): void {
+  if (cur().pendingOpen) {
+    cur().pendingOpen = false;
+    publishRoute(boundRef, path);
+  }
+}
+
+function applyListing(files: FileEntry[], writable: boolean): void {
+  cur().entries = files;
+  cur().answered = true;
+  cur().listError = "";
+  cur().entryMap.clear();
+  for (const e of files) {
+    cur().entryMap.set(e.name, e);
+  }
+  cur().dirWritable = writable;
+}
+
+/**
+ * `file` named a file: its folder takes its place in the trail, the route and `fb_path`. Only the path field `open`s it;
+ * every other door (a deep link, the boot restore) lands on the folder alone, since an unasked editor tab is a surprise.
+ */
+function settleOnParent(file: string, open: boolean): void {
+  const dir = parentPath(file);
+  cur().replaceCurrent(dir);
+  // A deep link put the file in the address bar; its entry becomes the folder's rather than gaining one.
+  if (location.pathname === buildPath({ kind: "files", path: file })) {
+    replaceRoute({ kind: "files", path: dir });
+  }
+  publishRoute(boundRef, dir);
+  updateNavButtons();
+  if (open) {
+    openFile(file);
+  }
+  loadDir();
 }
 
 /** The row's route, not `pushRoute`: the projection is the one URL writer. */
-function publishDir(path: string): void {
+function publishRoute(ref: string, path: string): void {
   recordBrowsePath(path);
-  setFilesRoute(boundRef, path);
-  renameTab(filesTabIdFor(boundRef), filesRowName(path));
+  setFilesRoute(ref, path);
+  renameTab(filesTabIdFor(ref), filesRowName(path));
+}
+
+/**
+ * Every reader move ends here: the one place a reader's move retires `pendingRestore`, and where a shown error clears
+ * even when the path is unchanged. `pointFilesTab` and `settleOnParent` bypass it.
+ */
+function readerMove(): void {
+  cur().pendingRestore = false;
+  cur().listError = "";
   updateNavButtons();
   loadWithTransition();
+}
+
+function publishDir(path: string): void {
+  publishRoute(boundRef, path);
+  readerMove();
 }
 
 function navigate(path: string): void {
   cur().navigate(path);
   publishDir(path);
+}
+
+/**
+ * The path field's move publishes once the answer says what the path is, so a typed file never reaches the route or
+ * `fb_path`. An unchanged path reloads.
+ */
+function navigateTyped(path: string): void {
+  if (cur().navigate(path)) {
+    cur().pendingOpen = true;
+  }
+  readerMove();
 }
 
 function goBack(): void {
@@ -399,6 +466,12 @@ function goForward(): void {
     return;
   }
   publishDir(cur().currentPath);
+}
+
+/** The same path, so no move clears the error; clearing it here takes the notice down before the answer. */
+function retryListing(): void {
+  cur().listError = "";
+  loadDir();
 }
 
 function loadWithTransition(): void {
@@ -463,19 +536,25 @@ function renderList(opts: { transition?: boolean } = {}): void {
     const sorted = sortEntries(cur().entries);
     cur().sortedNames = sorted.map((e) => e.name);
 
-    $.fbList.setAttribute("role", "list");
-
     const items: FbEntry[] = [];
-    if (cur().currentPath !== FB_ROOT) {
-      items.push({ kind: "parent" });
-    }
-    for (const entry of sorted) {
-      items.push({ kind: "entry", entry });
+    const listError = cur().listError;
+    if (listError !== "") {
+      // A notice is not a list item, so the list role goes with the rows.
+      $.fbList.removeAttribute("role");
+      items.push({ kind: "error", message: listError });
+    } else {
+      $.fbList.setAttribute("role", "list");
+      if (cur().currentPath !== FB_ROOT) {
+        items.push({ kind: "parent" });
+      }
+      for (const entry of sorted) {
+        items.push({ kind: "entry", entry });
+      }
     }
 
     reconcile($.fbList, items, {
-      key: (e: FbEntry) => (e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`),
-      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry)),
+      key: fbEntryKey,
+      mount: mountFbEntry,
       update: (row: HTMLElement, e: FbEntry) => {
         if (e.kind !== "entry") {
           return;
@@ -505,6 +584,43 @@ function renderList(opts: { transition?: boolean } = {}): void {
   } else {
     swapViews(swap);
   }
+}
+
+/** Keyed by path and message, so a reload that fails the same way keeps its node and any other failure remounts. */
+function fbEntryKey(e: FbEntry): string {
+  switch (e.kind) {
+    case "parent":
+      return PARENT_KEY;
+    case "entry":
+      return `entry:${e.entry.name}`;
+    case "error":
+      return joinKey("error", cur().currentPath, e.message);
+  }
+}
+
+function mountFbEntry(e: FbEntry): HTMLElement {
+  switch (e.kind) {
+    case "parent":
+      return parentRow();
+    case "entry":
+      return entryRow(e.entry);
+    case "error":
+      return errorNotice(e.message);
+  }
+}
+
+function errorNotice(message: string): HTMLDivElement {
+  const actions = [{ label: "Retry", run: retryListing }];
+  // Off the root, offer the way back (a nested granted root's parent is not browsable; a deleted directory).
+  if (cur().currentPath !== FB_ROOT) {
+    actions.push({
+      label: "Go to root",
+      run: () => {
+        navigate(FB_ROOT);
+      },
+    });
+  }
+  return listNotice(message, actions);
 }
 
 /** Middle-click opens in the background; no engine emits `click` for it. The `mousedown` companion cancels autoscroll. */
@@ -540,7 +656,7 @@ function parentRow(): HTMLDivElement {
 
   const row = el(
     "div",
-    { className: FB_ROW },
+    { className: FB_ROW, role: "listitem" },
     checkSpan,
     icon,
     nameSpan,
