@@ -12,7 +12,7 @@ export type EntryKind = "turn_open" | "turn_bind" | "text" | "thinking" | "tool_
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable";
 
-export type FailureKind = "context_limit";
+export type FailureKind = "context_limit" | "model_call_limit";
 
 export type FileMatchKind = "content" | "name" | "dir";
 
@@ -68,7 +68,7 @@ export type SteerRowState = "queued" | "unsent" | "removed";
 
 export type SteerState = "read" | "dropped";
 
-export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests" | "unterminated";
+export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests" | "tool_use" | "unterminated";
 
 export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec" | "web";
 
@@ -2642,6 +2642,17 @@ export interface RunStartedPayload {
   workflow_id: string;
   name?: string;
   scheduled?: boolean;
+}
+
+/**
+ * RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
+ * keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
+ * stopped, `completed`, so its node status cannot say this.
+ */
+export interface RunStepEnd {
+  outcome: TurnOutcome;
+  failure_reason?: string;
+  failure_kind?: FailureKind;
 }
 
 /**

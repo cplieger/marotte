@@ -428,6 +428,10 @@ type FailureKind string
 // the remedy is compacting the context and sending the prompt again.
 const FailureKindContextLimit FailureKind = "context_limit"
 
+// FailureKindModelCallLimit is a turn kiro-cli stopped at its per-turn model-call
+// limit: the work may be unfinished, and the remedy is running it again or splitting it.
+const FailureKindModelCallLimit FailureKind = "model_call_limit"
+
 // SaySegmentID is the id of the k-th segment of a say a seal split: `<say>#k`.
 func SaySegmentID(say string, k int) string {
 	return say + "#" + strconv.Itoa(k)

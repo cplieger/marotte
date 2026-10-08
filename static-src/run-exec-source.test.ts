@@ -465,3 +465,69 @@ describe("runToExec alert precedence", () => {
 });
 
 // Both fields stay on `RunState`, which is a documented verbatim passthrough of KAS's own schema.
+
+// KAS grades a step `completed` when the model refused or kiro-cli stopped it at its model-call
+// limit; only the run log's close knows, and it arrives as the reply's `step_ends`.
+describe("runToExec reads the run log's step ends", () => {
+  const CAPPED =
+    "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps.";
+  const tree = (...children: unknown[]) =>
+    stateWith({ nodeId: "wf_1", type: "sequence", status: "completed", children });
+
+  it("marks a completed step whose turn kiro-cli stopped as failed, with the reason", () => {
+    const run = runToExec(
+      "wf_1",
+      tree(step("build", "completed")),
+      undefined,
+      NO_ASKS,
+      "",
+      new Map([
+        [
+          "wf_1/build",
+          { outcome: "failed", failure_kind: "model_call_limit", failure_reason: CAPPED },
+        ],
+      ]),
+    );
+    expect(run.nodes[0]?.state).toBe("fail");
+    expect(run.nodes[0]?.failure).toBe(CAPPED);
+  });
+
+  it("falls back to the outcome's sentence for an end with no reason", () => {
+    const run = runToExec(
+      "wf_1",
+      tree(step("build", "completed")),
+      undefined,
+      NO_ASKS,
+      "",
+      new Map([["wf_1/build", { outcome: "refused" }]]),
+    );
+    expect(run.nodes[0]?.state).toBe("fail");
+    expect(run.nodes[0]?.failure).toBe("The model declined to continue.");
+  });
+
+  it("keeps KAS's own account for a step it did not grade completed", () => {
+    const run = runToExec(
+      "wf_1",
+      tree(step("build", "failed", { failureReason: "exit 1" })),
+      undefined,
+      NO_ASKS,
+      "",
+      new Map([["wf_1/build", { outcome: "failed", failure_reason: CAPPED }]]),
+    );
+    expect(run.nodes[0]?.state).toBe("fail");
+    expect(run.nodes[0]?.failure).toBe("exit 1");
+  });
+
+  it("leaves a completed step with no end, and an end at another path, alone", () => {
+    const run = runToExec(
+      "wf_1",
+      tree(step("build", "completed")),
+      undefined,
+      NO_ASKS,
+      "",
+      new Map([["wf_1/other", { outcome: "failed", failure_reason: CAPPED }]]),
+    );
+    expect(run.nodes[0]?.state).toBe("ok");
+    expect(run.nodes[0]?.failure).toBeUndefined();
+  });
+});

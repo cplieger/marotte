@@ -6,7 +6,12 @@ import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
-import type { ConnectedPayload, LiveRun, RunControlsResponse } from "./wire/types.gen.js";
+import type {
+  ConnectedPayload,
+  LiveRun,
+  RunControlsResponse,
+  RunStepEnd,
+} from "./wire/types.gen.js";
 import {
   classifyRunNodeStatus,
   classifyRunStatus,
@@ -102,6 +107,8 @@ interface RawRunState extends Omit<RunState, "status" | "root"> {
 
 interface RawRunInspect extends Omit<RunInspect, "state"> {
   state?: RawRunState;
+  /** marotte's own key beside KAS's reply: the steps whose newest turn in the run's log closed broken. */
+  step_ends?: Record<string, RunStepEnd>;
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
@@ -164,6 +171,9 @@ const runRetries = new Map<string, RunRetry>();
 
 /** Per-run node plans, beside the signal rather than inside it. */
 const plans = new Map<string, unknown>();
+
+/** Per-run step ends by node path, beside the signal for the plan's reason. */
+const stepEnds = new Map<string, ReadonlyMap<string, RunStepEnd>>();
 
 function cell(workflowID: string): Signal<RunState | undefined> {
   let c = cells.get(workflowID);
@@ -356,14 +366,15 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     const d = r.data;
     if (d?.state !== undefined) {
-      // The plan BEFORE the state, because the state assignment is what wakes every reader: a
-      // subscriber that re-rendered between the two would draw a repeat's bound from the previous
-      // plan.
+      // The plan and the step ends BEFORE the state, because the state assignment is what wakes
+      // every reader: a subscriber that re-rendered between them would draw a repeat's bound from
+      // the previous plan.
       if (d.nodePlan === undefined) {
         plans.delete(workflowID);
       } else {
         plans.set(workflowID, d.nodePlan);
       }
+      stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       cell(workflowID).value = classifyRunState(d.state);
       answered = true;
     } else {
@@ -473,6 +484,7 @@ export function forgetRun(workflowID: string): void {
   answeredCause.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
+  stepEnds.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
   controlsStale.delete(workflowID);
@@ -550,6 +562,11 @@ async function fetchRunControls(workflowID: string): Promise<void> {
  *  would add a dependency that can never fire independently. */
 export function runPlan(workflowID: string): unknown {
   return plans.get(workflowID);
+}
+
+/** A run's step ends by node path, read WITHOUT subscribing, for `runPlan`'s reason. */
+export function runStepEnds(workflowID: string): ReadonlyMap<string, RunStepEnd> {
+  return stepEnds.get(workflowID) ?? new Map();
 }
 
 /** Which chat's agent launched a run, learned from the SSE envelope, and empty for a parentless

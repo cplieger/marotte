@@ -594,6 +594,34 @@ describe("a run's own log", () => {
     expect(runAppended).toHaveBeenCalledWith(RUN, e);
   });
 
+  it("refetches the run when a step's turn closes broken, and only then", () => {
+    // KAS's `node_complete` still reads `completed` for a step the server graded failed, so the
+    // tree turns red only from a run read's `step_ends`.
+    send(
+      "turn_closed",
+      { workflow_id: RUN, entry: entry("turn_close", { outcome: "completed" }, 2) },
+      "",
+    );
+    send(
+      "turn_closed",
+      { workflow_id: RUN, entry: entry("turn_close", { outcome: "cancelled" }, 3) },
+      "",
+    );
+    expect(invalidate).not.toHaveBeenCalled();
+
+    send(
+      "turn_closed",
+      {
+        workflow_id: RUN,
+        entry: entry("turn_close", { outcome: "failed", failure_kind: "model_call_limit" }, 4),
+      },
+      "",
+    );
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
   it("leaves a frame carrying no workflow id to the chat's own handler", () => {
     // The other half of the partition, and the half that cannot be asserted from the
     // chat handler's suite: this module has to do NOTHING for a chat's log, or one frame

@@ -844,6 +844,21 @@ describe("the agent-finished notification reads the severity", () => {
     }
   });
 
+  it("says a model-call-limit stop's own reason rather than an error", () => {
+    // kiro-cli stopped the turn at its per-turn limit; nothing reported an error.
+    const reason =
+      'kiro-cli stopped this turn after 300 model calls, so its work may be unfinished. Type "continue" to carry on, or split the work into smaller prompts.';
+    setSessions([makeSession("capped")]);
+    openTurnOn("capped");
+    fireClose("capped", {
+      payload: { outcome: "failed", failure_kind: "model_call_limit", failure_reason: reason },
+    });
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", `seeded: ${reason}`, {
+      kind: "chat",
+      chatID: "capped",
+    });
+  });
+
   it("covers a broken outcome, or the property above passes vacuously", () => {
     expect(cases.filter(([o]) => severityOf(o) === "broken").length).toBeGreaterThan(0);
   });

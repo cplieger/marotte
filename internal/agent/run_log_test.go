@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,6 +210,105 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunLog_AStepStoppedAtTheModelCallLimitNeverReadsCompleted(t *testing.T) {
+	cases := []struct {
+		desc    string
+		status  string
+		reason  string
+		outcome marotte.TurnOutcome
+		kind    marotte.FailureKind
+		want    string
+	}{
+		// The measured shape: KAS reports `completed` with no reason after a last turn_end of tool_use.
+		{"a step KAS reports as completed", "completed", "", marotte.TurnOutcomeFailed, marotte.FailureKindModelCallLimit, marotte.ModelCallLimitStepReason},
+		{"KAS's own failure keeps its account", "failed", "boom", marotte.TurnOutcomeFailed, "", "boom"},
+		{"a cancel keeps its account", "cancelled", "", marotte.TurnOutcomeCancelled, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			ctx := t.Context()
+			if _, _, err := r.Open(ctx, "wf1", "s", "", "c-1"); err != nil {
+				t.Fatal(err)
+			}
+			if !r.StopReason("wf1", "s", marotte.StopReasonToolUse) {
+				t.Fatal("StopReason(tool_use) refused on an open turn")
+			}
+			if _, closed, err := r.CloseNode(ctx, "wf1", "s", tc.status, tc.reason); err != nil || !closed {
+				t.Fatalf("CloseNode(%q) = %v, %v", tc.status, closed, err)
+			}
+			entries := runLogEntries(t, r, "wf1")
+			c := closeEntryOf(t, entries[len(entries)-1])
+			if c.Outcome != tc.outcome || c.FailureKind != tc.kind || c.FailureReason != tc.want || c.StopReasonRaw != "tool_use" {
+				t.Errorf("CloseNode(%q, %q) after turn_end tool_use wrote turn_close {%s %q %q %s}, want {%s %q %q tool_use}",
+					tc.status, tc.reason, c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw, tc.outcome, tc.kind, tc.want)
+			}
+		})
+	}
+}
+
+// closeStep runs one step turn through its turn_end and node_complete.
+func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, status string) {
+	t.Helper()
+	if _, _, err := r.Open(t.Context(), "wf1", path, "", "c-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !r.StopReason("wf1", path, raw) {
+		t.Fatalf("StopReason(%q) refused on the open turn %s", raw, path)
+	}
+	if _, closed, err := r.CloseNode(t.Context(), "wf1", path, status, ""); err != nil || !closed {
+		t.Fatalf("CloseNode(%s, %q) = %v, %v", path, status, closed, err)
+	}
+}
+
+func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
+	limit := marotte.RunStepEnd{
+		Outcome:       marotte.TurnOutcomeFailed,
+		FailureReason: marotte.ModelCallLimitStepReason,
+		FailureKind:   marotte.FailureKindModelCallLimit,
+	}
+	t.Run("a fresh registry reads them off the log on disk", func(t *testing.T) {
+		dir := t.TempDir()
+		w := newRunLog(dir)
+		closeStep(t, w, "wf1/capped", marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, "wf1/clean", marotte.StopReasonEndTurn, "completed")
+		// A rerun of a path that once failed: its newest turn is what the step says now.
+		closeStep(t, w, "wf1/rerun", marotte.StopReasonToolUse, "completed")
+		closeStep(t, w, "wf1/rerun", marotte.StopReasonEndTurn, "completed")
+
+		got, err := newRunLog(dir).StepEnds(t.Context(), "wf1")
+		if err != nil {
+			t.Fatalf("StepEnds: %v", err)
+		}
+		want := map[string]marotte.RunStepEnd{"wf1/capped": limit}
+		if !maps.Equal(got, want) {
+			t.Errorf("StepEnds = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a close after the first read keeps the answer current", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		closeStep(t, r, "wf1/clean", marotte.StopReasonEndTurn, "completed")
+		if got, err := r.StepEnds(t.Context(), "wf1"); err != nil || len(got) != 0 {
+			t.Fatalf("StepEnds before any broken close = %+v, %v, want none", got, err)
+		}
+		closeStep(t, r, "wf1/capped", marotte.StopReasonToolUse, "completed")
+
+		got, err := r.StepEnds(t.Context(), "wf1")
+		if err != nil {
+			t.Fatalf("StepEnds: %v", err)
+		}
+		if want := map[string]marotte.RunStepEnd{"wf1/capped": limit}; !maps.Equal(got, want) {
+			t.Errorf("StepEnds after the capped close = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a run with no log answers nothing", func(t *testing.T) {
+		got, err := newRunLog(t.TempDir()).StepEnds(t.Context(), "wf1")
+		if err != nil || got != nil {
+			t.Errorf("StepEnds with no log = %+v, %v, want nil, nil", got, err)
+		}
+	})
 }
 
 func TestRunLog_ANodeCompleteForAClosedPathClosesNothing(t *testing.T) {

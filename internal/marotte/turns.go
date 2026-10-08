@@ -100,6 +100,14 @@ func DefaultFailureReason(o TurnOutcome) string {
 	return ""
 }
 
+// ModelCallLimitTurnReason and ModelCallLimitStepReason are what a FailureKindModelCallLimit
+// close says, for a chat turn and a workflow step. 300 is KAS's per-turn agent iteration
+// limit (`kXi` in kiro-cli 2.28.0's acp-server.js); the stop carries no count.
+const (
+	ModelCallLimitTurnReason = "kiro-cli stopped this turn after 300 model calls, so its work may be unfinished. Type \"continue\" to carry on, or split the work into smaller prompts."
+	ModelCallLimitStepReason = "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
+)
+
 // TurnConclusion is one wire stop reason, read. A struct rather than four returns
 // because it travels as a unit into the turn_close entry and the header's
 // last_turn_outcome, where a transposed pair is silent in both directions.
@@ -112,8 +120,7 @@ type TurnConclusion struct {
 	// RawStop is the stop reason exactly as the wire sent it, kept whatever the
 	// outcome, so an unmeasured value is recoverable rather than flattened away.
 	RawStop StopReason
-	// FailureKind is the classified failure a prompt-failure closer names, persisted
-	// as turn_close.failure_kind.
+	// FailureKind is the classified failure, persisted as turn_close.failure_kind.
 	FailureKind FailureKind
 	// Truncated is a turn the model stopped short of finishing. Stored though
 	// derivable from RawStop, so two projections do not re-implement the mapping.
@@ -145,6 +152,12 @@ func ConcludeStopReason(stop StopReason) TurnConclusion {
 		c.Outcome = TurnOutcomeFailed
 	case StopReasonRefusal, StopReasonContentFiltered:
 		c.Outcome = TurnOutcomeRefused
+	case StopReasonToolUse:
+		// Not truncated-and-completed like the bounds below: the model had asked for more work,
+		// so a completed grade would report unfinished work as done.
+		c.Outcome = TurnOutcomeFailed
+		c.FailureKind = FailureKindModelCallLimit
+		c.Reason = ModelCallLimitTurnReason
 	case StopReasonMaxTokens, StopReasonMaxTurnRequests:
 		// The turn finished the work it was allowed to do, so it COMPLETED with its
 		// answer cut off. Grading it failed would report a bounded turn as broken.

@@ -45,40 +45,59 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID, nodePath, status, re
 		slog.Debug("run log: node_complete for a path with no open turn", "run", runID, "node_path", nodePath)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
-	rs.noteStepRefused(ctx, runID, nodePath, sealed)
+	rs.noteStepEnded(ctx, runID, nodePath, sealed)
 }
 
-// stepRefusalNoteID is the note's steer id, shaped like runEndNoteID; the prefix decides nothing.
+// stepNoteRefused and stepNoteModelCallLimit name why a step left the launching chat a note, in its steer id.
+const (
+	stepNoteRefused        = "refused"
+	stepNoteModelCallLimit = "model-call-limit"
+)
+
+// stepNoteID is the note's steer id, shaped like runEndNoteID; the prefix decides nothing.
 // Keyed on the node path, which names one step instance (iterations carry iter-N).
-func stepRefusalNoteID(workflowID, nodePath string) string {
-	return "notify-" + workflowID + ":refused:" + nodePath
+func stepNoteID(workflowID, cause, nodePath string) string {
+	return "notify-" + workflowID + ":" + cause + ":" + nodePath
 }
 
-// noteStepRefused leaves the launching chat a row saying a step was declined, read off the close's
-// turn_close. It reaches the human reading the chat, not the agent (recordSteer never calls
-// _session/steer). Only CloseNode's close gets here.
-func (rs *Runs) noteStepRefused(ctx context.Context, workflowID, nodePath string, sealed []turnlog.Sealed) {
-	c, refused := refusedClose(sealed)
-	if !refused {
+// noteStepEnded leaves the launching chat a row saying a step KAS graded completed did not finish (it was declined,
+// or kiro-cli stopped it at its model-call limit), read off the close's turn_close. It reaches the human reading
+// the chat, not the agent (recordSteer never calls _session/steer). Only CloseNode's close gets here.
+func (rs *Runs) noteStepEnded(ctx context.Context, workflowID, nodePath string, sealed []turnlog.Sealed) {
+	c, ok := turnCloseOf(sealed)
+	if !ok {
+		return
+	}
+	var cause string
+	switch {
+	case c.Outcome == marotte.TurnOutcomeRefused:
+		cause = stepNoteRefused
+	case c.FailureKind == marotte.FailureKindModelCallLimit:
+		cause = stepNoteModelCallLimit
+	default:
 		return
 	}
 	l, held := rs.lease(workflowID)
 	if !held || l.ChatID == "" || rs.coord == nil {
 		return
 	}
-	producedTs := time.Now().UnixMilli()
-	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepRefusalNoteID(workflowID, nodePath), &marotte.EntrySteer{
-		Text:       stepRefusalNoteText(cmp.Or(l.Recipe, "Workflow run"), nodePath, c.Refusal),
+	recipe := cmp.Or(l.Recipe, "Workflow run")
+	text := stepModelCallLimitNoteText(recipe, nodePath)
+	if cause == stepNoteRefused {
+		text = stepRefusalNoteText(recipe, nodePath, c.Refusal)
+	}
+	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, nodePath), &marotte.EntrySteer{
+		Text:       text,
 		Origin:     marotte.SteerOriginAgent,
 		State:      marotte.SteerStateRead,
 		Severity:   "warning",
 		OriginRun:  workflowID,
-		ProducedTs: producedTs,
+		ProducedTs: time.Now().UnixMilli(),
 	})
 }
 
-// refusedClose answers a close's turn_close and whether it graded refused; an undecodable payload is not a refusal.
-func refusedClose(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
+// turnCloseOf answers a close's turn_close; false when it sealed none or its payload does not decode.
+func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 	for _, s := range sealed {
 		if s.Entry == nil || s.Entry.Kind != marotte.EntryKindTurnClose {
 			continue
@@ -87,9 +106,14 @@ func refusedClose(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 		if json.Unmarshal(s.Entry.Payload, &c) != nil {
 			return marotte.EntryTurnClose{}, false
 		}
-		return c, c.Outcome == marotte.TurnOutcomeRefused
+		return c, true
 	}
 	return marotte.EntryTurnClose{}, false
+}
+
+// stepModelCallLimitNoteText names the step and carries the step close's own remedy.
+func stepModelCallLimitNoteText(recipe, nodePath string) string {
+	return recipe + " step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.

@@ -15,6 +15,8 @@ let responses: (
       root?: unknown;
       runLabel?: string;
       workflowName?: string;
+      /** The reply's top-level `step_ends`, moved off the state when the mock answers. */
+      stepEnds?: Record<string, { outcome: string; failure_reason?: string }>;
     }
   | undefined
 )[] = [];
@@ -40,10 +42,15 @@ vi.mock("./api-client.js", () => ({
     if (state === undefined) {
       return { ok: false, status: failStatuses.shift() ?? 502, data: null, error: "" };
     }
+    const { stepEnds, ...kasState } = state;
     return {
       ok: true,
       status: 200,
-      data: { workflowId: state.workflowId, state },
+      data: {
+        workflowId: state.workflowId,
+        state: kasState,
+        ...(stepEnds === undefined ? {} : { step_ends: stepEnds }),
+      },
       error: "",
     };
   }),
@@ -162,6 +169,28 @@ describe("the fetch is coalesced, because a busy run invalidates dozens of times
 // The CAUSE token. A transport gap invalidates every cached run and then, a network round trip
 // later, invalidates every LIVE run again from the rebuild's answer — so at 7 live runs the gap
 // cost 14 of its 24 requests.
+describe("the reply's step ends travel beside the state", () => {
+  it("holds each read's step ends and drops them with the next read that has none", async () => {
+    responses = [
+      {
+        workflowId: "r1",
+        status: "completed",
+        stepEnds: { "r1/build": { outcome: "failed", failure_reason: "stopped" } },
+      },
+      { workflowId: "r1", status: "completed" },
+    ];
+    store.invalidateRun("r1");
+    await settle();
+    expect([...store.runStepEnds("r1")]).toEqual([
+      ["r1/build", { outcome: "failed", failure_reason: "stopped" }],
+    ]);
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runStepEnds("r1").size).toBe(0);
+  });
+});
+
 describe("one cause costs one request per run", () => {
   it("fetches once when the second invalidation lands AFTER the first answered", async () => {
     responses = [{ workflowId: "r1", status: "running" }];

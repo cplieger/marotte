@@ -66,6 +66,51 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 	return out, rec.Body.String()
 }
 
+// TestHandleRun_CarriesTheRunsStepEnds pins `step_ends`: KAS grades a step its iteration limit stopped `completed`,
+// so only the run log's close can tell the reader the step did not finish.
+func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
+	t.Run("a step kiro-cli stopped is named with its reason", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		h.runs.log = newRunLog(t.TempDir())
+		if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "wf_1/build", "", "c1"); err != nil {
+			t.Fatal(err)
+		}
+		h.runs.log.StopReason("wf_1", "wf_1/build", marotte.StopReasonToolUse)
+		if _, _, err := h.runs.log.CloseNode(t.Context(), "wf_1", "wf_1/build", "completed", ""); err != nil {
+			t.Fatal(err)
+		}
+
+		_, body := getRun(t, h, "wf_1")
+
+		var reply struct {
+			StepEnds map[string]marotte.RunStepEnd `json:"step_ends"`
+		}
+		if err := json.Unmarshal([]byte(body), &reply); err != nil {
+			t.Fatalf("decoding the run reply: %s", err)
+		}
+		want := marotte.RunStepEnd{
+			Outcome:       marotte.TurnOutcomeFailed,
+			FailureReason: marotte.ModelCallLimitStepReason,
+			FailureKind:   marotte.FailureKindModelCallLimit,
+		}
+		if got := reply.StepEnds["wf_1/build"]; got != want || len(reply.StepEnds) != 1 {
+			t.Errorf("step_ends = %+v, want only wf_1/build = %+v: %s", reply.StepEnds, want, body)
+		}
+	})
+
+	t.Run("a run with no broken step carries an empty object rather than null", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+
+		_, body := getRun(t, h, "wf_1")
+
+		if !strings.Contains(body, `"step_ends":{}`) {
+			t.Errorf("the body = %s, want `\"step_ends\":{}`", body)
+		}
+	})
+}
+
 // TestHandleRun_CarriesTheRunsOpenAsks pins `open_asks`, so an agent handed a deferral can find the question and its ask id.
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	t.Run("an ask carries its id, question and node, and the passthrough survives", func(t *testing.T) {

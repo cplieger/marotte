@@ -22,6 +22,8 @@ import {
   sealRunEntry,
 } from "../run-store.js";
 import { submitPrompt } from "../submit.js";
+import { isBroken } from "../turn-severity.js";
+import { payloadOf } from "../turns.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import {
@@ -172,6 +174,11 @@ onSSE("turn_closed", (_chatID, p) => {
   if (runID !== "") {
     // A step reads settled from its own `turn_close` rather than from a flag.
     appendRunEntry(runID, p.entry);
+    // The tree grades a broken step from the run read's `step_ends`, and the applied
+    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live.
+    if (isBroken(payloadOf(p.entry, "turn_close")?.outcome)) {
+      invalidateRun(runID);
+    }
   }
 });
 

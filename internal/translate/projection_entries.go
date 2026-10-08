@@ -602,7 +602,7 @@ func (p *EntryProjection) closeTurn() {
 		return
 	}
 	p.closed = true
-	reason, kind := c.Reason, marotte.FailureKind("")
+	reason, kind := c.Reason, c.FailureKind
 	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
 		m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
 		reason, _ = runesafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")

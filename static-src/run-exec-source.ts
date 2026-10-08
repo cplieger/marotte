@@ -13,6 +13,11 @@ import {
 import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
+import { defaultFailureReason, isBroken } from "./turn-severity.js";
+import type { RunStepEnd } from "./wire/types.gen.js";
+
+/** The run log's step ends by node path (`run-store.ts` `runStepEnds`). */
+type StepEnds = ReadonlyMap<string, RunStepEnd>;
 
 /** The per-node facts `nodePlan` carries that the state tree does not. Keyed by node id rather
  *  than by path, because the PLAN is the definition: it describes a node once, while the state
@@ -107,6 +112,12 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   return own;
 }
 
+/** A step KAS graded `completed` reads failed when its newest turn closed broken: the model refused, or kiro-cli
+ *  stopped it at its model-call limit with its work unfinished. Any other KAS grade is KAS's own account. */
+function endedState(own: ExecState, end: RunStepEnd | undefined): ExecState {
+  return own === "ok" && isBroken(end?.outcome) ? "fail" : own;
+}
+
 /** The kind, mapped rather than passed through, so an upstream addition lands on `group` (which
  *  the CSS has a rule for) instead of on nothing. */
 function kindOf(type: string): ExecKind {
@@ -195,18 +206,22 @@ function toNode(
   trail: readonly string[],
   plans: Map<string, PlanEntry>,
   asks: RunAsks,
+  ends: StepEnds,
   parent?: RunNode,
 ): ExecNode {
   const path = [...trail, nodePathSegment(node, parent)];
+  const address = path.join("/");
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
-  const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, node));
+  const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, ends, node));
   const own = withAsk(stateOf(node.status), asks.nodes.has(node.nodeId));
+  const end = children.length === 0 ? ends.get(address) : undefined;
+  const state = children.length === 0 ? endedState(own, end) : rollUp(own, children);
   const out: ExecNode = {
-    path: path.join("/"),
+    path: address,
     label: node.nodeId,
     kind,
-    state: children.length === 0 ? own : rollUp(own, children),
+    state,
     children,
   };
   if (node.startedAt !== undefined) {
@@ -225,6 +240,8 @@ function toNode(
   }
   if (node.failureReason !== undefined && node.failureReason !== "") {
     out.failure = node.failureReason;
+  } else if (state !== own && end !== undefined) {
+    out.failure = end.failure_reason ?? defaultFailureReason(end.outcome);
   }
   if (node.capturedOutput !== undefined) {
     out.output = node.capturedOutput;
@@ -300,6 +317,7 @@ export function runToExec(
   plan: unknown,
   asks: RunAsks,
   focus = "",
+  ends: StepEnds = new Map(),
 ): ExecRun {
   const plans = indexPlan(plan);
   // The root is a container KAS names after the workflow itself, so its children are the run's real
@@ -311,9 +329,9 @@ export function runToExec(
       ? []
       : root.type === "sequence" && (root.children?.length ?? 0) > 0
         ? (root.children ?? []).map((k) =>
-            toNode(k, [nodePathSegment(root, undefined)], plans, asks, root),
+            toNode(k, [nodePathSegment(root, undefined)], plans, asks, ends, root),
           )
-        : [toNode(root, [], plans, asks)];
+        : [toNode(root, [], plans, asks, ends)];
 
   const runState = stateOf(state.status);
   const out: ExecRun = {
