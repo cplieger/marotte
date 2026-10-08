@@ -194,6 +194,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunInputSettledPayload](),
 	// GET /api/runs/{id}'s `open_asks`, a read reply, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunOpenAsk](),
+	// GET /api/runs/{id}'s `step_ends`, a read reply like `open_asks`.
+	wiregen.TypeRef[marotte.RunStepEnd](),
 	// GET /api/runs/{id}/steps/{path...}. No omitempty, so `state` is REQUIRED in TypeScript.
 	wiregen.TypeRef[marotte.RunStepTranscript](),
 	wiregen.TypeRef[marotte.ToolJobChangedPayload](),

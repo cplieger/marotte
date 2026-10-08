@@ -571,18 +571,18 @@ func TestASinkFailureIsReported(t *testing.T) {
 	}
 }
 
-// An unknown stop reason (KAS added `tool_use` without notice) reaches the turn_close
+// An unknown stop reason (KAS may add one without notice) reaches the turn_close
 // verbatim beside a derived outcome, so the chat stays readable.
 func TestCloseCarriesAnUnknownRawStopReasonVerbatim(t *testing.T) {
 	turn, rec := open(t)
-	rec.seal(turn.Close(t.Context(), marotte.ConcludeStopReason("tool_use")))
+	rec.seal(turn.Close(t.Context(), marotte.ConcludeStopReason("pause_turn")))
 
 	var footer marotte.EntryTurnClose
 	if err := json.Unmarshal(rec.entries[len(rec.entries)-1].Payload, &footer); err != nil {
 		t.Fatalf("parse turn_close: %v", err)
 	}
-	if footer.StopReasonRaw != "tool_use" {
-		t.Errorf("stop_reason_raw = %q, want the upstream's own word tool_use", footer.StopReasonRaw)
+	if footer.StopReasonRaw != "pause_turn" {
+		t.Errorf("stop_reason_raw = %q, want the upstream's own word pause_turn", footer.StopReasonRaw)
 	}
 	if footer.Outcome != marotte.TurnOutcomeUnknown {
 		t.Errorf("outcome = %q, want unknown: the closed enum is derived, never the raw word", footer.Outcome)
@@ -591,7 +591,7 @@ func TestCloseCarriesAnUnknownRawStopReasonVerbatim(t *testing.T) {
 	if err := json.Unmarshal(rec.entries[len(rec.entries)-1].Payload, &wire); err != nil {
 		t.Fatalf("parse turn_close as a map: %v", err)
 	}
-	if got, ok := wire["stop_reason_raw"].(string); !ok || got != "tool_use" {
-		t.Errorf("stop_reason_raw on the wire = %#v, want the string tool_use", wire["stop_reason_raw"])
+	if got, ok := wire["stop_reason_raw"].(string); !ok || got != "pause_turn" {
+		t.Errorf("stop_reason_raw on the wire = %#v, want the string pause_turn", wire["stop_reason_raw"])
 	}
 }

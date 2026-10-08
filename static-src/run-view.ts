@@ -38,6 +38,7 @@ import {
   runState,
   runChatID,
   runPlan,
+  runStepEnds,
   runTurnHoles,
   runTurns,
   type RunState,
@@ -451,7 +452,14 @@ function paint(
   // Two inputs on different clocks, the same pair the transcript's card takes: `inspect` says what
   // the nodes are doing, and the dock says which of them is blocked on a person.
   const focus = focusRequest?.workflowID === workflowID ? focusRequest.path : "";
-  const run = runToExec(workflowID, state, runPlan(workflowID), runPendingAsks(workflowID), focus);
+  const run = runToExec(
+    workflowID,
+    state,
+    runPlan(workflowID),
+    runPendingAsks(workflowID),
+    focus,
+    runStepEnds(workflowID),
+  );
   view.render(run);
   if (!mounted) {
     pageScroll.restore(workflowID);

@@ -170,3 +170,19 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 		})
 	}
 }
+
+// A turn kiro-cli cut at its model-call limit did not report an error, so its push says what happened and what to do.
+func TestPushTurnOutcome_AModelCallLimitStopPushesItsOwnRemedy(t *testing.T) {
+	h, fp := newWithholdHub(t)
+
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonToolUse), "")
+
+	select {
+	case got := <-fp.sent:
+		if got.body != marotte.ModelCallLimitTurnReason {
+			t.Errorf("push body = %q, want %q", got.body, marotte.ModelCallLimitTurnReason)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("no push sent for a turn kiro-cli stopped at its model-call limit")
+	}
+}

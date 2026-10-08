@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -66,7 +67,9 @@ type runRecord struct {
 	log    *chat.EntryLog
 	open   map[string]*runTurn
 	closed map[string]string
-	host   marotte.ChatID
+	// ends is each path whose newest turn closed broken, nil until a read scans the log; every close then keeps it current.
+	ends map[string]marotte.RunStepEnd
+	host marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -417,11 +420,17 @@ func (r *runLog) CloseNode(ctx context.Context, workflowID, nodePath, status, re
 		return nil, false, nil
 	}
 	c := runOutcome(status)
-	// KAS grades a refused step `completed`; the step's last turn_end says it declined, and that outranks the status.
-	if stop := marotte.ConcludeStopReason(t.rawStop); stop.Outcome == marotte.TurnOutcomeRefused {
-		c = stop
-	}
 	c.Reason = reason
+	// KAS grades a refused step, and one its iteration limit stopped, `completed`; the step's last turn_end
+	// outranks that status. A failed or cancelled status keeps KAS's own account.
+	switch stop := marotte.ConcludeStopReason(t.rawStop); {
+	case stop.Outcome == marotte.TurnOutcomeRefused:
+		c = stop
+		c.Reason = reason
+	case stop.FailureKind == marotte.FailureKindModelCallLimit && c.Outcome == marotte.TurnOutcomeCompleted:
+		c = stop
+		c.Reason = marotte.ModelCallLimitStepReason
+	}
 	// An unmapped status is itself the raw stop, keeping it recoverable.
 	if c.Known && t.rawStop != "" {
 		c.RawStop = t.rawStop
@@ -527,7 +536,64 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 	sealed, err := t.turn.Close(ctx, c)
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
+	if rec.ends != nil {
+		noteStepEnd(rec.ends, t.path, c.Outcome, c.Reason, c.FailureKind)
+	}
 	return sealed, err
+}
+
+// noteStepEnd records a path's newest close: a broken one is kept, any other drops what an earlier turn left.
+func noteStepEnd(ends map[string]marotte.RunStepEnd, path string, o marotte.TurnOutcome, reason string, kind marotte.FailureKind) {
+	if marotte.SeverityOf(o) != marotte.TurnSeverityBroken {
+		delete(ends, path)
+		return
+	}
+	ends[path] = marotte.RunStepEnd{Outcome: o, FailureReason: reason, FailureKind: kind}
+}
+
+// StepEnds answers the run's broken step ends by node path, scanning the log on the first read of the process;
+// nil with no log.
+func (r *runLog) StepEnds(ctx context.Context, workflowID string) (map[string]marotte.RunStepEnd, error) {
+	l, err := r.Log(ctx, workflowID)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, nil
+	}
+	if rec.ends == nil {
+		all, err := l.All()
+		if err != nil {
+			return nil, err
+		}
+		rec.ends = scanStepEnds(all)
+	}
+	return maps.Clone(rec.ends), nil
+}
+
+// scanStepEnds folds a log's turn_open paths and turn_close verdicts in file order, so a path's newest turn wins.
+func scanStepEnds(all []marotte.Entry) map[string]marotte.RunStepEnd {
+	ends := make(map[string]marotte.RunStepEnd)
+	paths := make(map[string]string)
+	for i := range all {
+		e := &all[i]
+		switch e.Kind {
+		case marotte.EntryKindTurnOpen:
+			var to marotte.EntryTurnOpen
+			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
+				paths[e.Turn] = to.NodePath
+			}
+		case marotte.EntryKindTurnClose:
+			var tc marotte.EntryTurnClose
+			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
+				noteStepEnd(ends, path, tc.Outcome, tc.FailureReason, tc.FailureKind)
+			}
+		}
+	}
+	return ends
 }
 
 // runOutcome maps KAS's status to `completed`, `failed`, `cancelled`, or `unknown` with the status as raw stop.

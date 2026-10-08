@@ -193,6 +193,15 @@ type RunOpenAsk struct {
 	AskedAt   string `json:"asked_at,omitempty"`
 }
 
+// RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
+// keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
+// stopped, `completed`, so its node status cannot say this.
+type RunStepEnd struct {
+	Outcome       TurnOutcome `json:"outcome"`
+	FailureReason string      `json:"failure_reason,omitempty"`
+	FailureKind   FailureKind `json:"failure_kind,omitempty"`
+}
+
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
 //
 // Empty Text is a 400 rather than a waive. Continuing without an answer is a

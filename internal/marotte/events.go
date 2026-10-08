@@ -84,6 +84,10 @@ const (
 	// is what TurnConclusion.Truncated carries.
 	StopReasonMaxTokens       StopReason = "max_tokens"
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
+	// StopReasonToolUse is KAS's raw stop for a turn its agent loop cut at the per-turn
+	// model-call limit while the model was asking for another tool. KAS never sends
+	// max_turn_requests for that stop, and a turn that finishes never ends on tool_use.
+	StopReasonToolUse StopReason = "tool_use"
 	// StopReasonUnterminated is marotte's OWN value, never KAS's: the entry log's
 	// store-open closer stamps it on a turn no process could have closed, and the
 	// merge's synthesized closer stamps it on a turn neither side closed. It is a

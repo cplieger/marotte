@@ -29,20 +29,24 @@ import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
 import { severityOf, defaultFailureReason } from "../turn-severity.js";
-import type { TurnOutcome } from "../wire/types.gen.js";
+import type { EntryTurnClose } from "../types.js";
 export { ERROR_ROUTES };
 
 // Whether a cue may be raised YET is `agent-finished-cue.ts`'s; this owns what one would say.
 
 /** What an off-screen notification SAYS about a finished turn, "" for silence. A TOTAL switch on
  *  the SEVERITY with no default (a new member fails `noImplicitReturns`); `unknown` says nothing.
- *  `turn-severity.ts` owns the wording, shared with internal/agent/turn_finalize.go. */
-function notifyBodyFor(outcome: TurnOutcome | undefined, name: string): string {
+ *  `turn-severity.ts` owns the wording; a model-call-limit stop says its own reason, as
+ *  internal/agent/turn_finalize.go `failurePushBody` does. */
+function notifyBodyFor(close: EntryTurnClose | undefined, name: string): string {
+  const outcome = close?.outcome;
   switch (severityOf(outcome)) {
     case "clean":
       return `${name}: Agent finished`;
-    case "broken":
-      return `${name}: ${defaultFailureReason(outcome)}`;
+    case "broken": {
+      const own = close?.failure_kind === "model_call_limit" ? (close.failure_reason ?? "") : "";
+      return `${name}: ${own !== "" ? own : defaultFailureReason(outcome)}`;
+    }
     case "stopped":
     case "running":
       return "";
@@ -81,7 +85,6 @@ onSSE("turn_closed", (chatID, p) => {
   // fit asks for the turn's range read rather than settling off a frame in the wrong place.
   appendEntry(chatID, p.entry);
   const close = payloadOf(p.entry, "turn_close");
-  const outcome = close?.outcome;
   const settles = !anotherTurnOpen(chatID, p.entry.turn);
   // Read off the close itself: its turn_open may not be resident, and the repair read is async.
   const agentRan = close?.carrier !== true;
@@ -107,7 +110,7 @@ onSSE("turn_closed", (chatID, p) => {
   // Inside the `settles` branch and AFTER the writes above: the cue is a statement about a
   // turn this handler settled, and `chatSettled` reads the turn state those writes produce.
   if (settles && agentRan) {
-    noteAgentFinished(chatID, notifyBodyFor(outcome, get(chatID)?.name ?? "Chat"));
+    noteAgentFinished(chatID, notifyBodyFor(close, get(chatID)?.name ?? "Chat"));
   }
 });
 

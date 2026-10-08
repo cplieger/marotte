@@ -323,6 +323,27 @@ func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 	}
 }
 
+// TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit pins that a chat turn kiro-cli cut at its model-call limit
+// keeps the stop's own kind and remedy rather than the generic failure sentence.
+func TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit(t *testing.T) {
+	h, cs, _ := newTestHub()
+	streamingPromptTurn(t, h, "c1", "half an answer")
+
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonToolUse)
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	got := closes[0]
+	if got.Outcome != marotte.TurnOutcomeFailed || got.FailureKind != marotte.FailureKindModelCallLimit ||
+		got.FailureReason != marotte.ModelCallLimitTurnReason || got.StopReasonRaw != "tool_use" {
+		t.Errorf("WireTurnEnd(tool_use) wrote turn_close {%s %q %q %s}, want {failed %q %q tool_use}",
+			got.Outcome, got.FailureKind, got.FailureReason, got.StopReasonRaw,
+			marotte.FailureKindModelCallLimit, marotte.ModelCallLimitTurnReason)
+	}
+}
+
 // TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing feeds the empty-turn check; a turn with content is never recreated.
 func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
 	h, _, _ := newTestHub()

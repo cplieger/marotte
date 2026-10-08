@@ -82,7 +82,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("no steer entry reached the launching chat; entries: %+v", entries)
 	}
-	if want := stepRefusalNoteID(id, nodePath); entries[i].ID != want {
+	if want := stepNoteID(id, stepNoteRefused, nodePath); entries[i].ID != want {
 		t.Errorf("note id = %q, want %q (the step's own path, so each refused step gets its own row)",
 			entries[i].ID, want)
 	}
@@ -107,6 +107,47 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	// A deterministic refusal must not read "try again".
 	if !strings.Contains(steer.Text, "declined again") {
 		t.Errorf("note text = %q, want it to say a re-run is declined again", steer.Text)
+	}
+}
+
+// KAS grades a step its iteration limit stopped `completed`, so only this note tells the launching chat it did not finish.
+func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t *testing.T) {
+	const (
+		id       = "wf_1"
+		chatID   = marotte.ChatID("c1")
+		nodePath = "wf_1/build"
+	)
+	h, cs := runLoggingHub(t)
+	seedChat(t, cs, chatID)
+	h.runs.grantLease(t.Context(), id, "nightly",
+		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)})
+	h.runs.RunNodeStart(t.Context(), id, nodePath, "step-session-1", "")
+	if !h.runs.log.StopReason(id, nodePath, marotte.StopReasonToolUse) {
+		t.Fatal("StopReason(tool_use) refused on the open turn")
+	}
+
+	h.runs.RunNodeComplete(t.Context(), id, nodePath, "completed", "")
+
+	entries, err := cs.All(t.Context(), chatID)
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	i := slices.IndexFunc(entries, func(e marotte.Entry) bool { return e.Kind == marotte.EntryKindSteer })
+	if i < 0 {
+		t.Fatalf("no steer entry reached the launching chat; entries: %+v", entries)
+	}
+	if want := stepNoteID(id, stepNoteModelCallLimit, nodePath); entries[i].ID != want {
+		t.Errorf("note id = %q, want %q", entries[i].ID, want)
+	}
+	var steer marotte.EntrySteer
+	if err := json.Unmarshal(entries[i].Payload, &steer); err != nil {
+		t.Fatalf("decode the steer: %v", err)
+	}
+	if want := "nightly step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason; steer.Text != want {
+		t.Errorf("note text = %q, want %q", steer.Text, want)
+	}
+	if steer.Severity != "warning" || steer.OriginRun != id {
+		t.Errorf("note severity/run = %q/%q, want warning/%s", steer.Severity, steer.OriginRun, id)
 	}
 }
 

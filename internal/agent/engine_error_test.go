@@ -60,6 +60,24 @@ func TestWireTurnEnd_ALatchedContextOverflowKeepsItsRemedy(t *testing.T) {
 	}
 }
 
+// A model-call-limit stop names its own cause, so an earlier recovered display_error does not replace it.
+func TestWireTurnEnd_AModelCallLimitStopOutranksALatchedEngineError(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
+	log.SetEngineError(marotte.EngineError{Message: "Your connection was interrupted. Please try again in a moment.", ErrorType: "ge"})
+
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonToolUse)
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	if closes[0].FailureKind != marotte.FailureKindModelCallLimit || closes[0].FailureReason != marotte.ModelCallLimitTurnReason {
+		t.Errorf("turn_close = {%q %q}, want {%q %q}", closes[0].FailureKind, closes[0].FailureReason,
+			marotte.FailureKindModelCallLimit, marotte.ModelCallLimitTurnReason)
+	}
+}
+
 // The failure closer waits on its reply's position only to follow a queued turn_end; a dead ctx must still close.
 func TestAbandonInFlightTurn_ClosesOnACancelledContextWithASeq(t *testing.T) {
 	h, cs, _ := newTestHub()

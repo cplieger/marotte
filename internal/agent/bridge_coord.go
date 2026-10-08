@@ -1139,7 +1139,7 @@ func (bc *BridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte
 	if bc.runs == nil {
 		return
 	}
-	c := bc.concludeStop(chatID, stop, deathInterruptCause)
+	c := bc.concludeStop(chatID, stop, deathInterruptCause, "")
 	byRun, err := bc.runs.CloseHost(ctx, chatID, c)
 	for runID, sealed := range byRun {
 		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), "", runID, sealed)

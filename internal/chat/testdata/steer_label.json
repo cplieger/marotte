@@ -61,7 +61,7 @@
       "label": "Workflow result",
       "compared": true,
       "sites": [
-        "internal/agent/run_appender.go:70",
+        "internal/agent/run_appender.go:89",
         "internal/agent/run_bounds.go:352",
         "internal/translate/steering.go:165",
         "internal/translate/steering.go:82"
@@ -157,7 +157,7 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:70",
+      "site": "internal/agent/run_appender.go:89",
       "form": "literal",
       "origin": "agent",
       "state": "read",

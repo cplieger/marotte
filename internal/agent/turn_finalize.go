@@ -136,10 +136,12 @@ func (bc *BridgeCoordinator) publishClose(ctx context.Context, t *Turn, cf close
 }
 
 // engineAccount is a broken turn's sentence when the closer supplied none: the engine's latched display_error,
-// through the prompt-failure remedy table. A clean close ignores it.
+// through the prompt-failure remedy table. A clean close ignores it, and so does a stop that classifies itself, as
+// the replay projection does.
 func engineAccount(t *Turn, stop marotte.StopReason) (string, marotte.FailureKind) {
 	e := t.Log.EngineError()
-	if e == nil || marotte.SeverityOf(marotte.ConcludeStopReason(stop).Outcome) != marotte.TurnSeverityBroken {
+	c := marotte.ConcludeStopReason(stop)
+	if e == nil || c.FailureKind != "" || marotte.SeverityOf(c.Outcome) != marotte.TurnSeverityBroken {
 		return "", ""
 	}
 	m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
@@ -221,8 +223,7 @@ func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 // push fires. It returns the outcome the turn_close states.
 func (bc *BridgeCoordinator) closeTurn(ctx context.Context, t *Turn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
-	c := bc.concludeStop(chatID, stop, reason)
-	c.FailureKind = kind
+	c := bc.concludeStop(chatID, stop, reason, kind)
 	statusDesc := bc.turns.statusDescription(t)
 	sealed, err := t.Log.Close(ctx, c)
 	translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
@@ -261,13 +262,18 @@ type broadcastFunc func(ctx context.Context, e marotte.ServerEvent)
 // Broadcast publishes e.
 func (f broadcastFunc) Broadcast(ctx context.Context, e marotte.ServerEvent) { f(ctx, e) }
 
-// concludeStop grades the stop and carries the reason on the conclusion; an unmapped stop logs once per value.
+// concludeStop grades the stop; a closer's own reason or kind replaces the stop's account as a pair. An unmapped
+// stop logs once per value.
 func (bc *BridgeCoordinator) concludeStop(
 	chatID marotte.ChatID,
 	stop marotte.StopReason,
 	reason string,
+	kind marotte.FailureKind,
 ) marotte.TurnConclusion {
 	c := marotte.ConcludeStopReason(stop)
+	if reason != "" || kind != "" {
+		c.Reason, c.FailureKind = reason, kind
+	}
 	c.EmptyIfSilent = stop == marotte.StopReasonEndTurn
 	if !c.Known {
 		if _, seen := bc.unknownStops.LoadOrStore(stop, struct{}{}); !seen {
@@ -275,13 +281,22 @@ func (bc *BridgeCoordinator) concludeStop(
 				"chat_id", chatID, "stop_reason", stop)
 		}
 	}
-	c.Reason = reasonFor(c.Outcome, reason)
+	c.Reason = reasonFor(c.Outcome, c.Reason)
 	if c.Reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
 		// Unreachable while DefaultFailureReason covers every broken outcome; logged since the cost is a bodiless red card.
 		slog.Warn("a broken turn closed with no reason to show",
 			"chat_id", chatID, "outcome", c.Outcome, "stop_reason", stop)
 	}
 	return c
+}
+
+// failurePushBody is a broken turn's push sentence: the outcome's default, except a model-call-limit stop, which the
+// default ("reported an error") misstates. The client's notifyBodyFor (static-src/handlers/turn.ts) applies the same rule.
+func failurePushBody(c marotte.TurnConclusion) string {
+	if c.FailureKind == marotte.FailureKindModelCallLimit && c.Reason != "" {
+		return c.Reason
+	}
+	return marotte.DefaultFailureReason(c.Outcome)
 }
 
 // pushTurnOutcome sends a finished turn's off-screen push, reading the severity so it never claims success. The client
@@ -303,7 +318,7 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 	case marotte.TurnSeverityClean:
 		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), marotte.PushKindAgentFinished, chatID)
 	case marotte.TurnSeverityBroken:
-		bc.NotifyPush(ctx, marotte.DefaultFailureReason(c.Outcome), marotte.PushKindAgentFinished, chatID)
+		bc.NotifyPush(ctx, failurePushBody(c), marotte.PushKindAgentFinished, chatID)
 	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:
 		// A cancel was asked for and an unreadable end says nothing, so neither pushes; `running` cannot close.
 	}

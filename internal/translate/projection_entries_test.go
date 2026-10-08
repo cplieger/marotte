@@ -882,6 +882,21 @@ func TestEntryProjection_TurnEndStopDetailsRefusalFillsTurnClose(t *testing.T) {
 	}
 }
 
+// A replayed turn kiro-cli cut at its model-call limit projects the same close a live one records.
+func TestEntryProjection_ATurnEndAtTheModelCallLimitKeepsItsKind(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		agentChunkFrame(t, "working"),
+		turnEndFrame(t, "tool_use"),
+	})
+	var c marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &c)
+	if c.Outcome != marotte.TurnOutcomeFailed || c.FailureKind != marotte.FailureKindModelCallLimit || c.FailureReason != marotte.ModelCallLimitTurnReason {
+		t.Errorf("turn_close = {%s %q %q}, want {failed %q %q}", c.Outcome, c.FailureKind, c.FailureReason,
+			marotte.FailureKindModelCallLimit, marotte.ModelCallLimitTurnReason)
+	}
+}
+
 // A replayed failed turn carries the engine's own account: the display_error row
 // replays before its turn_end, and turn_end itself carries no failure sentence.
 func TestEntryProjection_ReplayedDisplayErrorIsTheFailedTurnsReason(t *testing.T) {

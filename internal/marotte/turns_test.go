@@ -128,3 +128,22 @@ func TestDefaultFailureReason_SpeaksWhereverThereIsSomethingToSay(t *testing.T) 
 		}
 	}
 }
+
+// A tool_use stop is kiro-cli's per-turn model-call limit cutting a turn that asked for more work, so it must read
+// broken with its own remedy, never completed or truncated.
+func TestConcludeStopReason_AToolUseStopIsTheModelCallLimit(t *testing.T) {
+	got := ConcludeStopReason(StopReasonToolUse)
+	want := TurnConclusion{
+		Outcome:     TurnOutcomeFailed,
+		Reason:      ModelCallLimitTurnReason,
+		RawStop:     StopReasonToolUse,
+		FailureKind: FailureKindModelCallLimit,
+		Known:       true,
+	}
+	if got != want {
+		t.Errorf("ConcludeStopReason(%q) = %+v, want %+v", StopReasonToolUse, got, want)
+	}
+	if sev := SeverityOf(got.Outcome); sev != TurnSeverityBroken {
+		t.Errorf("SeverityOf(%q) = %q, want broken: the step's work may be unfinished", got.Outcome, sev)
+	}
+}
