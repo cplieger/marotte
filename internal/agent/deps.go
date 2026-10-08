@@ -17,6 +17,8 @@ type mcpNameSets interface {
 	ConfiguredNames(ctx context.Context) map[string]struct{}
 }
 
+// kasMCPRenderer is *mcp.Store, called on the chat-open path: RenderKASConfig gives up when ctx ends, and
+// RenderedWaitForReady must not block.
 type kasMCPRenderer interface {
 	RenderKASConfig(ctx context.Context) error
 	RenderedWaitForReady() (waitForReady, known bool)

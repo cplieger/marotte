@@ -12,7 +12,7 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
-import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
+import { setUserScrolledUp } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
@@ -410,14 +410,10 @@ export function maybeCollapseGroup(node: HTMLElement): void {
       group.classList.contains(CLS_AUTO_COLLAPSED) &&
       !group.classList.contains(CLS_USER_TOGGLED)
     ) {
-      preserveReadingPosition(() => {
-        group.classList.remove(CLS_AUTO_COLLAPSED);
-        groupCtls.get(group)?.open();
-        group
-          .querySelector<HTMLElement>(".tool-group-header")
-          ?.setAttribute("aria-expanded", "true");
-        refreshGroupHeader(group);
-      }, "content-growth");
+      group.classList.remove(CLS_AUTO_COLLAPSED);
+      groupCtls.get(group)?.open();
+      group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "true");
+      refreshGroupHeader(group);
     }
     return;
   }
@@ -459,11 +455,7 @@ export function autoCollapseGroup(group: HTMLElement): void {
       return;
     }
   }
-  // An AUTO collapse removes height ABOVE the reader, so it is compensated.
-  // The one ANIMATED compensated height change, via createDisclosure.
-  preserveReadingPosition(() => {
-    markAutoCollapsed(group);
-    ctl.close();
-    refreshGroupHeader(group);
-  }, "content-growth");
+  markAutoCollapsed(group);
+  ctl.close();
+  refreshGroupHeader(group);
 }

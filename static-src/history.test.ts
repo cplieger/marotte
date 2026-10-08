@@ -105,9 +105,6 @@ vi.mock("./navigate.js", () => ({
 }));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
-  preserveReadingPosition: (fn: () => void) => {
-    fn();
-  },
 }));
 const chatRow = {
   session_id: "sess_chat",

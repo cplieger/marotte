@@ -349,7 +349,7 @@ describe(
       off();
 
       expect(cardFor("t1")).not.toBeNull();
-      // Not the exact park offset: a prepend runs inside `preserveReadingPosition`, which moves the number by design.
+      // Not the exact park offset: scroll anchoring holds the reader under the prepend, which moves the number by design.
       expect(atLiveEdge()).toBe(false);
       expect(seen).toHaveBeenCalledTimes(0);
     });

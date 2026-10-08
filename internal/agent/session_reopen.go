@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/securityprofile"
@@ -128,12 +129,12 @@ func (rt *Runtime) ReconcileSessionSettings(ctx context.Context) {
 }
 
 func (rt *Runtime) reconcileSettingsWrite(ctx context.Context, reason string) {
-	rt.reconcileSessionSettings(ctx, reason)
+	rt.reconcileSessionSettings(ctx, reason, time.Now().Add(ignorePushTimeout))
 	rt.pushLiveToAll(ctx)
 }
 
 func (rt *Runtime) reconcileUtilityUse(ctx context.Context) {
-	rt.reconcileSessionSettings(ctx, "session settings")
+	rt.reconcileSessionSettings(ctx, "session settings", time.Now().Add(ignorePushTimeout))
 	if u := rt.utility.peek(); u != nil {
 		u.session.syncLive(ctx, rt.liveSettings)
 	}
@@ -142,7 +143,8 @@ func (rt *Runtime) reconcileUtilityUse(ctx context.Context) {
 
 // reconcileSessionSettings marks chats for reopen and restarts the utility session as the
 // fingerprints moved, and syncs what this server applies itself; it pushes to no chat process.
-func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string) {
+// The sync and the utility stop wait no later than deadline in all.
+func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string, deadline time.Time) {
 	b := &rt.sessionSeen
 	b.mu.Lock()
 	now, ok := rt.sessionFingerprint(ctx)
@@ -151,18 +153,63 @@ func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string) 
 	if ok {
 		b.seen = now
 	}
-	var utility *utilityRuntime
+	start := make(chan struct{})
+	var retired <-chan struct{}
 	if restart {
-		utility = rt.utility.take()
+		retired = rt.claimUtilityRetire(ctx, start)
 	}
 	if reopen {
 		rt.ReopenChatSessions(reason)
 	}
 	b.mu.Unlock()
-	rt.syncProcessLive(ctx)
-	if utility != nil {
-		// It serves the leases it holds until Stop.
-		utility.session.syncLive(ctx, rt.liveSettings)
-		utility.session.Stop()
+	syncCtx, cancel := context.WithDeadline(ctx, deadline)
+	rt.syncProcessLive(syncCtx)
+	cancel()
+	close(start)
+	if retired != nil {
+		awaitUtilityRetire(retired, deadline)
+	}
+}
+
+// claimUtilityRetire takes the utility session whose spawn settings moved, for a stop on inflight that begins once
+// start closes, and returns a channel closed when that stop ends. It returns nil when no session is built, and once
+// Shutdown has begun, which leaves the session to Shutdown's own utility stop.
+func (rt *Runtime) claimUtilityRetire(ctx context.Context, start <-chan struct{}) <-chan struct{} {
+	done := make(chan struct{})
+	claimed := rt.lifecycle.goClaimed(func() func() {
+		utility := rt.utility.take()
+		if utility == nil {
+			return nil
+		}
+		return func() {
+			defer close(done)
+			<-start
+			// It serves the leases it holds until Stop.
+			utility.session.syncLive(ctx, rt.liveSettings)
+			utility.session.Stop()
+		}
+	})
+	if !claimed {
+		return nil
+	}
+	return done
+}
+
+// awaitUtilityRetire waits until deadline at most: Stop waits for a start in flight and the process teardown, which
+// only the handshake budget and the teardown graces bound. A stop still running finishes on inflight.
+func awaitUtilityRetire(done <-chan struct{}, deadline time.Time) {
+	select {
+	case <-done:
+		return
+	default:
+	}
+	start := time.Now()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		slog.Warn("utility session stop still running; it finishes in the background",
+			"waited_ms", time.Since(start).Milliseconds())
 	}
 }

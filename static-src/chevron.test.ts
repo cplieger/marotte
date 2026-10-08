@@ -6,9 +6,6 @@ import { loadCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: vi.fn(),
-  preserveReadingPosition: (fn: () => void) => {
-    fn();
-  },
 }));
 
 import { chevronEl } from "./chevron.js";

@@ -46,10 +46,11 @@ type BridgeCoordinator struct {
 	// ensureIdentity confirms the account before a bridge attaches; nil leaves package tests inert.
 	ensureIdentity func(context.Context) `wiring:"optional"`
 	// reconcileSessions marks every chat for reopen when a setting read only at open moved, so it
-	// runs before this open checks the mark.
-	reconcileSessions func(context.Context)
-	// afterOpen runs once an open synced its own bridge, whose spawn may be the first chat process a report needs.
-	afterOpen func(context.Context, marotte.ChatID)
+	// runs before this open checks the mark. It waits no later than its deadline.
+	reconcileSessions func(context.Context, time.Time)
+	// afterOpen runs once an open synced its own bridge, whose spawn may be the first chat process a report needs. It
+	// waits no later than its deadline.
+	afterOpen func(context.Context, marotte.ChatID, time.Time)
 	// retireUtility resets the utility session at the chat bridges' identity boundary.
 	retireUtility func()
 	// replayProjection is the session/load replay lifecycle; nil in tests without a load.
@@ -169,16 +170,18 @@ func resolveAgentEngine() string {
 // OpenBridge returns chatID's bridge, creating it; concurrent callers coalesce on bridgeSpawnKey. Before it
 // returns it sends the bridge each live setting the bridge has not confirmed (sharedBridge.syncLive); a failed push
 // is resent at the next chat open or settings write. Every other live process is synced in the background, so a
-// hand edit reaches all of them from one open.
+// hand edit reaches all of them from one open. Its waits for the process sync, across every reconcile a reopen
+// repeats and the unreadable report, end at one deadline ignorePushTimeout after the call.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within agent use the methods on it. Exporting would leak ACP wiring outside the runtime package.
 func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
-	sb, err := bc.openBridge(ctx, chatID, modelOverride)
+	syncBy := time.Now().Add(ignorePushTimeout)
+	sb, err := bc.openBridge(ctx, chatID, modelOverride, syncBy)
 	if err != nil {
 		return nil, err
 	}
 	sb.syncLive(ctx, chatID, bc.readLiveSettings)
-	bc.afterOpen(ctx, chatID)
+	bc.afterOpen(ctx, chatID, syncBy)
 	return sb, nil
 }
 
@@ -186,18 +189,18 @@ func (bc *BridgeCoordinator) readLiveSettings(ctx context.Context) liveSettings 
 	return readLiveSettings(ctx, bc.lifecycle.configDir, readLiveFields)
 }
 
-func (bc *BridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string, syncBy time.Time) (*sharedBridge, error) {
 	// Before the fast path, so an account switch retires the existing bridge.
 	if bc.ensureIdentity != nil {
 		bc.ensureIdentity(ctx)
 	}
-	bc.reconcileSessions(ctx)
+	bc.reconcileSessions(ctx, syncBy)
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
 		if reopen, stopped := bc.bridge.mgr.closeIfRetired(chatID, sb); reopen {
 			if stopped {
 				bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
 			}
-			return bc.openBridge(ctx, chatID, modelOverride)
+			return bc.openBridge(ctx, chatID, modelOverride, syncBy)
 		}
 		bc.repairEffort(ctx, chatID, sb)
 		return sb, nil
@@ -216,7 +219,7 @@ func (bc *BridgeCoordinator) openBridge(ctx context.Context, chatID marotte.Chat
 		if stopped {
 			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
 		}
-		return bc.openBridge(ctx, chatID, modelOverride)
+		return bc.openBridge(ctx, chatID, modelOverride, syncBy)
 	}
 	return b, nil
 }

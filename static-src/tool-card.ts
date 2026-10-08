@@ -21,7 +21,7 @@ import { openChange, openAtLine, openCallDiff, openSpec } from "./navigate.js";
 import { specDirOf } from "./spec-path.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
-import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
+import { setUserScrolledUp } from "./scroll.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { toolCallBulk, type ToolBulk } from "./tool-bulk.js";
 import {
@@ -1091,11 +1091,5 @@ export function insertDiffPreview(
     wrap.appendChild(more);
   }
 
-  // The third layout-change case: a card GROWS when its diff preview lands on the update
-  // path, which pushes everything below it — including the reader's position —
-  // down. Content-growth class, same helper. Immediate, like reasoning's seal
-  // and unlike tool-group's animated collapse.
-  preserveReadingPosition(() => {
-    node.insertBefore(wrap, node.querySelector(".tool-details"));
-  }, "content-growth");
+  node.insertBefore(wrap, node.querySelector(".tool-details"));
 }

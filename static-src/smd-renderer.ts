@@ -34,19 +34,31 @@ import {
   EQUATION_INLINE,
   UNCLOSED,
   ALIGN,
+  HREF,
+  SRC,
+  TITLE,
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { exfilShaped, isSafeUrl, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import {
+  decodeDestination,
+  exfilShaped,
+  isSafeUrl,
+  rewriteServedImageSrc,
+  servedFileRoute,
+  servedPath,
+} from "./utils-url.js";
 import { formPayloadLink, linkAnchor } from "./link-guard.js";
 import { buildPath } from "./route-path.js";
 import { bindFileLink } from "./linkify.js";
 import { mediaElementFor } from "./media-block.js";
-import { buildPreviewCard, previewHrefPage } from "./preview-card.js";
+import { buildPreviewCard, previewCardFolder, previewHrefPage } from "./preview-card.js";
 import { fileOpenRoute } from "./preview-page.js";
 import { latexToMathML } from "./mathml.js";
+import { followRoot } from "./workspace.js";
 import { el } from "@cplieger/reactive";
+import { join as joinKey } from "@cplieger/keyenc";
 
 export type { Renderer } from "./smd-parser-types.js";
 
@@ -205,10 +217,16 @@ function add_token_dom(data: DomRendererData, type: Token): void {
 }
 
 /** Marks a per-chunk span whose fade has already played, so the CSS rule that animates one on
- *  mount skips it. Set only by the unwrap below: MEASURED in Chromium, re-inserting a node
- *  restarts its CSS animation, so re-parenting a settled span would re-run the fade over text
- *  already on screen — the flash the mount-once design exists to avoid. */
+ *  mount skips it. MEASURED in Chromium, re-inserting a node restarts its CSS animation, so
+ *  re-parenting an unsettled span would re-run the fade over text already on screen — the flash
+ *  the mount-once design exists to avoid. Every move of streamed text settles it first. */
 const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
+
+function settleChunks(el: Element): void {
+  for (const span of el.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
+    span.setAttribute(CHUNK_SETTLED_ATTR, "");
+  }
+}
 
 /** Replace an inline element whose token never closed with its own delimiter followed by its
  *  children, which is what CommonMark renders for an unclosed delimiter run. The parser is
@@ -225,9 +243,7 @@ function unwrap_unclosed(data: DomRendererData, el: Element, delim: string): voi
     data.caretEl = parent;
     parent.setAttribute(CARET_ATTR, "");
   }
-  for (const span of el.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
-    span.setAttribute(CHUNK_SETTLED_ATTR, "");
-  }
+  settleChunks(el);
   // IMG is void: markdown's `![alt]` puts the swallowed text in `alt`, so the replacement is one
   // text node rather than a delimiter plus children.
   const head = el.tagName === "IMG" ? delim + (el.getAttribute("alt") ?? "") : delim;
@@ -317,17 +333,109 @@ function add_text_dom(data: DomRendererData, text: string): void {
 /** A bracket link's href arrives after its label, so the label's nodes exist and are MOVED into
  *  the card; the node stack and the caret follow them. */
 function swapForPreviewCard(data: DomRendererData, link: Element, page: string): void {
-  for (const span of link.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
-    span.setAttribute(CHUNK_SETTLED_ATTR, "");
-  }
+  settleChunks(link);
   const card = buildPreviewCard(page, [...link.childNodes]);
   link.replaceWith(card);
+  followRootDest(link, card);
   data.nodes[data.index] = card;
   if (data.caretEl === link) {
     const label = card.querySelector(".preview-card-label") ?? card;
     label.setAttribute(CARET_ATTR, "");
     data.caretEl = label;
   }
+}
+
+/** A link or image whose role reads the root, re-decided at every root change. */
+interface RootDest {
+  /** What stands for the destination now: the anchor or its card, the image, its media swap or its miss. */
+  current: WeakRef<Element>;
+  /** The element as `add_token` made it, before the destination landed. */
+  readonly pristine: Element;
+  readonly attr: typeof HREF | typeof SRC;
+  readonly value: string;
+  /** What the role read from the root; the element is rebuilt only when a new root changes it. */
+  readonly key: string;
+  title: string | null;
+  readonly emptyLabel: boolean;
+}
+
+/** Keyed by the element standing for the destination, so a swap keeps the record, and the record lives exactly as
+ *  long as one of its elements does. */
+const rootDestByEl = new WeakMap<Element, RootDest>();
+
+/** Everything a link's or image's role reads from the root, in set_attr_dom's order: a link's card page and folder
+ *  label, else the tab its route names; an image's served path. */
+function rootKey(attr: typeof HREF | typeof SRC, value: string): string {
+  if (attr === SRC) {
+    return servedPath(value) ?? "";
+  }
+  const page = previewHrefPage(value);
+  if (page !== null) {
+    return joinKey(page, previewCardFolder(page));
+  }
+  const file = servedFileRoute(value);
+  return joinKey("", file === null ? "" : buildPath(fileOpenRoute(file.path, file.line)));
+}
+
+/** Only an absolute path can sit beneath a root. The destination lands when `)` closes, so a tracked element is never
+ *  on a parser's open-node stack and a later rebuild cannot strand one. */
+function trackRootDest(node: Element, attr: typeof HREF | typeof SRC, value: string): void {
+  if (!/^\/(?![/\\])/.test(decodeDestination(value))) {
+    return;
+  }
+  const rec: RootDest = {
+    current: new WeakRef(node),
+    pristine: node.cloneNode(false) as Element,
+    attr,
+    value,
+    key: rootKey(attr, value),
+    title: null,
+    emptyLabel: node.firstChild === null,
+  };
+  rootDestByEl.set(node, rec);
+  followRoot(rec, redecide);
+}
+
+function followRootDest(from: Element, to: Element): void {
+  const rec = rootDestByEl.get(from);
+  if (rec !== undefined) {
+    rec.current = new WeakRef(to);
+    rootDestByEl.set(to, rec);
+  }
+}
+
+/** Rebuild a destination whose role the new root changed from its pristine element, through the same path a render
+ *  takes; the rebuild tracks the fresh element under a record of its own. Answers whether to keep following `rec`. */
+function redecide(rec: RootDest): boolean {
+  const current = rec.current.deref();
+  if (current?.parentNode == null) {
+    return false;
+  }
+  if (rootKey(rec.attr, rec.value) === rec.key) {
+    return true;
+  }
+  const fresh = rec.pristine.cloneNode(false) as Element;
+  if (rec.attr === HREF && !rec.emptyLabel) {
+    const label = current.classList.contains("preview-card")
+      ? current.querySelector(".preview-card-label")
+      : current;
+    if (label !== null) {
+      settleChunks(label);
+      fresh.append(...label.childNodes);
+    }
+  }
+  current.replaceWith(fresh);
+  const data: DomRendererData = {
+    nodes: [fresh],
+    index: 0,
+    onBlockComplete: undefined,
+    animateText: false,
+  };
+  set_attr_dom(data, rec.attr, rec.value);
+  if (rec.title !== null) {
+    set_attr_dom(data, TITLE, rec.title);
+  }
+  return false;
 }
 
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
@@ -350,6 +458,15 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
     node.setAttribute(attrName, "#");
     return;
+  }
+  if ((attr === HREF && node.tagName === "A") || (attr === SRC && node.tagName === "IMG")) {
+    trackRootDest(node, attr, value);
+  }
+  if (attr === TITLE) {
+    const rec = rootDestByEl.get(node);
+    if (rec !== undefined) {
+      rec.title = value;
+    }
   }
   const page = attrName === "href" && node.tagName === "A" ? previewHrefPage(value) : null;
   if (page !== null) {
@@ -383,6 +500,7 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
     const swapped = mediaElementFor(value, node.getAttribute("alt") ?? "");
     if (swapped !== null) {
       node.replaceWith(swapped);
+      followRootDest(node, swapped);
       // Re-point the node stack, or end_token would close a node no longer in the document and any
       // later emission would land on the departed `<img>`.
       data.nodes[data.index] = swapped;
@@ -408,6 +526,7 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
         miss.setAttribute(CHROME_ATTR, "");
         miss.textContent = `Image not available: ${shown}`;
         node.replaceWith(miss);
+        followRootDest(node, miss);
       },
       { once: true },
     );

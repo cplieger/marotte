@@ -664,8 +664,8 @@ function releaseIntent(): void {
 }
 
 /** Jump to a turn: page it in if needed, build its body, scroll once, then correct until its top
- *  sits on the reading line. ONE branch point (paging); the body build runs on both paths, since its
- *  `preserveReadingPosition` write mid-animation would redirect the scroll. */
+ *  sits on the reading line. ONE branch point (paging); the body build runs on both paths first, since
+ *  a body landing mid-animation would move the target under the flight. */
 async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promise<void> {
   // A second click on a turn that is already paging IS that jump, not another one:
   // claiming a generation here would supersede the operation this click is waiting

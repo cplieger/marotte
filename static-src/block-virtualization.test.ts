@@ -272,8 +272,10 @@ function bodyRows(turnID: string): HTMLElement[] {
   return [...bodyOf(turnID).querySelectorAll<HTMLElement>(":scope > .msg-row")];
 }
 
+/** The head spacer is the body's first child; the tail is the body's next sibling. */
 function spacer(turnID: string, side: "head" | "tail"): HTMLElement | null {
-  return card(turnID).querySelector<HTMLElement>(`:scope > .turn-space[data-space="${side}"]`);
+  const host = side === "head" ? ":scope > .turn-body" : ":scope";
+  return card(turnID).querySelector<HTMLElement>(`${host} > .turn-space[data-space="${side}"]`);
 }
 
 // Search navigation onto an entry not in the DOM: everything runs for real except the
@@ -508,7 +510,7 @@ describe("scrolling moves the window", () => {
   /**
    * Drag the scrollbar to `top` and report how far the reader moved. The wheel's DIRECTION
    * matters: Reading is entered from the input's aim. `behavior: "instant"`, because the
-   * scroller is `scroll-behavior: smooth`. Measured before any compensation.
+   * scroller is `scroll-behavior: smooth`. Measured before any anchoring.
    */
   async function dragTo(top: number): Promise<number> {
     const scrollEl = scroller();
@@ -523,10 +525,9 @@ describe("scrolling moves the window", () => {
   }
 
   /**
-   * Drag to the top, wait for the window to move HEAD-ward, and report the ordinal reached.
-   * It converges in ONE pass on this fixture (the ladder anchors on mounted elements, so
-   * scrollTop 0 re-seeds at the window's own head), so cases assert that the window MOVED
-   * and the tail DROPPED, not that ordinal 1 was reached. `dragToHead` serves prose runs.
+   * Drag to the top, wait for the window to move HEAD-ward, and report the ordinal reached. The anchor prices
+   * the head spacer, so scrollTop 0 seeds the window at the turn's first ordinal in one pass.
+   * `dragToHead` serves prose runs.
    */
   async function dragUpAWindow(turnID: string): Promise<number> {
     const was = mountedSeqs(turnID)[0] ?? 0;
@@ -673,6 +674,91 @@ describe("scrolling moves the window", () => {
     expect(Math.abs(drift)).toBeLessThan(0.25 * Math.abs(travelled));
   });
 
+  it("holds a reader parked just past the mounted rows where they are while the window moves", async () => {
+    await coldLoad("big", hugeTurn("big", HUGE));
+    await dragUpAWindow("big");
+    const to = mountedSeqs("big").at(-1) ?? 0;
+
+    // The viewport top on the body's last edge, every row above it: the body is the only box in view.
+    const parked = mountedBottom("big");
+    await dragTo(parked);
+    await vi.waitFor(() => {
+      expect(mountedSeqs("big").at(-1)).toBeGreaterThan(to);
+    });
+    await windowSettled("big");
+
+    // The head retracted above and the tail mounted in place of its spacer at the price it stood for.
+    expect(Math.abs(scroller().scrollTop - parked)).toBeLessThanOrEqual(1);
+  });
+
+  it("mounts what a reader dropped deep into a spacer sees, with no further gesture", async () => {
+    // Long enough that the middle of the head spacer lies more than one window move from the mounted rows.
+    await coldLoad("big", hugeTurn("big", 4 * HUGE));
+    const head = spacer("big", "head");
+    expect(head).not.toBeNull();
+    const box = scroller().getBoundingClientRect();
+    const r = head?.getBoundingClientRect() ?? box;
+    const deep = Math.round(scroller().scrollTop + r.top - box.top + r.height / 2);
+    expect(r.height).toBeGreaterThan(8 * VIEWPORT_PX);
+    // A scrollbar drag, then stillness.
+    await dragTo(deep);
+    await windowSettled("big");
+
+    const inView = [...card("big").querySelectorAll<HTMLElement>("[data-entry-seq]")].filter(
+      (row) => {
+        const rr = row.getBoundingClientRect();
+        return rr.bottom > box.top && rr.top < box.bottom;
+      },
+    );
+    expect(inView.length).toBeGreaterThan(0);
+    // One window, not everything between where it was and where it went.
+    expect(mountedSeqs("big").length).toBeLessThanOrEqual(RESIDENT_ENTRIES);
+  });
+
+  it("mounts what a reader dropped deep into the TAIL spacer sees, as one window", async () => {
+    await coldLoad("big", hugeTurn("big", 4 * HUGE));
+    await dragTo(0);
+    await windowSettled("big");
+    const tail = spacer("big", "tail");
+    expect(tail).not.toBeNull();
+    const box = scroller().getBoundingClientRect();
+    const r = tail?.getBoundingClientRect() ?? box;
+    expect(r.height).toBeGreaterThan(8 * VIEWPORT_PX);
+    await dragTo(Math.round(scroller().scrollTop + r.top - box.top + r.height / 2));
+    await windowSettled("big");
+
+    const inView = [...card("big").querySelectorAll<HTMLElement>("[data-entry-seq]")].filter(
+      (row) => {
+        const rr = row.getBoundingClientRect();
+        return rr.bottom > box.top && rr.top < box.bottom;
+      },
+    );
+    expect(inView.length).toBeGreaterThan(0);
+    expect(mountedSeqs("big").length).toBeLessThanOrEqual(RESIDENT_ENTRIES);
+  });
+
+  it("lets a reader's own scroll supersede the turn they opened, however far they go", async () => {
+    // Opened by the reader, which pins its first ordinal as a standing request.
+    const id = await coldLoad("big", hugeTurn("big", 4 * HUGE));
+    setTurnOpen(id, "big", true);
+    await mountTurnBody(id, "big", 0);
+    await windowSettled("big");
+    const tail = spacer("big", "tail");
+    expect(tail).not.toBeNull();
+    const box = scroller().getBoundingClientRect();
+    const r = tail?.getBoundingClientRect() ?? box;
+    await dragTo(Math.round(scroller().scrollTop + r.top - box.top + r.height / 2));
+    await windowSettled("big");
+
+    const inView = [...card("big").querySelectorAll<HTMLElement>("[data-entry-seq]")].filter(
+      (row) => {
+        const rr = row.getBoundingClientRect();
+        return rr.bottom > box.top && rr.top < box.bottom;
+      },
+    );
+    expect(inView.length).toBeGreaterThan(0);
+  });
+
   it("keeps the reader's position addressable when the tail's window empties", async () => {
     await coldLoad("big", hugeTurn("big", HUGE));
     await dragUpAWindow("big");
@@ -692,7 +778,7 @@ describe("scrolling moves the window", () => {
 
     const first = mountedSeqs("big").join(",");
     const landed = scroller().scrollTop;
-    // Eight idle frames: the compensation's own scroll must not re-arm the window, thanks to
+    // Eight idle frames: anchoring's own scroll must not re-arm the window, thanks to
     // the re-entrancy latch and the plan-equality exit.
     for (let i = 0; i < 8; i++) {
       await frame();
@@ -700,6 +786,38 @@ describe("scrolling moves the window", () => {
     expect(mountedSeqs("big").join(",")).toBe(first);
     expect(scroller().scrollTop).toBeCloseTo(landed, -1);
   });
+
+  for (const shape of ["reasoning", "tool_call"] as const) {
+    it(`mounts a head extension below the head spacer, ${shape}`, async () => {
+      await coldLoad("big", shape === "reasoning" ? hugeTurn("big", HUGE) : toolTurn("big", HUGE));
+      // Just inside the head spacer's end: a move that overlaps the mounted rows, so the head grows in place.
+      const box = scroller().getBoundingClientRect();
+      const end = spacer("big", "head")?.getBoundingClientRect().bottom ?? box.top;
+      // Watched while it moves: a row seated above the spacer re-anchors the next pass, which can sort it out.
+      const misplaced: string[] = [];
+      const body = bodyOf("big");
+      const watch = new MutationObserver(() => {
+        const first = body.firstElementChild;
+        if (spacer("big", "head") !== null && first?.classList.contains("turn-space") !== true) {
+          misplaced.push((first as HTMLElement | null)?.dataset["entrySeq"] ?? "?");
+        }
+      });
+      watch.observe(body, { childList: true });
+      await dragTo(Math.round(scroller().scrollTop + end - box.top - VIEWPORT_PX / 4));
+      await windowSettled("big");
+      watch.disconnect();
+      expect(misplaced).toEqual([]);
+      const head = spacer("big", "head");
+      // Or the order is vacuous: the window must still stop short of the turn's first ordinal.
+      expect(head).not.toBeNull();
+      const above = [...card("big").querySelectorAll<HTMLElement>("[data-entry-seq]")].filter(
+        (row) =>
+          head !== null &&
+          (head.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING) !== 0,
+      );
+      expect(above.map((row) => row.dataset["entrySeq"])).toEqual([]);
+    });
+  }
 
   for (const shape of ["reasoning", "tool_call"] as const) {
     it(`keeps one overscan mounted each side of the anchor, ${shape}`, async () => {
@@ -716,7 +834,7 @@ describe("scrolling moves the window", () => {
       // INTO the moved region, or `anchorSeq` answers -1 and the floor is unreadable.
       await dragTo(Math.round((mountedTop("big") + mountedBottom("big")) / 2));
 
-      // Anchor and window read TOGETHER until they agree: a clamp after the compensation can
+      // Anchor and window read TOGETHER until they agree: a clamp after the move can
       // move the window after two polls agreed. A MISSING floor still times out red.
       await vi.waitFor(
         () => {

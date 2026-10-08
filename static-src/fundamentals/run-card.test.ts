@@ -1,15 +1,8 @@
 // The run card's state vocabulary: the per-step GLYPH is the only signal for what a step is
 // doing, so every step state has to reach it.
-import { vi, describe, it, expect } from "vitest";
-
-// scroll.ts is a singleton over a real `#messages`; the canonical mock runs its compensation
-// helpers' mutation, which also makes the compensation observable.
-vi.mock("../scroll.js", () =>
-  import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
-);
+import { describe, it, expect } from "vitest";
 
 import { buildRunCard, type RunAsks } from "./run-card.js";
-import { scrollMock } from "../__test-helpers__/scroll-mock.js";
 import { leaves } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
 import type { RunNode, RunState } from "../run-store.js";
@@ -706,40 +699,6 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     expect(collapsed(later.c)).toBe(true);
     later.c.render(runOf("failed", step("build", "failed")));
     expect(collapsed(later.c)).toBe(false);
-  });
-
-  it("routes the fold through the scroll compensator", () => {
-    // An auto fold removes height ABOVE the reader, so it must go through `preserveReadingPosition`.
-    // Withholding the wrapped mutation makes that falsifiable: an unwrapped `ctl.close()` would fold
-    // anyway.
-    const { c } = wired();
-    c.render(clean());
-    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
-
-    c.setSuperseded(true);
-
-    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
-    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
-    expect(collapsed(c)).toBe(false);
-    expect(aria(c)).toBe("true");
-  });
-
-  it("routes the failure re-open through it as well", () => {
-    // The other direction, which `maybeCollapseGroup` also wraps: this ADDS the step
-    // rows' height back above the reader.
-    const { c } = wired();
-    c.render(clean());
-    c.setSuperseded(true);
-    expect(collapsed(c)).toBe(true);
-    // Cleared, because the fold above went through the compensator too.
-    scrollMock.preserveReadingPosition.mockClear();
-    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
-
-    c.render(runOf("failed", step("build", "failed")));
-
-    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
-    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
-    expect(collapsed(c)).toBe(true);
   });
 
   it("re-opens a folded card when the LAUNCH turns out to have failed", () => {

@@ -35,7 +35,7 @@ const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
 /** Long enough to WRAP, so a mounted element measures several times the per-entry estimate the
  *  spacer above it priced. One line of prose per entry and the head's growth is too small for a
- *  compensation to be observable at all. */
+ *  misplaced anchor to be observable at all. */
 const LONG = "the quick brown fox jumps over the lazy dog and keeps going ".repeat(6);
 
 /** Prose RUNS per turn. A run is ONE mounted element however many entries it holds (`sliceTurn`
@@ -102,6 +102,30 @@ function heavyTurn(turnID: string, n: number, perRun: number): Entry[] {
   return out;
 }
 
+/** One turn of `groups` runs of sixteen settled tool calls, each run after a `thinking` entry, so
+ *  every run is a group that folds once something follows it. Dense in entries per pixel, so the
+ *  tool budget ends the window close to the reader. */
+function groupedTurn(turnID: string, n: number, groups: number): Entry[] {
+  const out: Entry[] = [turnOpen(turnID, n)];
+  let at = 1;
+  for (let g = 0; g < groups; g++) {
+    out.push(sealed(turnID, at++, "thinking", { text: `step ${String(g)}` }));
+    for (let c = 0; c < 16; c++) {
+      out.push(
+        sealed(turnID, at++, "tool_call", {
+          id: `${turnID}-tc${String(at)}`,
+          title: `Run step ${String(g)}.${String(c)}`,
+          kind: "execute",
+          status: "completed",
+          ts: at,
+        }),
+      );
+    }
+  }
+  out.push(sealed(turnID, at, "turn_close", { outcome: "completed" }));
+  return out;
+}
+
 /** A chat holding whole turns, the shape a page GET lands. */
 function activate(chat: string, turnEntries: readonly (readonly Entry[])[]): void {
   const turns = new Map<string, TurnState>();
@@ -153,7 +177,9 @@ function residency(): string {
     const seqs = [...c.querySelectorAll<HTMLElement>("[data-entry-seq]")]
       .map((e) => `${e.dataset["entryTurn"] ?? ""}#${e.dataset["entrySeq"] ?? ""}`)
       .join(",");
-    const spacers = [...c.querySelectorAll<HTMLElement>(":scope > .turn-space")]
+    const spacers = [
+      ...c.querySelectorAll<HTMLElement>(":scope > .turn-body > .turn-space, :scope > .turn-space"),
+    ]
       .map((e) => `${e.dataset["space"] ?? "?"}=${e.style.blockSize}`)
       .join("/");
     parts.push(`${id}{${seqs}}[${spacers}]`);
@@ -212,10 +238,10 @@ describe("the residency anchor under a reader's own scroll", () => {
   /** `count` heavy turns of `perRun` entries per run, all but the newest explicitly OPEN so
    *  every one is `openable` and the window has to choose between them. Left to the fold policy
    *  only the newest would be, and then the window never moves across a turn boundary at all. */
-  async function openTurns(count: number, perRun: number): Promise<void> {
+  async function openTurns(count: number, perRun: number, build = heavyTurn): Promise<void> {
     const turnEntries: Entry[][] = [];
     for (let i = 1; i <= count; i++) {
-      turnEntries.push(heavyTurn(`t${String(i)}`, i, perRun));
+      turnEntries.push(build(`t${String(i)}`, i, perRun));
     }
     const chat = chatID();
     activate(chat, turnEntries);
@@ -267,24 +293,27 @@ describe("the residency anchor under a reader's own scroll", () => {
   }
 
   /** Walk up in `STEP_PX` gestures until the viewport top has CROSSED from one turn's card into
-   *  the previous one `crossings` times, and report the last such gesture. TWO by default,
+   *  the previous one `crossings` times, and report how far the element on the reading line
+   *  drifted in the last such gesture, beyond the reader's own travel. TWO by default,
    *  because the FIRST crossing still has the window's tail LATCHED at the transcript's end: a
    *  backward anchor error cannot retract a latched tail, so that one absorbs it and reports
    *  nothing. */
-  async function scrollUpAcrossTurnBoundaries(
-    crossings = 2,
-  ): Promise<{ asked: number; landed: number }> {
+  async function scrollUpAcrossTurnBoundaries(crossings = 2): Promise<number> {
     let from = turnAtViewportTop();
     expect(from, "the viewport top must start inside a turn's card").not.toBe("");
     let seen = 0;
     for (let s = 0; s < 40; s++) {
+      const held = atReadingLine();
+      expect(held, "nothing on the reading line").not.toBeNull();
+      const was = scroller().scrollTop;
       const asked = await readerScrollsUp(STEP_PX);
       const now = turnAtViewportTop();
       if (now !== from && now !== "") {
         from = now;
         seen++;
-        if (seen === crossings) {
-          return { asked, landed: scroller().scrollTop };
+        if (seen === crossings && held !== null) {
+          expect(held.el.isConnected, "the element read was unmounted").toBe(true);
+          return held.el.getBoundingClientRect().top - held.top - (was - asked);
         }
       }
       if (scroller().scrollTop === 0) {
@@ -298,7 +327,7 @@ describe("the residency anchor under a reader's own scroll", () => {
 
   /** Walk up until the reader is INSIDE a card whose own window is partial at the tail. */
   async function readerReachesRetractingTail(): Promise<void> {
-    for (let s = 0; s < 40; s++) {
+    for (let s = 0; s < 80; s++) {
       const card = cardAtViewportTop();
       if (card?.querySelector(':scope > .turn-space[data-space="tail"]') != null) {
         return;
@@ -316,22 +345,23 @@ describe("the residency anchor under a reader's own scroll", () => {
     // handful of gestures away.
     await openTurns(6, SMALL_PER_RUN);
 
-    const { asked, landed } = await scrollUpAcrossTurnBoundaries();
-
     // The crossing is where the anchor's own box is a run the window's edge is about to move past.
-    expect(Math.abs(landed - asked)).toBeLessThan(STEP_PX);
+    // Measured on what the reader reads: anchoring moves `scrollTop` with the content above.
+    const drift = await scrollUpAcrossTurnBoundaries();
+
+    expect(Math.abs(drift)).toBeLessThanOrEqual(2);
   }, 90000);
 
   it("does not schedule a window pass from the scroll the last pass wrote", async () => {
     // Turns LARGER than the whole budget, so the window sits inside one card and both its edges are
     // in the card the reader is in — which is where a move extends that card's tail underneath them
-    // and the compensation carries a correction for content below the reader.
+    // and anchoring has content below the reader to misread.
     await openTurns(3, BIG_PER_RUN);
     await readerReachesRetractingTail();
 
     // SCROLL EVENTS, not residency readings: the loop's own edge is a write to `scrollTop`, so
     // counting the writes measures the edge directly rather than what it did to the window. One
-    // reader gesture may produce two — the reader's own, and the pass's one compensation.
+    // reader gesture may produce two — the reader's own, and one correction of what the pass moved.
     const el = scroller();
     const writes: number[] = [];
     const onScroll = (): void => {
@@ -352,8 +382,92 @@ describe("the residency anchor under a reader's own scroll", () => {
 
     // With the pass hanging off every scroll frame rather than off a reader gesture, this is what
     // the writes look like: sixteen for four gestures, alternating over the same few hundred
-    // pixels, because each compensation re-planned the window from the position it had just
+    // pixels, because each correction re-planned the window from the position it had just
     // corrected.
     expect(writes.length, `scroll writes: ${writes.join(",")}`).toBeLessThanOrEqual(2 * gestures);
   }, 90000);
+
+  /** What the reader reads: the first transcript element starting in view at or below the reading
+   *  line, else the one on the line itself (a paragraph taller than the viewport), and its top. */
+  function atReadingLine(): { el: Element; top: number } | null {
+    const box = scroller().getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const at = (y: number): { el: Element; top: number } | null => {
+      const el = document.elementFromPoint(x, y);
+      return el === null || !root().contains(el) || el.closest(".turn-space") !== null
+        ? null
+        : { el, top: el.getBoundingClientRect().top };
+    };
+    for (let y = box.top + box.height / 3; y < box.bottom; y += 24) {
+      const hit = at(y);
+      if (hit !== null && hit.top >= box.top) {
+        return hit;
+      }
+    }
+    return at(box.top + box.height / 3);
+  }
+
+  it("moves what the reader reads by exactly their own scroll while the window moves under it", async () => {
+    // Turns larger than the budget, of rows that wrap far past the `content-visibility` placeholder:
+    // every window move mounts rows that take their real size only once they near the viewport.
+    await openTurns(3, BIG_PER_RUN);
+    const el = scroller();
+    const drifts: string[] = [];
+    for (let g = 0; g < 24 && el.scrollTop > 0; g++) {
+      // Read once the reader's own travel has landed and before any pass it triggers runs: an element their
+      // travel took out of view is not one they are reading.
+      el.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+      el.scrollTo({ top: Math.max(0, el.scrollTop - STEP_PX), behavior: "instant" });
+      const held = atReadingLine();
+      expect(held, `gesture ${String(g)}: nothing on the reading line`).not.toBeNull();
+      if (held === null) {
+        return;
+      }
+      for (let f = 0; f < 12; f++) {
+        await frame();
+      }
+      expect(held.el.isConnected, `gesture ${String(g)}: the element read was unmounted`).toBe(
+        true,
+      );
+      const drift = Math.round(held.el.getBoundingClientRect().top - held.top);
+      if (Math.abs(drift) > 2) {
+        drifts.push(`gesture ${String(g)}: ${String(drift)}px`);
+      }
+    }
+    expect(drifts).toEqual([]);
+  }, 120000);
+
+  it("keeps every row the reader can see mounted while the window moves under them", async () => {
+    await openTurns(3, 20, groupedTurn);
+    const el = scroller();
+    const box = el.getBoundingClientRect();
+    const lost: string[] = [];
+    for (let g = 0; g < 40 && el.scrollTop > 0; g++) {
+      // Rows, and the group boxes holding them: a collapsed group shows its header alone.
+      const seen = [
+        ...root().querySelectorAll<HTMLElement>("[data-entry-seq], .tool-group"),
+      ].filter((row) => {
+        const r = row.getBoundingClientRect();
+        return r.height > 0 && r.bottom > box.top && r.top < box.bottom;
+      });
+      // Labelled before the gesture: a dropped group has lost its members by the time it is found.
+      const label = new Map(
+        seen.map((row) => {
+          const member = row.querySelector<HTMLElement>("[data-entry-seq]") ?? row;
+          const what = row === member ? "" : "group of ";
+          return [
+            row,
+            `${what}${member.dataset["entryTurn"] ?? ""}#${member.dataset["entrySeq"] ?? ""}`,
+          ];
+        }),
+      );
+      await readerScrollsUp(300, 12);
+      for (const row of seen) {
+        if (!row.isConnected) {
+          lost.push(`gesture ${String(g)}: ${label.get(row) ?? ""}`);
+        }
+      }
+    }
+    expect(lost).toEqual([]);
+  }, 120000);
 });

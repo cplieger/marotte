@@ -5,6 +5,7 @@
 // transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import scrollSource from "./scroll.ts?raw";
 
 /** The selectors that carry the bulk, and the file each is authored in. */
 const BULK: readonly { selector: string; file: string }[] = [
@@ -35,6 +36,12 @@ describe("transcript containment", () => {
     // they must not be "aligned".
     const body = ruleBody(loadCSS("14-tools.css"), ".subagent-block.collapsed > .subagent-body");
     expect(body).toMatch(/content-visibility:\s*hidden\s*;/u);
+  });
+
+  it("is the set scroll.ts lays out ahead of the scrollport", () => {
+    // A box missing there first takes its real size on screen in WebKit, where anchoring cannot hide it.
+    const declared = /const SKIPPABLE = "([^"]+)";/u.exec(scrollSource)?.[1]?.split(", ") ?? [];
+    expect(declared.toSorted()).toEqual(BULK.map((b) => b.selector).toSorted());
   });
 });
 
@@ -137,6 +144,26 @@ describe("against real layout", () => {
     );
     return { scrollEl: wrap, edge: edge as HTMLElement };
   }
+
+  it("lays a skippable box out once it is marked near, with the containment `auto` applies", () => {
+    const wrap = document.createElement("div");
+    wrap.id = "messages-wrap";
+    stage.appendChild(wrap);
+    const seen = BULK.map(({ selector }) => {
+      const box = document.createElement("div");
+      box.className = selector.slice(1);
+      wrap.appendChild(box);
+      const far = getComputedStyle(box).contentVisibility;
+      box.toggleAttribute("data-near", true);
+      const near = getComputedStyle(box);
+      return { selector, far, near: near.contentVisibility, contain: near.contain };
+    });
+    wrap.remove();
+
+    expect(seen).toEqual(
+      BULK.map(({ selector }) => ({ selector, far: "auto", near: "visible", contain: "content" })),
+    );
+  });
 
   /** How far the marker's bottom sits above the scroller's content bottom, which is
    *  the figure `isAtBottom()` and the edge observer have to agree on. */

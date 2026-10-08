@@ -134,7 +134,7 @@ async function until(pred: () => boolean, what: string): Promise<void> {
   }
 }
 
-/** The fold pass applies through a compensated batch, so `data-folded` lands a frame or two after
+/** The fold pass applies through a deferred batch, so `data-folded` lands a frame or two after
  *  `mount` or a toggle; the card count alone reads the pre-fold state. */
 async function untilFolded(card: HTMLElement, folded: boolean): Promise<void> {
   await until(

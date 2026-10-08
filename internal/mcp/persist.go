@@ -44,8 +44,8 @@ const fileVersion = 1
 // failed KAS write would leave the UI showing a server the agent cannot
 // see. The caller rolls its in-memory mutation back on error.
 //
-// MUST be called with s.mu held for writing: sync.RWMutex is not
-// reentrant, and every call site already holds the write lock across its
+// MUST be called on the write turn with s.mu held for writing: sync.RWMutex
+// is not reentrant, and every call site already holds both across its
 // mutation and this write.
 func (s *Store) persist(ctx context.Context) error {
 	if ctx.Err() != nil {

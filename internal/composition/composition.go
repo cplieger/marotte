@@ -302,7 +302,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPStatus(h.MCPRegistry()),
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
-		server.WithPreview(preview.New(cfg.WorkDir, previewSigner, slog.Default())),
+		server.WithPreview(preview.New(cfg.WorkDir, sensitive, previewSigner, slog.Default())),
 		server.WithTools(tools),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),

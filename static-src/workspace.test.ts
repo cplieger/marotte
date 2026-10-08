@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   absPath,
+  followRoot,
   onWorkspaceRoot,
   relBeneath,
   relToWorkspace,
@@ -61,6 +62,41 @@ describe("workspace root", () => {
     off();
     setWorkspaceRoot("/workspace");
     expect(woke).toBe(0);
+  });
+});
+
+describe("followRoot", () => {
+  beforeEach(() => {
+    _resetForTest();
+  });
+
+  it("re-decides a surface at every root change until it answers false", () => {
+    expect.assertions(1);
+    const seen: string[] = [];
+    followRoot({}, () => {
+      seen.push(workspaceRoot());
+      return seen.length < 2;
+    });
+    setWorkspaceRoot("/workspace");
+    setWorkspaceRoot("/srv/proj");
+    setWorkspaceRoot("/srv/other");
+    expect(seen).toEqual(["/workspace", "/srv/proj"]);
+  });
+
+  it("follows a surface a redo registered from the next root change on", () => {
+    // A rebuild registers its replacement, which already decided against the root that triggered it.
+    expect.assertions(1);
+    const seen: string[] = [];
+    followRoot({}, () => {
+      followRoot({}, () => {
+        seen.push(workspaceRoot());
+        return true;
+      });
+      return false;
+    });
+    setWorkspaceRoot("/workspace");
+    setWorkspaceRoot("/srv/proj");
+    expect(seen).toEqual(["/srv/proj"]);
   });
 });
 

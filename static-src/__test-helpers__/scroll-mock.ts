@@ -2,7 +2,7 @@
 import { vi } from "vitest";
 // Type-only, so the mocked module is not loaded; the types widen the mocks' return types (else
 // `readingState` would be the literal "following" and "reading" would not typecheck).
-import type { ReadingState, ShiftKind, ViewScrollState } from "../scroll.js";
+import type { ReadingState, ViewScrollState } from "../scroll.js";
 
 export const scrollMock = {
   // The real value: `readingLineOffset` is mocked to 0, so a reader does its own arithmetic.
@@ -23,6 +23,7 @@ export const scrollMock = {
   readingLineOffset: vi.fn(() => 0),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
+  rebaseLoadMore: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
   onReadingStateChange: vi.fn(),
   // Inert registrations: a mocked scroller never fires them; each returns the promised unregister.
@@ -33,11 +34,7 @@ export const scrollMock = {
   onAttach: vi.fn(() => () => undefined),
   setAnchorProvider: vi.fn(),
   setResumeLabel: vi.fn(),
-  // The compensation helpers run their mutation. `_kind` keeps the spy's call tuple the real
-  // signature's, so a suite can assert which shift a caller declared.
-  preserveReadingPosition: vi.fn((mutate: () => void, _kind: ShiftKind) => {
-    mutate();
-  }),
+  // The deferral helper runs its mutation.
   deferWhileReading: vi.fn((mutate: () => void) => {
     mutate();
   }),

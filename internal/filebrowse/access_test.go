@@ -122,3 +122,25 @@ func TestSensitive_NonDefaultConfigRootBlocksTheStoreAndTheRecord(t *testing.T) 
 		t.Error("a non-default root still blocks the /config spelling; the list did not move")
 	}
 }
+
+func TestSensitive_ExposedByRefusesEveryTreeReachingABlockedPath(t *testing.T) {
+	cases := []struct {
+		dir  string
+		want bool
+	}{
+		{"/config/home/proj", true},
+		{"/config/home", true},
+		{"/config", true},
+		{"/", true},
+		{"/config/mcp.json.d", true},
+		{"/config/mcp.json", true},
+		{"/config/tools", false},
+		{"/configx/home", false},
+		{"/workspace/demo", false},
+	}
+	for _, tc := range cases {
+		if got := (Sensitive{}).ExposedBy(tc.dir); got != tc.want {
+			t.Errorf("ExposedBy(%q) = %v, want %v", tc.dir, got, tc.want)
+		}
+	}
+}
