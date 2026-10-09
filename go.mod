@@ -42,3 +42,5 @@ require (
 )
 
 tool github.com/cplieger/toolbelt/v3/cmd/toolcatalog
+
+ignore ./static-src/node_modules
