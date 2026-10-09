@@ -98,7 +98,7 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "first half ", "second half")
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
@@ -109,8 +109,8 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 		t.Errorf("projected texts = %q, want the two deltas coalesced into one entry", texts)
 	}
 
-	if got.WorkflowID != "wf_1" || got.NodePath != "wf_1/loop/iter-0/build" {
-		t.Errorf("echoed identity = %q/%q, want wf_1/wf_1/loop/iter-0/build",
+	if got.WorkflowID != "wf_1" || got.NodePath != "wf_1:loop:iter-0:build" {
+		t.Errorf("echoed identity = %q/%q, want wf_1/wf_1:loop:iter-0:build",
 			got.WorkflowID, got.NodePath)
 	}
 }
@@ -126,8 +126,8 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 		session string
 		want    string
 	}{
-		{path: "wf_1/loop/iter-0/build", session: "sess_pass0", want: "pass zero"},
-		{path: "wf_1/loop/iter-1/build", session: "sess_pass1", want: "pass one"},
+		{path: "wf_1:loop:iter-0:build", session: "sess_pass0", want: "pass zero"},
+		{path: "wf_1:loop:iter-1:build", session: "sess_pass1", want: "pass one"},
 	} {
 		armStepReplay(br, tc.session, tc.want)
 		got, err := h.Runs().StepTranscript(t.Context(), "wf_1", tc.path)
@@ -153,7 +153,7 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/later")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:later")
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
@@ -176,10 +176,13 @@ func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
 	armStepInspect(br)
 
 	for _, path := range []string{
-		"wf_1/loop/iter-2/build", // an iteration that never ran
-		"wf_1/loop/build",        // the tree's own shape, missing the iteration
-		"wf_1/loop#0/build",      // the STATE-TREE spelling, which is not the wire's
-		"wf_1/nope",
+		"wf_1:loop:iter-2:build", // an iteration that never ran
+		"wf_1:loop:build",        // the tree's own shape, missing the iteration
+		"wf_1:loop#0:build",      // the STATE-TREE spelling, which is not the wire's
+		"wf_1/loop/iter-0/build", // segments joined with "/" rather than keyed
+		"wf_1:nope",
+		"wf_other:loop:iter-0:build", // another run's step
+		"",                           // no key at all
 	} {
 		got, err := h.Runs().StepTranscript(t.Context(), "wf_1", path)
 		if err == nil {
@@ -203,7 +206,7 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	}
 	br.mu.Unlock()
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	if err != nil {
 		t.Fatalf("a refused load must not be an error the handler 500s on: %v", err)
 	}
@@ -255,7 +258,7 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 			tc.arm(br)
 			br.mu.Unlock()
 
-			got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+			got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 			if err != nil {
 				t.Fatalf("an unreadable run must not be a client error: %v", err)
 			}
@@ -275,7 +278,7 @@ func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 	rs := unwiredStepRuns(t, br)
 
 	start := time.Now()
-	got, err := rs.StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := rs.StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
@@ -300,7 +303,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	}
 	br.mu.Unlock()
 
-	if _, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build"); err != nil {
+	if _, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build"); err != nil {
 		t.Fatalf("first read: %v", err)
 	}
 	// The retry succeeds; without the deferred take the registry would answer `unavailable` forever.
@@ -309,7 +312,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	br.mu.Unlock()
 	armStepReplay(br, "sess_pass0", "second time")
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -349,7 +352,7 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	}
 	br.mu.Unlock()
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
@@ -393,7 +396,7 @@ func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 		t.Fatal("the utility session reports no id")
 	}
 
-	if _, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build"); err != nil {
+	if _, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build"); err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
 
@@ -422,7 +425,7 @@ func TestHandleStepTranscript_HTTP(t *testing.T) {
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "served")
 
-	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1/loop/iter-0/build")
+	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1%3Aloop%3Aiter-0%3Abuild")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -448,7 +451,7 @@ func TestHandleStepTranscript_AGoneVerdictIsA200(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 
-	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1/later")
+	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1%3Alater")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -476,32 +479,39 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 			desc: "a path this run does not name is a 404",
 			// The one HTTP error: the caller's path.
 			method: http.MethodGet,
-			target: "/api/runs/wf_1/steps/wf_1/nope",
+			target: "/api/runs/wf_1/steps/wf_1%3Anope",
 			want:   http.StatusNotFound,
 		},
 		{
-			desc:   "no path at all is a 400",
+			desc:   "no key at all is a 404",
 			method: http.MethodGet,
 			target: "/api/runs/wf_1/steps/",
-			want:   http.StatusBadRequest,
+			want:   http.StatusNotFound,
 		},
 		{
-			// The exact form is registered so this is a 400, not ServeMux's 307, which canonicalAPIPath cannot see.
-			desc:   "the bare collection is a 400, never a redirect",
+			// A 307 to the slash form would be a hop canonicalAPIPath cannot see.
+			desc:   "the bare collection is a 404, never a redirect",
 			method: http.MethodGet,
 			target: "/api/runs/wf_1/steps",
-			want:   http.StatusBadRequest,
+			want:   http.StatusNotFound,
 		},
 		{
-			desc:   "a path belonging to another run is a 400",
+			desc:   "another run's step is a 404",
 			method: http.MethodGet,
-			target: "/api/runs/wf_1/steps/wf_other/loop/iter-0/build",
-			want:   http.StatusBadRequest,
+			target: "/api/runs/wf_1/steps/wf_other%3Aloop%3Aiter-0%3Abuild",
+			want:   http.StatusNotFound,
+		},
+		{
+			// Two segments after steps/ match no route: {path} is one segment.
+			desc:   "the run id repeated ahead of the key is a 404",
+			method: http.MethodGet,
+			target: "/api/runs/wf_1/steps/wf_1/wf_1%3Aloop%3Aiter-0%3Abuild",
+			want:   http.StatusNotFound,
 		},
 		{
 			desc:   "a non-GET method is refused",
 			method: http.MethodPost,
-			target: "/api/runs/wf_1/steps/wf_1/loop/iter-0/build",
+			target: "/api/runs/wf_1/steps/wf_1%3Aloop%3Aiter-0%3Abuild",
 			want:   http.StatusMethodNotAllowed,
 		},
 	} {
@@ -517,8 +527,8 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 	}
 }
 
-// TestHandleStepTranscript_APercentEncodedSegmentDecodes pins that segments are encoded individually and separators
-// stay raw; ServeMux's `{path...}` returns the decoded remainder.
+// TestHandleStepTranscript_APercentEncodedSegmentDecodes pins that the key is one encodeURIComponent segment after the
+// run id, which ServeMux's `{path}` hands over decoded.
 func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -532,7 +542,7 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	br.mu.Unlock()
 	armStepReplay(br, "sess_odd", "odd id")
 
-	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1/a%20b%230")
+	rec := getStepTranscript(t, h, "/api/runs/wf_1/steps/wf_1%3Aa%20b%230")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -545,6 +555,39 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	}
 	if texts := textsOf(t, out.Entries); !slices.Equal(texts, []string{"odd id"}) {
 		t.Errorf("texts = %q, want one %q", texts, "odd id")
+	}
+}
+
+func TestHandleStepTranscript_SlashBearingNodeIDsStayDistinct(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.mu.Lock()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowInspect: json.RawMessage(`{"state":{"workflowId":"wf_1","root":{` +
+			`"nodeId":"wf_1","type":"sequence","children":[` +
+			`{"nodeId":"a/b","type":"sequence","children":[` +
+			`{"nodeId":"c","type":"step","status":"completed","sessionId":"sess_ab_c"}]},` +
+			`{"nodeId":"a","type":"sequence","children":[` +
+			`{"nodeId":"b/c","type":"step","status":"completed","sessionId":"sess_a_bc"}]}]}}}`),
+	}
+	br.mu.Unlock()
+
+	for _, tc := range []struct {
+		target  string
+		session string
+	}{
+		{target: "/api/runs/wf_1/steps/wf_1%3Aa%2Fb%3Ac", session: "sess_ab_c"},
+		{target: "/api/runs/wf_1/steps/wf_1%3Aa%3Ab%2Fc", session: "sess_a_bc"},
+	} {
+		armStepReplay(br, tc.session, "from "+tc.session)
+		rec := getStepTranscript(t, h, tc.target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, want 200: %s", tc.target, rec.Code, rec.Body.String())
+			continue
+		}
+		if id := br.lastParamsFor(marotte.MethodSessionLoad)[marotte.KeySessionID]; id != tc.session {
+			t.Errorf("GET %s loaded session %v, want %s", tc.target, id, tc.session)
+		}
 	}
 }
 
@@ -713,7 +756,7 @@ func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	armStepReplay(br, "sess_pass0", "settled ", "in time")
 	shortStepBudget(t, 50*time.Millisecond)
 
-	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1/loop/iter-0/build")
+	got, err := h.Runs().StepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}

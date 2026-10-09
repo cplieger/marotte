@@ -28,7 +28,7 @@ func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *
 		want    []string
 	}{
 		{name: "the chat's own ask, cancelled", outcome: "cancelled", want: []string{"c1/tc-1"}},
-		{name: "a subagent's ask, cancelled", attr: FrameAttribution{SubSessionID: "sub"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
+		{name: "a subagent's ask, cancelled", attr: FrameAttribution{Subagent: true, SessionID: "sub"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
 		{name: "a step's ask, cancelled", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
 		{name: "an answer marotte sent", outcome: "selected", want: nil},
 		{name: "a dismissed question", outcome: "dismissed", want: nil},

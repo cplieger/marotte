@@ -148,7 +148,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	})
 
 	t.Run("DroppedForSubagentAndStep", func(t *testing.T) {
-		for _, attr := range []FrameAttribution{{SubSessionID: "sub"}, {Step: true}} {
+		for _, attr := range []FrameAttribution{{Subagent: true, SessionID: "sub"}, {Step: true}} {
 			events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe", hookStatusCompleted), attr)
 			if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
 				t.Errorf("attribution %+v produced events=%v calls=%d; want nothing", attr, hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))

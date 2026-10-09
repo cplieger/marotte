@@ -150,7 +150,7 @@ func (t *Translator) appendSteerAcks(ctx context.Context, chatID marotte.ChatID,
 func (t *Translator) foldTarget(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution) (*turnlog.Turn, entryScope, bool) {
 	sc := scopeOf(chatID, attr)
 	if attr.Step {
-		turn, ok := t.runs.RunFoldTarget(ctx, attr.RunID, attr.NodePath, attr.SessionID, chatID)
+		turn, ok := t.runs.RunFoldTarget(ctx, runStepOf(&attr), chatID)
 		if !ok {
 			slog.Debug("run log: content frame for a step path with no open turn, dropped",
 				"workflow_id", attr.RunID, "node_path", attr.NodePath)

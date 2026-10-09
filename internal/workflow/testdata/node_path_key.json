@@ -1,0 +1,45 @@
+{
+  "_comment": "Hand-written cases for workflow.PathKey, whose doc owns the rule; TestPathKey_SharedFixture and run-node-key.node.test.ts read every case.",
+  "cases": [
+    {
+      "name": "a plain step path joins verbatim",
+      "path": ["wf_1", "loop", "iter-0", "build"],
+      "key": "wf_1:loop:iter-0:build"
+    },
+    {
+      "name": "slash pair one: a slash in the container id",
+      "path": ["wf_1", "a/b", "c"],
+      "key": "wf_1:a/b:c"
+    },
+    {
+      "name": "slash pair two: a slash in the step id",
+      "path": ["wf_1", "a", "b/c"],
+      "key": "wf_1:a:b/c"
+    },
+    {
+      "name": "slash pair three: no slash in any id",
+      "path": ["wf_1", "a", "b", "c"],
+      "key": "wf_1:a:b:c"
+    },
+    {
+      "name": "a colon inside an id is escaped",
+      "path": ["wf_1", "a:b"],
+      "key": "wf_1:a\\:b"
+    },
+    {
+      "name": "a backslash inside an id is escaped",
+      "path": ["wf_1", "a\\"],
+      "key": "wf_1:a\\\\"
+    },
+    {
+      "name": "a space and a hash are not separators",
+      "path": ["wf_1", "a b#0"],
+      "key": "wf_1:a b#0"
+    },
+    {
+      "name": "an unplaced step is its bare id",
+      "path": ["build"],
+      "key": "build"
+    }
+  ]
+}

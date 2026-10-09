@@ -113,7 +113,7 @@ func TestAvailableCommandsUpdate_StepAndSubagentFramesAreIgnored(t *testing.T) {
 	raw := slashFrame(t, kasCmd("review", "prompt", nil))
 
 	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{Step: true})
-	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{SubSessionID: "sub"})
+	tr.HandleAvailableCommandsUpdate(t.Context(), "c1", raw, FrameAttribution{Subagent: true, SessionID: "sub"})
 	if slash.chat != 0 || len(bus.events) != 0 {
 		t.Fatalf("after step and subagent frames: SetFromChat calls = %d, events = %v, want none", slash.chat, bus.events)
 	}

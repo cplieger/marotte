@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // leased grants a manual lease: a lease-less run is unbounded, so a fixture forgetting it passes vacuously.
@@ -1127,7 +1128,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			h := newBudgetRuntime(t)
 			const launching marotte.ChatID = "c-parent"
-			if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "seq/coder", "sess-step", launching); err != nil {
+			if _, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, launching); err != nil {
 				t.Fatalf("Open(step turn): %v", err)
 			}
 
@@ -1151,7 +1152,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
 	h := newBudgetRuntime(t)
 	host := runChatID("wf_1")
-	if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "seq/coder", "sess-step", host); err != nil {
+	if _, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, host); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
 

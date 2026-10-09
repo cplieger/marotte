@@ -70,10 +70,11 @@ interface RouteDocs {
 interface RouteRun {
   kind: "run";
   id: string;
-  /** The step this URL asks to be focused, as a node PATH. A fragment rather than a path
-   *  segment, for two reasons: a node path contains `/` (`wf_1/iter-0/work`), and the tab's
-   *  identity is `(kind: run, ref: workflowId)`, which must not gain a second shape —
-   *  `subjectForRoute` drops this, so two nodes of one run are one tab. */
+  /** The step this URL asks to be focused, as a node path key (`run-node-key.ts`). A fragment
+   *  rather than a path segment, for two reasons: the key carries free-form node ids, which can
+   *  contain `/` (`wf_1:a/b:c`), and the tab's identity is `(kind: run, ref: workflowId)`,
+   *  which must not gain a second shape — `subjectForRoute` drops this, so two nodes of one run
+   *  are one tab. */
   node?: string;
 }
 /** One SUBAGENT execution, read on its own page. */

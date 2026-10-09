@@ -138,7 +138,7 @@ func TestHandleSessionInfoUpdate_NoPromptTurnAppendsNothing(t *testing.T) {
 func TestHandleSessionInfoUpdate_AForeignFrameBindsNothing(t *testing.T) {
 	for name, attr := range map[string]FrameAttribution{
 		"a workflow step's own session": {Step: true},
-		"a subagent's session":          {SubSessionID: "sess_sub"},
+		"a subagent's session":          {Subagent: true, SessionID: "sess_sub"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")

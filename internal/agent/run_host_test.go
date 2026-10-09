@@ -131,7 +131,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		t.Errorf("entry_opened = %+v, want the chunk's text as delta 1", opened.Open)
 	}
 	// The node path keys the run turn: a repeat's iterations share a node id.
-	if h.runs.log.Turn("wf_1", "seq/coder") == nil {
+	if h.runs.log.Turn("wf_1", "seq:coder") == nil {
 		t.Error("the step chunk opened no run turn for its node path")
 	}
 	// No chat turn.

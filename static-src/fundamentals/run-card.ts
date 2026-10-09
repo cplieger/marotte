@@ -14,6 +14,7 @@ import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { buildPath } from "../route-path.js";
+import { nodePathKey } from "../run-node-key.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
@@ -241,7 +242,7 @@ export function buildRunCard(
    *  through `onOpen` to activate in place. An UNPLACED address carries no node on either channel,
    *  or the page holds a pending focus forever. */
   function stepRow(addr: NodeAddress): StepRow {
-    const nodePath = addr.path.join("/");
+    const nodePath = nodePathKey(addr.path);
     let row = rows.get(nodePath);
     if (row !== undefined) {
       return row;
@@ -249,8 +250,7 @@ export function buildRunCard(
     const glyph = el("span", { className: "run-step-glyph", "aria-hidden": "true" });
     // The last path segment is the step; the segments above it are the loop or
     // branch containing it, and they are what tell two iterations apart.
-    const segs = nodePath.split("/");
-    const label = segs[segs.length - 1] ?? nodePath;
+    const label = addr.path[addr.path.length - 1] ?? nodePath;
     const nameEl2 = el("span", { className: "run-step-name" }, label);
     const meta = el("span", { className: "run-step-meta" });
     const dur = el("span", { className: "run-step-dur" });

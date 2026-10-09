@@ -112,7 +112,7 @@ func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
-	}), FrameAttribution{SubSessionID: "sub-1"})
+	}), FrameAttribution{Subagent: true, SessionID: "sub-1"})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {

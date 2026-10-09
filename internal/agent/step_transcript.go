@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -28,7 +27,8 @@ var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 
 // StepTranscript reads one step's transcript from the run's log when it holds a turn for the path (`log`, with
 // open tails and stamps), else KAS's replay (`replay`). `ready`, `gone` (session gone or never started) or
-// `unavailable` (worth retrying).
+// `unavailable` (worth retrying). nodePath is a workflow.PathKey, looked up among workflowID's own steps only,
+// so another run's step, like a missing key, is errStepUnknown.
 func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
 	out := marotte.RunStepTranscript{
 		Entries:     []marotte.Entry{},
@@ -84,7 +84,7 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 		return "", errRunStateUndecodable
 	}
 	for _, st := range workflow.Steps(res.State) {
-		if strings.Join(st.Path, "/") == nodePath {
+		if workflow.PathKey(st.Path) == nodePath {
 			return st.SessionID, nil
 		}
 	}

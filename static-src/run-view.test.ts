@@ -618,7 +618,7 @@ function resultStep(
 }
 
 /** A sequence root over the steps, which is the shape KAS sends: `runToExec` unwraps it, so each
- *  step is a top-level node addressed `wf_1/<nodeId>`. */
+ *  step is a top-level node addressed `wf_1:<nodeId>`. */
 function resultPlan(...steps: unknown[]): unknown {
   return { nodeId: "wf_1", type: "sequence", status: "running", children: steps };
 }
@@ -647,7 +647,7 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("built it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("reviewed it");
 
-    selectRow(body, "wf_1/review");
+    selectRow(body, "wf_1:review");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("reviewed it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("built it");
@@ -1135,7 +1135,7 @@ describe("run view structure", () => {
     expect(names).toEqual(["a", "b"]);
     // Overlapping steps overlap on screen, which is the whole point: `b` starts a third of the way
     // into the window rather than after `a`.
-    const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$="/b"] .ev-tl-bar');
+    const bar = body.querySelector<HTMLElement>('.ev-tl-lane[data-path$=":b"] .ev-tl-bar');
     expect(parseFloat(bar?.style.insetInlineStart ?? "0")).toBeGreaterThan(0);
     expect(parseFloat(bar?.style.insetInlineStart ?? "100")).toBeLessThan(50);
   });
@@ -1186,7 +1186,7 @@ describe("run view structure", () => {
       },
     });
     const nestVisible = (id: string): boolean => {
-      const row = body.querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`);
+      const row = body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
       return row?.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-nest")?.hidden === false;
     };
     // depth 0 (the group), depth 1 (its direct child), depth 2 (the sub-sub-item).
@@ -1198,7 +1198,7 @@ describe("run view structure", () => {
     // Depth 0 and 1 both indent by zero; only depth 2 steps in.
     const depthOf = (id: string): string =>
       body
-        .querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`)
+        .querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)
         ?.style.getPropertyValue("--ev-depth") ?? "";
     expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "0", "1"]);
   });
@@ -1245,7 +1245,7 @@ describe("run view structure", () => {
   it("gives the top-level box a fold and a container inside it none", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
     const row = (id: string): HTMLElement =>
-      body.querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`)!;
+      body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)!;
     const twistHidden = (id: string) =>
       row(id).querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")?.hidden;
 
@@ -1263,10 +1263,10 @@ describe("run view structure", () => {
 
   it("still folds the box on its own twist, and the loop stays open under it", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
-    const box = body.querySelector<HTMLElement>('.ev-row[data-path$="/outer"]')!;
+    const box = body.querySelector<HTMLElement>('.ev-row[data-path$=":outer"]')!;
     const kidsOf = (row: HTMLElement): HTMLElement =>
       row.querySelector<HTMLElement>(":scope > .ev-kids")!;
-    const inner = body.querySelector<HTMLElement>('.ev-row[data-path$="/inner"]')!;
+    const inner = body.querySelector<HTMLElement>('.ev-row[data-path$=":inner"]')!;
 
     box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
     expect(kidsOf(box).hidden).toBe(true);
@@ -1326,55 +1326,55 @@ describe("run view door focus", () => {
   it("selects the node the door named, not the one the page would follow", async () => {
     // The auto-follow would pick `build` (it is running), so the door has to name the OTHER step
     // for this to say anything.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
+    const { body } = await paint(rowDoor("wf_1:lint"), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("lint");
   });
 
   it("re-selects the same node after the reader has moved off it", async () => {
     const two = plan(["build", "running"], ["lint", "pending"]);
-    const { body } = await paint(rowDoor("wf_1/build"), "running", { root: two });
-    expect(selectedPath(body)).toBe("wf_1/build");
+    const { body } = await paint(rowDoor("wf_1:build"), "running", { root: two });
+    expect(selectedPath(body)).toBe("wf_1:build");
 
     // The reader moves in the tree, and a frame lands meanwhile — which is the render that carries
     // no focus.
-    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/lint"] > .ev-row-main')?.click();
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:lint"] > .ev-row-main')?.click();
+    expect(selectedPath(body)).toBe("wf_1:lint");
     await invalidated(two);
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
 
     // The same row again. Without the watermark reset this stays on `lint`.
-    openRunView("wf_1", "nightly", "", "wf_1/build");
+    openRunView("wf_1", "nightly", "", "wf_1:build");
     await invalidated(two);
-    expect(selectedPath(body)).toBe("wf_1/build");
+    expect(selectedPath(body)).toBe("wf_1:build");
   });
 
   it("focuses the node a `#node=` URL named, decoded by the router", async () => {
     // The COLD-DEEP-LINK chain, end to end minus one line: parseRoute reads the fragment,
-    // openRunView records it, ExecRun.focus spends it. The node path carries a `/`, which is why
-    // the route spells it as a fragment rather than a path segment.
-    const r = parseRoute("/run/wf_1", "#node=wf_1%2Flint");
+    // openRunView records it, ExecRun.focus spends it. A node path key may carry a `/` from a node
+    // id, which is why the route spells it as a fragment rather than a path segment.
+    const r = parseRoute("/run/wf_1", "#node=wf_1%3Alint");
     const node = r.kind === "run" ? (r.node ?? "") : "";
     // The auto-follow would pick the running `build`, so a lost fragment shows up as that step
     // being selected instead.
     const { body } = await paint((id, name) => openRunView(id, name, "", node), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
   });
 
   it("holds a pick the plan does not describe yet rather than losing it", async () => {
     // The click-beats-fetch race: the row was clicked before `inspect` answered, so the first paint
     // has no such node and the request must survive to the next one.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
+    const { body } = await paint(rowDoor("wf_1:lint"), "running", {
       root: plan(["build", "running"], ["publish", "pending"]),
     });
-    expect(selectedPath(body)).toBe("wf_1/build");
+    expect(selectedPath(body)).toBe("wf_1:build");
 
     await invalidated(plan(["build", "running"], ["publish", "pending"], ["lint", "pending"]));
-    expect(selectedPath(body)).toBe("wf_1/lint");
+    expect(selectedPath(body)).toBe("wf_1:lint");
   });
 });
 
@@ -1417,7 +1417,7 @@ describe("run view empty step notes", () => {
   // false for a chat-parented one.
   it("says a gone transcript is no longer stored, on either route", async () => {
     for (const parentless of [true, false]) {
-      m.reads.set("wf_1/coder", { state: "gone" });
+      m.reads.set("wf_1:coder", { state: "gone" });
       const text = await note("completed", { parentless, root: settled("completed") });
       expect(text).toContain("no longer stored");
       expect(text).toContain("captureOutput");
@@ -1428,7 +1428,7 @@ describe("run view empty step notes", () => {
   // `unavailable` is the transient verdict, and it must not read as `gone`: the read could not be
   // COMPLETED, so it is worth asking again, where a gone transcript never will be.
   it("says an unavailable transcript could not be read, not that it is gone", async () => {
-    m.reads.set("wf_1/coder", { state: "unavailable" });
+    m.reads.set("wf_1:coder", { state: "unavailable" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("could not be read");
     expect(text).not.toContain("no longer stored");
@@ -1438,7 +1438,7 @@ describe("run view empty step notes", () => {
   // A `ready` read reaches the NOTE only with the slice empty and the read holding no blocks, which
   // is its own fact rather than a failure: the step ran and wrote nothing.
   it("says a ready read with no blocks means the step wrote nothing", async () => {
-    m.reads.set("wf_1/coder", { state: "ready" });
+    m.reads.set("wf_1:coder", { state: "ready" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("without producing a transcript");
     expect(text).not.toContain("captureOutput");
@@ -1448,7 +1448,7 @@ describe("run view empty step notes", () => {
   // While the read is in flight the pane says so rather than showing one of the settled answers,
   // which would be a verdict nothing has reached yet.
   it("says the transcript is loading while the read is in flight", async () => {
-    m.reads.set("wf_1/coder", { state: "loading" });
+    m.reads.set("wf_1:coder", { state: "loading" });
     expect(await note("completed", { root: settled("completed") })).toContain("Loading this step");
   });
 
@@ -1465,7 +1465,7 @@ describe("run view empty step notes", () => {
   // The FOURTH arm, and the only one that is not the endpoint's own verdict: a 4xx means the server
   // refused the ADDRESS itself.
   it("says an unaddressable transcript is not named by the plan, not that it failed", async () => {
-    m.reads.set("wf_1/coder", { state: "unaddressable" });
+    m.reads.set("wf_1:coder", { state: "unaddressable" });
     const text = await note("completed", { root: settled("completed") });
     expect(text).toContain("the run's plan does not name it");
     expect(text).not.toContain("could not be read");
@@ -1549,15 +1549,15 @@ describe("run view step transcripts", () => {
   }
 
   it("renders a step's own entries in its own body", async () => {
-    logStep("wf_1", "wf_1/build", "compiling");
+    logStep("wf_1", "wf_1:build", "compiling");
     const { body } = await paint(openRunView, "running", { root: steps("build", "verify") });
-    await painted("wf_1/build");
+    await painted("wf_1:build");
 
-    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/build"]');
+    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:build"]');
     expect(host?.childElementCount).toBeGreaterThan(0);
     // One turn, two body entries (the text and the close). The `turn_open` is the turn's identity
     // rather than a row, which is why it is not among them.
-    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/build:1:2");
+    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1:build:1:2");
     // The host has content, so no empty-note copy may claim anything about it.
     expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
   });
@@ -1565,34 +1565,34 @@ describe("run view step transcripts", () => {
   // The no-orphan-host rule: a step the log holds no turn for gets no host minted for it, or the
   // pane would carry an empty region per unstarted step.
   it("mints a host only for a step the log holds a turn for", async () => {
-    logStep("wf_1", "wf_1/lint", "linting");
+    logStep("wf_1", "wf_1:lint", "linting");
     const { body } = await paint(openRunView, "running", { root: steps("lint", "unstarted") });
-    await painted("wf_1/lint");
+    await painted("wf_1:lint");
 
-    expect(m.paint.has("wf_1/lint")).toBe(true);
-    expect(m.paint.has("wf_1/unstarted")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/unstarted"]')).toBeNull();
+    expect(m.paint.has("wf_1:lint")).toBe(true);
+    expect(m.paint.has("wf_1:unstarted")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:unstarted"]')).toBeNull();
   });
 
   // A turn whose path names no node of THIS plan is dropped, so no orphan host is minted for it.
   // Two runs of one recipe share every path, so a log carrying a path this plan does not have is
   // the ordinary case rather than an edge.
   it("drops a turn whose node path this plan does not name", async () => {
-    logStep("wf_1", "wf_1/mine", "mine");
-    logStep("wf_1", "wf_1/absent", "not in this plan");
+    logStep("wf_1", "wf_1:mine", "mine");
+    logStep("wf_1", "wf_1:absent", "not in this plan");
     const { body } = await paint(openRunView, "running", { root: steps("mine", "other") });
-    await painted("wf_1/mine");
+    await painted("wf_1:mine");
 
-    expect(m.paint.has("wf_1/mine")).toBe(true);
-    expect(m.paint.has("wf_1/absent")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/absent"]')).toBeNull();
+    expect(m.paint.has("wf_1:mine")).toBe(true);
+    expect(m.paint.has("wf_1:absent")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:absent"]')).toBeNull();
   });
 
   // A CONTAINER hosts nothing (`transcript !== true`), so it is out by construction rather than by
   // a filter — and a host minted for one would be a region the pane can never fill.
   it("mints no host for a container", async () => {
-    logStep("wf_1", "wf_1/loop", "container work");
-    logStep("wf_1", "wf_1/loop/inner", "leaf work");
+    logStep("wf_1", "wf_1:loop", "container work");
+    logStep("wf_1", "wf_1:loop:inner", "leaf work");
     const { body } = await paint(openRunView, "completed", {
       root: {
         nodeId: "wf_1",
@@ -1608,61 +1608,61 @@ describe("run view step transcripts", () => {
         ],
       },
     });
-    await painted("wf_1/loop/inner");
+    await painted("wf_1:loop:inner");
 
-    expect(m.paint.has("wf_1/loop/inner")).toBe(true);
-    expect(m.paint.has("wf_1/loop")).toBe(false);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/loop"]')).toBeNull();
+    expect(m.paint.has("wf_1:loop:inner")).toBe(true);
+    expect(m.paint.has("wf_1:loop")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1:loop"]')).toBeNull();
   });
 
   // SEVERAL turns at one path is the normal answer for a healed step rather than an edge case: a
   // resume after a restart re-opens the same path as a NEW turn, so the log carries one closed turn
   // per attempt and the pane renders every one.
   it("paints every attempt of a healed step, not just the newest", async () => {
-    logStep("wf_1", "wf_1/heal", "first attempt", { attempt: 1 });
-    logStep("wf_1", "wf_1/heal", "second attempt", { attempt: 2 });
+    logStep("wf_1", "wf_1:heal", "first attempt", { attempt: 1 });
+    logStep("wf_1", "wf_1:heal", "second attempt", { attempt: 2 });
     const { body } = await paint(openRunView, "running", { root: steps("heal", "after") });
-    await painted("wf_1/heal");
+    await painted("wf_1:heal");
 
-    expect(m.paint.get("wf_1/heal")?.turns).toBe(2);
+    expect(m.paint.get("wf_1:heal")?.turns).toBe(2);
     expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/heal"] .step-marker')
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:heal"] .step-marker')
         ?.textContent,
-    ).toBe("wf_1/heal:2:4");
+    ).toBe("wf_1:heal:2:4");
   });
 
   // `live` is each turn's OWN `turn_close` absence and never the run's status, so one node's caret
   // says nothing about its siblings': a `parallel` node holds several open turns in one log, and a
   // settled step inside a running run is settled.
   it("marks a turn live from its own close, not from the run's status", async () => {
-    logStep("wf_1", "wf_1/open", "still going", { live: true });
+    logStep("wf_1", "wf_1:open", "still going", { live: true });
     await paint(openRunView, "running", { root: steps("open", "after") });
-    await painted("wf_1/open");
-    expect(m.paint.get("wf_1/open")?.live).toEqual([true]);
+    await painted("wf_1:open");
+    expect(m.paint.get("wf_1:open")?.live).toEqual([true]);
 
     // The SAME running run, with a step whose own turn is closed: `live` follows the turn's
     // `turn_close` and not the run's status, which is what makes a settled step inside a running
     // run render settled.
     m.paint.clear();
     m.projected.length = 0;
-    logStep("wf_1", "wf_1/closed", "finished");
+    logStep("wf_1", "wf_1:closed", "finished");
     await paint(openRunView, "running", { root: steps("closed", "after") });
-    await painted("wf_1/closed");
-    expect(m.paint.get("wf_1/closed")?.live).toEqual([false]);
+    await painted("wf_1:closed");
+    expect(m.paint.get("wf_1:closed")?.live).toEqual([false]);
   });
 
   // A step's prose GROWS after the first paint, and the pane has to follow it or the transcript is
   // only correct for entries that arrived before the tab was opened. The run log's own version
   // signal is what `installViewEffect` reads, so an append is the whole trigger.
   it("re-projects a step when an entry lands in its turn", async () => {
-    logStep("wf_1", "wf_1/grow", "compiling", { live: true });
+    logStep("wf_1", "wf_1:grow", "compiling", { live: true });
     const { body } = await paint(openRunView, "running", { root: steps("grow", "after") });
-    await painted("wf_1/grow");
+    await painted("wf_1:grow");
     const first = m.projected.length;
 
     appendRunEntry("wf_1", {
-      id: "t-wf_1-wf_1/grow-1-2",
-      turn: "t-wf_1-wf_1/grow-1",
+      id: "t-wf_1-wf_1:grow-1-2",
+      turn: "t-wf_1-wf_1:grow-1",
       lane: "",
       kind: "text",
       payload: { text: "linking" },
@@ -1673,13 +1673,13 @@ describe("run view step transcripts", () => {
 
     expect(m.projected.length).toBeGreaterThan(first);
     expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/grow"] .step-marker')
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:grow"] .step-marker')
         ?.textContent,
-    ).toBe("wf_1/grow:1:2");
+    ).toBe("wf_1:grow:1:2");
   });
 });
 
-// THE STEP READ: `GET /api/runs/{id}/steps/{path...}`, the fallback for a step whose turn the run's
+// THE STEP READ: `GET /api/runs/{id}/steps/{path}`, the fallback for a step whose turn the run's
 // log does not hold — a step that opened and closed entirely inside a connection gap, or a client
 // that missed its close.
 
@@ -1711,7 +1711,7 @@ describe("run view step reads", () => {
   // turn for is exactly what the read exists for.
   it("arms a read for a settled step with no turn in the log", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
-    expect(m.requested).toEqual(["wf_1/coder"]);
+    expect(m.requested).toEqual(["wf_1:coder"]);
     expect(m.reread).toEqual([]);
   });
 
@@ -1744,7 +1744,7 @@ describe("run view step reads", () => {
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.
-    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/coder"] > .ev-row-main')?.click();
+    body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:coder"] > .ev-row-main')?.click();
     await Promise.resolve();
     expect(m.requested).toEqual([]);
 
@@ -1763,14 +1763,14 @@ describe("run view step reads", () => {
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
     // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
     // live run, and `unavailable` is a verdict a repeat ask retries.
-    expect(m.requested).toEqual(["wf_1/coder"]);
+    expect(m.requested).toEqual(["wf_1:coder"]);
   });
 
   // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already
   // held and settled, so asking would fetch a second copy of what is on screen. Neither verb fires
   // — not the request, and not the re-read either.
   it("arms nothing when the log already holds the step's settled turn", async () => {
-    logStep("wf_1", "wf_1/held", "compiled");
+    logStep("wf_1", "wf_1:held", "compiled");
     await paint(openRunView, "completed", { root: oneNamedStep("held", "completed") });
     expect(m.requested).toEqual([]);
     expect(m.reread).toEqual([]);
@@ -1779,9 +1779,9 @@ describe("run view step reads", () => {
   // THE SECOND ARM: a turn the log holds with NO `turn_close` while `inspect` reports the node
   // settled is a client that missed the close, and it would otherwise read live for the tab's life.
   it("re-reads a settled step whose turn is missing its close", async () => {
-    logStep("wf_1", "wf_1/reopen", "no close arrived", { live: true });
+    logStep("wf_1", "wf_1:reopen", "no close arrived", { live: true });
     await paint(openRunView, "completed", { root: oneNamedStep("reopen", "completed") });
-    expect(m.reread).toEqual(["wf_1/reopen"]);
+    expect(m.reread).toEqual(["wf_1:reopen"]);
     expect(m.requested).toEqual([]);
   });
 
@@ -1805,9 +1805,9 @@ describe("run view step reads", () => {
     });
     m.requested.length = 0;
 
-    // The root sequence is the run's own header rather than a row, so `wf_1/loop` is the container
+    // The root sequence is the run's own header rather than a row, so `wf_1:loop` is the container
     // on screen.
-    const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1/loop"] > .ev-row-main');
+    const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:loop"] > .ev-row-main');
     expect(head).not.toBeNull();
     head?.click();
     await Promise.resolve();
@@ -1823,7 +1823,7 @@ describe("run view step reads", () => {
       "Loading this step",
     );
 
-    m.reads.set("wf_1/coder", { state: "ready" });
+    m.reads.set("wf_1:coder", { state: "ready" });
     stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
     for (let i = 0; i < 20; i++) {
       await Promise.resolve();

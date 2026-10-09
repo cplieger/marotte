@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -73,11 +74,12 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		h.runs.log = newRunLog(t.TempDir())
-		if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "wf_1/build", "", "c1"); err != nil {
+		build := workflow.PathKey([]string{"wf_1", "build"})
+		if _, _, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: build}, "c1"); err != nil {
 			t.Fatal(err)
 		}
-		h.runs.log.StopReason("wf_1", "wf_1/build", marotte.StopReasonToolUse)
-		if _, _, err := h.runs.log.CloseNode(t.Context(), "wf_1", "wf_1/build", "completed", ""); err != nil {
+		h.runs.log.StopReason("wf_1", build, marotte.StopReasonToolUse)
+		if _, _, err := h.runs.log.CloseNode(t.Context(), "wf_1", build, "completed", ""); err != nil {
 			t.Fatal(err)
 		}
 
@@ -94,8 +96,8 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 			FailureReason: marotte.ModelCallLimitStepReason,
 			FailureKind:   marotte.FailureKindModelCallLimit,
 		}
-		if got := reply.StepEnds["wf_1/build"]; got != want || len(reply.StepEnds) != 1 {
-			t.Errorf("step_ends = %+v, want only wf_1/build = %+v: %s", reply.StepEnds, want, body)
+		if got := reply.StepEnds[build]; got != want || len(reply.StepEnds) != 1 {
+			t.Errorf("step_ends = %+v, want only %s = %+v: %s", reply.StepEnds, build, want, body)
 		}
 	})
 

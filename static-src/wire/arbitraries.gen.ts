@@ -1764,12 +1764,12 @@ const arbModel = fc.letrec<{
     {
       workflow_id: fc.string(),
       node_id: fc.string(),
-      node_path: fc.string(),
       status: fc.string(),
       started_at: fc.string(),
       ended_at: fc.string(),
       failure_reason: fc.string(),
       kind: arbRunProgressKind,
+      node_path: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: ["workflow_id", "kind"] },
   ),

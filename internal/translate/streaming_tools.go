@@ -136,11 +136,11 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 	}
 }
 
-// updateTarget is the open turn an update folds into: the run's turn for the step
-// path, else the chat's own turn. Neither is opened here.
+// updateTarget is the turn an update folds into: the run's turn for the step path,
+// opened when the path has none, else the chat's own open turn, never opened here.
 func (t *Translator) updateTarget(chatID marotte.ChatID, attr FrameAttribution) (*turnlog.Turn, bool) {
 	if attr.Step {
-		return t.runs.RunFoldTarget(context.Background(), attr.RunID, attr.NodePath, attr.SessionID, chatID)
+		return t.runs.RunFoldTarget(context.Background(), runStepOf(&attr), chatID)
 	}
 	return t.turns.OwnTurn(chatID)
 }

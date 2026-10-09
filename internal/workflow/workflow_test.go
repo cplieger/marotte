@@ -7,8 +7,8 @@ package workflow
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -92,7 +92,7 @@ func TestStepSessions_EveryPathIsDistinct(t *testing.T) {
 	got := StepSessions(res.State)
 	seen := map[string]string{}
 	for _, s := range got {
-		key := strings.Join(s.Path, "/")
+		key := PathKey(s.Path)
 		if prev, dup := seen[key]; dup {
 			t.Errorf("path %q addresses two sessions (%s and %s)", key, prev, s.SessionID)
 		}
@@ -280,5 +280,35 @@ func TestSteps_EmptyInputs(t *testing.T) {
 	}
 	if got := Steps(&State{}); got != nil {
 		t.Errorf("Steps(no root) = %+v, want nil", got)
+	}
+}
+
+// TestPathKey_SharedFixture holds PathKey to testdata/node_path_key.json, which run-node-key.node.test.ts holds the
+// client's twin to; the fixture's "/"-alike pairs must keep distinct keys.
+func TestPathKey_SharedFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/node_path_key.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx struct {
+		Cases []struct {
+			Name string   `json:"name"`
+			Key  string   `json:"key"`
+			Path []string `json:"path"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	seen := make(map[string]string, len(fx.Cases))
+	for _, c := range fx.Cases {
+		got := PathKey(c.Path)
+		if got != c.Key {
+			t.Errorf("%s: PathKey(%q) = %q, want %q", c.Name, c.Path, got, c.Key)
+		}
+		if other, dup := seen[got]; dup {
+			t.Errorf("%s: PathKey(%q) = %q, the same key as %q", c.Name, c.Path, got, other)
+		}
+		seen[got] = c.Name
 	}
 }

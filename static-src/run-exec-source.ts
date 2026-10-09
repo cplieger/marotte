@@ -1,5 +1,6 @@
 // The WORKFLOW adapter: KAS's `inspect` reply folded into the exec view's model.
 
+import { nodePathKey } from "./run-node-key.js";
 import { truncate } from "./strings.js";
 import {
   isNeedInputPark,
@@ -210,7 +211,7 @@ function toNode(
   parent?: RunNode,
 ): ExecNode {
   const path = [...trail, nodePathSegment(node, parent)];
-  const address = path.join("/");
+  const address = nodePathKey(path);
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
   const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, ends, node));

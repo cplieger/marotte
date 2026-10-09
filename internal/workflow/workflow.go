@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
@@ -46,6 +47,15 @@ type StepSession struct {
 	SessionID string
 	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
+}
+
+// PathKey is a node path's one string identity: the run log's turn key, the step-transcript
+// address and the client's row key (run-node-key.ts, pinned by testdata/node_path_key.json). A
+// node id is free-form, so a separator join would collide ["a/b","c"] with ["a","b/c"].
+// It is an equality key only: a path over keyenc.MaxComponentBytes keys by a hash no split reads
+// back, so a reader needing the segments or the node id carries them beside the key.
+func PathKey(path []string) string {
+	return keyenc.Join(path...)
 }
 
 // StepSessions walks a run's state tree depth-first and returns every step with a session,

@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -113,9 +112,9 @@ func withRunLogFacts(raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[st
 	return json.Marshal(obj)
 }
 
-// handleStepTranscript serves GET /api/runs/{id}/steps/{path...}: one step's transcript. The path must
-// match the joined StepSession.Path and begin with the workflow id, so a node id containing `/` is
-// not addressable. Every 4xx is settled, so `gone` and `unavailable` are 200s.
+// handleStepTranscript serves GET /api/runs/{id}/steps/{path}: one step's transcript, {path} one
+// percent-encoded workflow.PathKey. A step outside run {id} is a 404 (StepTranscript). Every 4xx is
+// settled, so `gone` and `unavailable` are 200s.
 func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -127,14 +126,6 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 		return
 	}
 	nodePath := r.PathValue("path")
-	if nodePath == "" {
-		httpreply.BadRequest(w, "missing step path")
-		return
-	}
-	if first, _, _ := strings.Cut(nodePath, "/"); first != id {
-		httpreply.BadRequest(w, "the step path does not belong to this run")
-		return
-	}
 	out, err := rr.runs.StepTranscript(r.Context(), id, nodePath)
 	if err != nil {
 		if errors.Is(err, errStepUnknown) {

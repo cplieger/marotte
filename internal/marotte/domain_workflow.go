@@ -49,11 +49,6 @@ type RunStartedPayload struct {
 type RunProgressPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	NodeID     string `json:"node_id,omitempty"`
-	// NodePath addresses ONE execution of a node, joined with "/", spelling an
-	// iteration container `iter-<n>` as the run's entry log does. Empty on the
-	// run-level and shape-changing kinds, which is what tells the client to
-	// refetch instead.
-	NodePath string `json:"node_path,omitempty"`
 	// Status is the node's status after this frame, in KAS's own NodeState
 	// vocabulary so it drops straight onto the cached tree.
 	Status string `json:"status,omitempty"`
@@ -66,6 +61,10 @@ type RunProgressPayload struct {
 	// every other outcome.
 	FailureReason string          `json:"failure_reason,omitempty"`
 	Kind          RunProgressKind `json:"kind"`
+	// NodePath addresses ONE execution of a node by its path segments, spelling
+	// an iteration container `iter-<n>`. Empty on the run-level and
+	// shape-changing kinds, which is what tells the client to refetch instead.
+	NodePath []string `json:"node_path,omitempty"`
 }
 
 // RunFinishedPayload is the payload for type="run_finished": terminal. Status is
@@ -81,7 +80,7 @@ type RunFinishedPayload struct {
 	Name       string `json:"name,omitempty"`
 }
 
-// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...} answers
+// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path} answers
 // with. A registered wire enum, so the three values have one definition across both
 // languages and a client's branch over them is total. Three rather than a
 // 200-with-an-empty-list, because flattening the outcomes makes every client policy
@@ -120,13 +119,13 @@ const (
 	RunStepTranscriptSourceReplay RunStepTranscriptSource = "replay"
 )
 
-// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of the run's log at
+// RunStepTranscript is GET /api/runs/{id}/steps/{path}'s reply: every turn of the run's log at
 // that node path in file order, with open tails, or KAS's replay projected into the same shape when
 // the log holds none. No `omitempty` anywhere, so the generated fields are required and a client
 // cannot assume a verdict.
 type RunStepTranscript struct {
-	// WorkflowID and NodePath echo the request, so a client holding several reads in
-	// flight tells the answers apart without correlating.
+	// WorkflowID and NodePath (the step's workflow.PathKey) echo the request, so a
+	// client holding several reads in flight tells the answers apart without correlating.
 	WorkflowID string                  `json:"workflow_id"`
 	NodePath   string                  `json:"node_path"`
 	State      RunStepTranscriptState  `json:"state"`

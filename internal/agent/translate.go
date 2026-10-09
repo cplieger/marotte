@@ -250,8 +250,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 
-	// The one shared classifier (also deriveSubSession), so a step frame classifies the same through either door. A
-	// step has an empty SubSessionID and Step true.
+	// The one shared classifier (also deriveSubSession), so a step frame classifies the same through either door.
 	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow)
 
 	// A replayed frame is history: live handlers would open a phantom turn nothing ends. The gate is per frame, since current-state frames are untagged.

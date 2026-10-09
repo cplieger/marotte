@@ -37,7 +37,7 @@ func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
 		attr FrameAttribution
 	}{
 		{name: "the_chats_own_frame", attr: FrameAttribution{SessionID: "sess_chat"}},
-		{name: "a_subagents_frame", attr: FrameAttribution{SubSessionID: "sub-1", SessionID: "sub-1"}},
+		{name: "a_subagents_frame", attr: FrameAttribution{Subagent: true, SessionID: "sub-1"}},
 		{name: "a_step_with_no_run", attr: FrameAttribution{SessionID: "sess_step", Step: true}},
 	}
 	for _, tc := range tests {

@@ -7,8 +7,8 @@ package translate
 // durable copy, so nothing is persisted here.
 
 import (
+	"cmp"
 	"encoding/json"
-	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -33,24 +33,25 @@ const (
 // FrameAttribution is who a `session/update` frame belongs to, in the form a per-kind
 // handler acts on. Three owners: the chat and a run step must not share one empty value.
 type FrameAttribution struct {
-	// SubSessionID is the frame's session id when a SUBAGENT owns it, empty for the chat and
-	// a run step. Non-empty means "attribute to a subagent" only; never "not the chat".
-	SubSessionID string
 	// SessionID is the frame's session id as it arrived, which a run turn's turn_open records.
 	SessionID string
 	// RunID and NodePath address a step's turn: the run selects the log and the node PATH the
 	// turn (a parallel node is several open turns). Set with Step.
 	RunID    string
 	NodePath string
+	// NodeID is the step's own id, carried beside NodePath because the key is never split back.
+	NodeID string
+	// Subagent reports a SUBAGENT session owns the frame. False never means "the chat": a
+	// step is not a subagent either.
+	Subagent bool
 	// Step reports a workflow STEP session owns the frame: its content is the run log's and
 	// its metering never reaches the chat's own accounting.
 	Step bool
 }
 
-// ChatOwned reports whether the chat's OWN session sent the frame; a step also has an
-// empty SubSessionID.
+// ChatOwned reports whether the chat's OWN session sent the frame.
 func (a FrameAttribution) ChatOwned() bool {
-	return !a.Step && a.SubSessionID == ""
+	return !a.Step && !a.Subagent
 }
 
 // Attribute classifies a frame: the one derivation point for a `session/update`. wf is the
@@ -59,15 +60,13 @@ func (a FrameAttribution) ChatOwned() bool {
 func (t *Translator) Attribute(chatID marotte.ChatID, sessionID string, wf *ACPWorkflowMeta) FrameAttribution {
 	switch t.ClassifyFrame(chatID, sessionID, wf != nil) {
 	case OwnerSubagent:
-		return FrameAttribution{SubSessionID: sessionID, SessionID: sessionID}
+		return FrameAttribution{Subagent: true, SessionID: sessionID}
 	case OwnerStep:
-		attr := FrameAttribution{Step: true, SessionID: sessionID}
+		attr := FrameAttribution{Step: true, SessionID: sessionID, RunID: t.steps.refFor(sessionID).WorkflowID}
 		if wf != nil && wf.WorkflowID != "" {
-			attr.RunID, attr.NodePath = wf.WorkflowID, runNodePath(wf)
-		} else {
-			ref := t.steps.refFor(sessionID)
-			attr.RunID, attr.NodePath = ref.WorkflowID, ref.NodePath
+			attr.RunID = wf.WorkflowID
 		}
+		t.placeStep(&attr, wf)
 		return attr
 	case OwnerChat:
 		return FrameAttribution{SessionID: sessionID}
@@ -79,25 +78,46 @@ func (t *Translator) Attribute(chatID marotte.ChatID, sessionID string, wf *ACPW
 // frame: Step set, the run from the bridge's key, the path from the meta or the registry.
 func (t *Translator) StepAttribution(runID, sessionID string, wf *ACPWorkflowMeta) FrameAttribution {
 	attr := FrameAttribution{Step: true, SessionID: sessionID, RunID: runID}
-	if wf != nil && wf.WorkflowID != "" {
-		attr.NodePath = runNodePath(wf)
-	} else {
-		attr.NodePath = t.steps.refFor(sessionID).NodePath
-	}
+	t.placeStep(&attr, wf)
 	return attr
 }
 
-// runNodePath is the step's address within its run, the ONE join for the run log's turn key
-// and the run card's row key. The PATH, because a repeat's iterations share an id. Falls
-// back to the id: a misplaced row beats vanished content.
+// placeStep sets a step frame's node path and id from its workflow meta, else from the registry,
+// which is cold after a restart. The id prefers the registry's, the one a step's ask is stamped with.
+func (t *Translator) placeStep(attr *FrameAttribution, wf *ACPWorkflowMeta) {
+	ref := t.steps.refFor(attr.SessionID)
+	if wf != nil && wf.WorkflowID != "" {
+		attr.NodePath, attr.NodeID = runNodePath(wf), cmp.Or(ref.NodeID, wf.NodeID)
+		return
+	}
+	attr.NodePath, attr.NodeID = ref.NodePath, ref.NodeID
+}
+
+func runStepOf(attr *FrameAttribution) RunStep {
+	return RunStep{RunID: attr.RunID, NodePath: attr.NodePath, NodeID: attr.NodeID, SessionID: attr.SessionID}
+}
+
+// runNodePath is the step's run-log turn key. The PATH, because a repeat's iterations share
+// an id.
 func runNodePath(w *ACPWorkflowMeta) string {
 	if w == nil {
 		return ""
 	}
-	if len(w.NodePath) > 0 {
-		return strings.Join(w.NodePath, "/")
+	return nodeKey(w.NodePath, w.NodeID)
+}
+
+// nodeKey is a frame's node path as workflow.PathKey spells it.
+func nodeKey(path []string, nodeID string) string {
+	return workflow.PathKey(nodePathOf(path, nodeID))
+}
+
+// nodePathOf is a frame's node path, falling back to the bare id the way the client's
+// unplaced row does: a misplaced row beats vanished content.
+func nodePathOf(path []string, nodeID string) []string {
+	if len(path) == 0 && nodeID != "" {
+		return []string{nodeID}
 	}
-	return w.NodeID
+	return path
 }
 
 // stepRegistry maps a step's ACP session id to its run and node. One Translator serves
@@ -191,7 +211,7 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 		return
 	}
 	for _, st := range workflow.StepSessions(res.State) {
-		t.RecordStepSession(st.SessionID, res.State.WorkflowID, st.NodeID, strings.Join(st.Path, "/"))
+		t.RecordStepSession(st.SessionID, res.State.WorkflowID, st.NodeID, workflow.PathKey(st.Path))
 	}
 }
 
