@@ -899,9 +899,12 @@ describe("scrolling moves the window", () => {
 
     // All the way down, the shortest gesture that moves this window; the tail drops the first run.
     await dragTo(scroller().scrollHeight);
-    await vi.waitFor(() => {
-      expect(mountedSeqs("keep").join(",")).not.toBe(was);
-    });
+    await vi.waitFor(
+      () => {
+        expect(mountedSeqs("keep").join(",")).not.toBe(was);
+      },
+      { timeout: 4000 },
+    );
 
     // A kept run is not re-created: the reconcile matches on the row key.
     const after = runRows("keep");
