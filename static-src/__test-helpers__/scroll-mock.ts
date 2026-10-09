@@ -14,9 +14,15 @@ export const scrollMock = {
   scrollToBottom: vi.fn(),
   setUserScrolledUp: vi.fn(),
   jumpTo: vi.fn(),
+  shiftScroll: vi.fn(),
   // `scrollToOffset` moves nothing here; a suite asserting a landing drives the scroller itself.
   beginSelfScroll: vi.fn(),
   endSelfScroll: vi.fn(),
+  // A mocked scroller has no flight in progress, so the callback runs now.
+  afterSelfScroll: vi.fn((cb: () => void) => {
+    cb();
+    return () => undefined;
+  }),
   scrollToOffset: vi.fn(),
   atLiveEdgeNow: vi.fn(() => true),
   // A real answer: a suite asserting a landing must prime it, or the two coincide for any arithmetic.

@@ -48,6 +48,7 @@ vi.mock("@cplieger/web-terminal-ui/features/mobile-toolbar", () => ({
   mobileToolbar: (...args: unknown[]): unknown => live.mobileToolbar(...args),
 }));
 vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScrollEl() }));
+vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./code-blocks.js", () => ({
   setShellRunCallback: (cb: (cmd: string) => void): void => live.setShellRunCallback(cb),
 }));

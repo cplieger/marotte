@@ -10,6 +10,7 @@ import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile
 import type { TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
+import { shiftScroll } from "./scroll.js";
 import { setShellRunCallback } from "./code-blocks.js";
 import {
   shellHeight,
@@ -389,7 +390,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
       }
       const shrunk = prevHeight - getScrollEl().clientHeight;
       if (shrunk > 0) {
-        getScrollEl().scrollTop += shrunk;
+        shiftScroll(shrunk);
       }
     });
   } else {

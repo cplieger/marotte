@@ -120,7 +120,7 @@ class ScrollController {
   /** The element at the scrollport's top edge after the last scroll event, and where it stood. */
   private viewTop: { el: Element; top: number } | null = null;
 
-  /** The element on the reading line after the reader's last scroll, and where it stood (null =
+  /** The element on the reading line after the last scroll event or controller write, and where it stood (null =
    *  nothing to hold). Native anchoring holds the TOP edge, so a row there growing late — a
    *  `content-visibility` placeholder taking its real size — pushes this one away; `holdReadingLine`
    *  puts it back. Dropped by a press in the transcript: what a click opens is the reader's own. */
@@ -139,6 +139,7 @@ class ScrollController {
    *  bounds it (null = none). */
   private epochOpen = false;
   private epochTimer: ReturnType<typeof setTimeout> | null = null;
+  private settleWaiters: (() => void)[] = [];
 
   /** Did the reader's last directional input ask to go UP? The only thing that may enter
    *  Reading, and spent by `setState` at every door into Following. */
@@ -349,7 +350,7 @@ class ScrollController {
         if (held) {
           this.holdReadingLine();
         }
-        if (!this.epochOpen && !own && !anchored) {
+        if (!this.epochOpen && !own && !anchored && !this.unmoved(top)) {
           this.publishReaderGesture();
         }
         this.maybeLoadMore();
@@ -694,10 +695,43 @@ class ScrollController {
   /** Close the open epoch, if any. Idempotent, because four different closers race for it:
    *  `scrollend`, the backstop, reader input, and a change of owner. */
   endSelfScroll(): void {
+    const wasOpen = this.epochOpen;
     this.epochOpen = false;
     if (this.epochTimer !== null) {
       clearTimeout(this.epochTimer);
       this.epochTimer = null;
+    }
+    if (wasOpen && this.settleWaiters.length > 0) {
+      // Released in a microtask, because a jump closes the epoch and opens its successor in one call.
+      queueMicrotask(() => {
+        this.releaseSettleWaiters();
+      });
+    }
+  }
+
+  /** Run `cb` once no epoch is open: now, or when the one in flight closes with no successor; returns the cancel. */
+  afterSelfScroll(cb: () => void): () => void {
+    if (!this.epochOpen) {
+      cb();
+      return () => undefined;
+    }
+    this.settleWaiters.push(cb);
+    return () => {
+      const at = this.settleWaiters.indexOf(cb);
+      if (at >= 0) {
+        this.settleWaiters.splice(at, 1);
+      }
+    };
+  }
+
+  private releaseSettleWaiters(): void {
+    if (this.epochOpen) {
+      return;
+    }
+    const waiting = this.settleWaiters;
+    this.settleWaiters = [];
+    for (const cb of waiting) {
+      cb();
     }
   }
 
@@ -845,35 +879,52 @@ class ScrollController {
     // ownership rule `attach`, `detach` and `resetScrollState` follow.
     this.cancelPinPass();
     this.endSelfScroll();
-    // A jump is the READER moving, so it holds the window the same way a wheel does: nothing may
-    // re-derive the state or re-pin under a flight in progress.
+    // A jump is the READER moving, so it opens the quiet period a wheel does: nothing re-pins or
+    // releases Reading under its landing.
     this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
-    this.setState(this.landsAtLiveEdge(target, opts.block ?? "start") ? "following" : "reading");
-    // Guarded because jsdom does not implement scrollIntoView, and both callers are unit-tested
-    // against the DOM they build.
-    const fn = (target as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView;
-    if (typeof fn === "function") {
-      const before = this.scrollEl.scrollTop;
-      fn.call(target, { block: "start", behavior: "smooth", ...opts });
+    const before = this.scrollEl.scrollTop;
+    target.scrollIntoView({ block: "start", behavior: "smooth", ...opts });
+    const landed = this.scrollEl.scrollTop;
+    // Measured after the write: inside skipped `content-visibility: auto` content the target has no box, or one placed
+    // against its row's placeholder, until `scrollIntoView` lays that row out, and native anchoring then moves the
+    // scroller by the row's growth. A target that still reports no box keeps the reader Following rather than parking
+    // them on a guess.
+    const landing = this.jumpLanding(target, opts.block ?? "start");
+    const parks = landing !== null && !this.landsAtOffsetLiveEdge(landing);
+    this.setState(parks ? "reading" : "following");
+    if (landing !== null && Math.abs(landing - landed) >= 1) {
+      // A smooth flight is this controller's animation, as a rail jump's is. Outside an epoch its events re-derive the
+      // state (a flight up from the live edge starts in the tolerance band), publish gestures, and meet `holdReadingLine`,
+      // whose instant write ends the flight where it stands.
+      this.beginSelfScroll();
+    } else if (landed !== before) {
       // A landing this module reached is recorded like every write it makes, or the event it
       // produces is read as the READER stating a position — which published a reader gesture and
       // revoked the pick the rail's own click had just set, on every jump that actually moved.
-      const landed = this.scrollEl.scrollTop;
-      if (landed !== before) {
-        this.selfScrollTop = landed;
-      }
+      this.selfScrollTop = landed;
     }
+    this.rebaseReadLine();
   }
 
-  /** Would a jump to `target` leave the reader at the live edge? */
-  private landsAtLiveEdge(target: HTMLElement, block: ScrollLogicalPosition): boolean {
+  /** Move the scroller by `px` as this controller's own write that sets no reading state: a layout
+   *  compensation, never the reader stating a position. */
+  shiftBy(px: number): void {
+    this.scrollSelfTo(this.scrollEl.scrollTop + px, "instant");
+    this.rebaseReadLine();
+  }
+
+  /** Re-read the reading line at a write this controller just made, not at that write's scroll event: a write inside a
+   *  frame callback has its event deferred past the frame's ResizeObserver delivery, where a line read before the write
+   *  takes it for drift and `holdReadingLine` puts the reader back. */
+  private rebaseReadLine(): void {
+    this.readLine = this.pickReadLine();
+  }
+
+  private jumpLanding(target: HTMLElement, block: ScrollLogicalPosition): number | null {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const box = this.scrollFrameRect(target);
     if (box === null) {
-      // No box means no landing, so the jump moves the reader nowhere — and this function's own
-      // default is that a jump with nowhere to go keeps them Following rather than raising a resume
-      // control over a transcript that did not move.
-      return true;
+      return null;
     }
     const room = this.scrollEl.clientHeight - (box.bottom - box.top);
     let wanted = box.top;
@@ -882,12 +933,11 @@ class ScrollController {
     } else if (block === "end") {
       wanted = box.top - room;
     }
-    return this.landsAtOffsetLiveEdge(Math.max(0, Math.min(wanted, max)));
+    return Math.max(0, Math.min(wanted, max));
   }
 
-  /** Would landing on `landing` leave the reader at the live edge? The offset twin of
-   *  `landsAtLiveEdge`, so `BOTTOM_TOLERANCE_PX` stays inside the module that owns it and both
-   *  doors compare against one expression. */
+  /** Would landing on `landing` leave the reader at the live edge? One expression for every door that
+   *  parks the reader, so `BOTTOM_TOLERANCE_PX` stays inside the module that owns it. */
   private landsAtOffsetLiveEdge(landing: number): boolean {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     return landing >= max - BOTTOM_TOLERANCE_PX;
@@ -1205,6 +1255,12 @@ class ScrollController {
     return this.selfScrollTop >= 0 && Math.abs(this.scrollEl.scrollTop - this.selfScrollTop) <= 1;
   }
 
+  /** Is `top` where the previous scroll event stood? Such an event states no new position: the scroller
+   *  left and came back inside one frame (a layout clamp that the next layout's anchoring undoes). */
+  private unmoved(top: number): boolean {
+    return this.lastScrollTop >= 0 && Math.abs(top - this.lastScrollTop) < 1;
+  }
+
   private forgetScrollBaselines(): void {
     this.viewTop = null;
     this.readLine = null;
@@ -1458,6 +1514,11 @@ export function detach(): ViewScrollState {
 export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void {
   getInstance().jumpTo(target, opts);
 }
+/** Move the transcript by `px` as a layout compensation: it sets no reading state and publishes no
+ *  reader gesture. */
+export function shiftScroll(px: number): void {
+  getInstance().shiftBy(px);
+}
 /** Open a self-scroll epoch: every scroll event until it closes is the controller's own
  *  animation rather than a reader gesture. */
 export function beginSelfScroll(): void {
@@ -1466,6 +1527,10 @@ export function beginSelfScroll(): void {
 /** Close the open epoch. */
 export function endSelfScroll(): void {
   getInstance().endSelfScroll();
+}
+/** Run `cb` once the controller's own scroll animation has ended, or now when none is in flight; returns the cancel. */
+export function afterSelfScroll(cb: () => void): () => void {
+  return getInstance().afterSelfScroll(cb);
 }
 /** Scroll to an absolute offset inside the open epoch, parking the reader unless the landing is
  *  at the live edge. */
