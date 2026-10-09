@@ -44,6 +44,8 @@ let rerunTimer: ReturnType<typeof setTimeout> | undefined;
 function findRoot(): HTMLElement {
   return $.messages.querySelector<HTMLElement>(":scope > .transcript-view.is-active") ?? $.messages;
 }
+/** The identity `stampEntry` (messages-blocks.ts) writes on every entry element: a re-rendered entry keeps its hit's character position. */
+const ENTRY_HOLDER = ["data-entry-turn", "data-entry-id"] as const;
 /** Unregister for the re-run's ride on scroll.ts's shared MutationObserver; null while closed. */
 let unobserveTranscript: (() => void) | null = null;
 /** Engine ops in flight whose own writes must not re-trigger the re-run; a counter so nested calls stay safe. */
@@ -127,7 +129,7 @@ function ensureBuilt(): void {
   if (overlayEl !== null) {
     return;
   }
-  engine = new FindEngine(findRoot());
+  engine = new FindEngine(findRoot(), ENTRY_HOLDER);
 
   // A div with `search-status`: the counter is a line under the controls (24-find.css) that collapses while empty.
   const count = el("div", {
@@ -252,7 +254,7 @@ function ensureBuilt(): void {
         applyEngine(() => {
           engine?.clear();
         });
-        engine = new FindEngine(findRoot());
+        engine = new FindEngine(findRoot(), ENTRY_HOLDER);
       }
       startObserving();
       // aria-pressed: find is a toggle, and `.active` means "this singleton tab is active" (tabs.ts).

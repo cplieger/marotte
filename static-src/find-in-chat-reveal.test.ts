@@ -35,7 +35,8 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages, appendEntry, getActive } = await import("./store.js");
+const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolProgress } =
+  await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState, setPinSettleMs } = await import("./scroll.js");
 const { resetFoldState } = await import("./fold-state.js");
@@ -50,6 +51,7 @@ const VIEWPORT_PX = 720;
 const NEEDLE = "chartreuse";
 /** Not `NEEDLE`, which find keeps across a close: a new query makes the first Enter search, not step. */
 const FOLD_NEEDLE = "vermilion";
+const COMMAND_NEEDLE = "saffron";
 const ENTRIES = 200;
 const HIT_AT = 101;
 /** A second match above the hit, far enough that the two rows are never laid out together. */
@@ -488,6 +490,79 @@ describe("find-in-chat's reveal under reduced motion", () => {
       expect(messagesEl.querySelector("mark.find-hit-current")).toBe(
         entryById("f3-e1").querySelector("mark.find-hit"),
       );
+    } finally {
+      toggleChatFind();
+    }
+  });
+
+  it("keeps the current hit in a running command's output when its next frame lands", async () => {
+    const chat = "c-command-reduced";
+    const output = ["one", "two", "three"].map((n) => `${COMMAND_NEEDLE} ${n}`).join("\n");
+    const entries = [
+      inTurn("cmd", 0, "turn_open", {
+        prompt: { id: "cmd-p", text: "go" },
+        source: "prompt",
+        n: 1,
+      }),
+      inTurn("cmd", 1, "text", { text: "running the build" }),
+      inTurn("cmd", 2, "tool_call", {
+        id: "cmd-tc",
+        title: "Run make",
+        kind: "execute",
+        status: "in_progress",
+        ts: 1,
+        output,
+      }),
+    ];
+    try {
+      setSessions([
+        {
+          ...makeSession({ id: chat, name: chat }),
+          turns: new Map([["cmd", { entries, openEntries: new Map() }]]),
+          turn_order: ["cmd"],
+          turn_count: 1,
+        },
+      ]);
+      setActive(chat);
+      bumpMessages(chat, "load");
+      await vi.waitFor(() => {
+        entryById("cmd-e2");
+      });
+      const card = entryById("cmd-e2");
+      // A running card's output region is collapsed, so walked only once the reader opens it.
+      card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+      await vi.waitFor(() => {
+        expect(card.querySelector(".tool-output pre")?.checkVisibility()).toBe(true);
+      });
+      stageServerHits([]);
+      handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
+      const input = document.getElementById("chat-find-input") as HTMLInputElement;
+      input.value = COMMAND_NEEDLE;
+      for (const counter of ["1 of 3", "2 of 3", "3 of 3"]) {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+        await vi.waitFor(() => {
+          expect(countText()).toBe(counter);
+        });
+      }
+
+      applyToolProgress(chat, "cmd", {
+        turn: "cmd",
+        tool_call_id: "cmd-tc",
+        output_delta: "\nstill building",
+      });
+      const pre = card.querySelector(".tool-output pre");
+      await vi.waitFor(() => {
+        expect(pre?.textContent).toContain("still building");
+        expect(pre?.querySelectorAll("mark.find-hit")).toHaveLength(3);
+      });
+      expect({
+        counter: countText(),
+        current: [...(pre?.querySelectorAll("mark.find-hit") ?? [])].findIndex((m) =>
+          m.classList.contains("find-hit-current"),
+        ),
+      }).toEqual({ counter: "3 of 3", current: 2 });
     } finally {
       toggleChatFind();
     }

@@ -421,3 +421,129 @@ describe("refresh", () => {
     });
   });
 });
+
+const HOLDER = ["data-entry-turn", "data-entry-id"];
+
+function entry(id: string, inner: string): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset["entryTurn"] = "t1";
+  box.dataset["entryId"] = id;
+  box.innerHTML = inner;
+  return box;
+}
+
+const OUTPUT = "a needle, b needle, c needle";
+
+function commandEntries(): HTMLElement {
+  const host = mount("");
+  host.append(
+    entry("e1", `<p>the first needle</p>`),
+    entry("e2", `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`),
+  );
+  return host;
+}
+
+function stampedEl(host: HTMLElement, id: string): HTMLElement {
+  const found = host.querySelector<HTMLElement>(`[data-entry-id="${id}"]`);
+  if (found === null) {
+    throw new Error(`no entry ${id}`);
+  }
+  return found;
+}
+
+/** The current hit's text with the characters before it in its `<pre>`, which tells the output's three apart. */
+function currentInOutput(eng: FindEngine): string {
+  const mark = eng.currentMark();
+  const pre = mark?.closest("pre");
+  if (mark === null || pre === null || pre === undefined) {
+    return "";
+  }
+  const before = document.createRange();
+  before.selectNodeContents(pre);
+  before.setEndBefore(mark);
+  return before.toString() + (mark.textContent ?? "");
+}
+
+describe("refresh with holder attributes", () => {
+  it("keeps the third hit of a holder re-rendered as a copy", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const copy = entry(
+      "e2",
+      `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`,
+    );
+    stampedEl(host, "e2").replaceWith(copy);
+    expect(eng.refresh("needle")).toBe(4);
+    expect({ index: eng.currentIndex, inCopy: copy.contains(eng.currentMark()) }).toEqual({
+      index: 3,
+      inCopy: true,
+    });
+  });
+
+  it("keeps the hit when an element between its holder and it is replaced", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const grown = document.createElement("pre");
+    grown.textContent = `${OUTPUT}, d needle`;
+    stampedEl(host, "e2").querySelector(".out")?.replaceChildren(grown);
+    expect(eng.refresh("needle")).toBe(5);
+    expect(currentInOutput(eng)).toBe(OUTPUT);
+  });
+
+  it("keeps the hit when text before it in its holder changes length", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(3);
+    const title = stampedEl(host, "e2").querySelector(".title");
+    if (title !== null) {
+      title.textContent = "run a command with a longer title";
+    }
+    expect(eng.refresh("needle")).toBe(4);
+    expect(currentInOutput(eng)).toBe(OUTPUT);
+  });
+
+  it("makes the next entry's hit current once the holder is removed", () => {
+    const host = mount("");
+    host.append(
+      entry("e1", `<p>first needle</p>`),
+      entry("e2", `<p>one needle, then another needle here</p>`),
+      entry("e3", `<p>last needle</p>`),
+    );
+    const eng = new FindEngine(host, HOLDER);
+    eng.search("needle");
+    eng.setCurrent(2);
+    stampedEl(host, "e2").remove();
+    expect(eng.refresh("needle")).toBe(2);
+    expect(eng.currentMark()?.closest("[data-entry-id]")).toBe(stampedEl(host, "e3"));
+  });
+
+  it.each(["clearCurrent", "clear"] as const)(
+    "starts from the first hit when refreshed after %s",
+    (drop) => {
+      const host = commandEntries();
+      const eng = new FindEngine(host, HOLDER);
+      eng.search("needle");
+      eng.setCurrent(3);
+      eng[drop]();
+      expect(eng.refresh("needle")).toBe(4);
+      expect(eng.currentIndex).toBe(0);
+    },
+  );
+
+  it("without holder attributes, places a re-rendered holder's hit where its element stood", () => {
+    const host = commandEntries();
+    const eng = new FindEngine(host);
+    eng.search("needle");
+    eng.setCurrent(3);
+    stampedEl(host, "e2").replaceWith(
+      entry("e2", `<div class="title">run</div><div class="out"><pre>${OUTPUT}</pre></div>`),
+    );
+    expect(eng.refresh("needle")).toBe(4);
+    expect(eng.currentIndex).toBe(1);
+  });
+});
