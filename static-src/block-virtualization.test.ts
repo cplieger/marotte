@@ -521,6 +521,12 @@ describe("scrolling moves the window", () => {
     for (let f = 0; f < 4; f++) {
       await frame();
     }
+    // Resolve on a task, where input arrives. Inside a frame callback a following drag's write lands after
+    // that frame's scroll events and before its ResizeObserver delivery, so `scroll.ts` holds the reading
+    // line against a move whose scroll event it has not seen yet and undoes the drag.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
     return moved;
   }
 
@@ -899,12 +905,9 @@ describe("scrolling moves the window", () => {
 
     // All the way down, the shortest gesture that moves this window; the tail drops the first run.
     await dragTo(scroller().scrollHeight);
-    await vi.waitFor(
-      () => {
-        expect(mountedSeqs("keep").join(",")).not.toBe(was);
-      },
-      { timeout: 4000 },
-    );
+    await vi.waitFor(() => {
+      expect(mountedSeqs("keep").join(",")).not.toBe(was);
+    });
 
     // A kept run is not re-created: the reconcile matches on the row key.
     const after = runRows("keep");
