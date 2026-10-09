@@ -139,7 +139,6 @@ class ScrollController {
    *  bounds it (null = none). */
   private epochOpen = false;
   private epochTimer: ReturnType<typeof setTimeout> | null = null;
-  private settleWaiters: (() => void)[] = [];
 
   /** Did the reader's last directional input ask to go UP? The only thing that may enter
    *  Reading, and spent by `setState` at every door into Following. */
@@ -695,43 +694,10 @@ class ScrollController {
   /** Close the open epoch, if any. Idempotent, because four different closers race for it:
    *  `scrollend`, the backstop, reader input, and a change of owner. */
   endSelfScroll(): void {
-    const wasOpen = this.epochOpen;
     this.epochOpen = false;
     if (this.epochTimer !== null) {
       clearTimeout(this.epochTimer);
       this.epochTimer = null;
-    }
-    if (wasOpen && this.settleWaiters.length > 0) {
-      // Released in a microtask, because a jump closes the epoch and opens its successor in one call.
-      queueMicrotask(() => {
-        this.releaseSettleWaiters();
-      });
-    }
-  }
-
-  /** Run `cb` once no epoch is open: now, or when the one in flight closes with no successor; returns the cancel. */
-  afterSelfScroll(cb: () => void): () => void {
-    if (!this.epochOpen) {
-      cb();
-      return () => undefined;
-    }
-    this.settleWaiters.push(cb);
-    return () => {
-      const at = this.settleWaiters.indexOf(cb);
-      if (at >= 0) {
-        this.settleWaiters.splice(at, 1);
-      }
-    };
-  }
-
-  private releaseSettleWaiters(): void {
-    if (this.epochOpen) {
-      return;
-    }
-    const waiting = this.settleWaiters;
-    this.settleWaiters = [];
-    for (const cb of waiting) {
-      cb();
     }
   }
 
@@ -1527,10 +1493,6 @@ export function beginSelfScroll(): void {
 /** Close the open epoch. */
 export function endSelfScroll(): void {
   getInstance().endSelfScroll();
-}
-/** Run `cb` once the controller's own scroll animation has ended, or now when none is in flight; returns the cancel. */
-export function afterSelfScroll(cb: () => void): () => void {
-  return getInstance().afterSelfScroll(cb);
 }
 /** Scroll to an absolute offset inside the open epoch, parking the reader unless the landing is
  *  at the live edge. */

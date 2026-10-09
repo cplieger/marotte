@@ -39,6 +39,7 @@ const { setSessions, setActive, bumpMessages, appendEntry, getActive } = await i
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState, setPinSettleMs } = await import("./scroll.js");
 const { resetFoldState } = await import("./fold-state.js");
+const { KEY_ATTR } = await import("./reconcile.js");
 const { forgetHeights } = await import("./block-heights.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 const { handleFindHotkey, toggleChatFind, closeChatFind, _isChatFindOpen } =
@@ -47,8 +48,13 @@ const api = await import("./api-client.js");
 
 const VIEWPORT_PX = 720;
 const NEEDLE = "chartreuse";
+/** Not `NEEDLE`, which find keeps across a close: a new query makes the first Enter search, not step. */
+const FOLD_NEEDLE = "vermilion";
 const ENTRIES = 200;
 const HIT_AT = 101;
+/** A second match above the hit, far enough that the two rows are never laid out together. */
+const ABOVE_AT = 71;
+const ABOVE_TEXT = `prose ${String(ABOVE_AT)} a ${NEEDLE} that sits well above the hit`;
 
 function sealed(at: number, kind: Entry["kind"], payload: unknown): Entry {
   return { id: `big-e${String(at)}`, turn: "big", kind, seq: at, ts: at + 1, payload } as Entry;
@@ -68,13 +74,15 @@ function hitText(): string {
  *  row. The cold load lays out the tail only, so the rows around the hit still stand at their
  *  3rem placeholder and take their real height as the jump brings them near. A `live` turn has no
  *  close, so it can stream. */
-function proseTurn(live: boolean): Entry[] {
+function proseTurn(live: boolean, matchAbove = false): Entry[] {
   const out: Entry[] = [
     sealed(0, "turn_open", { prompt: { id: "big-p", text: "go" }, source: "prompt", n: 1 }),
   ];
   for (let at = 1; at <= ENTRIES; at++) {
     if (at === HIT_AT) {
       out.push(sealed(at, "text", { text: hitText() }));
+    } else if (matchAbove && at === ABOVE_AT) {
+      out.push(sealed(at, "text", { text: ABOVE_TEXT }));
     } else if (at % 2 === 1) {
       out.push(
         sealed(at, "text", {
@@ -91,23 +99,123 @@ function proseTurn(live: boolean): Entry[] {
   return out;
 }
 
-function streamChunk(chat: string): void {
-  const seq = getActive()?.turns.get("big")?.entries.length ?? 0;
-  appendEntry(chat, sealed(seq, "text", { text: `streamed ${String(seq)}` }));
+function streamChunk(chat: string, turn = "big"): void {
+  const seq = getActive()?.turns.get(turn)?.entries.length ?? 0;
+  appendEntry(chat, {
+    id: `${turn}-e${String(seq)}`,
+    turn,
+    kind: "text",
+    seq,
+    ts: seq + 1,
+    payload: { text: `streamed ${String(seq)}` },
+  } as Entry);
 }
 
-function hit(): Hit {
-  const text = hitText();
+function inTurn(turn: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
+  return { id: `${turn}-e${String(at)}`, turn, kind, seq: at, ts: at + 1, payload } as Entry;
+}
+
+/** A turn that ran a tool, so it offers the fold. `text` precedes the tool, keeping it out of the folded face, which
+ *  shows the final prose. A `live` turn has no close, so it can stream. */
+function toolTurn(turn: string, n: number, text: string, live = false): Entry[] {
+  const out = [
+    inTurn(turn, 0, "turn_open", { prompt: { id: `${turn}-p`, text: "go" }, source: "prompt", n }),
+    inTurn(turn, 1, "text", { text }),
+    inTurn(turn, 2, "tool_call", {
+      id: `${turn}-tc`,
+      title: "Read File",
+      kind: "read",
+      status: "completed",
+      ts: 1,
+    }),
+    inTurn(turn, 3, "text", { text: `done ${turn}` }),
+  ];
+  if (!live) {
+    out.push(inTurn(turn, 4, "turn_close", { outcome: "completed" }));
+  }
+  return out;
+}
+
+function turnCard(turn: string): HTMLElement {
+  const card = messagesEl.querySelector<HTMLElement>(`.turn[${KEY_ATTR}="${turn}"]`);
+  if (card === null) {
+    throw new Error(`no card for turn ${turn}`);
+  }
+  return card;
+}
+
+function foldToggle(turn: string): HTMLButtonElement {
+  const btn = turnCard(turn).querySelector<HTMLButtonElement>(".turn-fold-toggle");
+  if (btn === null) {
+    throw new Error(`turn ${turn} offers no fold`);
+  }
+  return btn;
+}
+
+function hitIn(at: number, text: string, excerpt: string): Hit {
   return {
     turn_id: "big",
-    entry_id: `big-e${String(HIT_AT)}`,
-    excerpt: `the ${NEEDLE} lives at the very end`,
+    entry_id: `big-e${String(at)}`,
+    excerpt,
     role: "assistant",
     segment_kind: "content",
     turn: 1,
     offset: text.indexOf(NEEDLE),
     segment_len: text.length,
   } as unknown as Hit;
+}
+
+function hit(): Hit {
+  return hitIn(HIT_AT, hitText(), `the ${NEEDLE} lives at the very end`);
+}
+
+function aboveHit(): Hit {
+  return hitIn(ABOVE_AT, ABOVE_TEXT, ABOVE_TEXT);
+}
+
+function entryEl(at: number): HTMLElement {
+  return entryById(`big-e${String(at)}`);
+}
+
+function entryById(id: string): HTMLElement {
+  const found = messagesEl.querySelector<HTMLElement>(
+    `[data-entry-id="${id}"], [data-entries~="${id}"]`,
+  );
+  if (found === null) {
+    throw new Error(`entry ${id} is not mounted`);
+  }
+  return found;
+}
+
+/** The hit's own paragraph, the last of its entry; found by position, since its marks may be gone. */
+function hitParagraph(): HTMLElement {
+  const last = [...entryEl(HIT_AT).querySelectorAll<HTMLElement>("p")].at(-1);
+  if (last === undefined) {
+    throw new Error("the hit entry has no paragraph");
+  }
+  return last;
+}
+
+function currentHitEntry(): string | null {
+  const mark = messagesEl.querySelector("mark.find-hit-current");
+  return mark?.closest("[data-entry-id]")?.getAttribute("data-entry-id") ?? null;
+}
+
+/** The reader's own scroll to `target`: an input first, which is what tells the controller the
+ *  reader moved, then an instant write. */
+function readerScrollsTo(target: HTMLElement, deltaY: number): void {
+  scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true }));
+  target.scrollIntoView({ block: "center", behavior: "instant" });
+}
+
+function twoFrames(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
 }
 
 /** The server's search reply, run through the caller's decoder so it is held to the wire shape. */
@@ -124,16 +232,20 @@ function countText(): string {
   return document.getElementById("chat-find-count")?.textContent ?? "";
 }
 
-async function findAndStep(query: string, beforeStep: () => void = () => undefined): Promise<void> {
+async function findAndStep(
+  query: string,
+  beforeStep: () => void = () => undefined,
+  back = false,
+): Promise<void> {
   handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
   const input = document.getElementById("chat-find-input") as HTMLInputElement;
-  const enter = (): void => {
+  const enter = (shiftKey: boolean): void => {
     input.value = query;
     input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey, bubbles: true, cancelable: true }),
     );
   };
-  enter();
+  enter(false);
   await vi.waitFor(() => {
     expect(countText()).toMatch(/in chat|matched, not shown here/);
   });
@@ -142,13 +254,13 @@ async function findAndStep(query: string, beforeStep: () => void = () => undefin
     setTimeout(resolve, 0);
   });
   beforeStep();
-  enter();
+  enter(back);
 }
 
-async function loadAtLiveEdge(chat: string, live: boolean): Promise<void> {
+async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): Promise<void> {
   forgetHeights(["big"]);
   const turns = new Map<string, TurnState>([
-    ["big", { entries: proseTurn(live), openEntries: new Map() }],
+    ["big", { entries: proseTurn(live, matchAbove), openEntries: new Map() }],
   ]);
   setSessions([
     { ...makeSession({ id: chat, name: chat }), turns, turn_order: ["big"], turn_count: 1 },
@@ -167,7 +279,7 @@ async function loadAtLiveEdge(chat: string, live: boolean): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, 150);
   });
-  stageServerHits([hit()]);
+  stageServerHits(matchAbove ? [aboveHit(), hit()] : [hit()]);
 }
 
 async function findFromLiveEdge(chat: string): Promise<void> {
@@ -294,6 +406,92 @@ describe("find-in-chat's reveal under reduced motion", () => {
     await findAndStep(NEEDLE, closeAfterFirstJump);
     await staysParkedThroughStream("c-close-reduced");
   });
+
+  it("keeps the current hit when the transcript streams while the reader is away from it", async () => {
+    try {
+      await loadAtLiveEdge("c-away-reduced", true, true);
+      await findAndStep(NEEDLE, undefined, true);
+      await vi.waitFor(() => {
+        expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
+      });
+      readerScrollsTo(entryEl(ABOVE_AT), -1);
+      await vi.waitFor(() => {
+        expect(hitParagraph().checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+      });
+      streamChunk("c-away-reduced");
+      // The re-run has walked once the match the reader is at carries a mark.
+      await vi.waitFor(() => {
+        expect(entryEl(ABOVE_AT).querySelector("mark.find-hit")).not.toBeNull();
+      });
+      readerScrollsTo(hitParagraph(), 1);
+      await twoFrames();
+      expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
+    } finally {
+      toggleChatFind();
+    }
+  });
+
+  it("makes the next hit current once the reader folds the turn holding the current hit", async () => {
+    const chat = "c-fold-reduced";
+    const turns = new Map<string, TurnState>(
+      [
+        toolTurn("f1", 1, `one ${FOLD_NEEDLE}`),
+        toolTurn("f2", 2, `a ${FOLD_NEEDLE} and a second ${FOLD_NEEDLE}`),
+        toolTurn("f3", 3, `a ${FOLD_NEEDLE} first, then a ${FOLD_NEEDLE} again`, true),
+      ].map((entries) => [entries[0]?.turn ?? "", { entries, openEntries: new Map() }]),
+    );
+    try {
+      setSessions([
+        {
+          ...makeSession({ id: chat, name: chat }),
+          turns,
+          turn_order: ["f1", "f2", "f3"],
+          turn_count: 3,
+        },
+      ]);
+      setActive(chat);
+      bumpMessages(chat, "load");
+      // Older turns load folded; the reader opens both.
+      await vi.waitFor(() => {
+        foldToggle("f2");
+      });
+      foldToggle("f1").click();
+      foldToggle("f2").click();
+      await vi.waitFor(() => {
+        expect(entryById("f2-e1").checkVisibility({ contentVisibilityAuto: true })).toBe(true);
+        expect(entryById("f1-e1").checkVisibility({ contentVisibilityAuto: true })).toBe(true);
+      });
+      stageServerHits([]);
+      handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
+      const input = document.getElementById("chat-find-input") as HTMLInputElement;
+      input.value = FOLD_NEEDLE;
+      for (const counter of ["1 of 5", "2 of 5", "3 of 5"]) {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+        await vi.waitFor(() => {
+          expect(countText()).toBe(counter);
+        });
+      }
+      expect(currentHitEntry()).toBe("f2-e1");
+
+      foldToggle("f2").click();
+      // `content-visibility` flips to hidden only at the end of the fold's transition delay, with no mutation, so the
+      // walk that drops the hit is the next streamed chunk's.
+      await vi.waitFor(() => {
+        expect(entryById("f2-e1").checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+      });
+      streamChunk(chat, "f3");
+      await vi.waitFor(() => {
+        expect(countText()).toBe("2 of 3");
+      });
+      expect(messagesEl.querySelector("mark.find-hit-current")).toBe(
+        entryById("f3-e1").querySelector("mark.find-hit"),
+      );
+    } finally {
+      toggleChatFind();
+    }
+  });
 });
 
 describe("find-in-chat's reveal with motion", () => {
@@ -326,6 +524,31 @@ describe("find-in-chat's reveal with motion", () => {
       await findAndStep(NEEDLE);
       await staysCentred(500);
       expect(countText()).toBe("1 of 1");
+    } finally {
+      streamOnHighlight.disconnect();
+      toggleChatFind();
+    }
+  });
+
+  it("keeps the current-hit highlight when the reader moves during the reveal's flight while the transcript streams", async () => {
+    const streamOnHighlight = new MutationObserver(() => {
+      if (messagesEl.querySelector("mark.find-hit-current") !== null) {
+        streamOnHighlight.disconnect();
+        streamChunk("c-input-motion");
+        setTimeout(() => {
+          scrollerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+        }, 250);
+      }
+    });
+    try {
+      await loadAtLiveEdge("c-input-motion", true);
+      streamOnHighlight.observe(messagesEl, { subtree: true, attributes: true, childList: true });
+      await findAndStep(NEEDLE);
+      // Past the flight, wherever the input left it.
+      await sleep(1200);
+      readerScrollsTo(hitParagraph(), -1);
+      await twoFrames();
+      expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
     } finally {
       streamOnHighlight.disconnect();
       toggleChatFind();

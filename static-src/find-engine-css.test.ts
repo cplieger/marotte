@@ -9,11 +9,6 @@ import type * as ModFindInChat from "./find-in-chat.js";
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   onTranscriptMutate: vi.fn(() => () => undefined),
-  // No flight is ever in progress here.
-  afterSelfScroll: vi.fn((cb: () => void) => {
-    cb();
-    return () => undefined;
-  }),
 }));
 vi.mock("./chat-search.js", { spy: true });
 vi.mock("./store.js", { spy: true });
