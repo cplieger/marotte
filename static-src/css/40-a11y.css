@@ -57,6 +57,14 @@
   outline-offset: var(--focus-offset);
 }
 
+/* The turn map's Escape focuses the transcript by script, and focus moved from a keyboard-focused
+ * link keeps `:focus-visible`: without this the UA's `outline: auto` rings the scroller. Inset,
+ * because the scroller's own edges clip an outset ring. */
+[id="messages-wrap"]:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-inset);
+}
+
 /* A CONTROL ITS CLIPPING CARD DOES NOT CLEAR TAKES THE RING INSIDE ITS OWN EDGE.
  *
  * THE CRITERION IS THE RING'S REACH, `--focus-offset` plus the ring's own width — 3px

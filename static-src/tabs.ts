@@ -2234,10 +2234,6 @@ export async function openFilesView(openAt: string): Promise<void> {
   await openTab({ kind: "files", ref: openAt });
 }
 
-export async function toggleHistoryView(): Promise<void> {
-  await toggleSingleton("history");
-}
-
 /** Switch the History page's pane route. No-op when it isn't open. */
 export function setHistoryTab(tab: HistoryTab): void {
   setTabRoute(tabIdFor("history"), { kind: "history", tab });

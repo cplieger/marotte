@@ -82,7 +82,7 @@
 /* Anchored top-right of the transcript. Its containing block is
    `#messages-wrap-outer` (13-messages.css), which sits INSIDE the view and so
    already below the title bar — so there is nothing here to clear, and
-   `--below-chat-toolbar` would be 60px of dead offset. `.turn-rail` occupies the
+   `--below-chat-toolbar` would be 60px of dead offset. `.turn-map` occupies the
    same box and takes the same inset for the same reason. */
 .chat-find {
   position: absolute;

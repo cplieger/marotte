@@ -7,7 +7,7 @@ import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
-// The dot's words, shared with the timeline rail's marker — see turn-severity.ts.
+// The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";

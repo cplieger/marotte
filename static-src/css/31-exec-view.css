@@ -415,7 +415,7 @@
 
 /* STACKED below the width where two panes each stop being usable, and keyed on the
    PAGE's own container rather than the viewport, because the sidebar decides how
-   much width this tab gets — the same reason the transcript's timeline rail keys on
+   much width this tab gets — the same reason the transcript's turn map keys on
    `chat-area`. Below it the tree keeps its own height and the detail grows, so a
    reader scrolls the page once instead of two panes independently. */
 @container exec-view (width < 52rem) {

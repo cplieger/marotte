@@ -27,9 +27,12 @@ const { probe } = vi.hoisted(() => ({
     landings: [] as { px: number; behavior: string; at: number }[],
     /** When the epoch was released, which is the operation's own last act. */
     releases: [] as number[],
+    /** Reader gestures delivered to the map's own subscription. */
+    gestures: 0,
     reset(): void {
       this.landings.length = 0;
       this.releases.length = 0;
+      this.gestures = 0;
     },
   },
 }));
@@ -46,6 +49,11 @@ vi.mock("./scroll.js", async (importOriginal) => {
       probe.releases.push(Date.now());
       real.endSelfScroll();
     },
+    onReaderGesture: (cb: () => void): (() => void) =>
+      real.onReaderGesture(() => {
+        probe.gestures++;
+        cb();
+      }),
   };
 });
 // The session-wide index is the rail's own fetch, and the pagination door is a network read. Both
@@ -84,11 +92,9 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Browser Mode serves no CSS, so the scene declares the boxes the stylesheet would: `.turn-rail`
-// takes its height from `position: absolute; inset-block` in production, and a track with no box
-// holds one marker.
+// Browser Mode serves no CSS, so the scene declares the stack's height the stylesheet would give it.
 const style = document.createElement("style");
-style.textContent = ".turn-rail{position:absolute;inset-block-start:0;block-size:400px}";
+style.textContent = ".turn-map-stack{display:block;position:relative;block-size:400px}";
 document.head.appendChild(style);
 
 const store = await import("./store.js");
@@ -168,14 +174,19 @@ function card(n: number, px: number): HTMLElement {
   return e;
 }
 
-function markerFor(n: number): HTMLButtonElement {
-  const hit = [...document.querySelectorAll<HTMLButtonElement>(".turn-rail > .rail-marker")].find(
-    (b) => b.firstChild?.textContent === String(n),
+function markerFor(n: number): HTMLAnchorElement {
+  const hit = [...document.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link")].find(
+    (a) => a.getAttribute("href")?.endsWith(`#turn-${String(n)}`) === true,
   );
   if (hit === undefined) {
-    throw new Error(`no rail marker for turn ${String(n)}`);
+    throw new Error(`no turn-map row for turn ${String(n)}`);
   }
   return hit;
+}
+
+/** Whether a row's jump is paging history in, which its preview says. */
+function isPending(link: HTMLElement): boolean {
+  return link.getAttribute("data-tooltip")?.includes("Loading\u2026") ?? false;
 }
 
 /** A card's top measured from the scrollport's own top edge, so it compares directly against the
@@ -272,7 +283,10 @@ async function residentChat(n: number): Promise<void> {
     card(i, 200);
   }
   rail.setResidentTurns([...messagesEl.children] as HTMLElement[]);
-  await until(() => document.querySelectorAll(".rail-marker").length === n, "the rail's markers");
+  await until(
+    () => document.querySelectorAll(".turn-map .turn-pill-link").length === n,
+    "the rail's markers",
+  );
 }
 
 beforeEach(async () => {
@@ -350,7 +364,12 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     for (const n of [4, 5, 6]) {
       card(n, 200);
     }
-    await until(() => document.querySelectorAll(".rail-marker").length === 6, "six markers");
+    // The paint that mounted the cards, as messages.ts makes it.
+    rail.setResidentTurns([...messagesEl.children] as HTMLElement[]);
+    await until(
+      () => document.querySelectorAll(".turn-map .turn-pill-link").length === 6,
+      "six markers",
+    );
     vi.mocked(loadMessages).mockImplementation((chatID: string) => {
       const s = store.get(chatID);
       if (s !== undefined) {
@@ -381,7 +400,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     expect(probe.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
     expect(Math.abs(topOnScreen("u3") - readingLine())).toBeLessThanOrEqual(TOLERANCE_PX);
     // The pending state means a fetch is in flight, so the operation has to clear it.
-    expect(markerFor(3).dataset["pending"]).toBeUndefined();
+    expect(isPending(markerFor(3))).toBe(false);
   });
 });
 
@@ -434,17 +453,15 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     markerFor(4).click();
     await until(() => probe.landings.length > 0, "the jump's own scroll to start");
 
+    // Counted from here: a scroll event an earlier reset left queued can publish one under load.
+    const before = probe.gestures;
+
     wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     wrap.scrollTop = 40;
 
-    await until(
-      () => markerFor(4).dataset["selected"] === undefined,
-      "the reader's gesture to revoke the pick",
-    );
-    expect(
-      [...document.querySelectorAll<HTMLElement>(".rail-marker")].every(
-        (m) => m.dataset["selected"] === undefined,
-      ),
-    ).toBe(true);
+    // The DOM cannot tell the pick from the scroll offset here, because the correction re-lands
+    // turn 4; the map's own subscription is what the wiring owes.
+    await until(() => probe.gestures > before, "the reader's gesture to reach the map");
+    expect(document.querySelectorAll(".turn-map [data-current]")).toHaveLength(1);
   });
 });

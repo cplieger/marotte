@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/ids"
@@ -85,15 +86,16 @@ type turnState struct {
 	calls     []entryCall
 	// ranges are the turn's lines in file order, one per contiguous run: turns can be open together and the merge files
 	// between-turns entries behind later turns, so a turn is not one span.
-	ranges  []byteRange
-	openTs  int64
-	lastTs  int64
-	n       uint64
-	nextSeq uint64
-	plans   int
-	drawn   bool
-	closed  bool
-	carrier bool
+	ranges    []byteRange
+	elapsedMs float64
+	openTs    int64
+	lastTs    int64
+	n         uint64
+	nextSeq   uint64
+	plans     int
+	drawn     bool
+	closed    bool
+	carrier   bool
 	// reverted means a turn_revert took this turn, so every read surface skips it. The lines stay on disk.
 	reverted bool
 	// hasRevert is whether the turn holds its own turn_revert record, which tells a complete carrier from the crash state
@@ -651,6 +653,7 @@ func foldTurnClose(st *turnState, e *marotte.Entry) error {
 	}
 	st.closed = true
 	st.outcome = payload.Outcome
+	st.elapsedMs = payload.ElapsedMs
 	st.carrier = payload.Carrier
 	st.unterminated = payload.StopReasonRaw == string(marotte.StopReasonUnterminated)
 	return nil
@@ -799,10 +802,18 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 	return true
 }
 
-// firstLineOf is a prompt's first line, whitespace-collapsed, for the rail row's hover label.
+// firstLineMax caps first_line so the session index stays small on a long chat.
+const firstLineMax = 120
+
+// firstLineOf is a prompt's first line, whitespace-collapsed and capped on a rune boundary, for
+// the turn-map preview. static-src/rail-merge.ts firstLine is its twin for a resident turn.
 func firstLineOf(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
-	return strings.Join(strings.Fields(line), " ")
+	line = strings.Join(strings.Fields(line), " ")
+	if utf8.RuneCountInString(line) <= firstLineMax {
+		return line
+	}
+	return string([]rune(line)[:firstLineMax]) + "\u2026"
 }
 
 // rescanLocked rebuilds the index in one pass, truncating an unreadable tail, then applies what the pass cannot
@@ -1159,6 +1170,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 			N:              ordinalAsInt(st.n),
 			Ts:             st.openTs,
 			AgentInitiated: !drawnSource(st.source),
+			ElapsedMs:      st.elapsedMs,
 		})
 	}
 	return rows

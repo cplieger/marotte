@@ -51,10 +51,9 @@ export function turnTop(offsets: TurnOffsets, id: string): number | null {
   return i < 0 ? null : (offsets.tops[i] ?? null);
 }
 
-/** The index of the shown marker that carries the mark for turn `n` when `n` itself has none:
- *  the last entry at or below `n`, `0` when every entry is above it, `-1` for an empty set. A
- *  downsampled rail has a marker for one turn in two or three, so the reading line spends most
- *  of its time in a turn with no marker of its own. */
+/** The index of the row that carries the mark for turn `n` when `n` has no row of its own: the
+ *  last entry at or below `n`, `0` when every entry is above it, `-1` for an empty set. A binned
+ *  map has one row for k turns, and an undrawn turn has none. */
 export function markerSlotFor(shown: readonly { readonly n: number }[], n: number): number {
   let slot = -1;
   for (let i = 0; i < shown.length; i++) {
@@ -63,6 +62,41 @@ export function markerSlotFor(shown: readonly { readonly n: number }[], n: numbe
     }
   }
   return slot >= 0 ? slot : shown.length === 0 ? -1 : 0;
+}
+
+/** The ids of the cards any part of which is inside the viewport. Card `i` spans `tops[i]` to
+ *  `tops[i+1]`, the last one to the end of the transcript. Empty for no table or no viewport. */
+export function turnsInView(
+  scrollTop: number,
+  offsets: TurnOffsets,
+  clientHeight: number,
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const n = offsets.ids.length;
+  if (n === 0 || clientHeight <= 0) {
+    return out;
+  }
+  const bottom = scrollTop + clientHeight;
+  // The last card whose top is at or above the viewport's top: it reaches into view.
+  let lo = 0;
+  let hi = n - 1;
+  let first = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if ((offsets.tops[mid] ?? 0) <= scrollTop) {
+      first = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  for (let i = first; i < n && (offsets.tops[i] ?? 0) < bottom; i++) {
+    const id = offsets.ids[i];
+    if (id !== undefined) {
+      out.add(id);
+    }
+  }
+  return out;
 }
 
 /** The turn the reading line is in, or `KEEP` when there is no answer. Pure and total: it holds

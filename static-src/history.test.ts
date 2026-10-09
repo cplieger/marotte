@@ -178,7 +178,7 @@ async function freshModule(): Promise<typeof ModHistory> {
 async function render(payload: unknown): Promise<HTMLElement> {
   const view = mountView();
   dispatch.mockResolvedValue(payload);
-  // The pair `activateTabQuietly` runs; `toggleHistoryView` toggles the tab and paints nothing here.
+  // The pair `activateTabQuietly` runs; `openTab` opens the tab and paints nothing here.
   const { loadHistoryView, refreshHistoryView } = await freshModule();
   loadHistoryView();
   refreshHistoryView();

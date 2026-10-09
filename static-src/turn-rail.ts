@@ -1,11 +1,8 @@
-// The transcript's turn rail: one marker per turn on a vertical axis in the chat
-// gutter. Position is a function of the marker's SLOT in the shown set, and the
-// active turn is a function of scroll offset — `rail-select.ts` and
-// `rail-activation.ts` own both arithmetics. This module is the DOM, the click flow
-// and the caches around them.
-
-import { el } from "@cplieger/reactive";
+import { el, KEY_ATTR, reconcile } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { apiGet } from "./api-client.js";
+import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import {
   atLiveEdgeNow,
   beginSelfScroll,
@@ -19,25 +16,24 @@ import {
   scrollableBy,
   scrollToOffset,
 } from "./scroll.js";
-import { markerLabel, railLabel } from "./rail-labels.js";
-import { formatElapsed, isoDuration } from "./strings.js";
-import { severityOf } from "./turn-severity.js";
-import { projectTurns, turnLedger } from "./turns.js";
-import { join } from "@cplieger/keyenc";
+import { binLabel, markerLabel } from "./rail-labels.js";
+import { buildPath } from "./route-path.js";
+import { projectTurns } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get } from "./store.js";
 import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
 import type { TurnSummary } from "./rail-merge.js";
-import { railAt, railMetrics, railSpan, selectMarkers } from "./rail-select.js";
-import { activeTurnAt, buildOffsets, markerSlotFor } from "./rail-activation.js";
+import { binTurns } from "./rail-select.js";
+import type { TurnBin, TurnMapLayout } from "./rail-select.js";
+import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
 
 /** One row of the session-wide turn index. Declared by the module that MERGES the
- *  set, which is a pure leaf, and re-exported here because this is where the rail's
+ *  set, which is a pure leaf, and re-exported here because this is where the map's
  *  consumers already read it from. */
 export type { TurnSummary };
 
-/** How far the transcript must scroll before the rail appears: a threshold, not `> 0`, so a few
+/** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. Equal to `BOTTOM_TOLERANCE_PX` by coincidence;
  *  do not collapse the two. */
 const MIN_SCROLL_PX = 100;
@@ -45,7 +41,7 @@ const MIN_SCROLL_PX = 100;
 /** Wall-clock bound on one jump's paging loop, so a store that keeps reporting more
  *  history cannot spin. Deliberately not a page count: `loadUntilResident` is
  *  written for sessions of 8 pages and more, so a small iteration cap would make a
- *  click on an early marker scroll nowhere. */
+ *  click on an early turn scroll nowhere. */
 const PAGE_BUDGET_MS = 4000;
 
 /** How long one scroll is given to settle before the landing is re-measured.
@@ -65,18 +61,25 @@ const LANDING_TOLERANCE_PX = 8;
  *  brackets: a paged jump spends both in sequence. */
 const PICK_BUDGET_MS = PAGE_BUDGET_MS + PICK_SETTLE_MS;
 
-let root: HTMLElement | undefined;
+interface MapNodes {
+  nav: HTMLElement;
+  /** The box binning is measured against: its height never depends on the rows inside it. */
+  track: HTMLElement;
+  stack: HTMLOListElement;
+  prev: HTMLButtonElement;
+  next: HTMLButtonElement;
+}
+
+let root: MapNodes | undefined;
 let chatID = "";
 /** The pointed chat's index rows, as last fetched or replayed from its record. Held
  *  beside `records` rather than read out of it, because a chat the STORE does not
- *  hold records nothing and would otherwise lose its rail. */
+ *  hold records nothing and would otherwise lose its map. */
 let indexed: TurnSummary[] = [];
 let summaries: TurnSummary[] = [];
 /** `summaries` indexed by the turn's opening-message id, rebuilt wherever the set is
  *  assigned, so the id-keyed lookups are never a linear scan. */
 let summaryByID = new Map<string, TurnSummary>();
-/** The session's turn count, which `railLabel` reports and the merge derives. */
-let total = 0;
 /** Each resident turn's number by its card key, so a held id resolves to a number
  *  even for the window's first turn when it is a fragment whose opening message paged
  *  out: `mergeTurnSets` keeps the INDEX's id for that row, so `summaryByID` never
@@ -90,11 +93,11 @@ let heldN: number | undefined;
 let activeID = "";
 /** The turn the READER picked, which outranks `activeID` until they say otherwise.
  *
- *  INVARIANT, enforced at `setTurns`: only ever a turn the marker set carries. The
+ *  INVARIANT, enforced at `setTurns`: only ever a turn the merged set carries. The
  *  click reads it off a summary, and the merge drops it when the new set no longer
  *  names it — a rewind truncates the session from a turn footer two clicks away. */
 let selectedID: string | undefined;
-/** Turn IDs whose jump is waiting on a fetch, so the marker can say so. */
+/** Turn IDs whose jump is waiting on a fetch, so the map can say so. */
 const pending = new Set<string>();
 
 /** One chat's fetched index plus the chat's turn count when the request went out,
@@ -106,7 +109,7 @@ interface RailRecord {
 }
 
 /** Session-wide indexes by chat, kept across switches so returning to a loaded chat
- *  paints its rail from memory instead of refetching. `refreshTurnRail` is the one
+ *  paints its map from memory instead of refetching. `refreshTurnRail` is the one
  *  writer; re-pointing prunes rows the store no longer holds, and
  *  `invalidateTurnRails` drops them all. */
 const records = new Map<string, RailRecord>();
@@ -130,32 +133,38 @@ export function invalidateTurnRails(): void {
   records.clear();
 }
 
-/** Whether there is enough transcript to navigate. Read live at every render rather
- *  than cached from a paint, because the answer changes on window resize too. */
-function navigable(): boolean {
+/** Whether there is enough transcript to navigate. */
+function measureNavigable(): boolean {
   return scrollableBy() > MIN_SCROLL_PX;
 }
 
-/** The navigability the last render was built from, so a paint that flips it can
- *  re-render and the overwhelming majority that do not cost one comparison. */
-let renderedNavigable = false;
+/** `measureNavigable()`'s last answer, taken in `pick()` so `render()` reads no layout. */
+let navigable = false;
 
-/** Everything the markers were built FROM, so a render that would redraw the same rail redraws
- *  nothing. `render()` runs on every transcript paint and replaces <button>s carrying `vk-dot-beat`,
- *  so an unguarded rebuild stole a keyboard reader's focus and restarted the beat. It must name EVERY
- *  input the nodes read (`renderSignature`, the one list), or the rail goes stale. */
+/** Everything the map's rows were built FROM, so a render that would redraw the same map writes
+ *  nothing: `render()` runs on every transcript paint. It must name EVERY input the map's nodes
+ *  read (`renderSignature`, the one list), or the map goes stale. */
 let renderedSig = "";
 
-/** The one writer of the marker set: the resident window merged into the fetched
+/** The track's height, from its ResizeObserver entry: `render()` reads no layout. 0 wherever CSS
+ *  does not draw the map (narrow, coarse), so `binTurns` lays no rows there; an unshown map stays
+ *  laid out (29-turns.css), so a chat switch bins against a live height. */
+let trackPx = 0;
+let inView: ReadonlySet<string> = new Set();
+/** The row a keyboard reader moved the tab stop to while focus is in the stack; the current row
+ *  holds it otherwise. */
+let rovingKey: string | undefined;
+let shown: readonly TurnBin[] = [];
+let shownSlots = 0;
+
+/** The one writer of the turn set: the resident window merged into the fetched
  *  index, so the newest turn appears the moment its card mounts and the index only
  *  extends the set backwards. Also the one place the reader's pick is reconciled
  *  against that set, because this is the moment the mapping moves. */
 function setTurns(): void {
   const session = get(chatID);
   const resident = session === undefined ? [] : projectTurns(session);
-  const merged = mergeTurnSets(resident, indexed);
-  summaries = merged.turns;
-  total = merged.total;
+  summaries = mergeTurnSets(resident, indexed);
   summaryByID = new Map(summaries.map((s) => [s.id, s]));
   residentN = new Map(resident.map((t) => [t.id, t.n]));
   if (selectedID !== undefined && !summaryByID.has(selectedID)) {
@@ -163,13 +172,14 @@ function setTurns(): void {
   }
 }
 
-/** Mount the rail into the transcript's positioned outer wrapper. Idempotent. */
+/** Mount the map into the transcript's positioned outer wrapper. Idempotent. */
 export function mountTurnRail(host: HTMLElement): void {
   if (root !== undefined) {
     return;
   }
-  root = el("nav", { className: "turn-rail", "aria-label": railLabel(0, 0) });
-  host.appendChild(root);
+  root = buildMap();
+  host.append(root.nav);
+  bindMapInput(root);
   getScrollEl().addEventListener("scroll", schedulePick, { passive: true });
   // A READER GESTURE revokes the pick; nothing else does. That covers both ways the
   // reader states a position — a scroll, and a request for the live edge, which
@@ -181,11 +191,38 @@ export function mountTurnRail(host: HTMLElement): void {
   onContentResize(repick);
   onAttach(repick);
   if (typeof ResizeObserver === "function") {
-    new ResizeObserver(scheduleRailRender).observe(root);
+    new ResizeObserver((entries) => {
+      for (const e of entries) {
+        trackPx = e.contentRect.height;
+      }
+      scheduleRailRender();
+    }).observe(root.track);
   }
 }
 
-/** Hand the rail to a chat, dropping the previous session's view state. Separate from the fetch: an
+function stepButton(dir: "prev" | "next"): HTMLButtonElement {
+  const label = dir === "prev" ? "Previous turn" : "Next turn";
+  const btn = el("button", {
+    type: "button",
+    className: "turn-map-step",
+    "data-dir": dir,
+    "aria-label": label,
+    "data-tooltip": label,
+  }) as HTMLButtonElement;
+  btn.appendChild(iconEl(dir === "prev" ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
+  return btn;
+}
+
+function buildMap(): MapNodes {
+  const prev = stepButton("prev");
+  const next = stepButton("next");
+  const stack = el("ol", { className: "turn-map-stack" }) as HTMLOListElement;
+  const track = el("div", { className: "turn-map-track" }, stack);
+  const nav = el("nav", { className: "turn-map", "aria-label": "Turns" }, prev, track, next);
+  return { nav, track, stack, prev, next };
+}
+
+/** Hand the map to a chat, dropping the previous session's view state. Separate from the fetch: an
  *  EMPTY chat re-points too. The chat's record paints at once, so a switch back costs no fetch. */
 export function pointTurnRail(id: string): void {
   if (id === chatID) {
@@ -207,16 +244,18 @@ export function pointTurnRail(id: string): void {
   indexed = records.get(id)?.summaries ?? [];
   activeID = "";
   heldN = undefined;
+  inView = new Set();
+  rovingKey = undefined;
   residentN = new Map();
   residentCards = [];
-  invalidateOffsets();
   setTurns();
   render();
+  repick();
 }
 
-/** The activation entry: point the rail at the chat, then fetch its index only when
+/** The activation entry: point the map at the chat, then fetch its index only when
  *  the chat's record cannot stand in for one. `force` skips that gate — the caller
- *  activating a stale transcript knows the rail is implicated with it. */
+ *  activating a stale transcript knows the map is implicated with it. */
 export async function loadTurnRail(id: string, opts?: { force?: boolean }): Promise<void> {
   pointTurnRail(id);
   if (opts?.force !== true && recordCurrent(id)) {
@@ -235,7 +274,7 @@ export async function refreshTurnRail(id: string): Promise<void> {
   const countAtStart = get(id)?.turn_count;
   const d = await apiGet<{ turns?: unknown }>(`/api/chats/${encodeURIComponent(id)}/turns`);
   if (d === null) {
-    // A failed fetch, already logged centrally. Keep what the rail is showing and
+    // A failed fetch, already logged centrally. Keep what the map is showing and
     // keep the stale record, so the next activation retries instead of trusting it.
     return;
   }
@@ -261,11 +300,11 @@ export function resetTurnRail(): void {
   summaries = [];
   summaryByID = new Map();
   residentN = new Map();
-  total = 0;
   activeID = "";
   heldN = undefined;
   selectedID = undefined;
-  renderedNavigable = false;
+  inView = new Set();
+  rovingKey = undefined;
   pending.clear();
   residentCards = [];
   invalidateOffsets();
@@ -303,7 +342,7 @@ let residentCards: HTMLElement[] = [];
 let offsets: TurnOffsets | undefined;
 /** The scroll-coalesced activation read. */
 let pickFrame = 0;
-/** The resize-coalesced render, deferred out of the rail's own resize delivery. */
+/** The resize-coalesced render, deferred out of the map's own resize delivery. */
 let renderFrame = 0;
 
 function invalidateOffsets(): void {
@@ -317,9 +356,9 @@ function repick(): void {
   schedulePick();
 }
 
-/** Defer the resize-driven render one frame, behind a single slot. NEVER inside the rail's own
- *  resize delivery: it rewrites the OBSERVED element and `.turn-rail:empty` hides it, so the engine
- *  reports "ResizeObserver loop completed with undelivered notifications". Other renders stay sync. */
+/** Defer the resize-driven render one frame, behind a single slot. NEVER inside the track's own
+ *  resize delivery: a render there that resized an observed box would make the engine report
+ *  "ResizeObserver loop completed with undelivered notifications". Other renders stay sync. */
 function scheduleRailRender(): void {
   if (renderFrame !== 0) {
     return;
@@ -343,20 +382,41 @@ function schedulePick(): void {
 }
 
 function pick(): void {
-  // A held intent owns the position for the length of its own animation, which
-  // crosses every intervening turn on the way.
-  if (intentOpen) {
-    return;
-  }
   const scroller = getScrollEl();
-  const next = activeTurnAt(scroller.scrollTop, readOffsets(), readingLineOffset(), {
-    clientHeight: scroller.clientHeight,
-    atLiveEdge: atLiveEdgeNow(),
-  });
-  if (next !== "" && next !== activeID) {
+  const table = readOffsets();
+  const seen = turnsInView(scroller.scrollTop, table, scroller.clientHeight);
+  const bandMoved = !sameSet(seen, inView);
+  inView = seen;
+  const gate = measureNavigable();
+  const gateMoved = gate !== navigable;
+  navigable = gate;
+  // A held intent owns the position for the length of its own animation, which
+  // crosses every intervening turn on the way. The band is a fact and follows anyway.
+  const next = intentOpen
+    ? ""
+    : activeTurnAt(scroller.scrollTop, table, readingLineOffset(), {
+        clientHeight: scroller.clientHeight,
+        atLiveEdge: atLiveEdgeNow(),
+      });
+  const moved = next !== "" && next !== activeID;
+  if (moved) {
     activeID = next;
+  }
+  if (moved || bandMoved || gateMoved) {
     render();
   }
+}
+
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const v of a) {
+    if (!b.has(v)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function readOffsets(): TurnOffsets {
@@ -398,155 +458,338 @@ function keyOf(card: Element): string {
 // Render
 // ---------------------------------------------------------------------------
 
+interface PillView {
+  readonly bin: TurnBin;
+  readonly hit: boolean;
+  readonly pending: boolean;
+  readonly inView: boolean;
+  readonly current: boolean;
+  readonly roving: boolean;
+}
+
 function render(): void {
   if (root === undefined) {
     return;
   }
-  renderedNavigable = navigable();
-  // No markers means no rail: `.turn-rail:empty` hides the element, which takes the
-  // axis line with it, so an unnavigable transcript needs no second mechanism.
-  if (summaries.length === 0 || !renderedNavigable) {
-    root.setAttribute("aria-label", railLabel(0, total));
-    root.replaceChildren();
-    // No signature can equal this, so flipping back to navigable re-renders.
-    renderedSig = "";
-    return;
-  }
-  const { markerPx, pitchPx } = railMetrics(root);
-  const shown = selectMarkers(summaries, root.clientHeight, pitchPx, searchHitTurns());
-  // ONE span for the whole render, so two markers cannot disagree about how far down
-  // the track the set reaches.
-  const span = railSpan(shown.length, root.clientHeight, markerPx);
-  // Once per render, not once per marker: the walk is over the whole resident window.
-  const elapsed = residentElapsed();
-  // Written unconditionally: it is one attribute on the container rather than a node the
-  // reader can hold, so it costs nothing and cannot go stale behind the guard below.
-  root.setAttribute("aria-label", railLabel(shown.length, total));
+  const visible = summaries.length > 0 && navigable;
+  const layout: TurnMapLayout = visible
+    ? binTurns(summaries, trackPx)
+    : { total: 0, slots: 0, bins: [] };
   const n = markedN();
-  const sig = renderSignature(shown, elapsed, span, n);
+  const current =
+    n === undefined
+      ? -1
+      : markerSlotFor(
+          layout.bins.map((b) => b.first),
+          n,
+        );
+  const roving = rovingIndex(layout.bins, current);
+  const hits = searchHitTurns();
+  const rows: PillView[] = layout.bins.map((bin, i) => ({
+    bin,
+    hit: bin.members.some((m) => hits.has(m.n)),
+    pending: bin.members.some((m) => pending.has(m.id)),
+    inView: bin.members.some((m) => inView.has(m.id)),
+    current: i === current,
+    roving: i === roving,
+  }));
+  const sig = renderSignature(rows, layout, visible, n);
   if (sig === renderedSig) {
     return;
   }
   renderedSig = sig;
-
-  const marked = n === undefined ? -1 : markerSlotFor(shown, n);
-  const nodes: HTMLElement[] = [];
-  shown.forEach((s, i) => {
-    nodes.push(markerNode(s, i, shown.length, i === marked, elapsed, span));
-  });
-  root.replaceChildren(...nodes);
+  shown = layout.bins;
+  shownSlots = layout.slots;
+  paintMap(root, rows, layout, visible, current);
 }
 
-/** Every value the rendered nodes read, in one string (see `renderedSig`): all of `markerNode`'s
- *  inputs, the three marks deciding the filled marker, and `railAt`'s slot count and `span`. Joined
- *  with `keyenc`: a turn id is server text, and a collision freezes the rail. */
+/** The row holding the single tab stop: the keyboard reader's while they hold one, else the
+ *  current row. */
+function rovingIndex(bins: readonly TurnBin[], current: number): number {
+  if (rovingKey !== undefined) {
+    const i = bins.findIndex((b) => b.key === rovingKey);
+    if (i >= 0) {
+      return i;
+    }
+    rovingKey = undefined;
+  }
+  return bins.length === 0 ? -1 : Math.max(0, current);
+}
+
+/** Every value the rendered nodes read, in one string (see `renderedSig`). Joined with `keyenc`:
+ *  a turn id is server text, and a collision freezes the map. */
 function renderSignature(
-  shown: readonly TurnSummary[],
-  elapsed: ReadonlyMap<string, number>,
-  span: number,
+  rows: readonly PillView[],
+  layout: TurnMapLayout,
+  visible: boolean,
   marked: number | undefined,
 ): string {
-  const hits = searchHitTurns();
   const parts: string[] = [
-    String(span),
-    String(total),
-    String(shown.length),
-    selectedID ?? "",
-    activeID,
+    String(layout.total),
+    String(layout.slots),
+    flag(visible),
     String(marked ?? -1),
+    chatID,
+    flag(pending.size > 0),
   ];
-  for (const s of shown) {
+  for (const r of rows) {
     parts.push(
-      "m",
-      s.id,
-      String(s.n),
-      s.outcome,
-      s.agent_initiated === true ? "1" : "0",
-      hits.has(s.n) ? "1" : "0",
-      pending.has(s.id) ? "1" : "0",
-      String(elapsed.get(s.id) ?? -1),
+      String(r.bin.members.length),
+      r.bin.key,
+      String(r.bin.at),
+      r.bin.severity,
+      r.bin.target.id,
+      flag(r.hit),
+      flag(r.pending),
+      flag(r.inView),
+      flag(r.current),
+      flag(r.roving),
     );
+    for (const m of r.bin.members) {
+      parts.push(
+        m.id,
+        String(m.n),
+        m.outcome,
+        flag(m.agent_initiated === true),
+        m.first_line ?? "",
+        String(m.elapsed_ms ?? 0),
+      );
+    }
   }
   return join(...parts);
 }
 
-/** One turn's marker, positioned by the `--rail-at` fraction one CSS rule consumes.
- *  The SINGLE writer of `data-current` / `data-selected`, and exactly one of the two
- *  is written per render: both take the same filled treatment, so writing both would
- *  claim two positions. */
-function markerNode(
-  s: TurnSummary,
-  slot: number,
-  slots: number,
-  marked: boolean,
-  elapsed: Map<string, number>,
-  span: number,
-): HTMLElement {
-  const hit = searchHitTurns().has(s.n);
-  const isPending = pending.has(s.id);
-  const elapsedMs = elapsed.get(s.id);
-  // ONE composer for both channels, and NO native `title`: a UA tooltip misses the
-  // styled treatment every other hover uses and publishes no `aria-describedby`.
-  const label = markerLabel(s, {
-    pending: isPending,
-    hit,
-    elapsedMs,
-  });
-  const btn = el(
-    "button",
-    {
-      className: "rail-marker",
-      type: "button",
-      "data-tooltip": label.tooltip,
-      "aria-label": label.ariaLabel,
-    },
-    String(s.n),
-  );
-  btn.style.setProperty("--rail-at", String(railAt(slot, slots, span)));
-  btn.dataset["outcome"] = s.outcome;
-  btn.dataset["severity"] = severityOf(s.outcome);
-  // One element carries the mark, and it names the turn the rail is CLAIMING.
-  if (marked) {
-    btn.dataset[selectedID === undefined ? "current" : "selected"] = "";
-    btn.setAttribute("aria-current", "true");
-  }
-  if (s.agent_initiated === true) {
-    btn.dataset["trigger"] = "system";
-  }
-  if (isPending) {
-    btn.dataset["pending"] = "";
-  }
-  // A search hit marks the rail, which is the fastest read of WHERE in the session
-  // the answer lives — a match 200 turns up is visible before anyone goes looking.
-  if (hit) {
-    btn.dataset["hit"] = "";
-  }
-  // The app's ONE machine-readable duration: the `datetime` and the text are two
-  // spellings of one value. No element at all when the store cannot answer.
-  if (elapsedMs !== undefined) {
-    btn.appendChild(
-      el(
-        "time",
-        { className: "rail-marker-time", datetime: isoDuration(elapsedMs) },
-        formatElapsed(elapsedMs),
-      ),
-    );
-  }
-  btn.addEventListener("click", () => {
-    // BEFORE the jump and unconditionally, which is the whole point: the jump is
-    // allowed to do nothing and the click still has to produce a reaction. The id
-    // comes off the summary this marker was built from, so the pick's invariant
-    // holds at this writer by construction.
-    selectedID = s.id;
-    holdIntent();
-    render();
-    void navigateToTurn(s);
-  });
-  return btn;
+function flag(b: boolean): string {
+  return b ? "1" : "0";
 }
 
-/** Land on turn `n` of `id`, the way a marker click does: a `#turn-<n>` link's
- *  door. Points the rail at the chat and fetches its index when it lacks `n`, so
+function paintMap(
+  m: MapNodes,
+  rows: readonly PillView[],
+  layout: TurnMapLayout,
+  visible: boolean,
+  current: number,
+): void {
+  m.nav.toggleAttribute("data-shown", visible);
+  setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
+  m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
+  m.stack.style.setProperty("--turn-map-total", String(Math.max(1, layout.total)));
+  reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
+  m.prev.disabled = current <= 0;
+  m.next.disabled = current >= rows.length - 1;
+}
+
+function mountPill(r: PillView): HTMLElement {
+  const link = el(
+    "a",
+    { className: "turn-pill-link" },
+    el("span", { className: "turn-pill-mark" }),
+    el("span", { className: "turn-pill-hit" }),
+  );
+  const li = el("li", { className: "turn-pill" }, link);
+  paintPill(li, r);
+  return li;
+}
+
+/** Writes in place, so a focused link and an open tooltip survive a repaint. */
+function paintPill(li: HTMLElement, r: PillView): void {
+  const { bin } = r;
+  const single = bin.members.length === 1;
+  li.style.setProperty("--rail-at", String(bin.at));
+  setAttr(li, "data-severity", bin.severity);
+  setAttr(li, "data-trigger", single && bin.first.agent_initiated === true ? "system" : null);
+  setAttr(li, "data-in-view", r.inView ? "" : null);
+  setAttr(li, "data-current", r.current ? "" : null);
+  setAttr(li, "data-hit", r.hit ? "" : null);
+  const link = li.firstElementChild;
+  if (!(link instanceof HTMLAnchorElement)) {
+    return;
+  }
+  const state = { pending: r.pending, hit: r.hit };
+  const label = single
+    ? markerLabel(bin.first, state)
+    : binLabel({ first: bin.first.n, last: bin.last.n, worst: bin.target.outcome }, state);
+  setAttr(link, "href", turnHref(bin.target));
+  setAttr(link, "tabindex", r.roving ? "0" : "-1");
+  setAttr(link, "aria-current", r.current ? "location" : null);
+  setAttr(link, "aria-label", label.ariaLabel);
+  // The styled tooltip, never a native `title`: a UA tooltip misses the styled treatment and
+  // publishes no `aria-describedby`.
+  setAttr(link, "data-tooltip", label.preview);
+}
+
+function turnHref(s: TurnSummary): string {
+  return buildPath({ kind: "chat", id: chatID, turn: s.n });
+}
+
+function setAttr(node: Element, name: string, value: string | null): void {
+  if (value === null) {
+    if (node.hasAttribute(name)) {
+      node.removeAttribute(name);
+    }
+  } else if (node.getAttribute(name) !== value) {
+    node.setAttribute(name, value);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+const KEY_STEP = new Map<string, number>([
+  ["ArrowUp", -1],
+  ["ArrowDown", 1],
+  ["PageUp", -10],
+  ["PageDown", 10],
+]);
+
+/** A primary click with no modifier is the map's own jump; anything else is the link's, so
+ *  copy-link, middle-click and open-in-new-tab keep working. */
+function isPlainClick(e: MouseEvent): boolean {
+  return (
+    !e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey
+  );
+}
+
+function bindMapInput(m: MapNodes): void {
+  // ONE listener for every row: the rows tile the stack, so native hit-testing maps pointer Y to a
+  // turn, and a click landing in a gap left by an undrawn turn resolves to the nearest row.
+  m.stack.addEventListener("click", (e) => {
+    if (!isPlainClick(e)) {
+      return;
+    }
+    const bin = binAt(m, e);
+    if (bin === undefined) {
+      return;
+    }
+    e.preventDefault();
+    landTurn(bin.target);
+  });
+  m.stack.addEventListener("keydown", (e) => {
+    onStackKey(m, e);
+  });
+  m.stack.addEventListener("focusout", (e) => {
+    if (e.relatedTarget instanceof Node && m.stack.contains(e.relatedTarget)) {
+      return;
+    }
+    if (rovingKey !== undefined) {
+      rovingKey = undefined;
+      render();
+    }
+  });
+  m.prev.addEventListener("click", () => {
+    step(-1);
+  });
+  m.next.addEventListener("click", () => {
+    step(1);
+  });
+}
+
+function binAt(m: MapNodes, e: MouseEvent): TurnBin | undefined {
+  const row = e.target instanceof Element ? e.target.closest(".turn-pill") : null;
+  if (row !== null) {
+    const key = row.getAttribute(KEY_ATTR);
+    return shown.find((b) => b.key === key);
+  }
+  if (e.target !== m.stack || shown.length === 0) {
+    return undefined;
+  }
+  const pitch = m.stack.clientHeight / Math.max(1, shownSlots);
+  const slot = pitch > 0 ? e.offsetY / pitch - 0.5 : 0;
+  let best = shown[0];
+  for (const b of shown) {
+    const d = Math.abs(b.at * (shownSlots - 1) - slot);
+    if (best === undefined || d < Math.abs(best.at * (shownSlots - 1) - slot)) {
+      best = b;
+    }
+  }
+  return best;
+}
+
+function onStackKey(m: MapNodes, e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    getScrollEl().focus({ preventScroll: true });
+    return;
+  }
+  if (shown.length === 0) {
+    return;
+  }
+  const last = shown.length - 1;
+  const from = focusedRow();
+  let to: number;
+  if (e.key === "Home") {
+    to = 0;
+  } else if (e.key === "End") {
+    to = last;
+  } else {
+    const delta = KEY_STEP.get(e.key);
+    if (delta === undefined) {
+      return;
+    }
+    to = Math.min(last, Math.max(0, from + delta));
+  }
+  e.preventDefault();
+  const bin = shown[to];
+  if (bin === undefined) {
+    return;
+  }
+  rovingKey = bin.key;
+  render();
+  for (const li of m.stack.children) {
+    if (li.getAttribute(KEY_ATTR) === bin.key && li.firstElementChild instanceof HTMLElement) {
+      li.firstElementChild.focus();
+    }
+  }
+}
+
+function focusedRow(): number {
+  const active = document.activeElement;
+  const row = active instanceof Element ? active.closest(".turn-pill") : null;
+  const key = row?.getAttribute(KEY_ATTR);
+  const at = shown.findIndex((b) => b.key === key);
+  if (at >= 0) {
+    return at;
+  }
+  const n = markedN();
+  return n === undefined
+    ? 0
+    : Math.max(
+        0,
+        markerSlotFor(
+          shown.map((b) => b.first),
+          n,
+        ),
+      );
+}
+
+function step(dir: -1 | 1): void {
+  const n = markedN();
+  const current =
+    n === undefined
+      ? -1
+      : markerSlotFor(
+          shown.map((b) => b.first),
+          n,
+        );
+  const bin = shown[current + dir];
+  if (bin !== undefined) {
+    landTurn(bin.target);
+  }
+}
+
+function landTurn(s: TurnSummary): void {
+  // BEFORE the jump and unconditionally: the jump is allowed to do nothing and the pick still has
+  // to produce a reaction. `s` comes off the merged set, so the pick's invariant holds here.
+  selectedID = s.id;
+  rovingKey = undefined;
+  holdIntent();
+  render();
+  void navigateToTurn(s);
+}
+
+/** Land on turn `n` of `id`, the way a map click does: a `#turn-<n>` link's
+ *  door. Points the map at the chat and fetches its index when it lacks `n`, so
  *  a cold link pages history in. Answers whether the turn was found. */
 export async function jumpToTurn(id: string, n: number): Promise<boolean> {
   if (id !== chatID) {
@@ -567,7 +810,7 @@ export async function jumpToTurn(id: string, n: number): Promise<boolean> {
   return true;
 }
 
-/** The NUMBER of the turn the rail claims the reader is at: their own pick while they
+/** The NUMBER of the turn the map claims the reader is at: their own pick while they
  *  hold one, the scroll-derived turn otherwise, resolved through the resident
  *  projection first and the index second, and latched. */
 function markedN(): number | undefined {
@@ -589,30 +832,12 @@ function clearSelection(): void {
   render();
 }
 
-/** Per-turn durations for the turns the STORE holds, keyed by turn id. THE RAIL'S OWN
- *  FEED CANNOT ANSWER THIS: the turns index carries no duration, so the answer is
- *  bounded by the paginated window and a turn outside it gets no slot. */
-function residentElapsed(): Map<string, number> {
-  const out = new Map<string, number>();
-  const session = get(chatID);
-  if (session === undefined) {
-    return out;
-  }
-  for (const t of projectTurns(session)) {
-    const ms = turnLedger(t).elapsedMs;
-    if (ms > 0) {
-      out.set(t.id, ms);
-    }
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------------
 
 /** The on-demand body build for a stub turn, injected by messages.ts at mount (a
- *  static import back would cycle). Inert until wired, so a rail built in a test
+ *  static import back would cycle). Inert until wired, so a map built in a test
  *  renders without the transcript. `activeView` scopes the card lookup to the ACTIVE
  *  transcript view: with parked views resident the same key exists once per view. */
 let mountTurnBody: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
@@ -706,8 +931,8 @@ async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promis
     markRailTarget(card);
     await correctLanding(card, gen);
   } finally {
-    // Per id and unconditional: a superseded jump still owns the marker it set
-    // pending. The epoch and the pick belong to whoever owns the scroller, and the
+    // Per id and unconditional: a superseded jump still owns the pending mark it
+    // set. The epoch and the pick belong to whoever owns the scroller, and the
     // epoch closes from here because one left open suspends pagination and silences
     // every reader gesture indefinitely.
     pending.delete(s.id);
@@ -759,7 +984,7 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
     if (Date.now() > deadline) {
       // A budget spent on a store that still reports more history is a regression
       // signal rather than an ordinary end of the session.
-      console.warn("turn rail: paging budget spent before the turn became resident", s.n);
+      console.warn("turn map: paging budget spent before the turn became resident", s.n);
       return false;
     }
     const oldest = session.turn_order[0];
@@ -792,7 +1017,7 @@ async function correctLanding(card: HTMLElement, gen: number): Promise<void> {
     }
     scrollToOffset(landing, "auto");
   }
-  console.warn("turn rail: the landing did not settle within the correction budget");
+  console.warn("turn map: the landing did not settle within the correction budget");
 }
 
 /** Resolve on `scrollend` or at `PICK_SETTLE_MS`, whichever comes first. */
@@ -822,7 +1047,7 @@ function jumpBehavior(): ScrollBehavior {
 /** The mounted card for the turn whose opening message is `id`, or null when it is
  *  not resident. Scoped to the ACTIVE transcript view, because the reconcile key
  *  repeats once per resident view and a document-wide query answers in document
- *  order. The document fallback keeps the rail fixtures working unscoped. */
+ *  order. The document fallback keeps the map fixtures working unscoped. */
 function turnCard(id: string): HTMLElement | null {
   if (id === "") {
     return null;
@@ -833,7 +1058,7 @@ function turnCard(id: string): HTMLElement | null {
 }
 
 /** How long the landing card wears its ring. Long enough to be seen, short enough
- *  not to read as a persistent selected state — the marker carries that. */
+ *  not to read as a persistent selected state — the current row carries that. */
 const RAIL_TARGET_MS = 1000;
 
 /** The card currently wearing `data-rail-target`, and the timer that removes it.

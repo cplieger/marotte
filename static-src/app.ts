@@ -27,7 +27,6 @@ import {
   registerTabNotice,
   setChatSettledProbe,
   toggleDocsView,
-  toggleHistoryView,
 } from "./tabs.js";
 import { chatNotice } from "./notice-subject.js";
 import { applyRoute } from "./route-apply.js";
@@ -59,7 +58,7 @@ import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
-import { isRetentionEnabled, onRetentionChange } from "./retention.js";
+import { initSidebarHistory } from "./sidebar-history.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
 import {
@@ -293,16 +292,7 @@ function init(): void {
   $.docsBtn.addEventListener("click", () => {
     void toggleDocsView();
   });
-  $.historyBtn.addEventListener("click", () => {
-    void toggleHistoryView();
-  });
-  // Retention = 0 is "no retention" (ephemeral chats, nothing survives a close) → hide
-  // History; anything else keeps closed chats → show it.
-  const syncHistoryBtn = (): void => {
-    $.historyBtn.classList.toggle("hidden", !isRetentionEnabled());
-  };
-  onRetentionChange(syncHistoryBtn);
-  syncHistoryBtn();
+  initSidebarHistory();
   initAwaySummary();
   initTerminalStream();
   initTooltips();

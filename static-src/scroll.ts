@@ -373,8 +373,8 @@ class ScrollController {
       this.resume();
     });
 
-    // On the DOCUMENT, not the scroller: the transcript carries no tabindex, so Chromium scrolls it
-    // with `activeElement` still on `body` and the keydown never passes through it (measured). Both
+    // On the DOCUMENT, not the scroller: until something focuses the transcript, Chromium scrolls it
+    // with `activeElement` still on `body`, so the keydown never passes through it (measured). Both
     // arms stop at a text field, where End means end-of-line and every other key is typing.
     document.addEventListener("keydown", (e) => {
       const t = e.target as HTMLElement | null;

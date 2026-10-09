@@ -2069,7 +2069,7 @@ describe("onReaderGesture", () => {
 
   it("does not fire for an instant jump", async () => {
     // A jump is a gesture whose whole meaning is "this turn", so publishing it revokes the very
-    // pick that produced it — the timeline rail sets its pick and then jumps to that turn.
+    // pick that produced it — the turn map sets its pick and then jumps to that turn.
     const wrap = realScroller();
     block(3000);
     const target = block(200);

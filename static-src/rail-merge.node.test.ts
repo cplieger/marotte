@@ -5,6 +5,7 @@
 // declaration the browser drops, so the failure is a marker silently pinned to the top rather than
 // a wrong one.
 
+import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { mergeTurnSets, validateTurnIndex, type TurnSummary } from "./rail-merge.js";
@@ -29,6 +30,20 @@ function residentTurn(n: number, over: Partial<Turn> = {}): Turn {
   };
 }
 
+interface FirstLineCase {
+  name: string;
+  prompt: string;
+  first_line: string;
+}
+
+function firstLineCases(): FirstLineCase[] {
+  const raw = readFileSync(
+    new URL("../internal/chat/testdata/first_line.json", import.meta.url),
+    "utf8",
+  );
+  return (JSON.parse(raw) as { cases: FirstLineCase[] }).cases;
+}
+
 function indexRow(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
   return {
     id: `t-${String(n)}`,
@@ -45,7 +60,7 @@ describe("resident wins for anything it can answer", () => {
   it("takes the resident outcome over the index's for a turn in the window", () => {
     const index = [indexRow(1), indexRow(2, { outcome: "unknown" })];
     const resident = [residentTurn(2, { outcome: "running" })];
-    const { turns } = mergeTurnSets(resident, index);
+    const turns = mergeTurnSets(resident, index);
     expect(turns.map((t) => [t.n, t.outcome])).toEqual([
       [1, "completed"],
       [2, "running"],
@@ -55,27 +70,19 @@ describe("resident wins for anything it can answer", () => {
   it("carries a turn the index has never seen, so the newest turn needs no fetch", () => {
     const index = [indexRow(1), indexRow(2)];
     const resident = [residentTurn(2), residentTurn(3, { outcome: "running" })];
-    const { turns, total } = mergeTurnSets(resident, index);
+    const turns = mergeTurnSets(resident, index);
     expect(turns.map((t) => t.n)).toEqual([1, 2, 3]);
-    expect(total).toBe(3);
   });
 
-  it("derives the hover label from the trigger's text, collapsed to one line", () => {
-    const trigger = prompt("m-4", "  fix   the\n  rail\t please  ");
-    const { turns } = mergeTurnSets([residentTurn(4, { trigger })], []);
-    expect(turns[0]?.first_line).toBe("fix the rail please");
-  });
-
-  it("truncates a pasted block on a rune boundary", () => {
-    const long = "\u00e9".repeat(200);
-    const { turns } = mergeTurnSets([residentTurn(4, { trigger: prompt("m-4", long) })], []);
-    const line = turns[0]?.first_line ?? "";
-    expect(Array.from(line)).toHaveLength(121);
-    expect(line.endsWith("\u2026")).toBe(true);
+  // The server's first_line for the same turn follows the same file, so a turn's preview does not
+  // change as it pages in or out of the store's window. Node: a disk read.
+  it.each(firstLineCases())("derives the preview as the index does: $name", (c) => {
+    const turns = mergeTurnSets([residentTurn(4, { trigger: prompt("m-4", c.prompt) })], []);
+    expect(turns[0]?.first_line ?? "").toBe(c.first_line);
   });
 
   it("reports a turn with no trigger as agent-initiated and unlabelled", () => {
-    const { turns } = mergeTurnSets([residentTurn(4, { trigger: undefined })], []);
+    const turns = mergeTurnSets([residentTurn(4, { trigger: undefined })], []);
     expect(turns[0]?.agent_initiated).toBe(true);
     // ABSENT rather than "": the field is `omitempty` on the wire, so an agent-initiated turn
     // carries no label there either and every reader defaults.
@@ -87,7 +94,7 @@ describe("resident wins for anything it can answer", () => {
     const resident = [
       residentTurn(8, { id: "t-8", ts: 9000, trigger: prompt("m-8", "live prompt") }),
     ];
-    const { turns } = mergeTurnSets(resident, index);
+    const turns = mergeTurnSets(resident, index);
     expect(turns[0]).toEqual({
       id: "t-8",
       n: 8,
@@ -99,26 +106,46 @@ describe("resident wins for anything it can answer", () => {
   });
 });
 
-describe("the index extends the set backwards", () => {
-  it("supplies the turns outside the window and the session's count", () => {
-    const index = Array.from({ length: 10 }, (_, i) => indexRow(i + 1));
-    const resident = [residentTurn(8), residentTurn(9), residentTurn(10)];
-    const { turns, total } = mergeTurnSets(resident, index);
-    expect(turns.map((t) => t.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(total).toBe(10);
+describe("a resident turn's duration comes from its own turn_close", () => {
+  it("carries the close's elapsed_ms and wins over the index row's", () => {
+    const closed = residentTurn(3, {
+      body: [
+        {
+          id: "t-3-close",
+          turn: "t-3",
+          lane: "",
+          kind: "turn_close",
+          seq: 1,
+          ts: 3500,
+          payload: { outcome: "completed", elapsed_ms: 4200 },
+        },
+      ],
+    });
+    const turns = mergeTurnSets([closed], [indexRow(3, { elapsed_ms: 99 })]);
+    expect(turns[0]?.elapsed_ms).toBe(4200);
   });
 
-  it("falls back to the highest resident n when no index has landed", () => {
-    const resident = [residentTurn(40), residentTurn(41), residentTurn(42)];
-    const { turns, total } = mergeTurnSets(resident, []);
-    expect(turns.map((t) => t.n)).toEqual([40, 41, 42]);
-    expect(total).toBe(42);
+  it("carries no duration for a resident turn that has not closed", () => {
+    const turns = mergeTurnSets(
+      [residentTurn(3, { outcome: "running" })],
+      [indexRow(3, { elapsed_ms: 99 })],
+    );
+    expect(turns[0]?.elapsed_ms).toBeUndefined();
+  });
+});
+
+describe("the index extends the set backwards", () => {
+  it("supplies the turns outside the window", () => {
+    const index = Array.from({ length: 10 }, (_, i) => indexRow(i + 1));
+    const resident = [residentTurn(8), residentTurn(9), residentTurn(10)];
+    const turns = mergeTurnSets(resident, index);
+    expect(turns.map((t) => t.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("orders the merged set by n whatever order either side arrived in", () => {
     const index = [indexRow(9), indexRow(1), indexRow(4)];
     const resident = [residentTurn(7), residentTurn(2)];
-    const { turns } = mergeTurnSets(resident, index);
+    const turns = mergeTurnSets(resident, index);
     expect(turns.map((t) => t.n)).toEqual([1, 2, 4, 7, 9]);
   });
 });
@@ -129,7 +156,7 @@ describe("the merge keys on n, never on id", () => {
     // by a merge swap), and the position is what the rail renders.
     const index = [indexRow(7), indexRow(8, { id: "t-8-index" })];
     const resident = [residentTurn(8, { id: "t-8-resident" })];
-    const { turns } = mergeTurnSets(resident, index);
+    const turns = mergeTurnSets(resident, index);
     expect(turns.map((t) => t.n)).toEqual([7, 8]);
     expect(turns[1]?.id).toBe("t-8-resident");
   });
@@ -243,6 +270,27 @@ describe("validating the index", () => {
     expect(turns.map((t) => t.agent_initiated)).toEqual([false, false, true]);
   });
 
+  it("keeps a finite positive elapsed_ms and omits every other value without dropping the row", () => {
+    const { turns, dropped } = validateTurnIndex([
+      { id: "a", n: 1, ts: 1, outcome: "completed", elapsed_ms: 1234 },
+      { id: "b", n: 2, ts: 2, outcome: "completed", elapsed_ms: Number.NaN },
+      { id: "c", n: 3, ts: 3, outcome: "completed", elapsed_ms: -5 },
+      { id: "d", n: 4, ts: 4, outcome: "completed", elapsed_ms: "1234" },
+      { id: "e", n: 5, ts: 5, outcome: "completed", elapsed_ms: 0 },
+      { id: "f", n: 6, ts: 6, outcome: "completed", elapsed_ms: Number.POSITIVE_INFINITY },
+    ]);
+    expect(dropped).toBe(0);
+    expect(turns.map((t) => t.elapsed_ms)).toEqual([
+      1234,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect("elapsed_ms" in (turns[1] ?? {})).toBe(false);
+  });
+
   it("logs once per fetch and stays quiet when nothing was dropped", () => {
     validateTurnIndex([
       { id: "", n: 1, ts: 1 },
@@ -253,16 +301,6 @@ describe("validating the index", () => {
     warn.mockClear();
     validateTurnIndex([{ id: "c", n: 3, ts: 1 }]);
     expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("derives the session count from the surviving rows", () => {
-    const { turns } = validateTurnIndex([
-      { id: "a", n: 1, ts: 1, outcome: "completed" },
-      { id: "b", n: Number.NaN, ts: 2, outcome: "completed" },
-      { id: "c", n: 3, ts: 3, outcome: "completed" },
-    ]);
-    const { total } = mergeTurnSets([], turns);
-    expect(total).toBe(3);
   });
 });
 
@@ -279,7 +317,7 @@ describe("an outcome the merge cannot grade is still a real value", () => {
       "empty",
     ];
     const resident = outcomes.map((outcome, i) => residentTurn(i + 1, { outcome }));
-    const { turns } = mergeTurnSets(resident, []);
+    const turns = mergeTurnSets(resident, []);
     expect(turns.map((t) => t.outcome)).toEqual(outcomes);
   });
 });

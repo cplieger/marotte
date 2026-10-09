@@ -7,7 +7,7 @@
 // a run of `text` entries into ONE element.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { TurnState } from "./types.js";
@@ -1107,7 +1107,28 @@ describe("the cold build", () => {
 // --- Navigation surfaces --------------------------------------------------------
 
 describe("navigation onto a stub", () => {
-  it("a rail jump mounts the stub turn it lands on", async () => {
+  // Browser Mode serves no CSS, and the map lays no rows until its track has measured a height.
+  const trackCSS = document.createElement("style");
+  trackCSS.textContent = ".turn-map-track{display:block;block-size:2000px}";
+
+  beforeAll(async () => {
+    document.head.appendChild(trackCSS);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+
+  afterAll(() => {
+    trackCSS.remove();
+  });
+
+  function firstRow(): HTMLAnchorElement {
+    const a = document.querySelector<HTMLAnchorElement>(".turn-map .turn-pill-link");
+    if (a === null) {
+      throw new Error("no turn-map row");
+    }
+    return a;
+  }
+
+  it("a turn-map jump mounts the stub turn it lands on", async () => {
     const id = chatID();
     activate(id, [...plainTurns(2), heavyTurn("big", RESIDENT_ENTRIES + 64, 3)]);
     expect(hasBody("u1")).toBe(false);
@@ -1118,9 +1139,9 @@ describe("navigation onto a stub", () => {
       ts: (i + 1) * 60_000,
     }));
     await loadTurnRail(id);
-    const marker = document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker");
-    expect(marker?.textContent).toBe("1");
-    marker?.click();
+    const marker = firstRow();
+    expect(marker.getAttribute("href")).toMatch(/#turn-1$/u);
+    marker.click();
     // BOTH ends of the jump: the body is built BEFORE anything scrolls, so waiting
     // on the body alone would assert the scroll a frame before it happens.
     await vi.waitFor(() => {
@@ -1152,7 +1173,7 @@ describe("navigation onto a stub", () => {
       ts: (i + 1) * 60_000,
     }));
     await loadTurnRail(id);
-    document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker")?.click();
+    firstRow().click();
     await vi.waitFor(() => {
       expect(hasBody("u1")).toBe(true);
     });

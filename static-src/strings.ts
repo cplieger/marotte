@@ -142,31 +142,3 @@ export function formatElapsed(ms: number): string {
   }
   return `${(ms / 1000).toFixed(1)}s`;
 }
-
-/** The same span as an ISO 8601 duration for `<time datetime>`, following `formatElapsed`'s split
- *  exactly (no seconds at or above an hour), since `datetime` must match the element's CONTENTS.
- *  `PT0.0S` for zero. */
-export function isoDuration(ms: number): string {
-  const total = Math.max(0, ms);
-  const hours = Math.floor(total / 3_600_000);
-  const minutes = Math.floor((total % 3_600_000) / 60_000);
-  const seconds = (total % 60_000) / 1000;
-  let out = "PT";
-  if (hours > 0) {
-    out += `${String(hours)}H`;
-  }
-  if (minutes > 0) {
-    out += `${String(minutes)}M`;
-  }
-  if (total >= 3_600_000) {
-    // `1h 0m` is a whole hour spelled `PT1H`, and a duration with no seconds
-    // component is still a conforming duration.
-    return out;
-  }
-  // Whole seconds above a minute, a tenth below it — `formatElapsed`'s own split,
-  // so `PT2M31S` sits beside "2m 31s" and `PT0.4S` beside "0.4s".
-  if (seconds > 0 || out === "PT") {
-    out += `${total >= 60_000 ? String(Math.floor(seconds)) : seconds.toFixed(1)}S`;
-  }
-  return out;
-}

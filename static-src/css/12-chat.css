@@ -47,8 +47,8 @@
    push a full-width tab bar clear of the band (its own comment records the
    measurement: the Sources segment lost its last 33px at 1440x900), the banner
    stack needed a ResizeObserver publishing the bar's live WIDTH so it could stop
-   short of it, and `.turn-rail`'s first two markers rendered underneath it,
-   invisible and unclickable.
+   short of it, and the turn map's first rows rendered underneath it, invisible
+   and unclickable.
 
    The three tokens below are kept, redefined against the new geometry, because
    their consumers still ask a real question — an absolutely positioned overlay
@@ -73,7 +73,7 @@
 
      A box inside `#messages-wrap-outer` must NOT read this — that element is
      already below the bar, so the clearance is dead offset. `.chat-find` and
-     `.turn-rail` both live there and both take `var(--sp-3)`. */
+     `.turn-map` both live there and both take `var(--sp-3)`. */
   --below-chat-toolbar: calc(var(--titlebar-h) + var(--sp-2) + env(safe-area-inset-top, 0));
 
   /* A full-width bar has no right edge to dodge, so this is a constant. Declared
@@ -86,7 +86,7 @@
   --toolbar-gap: 0.125rem;
 
   /* The bar's rendered bottom edge, for the notice band (`.banner-stack`,
-     13-messages.css), which no token can place: below about 375px of chat area the
+     13-messages.css), which no token can place: below 344px of chat area the
      actions no longer fit a row and wrap, so the bar's height stops being
      `--titlebar-h` and becomes content-driven. The band reads this and then
      publishes its OWN bottom edge as `--notice-band` for the toast stack, so the
@@ -103,26 +103,13 @@
      which is `position: absolute`, so it leaves the flex line entirely. */
   justify-content: flex-end;
 
-  /* The LAST resort, and it is the actions that wrap rather than the title.
-     THE ARITHMETIC, and both figures matter. Eight 44px targets plus SEVEN 2px
-     gaps is 366px of buttons, against a content box of `width - 24px` (`--sp-3`
-     each side) — so the buttons alone fit at exactly 390px and cannot fit below
-     it. While the heading is in flow it is a NINTH flex item contributing an
-     EIGHTH gap, so the line then needs 368px against the 366px a 390px viewport
-     gives: one gap short. That is why the threshold READ as 392px, and why
-     `page-title.ts` measures the ACTIONS' own rows as well as the title's
-     overflow — a heading whose only cost is its gap has to leave the line before
-     the bar breaks for it. `.sr-only` is `position: absolute`, so a clipped
-     heading takes its gap with it and 390 and 391 hold ONE row with the title
-     announced but not painted.
-     BELOW 390 THE TWO ROWS ARE DELIBERATE, not a fallback: 320px gives 296px of
-     content box against 366px of buttons, and the alternatives are shrinking a
-     touch target (`min-width: var(--btn-h)` below is that floor) or dropping a
-     button from the phone row, which is a product decision this rule does not get
-     to make. With no wrap those items would overflow past `flex-end` off the START
-     edge, which puts a control off-screen with no scroll to reach it. The heading's
-     `flex-basis: 0` is what keeps the wrap from firing early — it contributes no
-     basis to line breaking, so the buttons alone decide when a row breaks. */
+  /* Seven 44px targets plus six 2px gaps is 320px against `width - 24px`, so
+     the phone row fits from 344px; below that the wrap is deliberate, since
+     without it the row overflows past `flex-end` off the start edge, out of
+     reach. An in-flow heading costs one more gap, so `page-title.ts` measures
+     the actions' rows too and clips the heading before the bar breaks for it.
+     Invariant: the heading's `flex-basis: 0` gives it no basis in line
+     breaking, so the buttons alone decide when a row breaks. */
   flex-wrap: wrap;
   gap: var(--toolbar-gap);
   flex-shrink: 0;

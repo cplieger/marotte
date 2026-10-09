@@ -32,8 +32,8 @@ interface Shell {
   rail: HTMLElement;
 }
 
-/** The production shell, cut to what the readers and the rail's container query touch. The rail
- *  carries a marker because `.turn-rail:empty` hides it. */
+/** The production shell, cut to what the readers and the turn map's container query touch. The map
+ *  carries `data-shown`, which the renderer writes once the transcript can scroll. */
 function mountShell(): Shell {
   const app = document.createElement("div");
   app.id = "app";
@@ -49,11 +49,8 @@ function mountShell(): Shell {
   const outer = document.createElement("div");
   outer.id = "messages-wrap-outer";
   const rail = document.createElement("nav");
-  rail.className = "turn-rail";
-  const marker = document.createElement("button");
-  marker.className = "rail-marker";
-  marker.textContent = "1";
-  rail.appendChild(marker);
+  rail.className = "turn-map";
+  rail.toggleAttribute("data-shown", true);
   outer.appendChild(rail);
   chat.appendChild(outer);
 
@@ -130,7 +127,7 @@ describe("the clamp renders the preference, bounded by the window", () => {
     expect(width()).toBe(480);
   });
 
-  it("never hides the rail by widening", async () => {
+  it("never hides the turn map by widening", async () => {
     for (const vw of [1182, 1280, 1366, 1440, 1920, 2560]) {
       await at(vw);
       const s = mountShell();
@@ -144,13 +141,13 @@ describe("the clamp renders the preference, bounded by the window", () => {
 
   // A fractional root font size is what a non-default zoom or text size produces. 16.2px at 1280 is
   // a combination where the max expression without its `- 1px` leaves the chat area a layout unit
-  // under 57.5rem and the rail hidden.
+  // under 57.5rem and the turn map hidden.
   it.each([
     ["16.2px", 1280],
     ["15.37px", 1310],
     ["16.71px", 1366],
     ["15.37px", 1440],
-  ])("keeps the rail at a %s root font at %ipx", async (fontSize, vw) => {
+  ])("keeps the turn map at a %s root font at %ipx", async (fontSize, vw) => {
     await at(vw);
     const s = mountShell();
     document.documentElement.style.fontSize = fontSize;
@@ -208,9 +205,9 @@ describe("the query literals are the tokens' values", () => {
     return Number(m[1]);
   };
 
-  it("pins the rail's and the resume control's thresholds to --main-min-w", () => {
+  it("pins the turn map's and the resume control's thresholds to --main-min-w", () => {
     const main = `${String(rem("--main-min-w"))}rem`;
-    expect(loadCSS("29-turns.css")).toContain(`@container chat-area (width < ${main})`);
+    expect(loadCSS("29-turns.css")).toContain(`@container chat-area (width >= ${main})`);
     expect(loadCSS("13-messages.css")).toContain(`@container chat-area (width >= ${main})`);
   });
 
