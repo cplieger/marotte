@@ -2,18 +2,27 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Replacing the actions layer keeps the first subscriber's read off the network; tests seed with `_setReposForTest`.
 // Which triggers read is git-status-triggers.test.ts's subject.
+const { refreshDispatch } = vi.hoisted(() => ({
+  refreshDispatch:
+    vi.fn<
+      (args: {
+        paths?: readonly string[];
+        gen?: number;
+      }) => Promise<{ repos: GitRepoStatus[] } | undefined>
+    >(),
+}));
 vi.mock("./actions/index.js", () => ({
   apiAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
-  defineAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
+  defineAction: () => ({ dispatch: refreshDispatch }),
 }));
 
 import {
   _setReposForTest,
-  statusFor,
   statusForPath,
   statusUnder,
   currentRepos,
   onGitStatusChange,
+  refreshGitStatus,
 } from "./git-status-store.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { onWorkspaceRoot, setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
@@ -45,17 +54,9 @@ beforeEach(() => {
   _setReposForTest([]);
 });
 
-describe("statusFor", () => {
-  it("returns the letter for a known repo-relative path", () => {
-    _setReposForTest([repo(".kiro", [{ path: "steering/actions.md", status: "M" }])]);
-    expect(statusFor(".kiro", "steering/actions.md")).toBe("M");
-  });
-
-  it("returns empty for a clean or unknown path", () => {
-    _setReposForTest([repo(".kiro", [{ path: "steering/actions.md", status: "M" }])]);
-    expect(statusFor(".kiro", "steering/other.md")).toBe("");
-    expect(statusFor("nosuchrepo", "steering/actions.md")).toBe("");
-    expect(statusFor("", "")).toBe("");
+describe("the letter a path reads", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/workspace");
   });
 
   it("keys on repo AND path, so the same relative path in two repos is distinct", () => {
@@ -63,13 +64,13 @@ describe("statusFor", () => {
       repo("alpha", [{ path: "README.md", status: "M" }]),
       repo("beta", [{ path: "README.md", status: "A" }]),
     ]);
-    expect(statusFor("alpha", "README.md")).toBe("M");
-    expect(statusFor("beta", "README.md")).toBe("A");
+    expect(statusForPath("/workspace/alpha/README.md")).toBe("M");
+    expect(statusForPath("/workspace/beta/README.md")).toBe("A");
   });
 
   it("takes the first letter of a two-character porcelain status", () => {
     _setReposForTest([repo("r", [{ path: "a.md", status: "MM" }])]);
-    expect(statusFor("r", "a.md")).toBe("M");
+    expect(statusForPath("/workspace/r/a.md")).toBe("M");
   });
 
   it("keeps the first entry when a path appears twice (staged + unstaged)", () => {
@@ -79,7 +80,7 @@ describe("statusFor", () => {
         { path: "a.md", status: "M", staged: false },
       ]),
     ]);
-    expect(statusFor("r", "a.md")).toBe("A");
+    expect(statusForPath("/workspace/r/a.md")).toBe("A");
   });
 
   it("ignores directories that are not repos", () => {
@@ -88,15 +89,32 @@ describe("statusFor", () => {
       is_repo: false,
     };
     _setReposForTest([notARepo]);
-    expect(statusFor("x", "a.md")).toBe("");
+    expect(statusForPath("/workspace/x/a.md")).toBe("");
   });
 
   it("clears stale entries when a poll returns a cleaner tree", () => {
     _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
-    expect(statusFor("r", "a.md")).toBe("M");
+    expect(statusForPath("/workspace/r/a.md")).toBe("M");
     // The file was committed: the next read no longer lists it.
     _setReposForTest([repo("r", [])]);
-    expect(statusFor("r", "a.md")).toBe("");
+    expect(statusForPath("/workspace/r/a.md")).toBe("");
+  });
+});
+
+describe("a / work dir that is itself a repository", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/");
+  });
+
+  it("keys its files at the filesystem root, not under a doubled slash", () => {
+    _setReposForTest([repo(".", [{ path: "srv/notes.md", status: "M" }])]);
+    expect(statusForPath("/srv/notes.md")).toBe("M");
+  });
+
+  it("rolls a change up to / itself", () => {
+    _setReposForTest([repo(".", [{ path: "srv/notes.md", status: "M" }])]);
+    expect(statusUnder("/srv")).toBe("M");
+    expect(statusUnder("/")).toBe("M");
   });
 });
 
@@ -217,6 +235,68 @@ describe("the root landing after a poll", () => {
     setWorkspaceRoot("/workspace");
     off();
     expect(subscribers).toBe(1);
+  });
+});
+
+// A later handshake naming another root comes from a restarted server whose workspace the earlier read never saw.
+describe("a later handshake naming another root", () => {
+  it("drops the previous server's letters rather than keying them under the new root", () => {
+    expect.assertions(4);
+    setWorkspaceRoot("/workspace");
+    _setReposForTest([repo("marotte", [{ path: "a.md", status: "M" }])]);
+    setWorkspaceRoot("/srv/proj");
+    expect(statusForPath("/srv/proj/marotte/a.md")).toBe("");
+    expect(statusUnder("/srv/proj/marotte")).toBe("");
+    expect(statusForPath("/workspace/marotte/a.md")).toBe("");
+    expect(currentRepos()).toEqual([]);
+  });
+
+  it("re-reads the whole tree for a subscribed consumer and shows the new server's letters", async () => {
+    setWorkspaceRoot("/workspace");
+    const off = onGitStatusChange(() => undefined);
+    _setReposForTest([repo("marotte", [{ path: "a.md", status: "M" }])]);
+    refreshDispatch.mockClear();
+    refreshDispatch.mockResolvedValueOnce({
+      repos: [repo("marotte", [{ path: "b.md", status: "A" }])],
+    });
+
+    setWorkspaceRoot("/srv/proj");
+    await vi.waitFor(() => {
+      expect(statusForPath("/srv/proj/marotte/b.md")).toBe("A");
+    });
+    off();
+    expect(refreshDispatch.mock.calls).toHaveLength(1);
+    expect(refreshDispatch.mock.calls[0]?.[0].paths).toBeUndefined();
+  });
+
+  it("drops a read the previous server answers after the root moved, and keeps the new server's", async () => {
+    setWorkspaceRoot("/workspace");
+    const off = onGitStatusChange(() => undefined);
+    let answerOld: (v: { repos: GitRepoStatus[] }) => void = () => undefined;
+    refreshDispatch.mockClear();
+    refreshDispatch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answerOld = resolve;
+        }),
+    );
+    refreshDispatch.mockResolvedValueOnce({
+      repos: [repo("p", [{ path: "new.md", status: "A" }])],
+    });
+    const oldRead = refreshGitStatus();
+
+    setWorkspaceRoot("/srv/proj");
+    await vi.waitFor(() => {
+      expect(statusForPath("/srv/proj/p/new.md")).toBe("A");
+    });
+    answerOld({ repos: [repo("p", [{ path: "old.md", status: "M" }])] });
+    await oldRead;
+    off();
+
+    expect(statusForPath("/srv/proj/p/old.md")).toBe("");
+    expect(statusForPath("/srv/proj/p/new.md")).toBe("A");
+    const [oldGen, newGen] = refreshDispatch.mock.calls.map((c) => c[0].gen ?? -1);
+    expect(newGen).toBeGreaterThan(oldGen ?? Infinity);
   });
 });
 

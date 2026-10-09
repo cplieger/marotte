@@ -4,8 +4,8 @@
 // hosting it built every step's cards (`content-visibility` skips paint, not construction).
 // Expanded while it is the newest top-level element, folded once superseded, unless one of FOUR
 // REFUSALS holds: a failure, a still-live run (incl. paused or unknown), an unanswered ask, or a
-// reader decision. An aborted or cancelled run folds. A later failure re-opens it; both height
-// changes go through `preserveReadingPosition`. A pure view of `inspect` (`run-store.ts` fetches).
+// reader decision. An aborted or cancelled run folds. A later failure re-opens it. A pure view of
+// `inspect` (`run-store.ts` fetches).
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -14,7 +14,6 @@ import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { buildPath } from "../route-path.js";
-import { preserveReadingPosition } from "../scroll.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
@@ -507,12 +506,7 @@ export function buildRunCard(
     }
     if (holdsFailure()) {
       if (!ctl.isOpen) {
-        // Compensated like the fold below: this adds the step rows' height back ABOVE
-        // the reader. Gated on the state actually moving, because `render` re-asks the
-        // fold on every frame and the compensator measures the scroller each call.
-        preserveReadingPosition(() => {
-          ctl.open();
-        }, "content-growth");
+        ctl.open();
       }
       return;
     }
@@ -531,11 +525,7 @@ export function buildRunCard(
     ) {
       return;
     }
-    // Compensated here, not at the dispatcher's `syncContainerCollapse` arm: the helper measures its
-    // own delta, so a nested pair would compensate twice.
-    preserveReadingPosition(() => {
-      ctl.close();
-    }, "content-growth");
+    ctl.close();
   }
 
   function render(state: RunState | undefined, asks: RunAsks = lastAsks): void {

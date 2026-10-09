@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import type * as GitStatusStore from "./git-status-store.js";
 
 type GitStatusStoreModule = typeof GitStatusStore;
@@ -91,15 +91,10 @@ vi.mock("./git-status-store.js", async (importOriginal) => ({
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 
-import {
-  _setDocsForTest,
-  _setHooksForTest,
-  _hookRowsForTest,
-  _splitRepoPathForTest,
-  _renderRowForTest,
-} from "./docs.js";
+import { _setDocsForTest, _setHooksForTest, _hookRowsForTest, _renderRowForTest } from "./docs.js";
 import { _setReposForTest } from "./git-status-store.js";
 import type { GitRepoStatus } from "./git-types.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 beforeEach(() => {
   _setReposForTest([]);
@@ -107,39 +102,8 @@ beforeEach(() => {
   _setHooksForTest([]);
 });
 
-describe("splitRepoPath", () => {
-  it("treats the workspace-root .kiro as its own repo", () => {
-    // The root .kiro is its own git repo, so the repo is ".kiro" and the path drops that prefix.
-    expect(_splitRepoPathForTest("workspace/.kiro/steering/actions.md")).toEqual({
-      repo: ".kiro",
-      rel: "steering/actions.md",
-    });
-  });
-
-  it("treats a per-repo .kiro as part of that repo", () => {
-    // Here the repo is the directory holding .kiro.
-    expect(_splitRepoPathForTest("workspace/myrepo/.kiro/steering/x.md")).toEqual({
-      repo: "myrepo",
-      rel: ".kiro/steering/x.md",
-    });
-  });
-
-  it("handles an absolute-looking workdir prefix", () => {
-    expect(_splitRepoPathForTest("home/cplieger/workspace/.kiro/agents/a.md")).toEqual({
-      repo: ".kiro",
-      rel: "agents/a.md",
-    });
-    expect(_splitRepoPathForTest("home/cplieger/workspace/pg-autodump/.kiro/specs/f/r.md")).toEqual(
-      {
-        repo: "pg-autodump",
-        rel: ".kiro/specs/f/r.md",
-      },
-    );
-  });
-
-  it("yields an empty repo for a path with no .kiro segment", () => {
-    expect(_splitRepoPathForTest("workspace/README.md")).toEqual({ repo: "", rel: "" });
-  });
+afterEach(() => {
+  resetWorkspace();
 });
 
 function repoStatus(name: string, path: string, status: string): GitRepoStatus {
@@ -155,6 +119,52 @@ function repoStatus(name: string, path: string, status: string): GitRepoStatus {
     files: [{ path, status, staged: false, display: path }],
   };
 }
+
+// `/api/git/status-all` names each repository by its directory under the work dir, "." when the work dir is itself
+// one (discoverRepos in internal/git/repos.go), so a row's letter must not depend on which layout holds it.
+describe("a row's git letter, whatever repository layout holds it", () => {
+  function letterAt(path: string): string | null | undefined {
+    return _renderRowForTest({ category: "steering", name: "x", path }).querySelector(
+      ".docs-git-letter",
+    )?.textContent;
+  }
+
+  it("reads the work dir's own .kiro when the work dir is the repository", () => {
+    setWorkspaceRoot("/srv/proj");
+    _setReposForTest([repoStatus(".", ".kiro/steering/x.md", "M")]);
+    expect(letterAt("srv/proj/.kiro/steering/x.md")).toBe("M");
+  });
+
+  it("reads a first-level directory's .kiro inside a work dir that is the repository", () => {
+    setWorkspaceRoot("/srv/proj");
+    _setReposForTest([repoStatus(".", "myrepo/.kiro/steering/x.md", "A")]);
+    expect(letterAt("srv/proj/myrepo/.kiro/steering/x.md")).toBe("A");
+  });
+
+  it("reads a root .kiro that is a clone of its own under a custom work dir", () => {
+    setWorkspaceRoot("/srv/proj");
+    _setReposForTest([repoStatus(".kiro", "steering/x.md", "M")]);
+    expect(letterAt("srv/proj/.kiro/steering/x.md")).toBe("M");
+  });
+
+  it("reads a per-repo .kiro as part of that repository", () => {
+    setWorkspaceRoot("/srv/proj");
+    _setReposForTest([repoStatus("myrepo", ".kiro/steering/x.md", "M")]);
+    expect(letterAt("srv/proj/myrepo/.kiro/steering/x.md")).toBe("M");
+  });
+
+  it("reads a / work dir's repositories", () => {
+    setWorkspaceRoot("/");
+    _setReposForTest([repoStatus(".kiro", "steering/x.md", "M")]);
+    expect(letterAt(".kiro/steering/x.md")).toBe("M");
+  });
+
+  it("gives no letter to a .kiro tree outside the workspace", () => {
+    setWorkspaceRoot("/srv/proj");
+    _setReposForTest([repoStatus(".kiro", "steering/x.md", "M")]);
+    expect(letterAt("srv/other/.kiro/steering/x.md")).toBeUndefined();
+  });
+});
 
 describe("row rendering", () => {
   it("shows a steering doc's inclusion badge, with the pattern on hover", () => {
@@ -234,6 +244,7 @@ describe("row rendering", () => {
   });
 
   it("decorates a dirty document with its git letter", () => {
+    setWorkspaceRoot("/workspace");
     _setReposForTest([repoStatus(".kiro", "steering/actions.md", "M")]);
     const row = _renderRowForTest({
       category: "steering",
@@ -246,6 +257,7 @@ describe("row rendering", () => {
   });
 
   it("omits the git letter for a clean document", () => {
+    setWorkspaceRoot("/workspace");
     _setReposForTest([repoStatus(".kiro", "steering/other.md", "M")]);
     const row = _renderRowForTest({
       category: "steering",
@@ -658,8 +670,17 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   });
 
   it("carries no git letter, whose lookup its path cannot answer", () => {
-    // splitRepoPath would resolve "~/.kiro/..." to a plausible repo name.
+    // The workspace's own hook of the same name is dirty, so a suffix match would paint its letter here.
+    setWorkspaceRoot("/workspace");
     _setReposForTest([repoStatus(".kiro", "hooks/greet.json", "M")]);
+    _setHooksForTest([globalHook()]);
+    expect(_renderRowForTest(globalDoc()).querySelector(".docs-git-letter")).toBeNull();
+  });
+
+  it("carries no git letter under a / work dir whose repository tracks a literal ~ directory", () => {
+    // `/` + `~/.kiro/hooks/greet.json` is the absolute key of that tracked file.
+    setWorkspaceRoot("/");
+    _setReposForTest([repoStatus(".", "~/.kiro/hooks/greet.json", "M")]);
     _setHooksForTest([globalHook()]);
     expect(_renderRowForTest(globalDoc()).querySelector(".docs-git-letter")).toBeNull();
   });
@@ -787,6 +808,7 @@ describe("the Hooks tab: a kept row repaints when its state changes", () => {
   });
 
   it("changes its signature when the git letter changes", () => {
+    setWorkspaceRoot("/workspace");
     const clean = _renderRowForTest(wsHookDoc()).getAttribute("data-sig");
     _setReposForTest([repoStatus(".kiro", "hooks/greet.json", "M")]);
     const dirty = _renderRowForTest(wsHookDoc()).getAttribute("data-sig");

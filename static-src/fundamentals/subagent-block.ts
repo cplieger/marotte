@@ -17,7 +17,6 @@ import { isToolActive } from "../tool-schema.js";
 import { iconEl } from "../icon-el.js";
 import { chevronEl } from "../chevron.js";
 import { ICON_TAB_AGENT, outcomeIcon } from "../icons.js";
-import { preserveReadingPosition } from "../scroll.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
 import {
   buildTurnFooter,
@@ -318,11 +317,7 @@ export function buildSubagentCard(
  *  also RE-OPENS a box that folded before it), a reader who has decided, and an EMPTY
  *  body — the inverted form of the group's bare carve-out, since an empty body has
  *  already withdrawn the whole control and there would be no chevron to close it
- *  again.
- *
- *  BOTH height changes — the fold and the failure re-open — go through `scroll.ts`'s
- *  `preserveReadingPosition`, the transcript's one entry point for a layout change,
- *  exactly as `tool-group.ts` wraps its own two. */
+ *  again. */
 export function buildSubagentContainer(
   name: string,
   status: ToolStatus,
@@ -394,20 +389,11 @@ export function buildSubagentContainer(
       isToolActive(lastStatus) ||
       lastStatus === "failed" ||
       body.firstElementChild === null ||
-      // Gated on the state actually moving: this runs on every pass, and the
-      // compensator measures the scroller on each call.
       !ctl.isOpen
     ) {
       return;
     }
-    // An AUTO collapse removes height ABOVE the reader, so it is compensated —
-    // `scroll.ts` is THE ONE ENTRY POINT for a transcript height change, and this box's
-    // body is N stage cards. Wrapped HERE and not at the dispatcher's
-    // `syncContainerCollapse` arm: the helper adjusts scrollTop by a delta it measures
-    // itself, so a nested pair would compensate the same delta twice.
-    preserveReadingPosition(() => {
-      ctl.close();
-    }, "content-growth");
+    ctl.close();
   };
 
   /** The disclosure's ONE writer. An EMPTY body gets the primitive's region-only mode,
@@ -457,7 +443,7 @@ export function buildSubagentContainer(
     if (populated && pendingAutoOpen && !userToggled) {
       pendingAutoOpen = false;
       // Through `openBody` rather than a bare `ctl.open()`, so the held ask lands
-      // through the one enforcement point and takes its scroll compensation with it.
+      // through the one enforcement point.
       openBody();
     }
     // A supersede that arrived while the body was empty was refused then; the body
@@ -466,10 +452,7 @@ export function buildSubagentContainer(
   };
 
   /** The failure auto-open's one enforcement point. An empty body has no chevron to
-   *  close it again, so the ask is HELD until the body gains its first stage.
-   *
-   *  Compensated for the same reason the fold is: this adds the stage cards' height
-   *  back ABOVE the reader, which is the direction `maybeCollapseGroup` wraps too. */
+   *  close it again, so the ask is HELD until the body gains its first stage. */
   const openBody = (): void => {
     if (body.firstElementChild === null) {
       pendingAutoOpen = true;
@@ -478,9 +461,7 @@ export function buildSubagentContainer(
     if (ctl.isOpen) {
       return;
     }
-    preserveReadingPosition(() => {
-      ctl.open();
-    }, "content-growth");
+    ctl.open();
   };
 
   if (status === "failed") {

@@ -15,10 +15,9 @@
 // identical in a DOM dump.
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
-// The delegate boxes compensate their own fold and failure re-open through scroll.ts,
-// which is a self-initialising singleton over a real `#messages`; the canonical mock is
-// what every other suite reaching that graph uses. Nothing here folds anything — this
-// file's subject is the tail's own box — so the mock only has to exist.
+// This graph reaches scroll.ts, a self-initialising singleton over a real `#messages`; the
+// canonical mock is what every other suite reaching that graph uses. Nothing here folds
+// anything — this file's subject is the tail's own box — so the mock only has to exist.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { buildSubagentCard, type SubagentCard } from "./fundamentals/subagent-block.js";

@@ -1070,8 +1070,6 @@ function buildEntryFallback(st: TurnRender, seqs: readonly number[]): HTMLElemen
   return row;
 }
 
-// One call per window edge: a single compensated call would include the below-the-reader removal.
-
 /**
  * Mount `keep`'s ordinals below the mounted head in place: no replayed animations, lost selections or
  * disclosures. Bounded by `keep.to`, or a disjoint move mounts everything between.
@@ -1103,10 +1101,10 @@ export function dropHead(turn: Turn, keep: EntryRange): void {
   if (st === undefined || keep.from <= st.window.from) {
     return;
   }
-  dropEntryRange(st, { from: keep.from, to: st.window.to });
+  // A move past the mounted tail keeps nothing, and an empty window at `keep.from` is where the tail mounts from.
+  dropEntryRange(st, { from: keep.from, to: Math.max(keep.from, st.window.to) });
 }
 
-/** Retract the window's tail to `keep.to`, run bare since its delta is below the reader. */
 export function dropTail(turn: Turn, keep: EntryRange): void {
   const st = renders.get(turn.id);
   if (st === undefined || keep.to >= st.window.to) {
@@ -1125,6 +1123,11 @@ function dropEntryRange(st: TurnRender, keep: EntryRange): void {
   }
   if (removed.length === 0) {
     return;
+  }
+  // Every height before any row goes: a read between removals lays out a page short by the rows already gone, and
+  // the browser clamps `scrollTop` to it before the spacer can take their place.
+  for (const seq of removed) {
+    recordOutgoingHeight(st, seq);
   }
   const orphaned = new Map<string, RunCardView>();
   for (const seq of removed) {
@@ -1182,8 +1185,33 @@ export function geometrySkipped(el: Element): boolean {
 }
 
 /**
- * Release one entry's height, disclosure, element, sink, signal and cleanups; returns any hosted run card for the
- * caller to decide on.
+ * Record the height `seq`'s row holds, so the spacer replacing it holds it too. A run's row is one box, keyed by
+ * the run's range; a member row, a container root and an unrendered subtree record nothing.
+ */
+function recordOutgoingHeight(st: TurnRender, seq: number): void {
+  const el = st.entryEls.get(seq);
+  const head = st.runHead.get(seq);
+  if (el === undefined || (head !== undefined && head !== seq)) {
+    return;
+  }
+  if (isContainerRoot(st, el, hostedRun(st, entryAt(st.turn, seq))?.card) || geometrySkipped(el)) {
+    return;
+  }
+  const px = el.offsetHeight;
+  if (px <= 0) {
+    return;
+  }
+  const view = head === seq ? st.proseRuns.get(seq) : undefined;
+  if (view === undefined) {
+    recordEntryHeight(st.turnID, seq, px);
+  } else {
+    recordRowHeight(st.turnID, { from: seq, to: (view.seqs[view.seqs.length - 1] ?? seq) + 1 }, px);
+  }
+}
+
+/**
+ * Release one entry's disclosure, element, sink, signal and cleanups; returns any hosted run card for the caller to
+ * decide on. `recordOutgoingHeight` keeps a height the spacer needs.
  */
 function dropEntry(st: TurnRender, seq: number): { runID: string; card: RunCardView } | undefined {
   const entry = entryAt(st.turn, seq);
@@ -1193,14 +1221,9 @@ function dropEntry(st: TurnRender, seq: number): { runID: string; card: RunCardV
   // A run's members share one row, so only the head releases it; the window snap keeps whole runs on one side.
   const head = st.runHead.get(seq);
   st.runHead.delete(seq);
-  // The range the row held keys its height; a partial slice answers for no other.
-  let runRange: EntryRange | undefined;
   if (head !== undefined && head === seq) {
     const view = st.proseRuns.get(seq);
     st.proseRuns.delete(seq);
-    if (view !== undefined) {
-      runRange = { from: seq, to: (view.seqs[view.seqs.length - 1] ?? seq) + 1 };
-    }
     // The row carrying the open tail is going, so stop its subscription.
     if (st.openTail?.kind === "text" && st.openTail.run === view) {
       releaseOpenTail(st);
@@ -1215,17 +1238,6 @@ function dropEntry(st: TurnRender, seq: number): { runID: string; card: RunCardV
     return hosted;
   }
   if (el !== undefined && !isContainerRoot(st, el, hosted?.card)) {
-    // Measured on the way out so the spacer holds its height; a detached element reads 0. Skipped inside an
-    // unrendered subtree, where the read is meaningless and forces a render.
-    const px = geometrySkipped(el) ? 0 : el.offsetHeight;
-    if (px > 0) {
-      // A run's row is one box, so its height is keyed by its range.
-      if (runRange === undefined) {
-        recordEntryHeight(st.turnID, seq, px);
-      } else {
-        recordRowHeight(st.turnID, runRange, px);
-      }
-    }
     recordDisclosure(el, entry === undefined ? "" : (payloadOf(entry, "tool_call")?.id ?? ""));
     st.bubbles = st.bubbles.filter((b) => {
       if (b.root !== el && !el.contains(b.root)) {
@@ -2639,7 +2651,7 @@ function placeInContainer(st: TurnRender, container: HTMLElement, el: HTMLElemen
 
 /**
  * Record `container`'s insertion boundary on the extension's first touch, null included; `has`, since a created
- * container is empty then.
+ * container is empty then. A turn body's head spacer leads it and holds no entry, so the boundary is past it.
  */
 function captureInsertRef(
   st: TurnRender,
@@ -2647,7 +2659,10 @@ function captureInsertRef(
 ): Map<HTMLElement, HTMLElement | null> | null {
   const refs = st.insertBefore;
   if (refs !== null && !refs.has(container)) {
-    refs.set(container, container.firstElementChild as HTMLElement | null);
+    const first = container.firstElementChild as HTMLElement | null;
+    const lead =
+      first?.classList.contains("turn-space") === true ? first.nextElementSibling : first;
+    refs.set(container, lead as HTMLElement | null);
   }
   return refs;
 }

@@ -3,7 +3,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_TAB_WEB } from "./icons.js";
 import { isPreviewablePage } from "./preview-page.js";
 import { decodeDestination } from "./utils-url.js";
-import { relToWorkspace } from "./workspace.js";
+import { relBeneath, workspaceRootOrDefault } from "./workspace.js";
 
 // Injected: the markdown renderer reaching the tab system would close an import cycle.
 let opener: ((path: string) => void) | null = null;
@@ -18,7 +18,6 @@ export function previewHrefPage(href: string): string | null {
   if (/[?#]/.test(href)) {
     return null;
   }
-  // Not `servedPath`: its roots are fixed, and the page predicate follows the live workspace root.
   const path = decodeDestination(href);
   return isPreviewablePage(path) ? path : null;
 }
@@ -39,7 +38,7 @@ export function buildPreviewCard(path: string, label: readonly Node[]): HTMLButt
     name.textContent = path.slice(path.lastIndexOf("/") + 1);
   }
   const folder = chrome("preview-card-folder");
-  folder.textContent = relToWorkspace(path.slice(0, path.lastIndexOf("/")));
+  folder.textContent = previewCardFolder(path);
   const open = chrome("preview-card-open");
   open.textContent = "Open";
   card.append(icon, name, folder, open);
@@ -47,6 +46,13 @@ export function buildPreviewCard(path: string, label: readonly Node[]): HTMLButt
     opener?.(path);
   });
   return card;
+}
+
+/** The folder a card for `path` names: relative to the root the page was found previewable under, so the label
+ *  agrees with the decision. */
+export function previewCardFolder(path: string): string {
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  return relBeneath(workspaceRootOrDefault(), dir) ?? dir;
 }
 
 function chrome(className: string): HTMLSpanElement {

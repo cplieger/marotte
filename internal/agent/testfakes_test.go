@@ -62,6 +62,8 @@ type fakeBridge struct {
 	startOpts *marotte.StartOpts
 	// startGate holds a spawn open, so a bridge-ready test is not saved by an instantaneous Start.
 	startGate chan struct{}
+	// stopGate holds a Stop open, as a slow process teardown does.
+	stopGate chan struct{}
 	// onStart runs at the top of Start, so a test can change the world while a process spawns.
 	onStart func()
 	// startErr fails every spawn: a server fault the REST layer classifies apart (errRunHostStart).
@@ -244,6 +246,12 @@ func (b *fakeBridge) isStopped() bool {
 }
 
 func (b *fakeBridge) Stop() {
+	b.mu.Lock()
+	gate := b.stopGate
+	b.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	b.sendMu.Lock()
 	defer b.sendMu.Unlock()
 	b.mu.Lock()

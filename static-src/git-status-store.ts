@@ -31,6 +31,8 @@ function scopeQuery(paths: readonly string[] | undefined): string {
 
 interface ScopeArgs {
   paths?: readonly string[];
+  /** The root generation the read was dispatched under; part of its identity, never sent. */
+  gen?: number;
 }
 
 const fetchStatusAll = apiAction<ScopeArgs, StatusAllResponse>({
@@ -42,9 +44,11 @@ const fetchStatusAll = apiAction<ScopeArgs, StatusAllResponse>({
 
 const refreshAction = defineAction<ScopeArgs, StatusAllResponse>({
   name: "git-status.refresh",
-  // Keyed on the scope: two reads naming different repositories are two, or the second repository's rows go stale.
-  dedupe: (args) => `git-status.refresh${scopeQuery(args.paths)}`,
-  run: async (args) => (await fetchStatusAll.dispatch(args)) ?? { repos: [] },
+  // Keyed on the scope: two reads naming different repositories are two, or the second repository's rows go stale;
+  // and on the root generation, so a read for a new server never joins one the previous server answers.
+  dedupe: (args) => `git-status.refresh${scopeQuery(args.paths)}#${String(args.gen ?? 0)}`,
+  run: async ({ paths }) =>
+    (await fetchStatusAll.dispatch(paths === undefined ? {} : { paths })) ?? { repos: [] },
   error: false,
   success: false,
 });
@@ -52,12 +56,16 @@ const refreshAction = defineAction<ScopeArgs, StatusAllResponse>({
 /** A signal so consumers re-render on every read without holding a copy. */
 const repos = signal<readonly GitRepoStatus[]>([]);
 
-/** "<repo>\u0000<repo-relative path>" → letter, rebuilt every read; a map because the docs page asks ~200 times a paint. */
-let index = new Map<string, string>();
+/** The root `repos` was read under; "" for a read that beat the handshake, which the arriving root adopts. */
+let reposRoot = "";
+
+/** Bumped when a known root is replaced by another, so a read the previous server answers is never published. */
+let rootGen = 0;
+let knownRoot = "";
 
 /**
- * Absolute path → letter, for the file browser, which has no repo split of its own. Keys are joined through
- * workspace.ts's absPath, the one owner of the relative-to-absolute rule.
+ * Absolute path → letter, so no consumer needs a repo split of its own; a map because the docs page asks ~200 times a
+ * paint. Repositories resolve through workspace.ts's absPath, the one owner of the relative-to-absolute rule.
  */
 let absIndex = new Map<string, string>();
 
@@ -86,55 +94,60 @@ function worse(a: string, b: string): string {
 let started = false;
 
 function rebuildIndex(list: readonly GitRepoStatus[]): void {
-  const next = new Map<string, string>();
   const nextAbs = new Map<string, string>();
   const nextDir = new Map<string, string>();
-  // The absolute indexes need the root; without it the lookups return "" rather than a letter from a guessed root.
-  const rooted = workspaceRoot() !== "";
+  absIndex = nextAbs;
+  dirIndex = nextDir;
+  // Without the root the lookups return "" rather than a letter from a guessed root.
+  const root = workspaceRoot();
+  if (root === "") {
+    return;
+  }
   for (const r of list) {
     if (!r.is_repo) {
       continue;
     }
     // `r.repo` is a directory name under the workspace, and "." means the root is the repo.
-    const repoAbs = r.repo === "." ? workspaceRoot() : absPath(r.repo);
+    const repoAbs = r.repo === "." ? root : absPath(r.repo);
     for (const f of r.files) {
-      const key = `${r.repo}\u0000${f.path}`;
       const letter = statusLetter(f.status);
-      // First non-empty letter wins for a path listed twice (staged + unstaged), as in the git view.
-      if (!next.has(key)) {
-        next.set(key, letter);
-      }
-      if (letter === "" || !rooted) {
+      if (letter === "") {
         continue;
       }
-      const abs = `${repoAbs}/${f.path}`;
+      const abs = repoAbs === "/" ? `/${f.path}` : `${repoAbs}/${f.path}`;
+      // First letter wins for a path listed twice (staged + unstaged), as in the git view.
       if (!nextAbs.has(abs)) {
         nextAbs.set(abs, letter);
       }
       // Mark every ancestor up to and including the repo root.
       let cut = abs.lastIndexOf("/");
-      while (cut > 0) {
-        const dir = abs.slice(0, cut);
+      while (cut >= 0) {
+        const dir = cut === 0 ? "/" : abs.slice(0, cut);
         nextDir.set(dir, worse(nextDir.get(dir) ?? "", letter));
-        if (dir === repoAbs) {
+        if (dir === repoAbs || cut === 0) {
           break;
         }
         cut = dir.lastIndexOf("/");
       }
     }
   }
-  index = next;
-  absIndex = nextAbs;
-  dirIndex = nextDir;
 }
 
 // The root handshake and the first read race with no ordering; a read that wins builds no absolute keys, and no
-// timer follows. Rebuilding when the root lands and republishing repaints rows painted letter-less meanwhile.
+// timer follows. Rebuilding when the root lands and republishing repaints rows painted letter-less meanwhile. A
+// read taken under another known root came from the server the handshake replaced: it is dropped and re-read.
 onWorkspaceRoot(() => {
-  const list = repos.peek();
-  rebuildIndex(list);
+  const root = workspaceRoot();
+  if (knownRoot !== "" && root !== knownRoot) {
+    rootGen++;
+  }
+  knownRoot = root;
+  const foreign = reposRoot !== "" && reposRoot !== root;
   // A new array identity: the index changed while the data did not, and `repos` is all consumers watch.
-  repos.value = [...list];
+  publish(foreign ? [] : [...repos.peek()], root);
+  if (foreign && started) {
+    void refreshGitStatus();
+  }
 });
 
 // The catch-all for writers this client cannot name (the shell, another window, a command). Fires when a stale badge
@@ -161,22 +174,22 @@ function startOnFirstSubscriber(): void {
  * merges a scoped scan into its snapshot, so no partial list is published.
  */
 export async function refreshGitStatus(paths?: readonly string[]): Promise<void> {
-  const d = await refreshAction.dispatch(paths === undefined ? {} : { paths });
-  const list = d?.repos ?? [];
+  const gen = rootGen;
+  const root = workspaceRoot();
+  const d = await refreshAction.dispatch(paths === undefined ? { gen } : { paths, gen });
+  if (gen === rootGen) {
+    publish(d?.repos ?? [], root);
+  }
+}
+
+function publish(list: readonly GitRepoStatus[], readUnder: string): void {
   rebuildIndex(list);
+  reposRoot = readUnder;
   repos.value = list;
 }
 
-/**
- * The git status letter for one repo-relative path, or "" when clean, ignored, or the repo is unknown. Letters are
- * git-types.ts's vocabulary, the same the git view and file browser show.
- */
-export function statusFor(repo: string, relPath: string): string {
-  return index.get(`${repo}\u0000${relPath}`) ?? "";
-}
-
-/** The status letter for an ABSOLUTE path, or "" when clean/unknown. For
- *  consumers that hold real filesystem paths rather than a repo-relative pair. */
+/** The status letter for an ABSOLUTE path, or "" when clean, ignored, unknown or the root is not yet known. Letters
+ *  are git-types.ts's vocabulary, the same the git view and file browser show. */
 export function statusForPath(absPath: string): string {
   return absIndex.get(normalizeAbs(absPath)) ?? "";
 }
@@ -209,6 +222,5 @@ export function currentRepos(): readonly GitRepoStatus[] {
 
 /** @internal Test seam: inject a repos array without a fetch. */
 export function _setReposForTest(list: readonly GitRepoStatus[]): void {
-  rebuildIndex(list);
-  repos.value = list;
+  publish(list, workspaceRoot());
 }

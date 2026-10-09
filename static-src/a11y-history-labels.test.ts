@@ -62,9 +62,6 @@ vi.mock("./navigate.js", () => ({
 }));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
-  preserveReadingPosition: (fn: () => void) => {
-    fn();
-  },
 }));
 import { loadHistoryView, refreshHistoryView } from "./history.js";
 

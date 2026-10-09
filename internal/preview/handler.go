@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
@@ -44,23 +45,36 @@ type Handler struct {
 	signer  *Signer
 	log     *slog.Logger
 	workDir string
+	// realWorkDir is workDir with its symlinks resolved. Every open beneath
+	// workFD follows no symlink, so realWorkDir joined with a relative path is
+	// the path the kernel opens.
+	realWorkDir string
+	sensitive   filebrowse.Sensitive
 	// workFD is the workspace root every resolution starts from; -1 means it
 	// could not be opened and every route answers 503.
 	workFD     int
 	resolveLog sync.Once
 }
 
-// New returns a Handler confined to workDir. A workspace that cannot be opened
-// is logged once and leaves every route answering 503.
-func New(workDir string, s *Signer, log *slog.Logger) *Handler {
-	h := &Handler{signer: s, log: log, workDir: filepath.Clean(workDir), workFD: -1}
+// New returns a Handler confined to workDir that refuses any folder sensitive
+// reports exposed. A workspace that cannot be opened is logged once and leaves
+// every route answering 503.
+func New(workDir string, sensitive filebrowse.Sensitive, s *Signer, log *slog.Logger) *Handler {
+	h := &Handler{signer: s, log: log, sensitive: sensitive, workDir: filepath.Clean(workDir), workFD: -1}
 	fd, err := unix.Open(h.workDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		log.Warn("preview: workspace root could not be opened; previews are unavailable",
 			"work_dir", h.workDir, "error", err)
 		return h
 	}
-	h.workFD = fd
+	resolved, err := evalSymlinks(h.workDir)
+	if err != nil {
+		_ = unix.Close(fd)
+		log.Warn("preview: workspace root could not be resolved; previews are unavailable",
+			"work_dir", h.workDir, "error", err)
+		return h
+	}
+	h.realWorkDir, h.workFD = resolved, fd
 	return h
 }
 
@@ -163,6 +177,10 @@ func (h *Handler) openFolder(folder string) (int, error) {
 	if !ok {
 		return -1, refuse(http.StatusForbidden, "the granted folder is outside the workspace")
 	}
+	if h.sensitive.ExposedBy(folder) || h.sensitive.ExposedBy(filepath.Join(h.realWorkDir, rel)) {
+		return -1, refuse(http.StatusForbidden,
+			"This folder would expose marotte's own configuration or credentials, so it cannot be previewed.")
+	}
 	fd, err := openDir(h.workFD, rel)
 	if err != nil {
 		return -1, h.resolveError(err, "no such folder")
@@ -217,6 +235,10 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 // grantStamped runs between a grant's folder stamp and its head read, so a test
 // can rewrite the page inside that window.
 var grantStamped = func() {}
+
+// evalSymlinks resolves the workspace root once it opened; a test fails it, since
+// only a root removed between the open and the resolve reaches that arm.
+var evalSymlinks = filepath.EvalSymlinks
 
 func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodPost) {

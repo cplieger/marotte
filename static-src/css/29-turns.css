@@ -279,9 +279,11 @@
 
 /* The height the ordinals outside the window stand in for: its own `block-size` and
  * nothing else, so `spacerHeight` alone decides it — the `gap` this parent adds around
- * the box is NOT part of it, and is a term in that function. */
+ * the box is NOT part of it, and is a term in that function. Never the scroll anchor: it
+ * is re-priced as the window moves, and a row beside it is the content the reader holds. */
 .turn-space {
   flex-shrink: 0;
+  overflow-anchor: none;
 }
 
 /* A collapsed body makes the header the card's last painted band, so it rounds the

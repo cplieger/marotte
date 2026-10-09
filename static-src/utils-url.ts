@@ -5,6 +5,7 @@
 import { isViewableImage } from "./file-extensions.js";
 import type { Route } from "./route-path.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
+import { workspaceRootOrDefault } from "./workspace.js";
 
 /** URL safety predicate for a rendered href/src: http, https and mailto are the only absolute
  *  schemes; scheme-less resolves against the document. Strips every C0 control THEN trims, at least
@@ -60,19 +61,24 @@ export function fileDownloadURL(path: string): string {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
 }
 
-/** The roots the byte route can serve (granted browse mounts, `browseRoots` in
- *  internal/composition/config.go); outside them the SPA answers index.html, a broken image.
- *  `/config` is deliberately absent: it holds the chat store, MCP secrets and tool state. */
-const SERVED_ROOTS = ["/workspace/", `${UPLOADS_DIR}/`] as const;
+/** The roots the byte route can serve, as far as routing a link goes: the live workspace root and
+ *  the uploads mount (`browseRoots` in internal/composition/config.go), never the config mount,
+ *  which holds the chat store and credentials. Outside them the SPA answers index.html. The
+ *  server's mount allow-list and deny list decide access; this list only routes. A `/` work dir is
+ *  never a mount (filebrowse `openMounts` refuses it), so it routes nothing. */
+function servedRoots(): readonly string[] {
+  const root = workspaceRootOrDefault();
+  return root === "/" ? [`${UPLOADS_DIR}/`] : [`${root}/`, `${UPLOADS_DIR}/`];
+}
 
 /** Is this an absolute path the byte route can serve? */
 function isServedPath(path: string): boolean {
-  return SERVED_ROOTS.some((root) => path.startsWith(root));
+  return servedRoots().some((root) => path.startsWith(root));
 }
 
 /** Rewrite an image `src` under a served root to the byte-serving route, so an agent's
  *  `![shot](/workspace/out/shot.png)` renders instead of hitting the SPA fallback. Anything outside
- *  SERVED_ROOTS, or without an image extension, is returned untouched. */
+ *  the served roots, or without an image extension, is returned untouched. */
 export function rewriteServedImageSrc(src: string): string {
   const path = servedPath(src);
   if (path === null || !isViewableImage(path)) {
@@ -92,8 +98,8 @@ export function decodeDestination(dest: string): string {
   }
 }
 
-/** The file path a markdown destination names under SERVED_ROOTS, else null. Percent-decoded once.
- *  A `.` or `..` segment answers null: `/workspace/../config/x` passes the prefix test. */
+/** The file path a markdown destination names under a served root, else null. Percent-decoded
+ *  once. A `.` or `..` segment answers null: `/workspace/../config/x` passes the prefix test. */
 export function servedPath(dest: string): string | null {
   const path = decodeDestination(dest);
   if (!isServedPath(path) || path.split("/").some((seg) => seg === "." || seg === "..")) {

@@ -1,5 +1,5 @@
-// The follow model's two compensation MODES.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+// The follow model: reading state, the live-edge pins and the reader's own gestures.
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Read for the premise test below: the regression cases only reproduce production while `.msg-row`
 // really is a containment box, so the declaration is asserted out of the shipped stylesheet rather
@@ -65,77 +65,6 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
 
 beforeEach(() => {
   scroll.resetScrollState();
-});
-
-describe("preserveReadingPosition", () => {
-  it("runs the mutation bare while Following", () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
-    scroll.setUserScrolledUp(false);
-    scroll.preserveReadingPosition(() => {
-      s.scrollHeight = 1400;
-    }, "content-growth");
-    // Following is pinned to the live edge and the auto-scroll re-pins, so there is nothing to
-    // preserve and scrollTop must not be nudged.
-    expect(s.scrollTop).toBe(500);
-  });
-
-  it("runs the mutation itself on that bare path", () => {
-    // The assertion above holds whether or not the mutation ran at all, and the bare path is the
-    // one every append while Following takes.
-    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
-    scroll.setUserScrolledUp(false);
-    const mutate = vi.fn();
-    scroll.preserveReadingPosition(mutate, "content-growth");
-    expect(mutate).toHaveBeenCalledTimes(1);
-  });
-
-  it("restores the reader by the scrollHeight delta on content growth", () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
-    scroll.preserveReadingPosition(() => {
-      s.scrollHeight = 1400;
-    }, "content-growth");
-    expect(s.scrollTop).toBe(600);
-  });
-
-  it("restores the reader when content SHRINKS above them", () => {
-    // A fold is the shrink case, and it is the one that motivated the helper: hundreds of pixels
-    // leave from above the reading position.
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 900 });
-    scroll.setUserScrolledUp(true);
-    scroll.preserveReadingPosition(() => {
-      s.scrollHeight = 1200;
-    }, "content-growth");
-    expect(s.scrollTop).toBe(100);
-  });
-
-  it("restores the reader by the clientHeight delta on viewport shrink", () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
-    scroll.preserveReadingPosition(() => {
-      s.clientHeight = 400;
-    }, "viewport-shrink");
-    expect(s.scrollTop).toBe(300);
-  });
-
-  // The distinction that makes two modes necessary rather than one.
-  it("compensates ZERO if a viewport shrink is measured as content growth", () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
-    scroll.preserveReadingPosition(() => {
-      s.clientHeight = 400; // scrollHeight untouched
-    }, "content-growth");
-    expect(s.scrollTop).toBe(200);
-  });
-
-  it("leaves scrollTop alone when nothing moved", () => {
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
-    scroll.setUserScrolledUp(true);
-    scroll.preserveReadingPosition(() => {
-      /* no geometry change */
-    }, "content-growth");
-    expect(s.scrollTop).toBe(200);
-  });
 });
 
 describe("deferWhileReading", () => {
@@ -1016,12 +945,10 @@ function realScroller(): HTMLElement {
   for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
     Reflect.deleteProperty(wrap, key);
   }
-  // `scrollbar-gutter: stable` and `overflow-anchor: none` are both shipped declarations
-  // (css/13-messages.css) that this section MEASURES rather than decorates: the gutter is what a
-  // scrollbar press aims at, and without the anchoring off Chromium restores a clamped position
-  // itself, which is the platform doing the controller's job and hiding whether it works.
-  wrap.style.cssText =
-    "height:400px;overflow-y:auto;position:relative;scrollbar-gutter:stable;overflow-anchor:none;";
+  // `scrollbar-gutter: stable` is a shipped declaration (css/13-messages.css) this section
+  // MEASURES rather than decorates: the gutter is what a scrollbar press aims at. Scroll anchoring
+  // is left at its shipped `auto`, because the controller's model has to hold with it on.
+  wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;scrollbar-gutter:stable;";
   if (messagesEl.parentElement !== wrap) {
     wrap.appendChild(messagesEl);
   }
@@ -1389,19 +1316,17 @@ describe("a deliberate upward gesture inside the bottom tolerance", () => {
     expect(landing(wrap)).toEqual({ scrollTop: 2600, state: "following", hidden: true });
   });
 
-  it("keeps the reader parked when the controller compensates a fold above them", async () => {
-    // The compensation moves scrollTop DOWN by the height that arrived above, which is the
-    // controller's own write and not the reader coming back. Inside the gesture window and inside
-    // the band, so only that distinction holds the park.
+  it("keeps the reader parked when scroll anchoring holds them under content arriving above", async () => {
+    // Anchoring moves scrollTop DOWN by the height that arrived above, which is the browser holding
+    // the reader and not the reader coming back. Inside the gesture window and inside the band, so
+    // only that distinction holds the park.
     const wrap = await atTheLiveEdge();
     await wheelUp(wrap, 60, 1);
     expect(scroll.readingState()).toBe("reading");
 
-    scroll.preserveReadingPosition(() => {
-      const above = document.createElement("div");
-      above.style.cssText = "height:200px;";
-      messagesEl.prepend(above);
-    }, "content-growth");
+    const above = document.createElement("div");
+    above.style.cssText = "height:200px;";
+    messagesEl.prepend(above);
     await land();
 
     expect(landing(wrap)).toEqual({ scrollTop: 2740, state: "reading", hidden: false });
@@ -2329,14 +2254,11 @@ describe("the self-scroll epoch", () => {
     return seen.mock.calls.length > 0;
   }
 
-  /** A page of content prepended above the reader — the shift every `preserveReadingPosition`
-   *  caller declares as `content-growth`. */
+  /** A page of content prepended above the reader, which scroll anchoring holds them under. */
   function foldIn(px: number): void {
-    scroll.preserveReadingPosition(() => {
-      const page = document.createElement("div");
-      page.style.cssText = `height:${String(px)}px;`;
-      messagesEl.prepend(page);
-    }, "content-growth");
+    const page = document.createElement("div");
+    page.style.cssText = `height:${String(px)}px;`;
+    messagesEl.prepend(page);
   }
 
   beforeEach(epochReset);
@@ -2557,28 +2479,26 @@ describe("the self-scroll epoch", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("compensates its TARGET when a fold lands mid-animation", async () => {
+  it("writes nothing into a flight when a page lands above mid-animation", async () => {
+    // The flight's owner re-measures its target after it settles (turn-rail.ts `correctLanding`);
+    // a write from here would cut the animation short.
     const wrap = realScroller();
     block(3000);
     await land();
 
     scroll.beginSelfScroll();
     scroll.scrollToOffset(500, "smooth");
-    // Mid-flight, so the live position and the target are hundreds of pixels apart and the two
-    // candidate compensations cannot agree by accident.
     await land(60);
     expect(wrap.scrollTop).toBeGreaterThan(900);
-
-    // The WRITE rather than the settled position: an interrupted smooth animation gets one more
-    // frame in before it aborts, so the position lands a few px short of the value the compensation
-    // asked for (measured: 668 against 700).
     const writes = recordWrites(wrap);
     foldIn(200);
+    await land(1000);
 
-    expect(writes).toEqual([700]);
+    expect(writes).toEqual([]);
+    expect(wrap.scrollTop).toBe(500);
   });
 
-  it("compensates the live position when no epoch is open", async () => {
+  it("holds a parked reader when a page lands above them", async () => {
     const wrap = realScroller();
     block(3000);
     await land();
@@ -2588,14 +2508,12 @@ describe("the self-scroll epoch", () => {
     expect(scroll.readingState()).toBe("reading");
 
     foldIn(200);
+    await land();
 
     expect(wrap.scrollTop).toBe(700);
   });
 
-  it("compensates the landing when a fold arrives after the animation settled", async () => {
-    // The fold that lands between `scrollend` and the correction loop's first pass: the epoch has
-    // closed, so the live position IS the target, and the compensation has to still run rather than
-    // have been suspended for the jump.
+  it("holds the landing when a page arrives after the animation settled", async () => {
     const wrap = realScroller();
     block(3000);
     await land();
@@ -2605,8 +2523,473 @@ describe("the self-scroll epoch", () => {
     expect(wrap.scrollTop).toBe(500);
 
     foldIn(200);
+    await land();
 
     expect(wrap.scrollTop).toBe(700);
+  });
+});
+
+describe("holding what the reader reads", () => {
+  beforeEach(realLayoutReset);
+
+  /** Twenty 100px rows in the 400px scrollport, the reader parked at 500: row 5 is at the top
+   *  edge and row 6 holds the reading line, a third of the way down. */
+  async function parkedAmongRows(): Promise<{ wrap: HTMLElement; rows: HTMLElement[] }> {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 500);
+    await land();
+    expect(scroll.readingState()).toBe("reading");
+    return { wrap, rows };
+  }
+
+  it("publishes no reader gesture for the browser's own anchoring", async () => {
+    const { wrap } = await parkedAmongRows();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    const above = document.createElement("div");
+    above.style.cssText = "height:200px;";
+    messagesEl.prepend(above);
+    await land();
+    off();
+
+    // The premise: anchoring did move the scroller.
+    expect(wrap.scrollTop).toBe(700);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("puts the reading line back when the row above it grows", async () => {
+    // Anchoring holds the TOP edge, and the top row is the one growing, so it alone would push the
+    // row the reader is on down by the growth.
+    const { rows } = await parkedAmongRows();
+    const reading = rows[6]!;
+    const was = reading.getBoundingClientRect().top;
+    rows[5]!.style.height = "300px";
+    await land();
+
+    expect(reading.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("holds a growth that lands between its own correction and that correction's scroll event", async () => {
+    // A growth the observer reports after the correction's write and before that write's scroll event.
+    const { rows } = await parkedAmongRows();
+    const reading = rows[6]!;
+    const was = reading.getBoundingClientRect().top;
+    let grown = false;
+    const late = new ResizeObserver(() => {
+      if (!grown) {
+        grown = true;
+        // A task after this delivery: past the correction's write, before its scroll event.
+        setTimeout(() => {
+          rows[5]!.style.height = "500px";
+        }, 0);
+      }
+    });
+    rows[5]!.style.height = "300px";
+    late.observe(rows[5]!);
+    await land();
+    late.disconnect();
+
+    expect(grown).toBe(true);
+    expect(reading.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("leaves a press's own change where it opened", async () => {
+    // What a click opens is the reader's: the top edge holds and the content below moves for it.
+    const { rows } = await parkedAmongRows();
+    const reading = rows[6]!;
+    const was = reading.getBoundingClientRect().top;
+    rows[5]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    rows[5]!.style.height = "300px";
+    await land();
+
+    expect(reading.getBoundingClientRect().top).toBe(was + 200);
+  });
+
+  it("re-reads the line where a correction cannot scroll, and stops correcting", async () => {
+    // At offset 0 a shrink above the line has nowhere to be put back; the reader now sees the line
+    // where it landed, so a later growth is held there.
+    const { rows } = await parkedAmongRows();
+    const wrap = scroll.getScrollEl();
+    readerScrollTo(wrap, 0);
+    await land();
+    const reading = rows[1]!;
+    rows[0]!.style.height = "50px";
+    await land();
+    const landed = reading.getBoundingClientRect().top;
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    await land();
+    const idleFrames = frames.mock.calls.length;
+    frames.mockRestore();
+    rows[0]!.style.height = "300px";
+    await land();
+
+    expect({ idleFrames, top: reading.getBoundingClientRect().top }).toEqual({
+      idleFrames: 0,
+      top: landed,
+    });
+  });
+
+  it("re-picks the line when its element loses its box, instead of reading that as a drift", async () => {
+    const { wrap, rows } = await parkedAmongRows();
+    rows[6]!.hidden = true;
+    await land();
+
+    expect(wrap.scrollTop).toBe(500);
+  });
+
+  /** The page writers' order around a landing: the paint re-measures and writes the page, then the skeleton's owner
+   *  re-measures and drops it (messages.ts, chat.ts). */
+  function landPage(px: number): void {
+    scroll.rebaseLoadMore();
+    const page = document.createElement("div");
+    page.style.cssText = `height:${String(px)}px;`;
+    document.getElementById("load-more-skeleton")?.after(page);
+    scroll.rebaseLoadMore();
+    document.getElementById("load-more-skeleton")?.remove();
+  }
+
+  /** A page of `px` landing above everything, the way the real caller lands one: after the fetch,
+   *  with the skeleton dropped in the same task. */
+  function loadsPage(px: number): () => void {
+    return () => {
+      setTimeout(() => {
+        landPage(px);
+      }, 0);
+    };
+  }
+
+  it("holds the reader where the skeleton left them at offset 0, where nothing anchors, when an older page lands", async () => {
+    // The skeleton is shorter than the button it replaces, and at offset 0 nothing can take that back.
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 150);
+    await land();
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    readerScrollTo(wrap, 0);
+    await land();
+    const was = rows[0]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[0]!.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("does not count an anchored older page twice", async () => {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 150);
+    await land();
+    scroll.setLoadMore(loadsPage(400), true);
+    await land();
+    const was = rows[1]!.getBoundingClientRect().top;
+    const travel = wrap.scrollTop - 50;
+    readerScrollTo(wrap, 50);
+    await land();
+
+    expect(rows[1]!.getBoundingClientRect().top).toBe(was + travel);
+  });
+
+  /** A fetch the test lands by hand, so the reader can move while it is in flight. */
+  function heldPage(px: number): { load: () => void; land: () => void } {
+    let pending = false;
+    return {
+      load: () => {
+        pending = true;
+      },
+      land: () => {
+        expect(pending).toBe(true);
+        landPage(px);
+      },
+    };
+  }
+
+  it("leaves the reader where they scrolled to at offset 0 while the older page was in flight", async () => {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 150);
+    await land();
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    readerScrollTo(wrap, 80);
+    await land();
+    readerScrollTo(wrap, 0);
+    await land();
+    const was = rows[0]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[0]!.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("leaves the reader where they scrolled to under an anchored page that was in flight", async () => {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 150);
+    await land();
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    readerScrollTo(wrap, 90);
+    await land();
+    readerScrollTo(wrap, 30);
+    await land();
+    const was = rows[0]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[0]!.getBoundingClientRect().top).toBe(was);
+  });
+
+  /** Twenty 100px rows, the reader parked, and an older page of 400px in flight since the reader
+   *  scrolled near the top. */
+  async function pageInFlight(): Promise<{
+    wrap: HTMLElement;
+    rows: HTMLElement[];
+    page: { land: () => void };
+  }> {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 150);
+    await land();
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    readerScrollTo(wrap, 80);
+    await land();
+    return { wrap, rows, page };
+  }
+
+  it("leaves the reader where a rail jump put them while the older page was in flight", async () => {
+    const { rows, page } = await pageInFlight();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(1200, "instant");
+    await land();
+    scroll.endSelfScroll();
+    const was = rows[14]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[14]!.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("writes nothing below the live edge a resume reached while the older page was in flight", async () => {
+    const { wrap, rows, page } = await pageInFlight();
+    scroll.scrollToBottom();
+    // Past the bottom pin's settle window, so only the landing can write.
+    await land(900);
+    const was = rows[19]!.getBoundingClientRect().top;
+    const edge = wrap.scrollTop;
+    const writes = recordWrites(wrap);
+    page.land();
+    await land();
+
+    expect({
+      above: writes.filter((top) => top < edge),
+      top: rows[19]!.getBoundingClientRect().top,
+    }).toEqual({ above: [], top: was });
+  });
+
+  it("keeps the reading line where its own hold put it back while the older page was in flight", async () => {
+    const { wrap, page } = await pageInFlight();
+    const box = wrap.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const edgeRow = document.elementFromPoint(x, box.top + 1) as HTMLElement;
+    const reading = document.elementFromPoint(x, box.top + scroll.readingLineOffset())!;
+    expect(reading).not.toBe(edgeRow);
+    const was = reading.getBoundingClientRect().top;
+    edgeRow.style.height = "300px";
+    await land();
+    const held = reading.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect({ held, landed: reading.getBoundingClientRect().top }).toEqual({
+      held: was,
+      landed: was,
+    });
+  });
+
+  it("keeps anchoring's hold of a growth above the view while the older page was in flight", async () => {
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 900);
+    await land();
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    (document.getElementById("load-more-indicator") as HTMLButtonElement).click();
+    await land();
+    const was = rows[12]!.getBoundingClientRect().top;
+    rows[3]!.style.height = "200px";
+    await land();
+    const anchored = rows[12]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect({ anchored, landed: rows[12]!.getBoundingClientRect().top }).toEqual({
+      anchored: was,
+      landed: was,
+    });
+  });
+
+  it("leaves the reader at the top when the older page they pressed for lands there", async () => {
+    // The press drops the reading line, so only the pass can put back what landed above at offset 0, and only
+    // against a measure taken before the page.
+    const wrap = realScroller();
+    const rows = Array.from({ length: 20 }, () => block(100));
+    await land();
+    await park(wrap);
+    rows[0]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const page = heldPage(400);
+    scroll.setLoadMore(page.load, true);
+    await land();
+    const button = document.getElementById("load-more-indicator")!;
+    button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    button.click();
+    await land();
+    const was = rows[0]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[0]!.getBoundingClientRect().top).toBe(was);
+  });
+
+  it("keeps a reader's move the page landed ahead of that move's scroll event", async () => {
+    const { wrap, rows, page } = await pageInFlight();
+    readerScrollTo(wrap, 30);
+    // Same task: the scroller has moved and its scroll event has not run.
+    const was = rows[1]!.getBoundingClientRect().top;
+    page.land();
+    await land();
+
+    expect(rows[1]!.getBoundingClientRect().top).toBe(was);
+  });
+});
+
+describe("laying out what is near the scrollport", () => {
+  beforeEach(realLayoutReset);
+  // The attach case re-roots the observers on its own view; hand them back to the transcript root.
+  afterEach(() => {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+  });
+
+  /** A `.tool-call` box `px` tall, appended to `host`. */
+  function skippable(host: HTMLElement, px: number): HTMLElement {
+    const box = document.createElement("div");
+    box.className = "tool-call";
+    box.style.cssText = `height:${String(px)}px;`;
+    host.appendChild(box);
+    return box;
+  }
+
+  it("marks a box within one and a half scrollports of the view, and not one past that", async () => {
+    // 400px scrollport parked at the top: the near span ends 600px below it, at 1000.
+    const wrap = realScroller();
+    block(850);
+    const near = skippable(messagesEl, 100);
+    block(1000);
+    const far = skippable(messagesEl, 100);
+    block(1000);
+    await land();
+    await park(wrap);
+    const before = { near: near.hasAttribute("data-near"), far: far.hasAttribute("data-near") };
+    wrap.scrollTop = 1500;
+    await land();
+
+    expect({ before, after: far.hasAttribute("data-near") }).toEqual({
+      before: { near: true, far: false },
+      after: true,
+    });
+  });
+
+  it("measures the lead in scrollport heights on a tall, narrow scroller", async () => {
+    // 200x800 parked at the top: the near span ends 1200px below the scrollport, at 2000.
+    const wrap = realScroller();
+    wrap.style.width = "200px";
+    wrap.style.height = "800px";
+    block(1920);
+    const near = skippable(messagesEl, 100);
+    block(20);
+    const far = skippable(messagesEl, 100);
+    block(1000);
+    await land();
+    await park(wrap);
+
+    expect({ near: near.hasAttribute("data-near"), far: far.hasAttribute("data-near") }).toEqual({
+      near: true,
+      far: false,
+    });
+  });
+
+  it("re-measures the lead when the scrollport's height changes", async () => {
+    // 400px: the span ends at 1000. 800px: it ends at 2000.
+    const wrap = realScroller();
+    block(1300);
+    const box = skippable(messagesEl, 100);
+    block(1000);
+    await land();
+    await park(wrap);
+    const before = box.hasAttribute("data-near");
+    wrap.style.height = "800px";
+    await land();
+
+    expect({ before, after: box.hasAttribute("data-near") }).toEqual({
+      before: false,
+      after: true,
+    });
+  });
+
+  it("marks the boxes a view already holds when the scroller attaches it", async () => {
+    const wrap = realScroller();
+    wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+    const shown = document.createElement("div");
+    messagesEl.replaceChildren(shown);
+    scroll.attach({ el: shown, scrollTop: 0, readingState: "following" });
+    // Built beside the attached view, the way the multiplexer seats a chat's view.
+    const incoming = document.createElement("div");
+    const box = skippable(incoming, 100);
+    messagesEl.prepend(incoming);
+    await land();
+    const before = box.hasAttribute("data-near");
+
+    scroll.attach({ el: incoming, scrollTop: 0, readingState: "following" });
+    await land();
+
+    expect({ before, after: box.hasAttribute("data-near") }).toEqual({
+      before: false,
+      after: true,
+    });
+  });
+
+  it("delivers nothing to a box once its view is detached", async () => {
+    realScroller();
+    const box = skippable(messagesEl, 100);
+    await land();
+    const before = box.hasAttribute("data-near");
+    scroll.detach();
+    // Out of the near span (no box at all) while parked: an observer still holding it would unmark it.
+    box.hidden = true;
+    await land();
+
+    expect({ before, after: box.hasAttribute("data-near") }).toEqual({ before: true, after: true });
   });
 });
 

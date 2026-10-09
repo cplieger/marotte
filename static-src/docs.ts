@@ -15,7 +15,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { deleteDoc } from "./actions/docs.js";
-import { onGitStatusChange, statusFor } from "./git-status-store.js";
+import { onGitStatusChange, statusForPath } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { openFile } from "./editor-openers.js";
 import { openSpec } from "./navigate.js";
@@ -962,22 +962,6 @@ function gitLetterChip(letter: string): HTMLElement {
   return chip;
 }
 
-/** `<workdir>/<repo>/.kiro/...` or `<workdir>/.kiro/...` to (repo, repo-relative path); the root `.kiro` is its own repo. */
-function splitRepoPath(path: string): { repo: string; rel: string } {
-  const idx = path.indexOf("/.kiro");
-  if (idx < 0) {
-    return { repo: "", rel: "" };
-  }
-  const before = path.slice(0, idx);
-  const afterKiro = path.slice(idx + 1);
-  const parent = before.slice(before.lastIndexOf("/") + 1);
-  // A per-repo tree's repo holds .kiro; the workspace-root tree's .kiro is itself the repo.
-  if (parent === "" || before.endsWith("/workspace") || !before.includes("/")) {
-    return { repo: ".kiro", rel: afterKiro.slice(".kiro/".length) };
-  }
-  return { repo: parent, rel: afterKiro };
-}
-
 /**
  * Three independent gates resolved once: global hook (container HOME is deny-listed by `internal/filebrowse`, so
  * nothing opens), `read_only` (body stays a door, controls go), `delete_protected` (a symlink).
@@ -1140,13 +1124,13 @@ function toolCountLabel(n: number): string {
   return `${String(n)} tool${n === 1 ? "" : "s"}`;
 }
 
-/** Skipped for an unreachable row: splitRepoPath would resolve `~/...` to a plausible repo. */
+/** Row paths are absolute with the leading `/` dropped. Skipped for an unreachable row: a global hook's
+ *  `~/` path would read as a literal `/~` key, which a repository at `/` can hold. */
 function gitLetter(doc: KiroDoc, gates: RowGates): string {
   if (!gates.openable) {
     return "";
   }
-  const { repo, rel } = splitRepoPath(doc.path);
-  return repo === "" ? "" : statusFor(repo, rel);
+  return statusForPath("/" + doc.path);
 }
 
 /** On the list's own tier, so the swap to real rows moves nothing. */
@@ -1173,12 +1157,6 @@ export function _setHooksForTest(list: HookState[]): void {
  *  pure filter of the inventory. */
 export function _hookRowsForTest(): KiroDoc[] {
   return hookRows();
-}
-
-/** @internal Test seam for the repo/path split — the piece that decides whether
- *  a git letter resolves at all. */
-export function _splitRepoPathForTest(path: string): { repo: string; rel: string } {
-  return splitRepoPath(path);
 }
 
 /** @internal Test seam for one rendered row. */

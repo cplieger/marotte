@@ -187,6 +187,8 @@ interface Harness {
   gutter: FakeResizeObserver;
   /** The live-edge publisher, whose entries the mutation path consumes. */
   io: FakeIntersectionObserver;
+  /** The near-view observer, which lays skippable boxes out ahead of the scrollport. */
+  near: FakeIntersectionObserver;
   messagesEl: HTMLElement;
   scrollEl: HTMLElement;
   /** Every `addEventListener` on the scroller since just before the module was imported. */
@@ -225,17 +227,19 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
   const scrollEl = scroll.getScrollEl();
   // TWO ResizeObservers, in construction order: the content one, then the gutter one. Attributed by
   // construction site rather than by target, so a regression that moves a callback between them
-  // names the observer it moved to.
+  // names the observer it moved to. TWO IntersectionObservers likewise: the live edge's, then the
+  // near-view one.
   expect([
     FakeResizeObserver.instances.length,
     FakeIntersectionObserver.instances.length,
     scrollEl,
-  ]).toEqual([2, 1, wrap]);
+  ]).toEqual([2, 2, wrap]);
   return {
     scroll,
     ro: FakeResizeObserver.instances[0]!,
     gutter: FakeResizeObserver.instances[1]!,
     io: FakeIntersectionObserver.instances[0]!,
+    near: FakeIntersectionObserver.instances[1]!,
     messagesEl: messages,
     scrollEl,
     listeners,
@@ -741,6 +745,48 @@ describe("the live-edge publisher", () => {
     row.appendChild(document.createTextNode("a chunk"));
     await settle();
     expect(h.scroll.readingState()).toBe("following");
+  });
+});
+
+describe("the near-view observer", () => {
+  /** A `.tool-call` box inside a row, the depth the transcript nests one at. */
+  function rowWithBox(host: HTMLElement): { row: HTMLElement; box: HTMLElement } {
+    const row = document.createElement("div");
+    const box = document.createElement("div");
+    box.className = "tool-call";
+    row.appendChild(box);
+    host.appendChild(row);
+    return { row, box };
+  }
+
+  it("releases the outgoing view's boxes on detach and watches only the incoming view's", async () => {
+    // A box still observed after its view is parked or evicted keeps that transcript alive.
+    const h = await freshModule();
+    const outgoing = rowWithBox(h.messagesEl).box;
+    await settle();
+    expect(h.near.targets.has(outgoing)).toBe(true);
+
+    h.scroll.detach();
+    expect(h.near.targets.size).toBe(0);
+
+    const incoming = document.createElement("div");
+    const kept = rowWithBox(incoming).box;
+    h.messagesEl.appendChild(incoming);
+    h.scroll.attach({ el: incoming, scrollTop: 0, readingState: "following" });
+    expect([h.near.targets.size, h.near.targets.has(kept)]).toEqual([1, true]);
+  });
+
+  it("stops watching a box whose row leaves the transcript, and watches it again when it returns", async () => {
+    const h = await freshModule();
+    const { row, box } = rowWithBox(h.messagesEl);
+    await settle();
+    row.remove();
+    await settle();
+    const gone = h.near.targets.has(box);
+    h.messagesEl.appendChild(row);
+    await settle();
+
+    expect({ gone, back: h.near.targets.has(box) }).toEqual({ gone: false, back: true });
   });
 });
 

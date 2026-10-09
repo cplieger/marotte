@@ -109,6 +109,14 @@ func (s Sensitive) Blocks(resolved string) bool {
 	return false
 }
 
+// ExposedBy reports whether a grant over the whole tree rooted at dir would reach a blocked path:
+// dir is blocked itself, lies inside a listed directory, or encloses a listed entry. A false answer
+// covers every path beneath dir. The caller passes a clean absolute path; it checks each spelling
+// (lexical and symlink-resolved) it can reach dir by.
+func (s Sensitive) ExposedBy(dir string) bool {
+	return s.Blocks(dir) || s.protectedDir(dir)
+}
+
 // protectedDir reports whether deleting `resolved` would wipe a directory listed in, or enclosing a
 // path listed in, the deny list: the container check Blocks omits (Blocks passes `<root>/chats`
 // itself). Callers pass a canonicalised path.

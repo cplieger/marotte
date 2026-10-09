@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/marotte/internal/filemode"
@@ -108,17 +109,23 @@ type KeyPair struct {
 // Store holds the persisted list in memory plus the coordination
 // needed to serialise writes and notify watchers on changes.
 type Store struct {
-	ctx      context.Context
-	path     string
-	kasPath  string
-	onChange func(context.Context)
+	ctx context.Context
+	// rendered is written on the write turn and read without it, so RenderedWaitForReady never queues behind a render.
+	rendered atomic.Pointer[renderedWait]
+	// writeTurn is the store's one writer slot, taken before mu: every change to servers and every write of either
+	// file holds it, so a holder reads servers without mu. A channel because a turn awaited under a context must be
+	// abandonable, which sync.Mutex.Lock is not.
+	writeTurn chan struct{}
+	path      string
+	kasPath   string
+	onChange  func(context.Context)
 	// waitForReady answers the global mcp_wait_for_ready setting. Read on every
 	// write rather than captured at construction, because the user changes it
 	// while the store is alive.
 	waitForReady func(context.Context) (waitForReady, readable bool)
 	servers      []*Server
-	rendered     renderedWait
-	mu           sync.RWMutex
+	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
+	mu sync.RWMutex
 }
 
 // renderedWait is the wait value KAS's config file holds; known is false while no write has landed.
@@ -140,11 +147,12 @@ func New(ctx context.Context, configDir string, onChange func(context.Context), 
 		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
 	}
 	s := &Store{
-		ctx:      ctx,
-		path:     filepath.Join(configDir, "mcp.json"),
-		kasPath:  kasConfigPath(),
-		onChange: onChange,
-		servers:  []*Server{},
+		ctx:       ctx,
+		writeTurn: make(chan struct{}, 1),
+		path:      filepath.Join(configDir, "mcp.json"),
+		kasPath:   kasConfigPath(),
+		onChange:  onChange,
+		servers:   []*Server{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -179,22 +187,49 @@ func WithKASConfigPath(path string) Option {
 // renders `waitForReady: true` on every server. Unwired means off, KAS's own
 // default. readable false means the setting has no answer: a write keeps the
 // value the last write rendered, and RenderKASConfig writes nothing. The resolver
-// must not call back into the store: writeKASConfig runs it with the store's
-// write lock held.
+// must not call back into the store: writeKASConfig runs it on the write turn,
+// with the store's write lock held when a mutation persists.
 func WithWaitForReady(fn func(context.Context) (waitForReady, readable bool)) Option {
 	return func(s *Store) { s.waitForReady = fn }
 }
 
-// renderPolicy runs under s.mu held for writing, or before New returns.
+// renderPolicy runs on the write turn, or before New returns.
 func (s *Store) renderPolicy(ctx context.Context) (policy kasRenderPolicy, readable bool) {
 	if s.waitForReady == nil {
 		return kasRenderPolicy{}, true
 	}
 	wait, readable := s.waitForReady(ctx)
 	if !readable {
-		wait = s.rendered.known && s.rendered.waitForReady
+		r := s.renderedState()
+		wait = r.known && r.waitForReady
 	}
 	return kasRenderPolicy{waitAll: wait}, readable
+}
+
+// acquireWrite takes the write turn, or returns ctx's error once ctx ends first and leaves nothing waiting.
+// releaseWrite gives it back.
+func (s *Store) acquireWrite(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.writeTurn <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) releaseWrite() {
+	<-s.writeTurn
+}
+
+// renderedState is the last landed write's wait value, the zero value before any.
+func (s *Store) renderedState() renderedWait {
+	if r := s.rendered.Load(); r != nil {
+		return *r
+	}
+	return renderedWait{}
 }
 
 // SetOnChange replaces the change callback.

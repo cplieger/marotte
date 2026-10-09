@@ -40,6 +40,7 @@ import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import {
   mountChatView,
   setLoadMore,
+  rebaseLoadMore,
   loadTurnRail,
   pointTurnRail,
   activeTranscriptView,
@@ -312,6 +313,7 @@ function setupLoadMore(chatID: string): void {
             return;
           }
           void loadMessages(chatID, oldest).then(() => {
+            rebaseLoadMore();
             // scroll.ts watches for this removal as the "load complete" signal.
             // Scoped to this chat's view: parked views keep the id resident too.
             transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();

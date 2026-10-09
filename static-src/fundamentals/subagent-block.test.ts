@@ -13,18 +13,11 @@ vi.mock("../icons.js", async (importOriginal) => ({
   ICON_TAB_AGENT: '<svg data-icon="agent-hexagon"></svg>',
 }));
 
-// scroll.ts is a singleton over a real `#messages`; the canonical mock runs its compensation
-// helpers' mutation, which also makes the compensation observable.
-vi.mock("../scroll.js", () =>
-  import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
-);
-
 import {
   buildSubagentCard,
   buildSubagentContainer,
   type SubagentContainer,
 } from "./subagent-block.js";
-import { scrollMock } from "../__test-helpers__/scroll-mock.js";
 import type { ToolStatus } from "../types.js";
 import { outcomeIcon } from "../icons.js";
 import { iconEl } from "../icon-el.js";
@@ -410,36 +403,6 @@ describe("the pipeline container", () => {
     expect(box.root.classList.contains("collapsed")).toBe(true);
     box.setStatus("failed");
     expect(box.root.classList.contains("collapsed")).toBe(false);
-  });
-
-  it("routes the fold through the scroll compensator", async () => {
-    // An auto fold removes height ABOVE the reader, so it must go through `preserveReadingPosition`.
-    // Withholding the wrapped mutation makes that falsifiable.
-    const box = buildSubagentContainer("pipeline", "completed");
-    await populate(box);
-    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
-
-    box.setSuperseded(true);
-
-    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
-    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
-    expect(box.root.classList.contains("collapsed")).toBe(false);
-    expect(headerOf(box.root).getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("routes the failure re-open through it as well", async () => {
-    // The other direction, which `maybeCollapseGroup` also wraps: this ADDS the stage
-    // cards' height back above the reader.
-    const box = buildSubagentContainer("pipeline", "completed", { startOpen: false });
-    await populate(box);
-    expect(box.root.classList.contains("collapsed")).toBe(true);
-    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
-
-    box.setStatus("failed");
-
-    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
-    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
-    expect(box.root.classList.contains("collapsed")).toBe(true);
   });
 
   it("respects a reader who closed it: a later failure stays closed", async () => {

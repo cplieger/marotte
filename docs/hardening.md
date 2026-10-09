@@ -10,7 +10,7 @@ Signing in on the page signs kiro-cli in to your Kiro account. That is the agent
 
 Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`.
 
-The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration, stay hidden.
+The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration, stay hidden. The preview tab follows the same list. It refuses a page whose folder holds those files or sits among them.
 
 ## The container user
 

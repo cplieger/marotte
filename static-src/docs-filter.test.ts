@@ -38,7 +38,7 @@ vi.mock("./bus.js", () => ({
 vi.mock("./git-status-store.js", () => ({
   initGitStatusStore: vi.fn(),
   onGitStatusChange: vi.fn(() => () => undefined),
-  statusFor: vi.fn(() => ""),
+  statusForPath: vi.fn(() => ""),
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 vi.mock("./recipes.js", () => ({
@@ -524,9 +524,10 @@ describe("the census: every string a row renders is matchable", () => {
   it("finds every rendered string of every row on every inventory tab", async () => {
     // The letter goes on a row with no other `m`, so the census reaches it through the letter alone. At most two badges
     // per row, since the title line paints two.
-    const { statusFor } = await import("./git-status-store.js");
-    vi.mocked(statusFor).mockImplementation(((_repo: string, rel: string) =>
-      rel === "hooks/guard.json" ? "M" : "") as typeof statusFor);
+    const { statusForPath } = await import("./git-status-store.js");
+    vi.mocked(statusForPath).mockImplementation((abs) =>
+      abs === "/workspace/.kiro/hooks/guard.json" ? "M" : "",
+    );
     setDocs([
       steering({
         name: "alpha",

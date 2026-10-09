@@ -94,6 +94,10 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		return nil, err
 	}
 
+	if err := s.acquireWrite(ctx); err != nil {
+		return nil, err
+	}
+	defer s.releaseWrite()
 	s.mu.Lock()
 	// A reinstall of an identical spec is a no-op, not a conflict. The 409
 	// it replaces had exactly one workaround — delete, then re-add —
@@ -168,6 +172,10 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 	}
 
 	now := time.Now().UnixMilli()
+	if err := s.acquireWrite(ctx); err != nil {
+		return nil, err
+	}
+	defer s.releaseWrite()
 	s.mu.Lock()
 	before := s.servers
 	results := make([]ImportResult, 0, len(in))
@@ -230,6 +238,10 @@ func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 // edit non-secret fields without re-submitting the secret. Returns a
 // masked copy of the stored record.
 func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, error) {
+	if err := s.acquireWrite(ctx); err != nil {
+		return nil, err
+	}
+	defer s.releaseWrite()
 	s.mu.Lock()
 	idx := s.indexLocked(id)
 	if idx < 0 {
@@ -293,6 +305,10 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 // SetEnabled flips the enabled flag for one server. Returns the updated
 // masked copy.
 func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Server, error) {
+	if err := s.acquireWrite(ctx); err != nil {
+		return nil, err
+	}
+	defer s.releaseWrite()
 	s.mu.Lock()
 	idx := s.indexLocked(id)
 	if idx < 0 {
@@ -325,6 +341,10 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 
 // Delete removes a server by id. No-op if not found.
 func (s *Store) Delete(ctx context.Context, id ServerID) error {
+	if err := s.acquireWrite(ctx); err != nil {
+		return err
+	}
+	defer s.releaseWrite()
 	s.mu.Lock()
 	idx := s.indexLocked(id)
 	if idx < 0 {

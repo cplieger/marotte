@@ -133,8 +133,8 @@ const CHAT_SKELETON: readonly SkeletonTurnShape[] = [
 
 /** The top-of-transcript placeholder while an older page loads. The transcript's own card shape,
  *  two cards deep: the reader sees the top edge of the incoming page and nothing more, and
- *  `scroll.ts` measures the reading-position compensation AFTER this comes down, so its height
- *  is not a term in that arithmetic. */
+ *  `scroll.ts` corrects the reader's drift again AFTER this comes down, so its height is not a
+ *  term in that arithmetic. */
 const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
   { prompt: ["54%"], reply: ["92%", "61%"] },
   { prompt: ["73%"], reply: ["95%", "87%", "48%"] },

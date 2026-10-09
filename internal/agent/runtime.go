@@ -71,19 +71,31 @@ type lifetime struct {
 	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
 	loops sync.WaitGroup
 	mu    sync.Mutex
-	// drainGate orders goUnlessDraining's Add before Shutdown's draining flip, so every admitted Add precedes inflight.Wait.
+	// drainGate orders each goClaimed claim and its Add before Shutdown's draining flip: what a claim takes is waited
+	// for through inflight, and what a refused claim leaves is still there for Shutdown's own teardown.
 	drainGate sync.RWMutex
 	draining  atomic.Bool
 }
 
 // goUnlessDraining runs fn on inflight unless Shutdown has begun, reporting whether it did.
 func (lt *lifetime) goUnlessDraining(fn func()) bool {
+	return lt.goClaimed(func() func() { return fn })
+}
+
+// goClaimed runs claim, then the work it returns on inflight, unless Shutdown has begun, reporting whether work
+// started. claim runs under the drain gate, so what it takes is waited for by Shutdown and what a refusal leaves
+// stays for Shutdown's own teardown. A nil work runs nothing.
+func (lt *lifetime) goClaimed(claim func() (work func())) bool {
 	lt.drainGate.RLock()
 	defer lt.drainGate.RUnlock()
 	if lt.draining.Load() {
 		return false
 	}
-	lt.inflight.Go(fn)
+	work := claim()
+	if work == nil {
+		return false
+	}
+	lt.inflight.Go(work)
 	return true
 }
 
@@ -431,9 +443,13 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	h.coord = newBridgeCoordinator(h)
 	bridgeP.mgr.revertStarting = h.coord.turns.expectRevertRestores
-	h.coord.reconcileSessions = func(ctx context.Context) { h.reconcileSessionSettings(ctx, "session settings") }
-	h.coord.afterOpen = func(ctx context.Context, chatID marotte.ChatID) {
-		h.reportUnreadableOwed(ctx)
+	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
+		h.reconcileSessionSettings(ctx, "session settings", deadline)
+	}
+	h.coord.afterOpen = func(ctx context.Context, chatID marotte.ChatID, deadline time.Time) {
+		reportCtx, cancel := context.WithDeadline(ctx, deadline)
+		h.reportUnreadableOwed(reportCtx)
+		cancel()
 		h.fanOutLive(liveSurface{chat: chatID})
 	}
 	h.coord.autoCompact = newAutoCompactor(h.coord)

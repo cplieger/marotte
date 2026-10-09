@@ -3,6 +3,7 @@ package preview
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -71,7 +73,7 @@ func newFixture(t *testing.T) *fixture {
 	symlink(t, outside, filepath.Join(ws, "linked"))
 	symlink(t, ".", filepath.Join(ws, "alias"))
 	now := time.Unix(1_700_000_000, 0)
-	h := New(ws, newTestSigner(t, now), slog.New(slog.DiscardHandler))
+	h := New(ws, filebrowse.Sensitive{}, newTestSigner(t, now), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return &fixture{h: h, mux: mux, ws: ws, demo: demo, now: now}
@@ -166,33 +168,50 @@ func TestGrant_Refusals(t *testing.T) {
 }
 
 // testdata/page-shapes.json is the page-shape contract preview-page.test.ts reads too: the client
-// offers a preview only for a path this handler grants. Its paths are rooted at /workspace.
+// offers a preview only for a path this handler grants. Its paths are rooted at /workspace, its
+// config_dir included. A deny_listed row is a well-formed page the deny list alone refuses, so its
+// page exists and the answer must be 403.
 func TestGrant_PageShapesMatchTheFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/page-shapes.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []struct {
-		Path        string `json:"path"`
-		Previewable bool   `json:"previewable"`
+	var shapes struct {
+		ConfigDir string `json:"config_dir"`
+		Pages     []struct {
+			Path        string `json:"path"`
+			Previewable bool   `json:"previewable"`
+			DenyListed  bool   `json:"deny_listed"`
+		} `json:"pages"`
 	}
-	if err := json.Unmarshal(raw, &rows); err != nil {
+	if err := json.Unmarshal(raw, &shapes); err != nil {
 		t.Fatal(err)
 	}
-	f := newFixture(t)
-	for i, row := range rows {
-		p := row.Path
+	if shapes.ConfigDir == "" || len(shapes.Pages) == 0 {
+		t.Fatalf("page-shapes.json = %d pages under config_dir %q, want both", len(shapes.Pages), shapes.ConfigDir)
+	}
+	ws := newFixture(t).ws
+	rooted := func(p string) string {
 		if rest, ok := strings.CutPrefix(p, "/workspace"); ok {
-			p = f.ws + rest
+			return ws + rest
 		}
+		return p
+	}
+	f := newDenyFixture(t, ws, rooted(shapes.ConfigDir))
+	for i, row := range shapes.Pages {
+		p := rooted(row.Path)
 		t.Run("row"+strconv.Itoa(i), func(t *testing.T) {
-			if row.Previewable {
+			if row.Previewable || row.DenyListed {
 				write(t, p, "<p>page")
 			}
 			got, body := f.grantStatus(p)
 			switch {
+			case row.Previewable && row.DenyListed:
+				t.Errorf("row %q is both previewable and deny_listed", row.Path)
 			case row.Previewable && got != http.StatusOK:
 				t.Errorf("grant(%q) = %d %s, want 200", row.Path, got, body)
+			case row.DenyListed && got != http.StatusForbidden:
+				t.Errorf("grant(%q) = %d %s, want the deny list's 403", row.Path, got, body)
 			case !row.Previewable && got != http.StatusBadRequest && got != http.StatusForbidden:
 				t.Errorf("grant(%q) = %d %s, want a 400 or 403 shape refusal", row.Path, got, body)
 			}
@@ -225,7 +244,7 @@ func TestGrant_WorkspaceRootSpellings(t *testing.T) {
 	page := filepath.Join(f.demo, "index.html")
 	for _, root := range []string{"/", f.ws + "/"} {
 		t.Run(strings.ReplaceAll(root, "/", "_"), func(t *testing.T) {
-			g := &fixture{h: New(root, newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
+			g := &fixture{h: New(root, filebrowse.Sensitive{}, newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
 			g.h.RegisterRoutes(g.mux)
 			grant := g.grant(t, page)
 			if rec := g.do(http.MethodGet, grant.URL, ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), shimMarker) {
@@ -236,7 +255,7 @@ func TestGrant_WorkspaceRootSpellings(t *testing.T) {
 			}
 		})
 	}
-	g := &fixture{h: New("/", newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
+	g := &fixture{h: New("/", filebrowse.Sensitive{}, newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
 	g.h.RegisterRoutes(g.mux)
 	if code, body := g.grantStatus("/index.html"); code != 400 || !strings.Contains(body, "its own folder under /") {
 		t.Errorf("grant(/index.html) under root / = %d %s, want 400 naming its own folder", code, body)
@@ -485,7 +504,7 @@ func TestServe_AFileGrowingAfterTheSizeCheckIsServedAtTheCheckedSize(t *testing.
 }
 
 func TestHandler_UnopenableWorkspaceAnswers503(t *testing.T) {
-	h := New(filepath.Join(t.TempDir(), "missing"), newTestSigner(t, time.Now()), slog.New(slog.DiscardHandler))
+	h := New(filepath.Join(t.TempDir(), "missing"), filebrowse.Sensitive{}, newTestSigner(t, time.Now()), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	for _, tc := range []struct{ method, target, body string }{
@@ -500,6 +519,27 @@ func TestHandler_UnopenableWorkspaceAnswers503(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s = %d, want 503", tc.method, tc.target, rec.Code)
 		}
+	}
+}
+
+func TestHandler_AWorkspaceThatOpensButCannotBeResolvedAnswers503(t *testing.T) {
+	evalSymlinks = func(string) (string, error) { return "", errors.New("resolve failed") }
+	t.Cleanup(func() { evalSymlinks = filepath.EvalSymlinks })
+	var logs bytes.Buffer
+	h := New(t.TempDir(), filebrowse.Sensitive{}, newTestSigner(t, time.Now()), slog.New(slog.NewTextHandler(&logs, nil)))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/preview/grant", strings.NewReader(`{"path":"/w/d/x.html"}`))
+	req.Host = testHost
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("grant over a workspace root that opened but did not resolve = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(logs.String(), "workspace root could not be resolved") {
+		t.Errorf("the resolve failure logged:\n%s\nwant the could-not-be-resolved warning", logs.String())
 	}
 }
 

@@ -1,90 +1,111 @@
-[
-  {
-    "path": "/workspace/demo/index.html",
-    "previewable": true
-  },
-  {
-    "path": "/workspace/demo/PAGE.HTM",
-    "previewable": true
-  },
-  {
-    "path": "/workspace/demo/about.Html",
-    "previewable": true
-  },
-  {
-    "path": "/workspace/demo/sub/inner.html",
-    "previewable": true
-  },
-  {
-    "path": "/workspace/my demo/a#b?.html",
-    "previewable": true
-  },
-  {
-    "path": "/workspace/root.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/index.htm",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/.uploads/x.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/.hidden.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/.git/x.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/a\\b.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/app.js",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/index.html.bak",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/index.html/",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo//index.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/./index.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/../demo/index.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/demo/index\u0000.html",
-    "previewable": false
-  },
-  {
-    "path": "demo/index.html",
-    "previewable": false
-  },
-  {
-    "path": "/etc/demo/index.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspacex/demo/index.html",
-    "previewable": false
-  },
-  {
-    "path": "/workspace/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/index.html",
-    "previewable": false
-  }
-]
+{
+  "config_dir": "/workspace/state/config",
+  "pages": [
+    {
+      "path": "/workspace/demo/index.html",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/demo/PAGE.HTM",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/demo/about.Html",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/demo/sub/inner.html",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/my demo/a#b?.html",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/root.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/index.htm",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/.uploads/x.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/.hidden.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/.git/x.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/a\\b.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/app.js",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/index.html.bak",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/index.html/",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo//index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/./index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/../demo/index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/demo/index\u0000.html",
+      "previewable": false
+    },
+    {
+      "path": "demo/index.html",
+      "previewable": false
+    },
+    {
+      "path": "/etc/demo/index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspacex/demo/index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/index.html",
+      "previewable": false
+    },
+    {
+      "path": "/workspace/state/config/index.html",
+      "previewable": false,
+      "deny_listed": true
+    },
+    {
+      "path": "/workspace/state/index.html",
+      "previewable": false,
+      "deny_listed": true
+    },
+    {
+      "path": "/workspace/state/config-old/index.html",
+      "previewable": true
+    },
+    {
+      "path": "/workspace/state-old/index.html",
+      "previewable": true
+    }
+  ]
+}

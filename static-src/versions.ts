@@ -80,6 +80,12 @@ export async function configFilePath(name: "tools.json" | "config.json"): Promis
   return `${configDir}/${name}`;
 }
 
+/** The server's config directory without a trailing slash, or "" until GET /api/version has
+ *  named one. */
+export function knownConfigDir(): string {
+  return configDir;
+}
+
 /** Reset for tests. Not part of the app's own lifecycle — the pair is read once
  *  per page load and a page load is the reset. */
 export function _resetVersionsForTest(): void {

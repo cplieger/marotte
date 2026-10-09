@@ -39,13 +39,12 @@
   --rail-foot: calc(var(--sp-3) + (var(--hit-floor) + var(--rail-mark)) / 2 + var(--sp-2));
 }
 
-/* THE HELPER OWNS EVERY MUTATION. Native scroll anchoring is off deliberately,
- * not as a fallback: Safari does not support `overflow-anchor` at all, and
- * leaving it on alongside scroll.ts's preserveReadingPosition is a DOUBLE
- * correction — anchoring applies its queued delta while the helper adds the same
- * one, moving the reader roughly twice as far. */
+/* NATIVE SCROLL ANCHORING HOLDS THE READER (`overflow-anchor` left at `auto`,
+ * https://drafts.csswg.org/css-scroll-anchoring/). It is the one mechanism that sees
+ * a height change landing after the mutation that caused it — a `content-visibility`
+ * row taking its real size, an animated collapse. It keeps the anchor node's top in
+ * place, so `scroll.ts` holds the reading line when the row on that edge grows. */
 [id="messages-wrap"] {
-  overflow-anchor: none;
   position: absolute;
   inset: 0;
   overflow-y: auto;
@@ -278,6 +277,14 @@
   flex-shrink: 0;
   content-visibility: auto;
   contain-intrinsic-size: auto 3rem;
+}
+
+/* A skippable transcript box near the scrollport (`scroll.ts` `NEAR_LEAD`): laid out
+ * ahead, with the containment `auto` applies, so `[id="messages-wrap"]` outranks each
+ * box's own `content-visibility`. */
+[id="messages-wrap"] [data-near] {
+  content-visibility: visible;
+  contain: layout style paint;
 }
 
 /* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the node

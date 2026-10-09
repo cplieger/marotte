@@ -67,6 +67,7 @@ vi.mock("@cplieger/ui-primitives/skeleton", () => ({
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
+  rebaseLoadMore: vi.fn(),
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
   fadeInTranscript: vi.fn(),

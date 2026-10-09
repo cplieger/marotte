@@ -33,6 +33,25 @@ const SELF_SCROLL_MAX_MS = 1500;
  *  UP, which no other key spelling distinguishes. */
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", " "]);
+/** The transcript's `content-visibility: auto` boxes (`transcript-layout-css.test.ts` `BULK`). */
+const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-card";
+/** How far past the scrollport, in scrollport heights, a skippable box is laid out ahead (`[data-near]`). Chromium's
+ *  own lead (https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/display_lock/display_lock_document_state.cc);
+ *  WebKit's has no margin and lands a frame late
+ *  (https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ContentVisibilityDocumentState.cpp), so a box
+ *  would take its real size on screen, after the paint, where no anchoring hides it. Applied in pixels: the spec resolves
+ *  a rootMargin percentage against the root's WIDTH (https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle),
+ *  which Chromium and WebKit do not follow. */
+const NEAR_LEAD = 1.5;
+
+function forEachSkippable(root: Element, fn: (box: Element) => void): void {
+  if (root.matches(SKIPPABLE)) {
+    fn(root);
+  }
+  for (const box of root.querySelectorAll(SKIPPABLE)) {
+    fn(box);
+  }
+}
 
 /** The reader's position. */
 export type ReadingState = "following" | "reading";
@@ -49,9 +68,6 @@ export interface ViewScrollState {
 export interface ViewAttachHandle extends ViewScrollState {
   el: HTMLElement;
 }
-
-/** Which geometry a mutation disturbs; measuring the wrong one compensates by ZERO. */
-export type ShiftKind = "content-growth" | "viewport-shrink";
 
 class ScrollController {
   readonly scrollEl: HTMLElement;
@@ -101,15 +117,27 @@ class ScrollController {
   private pinUntil = 0;
   private pinFrame = 0;
 
+  /** The element at the scrollport's top edge after the last scroll event, and where it stood. */
+  private viewTop: { el: Element; top: number } | null = null;
+
+  /** The element on the reading line after the reader's last scroll, and where it stood (null =
+   *  nothing to hold). Native anchoring holds the TOP edge, so a row there growing late — a
+   *  `content-visibility` placeholder taking its real size — pushes this one away; `holdReadingLine`
+   *  puts it back. Dropped by a press in the transcript: what a click opens is the reader's own. */
+  private readLine: { el: Element; top: number } | null = null;
+
+  /** Whether the last write was `holdReadingLine`'s: layout can move the line again between that write and its
+   *  scroll event, so the event holds once more before it re-reads the line. */
+  private holding = false;
+
   /** The scrollTop this controller last wrote, or -1. A `scroll` event landing on it is the
    *  controller's OWN, so it may not be PUBLISHED as a reader gesture: a streaming turn re-pins
    *  several times a second and none of those is the reader changing their mind. */
   private selfScrollTop = -1;
 
-  /** An interval in which every scroll event belongs to this controller, the target it is
-   *  animating toward, and the timer that bounds it (null = none). */
+  /** An interval in which every scroll event belongs to this controller, and the timer that
+   *  bounds it (null = none). */
   private epochOpen = false;
-  private epochTarget = 0;
   private epochTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Did the reader's last directional input ask to go UP? The only thing that may enter
@@ -131,6 +159,8 @@ class ScrollController {
 
   /** Teardown for the pagination pass in flight, or null when none is running. */
   private pendingLoad: (() => void) | null = null;
+  /** Re-measures the pass's drift baseline where the reader now stands, until the page lands; null with no pass. */
+  private rebaseLoad: (() => void) | null = null;
 
   /** The observers rooted on `viewEl`, held as fields so `attach` can re-root them on the
    *  incoming view. `resizeObserver` watches the view's CHILDREN and only reads; the scroller's
@@ -140,6 +170,11 @@ class ScrollController {
   private childObserver: MutationObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private gutterObserver: ResizeObserver | null = null;
+  private nearObserver: IntersectionObserver | null = null;
+  /** `nearObserver`'s targets, so the observer a new scrollport height needs takes over exactly these. */
+  private nearTargets = new Set<Element>();
+  /** The near lead `nearObserver` was built with, in px (-1 = none built). */
+  private nearMargin = -1;
   private observedChildren = new Set<Element>();
 
   /** The frame the gutter write has queued (0 = none), a single slot so a resize storm costs one
@@ -233,6 +268,7 @@ class ScrollController {
     this.scrollEl.addEventListener(
       "pointerdown",
       (e) => {
+        this.readLine = null;
         if (this.inScrollbarGutter(e)) {
           this.barDragging = true;
           this.lastBarY = e.clientY;
@@ -278,10 +314,14 @@ class ScrollController {
         // Read before anything below can dirty the layout.
         const top = this.scrollEl.scrollTop;
         const edge = this.edgeDistance();
+        const anchored = this.movedByAnchoring(top);
         // A clamp only ever lowers scrollTop, so moving DOWN is the one thing it cannot do; the
-        // controller's own write is not the reader moving either.
+        // controller's own write and the browser's anchoring are not the reader moving either.
         const movedDown =
-          !this.landedOnOwnWrite() && this.lastScrollTop >= 0 && top > this.lastScrollTop + 1;
+          !this.landedOnOwnWrite() &&
+          !anchored &&
+          this.lastScrollTop >= 0 &&
+          top > this.lastScrollTop + 1;
         this.dispatchViewportChange();
         // An open epoch attributes this event to the controller's own animation: the state was
         // decided when the epoch opened, and a position the flight passes through inside the
@@ -304,12 +344,18 @@ class ScrollController {
         // is derived from input, which a write of this controller's does not fire.
         const own = this.landedOnOwnWrite();
         this.selfScrollTop = -1;
-        if (!this.epochOpen && !own) {
+        const held = own && this.holding;
+        this.holding = false;
+        if (held) {
+          this.holdReadingLine();
+        }
+        if (!this.epochOpen && !own && !anchored) {
           this.publishReaderGesture();
         }
         this.maybeLoadMore();
         this.lastScrollTop = top;
         this.lastEdgeDistance = edge;
+        this.noteViewTop();
       },
       { passive: true },
     );
@@ -335,6 +381,10 @@ class ScrollController {
       if (t !== null && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) {
         return;
       }
+      // Activating a control in the transcript is a press, like the pointer's.
+      if ((e.key === "Enter" || e.key === " ") && t !== null && this.viewEl.contains(t)) {
+        this.readLine = null;
+      }
       // Under a modifier too, and BEFORE the resume arm's guard: Ctrl+Home scrolls this box, so
       // dropping it leaves the reader at a position with no fingerprint on it, which reads as
       // Following and pins them straight back down.
@@ -356,7 +406,8 @@ class ScrollController {
     // NOTICES change; measures nothing. It consumes the published edge state and hands the one
     // write it still owes to an animation frame (`autoScrollIfAnchored`), so a streamed delta costs
     // this callback no layout over a subtree that can hold several hundred cards.
-    const mutationObserver = new MutationObserver(() => {
+    const mutationObserver = new MutationObserver((records) => {
+      this.settleNear(records);
       this.revalidateReadingState(this.atLiveEdge);
       this.autoScrollIfAnchored();
       for (const cb of this.mutateListeners) {
@@ -395,6 +446,8 @@ class ScrollController {
     // The one observer that sees a box change with no DOM mutation behind it (zoom, a scrollbar
     // swap, a code block expanding).
     this.resizeObserver = new ResizeObserver(() => {
+      // First: the deliveries below may pin, and this reads the layout the change produced.
+      this.holdReadingLine();
       this.scheduleRevalidate();
       // Ordered BEFORE the deferred transition, so a delivery whose release lands next frame pins
       // nothing here; the flush's own resize or the next mutation does it.
@@ -406,8 +459,10 @@ class ScrollController {
     // Watches the scroller ALONE and owns the one write that reaches a shared ancestor.
     this.gutterObserver = new ResizeObserver(() => {
       this.scheduleScrollbarWidth();
+      this.fitNearObserver();
     });
     this.gutterObserver.observe(this.scrollEl);
+    this.fitNearObserver();
     this.childObserver = new MutationObserver(() => {
       this.reobserveChildren();
     });
@@ -437,13 +492,14 @@ class ScrollController {
     this.childObserver?.disconnect();
     this.childObserver?.observe(view, { childList: true });
     this.reobserveChildren();
+    this.observeNear(view);
   }
 
   private disconnectView(): void {
     this.contentObserver?.disconnect();
     this.childObserver?.disconnect();
     // The edge marker rides with the outgoing view, so unobserving it is what makes `detach`'s
-    // promise true for all FOUR view observers: parking the view sets `content-visibility: hidden`,
+    // promise true for every view observer: parking the view sets `content-visibility: hidden`,
     // the sentinel stops being rendered, and the observer would otherwise publish `isIntersecting:
     // false` from a subtree nobody is reading.
     if (this.edgeSentinel !== null) {
@@ -453,6 +509,68 @@ class ScrollController {
       this.resizeObserver?.unobserve(child);
     }
     this.observedChildren.clear();
+    // The near set holds only the attached view's boxes; `observeView` rescans the incoming one.
+    this.nearObserver?.disconnect();
+    this.nearTargets.clear();
+  }
+
+  /** Build the near observer for the scrollport's current height, if its lead changed: a rootMargin is fixed for an
+   *  observer's lifetime. */
+  private fitNearObserver(): void {
+    const margin = Math.round(this.scrollEl.clientHeight * NEAR_LEAD);
+    if (margin === this.nearMargin) {
+      return;
+    }
+    this.nearMargin = margin;
+    this.nearObserver?.disconnect();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          entry.target.toggleAttribute("data-near", entry.isIntersecting);
+        }
+      },
+      { root: this.scrollEl, rootMargin: `${String(margin)}px 0px` },
+    );
+    this.nearObserver = observer;
+    for (const box of this.nearTargets) {
+      observer.observe(box);
+    }
+  }
+
+  private settleNear(records: readonly MutationRecord[]): void {
+    const observer = this.nearObserver;
+    if (observer === null) {
+      return;
+    }
+    // Removals first: a node moved within one record is listed as both, and must stay observed.
+    for (const record of records) {
+      for (const node of record.removedNodes) {
+        if (node instanceof Element) {
+          forEachSkippable(node, (box) => {
+            observer.unobserve(box);
+            this.nearTargets.delete(box);
+          });
+        }
+      }
+      for (const node of record.addedNodes) {
+        if (node instanceof Element) {
+          this.observeNear(node);
+        }
+      }
+    }
+  }
+
+  /** Lay every skippable box in `root` out while it is near the scrollport, so its first real size lands off screen,
+   *  where native anchoring holds the reader. Observing a box twice is a no-op. */
+  private observeNear(root: Element): void {
+    const observer = this.nearObserver;
+    if (observer === null) {
+      return;
+    }
+    forEachSkippable(root, (box) => {
+      observer.observe(box);
+      this.nearTargets.add(box);
+    });
   }
 
   private reobserveChildren(): void {
@@ -570,7 +688,6 @@ class ScrollController {
    *  rather than the reader stating a position. */
   beginSelfScroll(): void {
     this.epochOpen = true;
-    this.epochTarget = this.scrollEl.scrollTop;
     this.armEpochBackstop();
   }
 
@@ -603,7 +720,6 @@ class ScrollController {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const landing = Math.max(0, Math.min(px, max));
     this.setState(this.landsAtOffsetLiveEdge(landing) ? "following" : "reading");
-    this.epochTarget = landing;
     this.armEpochBackstop();
     this.scrollSelfTo(landing, behavior);
   }
@@ -777,35 +893,6 @@ class ScrollController {
     return landing >= max - BOTTOM_TOLERANCE_PX;
   }
 
-  /** Run `mutate` without moving what the reader is looking at. */
-  preserveReadingPosition(mutate: () => void, kind: ShiftKind): void {
-    if (this.state === "following") {
-      mutate();
-      return;
-    }
-    const before =
-      kind === "content-growth" ? this.scrollEl.scrollHeight : this.scrollEl.clientHeight;
-    mutate();
-    const after =
-      kind === "content-growth" ? this.scrollEl.scrollHeight : this.scrollEl.clientHeight;
-    const delta = kind === "content-growth" ? after - before : before - after;
-    if (delta === 0) {
-      return;
-    }
-    // Through `scrollSelfTo` so the compensation is clamped to a landing the scroller can reach: an
-    // out-of-range target silently lands short, which is the displacement this helper exists to
-    // prevent.
-    if (this.epochOpen) {
-      // An animation owns the position, so the live `scrollTop` is a point it is passing through:
-      // compensating THAT redirects the animation to `live + delta` instead of moving its target by
-      // the height that left the document.
-      this.epochTarget += delta;
-      this.scrollSelfTo(this.epochTarget, "instant");
-      return;
-    }
-    this.scrollSelfTo(this.scrollEl.scrollTop + delta, "instant");
-  }
-
   /** Apply `mutate` now if Following, or queue it until the reader returns. Content must never
    *  disappear from above the reader through no action of their own, which is exactly what a
    *  turn folding while they read does. */
@@ -940,6 +1027,10 @@ class ScrollController {
     this.updateLoadMoreIndicator();
   }
 
+  rebaseLoadMore(): void {
+    this.rebaseLoad?.();
+  }
+
   /** Fetch until the scroller actually overflows. */
   fillViewport(): void {
     if (this.scrollEl.scrollHeight > this.scrollEl.clientHeight + BOTTOM_TOLERANCE_PX) {
@@ -998,8 +1089,7 @@ class ScrollController {
     }
   }
 
-  /** Apply queued mutations, each still compensated: the reader is at the live edge now, but a
-   *  fold above them would still yank the content. */
+  /** Apply queued mutations in arrival order: the reader is at the live edge now. */
   private flushDeferred(): void {
     if (this.deferred.length === 0) {
       return;
@@ -1041,11 +1131,84 @@ class ScrollController {
     return this.scrollEl.scrollHeight - this.scrollEl.clientHeight - this.scrollEl.scrollTop;
   }
 
+  /** Did the browser's scroll anchoring produce this scroll? It moves `scrollTop` to hold the
+   *  content in view still, so the element that was at the top edge has not moved. */
+  private movedByAnchoring(top: number): boolean {
+    const ref = this.viewTop;
+    return (
+      ref !== null &&
+      top !== this.lastScrollTop &&
+      ref.el.isConnected &&
+      Math.abs(ref.el.getBoundingClientRect().top - ref.top) < 1
+    );
+  }
+
+  private noteViewTop(): void {
+    const box = this.scrollEl.getBoundingClientRect();
+    this.viewTop = this.contentAt(box.left + box.width / 2, box.top + 1);
+    this.readLine = this.pickReadLine();
+  }
+
+  private pickReadLine(): { el: Element; top: number } | null {
+    const box = this.scrollEl.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    // Preferably the first element that starts in view at or below the line: a box reaching above
+    // the scrollport (a body around a gap) does not move when the rows inside it do. A paragraph
+    // taller than the scrollport starts in view nowhere, so the line's own element stands.
+    const bottom = box.top + this.scrollEl.clientHeight;
+    const line = box.top + this.scrollEl.clientHeight * READING_LINE_FRACTION;
+    for (let y = line; y < bottom; y += 24) {
+      const hit = this.contentAt(x, y);
+      if (hit !== null && hit.top >= box.top) {
+        return hit;
+      }
+    }
+    return this.contentAt(x, line);
+  }
+
+  /** The transcript element at a client point and its top, or null over a gap or a spacer. */
+  private contentAt(x: number, y: number): { el: Element; top: number } | null {
+    const el = document.elementFromPoint(x, y);
+    if (el === null || !this.viewEl.contains(el) || el.closest(".turn-space") !== null) {
+      return null;
+    }
+    return { el, top: el.getBoundingClientRect().top };
+  }
+
+  /** Put the reading line's element back where the reader left it, if a size change moved it. */
+  private holdReadingLine(): void {
+    const line = this.readLine;
+    if (line === null || this.state !== "reading" || this.epochOpen) {
+      return;
+    }
+    // A box-less element reads a rect of zeros, which would pass for a drift of its whole offset.
+    if (!line.el.isConnected || line.el.getClientRects().length === 0) {
+      this.readLine = this.pickReadLine();
+      return;
+    }
+    const top = line.el.getBoundingClientRect().top;
+    const drift = top - line.top;
+    if (Math.abs(drift) < 1) {
+      return;
+    }
+    const from = this.scrollEl.scrollTop;
+    this.scrollSelfTo(from + drift, "instant");
+    if (Math.abs(this.scrollEl.scrollTop - from) < 1) {
+      // Clamped where it stood: no scroll event follows to re-read the line, and the reader now sees it here.
+      this.readLine = { el: line.el, top };
+      return;
+    }
+    this.holding = true;
+  }
+
   private landedOnOwnWrite(): boolean {
     return this.selfScrollTop >= 0 && Math.abs(this.scrollEl.scrollTop - this.selfScrollTop) <= 1;
   }
 
   private forgetScrollBaselines(): void {
+    this.viewTop = null;
+    this.readLine = null;
+    this.holding = false;
     this.lastScrollTop = -1;
     this.lastEdgeDistance = Number.POSITIVE_INFINITY;
   }
@@ -1112,7 +1275,7 @@ class ScrollController {
    *  offsetParent is its own `.msg-row`, because `content-visibility: auto`
    *  (css/13-messages.css) implies `contain: paint` and a paint-containing box is a containing
    *  block, which is where the offsetParent walk stops. */
-  private scrollFrameRect(el: HTMLElement): { top: number; bottom: number } | null {
+  private scrollFrameRect(el: Element): { top: number; bottom: number } | null {
     if (!el.isConnected || el.getClientRects().length === 0) {
       return null;
     }
@@ -1141,7 +1304,7 @@ class ScrollController {
       return;
     }
     // A smooth flight toward an early turn crosses the threshold on its way, and this pass ends in
-    // a height compensation — a second writer inside one animation. The FORCED call is a caller
+    // a drift correction — a second writer inside one animation. The FORCED call is a caller
     // stating a need rather than the listener guessing at one, so it still runs.
     if (!force && this.epochOpen) {
       return;
@@ -1156,22 +1319,52 @@ class ScrollController {
     // view's DOM), so a document-wide id lookup could find a sibling view's button and mount this
     // pass's skeleton there.
     const indicator = this.viewEl.querySelector(`[id="load-more-indicator"]`);
+    // The skeleton and then the older messages land ABOVE the reader. Scroll anchoring holds them in
+    // place except at offset 0, a suppression trigger (css-scroll-anchoring §2.2.2), so only the
+    // drift it left is corrected: the height delta would count the page twice wherever it did anchor.
+    const ref =
+      [...this.viewEl.children].find((c) => c !== indicator && c !== this.edgeSentinel) ?? null;
+    let refTop = 0;
+    let prevTop = 0;
+    let prevHeight = 0;
+    const measure = (): void => {
+      refTop = ref?.getBoundingClientRect().top ?? 0;
+      prevTop = this.scrollEl.scrollTop;
+      prevHeight = this.scrollEl.scrollHeight;
+    };
+    measure();
+    const hold = (): void => {
+      const drift =
+        ref?.isConnected === true
+          ? ref.getBoundingClientRect().top - refTop
+          : this.scrollEl.scrollHeight - prevHeight - (this.scrollEl.scrollTop - prevTop);
+      if (drift !== 0) {
+        // Through `scrollSelfTo` so the write is clamped to a reachable landing.
+        this.scrollSelfTo(this.scrollEl.scrollTop + drift, "instant");
+      }
+    };
     if (indicator !== null) {
       indicator.replaceWith(skel);
     } else {
       this.viewEl.prepend(skel);
     }
-    // The content-growth instance this helper was generalised from: older messages land ABOVE the
-    // reader, so the box is unchanged and scrollHeight is the delta to restore.
-    const prevHeight = this.scrollEl.scrollHeight;
+    hold();
+    // Scrolling never moves `ref` in the scroll frame, so while it stands where the skeleton left it nothing has landed
+    // above it, and a re-measure is a baseline from before the landing whatever moved the scroller.
+    const frameTop = (): number | null =>
+      ref === null ? null : (this.scrollFrameRect(ref)?.top ?? null);
+    const unlanded = frameTop();
+    this.rebaseLoad = (): void => {
+      const frame = frameTop();
+      if (unlanded !== null && frame !== null && Math.abs(frame - unlanded) < 1) {
+        measure();
+      }
+    };
     this.onLoadMore();
     const observer = new MutationObserver(() => {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
-        const newHeight = this.scrollEl.scrollHeight;
-        // Through `scrollSelfTo` so the write is clamped to a reachable landing: this compensation
-        // is the reader's position, and losing it throws them into the page that just arrived.
-        this.scrollSelfTo(this.scrollEl.scrollTop + (newHeight - prevHeight), "instant");
+        hold();
       }
     });
     const safetyTimer = setTimeout(() => {
@@ -1192,6 +1385,7 @@ class ScrollController {
   private endLoadPass(): void {
     const end = this.pendingLoad;
     this.pendingLoad = null;
+    this.rebaseLoad = null;
     this.loadingMore = false;
     end?.();
   }
@@ -1300,6 +1494,12 @@ export function scrollToBottom(): void {
 export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
   getInstance().setLoadMore(fn, hasMore);
 }
+/** Re-measure the older-page pass in flight where the reader stands now; a no-op once the page has landed. A writer
+ *  that may land the page calls it just before writing, because the browser can move the scroller before that move's
+ *  `scroll` event runs. */
+export function rebaseLoadMore(): void {
+  getInstance().rebaseLoadMore();
+}
 export function resetScrollState(): void {
   getInstance().resetScrollState();
 }
@@ -1324,9 +1524,6 @@ export function setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
 }
 export function setResumeLabel(text: string): void {
   getInstance().setResumeLabel(text);
-}
-export function preserveReadingPosition(mutate: () => void, kind: ShiftKind): void {
-  getInstance().preserveReadingPosition(mutate, kind);
 }
 export function deferWhileReading(mutate: () => void): void {
   getInstance().deferWhileReading(mutate);

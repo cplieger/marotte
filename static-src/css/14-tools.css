@@ -1166,8 +1166,7 @@ a.subagent-header {
  *    find-in-chat walker even while the card is OPEN — the walker prunes at any
  *    element whose `checkVisibility({contentVisibilityAuto:true})` is false — and
  *    it would make the scroller's own `scrollHeight` change as the reader
- *    scrolls, which `scroll.ts` differences to compensate reading position
- *    (`preserveReadingPosition`, and the load-older-pages path). `hidden` applies
+ *    scrolls. `hidden` applies
  *    only in the closed state, which is exactly the state whose content is
  *    already excluded from search by the `aria-hidden` the disclosure sets.
  *

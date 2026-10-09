@@ -5,7 +5,6 @@
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
-import { preserveReadingPosition } from "../scroll.js";
 
 /** One whitespace character. No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
@@ -129,11 +128,7 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
         return;
       }
       collapsed = true;
-      // No animation on a bare `open = false`, so compensate scroll position. The
-      // wrapper stays on the COLLAPSE half only: settling moves no height.
-      preserveReadingPosition(() => {
-        root.open = false;
-      }, "content-growth");
+      root.open = false;
     },
   };
 }

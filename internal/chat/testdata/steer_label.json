@@ -50,7 +50,7 @@
       "label": "Workflow result not delivered · the session restarted",
       "compared": true,
       "sites": [
-        "internal/agent/bridge_coord.go:1190",
+        "internal/agent/bridge_coord.go:1193",
         "internal/agent/entry_merge.go:493"
       ]
     },
@@ -108,7 +108,7 @@
       "compared": true,
       "sites": [
         "internal/agent/entry_merge.go:493",
-        "internal/agent/runtime.go:671"
+        "internal/agent/runtime.go:687"
       ]
     },
     {
@@ -136,7 +136,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1190",
+      "site": "internal/agent/bridge_coord.go:1193",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -171,7 +171,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:671",
+      "site": "internal/agent/runtime.go:687",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
