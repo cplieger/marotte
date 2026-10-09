@@ -112,10 +112,22 @@ interface Spot {
   readonly chars: number;
 }
 
+interface Held {
+  readonly selector: string;
+  readonly chars: number;
+}
+
 function rangeBefore(node: Node): Range {
   const at = document.createRange();
   at.setStartBefore(node);
   return at;
+}
+
+function charsTo(within: Element, at: Range): number {
+  const before = document.createRange();
+  before.selectNodeContents(within);
+  before.setEnd(at.startContainer, at.startOffset);
+  return before.toString().length;
 }
 
 /** `spot` as a collapsed range over the current text nodes; past the last one, the end of `within`. */
@@ -228,13 +240,21 @@ export class FindEngine {
   private current = -1;
   /**
    * Collapsed just before the current hit's first piece. Live, so removing the subtree holding it moves it to where
-   * that subtree stood, which is how `refresh` places a hit whose element was replaced.
+   * that subtree stood, which is how `refresh` places a replaced hit when no copy of its holder is mounted.
    */
   private anchor: Range | null = null;
+  private held: Held | null = null;
+  private readonly holderAttrs: readonly string[];
   private lastQuery = "";
 
-  constructor(root: HTMLElement) {
+  /**
+   * `holderAttrs` names the attributes identifying the element a hit lives in: the closest carrying all of them. A
+   * holder re-rendered as a copy with the same values keeps, through `refresh`, the current hit's character position
+   * in it: the same hit only while the text before it is unchanged. Empty means no holder.
+   */
+  constructor(root: HTMLElement, holderAttrs: readonly string[] = []) {
     this.root = root;
+    this.holderAttrs = holderAttrs;
   }
 
   get total(): number {
@@ -256,12 +276,13 @@ export class FindEngine {
 
   /**
    * Re-highlight `query` keeping the current hit: found again by where it starts, not its index, and walked even while
-   * its `content-visibility: auto` box is skipped, so the hit and its highlight outlast any scroll. Once it is gone (its
-   * turn folded, its element replaced), the first hit from where it stood is current, wrapping like `next`. Returns
-   * the count.
+   * its `content-visibility: auto` box is skipped, so the hit and its highlight outlast any scroll. Where it starts is
+   * counted in its holder while one with its identity is mounted, so a holder re-rendered as a copy keeps that
+   * character position; else it is where the hit's element stood. Once it is gone (its turn folded, its holder
+   * removed), the first hit from there is current, wrapping like `next`. Returns the count.
    */
   refresh(query: string, caseSensitive = false): number {
-    const spot = this.currentSpot();
+    const spot = this.heldSpot() ?? this.anchorSpot();
     const total = this.walk(
       query,
       caseSensitive,
@@ -291,20 +312,42 @@ export class FindEngine {
     return hits.length;
   }
 
-  private currentSpot(): Spot | null {
+  private anchorSpot(): Spot | null {
     const at = this.anchor;
     if (at === null) {
       return null;
     }
     const node = at.startContainer;
     const within = node instanceof Element ? node : node.parentElement;
+    return within === null ? null : { within, chars: charsTo(within, at) };
+  }
+
+  private heldSpot(): Spot | null {
+    if (this.held === null) {
+      return null;
+    }
+    const within = this.root.querySelector(this.held.selector);
     if (within === null) {
       return null;
     }
-    const before = document.createRange();
-    before.selectNodeContents(within);
-    before.setEnd(node, at.startOffset);
-    return { within, chars: before.toString().length };
+    const mark = this.currentMark();
+    // A mark still in its holder is counted afresh: text inserted before it since would stale the recorded count.
+    if (mark !== null && within.contains(mark)) {
+      return { within, chars: charsTo(within, rangeBefore(mark)) };
+    }
+    return { within, chars: this.held.chars };
+  }
+
+  private holdOf(mark: HTMLElement, before: Range): Held | null {
+    const attrs = this.holderAttrs;
+    const holder = attrs.length === 0 ? null : mark.closest(attrs.map((a) => `[${a}]`).join(""));
+    if (holder === null) {
+      return null;
+    }
+    const selector = attrs
+      .map((a) => `[${a}="${CSS.escape(holder.getAttribute(a) ?? "")}"]`)
+      .join("");
+    return { selector, chars: charsTo(holder, before) };
   }
 
   /** The first hit starting at or after `spot`, or -1. */
@@ -331,6 +374,7 @@ export class FindEngine {
     this.hits = [];
     this.current = -1;
     this.anchor = null;
+    this.held = null;
     this.lastQuery = "";
   }
 
@@ -377,7 +421,13 @@ export class FindEngine {
       }
     }
     const mark = this.currentMark();
-    this.anchor = mark === null ? null : rangeBefore(mark);
+    if (mark === null) {
+      this.anchor = null;
+      this.held = null;
+      return;
+    }
+    this.anchor = rangeBefore(mark);
+    this.held = this.holdOf(mark, this.anchor);
   }
 
   /** Runs of searchable text nodes. A block tag ends the run whether or not its subtree is searched. */
