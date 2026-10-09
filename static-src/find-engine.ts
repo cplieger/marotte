@@ -40,9 +40,9 @@ const CHROME_SELECTOR = "[data-vk-chrome]:not(.tool-denial):not(.tool-mcp-badge)
 
 /**
  * Prunes script/style, wrapped hits, chrome, structurally hidden subtrees and elements `checkVisibility` calls
- * invisible (except `display: contents`).
+ * invisible (except `display: contents`, and content inside `keep` that is hidden only by a skipped box).
  */
-function isSearchableElement(elem: Element): boolean {
+function isSearchableElement(elem: Element, keep: Element | null): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
     return false;
@@ -72,6 +72,16 @@ function isSearchableElement(elem: Element): boolean {
       opacityProperty: false,
     })
   ) {
+    if (
+      keep?.contains(elem) === true &&
+      cv.call(elem, {
+        contentVisibilityAuto: false,
+        visibilityProperty: true,
+        opacityProperty: false,
+      })
+    ) {
+      return true;
+    }
     return rendersWithoutBox(elem);
   }
   return true;
@@ -80,6 +90,50 @@ function isSearchableElement(elem: Element): boolean {
 /** `display: contents` is the one shape `checkVisibility` calls invisible that is not hidden, so the walker descends it. */
 function rendersWithoutBox(elem: Element): boolean {
   return getComputedStyle(elem).display === "contents";
+}
+
+/** The outermost `content-visibility: auto` box holding `el` below `root`: the box whose skipping hides it. */
+function skippableBoxOf(el: Element, root: Element): Element | null {
+  let box: Element | null = null;
+  for (let cur: Element | null = el; cur !== null && cur !== root; cur = cur.parentElement) {
+    if (getComputedStyle(cur).contentVisibility === "auto") {
+      box = cur;
+    }
+  }
+  return box;
+}
+
+/**
+ * Where a hit starts, which a re-walk keeps and an index does not: other boxes skipping or rendering renumber hits.
+ * Characters into an element, because marking and unmarking split and merge text nodes but never change text.
+ */
+interface Spot {
+  readonly within: Element;
+  readonly chars: number;
+}
+
+function rangeBefore(node: Node): Range {
+  const at = document.createRange();
+  at.setStartBefore(node);
+  return at;
+}
+
+/** `spot` as a collapsed range over the current text nodes; past the last one, the end of `within`. */
+function pointAt(spot: Spot): Range {
+  const at = document.createRange();
+  const texts = document.createTreeWalker(spot.within, NodeFilter.SHOW_TEXT);
+  let left = spot.chars;
+  for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
+    const length = (node as Text).length;
+    if (left < length) {
+      at.setStart(node, left);
+      return at;
+    }
+    left -= length;
+  }
+  at.selectNodeContents(spot.within);
+  at.collapse(false);
+  return at;
 }
 
 /** One slice of a text node that belongs to a hit. */
@@ -172,6 +226,11 @@ export class FindEngine {
   /** One entry per hit: its `<mark>` pieces in document order. */
   private hits: HTMLElement[][] = [];
   private current = -1;
+  /**
+   * Collapsed just before the current hit's first piece. Live, so removing the subtree holding it moves it to where
+   * that subtree stood, which is how `refresh` places a hit whose element was replaced.
+   */
+  private anchor: Range | null = null;
   private lastQuery = "";
 
   constructor(root: HTMLElement) {
@@ -192,6 +251,30 @@ export class FindEngine {
 
   /** Re-highlight `query` across the root, clearing prior marks; the current match resets to 0 (or -1). Returns the count. */
   search(query: string, caseSensitive = false): number {
+    return this.walk(query, caseSensitive, null);
+  }
+
+  /**
+   * Re-highlight `query` keeping the current hit: found again by where it starts, not its index, and walked even while
+   * its `content-visibility: auto` box is skipped, so the hit and its highlight outlast any scroll. Once it is gone (its
+   * turn folded, its element replaced), the first hit from where it stood is current, wrapping like `next`. Returns
+   * the count.
+   */
+  refresh(query: string, caseSensitive = false): number {
+    const spot = this.currentSpot();
+    const total = this.walk(
+      query,
+      caseSensitive,
+      spot === null ? null : skippableBoxOf(spot.within, this.root),
+    );
+    if (spot !== null) {
+      // With no hit after the spot this is a no-op, and `walk`'s first hit stays current: the wrap.
+      this.setCurrent(this.firstFrom(spot));
+    }
+    return total;
+  }
+
+  private walk(query: string, caseSensitive: boolean, keep: Element | null): number {
     this.clear();
     this.lastQuery = query;
     if (query === "") {
@@ -199,13 +282,39 @@ export class FindEngine {
     }
     const needle = prepare(query, caseSensitive);
     const hits: HTMLElement[][] = [];
-    for (const run of this.collectRuns()) {
+    for (const run of this.collectRuns(keep)) {
       markRun(run, needle, hits);
     }
     this.hits = hits;
     this.current = hits.length > 0 ? 0 : -1;
-    this.applyCurrentClass();
+    this.applyCurrent();
     return hits.length;
+  }
+
+  private currentSpot(): Spot | null {
+    const at = this.anchor;
+    if (at === null) {
+      return null;
+    }
+    const node = at.startContainer;
+    const within = node instanceof Element ? node : node.parentElement;
+    if (within === null) {
+      return null;
+    }
+    const before = document.createRange();
+    before.selectNodeContents(within);
+    before.setEnd(node, at.startOffset);
+    return { within, chars: before.toString().length };
+  }
+
+  /** The first hit starting at or after `spot`, or -1. */
+  private firstFrom(spot: Spot): number {
+    const at = pointAt(spot);
+    // From the first piece's text: `(mark, 0)` sorts before a point inside the mark's own text.
+    return this.hits.findIndex((pieces) => {
+      const first = pieces[0];
+      return first !== undefined && at.comparePoint(first.firstChild ?? first, 0) >= 0;
+    });
   }
 
   /** Remove all highlight marks and restore the original text nodes. */
@@ -221,6 +330,7 @@ export class FindEngine {
     }
     this.hits = [];
     this.current = -1;
+    this.anchor = null;
     this.lastQuery = "";
   }
 
@@ -229,7 +339,7 @@ export class FindEngine {
       return;
     }
     this.current = (this.current + 1) % this.hits.length;
-    this.applyCurrentClass();
+    this.applyCurrent();
   }
 
   prev(): void {
@@ -237,22 +347,22 @@ export class FindEngine {
       return;
     }
     this.current = (this.current - 1 + this.hits.length) % this.hits.length;
-    this.applyCurrentClass();
+    this.applyCurrent();
   }
 
-  /** Restore the current index after a live re-run, so streaming does not jump back to match 1. Clamped; out of range is a no-op. */
+  /** Make hit `index` current; out of range is a no-op. */
   setCurrent(index: number): void {
     if (index < 0 || index >= this.hits.length) {
       return;
     }
     this.current = index;
-    this.applyCurrentClass();
+    this.applyCurrent();
   }
 
   /** Drop the current hit, keeping every highlight: the cursor moved to a list this engine does not hold. */
   clearCurrent(): void {
     this.current = -1;
-    this.applyCurrentClass();
+    this.applyCurrent();
   }
 
   /** The current hit's first piece, which is where a scroll lands. */
@@ -260,16 +370,18 @@ export class FindEngine {
     return this.hits[this.current]?.[0] ?? null;
   }
 
-  private applyCurrentClass(): void {
+  private applyCurrent(): void {
     for (let i = 0; i < this.hits.length; i++) {
       for (const mark of this.hits[i] ?? []) {
         mark.classList.toggle(CURRENT_CLASS, i === this.current);
       }
     }
+    const mark = this.currentMark();
+    this.anchor = mark === null ? null : rangeBefore(mark);
   }
 
   /** Runs of searchable text nodes. A block tag ends the run whether or not its subtree is searched. */
-  private collectRuns(): Text[][] {
+  private collectRuns(keep: Element | null): Text[][] {
     const runs: Text[][] = [];
     let run: Text[] = [];
     const flush = (): void => {
@@ -293,7 +405,7 @@ export class FindEngine {
       if (bounds) {
         flush();
       }
-      if (isSearchableElement(elem)) {
+      if (isSearchableElement(elem, keep)) {
         for (const child of elem.childNodes) {
           visit(child);
         }

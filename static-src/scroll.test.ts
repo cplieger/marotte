@@ -258,65 +258,13 @@ describe("jumpTo", () => {
       state.scrollTop += 600;
     };
     scroll.jumpTo(far);
-    const cb = vi.fn();
-    scroll.afterSelfScroll(cb);
-    expect(cb).not.toHaveBeenCalled();
-  });
-});
-
-describe("afterSelfScroll", () => {
-  beforeEach(resetBetween);
-
-  it("runs the callback at once when no flight is in progress", () => {
-    const cb = vi.fn();
-    scroll.afterSelfScroll(cb);
-    expect(cb).toHaveBeenCalledTimes(1);
-  });
-
-  it("runs the callback once the flight in progress ends", async () => {
-    const cb = vi.fn();
-    scroll.beginSelfScroll();
-    scroll.afterSelfScroll(cb);
-    await Promise.resolve();
-    expect(cb).not.toHaveBeenCalled();
-
-    scroll.endSelfScroll();
-    await Promise.resolve();
-    expect(cb).toHaveBeenCalledTimes(1);
-  });
-
-  // A jump closes the flight it replaces and opens its own in one call.
-  it("waits through a jump that replaces the flight with another", async () => {
-    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
-    const far = document.createElement("div");
-    far.getBoundingClientRect = () =>
-      new DOMRect(0, scroll.getScrollEl().getBoundingClientRect().top - 3000, 100, 400);
-    far.getClientRects = (() =>
-      [far.getBoundingClientRect()] as unknown as DOMRectList) as typeof far.getClientRects;
-    // A smooth flight: the scroller has not moved when the call returns.
-    far.scrollIntoView = () => undefined;
-    messagesEl.appendChild(far);
-    const cb = vi.fn();
-    scroll.beginSelfScroll();
-    scroll.afterSelfScroll(cb);
-
-    scroll.jumpTo(far);
-    await Promise.resolve();
-    expect(cb).not.toHaveBeenCalled();
-
-    scroll.endSelfScroll();
-    await Promise.resolve();
-    expect(cb).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not run a cancelled callback", async () => {
-    const cb = vi.fn();
-    scroll.beginSelfScroll();
-    const cancel = scroll.afterSelfScroll(cb);
-    cancel();
-    scroll.endSelfScroll();
-    await Promise.resolve();
-    expect(cb).not.toHaveBeenCalled();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    // A frame of the flight: inside its epoch, the controller's own animation and not the reader.
+    state.scrollTop -= 300;
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    off();
+    expect(seen).not.toHaveBeenCalled();
   });
 });
 

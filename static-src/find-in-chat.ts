@@ -6,7 +6,7 @@ import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
-import { afterSelfScroll, jumpTo, onTranscriptMutate } from "./scroll.js";
+import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
 import { runOffsetOf } from "./messages-blocks.js";
@@ -39,7 +39,6 @@ let countEl: HTMLElement | null = null;
 let engine: FindEngine | null = null;
 let lastFocus: HTMLElement | null = null;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
-let cancelFlightWait: (() => void) | null = null;
 
 /** The active transcript view, by the multiplexer's class contract rather than an import (messages.ts sits above this). */
 function findRoot(): HTMLElement {
@@ -968,18 +967,14 @@ function cancelRerun(): void {
     clearTimeout(rerunTimer);
     rerunTimer = undefined;
   }
-  cancelFlightWait?.();
-  cancelFlightWait = null;
 }
 
-/** Re-run so the counter stays honest, preserving the index and not scrolling. */
+/** Re-run so the counter stays honest, keeping the current hit and not scrolling. */
 function scheduleRerun(): void {
   cancelRerun();
   rerunTimer = setTimeout(() => {
     rerunTimer = undefined;
-    // Not under a flight: the walker prunes skipped content, and mid-flight the current hit can be outside the
-    // rendered range, so its marks would go. At the landing the hit is in view.
-    cancelFlightWait = afterSelfScroll(rerun);
+    rerun();
   }, RERUN_DEBOUNCE_MS);
 }
 
@@ -987,11 +982,9 @@ function rerun(): void {
   if (!isOpen() || engine === null || shell === null) {
     return;
   }
-  const prevIndex = engine.currentIndex;
   const query = shell.value;
   applyEngine(() => {
-    engine?.search(query, shell?.caseSensitive ?? false);
-    engine?.setCurrent(prevIndex);
+    engine?.refresh(query, shell?.caseSensitive ?? false);
   });
   updateCounter(query);
 }

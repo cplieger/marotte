@@ -6,11 +6,6 @@ vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   // Inert: these tests drive re-runs through the module's own paths.
   onTranscriptMutate: vi.fn(() => () => undefined),
-  // No flight is ever in progress here.
-  afterSelfScroll: vi.fn((cb: () => void) => {
-    cb();
-    return () => undefined;
-  }),
 }));
 // Spy-wrapped: `vi.spyOn(namespace, name)` cannot patch an ESM namespace in a real browser.
 vi.mock("./chat-search.js", { spy: true });
