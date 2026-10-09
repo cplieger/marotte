@@ -6,7 +6,7 @@ import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
-import { jumpTo, onTranscriptMutate } from "./scroll.js";
+import { afterSelfScroll, jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
 import { runOffsetOf } from "./messages-blocks.js";
@@ -39,6 +39,7 @@ let countEl: HTMLElement | null = null;
 let engine: FindEngine | null = null;
 let lastFocus: HTMLElement | null = null;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
+let cancelFlightWait: (() => void) | null = null;
 
 /** The active transcript view, by the multiplexer's class contract rather than an import (messages.ts sits above this). */
 function findRoot(): HTMLElement {
@@ -177,9 +178,7 @@ function ensureBuilt(): void {
         return null;
       }
       // The local pass runs first and synchronously; the server pre-pass makes the count honest (the walker prunes hidden content).
-      applyEngine(() => {
-        engine?.search(query, ctx.caseSensitive);
-      });
+      searchNow(query, ctx.caseSensitive);
       updateCounter(query);
       // Not while a handoff's landing is pending: that open is going elsewhere.
       if (!landOnResume) {
@@ -209,9 +208,7 @@ function ensureBuilt(): void {
         return;
       }
       // Re-run over the revealed DOM so marks and count cover the opened turns.
-      applyEngine(() => {
-        engine?.search(query, shell?.caseSensitive ?? false);
-      });
+      searchNow(query, shell?.caseSensitive ?? false);
       updateCounter(query);
       const target = land ? stepOrder[hitCursor] : undefined;
       if (target !== undefined) {
@@ -292,10 +289,7 @@ function ensureBuilt(): void {
 function teardown(): void {
   stopObserving();
   shell?.cancel();
-  if (rerunTimer !== undefined) {
-    clearTimeout(rerunTimer);
-    rerunTimer = undefined;
-  }
+  cancelRerun();
   applyEngine(() => {
     engine?.clear();
   });
@@ -637,9 +631,7 @@ async function landOrNotice(walkTarget: HTMLElement, hit: Hit, narrowed: boolean
 
 /** The walk makes marks exist inside content that only just became visible. */
 function walkAndPick(target: HTMLElement, hit: Hit): number {
-  applyEngine(() => {
-    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
-  });
+  searchNow(shell?.value ?? "", shell?.caseSensitive ?? false);
   return pickNearestMark(target, hit);
 }
 
@@ -963,24 +955,45 @@ function stopObserving(): void {
   unobserveTranscript = null;
 }
 
-/** Re-run so the counter stays honest, preserving the index and not scrolling. */
-function scheduleRerun(): void {
+/** Walk the transcript now, superseding a pending re-run: this walk already sees the mutations that scheduled it. */
+function searchNow(query: string, caseSensitive: boolean): void {
+  cancelRerun();
+  applyEngine(() => {
+    engine?.search(query, caseSensitive);
+  });
+}
+
+function cancelRerun(): void {
   if (rerunTimer !== undefined) {
     clearTimeout(rerunTimer);
+    rerunTimer = undefined;
   }
+  cancelFlightWait?.();
+  cancelFlightWait = null;
+}
+
+/** Re-run so the counter stays honest, preserving the index and not scrolling. */
+function scheduleRerun(): void {
+  cancelRerun();
   rerunTimer = setTimeout(() => {
     rerunTimer = undefined;
-    if (!isOpen() || engine === null || shell === null) {
-      return;
-    }
-    const prevIndex = engine.currentIndex;
-    const query = shell.value;
-    applyEngine(() => {
-      engine?.search(query, shell?.caseSensitive ?? false);
-      engine?.setCurrent(prevIndex);
-    });
-    updateCounter(query);
+    // Not under a flight: the walker prunes skipped content, and mid-flight the current hit can be outside the
+    // rendered range, so its marks would go. At the landing the hit is in view.
+    cancelFlightWait = afterSelfScroll(rerun);
   }, RERUN_DEBOUNCE_MS);
+}
+
+function rerun(): void {
+  if (!isOpen() || engine === null || shell === null) {
+    return;
+  }
+  const prevIndex = engine.currentIndex;
+  const query = shell.value;
+  applyEngine(() => {
+    engine?.search(query, shell?.caseSensitive ?? false);
+    engine?.setCurrent(prevIndex);
+  });
+  updateCounter(query);
 }
 
 function openFindInChat(): void {

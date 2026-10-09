@@ -234,6 +234,90 @@ describe("jumpTo", () => {
     scroll.jumpTo(nearBottom, { block: "center" });
     expect(scroll.readingState()).toBe("reading");
   });
+
+  // Inside skipped `content-visibility: auto` content a target can report no box until the jump's own
+  // `scrollIntoView` lays its row out.
+  it("parks the reader on a far target that takes its box only when the jump lays it out", () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
+    const late = target(-3000, 400);
+    const laidOut = late.getClientRects.bind(late);
+    late.getClientRects = (() => [] as unknown as DOMRectList) as typeof late.getClientRects;
+    late.scrollIntoView = () => {
+      late.getClientRects = laidOut;
+    };
+    scroll.jumpTo(late);
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  // Laying a skipped row out grows it, and native anchoring moves the scroller by that growth before a flight's first
+  // frame, so a scroller that moved is not by that alone a landing.
+  it("treats a jump whose scroller moved short of the landing as a flight in progress", () => {
+    const state = fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 2400 });
+    const far = target(-2000, 400);
+    far.scrollIntoView = () => {
+      state.scrollTop += 600;
+    };
+    scroll.jumpTo(far);
+    const cb = vi.fn();
+    scroll.afterSelfScroll(cb);
+    expect(cb).not.toHaveBeenCalled();
+  });
+});
+
+describe("afterSelfScroll", () => {
+  beforeEach(resetBetween);
+
+  it("runs the callback at once when no flight is in progress", () => {
+    const cb = vi.fn();
+    scroll.afterSelfScroll(cb);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the callback once the flight in progress ends", async () => {
+    const cb = vi.fn();
+    scroll.beginSelfScroll();
+    scroll.afterSelfScroll(cb);
+    await Promise.resolve();
+    expect(cb).not.toHaveBeenCalled();
+
+    scroll.endSelfScroll();
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  // A jump closes the flight it replaces and opens its own in one call.
+  it("waits through a jump that replaces the flight with another", async () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
+    const far = document.createElement("div");
+    far.getBoundingClientRect = () =>
+      new DOMRect(0, scroll.getScrollEl().getBoundingClientRect().top - 3000, 100, 400);
+    far.getClientRects = (() =>
+      [far.getBoundingClientRect()] as unknown as DOMRectList) as typeof far.getClientRects;
+    // A smooth flight: the scroller has not moved when the call returns.
+    far.scrollIntoView = () => undefined;
+    messagesEl.appendChild(far);
+    const cb = vi.fn();
+    scroll.beginSelfScroll();
+    scroll.afterSelfScroll(cb);
+
+    scroll.jumpTo(far);
+    await Promise.resolve();
+    expect(cb).not.toHaveBeenCalled();
+
+    scroll.endSelfScroll();
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not run a cancelled callback", async () => {
+    const cb = vi.fn();
+    scroll.beginSelfScroll();
+    const cancel = scroll.afterSelfScroll(cb);
+    cancel();
+    scroll.endSelfScroll();
+    await Promise.resolve();
+    expect(cb).not.toHaveBeenCalled();
+  });
 });
 
 describe("readingState", () => {
@@ -1897,6 +1981,42 @@ describe("the streaming follow write's licence", () => {
   });
 });
 
+describe("a smooth jump's own flight", () => {
+  beforeEach(realLayoutReset);
+
+  it("keeps a jump up from the live edge parked while the transcript keeps resizing", async () => {
+    const wrap = realScroller();
+    const target = block(400);
+    block(20_000);
+    const tail = block(10);
+    await land();
+    const real = scroll.setPinSettleMs(20);
+    try {
+      scroll.scrollToBottom();
+    } finally {
+      scroll.setPinSettleMs(real);
+    }
+    await land(100);
+    expect(scroll.readingState()).toBe("following");
+
+    // A growing tail, as a streaming turn delivers it: every resize licenses a follow write.
+    const grow = setInterval(() => {
+      tail.style.height = `${String(tail.offsetHeight + 10)}px`;
+    }, 20);
+    try {
+      scroll.jumpTo(target, { block: "start" });
+      await land(1500);
+    } finally {
+      clearInterval(grow);
+    }
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 0,
+      state: "reading",
+    });
+  });
+});
+
 // `onReaderGesture`: the seam for "the reader said where they want to be".
 
 describe("onReaderGesture", () => {
@@ -1914,6 +2034,25 @@ describe("onReaderGesture", () => {
     off();
 
     expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent for a scroll event at the position the last one reported", async () => {
+    // The scroller left and came back inside one task, as a clamp the next layout's anchoring undoes
+    // does: the event it leaves states no new position.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    wrap.scrollTop = 1200;
+    await land();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+
+    wrap.scrollTop = 900;
+    wrap.scrollTop = 1200;
+    await land();
+    off();
+
+    expect(seen).not.toHaveBeenCalled();
   });
 
   it("fires when the reader asks for the live edge", async () => {
@@ -2638,6 +2777,43 @@ describe("holding what the reader reads", () => {
     await land();
 
     expect(wrap.scrollTop).toBe(500);
+  });
+
+  it("keeps a jump written inside a frame callback while a row resizes in that frame", async () => {
+    // The jump's scroll event is deferred past this frame's ResizeObserver delivery, so the resize
+    // is seen first.
+    const { wrap, rows } = await parkedAmongRows();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        rows[18]!.style.height = "150px";
+        scroll.jumpTo(rows[12]!, { block: "start", behavior: "instant" });
+        resolve();
+      });
+    });
+    await land();
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 1200,
+      state: "reading",
+    });
+  });
+
+  it("keeps a shift written inside a frame callback while a row resizes in that frame", async () => {
+    // The shell panel's opening compensation, from its own frame callback.
+    const { wrap, rows } = await parkedAmongRows();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        rows[18]!.style.height = "150px";
+        scroll.shiftScroll(200);
+        resolve();
+      });
+    });
+    await land();
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 700,
+      state: "reading",
+    });
   });
 
   /** The page writers' order around a landing: the paint re-measures and writes the page, then the skeleton's owner
