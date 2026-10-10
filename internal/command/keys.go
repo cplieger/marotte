@@ -20,8 +20,7 @@ const ellipsis = "..."
 var responseOK = map[string]bool{"ok": true}
 
 func responseWith(extra map[string]any) map[string]any {
-	m := make(map[string]any, len(extra)+1)
-	m["ok"] = true
+	m := map[string]any{"ok": true}
 	maps.Copy(m, extra)
 	return m
 }
