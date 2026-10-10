@@ -501,9 +501,6 @@ export class TextViewer {
       const a = Math.max(spec.from, s) - s;
       const b = Math.min(spec.to, rows.ends[r] ?? s) - s;
       const box = measureTextSpan(textEl, a, Math.max(a, b));
-      if (box === null) {
-        continue;
-      }
       const mark = el("div", { className: "editor-find-mark" });
       mark.style.top = `${String(this.rowTop(r))}px`;
       mark.style.left = `${String(box.left - rootRect.left)}px`;
@@ -559,17 +556,10 @@ function appendRowText(
 }
 
 /** The client box of characters `[a, b)` of a text span's content. */
-function measureTextSpan(
-  textEl: Element,
-  a: number,
-  b: number,
-): { left: number; width: number } | null {
+function measureTextSpan(textEl: Element, a: number, b: number): { left: number; width: number } {
   const range = document.createRange();
   const startPos = positionAt(textEl, a);
   const endPos = positionAt(textEl, b);
-  if (startPos === null || endPos === null) {
-    return null;
-  }
   range.setStart(startPos.node, startPos.offset);
   range.setEnd(endPos.node, endPos.offset);
   const rect = range.getBoundingClientRect();
@@ -579,7 +569,7 @@ function measureTextSpan(
   return { left: rect.left, width: rect.width };
 }
 
-function positionAt(root: Element, offset: number): { node: Node; offset: number } | null {
+function positionAt(root: Element, offset: number): { node: Node; offset: number } {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let left = offset;
   let last: Text | null = null;

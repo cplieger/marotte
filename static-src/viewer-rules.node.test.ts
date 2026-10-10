@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -176,12 +176,13 @@ describe("the viewer cap has one owner", () => {
   it("appears in no client module", () => {
     const hits: string[] = [];
     const walk = (dir: string): void => {
-      for (const name of readdirSync(dir)) {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const { name } = ent;
         const p = join(dir, name);
         if (name === "node_modules" || name.startsWith(".")) {
           continue;
         }
-        if (statSync(p).isDirectory()) {
+        if (ent.isDirectory()) {
           walk(p);
         } else if (name.endsWith(".ts") && !name.includes(".test.")) {
           const src = readFileSync(p, "utf8");
