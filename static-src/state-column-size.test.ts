@@ -62,7 +62,8 @@ const COLUMNS: readonly Column[] = [
     slot: ".ev-state",
     mount: (state) => {
       const page = el("div", "ev-page");
-      const row = el("div", "ev-row", { "data-state": state });
+      // A STEP row, as `tree.ts` writes it: a container's in-flight roll-up draws no ring.
+      const row = el("div", "ev-row", { "data-state": state, "data-kind": "step" });
       const main = el("div", "ev-row-main");
       const slot = el("span", "ev-state");
       main.appendChild(slot);

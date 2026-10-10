@@ -11,14 +11,34 @@ import {
   type RunState,
   userStopSentence,
 } from "./run-store.js";
-import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
-import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
+import {
+  currentMembers,
+  failureOwner,
+  isWork,
+  type ExecFact,
+  type ExecKind,
+  type ExecNode,
+  type ExecRun,
+} from "./exec-view/model.js";
 import { defaultFailureReason, isBroken } from "./turn-severity.js";
 import type { RunStepEnd } from "./wire/types.gen.js";
 
+/** What a run is waiting on a PERSON for. KAS leaves an asking run `running`, so `inspect` cannot
+ *  show it; built by `decision-dock.ts` and declared here, by the adapter that folds it in. */
+export interface RunAsks {
+  /** How many of this run's asks are unanswered. */
+  count: number;
+  /** The node ids those asks name. Separate from `count` because the wire cannot
+   *  always attribute one (the step-session registry has to have seen the
+   *  sub-session), and a run with an unattributable ask is still blocked. */
+  nodes: ReadonlySet<string>;
+  /** The head ask as one line, for the alert. "" when there is none to name. */
+  label: string;
+}
+
 /** The run log's step ends by node path (`run-store.ts` `runStepEnds`). */
-type StepEnds = ReadonlyMap<string, RunStepEnd>;
+export type StepEnds = ReadonlyMap<string, RunStepEnd>;
 
 /** The per-node facts `nodePlan` carries that the state tree does not. Keyed by node id rather
  *  than by path, because the PLAN is the definition: it describes a node once, while the state
@@ -31,7 +51,13 @@ interface PlanEntry {
   join?: string;
   /** A watch node's handler and what it waits for. */
   watch?: string;
+  /** A container's planned children, raw: what it will hold before KAS expands it. */
+  body?: unknown[];
 }
+
+/** Every container spelling the engine uses, plus a generic `children` so a node type added
+ *  upstream still has its descendants indexed. */
+const PLAN_CHILD_KEYS = ["steps", "branches", "children", "body", "nodes"] as const;
 
 /** Walk the raw plan and index every node id it names. */
 export function indexPlan(plan: unknown): Map<string, PlanEntry> {
@@ -82,13 +108,18 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
       if (handler !== undefined || until !== undefined) {
         entry.watch = [handler, until].filter((v) => v !== undefined).join(" \u2192 ");
       }
+      const body = PLAN_CHILD_KEYS.flatMap((key) => {
+        const v = o[key];
+        return Array.isArray(v) ? (v as unknown[]) : [];
+      });
+      if (body.length > 0) {
+        entry.body = body;
+      }
       if (Object.values(entry).some((v) => v !== undefined)) {
         out.set(id, entry);
       }
     }
-    // Every container spelling the engine uses, plus a generic `children` so a node type added
-    // upstream still has its descendants indexed.
-    for (const key of ["steps", "branches", "children", "body", "nodes"]) {
+    for (const key of PLAN_CHILD_KEYS) {
       walk(o[key]);
     }
   };
@@ -96,7 +127,8 @@ export function indexPlan(plan: unknown): Map<string, PlanEntry> {
   return out;
 }
 
-/** A container's state, derived from its children. */
+/** A container's state, derived from its current members (`currentMembers`): a repeat is where
+ *  its latest pass is. */
 function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   if (kids.length === 0) {
     return own;
@@ -191,11 +223,57 @@ function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined):
     if (node.modelId !== undefined && node.modelId !== "" && node.modelId !== "auto") {
       bits.push(node.modelId);
     }
-    if (node.iteration !== undefined) {
-      bits.push(`pass ${String(node.iteration + 1)}`);
+    // No pass number: the pass is the loop's, stated on its pass row.
+    if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
+      const n = node.continuationAttempts;
+      bits.push(`${String(n)} ${n === 1 ? "retry" : "retries"}`);
     }
   }
   return bits.join(" \u00b7 ");
+}
+
+/** A raw plan child as a not-yet-started state node, or nothing when it names no node. Any type is
+ *  kept, as the state tree keeps it, so `kindOf` decides both paths alike. */
+function plannedNode(raw: unknown): RunNode[] {
+  if (raw === null || typeof raw !== "object") {
+    return [];
+  }
+  const o = raw as Record<string, unknown>;
+  const id = o["nodeId"];
+  const type = o["type"];
+  if (typeof id !== "string" || id === "" || typeof type !== "string" || type === "") {
+    return [];
+  }
+  const out: RunNode = { nodeId: id, type, status: "pending" };
+  for (const key of ["agentName", "modelId"] as const) {
+    const v = o[key];
+    if (typeof v === "string" && v !== "") {
+      out[key] = v;
+    }
+  }
+  return [out];
+}
+
+/** What a container KAS has not expanded yet will hold, from its plan: a parallel's branches
+ *  before they start, a repeat's first pass before it opens. A repeat's pass is spelled the way
+ *  KAS spells it (`<id>#0`, iteration 0), so the paths these get are the ones the real nodes take. */
+function plannedChildren(node: RunNode, plan: PlanEntry | undefined): RunNode[] {
+  const body = (plan?.body ?? []).flatMap(plannedNode);
+  if (body.length === 0 || isWork({ kind: kindOf(node.type) })) {
+    return [];
+  }
+  if (node.type === "repeat") {
+    return [
+      {
+        nodeId: `${node.nodeId}#0`,
+        type: "sequence",
+        status: "pending",
+        iteration: 0,
+        children: body,
+      },
+    ];
+  }
+  return body;
 }
 
 /** Fold one state node and its subtree. `path` goes through `nodePathSegment`, so a step's tree
@@ -214,17 +292,32 @@ function toNode(
   const address = nodePathKey(path);
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
-  const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, ends, node));
+  const actual = node.children ?? [];
+  const kids = actual.length > 0 ? actual : plannedChildren(node, plan);
+  const children = kids.map((k) => toNode(k, path, plans, asks, ends, node));
   const own = withAsk(stateOf(node.status), asks.nodes.has(node.nodeId));
-  const end = children.length === 0 ? ends.get(address) : undefined;
-  const state = children.length === 0 ? endedState(own, end) : rollUp(own, children);
+  const work = isWork({ kind });
+  const end = work ? ends.get(address) : undefined;
+  const state = work ? endedState(own, end) : rollUp(own, currentMembers({ kind, children }));
+  // A repeat's child is a PASS; KAS names a pass container `<repeatId>#<n>`, which is its id
+  // and not something a reader can read.
+  const pass =
+    parent?.type === "repeat"
+      ? (node.iteration ?? (parent.children ?? []).indexOf(node)) + 1
+      : undefined;
   const out: ExecNode = {
     path: address,
-    label: node.nodeId,
+    label: pass !== undefined && !work ? `pass ${String(pass)}` : node.nodeId,
     kind,
     state,
     children,
   };
+  if (pass !== undefined) {
+    out.pass = pass;
+  }
+  if (kind === "repeat" && plan?.maxIterations !== undefined) {
+    out.maxPasses = plan.maxIterations;
+  }
   if (node.startedAt !== undefined) {
     out.start = node.startedAt;
   }
@@ -239,10 +332,12 @@ function toNode(
   if (facts.length > 0) {
     out.facts = facts;
   }
-  if (node.failureReason !== undefined && node.failureReason !== "") {
-    out.failure = node.failureReason;
+  const kasReason = (node.failureReason ?? "").trim();
+  if (kasReason !== "") {
+    out.failure = kasReason;
   } else if (state !== own && end !== undefined) {
-    out.failure = end.failure_reason ?? defaultFailureReason(end.outcome);
+    const logReason = (end.failure_reason ?? "").trim();
+    out.failure = logReason !== "" ? logReason : defaultFailureReason(end.outcome);
   }
   if (node.capturedOutput !== undefined) {
     out.output = node.capturedOutput;
@@ -250,9 +345,9 @@ function toNode(
   if (node.artifacts !== undefined && Object.keys(node.artifacts).length > 0) {
     out.artifacts = node.artifacts;
   }
-  // A LEAF can host a transcript; a container cannot, and saying so is what lets the detail pane
-  // distinguish "nothing streams here" from "nothing has arrived".
-  if (children.length === 0) {
+  // A work node can host a transcript; a container cannot, and saying so is what lets the detail
+  // pane distinguish "nothing streams here" from "nothing has arrived".
+  if (work) {
     out.transcript = true;
   }
   return out;
@@ -295,11 +390,7 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     return { kind: "paused", text: bits.join(" \u00b7 ") };
   }
   if (state.status === "failed") {
-    const failed = nodes
-      .flatMap(function all(n: ExecNode): ExecNode[] {
-        return [n, ...n.children.flatMap(all)];
-      })
-      .find((n) => n.state === "fail" && n.failure !== undefined);
+    const failed = failureOwner(nodes);
     return {
       kind: "failed",
       text:
@@ -321,18 +412,19 @@ export function runToExec(
   ends: StepEnds = new Map(),
 ): ExecRun {
   const plans = indexPlan(plan);
-  // The root is a container KAS names after the workflow itself, so its children are the run's real
-  // top level. Kept as a root only when it carries siblings worth showing — otherwise it would be
-  // one group wrapping everything, which is an indent for no information.
+  // A sequence root is a container KAS names after the workflow itself, so its children are the
+  // run's real top level (one group around everything is an indent for no information). The plan's
+  // top level is the root's body, which no plan entry names.
   const root = state.root;
-  const nodes =
-    root === undefined
-      ? []
-      : root.type === "sequence" && (root.children?.length ?? 0) > 0
-        ? (root.children ?? []).map((k) =>
-            toNode(k, [nodePathSegment(root, undefined)], plans, asks, ends, root),
-          )
-        : [toNode(root, [], plans, asks, ends)];
+  let nodes: ExecNode[] = [];
+  if (root?.type === "sequence") {
+    const planned = Array.isArray(plan) ? (plan as unknown[]).flatMap(plannedNode) : [];
+    const top = root.children !== undefined && root.children.length > 0 ? root.children : planned;
+    const trail = [nodePathSegment(root, undefined)];
+    nodes = top.map((k) => toNode(k, trail, plans, asks, ends, root));
+  } else if (root !== undefined) {
+    nodes = [toNode(root, [], plans, asks, ends)];
+  }
 
   const runState = stateOf(state.status);
   const out: ExecRun = {

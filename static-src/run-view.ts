@@ -20,7 +20,7 @@ import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./r
 import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
-import { flatten, leaves, type ExecNode } from "./exec-view/model.js";
+import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
@@ -525,7 +525,7 @@ function leafPaints(
 ): Map<string, RunStepPaint[]> {
   const src = runSource(turns);
   const out = new Map<string, RunStepPaint[]>();
-  for (const node of leaves(nodes)) {
+  for (const node of workNodes(nodes)) {
     const painted: RunStepPaint[] = [];
     for (const [id, state] of turnsForStep(turns, node.path)) {
       const turn = projectTurn(src, id);

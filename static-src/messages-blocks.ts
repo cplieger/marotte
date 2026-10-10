@@ -80,7 +80,7 @@ import {
 export { refreshGroupHeader };
 import { iconForSubagent, inlineAgentDetail, subagentLabel, subagentName } from "./roles.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
-import { invalidateRun, runState, forgetRun } from "./run-store.js";
+import { invalidateRun, runPlan, runState, runStepEnds, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { buildPath } from "./route-path.js";
 
@@ -1838,8 +1838,12 @@ function armRunCard(st: TurnRender, workflowID: string, card: RunCardView): void
   }
   const stop = effect(() => {
     // Two inputs on different clocks: `inspect` for step state, the dock for blocked asks. KAS leaves the run
-    // `running` while a step waits on a person.
-    card.render(runState(workflowID), runPendingAsks(workflowID));
+    // `running` while a step waits on a person. The plan and step ends land before the state wakes this.
+    const state = runState(workflowID);
+    card.render(state, runPendingAsks(workflowID), {
+      plan: runPlan(workflowID),
+      ends: runStepEnds(workflowID),
+    });
   });
   st.runEffects.set(workflowID, stop);
   holdRunClock(workflowID, card);

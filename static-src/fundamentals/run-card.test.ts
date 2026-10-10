@@ -1,9 +1,10 @@
 // The run card's state vocabulary: the per-step GLYPH is the only signal for what a step is
 // doing, so every step state has to reach it.
-import { describe, it, expect } from "vitest";
+import { vi, describe, it, expect } from "vitest";
 
-import { buildRunCard, type RunAsks } from "./run-card.js";
-import { leaves } from "../exec-view/model.js";
+import { buildRunCard } from "./run-card.js";
+import type { RunAsks } from "../run-exec-source.js";
+import { workNodes } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
 import type { RunNode, RunState } from "../run-store.js";
 
@@ -161,11 +162,10 @@ describe("an unanswered ask", () => {
     );
   });
 
-  it("leaves a settled step alone, because node_id is not instance-unique", () => {
+  it("marks the asker in a loop's latest pass, though node_id is not instance-unique", () => {
     const c = card();
-    // A repeat's iterations are separate `iter-N` containers holding the SAME step,
-    // so the two rows have distinct node paths and a shared node id. An ask naming
-    // `a` therefore matches both, and only the one still in flight can be the asker.
+    // A repeat's iterations are separate `iter-N` containers holding the SAME step, so
+    // an ask naming `a` matches both; the card shows the latest pass, the one in flight.
     const iter = (n: string, iteration: number, status: RunNode["status"]): RunNode => ({
       nodeId: n,
       type: "sequence",
@@ -186,7 +186,7 @@ describe("an unanswered ask", () => {
       },
       asks(1, ["a"]),
     );
-    expect(rowStates(c.root)).toEqual(["ok", "input"]);
+    expect(rowStates(c.root)).toEqual(["input"]);
   });
 
   it("takes the head's status word over the run's own", () => {
@@ -363,9 +363,8 @@ function buildAndRender(state: RunState, a: RunAsks): HTMLElement {
   return c.root;
 }
 
-// A step row is a door into `/run/<id>` with that node selected, so `render`'s `nodePathOf` and
-// `run-exec-source.ts`'s `nodePathSegment` must agree, or the click lands on nothing. KAS spells a
-// repeat iteration `<repeatId>#<n>` in the state tree and `iter-<n>` in a frame path.
+// A step row is a door into `/run/<id>` with that node selected, keyed by `runToExec`'s path, which
+// `nodePathSegment` spells as KAS spells a frame path (`iter-<n>`, not the state tree's `<id>#<n>`).
 describe("a step row's key is the exec view's own node path", () => {
   // The shape a real completed loop run has: the iteration container carries its
   // own generated id AND its `iteration`, which is what the segment rule reads.
@@ -408,10 +407,12 @@ describe("a step row's key is the exec view's own node path", () => {
     const state = loopRun();
     const c = card();
     c.render(state);
-    // The other producer, over the same state. `leaves` is what the run tab
+    // The run tab's model over the same state: its paths are what the page
     // navigates and `bodyFor` files a transcript under, so a row that keyed on
     // anything else would open the page on no node at all.
-    const execPaths = leaves(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map((n) => n.path);
+    const execPaths = workNodes(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map(
+      (n) => n.path,
+    );
     expect(execPaths).toEqual(["wf_1:plan", CODE_PATH, "wf_1:loop:iter-0:review"]);
     expect(rowPaths(c.root)).toEqual(execPaths);
   });
@@ -426,8 +427,8 @@ describe("a step row's key is the exec view's own node path", () => {
     expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
   });
 
-  it("keeps two iterations of one loop body in two rows", () => {
-    // They share a nodeId, so the node PATH is what separates them.
+  it("shows a loop's latest pass, keyed by that pass's own path", () => {
+    // Two passes share a nodeId, so the node PATH is what separates them.
     const c = card();
     c.render({
       workflowId: "wf_1",
@@ -454,7 +455,7 @@ describe("a step row's key is the exec view's own node path", () => {
         ],
       },
     });
-    expect(rowPaths(c.root)).toEqual(["wf_1:iter-0:work", "wf_1:iter-1:work"]);
+    expect(rowPaths(c.root)).toEqual(["wf_1:iter-1:work"]);
   });
 
   it("keeps two steps whose ids spell alike under a slash join in two rows", () => {
@@ -487,6 +488,35 @@ describe("a step row's key is the exec view's own node path", () => {
       "c",
       "b/c",
     ]);
+  });
+
+  // A slash join would spell the `a/b` group and the `a` > `b` group alike, and their steps too.
+  it("keeps groups whose ids spell alike under a slash join apart, with their steps", () => {
+    const c = card();
+    c.render(
+      runOf(
+        "running",
+        { nodeId: "a/b", type: "sequence", status: "running", children: [step("c", "running")] },
+        {
+          nodeId: "a",
+          type: "sequence",
+          status: "running",
+          children: [
+            { nodeId: "b", type: "sequence", status: "running", children: [step("c", "pending")] },
+          ],
+        },
+      ),
+    );
+    const keyed = [...c.root.querySelectorAll<HTMLElement>("[data-node]")].map(
+      (e) => e.dataset["node"] ?? "",
+    );
+    expect(new Set(keyed).size).toBe(keyed.length);
+    expect(keyed).toEqual(["wf_1:a/b", "wf_1:a/b:c", "wf_1:a", "wf_1:a:b", "wf_1:a:b:c"]);
+    expect(rowStates(c.root)).toEqual(["running", "pending"]);
+    const hrefs = [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(new Set(hrefs).size).toBe(2);
   });
 });
 
@@ -525,9 +555,8 @@ describe("a step row is a door into the run tab", () => {
     );
   });
 
-  it("gives two iterations of one loop body DIFFERENT hrefs", () => {
-    // These rows share a nodeId, so only the node path separates them. Own card: rows are never
-    // removed, so re-rendering `doorCard` would keep its `build` row.
+  it("points a loop's row at its own pass, not at the shared node id", () => {
+    // Two passes share a nodeId, so only the node path separates them.
     const c = card();
     c.render({
       workflowId: "wf_1",
@@ -558,7 +587,7 @@ describe("a step row is a door into the run tab", () => {
       [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
         a.getAttribute("href"),
       ),
-    ).toEqual(["/run/wf_1#node=wf_1%3Aiter-0%3Awork", "/run/wf_1#node=wf_1%3Aiter-1%3Awork"]);
+    ).toEqual(["/run/wf_1#node=wf_1%3Aiter-1%3Awork"]);
   });
 
   it("hosts no step body and carries no disclosure chevron", () => {
@@ -699,8 +728,7 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
 
   it("folds a run the reader stopped, because nobody is waiting on one", () => {
     // No wider than the four refusals: `stateOf` maps these to `warn`, and a "completed only" reading
-    // would keep a run the reader stopped expanded forever. The steps all completed, since an
-    // `aborted` STEP counts as failed in `runCounters`.
+    // would keep a run the reader stopped expanded forever.
     for (const status of ["cancelled", "aborted"] as const) {
       const { c } = wired();
       c.render(runOf(status, step("build", "completed")));
@@ -717,6 +745,67 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
     c.render(runOf("completed", step("build", "completed"), step("test", "failed")));
     c.setSuperseded(true);
     expect(collapsed(c)).toBe(false);
+  });
+
+  /** A completed loop: pass 1's `a` failed (an allSettled parallel), pass 2 ran clean. */
+  function recoveredLoop(status: NonNullable<RunState["status"]>, last: RunNode): RunState {
+    const pass = (i: number, kid: RunNode): RunNode => ({
+      nodeId: `loop#${String(i)}`,
+      type: "sequence",
+      status: "completed",
+      iteration: i,
+      children: [kid],
+    });
+    return runOf(status, {
+      nodeId: "loop",
+      type: "repeat",
+      status: "completed",
+      children: [
+        pass(0, { ...step("a", "failed"), failureReason: "the first try broke" }),
+        pass(1, last),
+      ],
+    });
+  }
+
+  it("folds a clean run whose loop recovered from a failure in an earlier pass", () => {
+    // The card shows the latest pass only, so a refusal read off an earlier one would hold the card
+    // open with no visible row saying why.
+    const { c } = wired();
+    c.render(recoveredLoop("completed", step("a", "completed")));
+    expect(rowStates(c.root)).toEqual(["ok"]);
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(true);
+  });
+
+  it("names the failure in the pass on screen when the run fails", () => {
+    const { c } = wired();
+    c.render(
+      recoveredLoop("failed", { ...step("a", "failed"), failureReason: "the second try broke" }),
+    );
+    expect(alertText(c.root)).toBe("a failed: the second try broke");
+  });
+
+  // The card and the run tab name one owner (`failureOwner`), so the two never disagree on why a
+  // run failed.
+  it("names the later pass's failure on the card and the run tab alike", () => {
+    const state = recoveredLoop("failed", {
+      ...step("a", "failed"),
+      failureReason: "the second try broke",
+    });
+    const { c } = wired();
+    c.render(state);
+    expect(alertText(c.root)).toBe("a failed: the second try broke");
+    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe(
+      "a failed: the second try broke",
+    );
+  });
+
+  it("names no failure the loop recovered from, on the card or the run tab", () => {
+    const state = recoveredLoop("failed", step("a", "completed"));
+    const { c } = wired();
+    c.render(state);
+    expect(alertText(c.root)).toBe("The run failed");
+    expect(runToExec("wf_1", state, undefined, NO_ASKS).alert?.text).toBe("The run failed");
   });
 
   it("does not fold a failed run, and re-opens one that fails after folding", () => {
@@ -755,5 +844,294 @@ describe("the newest run card is expanded, and being superseded folds it", () =>
 
     c.root.querySelector<HTMLElement>(".run-head")?.click();
     expect(wrote).toEqual([false]);
+  });
+});
+
+// The shape of a real run's `GET /api/runs/{id}` two minutes in: a repeat whose first pass holds a
+// running step, a parallel KAS has not expanded yet (`children: []`) and a pending step. The
+// parallel's two review steps exist only in the node PLAN.
+describe("the card shows the run's structure, and only steps and watches as work", () => {
+  const STARTED = new Date(Date.now() - 120_000).toISOString();
+
+  function liveLoop(): RunState {
+    return {
+      workflowId: "wf_1",
+      status: "running",
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        startedAt: STARTED,
+        children: [
+          {
+            nodeId: "build-loop",
+            type: "repeat",
+            status: "running",
+            startedAt: STARTED,
+            children: [
+              {
+                nodeId: "build-loop#0",
+                type: "sequence",
+                status: "running",
+                iteration: 0,
+                startedAt: STARTED,
+                children: [
+                  {
+                    nodeId: "code",
+                    type: "step",
+                    status: "running",
+                    agentName: "wf-coder",
+                    modelId: "claude-opus-5.5",
+                    iteration: 0,
+                    startedAt: STARTED,
+                  },
+                  { nodeId: "reviews", type: "parallel", status: "pending", children: [] },
+                  {
+                    nodeId: "aggregate",
+                    type: "step",
+                    status: "pending",
+                    agentName: "aggregator",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  /** The same run's first read: the repeat has started and its first pass does not exist yet. */
+  function loopStarting(): RunState {
+    const s = liveLoop();
+    const loop = s.root?.children?.[0];
+    if (loop !== undefined) {
+      delete loop.children;
+    }
+    return s;
+  }
+
+  const PLAN = [
+    {
+      nodeId: "build-loop",
+      type: "repeat",
+      maxIterations: 3,
+      steps: [
+        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "claude-opus-5.5" },
+        {
+          nodeId: "reviews",
+          type: "parallel",
+          branches: [
+            { nodeId: "review-a", type: "step", agentName: "reviewer-a" },
+            { nodeId: "review-b", type: "step", agentName: "reviewer-b" },
+          ],
+        },
+        { nodeId: "aggregate", type: "step", agentName: "aggregator" },
+      ],
+    },
+  ];
+
+  /** Every row and group in DOCUMENT order, as `<kind>:<name>`. */
+  function outline(root: HTMLElement): string[] {
+    return [...root.querySelectorAll<HTMLElement>(".run-step, .run-group")].map((e) =>
+      e.classList.contains("run-group")
+        ? `group:${e.querySelector(".run-group-name")?.textContent ?? ""}`
+        : `step:${e.querySelector(".run-step-name")?.textContent ?? ""}`,
+    );
+  }
+
+  function spinning(root: HTMLElement): string[] {
+    return [...root.querySelectorAll<HTMLElement>('[data-status="running"]')]
+      .filter((e) => e !== root)
+      .map((e) => e.querySelector(".run-step-name")?.textContent ?? e.className);
+  }
+
+  it("leaves only the running step spinning once the loop's first pass opens", () => {
+    const c = card();
+    c.render(loopStarting(), NO_ASKS, { plan: PLAN });
+    c.render(liveLoop(), NO_ASKS, { plan: PLAN });
+    expect(spinning(c.root)).toEqual(["code"]);
+    expect(outline(c.root)).not.toContain("step:build-loop");
+  });
+
+  it("retires the last pass's rows and groups when the next pass opens", () => {
+    const c = card();
+    c.render(liveLoop(), NO_ASKS, { plan: PLAN });
+    const next = liveLoop();
+    const loop = next.root?.children?.[0];
+    const first = loop?.children?.[0];
+    if (loop?.children === undefined || first?.children === undefined) {
+      throw new Error("fixture lost its first pass");
+    }
+    const settle = (n: RunNode): RunNode => ({
+      ...n,
+      status: "completed",
+      ...(n.children === undefined ? {} : { children: n.children.map(settle) }),
+    });
+    const pass2 = structuredClone(first);
+    pass2.nodeId = "build-loop#1";
+    pass2.iteration = 1;
+    loop.children = [settle(first), pass2];
+
+    c.render(next, NO_ASKS, { plan: PLAN });
+
+    const keyed = [...c.root.querySelectorAll<HTMLElement>("[data-node]")].map(
+      (e) => e.dataset["node"] ?? "",
+    );
+    expect(keyed.filter((p) => p.includes("iter-0"))).toEqual([]);
+    expect(keyed).toEqual([
+      "wf_1:build-loop",
+      "wf_1:build-loop:iter-1:code",
+      "wf_1:build-loop:iter-1:reviews",
+      "wf_1:build-loop:iter-1:reviews:review-a",
+      "wf_1:build-loop:iter-1:reviews:review-b",
+      "wf_1:build-loop:iter-1:aggregate",
+    ]);
+    expect(spinning(c.root)).toEqual(["code"]);
+    expect(
+      c.root.querySelector('.run-group[data-kind="repeat"] .run-group-meta')?.textContent,
+    ).toBe("pass 2 of 3");
+  });
+
+  // A re-insert of an attached node drops its focus and restarts its animation, so a row that
+  // survives a render must never move while a departed sibling still sits ahead of it.
+  it("keeps a surviving row seated, and focused, when an earlier sibling leaves", () => {
+    const c = card();
+    document.body.append(c.root);
+    try {
+      c.render(runOf("running", step("a", "completed"), step("b", "running")));
+      const b = c.root.querySelector<HTMLElement>('.run-step[data-node="wf_1:b"]');
+      const head = b?.querySelector<HTMLElement>(".run-step-head");
+      head?.focus();
+      expect(document.activeElement).toBe(head);
+
+      c.render(runOf("running", step("b", "running")));
+
+      expect(c.root.querySelector('.run-step[data-node="wf_1:b"]')).toBe(b);
+      expect(document.activeElement).toBe(head);
+    } finally {
+      c.root.remove();
+    }
+  });
+
+  it("keeps a nested running row's animation running when a sibling ahead of it leaves", async () => {
+    const c = card();
+    document.body.append(c.root);
+    // A real CSS animation on the glyph, standing in for the stylesheet's `vk-spin` ring.
+    const style = document.createElement("style");
+    style.textContent =
+      "@keyframes card-spin { to { rotate: 360deg } } .run-step-glyph { animation: card-spin 600ms linear infinite }";
+    document.head.appendChild(style);
+    try {
+      const first = liveLoop();
+      const pass = first.root?.children?.[0]?.children?.[0];
+      if (pass?.children === undefined) {
+        throw new Error("fixture lost its first pass");
+      }
+      pass.children = [{ nodeId: "plan", type: "step", status: "completed" }, ...pass.children];
+      c.render(first, NO_ASKS, { plan: PLAN });
+      const glyphOf = (): HTMLElement | null =>
+        c.root.querySelector<HTMLElement>(
+          '.run-step[data-node="wf_1:build-loop:iter-0:code"] .run-step-glyph',
+        );
+      const anim = glyphOf()?.getAnimations()[0];
+      expect(anim, "the row needs an animation to probe").toBeDefined();
+      anim?.pause();
+      if (anim !== undefined) {
+        anim.currentTime = 250;
+      }
+
+      expect(
+        c.root.querySelector('.run-step[data-node="wf_1:build-loop:iter-0:plan"]'),
+        "the departing sibling must render ahead of the probe",
+      ).not.toBeNull();
+      c.render(liveLoop(), NO_ASKS, { plan: PLAN });
+      await new Promise((r) => requestAnimationFrame(r));
+
+      const after = glyphOf()?.getAnimations()[0];
+      expect(Number(after?.currentTime), "a render must not restart the ring").toBe(250);
+      expect(after?.playState).toBe("paused");
+    } finally {
+      style.remove();
+      c.root.remove();
+    }
+  });
+
+  it("swaps the shape when a replanned run puts a container where a step was, and back", () => {
+    const c = card();
+    c.render(runOf("running", step("x", "running")));
+    c.render(
+      runOf("running", {
+        nodeId: "x",
+        type: "parallel",
+        status: "running",
+        children: [step("y", "running")],
+      }),
+    );
+    expect(outline(c.root)).toEqual(["group:x", "step:y"]);
+    c.render(runOf("running", step("x", "running")));
+    expect(outline(c.root)).toEqual(["step:x"]);
+  });
+
+  it("advances a running row's clock on tick, inside a group too", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-09-20T06:01:00.000Z"));
+      const c = card();
+      c.render(
+        runOf("running", {
+          nodeId: "g",
+          type: "parallel",
+          status: "running",
+          children: [{ ...step("y", "running"), startedAt: "2026-09-20T06:00:00.000Z" }],
+        }),
+      );
+      const dur = (): string => c.root.querySelector(".run-step-dur")?.textContent ?? "";
+      const before = dur();
+      vi.setSystemTime(new Date("2026-09-20T06:03:00.000Z"));
+      c.tick();
+      expect(dur()).not.toBe(before);
+      expect(dur()).toMatch(/^3m/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders a repeat as a group carrying its pass, AROUND its children in document order", () => {
+    const c = card();
+    c.render(liveLoop(), NO_ASKS, { plan: PLAN });
+    expect(outline(c.root)).toEqual([
+      "group:build-loop",
+      "step:code",
+      "group:reviews",
+      "step:review-a",
+      "step:review-b",
+      "step:aggregate",
+    ]);
+    const loop = c.root.querySelector<HTMLElement>('.run-group[data-kind="repeat"]');
+    expect(loop?.querySelector(".run-group-meta")?.textContent).toBe("pass 1 of 3");
+    // The pass belongs to the loop, so a step inside it does not restate it.
+    const code = c.root.querySelector<HTMLElement>(".run-step");
+    expect(code?.querySelector(".run-step-meta")?.textContent).toBe(
+      "wf-coder \u00b7 claude-opus-5.5",
+    );
+    // A container is structure: it carries no state mark and no clock.
+    expect(c.root.querySelector(".run-group .run-group-head .run-step-glyph")).toBeNull();
+    expect(c.root.querySelector(".run-group-head .run-step-dur")).toBeNull();
+  });
+
+  it("counts the steps a reader sees, in the head and the foot alike", () => {
+    const c = card();
+    c.render(liveLoop(), NO_ASKS, { plan: PLAN });
+    expect(c.root.querySelector(".run-count")?.textContent).toBe("step 1 of 4");
+    expect(ledger(c.root)).toMatch(/^4 steps \u00b7 running \u00b7 2m/);
+  });
+
+  it("keeps the pass-1 counter while the run's first read holds no pass yet", () => {
+    const c = card();
+    c.render(loopStarting(), NO_ASKS, { plan: PLAN });
+    expect(spinning(c.root)).toEqual([]);
+    expect(outline(c.root)[0]).toBe("group:build-loop");
+    expect(c.root.querySelector(".run-count")?.textContent).toBe("0 of 4");
   });
 });

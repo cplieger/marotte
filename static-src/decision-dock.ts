@@ -17,7 +17,7 @@ import { buildRunInputCard } from "./run-input.js";
 import { info } from "./toast.js";
 import { named, noticeSubject } from "./notice-subject.js";
 import { join } from "@cplieger/keyenc";
-import type { RunAsks } from "./fundamentals/run-card.js";
+import type { RunAsks } from "./run-exec-source.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,

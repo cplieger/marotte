@@ -800,6 +800,13 @@
   opacity: 0.7;
 }
 
+/* A CONTAINER is structure, not work: its roll-up draws no ring, so a spinner on this
+   page is always a step or watch that is running. Its settled outcome and its `?` are painted
+   into the slot itself and stay. After the ring rules above, which it ties. */
+.ev-row:not([data-kind="step"], [data-kind="watch"]) > .ev-row-main > .ev-state::before {
+  content: none;
+}
+
 /* The KIND glyph, which is what tells a loop from a branch without reading. */
 .ev-kind {
   flex-shrink: 0;
