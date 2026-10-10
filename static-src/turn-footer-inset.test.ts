@@ -1,7 +1,7 @@
-// THE FOOTER BAND'S GEOMETRY: the band is the ROW's height with smaller controls centred in it, the
-// `i` starts on the card's ink gutter (carried by the button), the trailing gutter matches the
-// leading one, Rewind is never flush (resting border), and the panel's ink sits one gutter off the
-// CARD. Phone cases run in an IFRAME (`width <= 40rem`), desktop in the 1280x720 page.
+// THE FOOTER BAND'S GEOMETRY: the band is the ROW's height with smaller controls centred in it, every
+// control sits the same air off all four band edges on both tiers, the `i` starts on the card's ink
+// gutter, and the panel's ink sits one gutter off the CARD. Phone cases run in an IFRAME
+// (`width <= 40rem`), desktop in the 1280x720 page.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -217,12 +217,13 @@ function band(footer: HTMLElement): number {
 function insets(
   footer: HTMLElement,
   child: HTMLElement,
-): { top: number; bottom: number; end: number } {
+): { top: number; bottom: number; start: number; end: number } {
   const f = footer.getBoundingClientRect();
   const c = child.getBoundingClientRect();
   return {
     top: +(c.top - f.top).toFixed(2),
     bottom: +(f.bottom - c.bottom).toFixed(2),
+    start: +(c.left - f.left).toFixed(2),
     end: +(f.right - c.right).toFixed(2),
   };
 }
@@ -237,14 +238,15 @@ function token(doc: Document, name: string): number {
   return px;
 }
 
-/** The height a control's target reaches, paint plus whatever its `::after`
- *  expander adds on the block axis. The pseudo has no rect of its own, so this
- *  reads the resolved inset — negative where it overhangs. */
-function targetHeight(el: HTMLElement): number {
-  const paint = el.getBoundingClientRect().height;
+/** The size a control's target reaches on one axis, paint plus whatever its `::after`
+ *  expander adds. The pseudo has no rect of its own, so this reads the resolved inset,
+ *  negative where it overhangs. */
+function target(el: HTMLElement, axis: "block" | "inline"): number {
+  const rect = el.getBoundingClientRect();
+  const paint = axis === "block" ? rect.height : rect.width;
   const after = cs(el, "::after");
-  const start = parseFloat(after.insetBlockStart);
-  const end = parseFloat(after.insetBlockEnd);
+  const start = parseFloat(axis === "block" ? after.insetBlockStart : after.insetInlineStart);
+  const end = parseFloat(axis === "block" ? after.insetBlockEnd : after.insetInlineEnd);
   if (Number.isNaN(start) || Number.isNaN(end)) {
     return paint;
   }
@@ -279,18 +281,20 @@ describe("the band and the control in it", () => {
     expect(cs(phone.documentElement).getPropertyValue("--hit-floor").trim()).toBe("2.75rem");
   });
 
-  it("gives a finger a 44px band with the control filling it", () => {
+  it("gives a finger a 44px band with the control CENTRED in it, not filling it", () => {
+    // The floor lifting the paint to the band is what put the wash flush against the card's
+    // edges on a phone; the paint stays `--ctl-h-sm` and the expander carries the target.
     const { footer, ledger } = mountFooter(phone, "rewind");
     const floor = token(phone, "--hit-floor");
     expect(floor).toBeCloseTo(44, 0);
-    // Band and control coincide here and there is nothing left to centre: the floor is
-    // 44 against `--ctl-h-dense` 40, so the row's `max()` and the control's own
-    // `max(--ctl-h-sm, --hit-floor)` both resolve to the floor.
     expect(band(footer)).toBeCloseTo(floor, 0);
-    expect(ledger.getBoundingClientRect().height).toBeCloseTo(floor, 0);
+    expect(ledger.getBoundingClientRect().height).toBeCloseTo(token(phone, "--ctl-h-sm"), 0);
+    expect(target(ledger, "block"), "the target still clears the floor").toBeGreaterThanOrEqual(
+      floor,
+    );
     const i = insets(footer, ledger);
-    expect(i.top, `top ${i.top}px`).toBeCloseTo(0, 1);
-    expect(i.bottom, `bottom ${i.bottom}px`).toBeCloseTo(0, 1);
+    expect(i.top, `top ${i.top}px against bottom ${i.bottom}px`).toBeCloseTo(i.bottom, 1);
+    expect(i.top, "so the wash keeps air above and below").toBeGreaterThan(1);
   });
 
   it("keeps the mouse tier's band at the dense height and CENTRES a smaller control", () => {
@@ -307,7 +311,7 @@ describe("the band and the control in it", () => {
     const h = ledger.getBoundingClientRect().height;
     expect(h, "the paint is the control box").toBeCloseTo(Math.max(small, floor), 0);
     expect(h, "which is shorter than the band").toBeLessThan(dense);
-    expect(targetHeight(ledger), "and the target still clears the floor").toBeGreaterThanOrEqual(
+    expect(target(ledger, "block"), "and the target still clears the floor").toBeGreaterThanOrEqual(
       floor,
     );
     const i = insets(footer, ledger);
@@ -315,79 +319,77 @@ describe("the band and the control in it", () => {
     expect(i.top, "so the wash paints a pill rather than a slab").toBeGreaterThan(1);
   });
 
-  it("reaches the band's leading edge while the `i` keeps the card's ink gutter", () => {
-    // The gutter moved from the footer onto the button, so the box reaches the edge
-    // and the ink does not. Compared against the HEADER's own text rather than a
-    // literal, because lining up with the rest of the card is the whole property.
-    const { footer, ledger, info, headerText } = mountFooter(document, "rewind");
-    expect(cs(footer).paddingInlineStart).toBe("0px");
-    expect(ledger.getBoundingClientRect().left).toBeCloseTo(footer.getBoundingClientRect().left, 1);
-    expect(info.getBoundingClientRect().left).toBeCloseTo(
-      headerText.getBoundingClientRect().left,
-      1,
-    );
+  it("keeps the ledger's box off the band's leading edge while the `i` keeps the card's ink gutter", () => {
+    // The leading air clears the card's corner arc, so the control's own radius is not a
+    // nesting, and the `i` still lines up with the HEADER's own text rather than a literal.
+    for (const [where, doc] of [
+      ["phone", phone],
+      ["desktop", document],
+    ] as const) {
+      const { footer, ledger, info, headerText } = mountFooter(doc, "rewind");
+      const i = insets(footer, ledger);
+      const arc = parseFloat(cs(footer).borderEndStartRadius);
+      expect(arc, `${where} the band rounds the card's corner`).toBeGreaterThan(0);
+      expect(i.start, `${where} leading ${i.start}px against a ${arc}px arc`).toBeGreaterThan(arc);
+      expect(info.getBoundingClientRect().left, `${where} ink gutter`).toBeCloseTo(
+        headerText.getBoundingClientRect().left,
+        1,
+      );
+    }
   });
 });
 
 describe("the trailing control", () => {
-  it("keeps Rewind off the band's edges, because it paints a resting border", () => {
-    // The one child that may not go flush. Both tiers, because its border is there
-    // at every width and the band is tight on the mouse tier too.
-    for (const [where, doc] of [
-      ["phone", phone],
-      ["desktop", document],
+  /** The trailing control the case is about: Rewind, or the `…` trigger standing for the actions. */
+  function trailingControl(m: Mounted): HTMLElement {
+    const el = m.last.matches(".turn-rewind")
+      ? m.last
+      : m.last.querySelector<HTMLElement>(".turn-action-more");
+    if (el === null) {
+      throw new Error("no trailing control");
+    }
+    return el;
+  }
+
+  it("sits the same air off the band's top, bottom and trailing edge as the ledger", () => {
+    // One rule for every control in the row, on both tiers: no fill reaches the card's edge.
+    // The `…` trigger exists only where the actions collapse, so desktop measures Rewind.
+    for (const [label, doc, trailing] of [
+      ["phone actions", phone, "actions"],
+      ["phone rewind", phone, "rewind"],
+      ["desktop rewind", document, "rewind"],
     ] as const) {
-      const { footer, last } = mountFooter(doc, "rewind");
-      expect(cs(last).borderTopWidth, `${where} resting border`).not.toBe("0px");
-      const i = insets(footer, last);
-      expect(i.top, `${where} top ${i.top}px`).toBeGreaterThan(1);
-      expect(i.bottom, `${where} bottom ${i.bottom}px`).toBeGreaterThan(1);
-      expect(i.end, `${where} end ${i.end}px`).toBeGreaterThan(1);
+      const m = mountFooter(doc, trailing);
+      const lead = insets(m.footer, m.ledger);
+      const i = insets(m.footer, trailingControl(m));
+      expect(i.top, `${label} top`).toBeCloseTo(lead.top, 1);
+      expect(i.bottom, `${label} bottom`).toBeCloseTo(lead.bottom, 1);
+      expect(i.end, `${label} end against the ledger's start`).toBeCloseTo(lead.start, 1);
+      expect(i.end, `${label} end`).toBeGreaterThan(1);
     }
   });
 
-  it("gives Rewind's target the hit floor back past its paint", () => {
-    // What the inset above costs, and the expander is what pays it: the paint is
-    // smaller than the floor, the target is not.
-    for (const [where, doc] of [
-      ["phone", phone],
-      ["desktop", document],
-    ] as const) {
-      const { last } = mountFooter(doc, "rewind");
-      const floor = token(doc, "--hit-floor");
-      const paint = last.getBoundingClientRect().height;
-      expect(paint, `${where} paint ${paint}px against floor ${floor}px`).toBeLessThan(floor);
-      expect(targetHeight(last), `${where} target`).toBeGreaterThanOrEqual(floor);
-      // Width stays on the floor, so the expander only grows the block axis and
-      // cannot reach the control 8px to its left.
-      expect(cs(last, "::after").insetInlineStart).toBe("0px");
-      expect(last.getBoundingClientRect().width).toBeGreaterThanOrEqual(floor);
-    }
-  });
-
-  it("lets the … trigger take the control box, because it paints nothing at rest", () => {
-    // The other trailing child, and the opposite call: it takes the shared control box
-    // and needs no inset of its own, which on this tier is the band exactly.
-    const { footer, last } = mountFooter(phone, "actions");
-    const trigger = last.querySelector<HTMLElement>(".turn-action-more");
-    expect(trigger).not.toBeNull();
-    if (trigger === null) {
-      return;
-    }
-    expect(cs(trigger).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(cs(trigger).borderTopWidth).toBe("0px");
-    expect(trigger.getBoundingClientRect().height).toBeCloseTo(band(footer), 0);
-  });
-
-  it("ends on the SAME gutter the `i` starts on, whatever the trailing child is", () => {
-    // Held against the LEADING declaration, over both trailing children (the fact sits inside the ledger
-    // button), so the trailing edge matches whichever control ends the row.
+  it("paints the ledger's box: no resting fill and no resting border", () => {
     for (const trailing of ["actions", "rewind"] as const) {
-      const { footer, ledger, last } = mountFooter(document, trailing);
-      const lead = parseFloat(cs(ledger).paddingInlineStart);
-      expect(lead, `${trailing} leading`).toBeGreaterThan(0);
-      expect(parseFloat(cs(footer).paddingInlineEnd), `${trailing} trailing`).toBeCloseTo(lead, 1);
-      expect(insets(footer, last).end, `${trailing} last child`).toBeCloseTo(lead, 1);
+      const m = mountFooter(phone, trailing);
+      const el = trailingControl(m);
+      expect(cs(el).backgroundColor, trailing).toBe(cs(m.ledger).backgroundColor);
+      expect(cs(el).borderTopWidth, trailing).toBe("0px");
+      expect(cs(el).borderTopLeftRadius, trailing).toBe(cs(m.ledger).borderTopLeftRadius);
+    }
+  });
+
+  it("is a square when it is icon-only, with the hit floor back past its paint", () => {
+    // Both trailing controls are icon-only on the phone; the expander carries the target on
+    // each axis the paint is short of the floor.
+    const floor = token(phone, "--hit-floor");
+    for (const trailing of ["actions", "rewind"] as const) {
+      const el = trailingControl(mountFooter(phone, trailing));
+      const r = el.getBoundingClientRect();
+      expect(r.width, `${trailing} square`).toBeCloseTo(r.height, 1);
+      expect(r.height, `${trailing} paint under the floor`).toBeLessThan(floor);
+      expect(target(el, "block"), `${trailing} target height`).toBeGreaterThanOrEqual(floor);
+      expect(target(el, "inline"), `${trailing} target width`).toBeGreaterThanOrEqual(floor);
     }
   });
 });
@@ -408,13 +410,13 @@ async function settle(el: Element): Promise<void> {
 
 describe("the panel the ledger opens", () => {
   it("holds its ink one gutter off the CARD on all four edges", async () => {
-    // Measured against the CARD, the only reading the panel's asymmetric inset can be
-    // judged by (`.turn-info-panel` in 29-turns.css owns why it is asymmetric), and held
-    // against the ledger's own gutter so one value stays the card's ink gutter.
-    const { card, footer, ledger, info, panel, title, lastRow } = mountFooter(document, "rewind");
+    // Measured against the CARD, because the band's inset sits between the two, and held
+    // against the `i`'s own ink gutter so one value stays the card's ink gutter.
+    const { card, footer, info, panel, title, lastRow } = mountFooter(document, "rewind");
     footer.dataset["info"] = "open";
     await settle(panel);
-    const gutter = parseFloat(cs(ledger).paddingInlineStart);
+    const gutter =
+      info.getBoundingClientRect().left - card.getBoundingClientRect().left - card.clientLeft;
     expect(gutter).toBeGreaterThan(0);
 
     const p = cs(panel);
@@ -469,7 +471,10 @@ describe("the delegate card mounts this row and gets the same gutters", () => {
     const { footer, ledger, last } = mountDelegate(document);
     const lead = parseFloat(cs(ledger).paddingInlineStart);
     expect(lead).toBeGreaterThan(0);
-    expect(parseFloat(cs(footer).paddingInlineEnd)).toBeCloseTo(lead, 1);
+    expect(parseFloat(cs(footer).paddingInlineEnd)).toBeCloseTo(
+      parseFloat(cs(footer).paddingInlineStart),
+      1,
+    );
     expect(parseFloat(cs(ledger).paddingInlineEnd)).toBeCloseTo(lead, 1);
     expect(
       last.getBoundingClientRect().right,

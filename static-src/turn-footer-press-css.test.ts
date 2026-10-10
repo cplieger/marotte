@@ -171,7 +171,9 @@ describe("the two ends of the footer share one press box", () => {
     const box = ruleContaining(mcp, ".turn-ledger-summary", "top");
     const hover = ruleContaining(mcp, ".turn-ledger-summary:hover", "top");
     expect(box.selector, "the resting box").toContain(".turn-action-btn");
+    expect(box.selector, "Rewind takes the same box").toContain(".turn-rewind");
     expect(hover.selector, "the hover fill").toContain(".turn-action-btn:hover");
+    expect(hover.selector, "and the same hover").toContain(".turn-rewind:hover");
     // `height` is in that list because the PAINTED box is what the two ends of the row
     // have to agree on: a per-control height is how the toggle came to paint a
     // full-height slab beside a 24px pill.
@@ -182,14 +184,21 @@ describe("the two ends of the footer share one press box", () => {
     expect(box.body, "the transition names box-shadow").toContain("box-shadow ");
   });
 
-  it("leaves the ledger's own rule holding geometry only", () => {
+  it("leaves the ledger's and Rewind's own rules holding geometry only", () => {
     // 29-turns.css owns the band's height and the card's ink gutter; every fill, ink and
     // transition is the shared rule's, so a copy here would silently overlap it.
-    const geometry = ruleContaining(turns, ".turn-ledger-summary", "top");
-    for (const decl of ["background", "border", "color", "cursor", "transition"]) {
-      expect(geometry.body, `${decl} belongs to the shared rule`).not.toContain(`${decl}:`);
+    for (const control of [".turn-ledger-summary", ".turn-rewind"]) {
+      const geometry = ruleContaining(turns, control, "top");
+      for (const decl of ["background", "border", "color", "cursor", "transition"]) {
+        expect(geometry.body, `${control}: ${decl} belongs to the shared rule`).not.toContain(
+          `${decl}:`,
+        );
+      }
+      expect(turns, `${control}: no bespoke focus ring`).not.toContain(`${control}:focus-visible`);
+      expect(turns, `${control}: no bespoke hover`).not.toMatch(
+        new RegExp(`\\${control}:hover\\s*\\{`, "u"),
+      );
     }
-    expect(turns, "no bespoke focus ring").not.toContain(".turn-ledger-summary:focus-visible");
   });
 
   it("resolves one rest treatment on both controls", () => {
