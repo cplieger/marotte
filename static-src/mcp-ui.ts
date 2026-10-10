@@ -24,6 +24,7 @@ import {
   type MCPPromptInfo,
   type MCPPromptArg,
   type MCPResourceInfo,
+  type MCPResourceTemplateInfo,
   servers,
   unconfiguredNames,
   mcpState,
@@ -47,6 +48,7 @@ import {
   getResourceContent,
 } from "./actions/mcp.js";
 import { promptResultToText, resourceResultToText } from "./mcp-content.js";
+import { parseTemplate } from "./context-mentions.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
 let sectionBody: HTMLDivElement | null = null;
@@ -990,7 +992,7 @@ function renderDiscovery(
     return;
   }
   box.replaceChildren();
-  const count = disc.prompts.length + disc.resources.length;
+  const count = disc.prompts.length + disc.resources.length + disc.resource_templates.length;
   if (!enabled || count === 0) {
     box.hidden = true;
     return;
@@ -1011,6 +1013,12 @@ function renderDiscovery(
     details.appendChild(el("div", { className: "mcp-disc-group" }, "Resources"));
     for (const res of disc.resources) {
       details.appendChild(buildResourceItem(serverName, res));
+    }
+  }
+  if (disc.resource_templates.length > 0) {
+    details.appendChild(el("div", { className: "mcp-disc-group" }, "Resource templates"));
+    for (const t of disc.resource_templates) {
+      details.appendChild(buildTemplateItem(serverName, t));
     }
   }
   box.appendChild(details);
@@ -1060,22 +1068,57 @@ function buildPromptItem(serverName: string, p: MCPPromptInfo): HTMLElement {
   }
 
   // Prompt with arguments: a toggle reveals an inline form; submit inserts.
-  const form = buildArgForm(serverName, p, args);
+  const form = buildArgForm(args, (values, submit) => {
+    void insertPrompt(serverName, p, values, submit);
+  });
+  return withFillInForm(item, form, "Fill in arguments");
+}
+
+/** An item whose action is a hidden inline form, revealed by a "Fill in…" toggle. */
+function withFillInForm(item: HTMLElement, form: HTMLFormElement, tooltip: string): HTMLElement {
   form.hidden = true;
   const toggleBtn = el(
     "button",
-    { type: "button", className: "mcp-disc-insert", "data-tooltip": "Fill in arguments" },
+    { type: "button", className: "mcp-disc-insert", "data-tooltip": tooltip },
     "Fill in…",
   ) as HTMLButtonElement;
   toggleBtn.addEventListener("click", () => {
     form.hidden = !form.hidden;
   });
   item.appendChild(toggleBtn);
-  const wrap = el("div", { className: "mcp-disc-prompt-wrap" }, item, form);
-  return wrap;
+  return el("div", { className: "mcp-disc-prompt-wrap" }, item, form);
 }
 
-function buildArgForm(serverName: string, p: MCPPromptInfo, args: MCPPromptArg[]): HTMLFormElement {
+/**
+ * A resource template's row: one field per variable, and Insert reads the expanded URI like a resource row. Empty
+ * values are allowed, as in the composer's fill flow; a template `parseTemplate` refuses is listed without an action.
+ */
+function buildTemplateItem(serverName: string, t: MCPResourceTemplateInfo): HTMLElement {
+  const item = el(
+    "div",
+    { className: "mcp-disc-item" },
+    discItemLabel(orFallback(t.name, t.uri_template), t.description ?? t.uri_template),
+  );
+  const parsed = parseTemplate(t.uri_template);
+  if (parsed === null) {
+    return item;
+  }
+  const fields = parsed.vars.map((name) => ({ name }));
+  const form = buildArgForm(fields, (values, submit) => {
+    const uri = parsed.expand(values);
+    void insertResource(
+      serverName,
+      { name: `${orFallback(t.name, t.uri_template)} (${uri})`, uri },
+      submit,
+    );
+  });
+  return withFillInForm(item, form, "Fill in template variables");
+}
+
+function buildArgForm(
+  args: readonly MCPPromptArg[],
+  onSubmit: (values: Record<string, string>, submit: HTMLButtonElement) => void,
+): HTMLFormElement {
   const form = el("form", { className: "mcp-disc-arg-form" }) as HTMLFormElement;
   const inputs = new Map<string, HTMLInputElement>();
   for (const a of args) {
@@ -1115,7 +1158,7 @@ function buildArgForm(serverName: string, p: MCPPromptInfo, args: MCPPromptArg[]
         values[name] = input.value;
       }
     }
-    void insertPrompt(serverName, p, values, submit);
+    onSubmit(values, submit);
   });
   return form;
 }
