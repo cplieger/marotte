@@ -78,7 +78,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 # css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
-ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.1.1
+ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.2.0-dev.2
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
