@@ -81,10 +81,10 @@ func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID
 	}
 	steer := &marotte.EntrySteer{
 		Text: text, Origin: t.steerOrigin(chatID, k.MessageID), State: marotte.SteerStateRead,
-		Severity: k.NotificationSeverity, Resends: t.steerResends(chatID, k.MessageID),
+		Severity: k.NotificationSeverity,
 	}
 	t.stampRunNotice(chatID, k.MessageID, steer)
-	t.steerBufferRead(chatID, k.MessageID)
+	steer.Resends = t.steerBufferRead(chatID, k.MessageID)
 	t.appendSteer(ctx, chatID, k.MessageID, steer)
 }
 
@@ -163,8 +163,7 @@ func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, 
 	}
 	p := held[0]
 	steer := &marotte.EntrySteer{
-		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead,
-		Resends: t.steerResends(chatID, steerID),
+		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead, Resends: p.Replaces,
 	}
 	t.stampRunNotice(chatID, steerID, steer)
 	t.appendSteerInLane(ctx, chatID, lane, steerID, steer)
@@ -204,10 +203,11 @@ func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p *marotte.SteerQ
 	return t.steerBuffer.SteerWaiting(chatID, p)
 }
 
-func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) {
-	if t.steerBuffer != nil {
-		t.steerBuffer.SteerRead(chatID, steerID)
+func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) []string {
+	if t.steerBuffer == nil {
+		return nil
 	}
+	return t.steerBuffer.SteerRead(chatID, steerID)
 }
 
 func (t *Translator) steerBufferCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
@@ -235,13 +235,4 @@ func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.
 		return marotte.SteerOriginAgent
 	}
 	return t.steers.SteerOrigin(chatID, steerID)
-}
-
-// steerResends answers the dropped steers a steer this server sent re-sends; nil
-// for an agent's steer, an unrecorded id, or a Translator built without the role.
-func (t *Translator) steerResends(chatID marotte.ChatID, steerID string) []string {
-	if t.steers == nil {
-		return nil
-	}
-	return t.steers.SteerResends(chatID, steerID)
 }

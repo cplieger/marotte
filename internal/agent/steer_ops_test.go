@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 func removeCmd(key string) marotte.ClientCommand {
@@ -265,8 +266,8 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 				_, live := s.state("steer-b")
 				return !live
 			})
-			if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonBoundary {
-				t.Errorf("kept entry = %+v, want the boundary note", n)
+			if n := s.spy.note("steer-b"); n != nil {
+				t.Errorf("kept entry = %+v, want none: the resend prompt carries it", n)
 			}
 		})
 	}
@@ -310,6 +311,94 @@ func resendPrompt(t *testing.T, cs *testChatStore) *marotte.EntryPrompt {
 			return nil
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// A cancel naming a queued row as its lead ends the turn and opens the next with every unread row as its
+// prompt, lead first; the log carries those words only as that prompt, never as a "not read" note.
+func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) {
+	s, cs, br := steerOpsHub(t)
+	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
+		s.h.coord.recordSteer(ctx, chatID, id, steer)
+	}
+	id, _ := s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", newTurnStartMsg())
+	s.steer("steer-a", "first")
+	s.steer("steer-b", "second")
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-b"}`)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(br.notified(marotte.MethodCancel)) == 0 {
+		t.Fatal("no session/cancel reached the bridge")
+	}
+	s.h.translateACPEvent("c1", clearedMsg("steer-a", "steer-b"))
+	s.h.translateACPEvent("c1", newTurnEndMsg("cancelled"))
+	s.h.coord.ReleaseTurn("c1", id)
+
+	if p := resendPrompt(t, cs); p == nil || p.Text != "second\n\nfirst" || !slices.Equal(p.Resends, []string{"steer-b", "steer-a"}) {
+		t.Errorf("next prompt = %+v, want the lead then the other row, naming both", p)
+	}
+	waitFor(t, func() bool {
+		_, liveA := s.state("steer-a")
+		_, liveB := s.state("steer-b")
+		return !liveA && !liveB
+	})
+	got := steerEntries(t, cs, "c1")
+	for _, k := range []string{"steer-a", "steer-b"} {
+		if e := got[k]; len(e) != 0 {
+			t.Errorf("steer entries for %s = %+v, want none: the next prompt carries its words", k, e)
+		}
+	}
+}
+
+// A delete resends the kept rows as one steer under a fresh id; read after the ledger has forgotten that id
+// (a turn outlives its TTL), the read entry still names both rows, so a later session/load merge inserts no
+// "Not read" note for either.
+func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *testing.T) {
+	s, cs, br := steerOpsHub(t)
+	s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", newTurnStartMsg())
+	s.steer("steer-a", "a")
+	s.steer("steer-b", "b")
+	s.steer("steer-c", "c")
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != marotte.MethodSessionSteerClear {
+			return nil, nil, false
+		}
+		return clearReply(s.kasHolds()), nil, true
+	}
+	rec := postCmd(t, s.h, removeCmd("steer-b"))
+	if got := removedBody(t, rec.Code, rec.Body.Bytes()); got["deleted"] != "steer-b" {
+		t.Fatalf("steer_remove = %v, want steer-b deleted", got)
+	}
+	probe := s.probe()
+	if probe == "" || s.kasID("steer-a") != probe || s.kasID("steer-c") != probe {
+		t.Fatalf("kept rows under %q/%q, want both under the probe %q", s.kasID("steer-a"), s.kasID("steer-c"), probe)
+	}
+	// ForgetChat stands in for the TTL lapse: the ledger answers nothing about the probe.
+	s.h.steerLedger.ForgetChat("c1")
+
+	s.h.translateACPEvent("c1", injectedMsg(probe, "a\n\nc"))
+
+	read := steerEntries(t, cs, "c1")[probe]
+	if len(read) != 1 || !slices.Equal(read[0].Resends, []string{"steer-a", "steer-c"}) {
+		t.Errorf("read entry for the probe = %+v, want one naming steer-a and steer-c", read)
+	}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		steerRow("steer-a", marotte.EntrySteer{Text: "a", Origin: marotte.SteerOriginUser}),
+		steerRow("steer-c", marotte.EntrySteer{Text: "c", Origin: marotte.SteerOriginUser}),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+	merged, _ := MergeEntries(RecordTurnsOf(logOf(t, cs, "c1"), nil), projected, "sid-1")
+	for _, turn := range merged {
+		for _, e := range turn.Entries {
+			if e.ID == "steer-a" || e.ID == "steer-c" {
+				t.Errorf("merged turn %s holds steer %s %s, want none: the read resend carried it", e.Turn, e.ID, e.Payload)
+			}
+		}
 	}
 }
 

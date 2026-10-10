@@ -572,8 +572,8 @@ func (q steerQueue) UnsentRows(chatID marotte.ChatID, deathDrained bool) []comma
 	return out
 }
 
-// Delivered retires the named rows once the prompt carrying them has opened: one
-// boundary note per key, then a removed frame.
+// Delivered retires the named rows once the prompt carrying them has opened: each
+// leaves the dock on a removed frame and writes no entry, since its words are that prompt's.
 func (q steerQueue) Delivered(chatID marotte.ChatID, keys []string) {
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		for _, k := range keys {
@@ -581,14 +581,8 @@ func (q steerQueue) Delivered(chatID marotte.ChatID, keys []string) {
 			if w == nil || w.state == rowRead {
 				continue
 			}
-			if !w.noted {
-				w.noted = true
-				fx.notes = append(fx.notes, steerNote{id: w.key, steer: boundarySteer(w)})
-			}
 			w.owner = ""
-			w.state = rowDone
-			fx.frames = append(fx.frames, rowFrame(w))
-			fx.changed = true
+			retire(w, nil, fx)
 		}
 	})
 }

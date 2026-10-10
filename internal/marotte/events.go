@@ -207,9 +207,9 @@ const (
 	// one thing the badge exists to tell apart.
 	EventSpecApproved EventType = "spec_approved"
 	// EventSteerQueued says a steer reached KAS's buffer, and it is the only
-	// steering EVENT: whether the model then read it or a boundary dropped it is
-	// the `steer` entry's own `state`, which arrives as entry_appended and is
-	// durable, where an event is not.
+	// steering EVENT: whether the model then read it or it was dropped is the
+	// `steer` entry's own `state`, which arrives as entry_appended and is
+	// durable, where an event is not. A row the next prompt carries gets no entry.
 	EventSteerQueued EventType = "steer_queued"
 	// EventAgentNotice is a notice the AGENT produced (a workflow step or subagent reporting into
 	// the launching session), arriving on KAS's steering channel. Its own event rather than a

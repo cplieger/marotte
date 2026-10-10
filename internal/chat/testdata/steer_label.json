@@ -38,7 +38,6 @@
       "label": "Workflow result not delivered · the turn ended first",
       "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:57",
         "internal/translate/steering.go:101",
         "internal/translate/steering.go:110"
       ]
@@ -51,7 +50,8 @@
       "compared": true,
       "sites": [
         "internal/agent/bridge_coord.go:1193",
-        "internal/agent/entry_merge.go:493"
+        "internal/agent/entry_merge.go:565",
+        "internal/agent/runtime.go:698"
       ]
     },
     {
@@ -85,8 +85,7 @@
       "label": "Not read · the turn ended first",
       "compared": true,
       "sites": [
-        "internal/agent/command_chat_ops.go:57",
-        "internal/agent/steer_buffer.go:304",
+        "internal/agent/command_chat_ops.go:61",
         "internal/translate/steering.go:101"
       ]
     },
@@ -107,8 +106,8 @@
       "label": "Not read · the session restarted",
       "compared": true,
       "sites": [
-        "internal/agent/entry_merge.go:493",
-        "internal/agent/runtime.go:690"
+        "internal/agent/entry_merge.go:565",
+        "internal/agent/runtime.go:693"
       ]
     },
     {
@@ -143,14 +142,14 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:57",
+      "site": "internal/agent/command_chat_ops.go:61",
       "form": "literal",
-      "origin": "",
+      "origin": "user",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:493",
+      "site": "internal/agent/entry_merge.go:565",
       "form": "mutation",
       "origin": "",
       "state": "dropped",
@@ -171,9 +170,16 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:690",
+      "site": "internal/agent/runtime.go:693",
       "form": "literal",
       "origin": "user",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/runtime.go:698",
+      "form": "mutation",
+      "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
@@ -183,13 +189,6 @@
       "origin": "user",
       "state": "dropped",
       "reason": "deleted"
-    },
-    {
-      "site": "internal/agent/steer_buffer.go:304",
-      "form": "literal",
-      "origin": "user",
-      "state": "dropped",
-      "reason": "boundary"
     },
     {
       "site": "internal/translate/projection_entries.go:216",

@@ -166,14 +166,46 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 			}
 			got := steerEntries(t, cs, "c1")
 			for _, k := range []string{"steer-a", "steer-b"} {
-				if e := got[k]; len(e) != 1 || e[0].Reason != marotte.SteerReasonBoundary {
-					t.Errorf("entries for %s = %+v, want one boundary note and no restart record", k, e)
+				if e := got[k]; len(e) != 0 {
+					t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
 				}
 			}
 			if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
 				t.Errorf("queue = %+v, want no Held row for steers a prompt already carried", rows)
 			}
 		})
+	}
+}
+
+// A tab close whose lock wait expires between a resend's open and its retire writes no drop note for the
+// steers that resend already carries.
+func TestBeginChatTeardown_AResendOpenedBeforeTheCloseKeepsItsSteers(t *testing.T) {
+	shortenSteerLockWait(t)
+	h, cs, _ := handoffHub(t)
+	ps := newPausingStore(h.coord.chatStore)
+	ps.onOpen = true
+	h.coord.chatStore = ps
+
+	fence := fenceNow(h, "c1")
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		h.dispatcher.DrainAfterClose(context.Background(), "c1",
+			command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
+	}()
+	<-ps.paused
+	h.BeginChatTeardown("c1", true)
+	close(ps.release)
+	<-drained
+
+	if p := resendPrompt(t, cs); p == nil || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
+		t.Fatalf("resend prompt = %+v, want both steers named", p)
+	}
+	got := steerEntries(t, cs, "c1")
+	for _, k := range []string{"steer-a", "steer-b"} {
+		if e := got[k]; len(e) != 0 {
+			t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
+		}
 	}
 }
 

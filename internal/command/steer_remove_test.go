@@ -165,8 +165,7 @@ func TestCmdSteerRemove_ARowKASDoesNotHoldGoesWithoutAClear(t *testing.T) {
 }
 
 // A row KAS may hold costs a clear, and the rows the reader kept go back as ONE
-// steer under a fresh id, recorded in the ledger as re-sending their keys so the
-// client can match the read entry against every row it carried.
+// steer under a fresh id, recorded in the ledger as the user's.
 func TestCmdSteerRemove_ClearsThenResendsTheKeptRowsAsOneSteer(t *testing.T) {
 	b := newSteerBridge()
 	b.results[marotte.MethodSessionSteerClear] = map[string]any{"cleared": true, "messageIds": []string{"steer-a", "steer-b", "steer-c"}}
@@ -191,8 +190,8 @@ func TestCmdSteerRemove_ClearsThenResendsTheKeptRowsAsOneSteer(t *testing.T) {
 	if !slices.Equal(q.cleared, []string{"steer-a", "steer-b", "steer-c"}) {
 		t.Errorf("record told cleared = %v, want the clear's own ids", q.cleared)
 	}
-	if got := ledger.SteerResends("c1", "steer-p"); !slices.Equal(got, []string{"steer-a", "steer-c"}) {
-		t.Errorf("ledger resends(steer-p) = %v, want [steer-a steer-c]", got)
+	if got := ledger.SteerOrigin("c1", "steer-p"); got != marotte.SteerOriginUser {
+		t.Errorf("ledger origin(steer-p) = %q, want %q", got, marotte.SteerOriginUser)
 	}
 	wantOrder := []string{"lock", "begin-remove steer-b", "await", "remove-cleared", "op-sent steer-p", "end-op", "unlock"}
 	if got := q.callLog(); !slices.Equal(got, wantOrder) {

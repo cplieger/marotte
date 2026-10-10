@@ -328,13 +328,16 @@ func TestSteeringInjected_TheEntryCarriesTheOrigin(t *testing.T) {
 	}
 }
 
-// The read steer's entry carries the resends the sender recorded: KAS's frames
-// never name them, so the ledger is the one source, and a client matches them
-// against its row keys to take every row the combined steer carried.
-func TestSteeringInjected_TheEntryCarriesTheRecordedResends(t *testing.T) {
+// The read steer's entry carries the row keys the steer buffer answers the read
+// with: KAS's frames never name them, and a client matches them against its row
+// keys to take every row the combined steer carried.
+func TestSteeringInjected_TheEntryCarriesTheBuffersCarriedKeys(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-2": true}
-	deps.steerResends = map[string][]string{"steer-2": {"steer-1"}}
+	deps.queuedAnswer = func(p marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+		p.Replaces = []string{"steer-1"}
+		return p, true
+	}
 	tr := New(rolesOf(deps))
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}), FrameAttribution{})
@@ -349,7 +352,7 @@ func TestSteeringInjected_TheEntryCarriesTheRecordedResends(t *testing.T) {
 		t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
 	}
 	if want := []string{"steer-1"}; !slices.Equal(rows[0].Resends, want) {
-		t.Errorf("read steer resends = %v, want the ledger's %v", rows[0].Resends, want)
+		t.Errorf("read steer resends = %v, want the buffer's %v", rows[0].Resends, want)
 	}
 }
 

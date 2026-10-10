@@ -83,12 +83,10 @@ type LineRecorder interface {
 	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
 }
 
-// SentSteers answers what this server recorded about a mid-turn steer when it sent
-// it: whose words it carries, total by construction (an unknown id still gets an
-// answer), and which dropped steers it re-sends (nil for an unknown id).
+// SentSteers answers whose words a mid-turn steer this server sent carries, total
+// by construction: an unknown id still gets an answer.
 type SentSteers interface {
 	SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin
-	SteerResends(chatID marotte.ChatID, steerID string) []string
 }
 
 // SteerBuffer is the host's record of KAS's steering buffer and of the user's own steers:
@@ -98,10 +96,12 @@ type SteerBuffer interface {
 	// SteerWaiting folds steering_queued; true means an agent row the caller broadcasts.
 	SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
 	// SteerForgotten folds an acknowledgement-evidenced read and answers what was
-	// read, with its text, which no frame carries here.
+	// read, with its text, which no frame carries here, and in Replaces the row keys
+	// an id that is not a row's own carries.
 	SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
-	// SteerRead folds steering_injected for the one id it names.
-	SteerRead(chatID marotte.ChatID, steerID string)
+	// SteerRead folds steering_injected for the one id it names and answers the row
+	// keys that id carries when it is not a row's own (nil otherwise).
+	SteerRead(chatID marotte.ChatID, steerID string) []string
 	// SteerCleared folds steering_cleared and answers the AGENT rows it named. A
 	// user row gets no entry at a clear: the host writes one at the row's own
 	// terminal transition, so a row resent after the clear is never noted unread.

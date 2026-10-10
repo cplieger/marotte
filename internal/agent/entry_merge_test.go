@@ -587,6 +587,124 @@ func TestMergeEntries_RecordlessSteersBecomeDroppedRestarts(t *testing.T) {
 	}
 }
 
+// KAS replays every steer it was sent, a carried one too. A row the record carried as a prompt
+// (turn_open.prompt.resends) or re-sent under a fresh id (steer.resends) has no entry under its
+// own key, and must not come back as a `dropped, restart` note in the turn it was sent in.
+func TestMergeEntries_ASteerTheRecordCarriedIsNotReinserted(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		carrier []entryRow
+	}{
+		{
+			name: "carried_as_the_next_prompt",
+			carrier: []entryRow{openRow("T2", 2, &marotte.EntryPrompt{
+				ID: "m-2", Text: "second\n\nfirst", Resends: []string{"steer-b", "steer-a"},
+			})},
+		},
+		{
+			name: "resent_as_one_steer",
+			carrier: []entryRow{
+				openRow("T2", 2, nil),
+				steerRow("steer-fresh", marotte.EntrySteer{
+					Text: "second\n\nfirst", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+					Resends: []string{"steer-b", "steer-a"},
+				}),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := []RecordTurn{
+				recTurn(t, "T1",
+					openRow("T1", 1, nil),
+					textRow("S1", "", "working"),
+					liveClose("T1:e1", marotte.TurnOutcomeCancelled, "cancelled"),
+				),
+				recTurn(t, "T2", append(tc.carrier,
+					textRow("S2", "", "reading it"),
+					liveClose("T2:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+				)...),
+			}
+			projected := []translate.ProjectedTurn{
+				projTurn(t, "P1",
+					openRow("P1", 0, nil),
+					textRow("S1", "", "working"),
+					steerRow("steer-a", marotte.EntrySteer{Text: "first", Origin: marotte.SteerOriginUser}),
+					steerRow("steer-b", marotte.EntrySteer{Text: "second", Origin: marotte.SteerOriginUser}),
+					closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
+				),
+				projTurn(t, "P2",
+					openRow("P2", 0, nil),
+					textRow("S2", "", "reading it"),
+					closeRow("P2:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+				),
+			}
+
+			merged, changed := MergeEntries(record, projected, "sid-1")
+
+			if changed {
+				t.Errorf("MergeEntries changed = true, want false: the record carried both steers:\n%s", dumpMerged(merged))
+			}
+			for _, turn := range merged {
+				for _, e := range turn.Entries {
+					if e.ID == "steer-a" || e.ID == "steer-b" {
+						t.Errorf("merged turn %s holds steer %s %s, want none: the record carried it", e.Turn, e.ID, e.Payload)
+					}
+				}
+			}
+		})
+	}
+}
+
+// An unpaired projected turn whose only content is a carried steer is not inserted: it would
+// render as a blank turn. One that keeps its prompt is inserted, less the carried steer.
+func TestMergeEntries_AnInsertedTurnLosesItsCarriedSteers(t *testing.T) {
+	carrier := recTurn(t, "T1",
+		openRow("T1", 1, &marotte.EntryPrompt{ID: "m-1", Text: "first", Resends: []string{"steer-a"}}),
+		textRow("S", "", "working"),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+	)
+	answered := projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S", "", "working"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)
+	carried := steerRow("steer-a", marotte.EntrySteer{Text: "first", Origin: marotte.SteerOriginUser})
+	sentIn := marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}
+
+	t.Run("steer_only", func(t *testing.T) {
+		projected := []translate.ProjectedTurn{
+			projTurn(t, "P0", openRow("P0", 0, nil), carried, closeRow("P0:e1", sentIn)),
+			answered,
+		}
+
+		merged, changed := MergeEntries([]RecordTurn{carrier}, projected, "sid-1")
+
+		if changed || len(merged) != 1 {
+			t.Errorf("MergeEntries = %d turns, changed %v; want the record's one turn, unchanged:\n%s", len(merged), changed, dumpMerged(merged))
+		}
+	})
+	t.Run("with_a_prompt", func(t *testing.T) {
+		prompt := &marotte.EntryPrompt{ID: "m-lost", Text: "the prompt the record lacks"}
+		projected := []translate.ProjectedTurn{
+			projTurn(t, "P0", openRow("P0", 0, prompt), carried, closeRow("P0:e1", sentIn)),
+			answered,
+		}
+
+		merged, changed := MergeEntries([]RecordTurn{carrier}, projected, "sid-1")
+
+		if !changed || len(merged) != 2 {
+			t.Fatalf("MergeEntries = %d turns, changed %v; want the recovered prompt turn inserted before T1:\n%s", len(merged), changed, dumpMerged(merged))
+		}
+		open, ok := turnOpenOf(merged[0].Entries)
+		if !ok || open.Prompt == nil || open.Prompt.ID != prompt.ID {
+			t.Errorf("merged[0] turn_open = %+v (ok %v), want the prompt %q", open, ok, prompt.ID)
+		}
+		if n := countKind(merged[0], marotte.EntryKindSteer); n != 0 {
+			t.Errorf("merged[0] holds %d steers, want 0: T1's prompt carries steer-a:\n%s", n, dumpMerged(merged))
+		}
+	})
+}
+
 // TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt pins the head rule: the open
 // prompt turn is unpaired, so it cannot anchor.
 func TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt(t *testing.T) {

@@ -872,8 +872,8 @@ export interface EntryPlan {
 /**
  * EntryPrompt is the prompt a turn_open carries when the reader opened the turn:
  * the client-minted message id, the text and the files staged beside it. Resends
- * names the dropped steer entries whose text this prompt re-sent; absent means
- * not a resend. The record owns it and the projection never synthesises it.
+ * names the steer rows (their dock keys) whose words this prompt carries; absent
+ * means not a resend. The record owns it and the projection never synthesises it.
  */
 export interface EntryPrompt {
   id: string;
@@ -926,9 +926,9 @@ export interface EntrySealedPayload {
  * `error`), present on an agent-origin note only. OriginRun and ProducedTs are the
  * provenance of a note a finished run left: the run's id and when it finished, so a
  * note read long after the fact can say so. Absent on a user steer and on a step's
- * mid-run note. ProducedTs labels; it never orders. Resends names the dropped steer
- * entries whose text this one re-sends, recorded by the sender; the projection never
- * synthesises it, so the merge keeps the record's.
+ * mid-run note. ProducedTs labels; it never orders. Resends names the steer rows (dock
+ * keys) this one re-sends under its own id, taken from the steer record at the read;
+ * the projection never synthesises it, so the merge keeps the record's.
  */
 export interface EntrySteer {
   text: string;

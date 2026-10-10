@@ -107,8 +107,8 @@ func (s TurnOpenSource) Name() TurnOpenSourceName {
 
 // EntryPrompt is the prompt a turn_open carries when the reader opened the turn:
 // the client-minted message id, the text and the files staged beside it. Resends
-// names the dropped steer entries whose text this prompt re-sent; absent means
-// not a resend. The record owns it and the projection never synthesises it.
+// names the steer rows (their dock keys) whose words this prompt carries; absent
+// means not a resend. The record owns it and the projection never synthesises it.
 type EntryPrompt struct {
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
@@ -230,9 +230,9 @@ const (
 	// never held, because KAS persists a steer's text at send time while its
 	// pending state dies with the process.
 	SteerReasonRestart SteerReason = "restart"
-	// SteerReasonBoundary is the reason on a steer the turn boundary cleared:
-	// KAS empties the steering buffer when a turn ends, so a steer queued
-	// against a turn that finished first is dropped having never been read.
+	// SteerReasonBoundary is the reason on a steer whose turn ended first: a user
+	// steer still unread when its chat's tab closed (the close cancels the turn and
+	// no prompt carries the steer), or an agent note KAS's turn-end clear named.
 	SteerReasonBoundary SteerReason = "boundary"
 	// SteerReasonDeleted is the reason on a steer the reader deleted from the
 	// dock before the agent read it.
@@ -244,9 +244,9 @@ const (
 // `error`), present on an agent-origin note only. OriginRun and ProducedTs are the
 // provenance of a note a finished run left: the run's id and when it finished, so a
 // note read long after the fact can say so. Absent on a user steer and on a step's
-// mid-run note. ProducedTs labels; it never orders. Resends names the dropped steer
-// entries whose text this one re-sends, recorded by the sender; the projection never
-// synthesises it, so the merge keeps the record's.
+// mid-run note. ProducedTs labels; it never orders. Resends names the steer rows (dock
+// keys) this one re-sends under its own id, taken from the steer record at the read;
+// the projection never synthesises it, so the merge keeps the record's.
 type EntrySteer struct {
 	Text       string      `json:"text"`
 	Origin     SteerOrigin `json:"origin"`

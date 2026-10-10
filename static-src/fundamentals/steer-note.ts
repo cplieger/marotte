@@ -26,7 +26,7 @@ export interface SteerNoteData {
 }
 
 /** The labels, TOTAL over the origin so a new one needs wording. A dropped label states only what
- *  is known; the resend's own note says what happened next. */
+ *  is known. */
 const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
   user: { read: "Mid-turn message", dropped: "Not read" },
   agent: { read: "Workflow result", dropped: "Workflow result not delivered" },
