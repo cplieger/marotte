@@ -477,3 +477,57 @@ describe("resource templates after a status fetch", () => {
     ]);
   });
 });
+
+describe("a configured row's prompts & resources disclosure", () => {
+  it("counts and lists resource templates beside resources, one field per variable", async () => {
+    const s = configured("tpl-row");
+    servers.setAll([s]);
+    statusResponse.servers = [
+      {
+        name: "tpl-row",
+        state: "connected",
+        origin: "user",
+        resources: [{ name: "projects", uri: "resource://projects" }],
+        resource_templates: [
+          {
+            name: "inbox",
+            uri_template: "resource://inbox/{agent}",
+            description: "One agent's inbox",
+          },
+          { name: "broken", uri_template: "resource://bad/{agent" },
+        ],
+      },
+    ];
+    mcpState.refetchStatus();
+    await settle();
+
+    const row = mountRow(s, s.id);
+    const box = row.querySelector<HTMLElement>(".mcp-discovery");
+    expect(box?.hidden).toBe(false);
+    expect(box?.querySelector(".mcp-discovery-summary")?.textContent).toBe(
+      "Prompts & resources (3)",
+    );
+    const groups = [...(box?.querySelectorAll(".mcp-disc-group") ?? [])].map((g) => g.textContent);
+    expect(groups).toEqual(["Resources", "Resource templates"]);
+
+    const names = [...(box?.querySelectorAll(".mcp-disc-item-name") ?? [])].map(
+      (n) => n.textContent,
+    );
+    expect(names).toEqual(["projects", "inbox", "broken"]);
+
+    const inbox = box?.querySelectorAll(".mcp-disc-prompt-wrap")[0];
+    const form = inbox?.querySelector<HTMLFormElement>("form.mcp-disc-arg-form");
+    expect(form?.hidden).toBe(true);
+    inbox?.querySelector<HTMLButtonElement>(".mcp-disc-item .mcp-disc-insert")?.click();
+    expect(form?.hidden).toBe(false);
+    const fields = [...(form?.querySelectorAll(".mcp-disc-arg-name") ?? [])].map(
+      (f) => f.textContent,
+    );
+    expect(fields).toEqual(["agent"]);
+
+    // A template parseTemplate refuses is listed without an action rather than dropped.
+    const broken = [...(box?.querySelectorAll(".mcp-disc-item") ?? [])].at(-1);
+    expect(broken?.querySelector(".mcp-disc-item-name")?.textContent).toBe("broken");
+    expect(broken?.querySelector(".mcp-disc-insert")).toBeNull();
+  });
+});
