@@ -141,7 +141,7 @@ export function failureOwner(nodes: readonly ExecNode[]): ExecNode | undefined {
   return now.find((n) => isWork(n) && named(n)) ?? now.find(named);
 }
 
-export interface ExecCounters {
+interface ExecCounters {
   total: number;
   done: number;
   failed: number;
