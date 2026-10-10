@@ -105,6 +105,9 @@ vi.mock("./navigate.js", () => ({
 }));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
+  preserveReadingPosition: (fn: () => void) => {
+    fn();
+  },
 }));
 const chatRow = {
   session_id: "sess_chat",
@@ -1611,6 +1614,23 @@ describe("history: the row's subtitle and time", () => {
     });
     expect(sub("r:wf_timed")).toBe("15m");
     expect(sub("r:wf_untimed")).toBe("");
+  });
+
+  it("times a resumed run from its creation, because a resume restamps its start", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        {
+          workflow_id: "wf_resumed",
+          name: "nightly",
+          status: "completed",
+          created_at: 1000,
+          started_at: 841000,
+          updated_at: 901000,
+        },
+      ],
+    });
+    expect(sub("r:wf_resumed")).toBe("15m");
   });
 
   it("names the recipe only when the label is not already the recipe", async () => {

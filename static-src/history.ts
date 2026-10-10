@@ -109,7 +109,9 @@ function runSub(r: WorkflowRun, endReason: string): string {
   if (recipe !== "" && recipe !== r.name) {
     parts.push(recipe);
   }
-  const started = r.started_at ?? 0;
+  // From creation, not `started_at`: KAS restamps that each time it resumes a run, which would drop every
+  // stretch before the last resume.
+  const started = r.started_at === undefined ? 0 : (r.created_at ?? r.started_at);
   if (started > 0 && r.updated_at > started) {
     parts.push(formatDuration(r.updated_at - started));
   }

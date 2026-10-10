@@ -2609,7 +2609,7 @@ export interface RunProgressPayload {
   /**
  * StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
  * KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
- * both with KAS's own values.
+ * both.
  */
   started_at?: string;
   ended_at?: string;
@@ -2664,6 +2664,18 @@ export interface RunStepEnd {
   outcome: TurnOutcome;
   failure_reason?: string;
   failure_kind?: FailureKind;
+}
+
+/**
+ * RunStepStart is when a node's current attempt began in the run's own log, under `step_starts` in GET /api/runs/{id}
+ * keyed by node path. KAS restamps a node's startedAt each time it re-enters it (a resume, a restart), so its tree
+ * cannot say this. Ended is true once the attempt's newest turn closed for any reason but an interruption: a node KAS
+ * shows in flight past an ended attempt is on a new one.
+ */
+export interface RunStepStart {
+  /** StartedAt is RFC 3339. */
+  started_at: string;
+  ended: boolean;
 }
 
 /**
