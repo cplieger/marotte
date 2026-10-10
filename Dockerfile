@@ -58,7 +58,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/reactive
-ARG CPLIEGER_REACTIVE_VERSION=2.1.2
+ARG CPLIEGER_REACTIVE_VERSION=2.2.0-dev.1
 RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
