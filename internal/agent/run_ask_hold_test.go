@@ -97,7 +97,7 @@ func TestPendingRunAsks_ADeliveredPromptAnswersNoAskFoldedOnAnotherAttachment(t 
 
 // carrierHub is messageHub's paused step on a carrier of its own, whose queued frames the test folds
 // by hand: the factory's bridge also serves the utility session, whose read loop drains its queue.
-func carrierHub(t *testing.T) (h *Runtime, carrier *fakeBridge, gen uint64) {
+func carrierHub(t *testing.T) (h *Runtime, carrier *fakeBridge, att forwardAttachment) {
 	t.Helper()
 	h, _ = messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	carrier = newFakeBridge()
@@ -123,11 +123,11 @@ func eventsOfType(h *Runtime, typ marotte.EventType) []bufferedEvent {
 // question nobody will answer.
 func TestMessageStep_AnAskArrivingDuringAPausedStepsPromptIsSettledByIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, br, gen := carrierHub(t)
+		h, br, att := carrierHub(t)
 		carrier := runChatID("wf_1")
 		t.Cleanup(func() {
 			// The test is this carrier's folder, so it reports the folder gone before shutdown waits on it.
-			h.coord.turns.exitFor(carrier, gen)()
+			att.exited()
 			shutdownHub(t, h)
 		})
 		br.mu.Lock()
@@ -143,7 +143,7 @@ func TestMessageStep_AnAskArrivingDuringAPausedStepsPromptIsSettledByIt(t *testi
 			t.Fatalf("MessageStep = (%+v, %v) with the ask still queued ahead of KAS's reply, want it waiting for the carrier", r.out, r.err)
 		default:
 		}
-		h.coord.consumeFrame(carrier, br, gen, <-br.notifCh)
+		h.coord.consumeFrame(carrier, br, att.gen, <-br.notifCh)
 		r := <-sent
 
 		if r.err != nil || r.out.Verb != marotte.RunStepMessagePrompt {
@@ -167,13 +167,13 @@ func TestMessageStep_AnAskArrivingDuringAPausedStepsPromptIsSettledByIt(t *testi
 
 // The same ask, folded while the words were on their way, is offered once KAS refuses the words.
 func TestMessageStep_AnAskArrivingDuringAFailedPromptIsOffered(t *testing.T) {
-	h, br, gen := carrierHub(t)
+	h, br, att := carrierHub(t)
 	carrier := runChatID("wf_1")
 	br.mu.Lock()
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == marotte.MethodPrompt {
 			br.deliver(notifyAsk("wf_1", "review", "which branch?", "n1"))
-			h.coord.consumeFrame(carrier, br, gen, <-br.notifCh)
+			h.coord.consumeFrame(carrier, br, att.gen, <-br.notifCh)
 		}
 		return nil, nil, false
 	}
@@ -200,13 +200,13 @@ func TestMessageStep_AnAskFoldedBeforeAnUnconfirmedPromptIsSettledByIt(t *testin
 		"reply_too_large": &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, br, gen := carrierHub(t)
+			h, br, att := carrierHub(t)
 			carrier := runChatID("wf_1")
 			br.mu.Lock()
 			br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 				if method == marotte.MethodPrompt {
 					br.deliver(notifyAsk("wf_1", "review", "which branch?", "n1"))
-					h.coord.consumeFrame(carrier, br, gen, <-br.notifCh)
+					h.coord.consumeFrame(carrier, br, att.gen, <-br.notifCh)
 				}
 				return nil, nil, false
 			}
@@ -247,10 +247,10 @@ func TestMessageStep_AnAskFoldedBeforeAnUnconfirmedPromptIsSettledByIt(t *testin
 // words answer it once; a retry under the same id sends nothing.
 func TestMessageStep_AnAskQueuedWhenTheCarrierExitsIsSettledByTheRecordedWords(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, br, gen := carrierHub(t)
+		h, br, att := carrierHub(t)
 		carrier := runChatID("wf_1")
 		t.Cleanup(func() {
-			h.coord.turns.exitFor(carrier, gen)()
+			att.exited()
 			shutdownHub(t, h)
 		})
 		br.mu.Lock()
@@ -273,7 +273,7 @@ func TestMessageStep_AnAskQueuedWhenTheCarrierExitsIsSettledByTheRecordedWords(t
 			t.Fatalf("MessageStep = (%+v, %v) with the ask still queued at shutdown, want it waiting for the carrier", r.out, r.err)
 		default:
 		}
-		h.coord.consumeFrame(carrier, br, gen, <-br.notifCh)
+		h.coord.consumeFrame(carrier, br, att.gen, <-br.notifCh)
 		if r := <-sent; !errors.Is(r.err, errStepUnconfirmed) {
 			t.Fatalf("MessageStep whose carrier exited = %v, want errStepUnconfirmed", r.err)
 		}

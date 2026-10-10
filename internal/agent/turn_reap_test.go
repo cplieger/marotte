@@ -63,7 +63,7 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 
 func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 	h, _, _, pctx := newCompactionReapFixture(t)
-	gen := h.coord.turns.attachForward("c1")
+	gen := h.coord.turns.attachForward("c1").gen
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
 		h.coord.turns.observe("c1", gen, 1)

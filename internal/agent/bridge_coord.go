@@ -749,15 +749,15 @@ type replayProjector interface {
 // goroutine runs: a settle that captured the old generation reads a later attach as a gone forward
 // and drops its close.
 func (bc *bridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) uint64 {
-	gen := bc.turns.attachForward(chatID)
-	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, bridge, gen) })
-	return gen
+	att := bc.turns.attachForward(chatID)
+	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, bridge, att) })
+	return att.gen
 }
 
 // forwardAt is Forward on an attachment the caller already took: tryLoadSession orders its
 // read-loop position against it.
-func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, gen uint64) {
-	exited := bc.turns.exitFor(chatID, gen)
+func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, att forwardAttachment) {
+	gen := att.gen
 	ch := bridge.NotifCh()
 	// The generation keeps a straggler from the previous bridge off a restarted counter.
 	for n := range ch {
@@ -774,7 +774,7 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, 
 	}
 	// Wake anything parked on a position, before the death closer.
 	bc.turns.sealPosition(chatID, gen)
-	exited()
+	att.exited()
 	// For every end, before the death closer, whose turn close would drop the cards without saying why.
 	bc.endAsks(bridge)
 

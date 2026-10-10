@@ -268,7 +268,7 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
 	// The clear's reply lands at seq 3, and the carrier's read loop has folded that far: only the
 	// carrier's position can release the barrier.
-	gen := h.coord.turns.attachForward(runChatID("wf_1"))
+	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
 	br.mu.Unlock()

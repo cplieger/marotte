@@ -516,8 +516,9 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	}
 
 	h.replay.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
-	gen := h.coord.turns.attachForward(chatID)
-	go h.coord.forwardAt(chatID, br, gen)
+	att := h.coord.turns.attachForward(chatID)
+	gen := att.gen
+	go h.coord.forwardAt(chatID, br, att)
 
 	// The load answered at the last frame's position, before anything was folded.
 	h.replay.MarkReplayLoadedAt(chatID, drainPoint{gen: gen, seq: uint64(len(frames))})

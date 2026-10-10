@@ -81,7 +81,7 @@ func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID stri
 		t.Fatalf("Setup: marshalling the clear reply: %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, raw)
-	gen := h.coord.turns.attachForward(runChatID(workflowID))
+	gen := h.coord.turns.attachForward(runChatID(workflowID)).gen
 	br.mu.Lock()
 	br.deliveredSeq = seq
 	br.mu.Unlock()

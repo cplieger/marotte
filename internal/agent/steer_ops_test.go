@@ -62,9 +62,10 @@ func clearReply(ids []string) json.RawMessage {
 // and the late read is the row's one entry.
 func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *testing.T) {
 	s, _, br := steerOpsHub(t)
-	gen := s.h.coord.turns.attachForward("c1")
+	att := s.h.coord.turns.attachForward("c1")
+	gen := att.gen
 	// No goroutine stands behind this generation, so close its exit as forward would.
-	t.Cleanup(s.h.coord.turns.exitFor("c1", gen))
+	t.Cleanup(att.exited)
 	s.bind()
 	s.steer("steer-a", "first")
 	s.steer("steer-b", "second")

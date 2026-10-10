@@ -9,42 +9,36 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// attachForward resets the observed position for a new forward goroutine and returns its generation. A new bridge
-// restarts its sequence at zero; the generation lets a straggling forward from the old bridge be ignored.
-func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
+// forwardAttachment is one forward goroutine's generation and the closer of its exit channel.
+type forwardAttachment struct {
+	exited func()
+	gen    uint64
+}
+
+// attachForward resets the observed position for a new forward goroutine and returns its attachment. A new bridge
+// restarts its sequence at zero; the generation lets a straggling forward from the old bridge be ignored. The closer
+// is bound here, not when the goroutine starts: a teardown that captured the exit channel may forget the lifecycle
+// before the goroutine runs, and a closer looked up then would never release its drain wait.
+func (r *turnRegistry) attachForward(chatID marotte.ChatID) forwardAttachment {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	lc.fwdGen++
+	gen := lc.fwdGen
 	lc.observedSeq = 0
 	lc.forwardGone = false
 	if lc.fwdExits == nil {
 		lc.fwdExits = make(map[uint64]chan struct{})
 	}
-	lc.fwdExits[lc.fwdGen] = make(chan struct{})
+	exit := make(chan struct{})
+	lc.fwdExits[gen] = exit
 	lc.wakeLocked()
-	return lc.fwdGen
-}
-
-// exitFor answers the func generation gen's goroutine calls to close its exit channel. Taken at start: by exit a
-// teardown may have forgotten the lifecycle.
-func (r *turnRegistry) exitFor(chatID marotte.ChatID, gen uint64) (done func()) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return func() {}
-	}
-	lc.mu.Lock()
-	exit := lc.fwdExits[gen]
-	lc.mu.Unlock()
-	return func() {
-		if exit == nil {
-			return
-		}
+	return forwardAttachment{gen: gen, exited: func() {
 		close(exit)
 		lc.mu.Lock()
 		delete(lc.fwdExits, gen)
 		lc.mu.Unlock()
-	}
+	}}
 }
 
 // forwardExit answers a channel the current forward goroutine closes on exit, nil when none is attached.
