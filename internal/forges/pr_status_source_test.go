@@ -253,6 +253,22 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 	}
 }
 
+func TestSource_APresentCycleHealsATemporaryProbeFailure(t *testing.T) {
+	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
+	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": core}, githubRecord())
+	if err := m.Probe(t.Context(), "github:github.com"); err == nil {
+		t.Fatal("Setup: Probe() over a dead network = nil, want the failure")
+	}
+	core.err = nil
+	p := newTestPoller(NewManagerPRSource(m, fixedOrigins()), &fakeNotifier{}, &fakeGate{present: true})
+
+	p.sweep(t.Context())
+
+	if f := m.Get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
+		t.Errorf("row after a present cycle once the network is back = %+v, want connected with the error cleared", f)
+	}
+}
+
 func TestSource_NothingConnectedReadsNoOrigins(t *testing.T) {
 	stubPath(t)
 	m := NewManager(t.TempDir())

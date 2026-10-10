@@ -297,8 +297,10 @@ type OwnerScopes struct {
 	Owners []string `json:"owners"`
 }
 
-// ProbeResult is a probe's answer: the row as the probe left it, and the
-// refusal's sentence when the identity read failed.
+// ProbeResult is a probe's answer: the row as the probe left it, whether that
+// row is connected, and the failure's sentence when the identity read failed.
+// A temporary failure on a connected row answers its sentence beside connected
+// true.
 type ProbeResult struct {
 	Forge     *ConfiguredForge `json:"forge,omitempty"`
 	Error     string           `json:"error,omitempty"`

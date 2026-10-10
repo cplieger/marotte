@@ -52,6 +52,19 @@ func TestProbeRoute_AScopeRefusalCodesTheRow(t *testing.T) {
 	}
 }
 
+func TestProbeRoute_ATemporaryFailureAnswersConnectedWithItsSentence(t *testing.T) {
+	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
+	got := postProbe(t, repoRoutes(recordManager(t, core)))
+
+	if !got.Connected || !got.Forge.Connected {
+		t.Errorf("probe over a dead network = %+v, want connected", got)
+	}
+	if got.Error == "" || got.Error != got.Forge.LastError || got.Forge.ErrorKind != "transient" {
+		t.Errorf("probe error %q, row last_error %q, kind %q, want both the same sentence, kind transient",
+			got.Error, got.Forge.LastError, got.Forge.ErrorKind)
+	}
+}
+
 func TestProbeRoute_ARateLimitNamesTheWaitInWholeSeconds(t *testing.T) {
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Kind: forgeapi.KindRateLimited, Status: http.StatusTooManyRequests, RetryAfter: 41200 * time.Millisecond,

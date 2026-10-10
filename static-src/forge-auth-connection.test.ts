@@ -42,8 +42,6 @@ vi.mock("./forge-store.js", async (importOriginal) => {
     refreshForges: forgeRead,
     ensureForges: forgeRead,
     initForgeStore: vi.fn(),
-    onForgeChange: vi.fn(() => () => undefined),
-    currentForges: vi.fn(() => []),
     oauthByKind: vi.fn(() => ({})),
     forgeLoadFailed: vi.fn(() => false),
   };
@@ -53,6 +51,7 @@ import { resetActionFramework } from "@cplieger/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
+import { outcomesOf } from "./__test-helpers__/press-feedback.js";
 
 const mockedApiGet = vi.mocked(apiGetTyped);
 
@@ -218,10 +217,9 @@ describe("forge-auth: the connection row", () => {
     answer(
       0,
       json({
-        connected: false,
+        connected: true,
         error: "Whoami (status 429)",
         forge: account({
-          connected: false,
           last_error: "Whoami (status 429)",
           error_kind: "rate_limited",
           retry_after_s: 42,
@@ -235,6 +233,38 @@ describe("forge-auth: the connection row", () => {
         "Try again in 42 seconds",
       );
     });
+  });
+
+  it("keeps a connected row with a temporary failure usable, and says it runs again", async () => {
+    const reason = 'Whoami: SSRF dial: all 1 IPs for "api.github.com" failed: no route to host';
+    const row = await showRow(account({ last_error: reason, error_kind: "transient" }));
+
+    expect(row.querySelector(".forge-account-error")?.textContent).toBe(
+      `The last check hit a temporary problem and runs again automatically. ${reason}`,
+    );
+    expect(row.classList.contains("forge-account-row-error")).toBe(false);
+    expect(button(row, "Check")).toBeDefined();
+    expect(button(row, "Reconnect")).toBeUndefined();
+  });
+
+  it("reports a check that met a temporary failure as failed, with the row saying why", async () => {
+    const row = await showRow(account());
+    const { answer } = queuedFetch();
+    const check = button(row, "Check")!;
+    const outcomes = outcomesOf(check);
+
+    check.click();
+    answer(
+      0,
+      json({
+        connected: true,
+        error: "Whoami: no route to host",
+        forge: account({ last_error: "Whoami: no route to host", error_kind: "transient" }),
+      }),
+    );
+
+    await vi.waitFor(() => expect(outcomes).toContain("error"));
+    expect(row.querySelector(".forge-account-error")?.textContent).toContain("temporary problem");
   });
 
   it("keeps the server's sentence for any other code", async () => {

@@ -116,8 +116,8 @@ func (m *Manager) markReconnectRequired(id string, err error) bool {
 		return false
 	}
 	turned := !f.ReconnectRequired
-	f.ReconnectRequired = true
-	f.recordFailure(err)
+	f.ReconnectRequired, f.Connected = true, false
+	f.recordError(err)
 	return turned
 }
 
