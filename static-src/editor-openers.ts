@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { effect } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/reactive";
 import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -298,7 +298,8 @@ export function activateFile(path: string): void {
   // restored-tab route was affected.
   const state = ensureFileState(path);
   setActiveFilePath(path);
-  $.editorFilename.textContent = routeForPath(path).displayPath;
+  // A <bdi>, so the RTL path box (20-editor.css) keeps the path's own order.
+  $.editorFilename.replaceChildren(el("bdi", {}, routeForPath(path).displayPath));
   $.editorError.classList.add("hidden");
   // The pane is shared by every editor tab, so a file shown for the first time
   // must not inherit the previous file's offset; a known file is restored below.

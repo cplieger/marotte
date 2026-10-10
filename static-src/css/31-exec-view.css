@@ -34,8 +34,12 @@
   gap: var(--sp-2);
 }
 
+/* WRAPS, because nothing in the row can shrink to fit a phone: the meta and the
+   controls are content-sized, so a single line pushed the controls off screen
+   and crushed the name to nothing. Each group takes its own line instead. */
 .ev-h-main {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
@@ -116,11 +120,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Shrinks to the header's width once it has a line to itself, so the row inside
+   (`.run-controls`, 18-pages.css) wraps rather than overflowing. */
 .ev-h-actions {
   margin-inline-start: auto;
   display: flex;
   gap: var(--sp-2);
-  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ev-h-actions:empty {

@@ -15,22 +15,30 @@
   }
 }
 
-.editor-filename {
+/* The bottom-bar path box, the editor's and the web preview's. RTL clips a long
+   path at its START so the file name stays visible; the inner <bdi> keeps the
+   path's own order, and `left` (not `start`) seats a short path at the left edge.
+   It scrolls inline so a swipe reaches the rest; the scrollbar would paint over
+   the text. No ellipsis: Chromium keeps it painted over the start after a scroll. */
+.editor-filename,
+.web-path {
+  flex: 1 1 0;
+  min-width: 0;
+  min-block-size: var(--btn-h);
+  padding: 0 var(--sp-3);
+  line-height: calc(var(--btn-h) - 2px);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
-  color: var(--c-text-primary);
   font-weight: var(--fw-medium);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--c-text-primary);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  padding: var(--sp-2) var(--sp-3);
-  min-block-size: var(--btn-h);
-  display: flex;
-  align-items: center;
+  direction: rtl;
+  text-align: left;
+  overflow: auto hidden;
+  scrollbar-width: none;
+  white-space: nowrap;
 }
 
 .editor-error {
