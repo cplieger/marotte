@@ -492,7 +492,7 @@ func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.
 		"messageId":    "notify-1",
 		"timestamp":    "2026-09-15T13:00:00.000Z",
 		"source":       "steer",
-		"notification": map[string]any{"kind": "system-notification", "status": "warning"},
+		"notification": map[string]any{"kind": "system-notification", "status": "warning", "sender": "step"},
 	})
 	turns := entryProject([][2]any{turnStartFrame(t), pair(k, raw), turnEndFrame(t, "end_turn")})
 
@@ -507,6 +507,32 @@ func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.
 	}
 	if payload.Text != "the step needs a decision" {
 		t.Errorf("text = %q, want the bare text as replayed", payload.Text)
+	}
+}
+
+// TestEntryProjection_AParentNoticeIsTheMainAgentsSteer pins the launching chat's send_message to
+// a step, replayed off the step's session with KAS's `notification.sender: "parent"`, as a parent
+// steer: an agent origin would label the main agent's words "Workflow result".
+func TestEntryProjection_AParentNoticeIsTheMainAgentsSteer(t *testing.T) {
+	k, raw := replayFrame(t, replayUserChunkKind, "weigh this design input", "", map[string]any{
+		"messageId": "notify-b88f88cd-676f-472a-ad99-83e7ac49ddda",
+		"timestamp": "2026-10-10T12:04:09.213Z",
+		"source":    "steer",
+		"notification": map[string]any{
+			"kind": "system-notification", "status": "info", "sender": "parent",
+			"notifyId": "notify-b88f88cd-676f-472a-ad99-83e7ac49ddda",
+		},
+	})
+	turns := entryProject([][2]any{turnStartFrame(t), pair(k, raw), turnEndFrame(t, "end_turn")})
+
+	steer := entryOfKind(t, turns[0], marotte.EntryKindSteer)
+	var payload marotte.EntrySteer
+	payloadOf(t, steer, &payload)
+	if payload.Origin != marotte.SteerOriginParent {
+		t.Errorf("origin = %q, want %q for a row KAS marks sender parent", payload.Origin, marotte.SteerOriginParent)
+	}
+	if payload.Severity != "info" {
+		t.Errorf("severity = %q, want the notification status", payload.Severity)
 	}
 }
 

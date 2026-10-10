@@ -32,8 +32,8 @@ export type { TurnOutcome };
 // --- Reading an entry ---
 
 /** Narrow an entry to its kind. The wire types `payload` as `unknown`, because Go's
- *  own field is an `any` chosen by `Kind`, so this is the ONE place the client makes
- *  that choice — every other module asks by kind and gets a typed payload. */
+ *  own field is an `any` chosen by `Kind`; every other module asks by kind and gets a
+ *  typed payload. */
 export function isEntryKind<K extends EntryKind>(e: Entry, kind: K): e is KindedEntry<K> {
   return e.kind === kind;
 }
@@ -44,8 +44,8 @@ export function payloadOf<K extends EntryKind>(e: Entry, kind: K): EntryPayload[
 }
 
 /** The entry as a discriminated union, so a dispatcher's switch is total by type.
- *  The one cast in the client's entry path, and it is a cast rather than a decode
- *  because the generated decoder has already validated the payload per kind. */
+ *  The one unchecked kind-to-payload cast in the client's entry path: `decodeEntry`
+ *  validates the envelope and leaves `payload` as the server wrote it. */
 export function entryUnion(e: Entry): AnyEntry {
   return e as AnyEntry;
 }

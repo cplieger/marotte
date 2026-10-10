@@ -14,25 +14,28 @@ func SteerIDFor(messageID string) string {
 
 // SteerOrigin says WHOSE words a mid-turn steer carries.
 //
-// KAS's steering buffer is the only inbound channel into a live turn, so it
-// carries the user's own correction AND a workflow reporting into the chat that
-// launched it. Measured on the live store (2026-09-03, KAS 2.21.0), all three
-// producers persist identically and `notificationSeverity` cannot separate them:
-// it is set only when the TEXT carries a `[notification/<sev>]` prefix. So the
-// server records the steers IT sent, and everything else is the agent's.
+// KAS's steering buffer carries the user's correction, a step's report into the
+// chat that launched it, a run-completion nudge, and that chat's send_message
+// into a step. The live steering frames carry no sender (`notificationSeverity`
+// is only a text-prefix sniff), so the server records the steers IT sent and
+// everything else is the agent's. Only a replayed row carries KAS's
+// `notification.sender`, which is how the parent's message to a step is told apart.
 type SteerOrigin string
 
-// The two origins. Each string is the wire value AND the client's SteerOrigin
-// union member, so a rename here is a cross-language change.
+// The origins. Each string is the wire value AND the client's SteerOrigin union
+// member, so a rename here is a cross-language change.
 //
-// There is deliberately no "unknown": the ledger answers for every id, and a
-// third value would put a label the client has no wording for on the wire.
+// There is deliberately no "unknown": every producer answers one of these, and
+// another value would put a label the client has no wording for on the wire.
 const (
 	// SteerOriginUser is a steer this server sent on the user's behalf.
 	SteerOriginUser SteerOrigin = "user"
 	// SteerOriginAgent is a steer that arrived from KAS's own buffer: a
 	// workflow step's report, or a run-completion nudge.
 	SteerOriginAgent SteerOrigin = "agent"
+	// SteerOriginParent is the launching chat's send_message into one of its
+	// run's steps, read in that step's session.
+	SteerOriginParent SteerOrigin = "parent"
 )
 
 // SteerState says whether the model ever READ a mid-turn steer. Rendering an

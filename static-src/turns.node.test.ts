@@ -177,9 +177,7 @@ describe("narrowing an entry to its kind", () => {
   });
 
   it("entryUnion hands back the same object, so a dispatcher switches without a decode", () => {
-    // The one cast in the client's entry path, and it is a cast BECAUSE the generated
-    // decoder has already validated the payload per kind. Identity is the assertion:
-    // a copy would mean something re-decoded it.
+    // Identity is the assertion: a copy would mean something re-decoded it.
     const e = textEntry("t1", 1);
     expect(entryUnion(e)).toBe(e);
   });

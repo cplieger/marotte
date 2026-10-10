@@ -88,6 +88,9 @@ type ACPKiroBlock struct {
 		// Status is KAS's severity for a notification-kind row; only a REPLAY carries it here (the
 		// live frame uses notificationSeverity), so a replayed step note keeps its label.
 		Status string `json:"status"`
+		// Sender is KAS's send_message role, REPLAY only: "step" for a step's note to its parent,
+		// "parent" for the parent's message into a step.
+		Sender string `json:"sender"`
 	} `json:"notification"`
 	// Workflow is on every frame of a workflow STEP's session and is the only mark of one.
 	// Nested at `params.update._meta.kiro.workflow`, not `params._meta`.
