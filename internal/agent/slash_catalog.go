@@ -37,8 +37,8 @@ func (c *slashCatalog) SetFromChat(cmds []marotte.SlashCommand) bool {
 	return true
 }
 
-// SetFromUtility seeds the list before any chat bridge exists; once a chat set it, the utility list never overwrites it.
-func (c *slashCatalog) SetFromUtility(cmds []marotte.SlashCommand) bool {
+// setFromUtility seeds the list before any chat bridge exists; once a chat set it, the utility list never overwrites it.
+func (c *slashCatalog) setFromUtility(cmds []marotte.SlashCommand) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.fromChat || slashCommandsEqual(c.cmds, cmds) {
@@ -62,8 +62,8 @@ func slashCommandsEqual(a, b []marotte.SlashCommand) bool {
 	return true
 }
 
-// Snapshot returns a copy of the list, never nil, and whether KAS has sent one.
-func (c *slashCatalog) Snapshot() (cmds []marotte.SlashCommand, ready bool) {
+// snapshot returns a copy of the list, never nil, and whether KAS has sent one.
+func (c *slashCatalog) snapshot() (cmds []marotte.SlashCommand, ready bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]marotte.SlashCommand, len(c.cmds))
@@ -71,7 +71,6 @@ func (c *slashCatalog) Snapshot() (cmds []marotte.SlashCommand, ready bool) {
 	return out, c.fromChat
 }
 
-// steeringIssues holds the latest configIssues map KAS reported.
 type steeringIssues struct {
 	issues map[string][]marotte.SteeringIssue
 	mu     sync.Mutex
@@ -102,8 +101,8 @@ func steeringIssuesEqual(a, b []marotte.SteeringIssue) bool {
 	return true
 }
 
-// Snapshot returns a copy of the map, never nil.
-func (s *steeringIssues) Snapshot() map[string][]marotte.SteeringIssue {
+// snapshot returns a copy of the map, never nil.
+func (s *steeringIssues) snapshot() map[string][]marotte.SteeringIssue {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make(map[string][]marotte.SteeringIssue, len(s.issues))
@@ -115,20 +114,18 @@ func (s *steeringIssues) Snapshot() map[string][]marotte.SteeringIssue {
 
 // handleSlashCommands: GET /api/slash-commands.
 func (rt *Runtime) handleSlashCommands(w http.ResponseWriter, _ *http.Request) {
-	cmds, ready := rt.slash.Snapshot()
+	cmds, ready := rt.slash.snapshot()
 	webhttp.WriteJSON(w, marotte.SlashCommandsResponse{Commands: cmds, Ready: ready})
 }
 
 // handleSteeringIssues: GET /api/steering/issues.
 func (rt *Runtime) handleSteeringIssues(w http.ResponseWriter, _ *http.Request) {
-	webhttp.WriteJSON(w, marotte.SteeringIssuesResponse{Issues: rt.steeringIssues.Snapshot()})
+	webhttp.WriteJSON(w, marotte.SteeringIssuesResponse{Issues: rt.steeringIssues.snapshot()})
 }
 
-// applyUtilitySlashCommands seeds the slash catalog from the utility session's
-// own frame, broadcasting when it changed.
 func (rt *Runtime) applyUtilitySlashCommands(update json.RawMessage) {
 	cmds, ok := translate.ReadSlashCatalog(update)
-	if !ok || !rt.slash.SetFromUtility(cmds) {
+	if !ok || !rt.slash.setFromUtility(cmds) {
 		return
 	}
 	rt.Broadcast(rt.lifecycle.shutdownCtx, marotte.NewEvent(marotte.EventSlashCommandsChanged, "", marotte.SlashCommandsChangedPayload{}))

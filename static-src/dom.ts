@@ -68,10 +68,7 @@ class Elements {
   get settingsBtn(): HTMLButtonElement {
     return byId("settings-btn");
   }
-  /**
-   * The footer's identity control and the status popup's trigger. `status.ts` writes its `data-tooltip`; `app.ts`
-   * makes it expandable.
-   */
+  /** `status.ts` writes its `data-tooltip`; `app.ts` makes it expandable. */
   get accountBtn(): HTMLButtonElement {
     return byId("account-btn");
   }
@@ -140,7 +137,6 @@ class Elements {
   get roleList(): HTMLDivElement {
     return byId("role-list");
   }
-  /** The interaction dock's host. */
   get decisionDock(): HTMLDivElement {
     return byId("decision-dock");
   }
@@ -334,14 +330,35 @@ class Elements {
   get editorContent(): HTMLTextAreaElement {
     return byId("editor-content");
   }
-  get editorHighlight(): HTMLPreElement {
-    return byId("editor-highlight");
+  get editorViewer(): HTMLDivElement {
+    return byId("editor-viewer");
   }
-  get editorCode(): HTMLElement {
-    return byId("editor-code");
+  get editorEditGutter(): HTMLDivElement {
+    return byId("editor-edit-gutter");
   }
-  get editorGutter(): HTMLPreElement {
-    return byId("editor-gutter");
+  get editorNotice(): HTMLDivElement {
+    return byId("editor-notice");
+  }
+  get editorReadonlyLabel(): HTMLElement {
+    return byId("editor-readonly-label");
+  }
+  get editorLiveBtn(): HTMLButtonElement {
+    return byId("editor-live-btn");
+  }
+  get editorLiveReason(): HTMLElement {
+    return byId("editor-live-reason");
+  }
+  get editorDownloadBtn(): HTMLButtonElement {
+    return byId("editor-download-btn");
+  }
+  get editorGotoBtn(): HTMLButtonElement {
+    return byId("editor-goto-btn");
+  }
+  get editorGoto(): HTMLFormElement {
+    return byId("editor-goto");
+  }
+  get editorGotoInput(): HTMLInputElement {
+    return byId("editor-goto-input");
   }
   get editorFilename(): HTMLElement {
     return byId("editor-filename");
@@ -367,9 +384,6 @@ class Elements {
   }
   get editorPreviewBtn(): HTMLButtonElement {
     return byId("editor-preview-btn");
-  }
-  get webView(): HTMLDivElement {
-    return byId("web-view");
   }
   get webStage(): HTMLDivElement {
     return byId("web-stage");
@@ -446,9 +460,6 @@ class Elements {
     return byId("pointer-mode-btn");
   }
 
-  get appRoot(): HTMLElement {
-    return byId("app");
-  }
   get chatArea(): HTMLElement {
     return byId("chat-area");
   }

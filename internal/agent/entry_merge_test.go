@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// entryOf builds one entry; a projected entry passes seq 0.
+// A projected entry passes seq 0.
 func entryOf(t *testing.T, turn string, seq uint64, kind marotte.EntryKind, id, lane string, payload any) marotte.Entry {
 	t.Helper()
 	return marotte.Entry{
@@ -21,14 +21,13 @@ func entryOf(t *testing.T, turn string, seq uint64, kind marotte.EntryKind, id, 
 	}
 }
 
-// recTurn builds one record turn, numbering seq from 0 as the log does.
-func recTurn(t *testing.T, turn string, rows ...entryRow) RecordTurn {
+func recTurn(t *testing.T, turn string, rows ...entryRow) recordTurn {
 	t.Helper()
 	entries := make([]marotte.Entry, 0, len(rows))
 	for i, r := range rows {
 		entries = append(entries, entryOf(t, turn, uint64(i), r.kind, r.id, r.lane, r.payload))
 	}
-	return RecordTurn{Entries: entries}
+	return recordTurn{Entries: entries}
 }
 
 // projTurn builds one projected turn: KAS order, seq unassigned.
@@ -113,8 +112,7 @@ func placeholderClose(id string) entryRow {
 	})
 }
 
-// dumpMerged renders a merged log as `n turn seq kind id` lines.
-func dumpMerged(turns []MergedTurn) string {
+func dumpMerged(turns []mergedTurn) string {
 	var b strings.Builder
 	for i := range turns {
 		fmt.Fprintf(&b, "turn %d:\n", i)
@@ -125,19 +123,17 @@ func dumpMerged(turns []MergedTurn) string {
 	return b.String()
 }
 
-// entryIn is a merged turn's first entry of one kind.
-func entryIn(t *testing.T, turn MergedTurn, kind marotte.EntryKind) marotte.Entry {
+func entryIn(t *testing.T, turn mergedTurn, kind marotte.EntryKind) marotte.Entry {
 	t.Helper()
 	for _, e := range turn.Entries {
 		if e.Kind == kind {
 			return e
 		}
 	}
-	t.Fatalf("merged turn holds no %s:\n%s", kind, dumpMerged([]MergedTurn{turn}))
+	t.Fatalf("merged turn holds no %s:\n%s", kind, dumpMerged([]mergedTurn{turn}))
 	return marotte.Entry{}
 }
 
-// decodePayload decodes one entry's payload into v.
 func decodePayload(t *testing.T, e marotte.Entry, v any) {
 	t.Helper()
 	if err := json.Unmarshal(e.Payload, v); err != nil {
@@ -145,8 +141,7 @@ func decodePayload(t *testing.T, e marotte.Entry, v any) {
 	}
 }
 
-// countKind is how many entries of one kind a merged turn holds.
-func countKind(turn MergedTurn, kind marotte.EntryKind) int {
+func countKind(turn mergedTurn, kind marotte.EntryKind) int {
 	n := 0
 	for _, e := range turn.Entries {
 		if e.Kind == kind {
@@ -156,8 +151,7 @@ func countKind(turn MergedTurn, kind marotte.EntryKind) int {
 	return n
 }
 
-// idsOf is a merged turn's entry ids in order.
-func idsOf(turn MergedTurn) []string {
+func idsOf(turn mergedTurn) []string {
 	ids := make([]string, 0, len(turn.Entries))
 	for _, e := range turn.Entries {
 		ids = append(ids, e.ID)
@@ -167,7 +161,7 @@ func idsOf(turn MergedTurn) []string {
 
 // TestMergeEntries_TwoClosersYieldOneAndItIsTheRecords pins one turn_close, the record's: closers pair by kind.
 func TestMergeEntries_TwoClosersYieldOneAndItIsTheRecords(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "hello"),
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
@@ -178,7 +172,7 @@ func TestMergeEntries_TwoClosersYieldOneAndItIsTheRecords(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 1 {
 		t.Fatalf("merged %d turns, want 1:\n%s", len(merged), dumpMerged(merged))
 	}
@@ -202,7 +196,7 @@ func TestMergeEntries_TwoClosersYieldOneAndItIsTheRecords(t *testing.T) {
 
 // TestMergeEntries_AnInsertedTurnWithNoCloseGetsTheSynthesizedOne pins rule 4's placeholder closer.
 func TestMergeEntries_AnInsertedTurnWithNoCloseGetsTheSynthesizedOne(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, &marotte.EntryPrompt{ID: "kas-1", Text: "go"}),
 		bindRow("T1:e1", "kas-1", "sid-1"),
 		textRow("S1", "", "on it"),
@@ -217,7 +211,7 @@ func TestMergeEntries_AnInsertedTurnWithNoCloseGetsTheSynthesizedOne(t *testing.
 		),
 	}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true — a turn was inserted:\n%s", dumpMerged(merged))
 	}
@@ -241,7 +235,7 @@ func TestMergeEntries_AnInsertedTurnWithNoCloseGetsTheSynthesizedOne(t *testing.
 // TestMergeEntries_TheEmptyTurnRetryPairsOnlyTheRetry is why rule one is session-scoped: both
 // turns carry one prompt id in two sessions.
 func TestMergeEntries_TheEmptyTurnRetryPairsOnlyTheRetry(t *testing.T) {
-	record := []RecordTurn{
+	record := []recordTurn{
 		recTurn(t, "T1",
 			openRow("T1", 1, &marotte.EntryPrompt{ID: "P", Text: "go"}),
 			bindRow("T1:e1", "kas-P", "sid-0"),
@@ -260,7 +254,7 @@ func TestMergeEntries_TheEmptyTurnRetryPairsOnlyTheRetry(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, _ := MergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 2 {
 		t.Fatalf("merged %d turns, want 2 — nothing may be inserted:\n%s", len(merged), dumpMerged(merged))
 	}
@@ -278,7 +272,7 @@ func TestMergeEntries_TheEmptyTurnRetryPairsOnlyTheRetry(t *testing.T) {
 
 // TestMergeEntries_AnOutOfScopeBindStaysUnpaired pins that an out-of-scope bind offers nothing.
 func TestMergeEntries_AnOutOfScopeBindStaysUnpaired(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, &marotte.EntryPrompt{ID: "P", Text: "go"}),
 		bindRow("T1:e1", "kas-1", "sid-other"),
 		liveClose("T1:e2", marotte.TurnOutcomeEmpty, "end_turn"),
@@ -288,7 +282,7 @@ func TestMergeEntries_AnOutOfScopeBindStaysUnpaired(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true — the unpaired projected turn is inserted")
 	}
@@ -299,7 +293,7 @@ func TestMergeEntries_AnOutOfScopeBindStaysUnpaired(t *testing.T) {
 
 // TestMergeEntries_AWithheldBindPairsByTheFirstContentID pins rule two for a turn whose bind never arrived.
 func TestMergeEntries_AWithheldBindPairsByTheFirstContentID(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, &marotte.EntryPrompt{ID: "P", Text: "go"}),
 		textRow("S", "", "answer"),
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
@@ -310,7 +304,7 @@ func TestMergeEntries_AWithheldBindPairsByTheFirstContentID(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 1 || changed {
 		t.Fatalf("merged %d turns, changed=%v; want 1 turn and no change:\n%s",
 			len(merged), changed, dumpMerged(merged))
@@ -320,7 +314,7 @@ func TestMergeEntries_AWithheldBindPairsByTheFirstContentID(t *testing.T) {
 // TestMergeEntries_ARecordLaneOutranksADisagreeingProjectedOne pins the record's live lane and the logged disagreement.
 func TestMergeEntries_ARecordLaneOutranksADisagreeingProjectedOne(t *testing.T) {
 	logs := captureLogs(t)
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		callRow("call-1", "d-9", ""),
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
@@ -331,7 +325,7 @@ func TestMergeEntries_ARecordLaneOutranksADisagreeingProjectedOne(t *testing.T) 
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, _ := MergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(record, projected, "sid-1")
 	call := entryIn(t, merged[0], marotte.EntryKindToolCall)
 	if call.Lane != "d-9" {
 		t.Errorf("lane = %q, want the record's %q", call.Lane, "d-9")
@@ -343,7 +337,7 @@ func TestMergeEntries_ARecordLaneOutranksADisagreeingProjectedOne(t *testing.T) 
 
 // TestMergeEntries_AnEmptyRecordLaneTakesTheProjectedOne is the other half of the lane rule.
 func TestMergeEntries_AnEmptyRecordLaneTakesTheProjectedOne(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		callRow("call-1", "", ""),
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
@@ -354,7 +348,7 @@ func TestMergeEntries_AnEmptyRecordLaneTakesTheProjectedOne(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if call := entryIn(t, merged[0], marotte.EntryKindToolCall); call.Lane != "d-9" {
 		t.Errorf("lane = %q, want the projected %q", call.Lane, "d-9")
 	}
@@ -369,7 +363,7 @@ func TestMergeEntries_AnInvocationPairsOnTheDelegateUUID(t *testing.T) {
 	fx := loadInvocationFixture(t)
 	projected := projectInvocationFixture(t, fx)
 
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("7c3d-say", "", "delegating the sweep"),
 		callRow(fx.ActionID, "", fx.DelegateID),
@@ -378,7 +372,7 @@ func TestMergeEntries_AnInvocationPairsOnTheDelegateUUID(t *testing.T) {
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
 	)}
 
-	merged, _ := MergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 1 {
 		t.Fatalf("merged %d turns, want 1:\n%s", len(merged), dumpMerged(merged))
 	}
@@ -399,7 +393,7 @@ func TestMergeEntries_AnInvocationPairsOnTheDelegateUUID(t *testing.T) {
 // TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN pins the same suffix at turn level:
 // a turn led by an invocation keys on the delegate uuid.
 func TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		callRow("act-1", "", "d-9"),
 		textRow("d9-1-say", "d-9", "swept 3 files"),
@@ -414,7 +408,7 @@ func TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, _ := MergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 1 {
 		t.Fatalf("merged %d turns, want 1 — the two are one delegating turn:\n%s",
 			len(merged), dumpMerged(merged))
@@ -429,7 +423,7 @@ func TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN(t *testing.T) {
 
 // TestMergeEntries_ASynthesizedCloserYieldsToKASsOwnAccount pins the placeholder yielding.
 func TestMergeEntries_ASynthesizedCloserYieldsToKASsOwnAccount(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		callRow("call-1", "", ""),
 		resultRow("call-1", "", marotte.ToolAborted),
@@ -442,7 +436,7 @@ func TestMergeEntries_ASynthesizedCloserYieldsToKASsOwnAccount(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true:\n%s", dumpMerged(merged))
 	}
@@ -462,9 +456,46 @@ func TestMergeEntries_ASynthesizedCloserYieldsToKASsOwnAccount(t *testing.T) {
 	}
 }
 
+// TestMergeEntries_AWatchedAbortKeepsAgainstKASsFailed pins the reload half of the stop grade:
+// under the live process's own closer, a stopped call stays `aborted` against KAS's `failed`
+// (its Canceled mapping), and still yields to a `completed` the process never saw.
+func TestMergeEntries_AWatchedAbortKeepsAgainstKASsFailed(t *testing.T) {
+	cases := []struct {
+		name     string
+		replayed marotte.ToolStatus
+		want     marotte.ToolStatus
+	}{
+		{name: "KAS says failed", replayed: marotte.ToolFailed, want: marotte.ToolAborted},
+		{name: "KAS says completed", replayed: marotte.ToolCompleted, want: marotte.ToolCompleted},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			record := []recordTurn{recTurn(t, "T1",
+				openRow("T1", 1, nil),
+				callRow("call-1", "", ""),
+				resultRow("call-1", "", marotte.ToolAborted),
+				liveClose("T1:e1", marotte.TurnOutcomeCancelled, "cancelled"),
+			)}
+			projected := []translate.ProjectedTurn{projTurn(t, "P1",
+				openRow("P1", 0, nil),
+				callRow("call-1", "", ""),
+				resultRow("call-1", "", c.replayed),
+				closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
+			)}
+
+			merged, _ := mergeEntries(record, projected, "sid-1")
+			var res marotte.EntryToolResult
+			decodePayload(t, entryIn(t, merged[0], marotte.EntryKindToolResult), &res)
+			if res.Status != c.want {
+				t.Errorf("merged status over a replayed %q = %q, want %q", c.replayed, res.Status, c.want)
+			}
+		})
+	}
+}
+
 // TestMergeEntries_ALiveCloserIsNotReplaced pins that only the placeholder yields.
 func TestMergeEntries_ALiveCloserIsNotReplaced(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "done"),
 		liveClose("T1:e1", marotte.TurnOutcomeInterrupted, "interrupted"),
@@ -475,7 +506,7 @@ func TestMergeEntries_ALiveCloserIsNotReplaced(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	var closer marotte.EntryTurnClose
 	decodePayload(t, entryIn(t, merged[0], marotte.EntryKindTurnClose), &closer)
 	if closer.Outcome != marotte.TurnOutcomeInterrupted {
@@ -489,7 +520,7 @@ func TestMergeEntries_ALiveCloserIsNotReplaced(t *testing.T) {
 // TestMergeEntries_ATextlessSteerLearnsItsTextAndSeverity pins the fill of KAS-persisted fields,
 // keeping the record's state and position.
 func TestMergeEntries_ATextlessSteerLearnsItsTextAndSeverity(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "working"),
 		steerRow("notify-1", marotte.EntrySteer{
@@ -509,7 +540,7 @@ func TestMergeEntries_ATextlessSteerLearnsItsTextAndSeverity(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true:\n%s", dumpMerged(merged))
 	}
@@ -537,7 +568,7 @@ func TestMergeEntries_ATextlessSteerLearnsItsTextAndSeverity(t *testing.T) {
 
 // TestMergeEntries_RecordlessSteersBecomeDroppedRestarts is rule 3's stamp.
 func TestMergeEntries_RecordlessSteersBecomeDroppedRestarts(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "working"),
 		steerRow("steer-paired", marotte.EntrySteer{
@@ -556,7 +587,7 @@ func TestMergeEntries_RecordlessSteersBecomeDroppedRestarts(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true:\n%s", dumpMerged(merged))
 	}
@@ -613,7 +644,7 @@ func TestMergeEntries_ASteerTheRecordCarriedIsNotReinserted(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			record := []RecordTurn{
+			record := []recordTurn{
 				recTurn(t, "T1",
 					openRow("T1", 1, nil),
 					textRow("S1", "", "working"),
@@ -639,10 +670,10 @@ func TestMergeEntries_ASteerTheRecordCarriedIsNotReinserted(t *testing.T) {
 				),
 			}
 
-			merged, changed := MergeEntries(record, projected, "sid-1")
+			merged, changed := mergeEntries(record, projected, "sid-1")
 
 			if changed {
-				t.Errorf("MergeEntries changed = true, want false: the record carried both steers:\n%s", dumpMerged(merged))
+				t.Errorf("mergeEntries changed = true, want false: the record carried both steers:\n%s", dumpMerged(merged))
 			}
 			for _, turn := range merged {
 				for _, e := range turn.Entries {
@@ -677,10 +708,10 @@ func TestMergeEntries_AnInsertedTurnLosesItsCarriedSteers(t *testing.T) {
 			answered,
 		}
 
-		merged, changed := MergeEntries([]RecordTurn{carrier}, projected, "sid-1")
+		merged, changed := mergeEntries([]recordTurn{carrier}, projected, "sid-1")
 
 		if changed || len(merged) != 1 {
-			t.Errorf("MergeEntries = %d turns, changed %v; want the record's one turn, unchanged:\n%s", len(merged), changed, dumpMerged(merged))
+			t.Errorf("mergeEntries = %d turns, changed %v; want the record's one turn, unchanged:\n%s", len(merged), changed, dumpMerged(merged))
 		}
 	})
 	t.Run("with_a_prompt", func(t *testing.T) {
@@ -690,10 +721,10 @@ func TestMergeEntries_AnInsertedTurnLosesItsCarriedSteers(t *testing.T) {
 			answered,
 		}
 
-		merged, changed := MergeEntries([]RecordTurn{carrier}, projected, "sid-1")
+		merged, changed := mergeEntries([]recordTurn{carrier}, projected, "sid-1")
 
 		if !changed || len(merged) != 2 {
-			t.Fatalf("MergeEntries = %d turns, changed %v; want the recovered prompt turn inserted before T1:\n%s", len(merged), changed, dumpMerged(merged))
+			t.Fatalf("mergeEntries = %d turns, changed %v; want the recovered prompt turn inserted before T1:\n%s", len(merged), changed, dumpMerged(merged))
 		}
 		open, ok := turnOpenOf(merged[0].Entries)
 		if !ok || open.Prompt == nil || open.Prompt.ID != prompt.ID {
@@ -708,7 +739,7 @@ func TestMergeEntries_AnInsertedTurnLosesItsCarriedSteers(t *testing.T) {
 // TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt pins the head rule: the open
 // prompt turn is unpaired, so it cannot anchor.
 func TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1", openRow("T1", 1, &marotte.EntryPrompt{ID: "m-new", Text: "carry on"}))}
+	record := []recordTurn{recTurn(t, "T1", openRow("T1", 1, &marotte.EntryPrompt{ID: "m-new", Text: "carry on"}))}
 	var projected []translate.ProjectedTurn
 	const k = 3
 	for i := range k {
@@ -720,7 +751,7 @@ func TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt(t *testing.T)
 		))
 	}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true")
 	}
@@ -756,7 +787,7 @@ func TestMergeEntries_AResumedSessionsHistoryLandsAheadOfThePrompt(t *testing.T)
 // TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment pins that segments are never merged
 // and the excess lands on the last one.
 func TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "first half "),
 		entryRow{
@@ -772,7 +803,7 @@ func TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("changed = false, want true — the tail was appended:\n%s", dumpMerged(merged))
 	}
@@ -794,7 +825,7 @@ func TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment(t *testing.T) {
 
 // TestMergeEntries_ADivergingSayKeepsTheRecordsText pins the no-prefix case.
 func TestMergeEntries_ADivergingSayKeepsTheRecordsText(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "the record's own words"),
 		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
@@ -805,7 +836,7 @@ func TestMergeEntries_ADivergingSayKeepsTheRecordsText(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	var say marotte.EntryText
 	decodePayload(t, entryIn(t, merged[0], marotte.EntryKindText), &say)
 	if say.Text != "the record's own words" {
@@ -824,7 +855,7 @@ func TestMergeEntries_AMidTurnCompactionIsOneTurnOnBothSides(t *testing.T) {
 		kind: marotte.EntryKindCompaction, id: id,
 		payload: marotte.EntryCompaction{Summary: summary},
 	}
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "before"),
 		compaction,
@@ -837,7 +868,7 @@ func TestMergeEntries_AMidTurnCompactionIsOneTurnOnBothSides(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, changed := MergeEntries(record, projected, "sid-1")
+	merged, changed := mergeEntries(record, projected, "sid-1")
 	if len(merged) != 1 || changed {
 		t.Fatalf("merged %d turns, changed=%v; want 1 turn and no change:\n%s",
 			len(merged), changed, dumpMerged(merged))
@@ -850,7 +881,7 @@ func TestMergeEntries_AMidTurnCompactionIsOneTurnOnBothSides(t *testing.T) {
 // TestMergeEntries_TwoUnpairedCompactionsAreReported pins two rows, not a silent drop.
 func TestMergeEntries_TwoUnpairedCompactionsAreReported(t *testing.T) {
 	logs := captureLogs(t)
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "before"),
 		entryRow{
@@ -869,7 +900,7 @@ func TestMergeEntries_TwoUnpairedCompactionsAreReported(t *testing.T) {
 		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 	)}
 
-	merged, _ := MergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(record, projected, "sid-1")
 	if got := countKind(merged[0], marotte.EntryKindCompaction); got != 2 {
 		t.Errorf("merged turn holds %d compaction entries, want both:\n%s", got, dumpMerged(merged))
 	}
@@ -883,7 +914,7 @@ func TestMergeEntries_TwoUnpairedCompactionsAreReported(t *testing.T) {
 // TestMergeEntries_ASecondMergeChangesNothing pins one turn_open and one turn_close per paired
 // turn, after one merge and after two.
 func TestMergeEntries_ASecondMergeChangesNothing(t *testing.T) {
-	record := []RecordTurn{recTurn(t, "T1",
+	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, &marotte.EntryPrompt{ID: "m-1", Text: "go"}),
 		bindRow("T1:e1", "kas-1", "sid-1"),
 		textRow("S", "", "answer"),
@@ -899,7 +930,7 @@ func TestMergeEntries_ASecondMergeChangesNothing(t *testing.T) {
 		),
 	}
 
-	first, changed := MergeEntries(record, projected, "sid-1")
+	first, changed := mergeEntries(record, projected, "sid-1")
 	if !changed {
 		t.Fatalf("first merge reported no change:\n%s", dumpMerged(first))
 	}
@@ -911,7 +942,7 @@ func TestMergeEntries_ASecondMergeChangesNothing(t *testing.T) {
 			t.Errorf("turn %d holds %d turn_close entries, want 1:\n%s", i, got, dumpMerged(first))
 		}
 	}
-	second, changedAgain := MergeEntries(mergedAsRecord(first), projected, "sid-1")
+	second, changedAgain := mergeEntries(mergedAsRecord(first), projected, "sid-1")
 	if changedAgain {
 		t.Errorf("second merge reported a change:\nfirst:\n%s\nsecond:\n%s",
 			dumpMerged(first), dumpMerged(second))
@@ -921,11 +952,10 @@ func TestMergeEntries_ASecondMergeChangesNothing(t *testing.T) {
 	}
 }
 
-// mergedAsRecord feeds a merge's output back in as the record.
-func mergedAsRecord(turns []MergedTurn) []RecordTurn {
-	out := make([]RecordTurn, 0, len(turns))
+func mergedAsRecord(turns []mergedTurn) []recordTurn {
+	out := make([]recordTurn, 0, len(turns))
 	for i := range turns {
-		out = append(out, RecordTurn{Entries: turns[i].Entries})
+		out = append(out, recordTurn{Entries: turns[i].Entries})
 	}
 	return out
 }
@@ -940,7 +970,7 @@ func TestRecordTurnsOf_OrdersByFileOrderAndSeq(t *testing.T) {
 		entryOf(t, "T1", 0, marotte.EntryKindTurnOpen, "T1", "", marotte.EntryTurnOpen{N: 1}),
 		entryOf(t, "T2", 1, marotte.EntryKindText, "S2", "", marotte.EntryText{Text: "c"}),
 	}
-	turns := RecordTurnsOf(entries, nil)
+	turns := recordTurnsOf(entries, nil)
 	if len(turns) != 2 {
 		t.Fatalf("grouped %d turns, want 2", len(turns))
 	}
@@ -962,7 +992,7 @@ func TestRecordTurnsOf_StampsTheRevertedSet(t *testing.T) {
 		entryOf(t, "T1", 0, marotte.EntryKindTurnOpen, "T1", "", marotte.EntryTurnOpen{N: 1}),
 		entryOf(t, "T2", 0, marotte.EntryKindTurnOpen, "T2", "", marotte.EntryTurnOpen{N: 2}),
 	}
-	turns := RecordTurnsOf(entries, map[string]struct{}{"T2": {}})
+	turns := recordTurnsOf(entries, map[string]struct{}{"T2": {}})
 	if len(turns) != 2 {
 		t.Fatalf("grouped %d turns, want 2", len(turns))
 	}
@@ -982,7 +1012,7 @@ func TestRecordTurnsOf_ATurnWithNoOpenIsSkippedAndSaidOutLoud(t *testing.T) {
 		entryOf(t, "T1", 0, marotte.EntryKindTurnOpen, "T1", "", marotte.EntryTurnOpen{N: 1}),
 		entryOf(t, "orphan", 3, marotte.EntryKindText, "S", "", marotte.EntryText{Text: "x"}),
 	}
-	turns := RecordTurnsOf(entries, nil)
+	turns := recordTurnsOf(entries, nil)
 	if len(turns) != 1 {
 		t.Fatalf("grouped %d turns, want 1", len(turns))
 	}
@@ -994,10 +1024,9 @@ func TestRecordTurnsOf_ATurnWithNoOpenIsSkippedAndSaidOutLoud(t *testing.T) {
 // invocationFixture is internal/translate's replay_invocation.json, read from there so the
 // projection and merge halves cannot drift.
 type invocationFixture struct {
-	ActionID       string `json:"action_id"`
-	ReplayedCallID string `json:"replayed_call_id"`
-	DelegateID     string `json:"delegate_id"`
-	Frames         []struct {
+	ActionID   string `json:"action_id"`
+	DelegateID string `json:"delegate_id"`
+	Frames     []struct {
 		Kind   marotte.ACPUpdateKind `json:"kind"`
 		Update json.RawMessage       `json:"update"`
 	} `json:"frames"`
@@ -1017,7 +1046,6 @@ func loadInvocationFixture(t *testing.T) invocationFixture {
 	return fx
 }
 
-// projectInvocationFixture drives the real EntryProjection over that stream.
 func projectInvocationFixture(t *testing.T, fx invocationFixture) []translate.ProjectedTurn {
 	t.Helper()
 	n := 0
@@ -1031,14 +1059,12 @@ func projectInvocationFixture(t *testing.T, fx invocationFixture) []translate.Pr
 	return p.Turns()
 }
 
-// turnCloseEntry is one turn_close entry carrying c.
 func turnCloseEntry(c marotte.EntryTurnClose) *marotte.Entry {
 	e := &marotte.Entry{Kind: marotte.EntryKindTurnClose}
 	setPayload(e, c)
 	return e
 }
 
-// toolResultEntry is one tool_result entry carrying r.
 func toolResultEntry(r marotte.EntryToolResult) *marotte.Entry {
 	e := &marotte.Entry{Kind: marotte.EntryKindToolResult}
 	setPayload(e, r)
@@ -1137,14 +1163,14 @@ func TestUnionToolResult_FillsAnOffloadOnlyTheReplayHolds(t *testing.T) {
 	}
 
 	rec := mk(marotte.EntryToolResult{Status: marotte.ToolCompleted})
-	unionToolResult(rec, mk(marotte.EntryToolResult{Status: marotte.ToolCompleted, Offload: off}))
+	unionToolResult(rec, mk(marotte.EntryToolResult{Status: marotte.ToolCompleted, Offload: off}), true)
 	if got := read(rec); got == nil || *got != *off {
 		t.Errorf("record offload after union = %+v, want the replay's %+v", got, off)
 	}
 
 	held := &marotte.ToolOffload{Path: "/k/held.txt", TotalChars: 1}
 	rec = mk(marotte.EntryToolResult{Status: marotte.ToolCompleted, Offload: held})
-	unionToolResult(rec, mk(marotte.EntryToolResult{Status: marotte.ToolCompleted, Offload: off}))
+	unionToolResult(rec, mk(marotte.EntryToolResult{Status: marotte.ToolCompleted, Offload: off}), true)
 	if got := read(rec); got == nil || *got != *held {
 		t.Errorf("record offload after union = %+v, want the record's own %+v kept", got, held)
 	}
@@ -1164,7 +1190,7 @@ func TestUnionToolResult_FillsAnInteractionOnlyTheReplayHolds(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := toolResultEntry(marotte.EntryToolResult{Status: marotte.ToolCompleted, Interaction: tt.record})
-			unionToolResult(rec, toolResultEntry(marotte.EntryToolResult{Status: marotte.ToolCompleted, Interaction: &proj}))
+			unionToolResult(rec, toolResultEntry(marotte.EntryToolResult{Status: marotte.ToolCompleted, Interaction: &proj}), true)
 			var got marotte.EntryToolResult
 			decodePayload(t, *rec, &got)
 			if got.Interaction == nil || *got.Interaction != tt.want {
@@ -1184,6 +1210,7 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 		Recoveries:       []string{"empty"},
 		Steering:         []string{"file:///w/a.md"},
 		EngineErrorClass: "ModelThrottleError",
+		ContextBreakdown: &marotte.ContextBreakdown{TotalChars: 77},
 	})
 	placeholder := turnCloseEntry(marotte.EntryTurnClose{
 		Outcome:       marotte.TurnOutcomeInterrupted,
@@ -1194,7 +1221,7 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 	decodePayload(t, *placeholder, &got)
 	if got.Throughput == nil || got.Throughput.EstimatedTokens != 9 || !slices.Equal(got.RequestIDs, []string{"req-1"}) ||
 		!slices.Equal(got.Recoveries, []string{"empty"}) || !slices.Equal(got.Steering, []string{"file:///w/a.md"}) ||
-		got.EngineErrorClass != "ModelThrottleError" {
+		got.EngineErrorClass != "ModelThrottleError" || got.ContextBreakdown == nil || got.ContextBreakdown.TotalChars != 77 {
 		t.Errorf("placeholder after union = %+v, want the replay's completion facts", got)
 	}
 
@@ -1208,5 +1235,91 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 	decodePayload(t, *real, &kept)
 	if !slices.Equal(kept.RequestIDs, []string{"req-own"}) || kept.Throughput != nil {
 		t.Errorf("a real closer after union = %+v, want its own facts kept", kept)
+	}
+}
+
+// KAS's replay gives a labelled prompt's label as its text (acp-server.js: displayText ?? content).
+func TestMergeEntries_ALabelledPromptPairsAndKeepsTheRecordsText(t *testing.T) {
+	prompt := &marotte.EntryPrompt{ID: "m-1", Text: "the whole instruction", Label: "Run task 2"}
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, prompt),
+		bindRow("T1:e1", "kas-1", "sid-1"),
+		textRow("S1", "", "done"),
+		liveClose("T1:e2", marotte.TurnOutcomeCompleted, "end_turn"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, &marotte.EntryPrompt{ID: "kas-1", Text: "Run task 2"}),
+		textRow("S1", "", "done"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+
+	merged, _ := mergeEntries(record, projected, "sid-1")
+	if len(merged) != 1 {
+		t.Fatalf("merged %d turns, want 1 (the labelled turn paired):\n%s", len(merged), dumpMerged(merged))
+	}
+	var open marotte.EntryTurnOpen
+	decodePayload(t, entryIn(t, merged[0], marotte.EntryKindTurnOpen), &open)
+	if open.Prompt == nil || open.Prompt.Text != prompt.Text || open.Prompt.Label != prompt.Label {
+		t.Errorf("merged prompt = %+v, want the record's %+v", open.Prompt, prompt)
+	}
+}
+
+func TestMergeEntries_AWorkflowMessagePairsByItsWords(t *testing.T) {
+	row := marotte.EntrySteer{Text: "part 1 done", Origin: marotte.SteerOriginStep, Step: "review", ProducedTs: 5}
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, nil),
+		textRow("S", "", "working"),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+		steerRow(marotte.WorkflowMessageIDPrefix+"a", row),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S", "", "working"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+		steerRow("notify-kas-1", marotte.EntrySteer{Text: "part 1 done", Origin: marotte.SteerOriginStep, ProducedTs: 4}),
+		steerRow("notify-kas-2", marotte.EntrySteer{Text: "part 2 done", Origin: marotte.SteerOriginStep, ProducedTs: 6}),
+	)}
+
+	merged, _ := mergeEntries(record, projected, "sid-1")
+	want := []string{"T1", "S", "T1:e1", marotte.WorkflowMessageIDPrefix + "a", "notify-kas-2"}
+	if got := idsOf(merged[0]); !equalStrings(got, want) {
+		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
+	}
+	var lost marotte.EntrySteer
+	decodePayload(t, merged[0].Entries[4], &lost)
+	if lost.State != "" || lost.Reason != "" {
+		t.Errorf("a replay-only workflow message = %+v, want no read state and no drop reason", lost)
+	}
+}
+
+func deliveredRow(steerID, kasID string) entryRow {
+	return entryRow{
+		kind: marotte.EntryKindSteerDelivered, id: marotte.SteerDeliveredID(steerID),
+		payload: marotte.EntrySteerDelivered{SteerID: steerID, KASID: kasID, ReadTs: 9},
+	}
+}
+
+func TestMergeEntries_AWorkflowMessagePairsOnTheIDItsTakeUpNamed(t *testing.T) {
+	a, b := marotte.WorkflowMessageIDPrefix+"a", marotte.WorkflowMessageIDPrefix+"b"
+	row := marotte.EntrySteer{Text: "done", Origin: marotte.SteerOriginStep, ProducedTs: 5}
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, nil),
+		textRow("S", "", "working"),
+		steerRow(a, row), deliveredRow(a, "notify-1"),
+		steerRow(b, row), deliveredRow(b, "notify-2"),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S", "", "working"),
+		steerRow("notify-2", marotte.EntrySteer{Text: "done", Origin: marotte.SteerOriginStep, ProducedTs: 6}),
+		steerRow("notify-x", marotte.EntrySteer{Text: "other", Origin: marotte.SteerOriginAgent}),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+
+	merged, _ := mergeEntries(record, projected, "sid-1")
+	want := []string{"T1", "S", a, marotte.SteerDeliveredID(a), b, "notify-x", marotte.SteerDeliveredID(b), "T1:e1"}
+	if got := idsOf(merged[0]); !equalStrings(got, want) {
+		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
 	}
 }

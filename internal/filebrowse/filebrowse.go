@@ -21,9 +21,9 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
-// MaxFileSize is the editor's read and write cap on /api/file. The spec
-// endpoint reads through the same constant so the two doors cannot drift.
-const MaxFileSize = 2 * 1024 * 1024
+// WholeFileMax is the largest file the viewer reads, identifies and saves. A larger file
+// has no identity and no viewer; it is only downloaded.
+const WholeFileMax = 2 << 20
 
 const (
 	maxUploadSize = 256 * 1024 * 1024 // 256 MB per multipart upload
@@ -33,8 +33,6 @@ const (
 	// MaxBytesReader's.
 	multipartMaxMemory = 1 * 1024 * 1024
 
-	// respPath is the response-body key echoing the request path back
-	// to the client (listing and read responses).
 	respPath = "path"
 )
 
@@ -113,6 +111,7 @@ func New(sensitive Sensitive, rootDirs []string, opts ...Option) (*Handler, erro
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/file", h.handleFile)
+	mux.HandleFunc("/api/file/stat", h.handleStat)
 	mux.HandleFunc("/api/file/download", h.handleDownload)
 	mux.HandleFunc("/api/file/upload", h.handleUpload)
 	mux.HandleFunc("/api/files", h.handleFiles)
@@ -126,7 +125,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // code) and handleFilesAction should not double-write.
 var errHandled = errors.New("handled")
 
-// errNoSpaceLeft is the client message every 507 on this surface carries.
 const errNoSpaceLeft = "not enough space left on the volume"
 
 // isOutOfSpace reports whether err is a volume-full write failure, answered with 507 rather than
@@ -157,25 +155,14 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing path")
 		return
 	}
-	if r.Method == http.MethodGet {
-		if out, granted, err := h.openToolOutput(reqPath); granted {
-			if err != nil {
-				readFileError(w, out.abs, err)
-				return
-			}
-			defer out.f.Close()
-			readToolOutput(r.Context(), w, out, reqPath)
-			return
-		}
-	}
-	l, ok := h.resolveOrForbid(w, reqPath)
-	if !ok {
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
-		readFile(r.Context(), w, l, reqPath)
+		h.handleRead(w, r, reqPath)
 	case http.MethodPut:
+		l, ok := h.resolveOrForbid(w, reqPath)
+		if !ok {
+			return
+		}
 		writeFile(w, r, l, h.saveHookFor(l))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)

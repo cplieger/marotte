@@ -32,7 +32,6 @@ function lenPx(v: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** The page's own route, for the report header. */
 function routeOf(): string {
   return `${location.pathname}${location.search}${location.hash}`;
 }
@@ -108,7 +107,6 @@ function distortedUnder(el: Element): Element | null {
   return null;
 }
 
-/** Group by a key, keeping the FIRST payload and counting the rest. */
 function bucket<T>(rows: readonly (readonly [string, T])[]): (T & { count: number })[] {
   const seen = new Map<string, T & { count: number }>();
   for (const [key, payload] of rows) {
@@ -782,7 +780,6 @@ function foldedOpacity(el: Element): number {
   return out;
 }
 
-/** Which ancestors (this element included) are dimming it, outermost last. */
 function dimmedBy(el: Element): string[] {
   const out: string[] = [];
   let cur: Element | null = el;

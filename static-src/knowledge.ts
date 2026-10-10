@@ -25,8 +25,6 @@ import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./valida
 
 interface KnowledgeContext {
   name: string;
-  id: string;
-  description?: string;
   path?: string;
   items_display?: string;
   item_count: number;
@@ -39,13 +37,8 @@ const decodeContext: Decoder<KnowledgeContext> = (v) => {
   const o = asObject(v, P);
   const out: KnowledgeContext = {
     name: reqStr(o, "name", P),
-    id: reqStr(o, "id", P),
     item_count: reqNum(o, "item_count", P),
   };
-  const d = optStr(o, "description", P);
-  if (d !== undefined) {
-    out.description = d;
-  }
   const p = optStr(o, "path", P);
   if (p !== undefined) {
     out.path = p;

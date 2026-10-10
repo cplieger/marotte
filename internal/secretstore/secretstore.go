@@ -31,13 +31,13 @@ import (
 // Bounds far above anything KAS produces (blobs are 90-211 bytes), so a buggy or hostile
 // flow cannot grow the file without limit.
 const (
-	// MaxValueBytes caps one credential blob.
-	MaxValueBytes = 64 << 10
-	// MaxKeyBytes caps a key. KAS's own keys are ~80 bytes.
-	MaxKeyBytes = 512
-	// MaxEntries caps how many distinct keys the store holds. Three keys per
+	// maxValueBytes caps one credential blob.
+	maxValueBytes = 64 << 10
+	// maxKeyBytes caps a key. KAS's own keys are ~80 bytes.
+	maxKeyBytes = 512
+	// maxEntries caps how many distinct keys the store holds. Three keys per
 	// MCP server, so this is a ceiling of ~340 servers.
-	MaxEntries = 1024
+	maxEntries = 1024
 	// maxFileBytes bounds the whole file on both read and write.
 	maxFileBytes = 8 << 20
 
@@ -46,9 +46,9 @@ const (
 	fileName = "mcp-secrets.json"
 )
 
-// ErrTooLarge is returned when a key or value exceeds its bound, or when the
+// errTooLarge is returned when a key or value exceeds its bound, or when the
 // store is full.
-var ErrTooLarge = errors.New("secretstore: value rejected (over limit)")
+var errTooLarge = errors.New("secretstore: value rejected (over limit)")
 
 // file is the on-disk shape: key → base64(value). A named field so an addition needs no
 // format migration.
@@ -156,13 +156,13 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	if err := validateKey(key); err != nil {
 		return err
 	}
-	if len(value) > MaxValueBytes {
-		return fmt.Errorf("%w: value is %d bytes, limit %d", ErrTooLarge, len(value), MaxValueBytes)
+	if len(value) > maxValueBytes {
+		return fmt.Errorf("%w: value is %d bytes, limit %d", errTooLarge, len(value), maxValueBytes)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.secrets[key]; !exists && len(s.secrets) >= MaxEntries {
-		return fmt.Errorf("%w: store holds %d entries, limit %d", ErrTooLarge, len(s.secrets), MaxEntries)
+	if _, exists := s.secrets[key]; !exists && len(s.secrets) >= maxEntries {
+		return fmt.Errorf("%w: store holds %d entries, limit %d", errTooLarge, len(s.secrets), maxEntries)
 	}
 	prev, had := s.secrets[key]
 	s.secrets[key] = value
@@ -195,7 +195,7 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// persistLocked writes the whole store atomically. Caller holds s.mu.
+// Caller holds s.mu.
 func (s *Store) persistLocked(ctx context.Context) error {
 	encoded := make(map[string]string, len(s.secrets))
 	for k, v := range s.secrets {
@@ -219,8 +219,8 @@ func validateKey(key string) error {
 	if key == "" {
 		return errors.New("secretstore: empty key")
 	}
-	if len(key) > MaxKeyBytes {
-		return fmt.Errorf("%w: key is %d bytes, limit %d", ErrTooLarge, len(key), MaxKeyBytes)
+	if len(key) > maxKeyBytes {
+		return fmt.Errorf("%w: key is %d bytes, limit %d", errTooLarge, len(key), maxKeyBytes)
 	}
 	if !utf8.ValidString(key) {
 		return errors.New("secretstore: key is not valid UTF-8")

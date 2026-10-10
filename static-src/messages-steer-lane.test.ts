@@ -27,9 +27,6 @@ const LANE = "sub-A";
 setActive(CHAT_ID);
 
 initBlockRenderer({
-  pushStreamingEffect: (): void => {
-    /* noop */
-  },
   pushEntryEffect: (): void => {
     /* noop */
   },

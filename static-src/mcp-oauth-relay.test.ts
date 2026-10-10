@@ -17,7 +17,6 @@ vi.mock("./api-client.js", async (importOriginal) => {
     apiGet: async (): Promise<null> => null,
     apiGetTyped: async (): Promise<null> => null,
     apiPost: async (): Promise<null> => null,
-    apiDelete: async (): Promise<boolean> => false,
   };
 });
 
@@ -50,7 +49,6 @@ vi.mock("./mcp-state.js", async (importOriginal) => {
 
 import { renderOAuthRelay } from "./mcp-ui.js";
 
-/** As the real action framework does. */
 function resolveWith(hook: "onSuccess" | "onError", arg: unknown): void {
   relayDispatch.mockImplementation((_args: unknown, opts: Record<string, (v: unknown) => void>) => {
     opts[hook]?.(arg);

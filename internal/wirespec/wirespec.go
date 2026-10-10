@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/server"
@@ -57,11 +58,13 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.EntryToolResult](),
 	wiregen.TypeRef[marotte.EntrySteer](),
 	wiregen.TypeRef[marotte.EntrySteerAck](),
+	wiregen.TypeRef[marotte.EntrySteerDelivered](),
 	wiregen.TypeRef[marotte.EntryPlan](),
 	wiregen.TypeRef[marotte.EntryCompaction](),
 	wiregen.TypeRef[marotte.EntryCompactionFailed](),
 	wiregen.TypeRef[marotte.EntrySafetyBlocked](),
 	wiregen.TypeRef[marotte.EntryModelSwitched](),
+	wiregen.TypeRef[marotte.EntryModelRouted](),
 	wiregen.TypeRef[marotte.EntryModeSwitched](),
 	wiregen.TypeRef[marotte.EntryTurnRevert](),
 	wiregen.TypeRef[marotte.EntryReconciled](),
@@ -80,6 +83,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.PermissionWatch](),
 	wiregen.TypeRef[marotte.FileChange](),
 	wiregen.TypeRef[marotte.TurnThroughput](),
+	wiregen.TypeRef[marotte.ContextPart](),
+	wiregen.TypeRef[marotte.ContextItem](),
+	wiregen.TypeRef[marotte.ContextMedia](),
+	wiregen.TypeRef[marotte.ContextCategory](),
+	wiregen.TypeRef[marotte.ContextBreakdown](),
 	wiregen.TypeRef[marotte.EntryTurnClose](),
 	wiregen.TypeRef[marotte.ConnectedPayload](),
 	wiregen.TypeRef[marotte.SubjectStamp](),
@@ -94,6 +102,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ToolProgressPayload](),
 	wiregen.TypeRef[marotte.TurnClosedPayload](),
 	wiregen.TypeRef[marotte.SteerQueuedPayload](),
+	wiregen.TypeRef[marotte.TangentMergedPayload](),
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
 	// Before the two types that reference it.
@@ -185,6 +194,9 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunLaunchedResponse](),
 	// A request the client composes, generated so a rename cannot land on one side only.
 	wiregen.TypeRef[marotte.RunAnswerRequest](),
+	wiregen.TypeRef[marotte.RunStepMessageRequest](),
+	wiregen.TypeRef[marotte.RunStepMessageResponse](),
+	wiregen.TypeRef[marotte.RunStepSteerRequest](),
 	wiregen.TypeRef[marotte.RunExtendRequest](),
 	wiregen.TypeRef[marotte.RunFinishLoopRequest](),
 	wiregen.TypeRef[marotte.RunStartedPayload](),
@@ -192,8 +204,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
 	wiregen.TypeRef[marotte.RunInputNeededPayload](),
 	wiregen.TypeRef[marotte.RunInputSettledPayload](),
+	wiregen.TypeRef[marotte.NotificationPayload](),
 	// GET /api/runs/{id}'s `open_asks`, a read reply, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunOpenAsk](),
+	// GET /api/runs/{id}'s `plan_update`, a read reply too.
+	wiregen.TypeRef[marotte.RunPlanUpdate](),
 	// GET /api/runs/{id}'s `step_ends`, a read reply like `open_asks`.
 	wiregen.TypeRef[marotte.RunStepEnd](),
 	wiregen.TypeRef[marotte.RunStepStart](),
@@ -205,6 +220,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TerminalOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalExitedPayload](),
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
+	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	// The list envelopes after the rows and parts they hold.
@@ -258,6 +274,14 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[filebrowse.MatchRange](),
 	wiregen.TypeRef[filebrowse.FileMatch](),
 	wiregen.TypeRef[filebrowse.FileSearchResult](),
+	// The file viewer: stat, the whole read, the save reply and their refusal body.
+	wiregen.TypeRef[filebrowse.FileStat](),
+	wiregen.TypeRef[filebrowse.FileRead](),
+	wiregen.TypeRef[filebrowse.FileWriteResult](),
+	wiregen.TypeRef[filebrowse.FileRefusal](),
+	// GET /api/git/show, the diff view's base side, and its refusal.
+	wiregen.TypeRef[git.ShowResponse](),
+	wiregen.TypeRef[git.ShowRefusal](),
 	// GET /api/mcp/registry/search, the entry family before the reply that holds it.
 	wiregen.TypeRef[mcp.RegistryEnvVar](),
 	wiregen.TypeRef[mcp.RegistryHeader](),
@@ -271,9 +295,9 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[server.KiroDocsResponse](),
 }
 
-// wireEnums names the string enums to emit; values are auto-discovered from each type's
-// const block. Each is a vocabulary a client branch or wording table must cover TOTALLY,
-// so one generated union makes a missing arm a compile error in both languages.
+// Values are auto-discovered from each type's const block. Each is a vocabulary a client branch or
+// wording table must cover TOTALLY, so one generated union makes a missing arm a compile error in
+// both languages.
 var wireEnums = map[string]wiregen.EnumDef{
 	"ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
@@ -306,11 +330,16 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The dock's row controls branch on it, so the branch must be total.
 	"SteerRowState": {},
 	// The toast colour is chosen by it, so the client fold must be total.
-	"NoticeLevel":     {},
+	"NoticeLevel": {},
+	// A notification's kind picks its Settings switch on the page.
+	"PushKind":        {},
 	"RunProgressKind": {},
 	// The client folds over both status vocabularies.
 	"RunStatus":     {},
 	"RunNodeStatus": {},
+	// The run composer words the delivery and each refusal, so both folds must be total.
+	"RunStepMessageVerb":    {},
+	"RunStepMessageRefusal": {},
 	// Registered for CatalogState's reason below.
 	"RunStepTranscriptState": {},
 	"DecisionKind":           {},
@@ -343,9 +372,13 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"PreviewHintSource": {},
 	// The slash menu disables prompt and steering rows mid-turn.
 	"SlashCommandKind": {},
+	// The viewer's refusal arms and the stale-save surface branch on these.
+	"RefusalCode": {},
+	"ContentKind": {},
+	// The diff view names the view a refused base gets from it.
+	"ShowRefusalCode": {},
 }
 
-// enumTSNames renames an enum on the TypeScript side.
 var enumTSNames = map[string]string{
 	"Kind":   "ForgeKind", // forges.Kind → ForgeKind in TS
 	"Origin": "MCPOrigin", // a bare Origin reads ambiguously beside SteerOrigin
@@ -359,9 +392,7 @@ var pathNameOverrides = map[string]string{
 	"OpenExternalURLPayload": "open_external_url_payload",
 }
 
-// sseEvents binds each SSE event type to the registered struct its payload decodes
-// as. Both directions are asserted by
-// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding.
+// Both directions are asserted by TestRegistry_EveryRegisteredPayloadHasAnSSEBinding.
 var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "chat_created", TypeName: "ChatHeader"},
 	{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
@@ -381,6 +412,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
 	{EventType: "mcp_oauth_needed", TypeName: "MCPOAuthPayload"},
 	{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
+	{EventType: "notification", TypeName: "NotificationPayload"},
 	{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
 	{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
 	{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
@@ -395,6 +427,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "tool_job_changed", TypeName: "ToolJobChangedPayload"},
 	{EventType: "tool_job_output", TypeName: "ToolJobOutputPayload"},
 	{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
+	{EventType: "tangent_merged", TypeName: "TangentMergedPayload"},
 	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
 	{EventType: "system_notice", TypeName: "SystemNoticePayload"},
 	// The agent-terminal trio.

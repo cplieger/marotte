@@ -13,11 +13,11 @@ import (
 
 var errUnknownInterruptMode = errors.New("mode must be steer or queue")
 
-// CmdSetInterruptMode records what Send does while this chat's turn runs. It
+// cmdSetInterruptMode records what Send does while this chat's turn runs. It
 // touches no turn and calls no bridge: a switch mid-turn moves nothing already
 // sent or queued. Auto-creates the record like set_mode, so a pick on a chat that
 // has not prompted yet survives to its first turn.
-func CmdSetInterruptMode(ctx context.Context, chats chatMutator, cmd *marotte.ClientCommand) (any, error) {
+func cmdSetInterruptMode(ctx context.Context, chats chatMutator, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}

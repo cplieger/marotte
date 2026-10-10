@@ -7,9 +7,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// handleUserMessageID appends turn_bind {kas_message_id, session_id} to the chat's
-// prompt-class turn. The frame carries no key but is emitted between the append and the
-// model call, so the one prompt-class turn IS that prompt's; session_id scopes the replay.
+// The frame carries no key but is emitted between the append and the model call, so the one
+// prompt-class turn IS that prompt's; session_id scopes the replay.
 func (t *Translator) handleUserMessageID(ctx context.Context, chatID marotte.ChatID, kasID string) {
 	turn, ok := t.turns.PromptTurn(chatID)
 	if !ok {

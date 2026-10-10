@@ -9,9 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// newEventCaptureDeps returns a baseDeps that captures broadcast events into
-// the returned slice pointer. Tests read *events after exercising the
-// translator.
+// Tests read *events after exercising the translator.
 func newEventCaptureDeps() (*baseDeps, *[]marotte.ServerEvent) {
 	events := &[]marotte.ServerEvent{}
 	deps := newBaseDeps()
@@ -298,7 +296,7 @@ type mcpCaptureDeps struct {
 	sources   map[string]marotte.MCPSource
 }
 
-func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
+func (d *mcpCaptureDeps) MCPRecorder() mcpRecorder {
 	return &captureMCPRecorder{
 		connected: d.connected, tools: d.tools, prompts: d.prompts,
 		resources: d.resources, templates: d.templates, disabled: d.disabled, failures: d.failures,
@@ -434,7 +432,6 @@ func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	}
 }
 
-// hasEventType reports whether events carries a frame of type et.
 func hasEventType(events []marotte.ServerEvent, et marotte.EventType) bool {
 	for _, e := range events {
 		if e.Type == et {

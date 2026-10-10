@@ -14,8 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// supervisedConfigDir writes doc as the settings file in a fresh temp dir. An
-// EMPTY doc writes no file at all, which is the fail-closed case.
+// An EMPTY doc writes no file at all, which is the fail-closed case.
 func supervisedConfigDir(t *testing.T, doc string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -31,9 +30,9 @@ func supervisedConfigDir(t *testing.T, doc string) string {
 // newSupervisedMembership builds a coordinator whose SupervisedDefault is the
 // same reader prompt.go uses, over configDir. Mirrors what RegisterDefaults
 // wires, so the two seed sites cannot disagree.
-func newSupervisedMembership(t *testing.T, chats ChatStore, configDir string) *Membership {
+func newSupervisedMembership(t *testing.T, chats chatStore, configDir string) *Membership {
 	t.Helper()
-	return NewMembership(&MembershipDeps{
+	return newMembership(&membershipDeps{
 		Chats:             chats,
 		SupervisedDefault: func(ctx context.Context) bool { return supervisedDefaultSetting(ctx, configDir) },
 	})
@@ -57,7 +56,7 @@ func TestCmdCreateChat_SeedsTheSupervisedDefault(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem := newSupervisedMembership(t, store, supervisedConfigDir(t, tc.doc))
 
-			body, err := CmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{}))
+			body, err := cmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{}))
 			if err != nil {
 				t.Fatalf("CmdCreateChat = %v", err)
 			}
@@ -82,7 +81,7 @@ func TestCmdResumeSession_SeedsTheSupervisedDefault(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem := newSupervisedMembership(t, store, supervisedConfigDir(t, tc.doc))
 
-			if _, err := CmdResumeSession(t.Context(), mem,
+			if _, err := cmdResumeSession(t.Context(), mem,
 				resumeReq(t, "c1", "sess_abc-123", "Earlier work")); err != nil {
 				t.Fatalf("CmdResumeSession = %v", err)
 			}
@@ -133,7 +132,7 @@ func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 			host := newForkHost(store, br, "c-parent")
 			mem := newSupervisedMembership(t, host, supervisedConfigDir(t, tc.doc))
 
-			if _, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem,
+			if _, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), mem,
 				forkReq(t, "c-tangent", "c-parent", "Reaper detour")); err != nil {
 				t.Fatalf("CmdForkChat = %v", err)
 			}
@@ -154,7 +153,7 @@ func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 
 // setSupervised flips one chat's posture without touching seedParent, which every
 // other fork test shares.
-func setSupervised(t *testing.T, store ChatStore, id marotte.ChatID, supervised bool) {
+func setSupervised(t *testing.T, store chatStore, id marotte.ChatID, supervised bool) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.SupervisedMode = supervised
@@ -168,7 +167,7 @@ func setSupervised(t *testing.T, store ChatStore, id marotte.ChatID, supervised 
 // wires no reader mints unsupervised chats rather than panicking, which is what
 // every test helper in this package relies on.
 func TestMembership_SupervisedDefaultUnwiredIsFalse(t *testing.T) {
-	mem := NewMembership(&MembershipDeps{Chats: testsupport.NewInMemoryChatStore()})
+	mem := newMembership(&membershipDeps{Chats: testsupport.NewInMemoryChatStore()})
 
 	if mem.supervisedDefaultValue(t.Context()) {
 		t.Error("an unwired SupervisedDefault read as true; it must fail closed")

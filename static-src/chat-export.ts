@@ -7,7 +7,6 @@ import { el } from "@cplieger/reactive";
 
 import { exportFilename } from "./export-filename.js";
 
-/** Build the export endpoint URL for a chat + format. */
 function chatExportURL(chatID: string, format: "md" | "json"): string {
   return `/api/chats/${encodeURIComponent(chatID)}/export?format=${format}`;
 }

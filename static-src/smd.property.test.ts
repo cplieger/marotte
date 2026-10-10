@@ -2,10 +2,8 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
+import { parser, parser_write, parser_end } from "./smd-parser.js";
 import {
-  parser,
-  parser_write,
-  parser_end,
   DOCUMENT,
   HEADING_1,
   HEADING_2,
@@ -13,7 +11,7 @@ import {
   HEADING_4,
   HEADING_5,
   HEADING_6,
-} from "./smd-parser.js";
+} from "./smd-parser-types.js";
 import { TOKEN_ARRAY_CAP } from "./smd-parser-types.js";
 import type { Parser } from "./smd-parser.js";
 
@@ -65,7 +63,6 @@ function recordingRenderer() {
   };
 }
 
-/** Arbitrary for markdown-like content with structural characters. */
 const markdownLike = fc.oneof(
   // Plain text
   fc.lorem({ maxCount: 5 }),
@@ -147,12 +144,10 @@ const markdownLike = fc.oneof(
   fc.constantFrom("\n", "\n\n"),
 );
 
-/** Generate a markdown document from multiple fragments. */
 const markdownDocument = fc
   .array(markdownLike, { minLength: 1, maxLength: 20 })
   .map((parts) => parts.join(""));
 
-/** Split a string at random positions into chunks. */
 function splitAtPositions(input: string, positions: number[]): string[] {
   const sorted = [...new Set(positions.map((p) => Math.min(Math.max(0, p), input.length)))].sort(
     (a, b) => a - b,
@@ -245,12 +240,10 @@ describe("smd parser property: structural invariants", () => {
         markdownDocument,
         fc.array(fc.nat({ max: 2000 }), { minLength: 1, maxLength: 10 }),
         (doc, splitPoints) => {
-          // Single pass
           const p1: Parser = parser(nullRenderer());
           parser_write(p1, doc);
           parser_end(p1);
 
-          // Chunked pass
           const p2: Parser = parser(nullRenderer());
           const chunks = splitAtPositions(doc, splitPoints);
           for (const chunk of chunks) {
@@ -270,7 +263,6 @@ describe("smd parser property: structural invariants", () => {
   it("chunked vs single-pass produces an identical token tree at paragraph boundaries", () => {
     expect.assertions(1);
 
-    /** Renderer that tracks max nesting depth reached. */
     function depthTrackingRenderer() {
       let depth = 0;
       let maxDepth = 0;
@@ -335,13 +327,11 @@ describe("smd parser property: structural invariants", () => {
             return true;
           }
 
-          // Single pass
           const rec1 = recordingRenderer();
           const p1: Parser = parser(rec1.renderer);
           parser_write(p1, doc);
           parser_end(p1);
 
-          // Chunked pass
           const rec2 = recordingRenderer();
           const p2: Parser = parser(rec2.renderer);
           for (const chunk of chunks) {

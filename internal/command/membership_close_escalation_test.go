@@ -25,7 +25,7 @@ type escalationHost struct {
 	mem         *Membership
 	st          *tabs.Store
 	bus         *tabBus
-	store       ChatStore
+	store       chatStore
 	teardown    *recordingTeardown
 	recordSeen  map[marotte.ChatID]bool
 	teardownCtx []error
@@ -34,7 +34,7 @@ type escalationHost struct {
 // newEscalationHost wires a coordinator with the escalation seams: the given
 // retention read, a delete grade that records the captured chain plus whether
 // the record still existed when it ran, and a close grade that records the id.
-func newEscalationHost(t *testing.T, store ChatStore, retention retentionRead) *escalationHost {
+func newEscalationHost(t *testing.T, store chatStore, retention retentionRead) *escalationHost {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
@@ -43,7 +43,7 @@ func newEscalationHost(t *testing.T, store ChatStore, retention retentionRead) *
 	return newEscalationHostOver(store, st, retention)
 }
 
-func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRead) *escalationHost {
+func newEscalationHostOver(store chatStore, tabSet TabSet, retention retentionRead) *escalationHost {
 	bus := &tabBus{}
 	h := &escalationHost{
 		st:         nil,
@@ -55,7 +55,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 	if realStore, ok := tabSet.(*tabs.Store); ok {
 		h.st = realStore
 	}
-	h.mem = NewMembership(&MembershipDeps{
+	h.mem = newMembership(&membershipDeps{
 		Chats:    store,
 		Tabs:     tabSet,
 		Bus:      bus,
@@ -77,7 +77,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 // seedSessionedRecord seeds a chat whose record carries a session CHAIN — a
 // retired session plus the live one — which is what the escalation must capture
 // before the record goes.
-func seedSessionedRecord(t *testing.T, store ChatStore, id marotte.ChatID, chain ...string) {
+func seedSessionedRecord(t *testing.T, store chatStore, id marotte.ChatID, chain ...string) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(id)
@@ -93,7 +93,6 @@ func seedSessionedRecord(t *testing.T, store ChatStore, id marotte.ChatID, chain
 func retentionOff(context.Context) bool { return false }
 func retentionOn(context.Context) bool  { return true }
 
-// eventTypes projects the bus's whole timeline, both stores' events included.
 func eventTypes(bus *tabBus) []marotte.EventType {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
@@ -122,7 +121,7 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 		t.Fatalf("open tangent: %v", err)
 	}
 
-	closed, _, err := h.mem.CloseTab(t.Context(), root.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), root.Subject.ID, "op-close")
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -194,7 +193,7 @@ type fixedTabs struct {
 	closed  []marotte.TabSubject
 }
 
-func (f *fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bool, uint64, error) {
+func (*fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bool, uint64, error) {
 	return marotte.TabSubject{}, false, 0, errors.New("not staged")
 }
 
@@ -202,11 +201,11 @@ func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64
 	return f.closed, 3, nil
 }
 
-func (f *fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
+func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
-func (f *fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
+func (*fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
 
-func (f *fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
+func (*fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
 
 func (f *fixedTabs) List() ([]marotte.TabSubject, uint64) { return f.open, 2 }
 
@@ -229,7 +228,7 @@ func TestCloseTab_LeavesAChatWithARemainingTabAlone(t *testing.T) {
 	store.Bus = h.bus
 	seedSessionedRecord(t, store, "c-x", "sess-x")
 
-	closed, _, err := h.mem.CloseTab(t.Context(), "tb_one", "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), "tb_one", "op-close")
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -265,7 +264,7 @@ func TestCloseTab_SubtreeWithoutTheChatsTabDeletesNothing(t *testing.T) {
 		t.Fatalf("open run child: %v", err)
 	}
 
-	if _, _, err = h.mem.CloseTab(t.Context(), child.Subject.ID, "op-close"); err != nil {
+	if _, _, err = h.mem.closeTab(t.Context(), child.Subject.ID, "op-close"); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 	if _, ok := store.Get(t.Context(), "c-a"); !ok {
@@ -308,7 +307,7 @@ func TestCloseTab_RetentionDecidesWhetherTheRecordSurvives(t *testing.T) {
 				t.Fatalf("open: %v", err)
 			}
 
-			closed, _, err := h.mem.CloseTab(t.Context(), opened.Subject.ID, "op-close")
+			closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
 			if err != nil {
 				t.Fatalf("CloseTab = %v", err)
 			}
@@ -339,8 +338,8 @@ type failingDeleteStore struct {
 
 var errDeleteRefused = errors.New("simulated chat file removal failure")
 
-func (s *failingDeleteStore) Delete(context.Context, marotte.ChatID) error {
-	return errDeleteRefused
+func (*failingDeleteStore) Delete(context.Context, marotte.ChatID) ([]string, error) {
+	return nil, errDeleteRefused
 }
 
 // TestCloseTab_RecordDeleteFailureStillAnswersSuccess: after the commit point
@@ -356,7 +355,7 @@ func TestCloseTab_RecordDeleteFailureStillAnswersSuccess(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	closed, _, err := h.mem.CloseTab(t.Context(), opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
 	if err != nil {
 		t.Fatalf("CloseTab = %v, want success — post-commit failures roll forward", err)
 	}
@@ -385,9 +384,9 @@ type ctxCheckingStore struct {
 	*testsupport.InMemoryChatStore
 }
 
-func (s *ctxCheckingStore) Delete(ctx context.Context, id marotte.ChatID) error {
+func (s *ctxCheckingStore) Delete(ctx context.Context, id marotte.ChatID) ([]string, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	return s.InMemoryChatStore.Delete(ctx, id)
 }
@@ -424,7 +423,7 @@ func TestCloseTab_ClientAbandonedRequestStillRollsForward(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	closed, _, err := h.mem.CloseTab(reqCtx, opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(reqCtx, opened.Subject.ID, "op-close")
 	if err != nil {
 		t.Fatalf("CloseTab = %v, want success", err)
 	}
@@ -461,7 +460,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := store.Delete(t.Context(), "c-ghost"); err != nil {
+	if _, err := store.Delete(t.Context(), "c-ghost"); err != nil {
 		t.Fatalf("remove the record: %v", err)
 	}
 	deletesBefore := 0
@@ -471,7 +470,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 		}
 	}
 
-	closed, _, err := h.mem.CloseTab(t.Context(), opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}

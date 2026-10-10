@@ -57,16 +57,13 @@ vi.mock("./dom.js", () => ({
 
 const { initRolePicker } = await import("./role-picker.js");
 
-/** Expand the pill and click the first mode option, which is what a user does. */
-function pickFirstMode(list: HTMLElement): string {
+function pickFirstMode(list: HTMLElement): void {
   expandList?.();
   const option = list.querySelector<HTMLButtonElement>(".pill-role-item");
   if (option === null) {
     throw new Error("the mode list rendered no options");
   }
-  const id = option.dataset["modeId"] ?? option.textContent ?? "";
   option.click();
-  return id;
 }
 
 beforeEach(() => {

@@ -18,7 +18,6 @@ import (
 	"github.com/cplieger/marotte/internal/specapproval"
 )
 
-// approvalCall is one Approve the handler made.
 type approvalCall struct{ dir, phase, hash, user string }
 
 // fakeApprovals is the record as this command sees it. err is what Approve
@@ -65,7 +64,6 @@ func approveReq(t *testing.T, dir, phase, hash string) *marotte.ClientCommand {
 	return &marotte.ClientCommand{Type: marotte.CmdApproveSpecPhase, Payload: payload}
 }
 
-// approvedFrames returns the spec_approved payloads the bus saw, in order.
 func approvedFrames(t *testing.T, b *capturingBus) []marotte.SpecApprovedPayload {
 	t.Helper()
 	var out []marotte.SpecApprovedPayload
@@ -90,7 +88,7 @@ func TestCmdApproveSpecPhase_RecordsTheApprovalAndAnnouncesTheSpec(t *testing.T)
 	approvals := &fakeApprovals{}
 	bus := &capturingBus{}
 
-	res, err := CmdApproveSpecPhase(t.Context(), approvals, ws, bus,
+	res, err := cmdApproveSpecPhase(t.Context(), approvals, ws, bus,
 		approveReq(t, ".kiro/specs/demo", "design", hashes["design.md"]))
 
 	if statusOf(err) != http.StatusOK {
@@ -119,7 +117,7 @@ func TestCmdApproveSpecPhase_RecordsNoUserRatherThanInventingOne(t *testing.T) {
 	ws, hashes := seedSpec(t, map[string]string{"tasks.md": "- [ ] 1. work\n"})
 	approvals := &fakeApprovals{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
 		approveReq(t, ".kiro/specs/demo", "tasks", hashes["tasks.md"]))
 
 	if statusOf(err) != http.StatusOK {
@@ -140,7 +138,7 @@ func TestCmdApproveSpecPhase_RefusesAStaleClaimAndNamesTheCurrentHash(t *testing
 	bus := &capturingBus{}
 	stale := strings.Repeat("a", 64)
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, bus,
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, bus,
 		approveReq(t, ".kiro/specs/demo", "design", stale))
 
 	if statusOf(err) != http.StatusConflict {
@@ -163,7 +161,7 @@ func TestCmdApproveSpecPhase_AnswersAnEmptyCurrentHashForAnAbsentDocument(t *tes
 	ws, _ := seedSpec(t, map[string]string{"design.md": "# Design\n"})
 	approvals := &fakeApprovals{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
 		approveReq(t, ".kiro/specs/demo", "tasks", strings.Repeat("a", 64)))
 
 	if statusOf(err) != http.StatusConflict {
@@ -186,7 +184,7 @@ func TestCmdApproveSpecPhase_ComparesTheFirstDocumentInDisplayOrderForASharedRol
 	})
 	approvals := &fakeApprovals{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
 		approveReq(t, ".kiro/specs/demo", "requirements", hashes["bugfix.md"]))
 
 	if statusOf(err) != http.StatusOK {
@@ -194,7 +192,7 @@ func TestCmdApproveSpecPhase_ComparesTheFirstDocumentInDisplayOrderForASharedRol
 			statusOf(err), errText(err))
 	}
 
-	_, err = CmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
+	_, err = cmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
 		approveReq(t, ".kiro/specs/demo", "requirements", hashes["requirements.md"]))
 
 	if statusOf(err) != http.StatusConflict {
@@ -229,7 +227,7 @@ func TestCmdApproveSpecPhase_RefusesWhatItCannotAddressOrRead(t *testing.T) {
 			approvals := &fakeApprovals{}
 			bus := &capturingBus{}
 
-			_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, bus,
+			_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, bus,
 				approveReq(t, tc.dir, tc.phase, tc.hash))
 
 			if statusOf(err) != tc.wantStatus {
@@ -251,7 +249,7 @@ func TestCmdApproveSpecPhase_RefusesAMalformedPayload(t *testing.T) {
 	ws, _ := seedSpec(t, map[string]string{"design.md": "# Design\n"})
 	approvals := &fakeApprovals{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, &capturingBus{},
 		&marotte.ClientCommand{Type: marotte.CmdApproveSpecPhase, Payload: json.RawMessage(`{{`)})
 
 	if statusOf(err) != http.StatusBadRequest {
@@ -272,7 +270,7 @@ func TestCmdApproveSpecPhase_RefusesWhenThereIsNoRecordToKeep(t *testing.T) {
 	ws, hashes := seedSpec(t, map[string]string{"design.md": "# Design\n"})
 	bus := &capturingBus{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), nil, ws, bus,
+	_, err := cmdApproveSpecPhase(t.Context(), nil, ws, bus,
 		approveReq(t, ".kiro/specs/demo", "design", hashes["design.md"]))
 
 	if statusOf(err) != http.StatusServiceUnavailable {
@@ -301,7 +299,7 @@ func TestCmdApproveSpecPhase_SurfacesTheStoresOwnRefusals(t *testing.T) {
 			approvals := &fakeApprovals{err: tc.err}
 			bus := &capturingBus{}
 
-			_, err := CmdApproveSpecPhase(t.Context(), approvals, ws, bus,
+			_, err := cmdApproveSpecPhase(t.Context(), approvals, ws, bus,
 				approveReq(t, ".kiro/specs/demo", "design", hashes["design.md"]))
 
 			if statusOf(err) != tc.wantStatus {
@@ -338,7 +336,7 @@ func TestCmdApproveSpecPhase_AddressesASpecInARepositorysOwnKiroTree(t *testing.
 	sum := sha256.Sum256([]byte(body))
 	approvals := &fakeApprovals{}
 
-	_, err := CmdApproveSpecPhase(t.Context(), approvals, Workspace{Dir: root}, &capturingBus{},
+	_, err := cmdApproveSpecPhase(t.Context(), approvals, Workspace{Dir: root}, &capturingBus{},
 		approveReq(t, "subrepo/.kiro/specs/demo", "design", hex.EncodeToString(sum[:])))
 
 	if statusOf(err) != http.StatusOK {

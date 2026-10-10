@@ -32,8 +32,8 @@ const (
 	settingsListMaxBytes = 64 * 1024
 )
 
-// CLIRunner abstracts subprocess execution for kiro-cli commands.
-type CLIRunner interface {
+// cliRunner abstracts subprocess execution for kiro-cli commands.
+type cliRunner interface {
 	// Run executes the CLI and returns combined stdout+stderr.
 	Run(ctx context.Context, args ...string) ([]byte, error)
 	// RunStdoutCapped executes the CLI capturing STDOUT only, stopping at limit
@@ -42,8 +42,8 @@ type CLIRunner interface {
 	RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error)
 }
 
-// execCLIRunner is the production CLIRunner. The path is a FUNCTION: the install manager
-// selects and can switch the active version after construction.
+// The path is a FUNCTION: the install manager selects and can switch the active version after
+// construction.
 type execCLIRunner struct {
 	cliPath func() string
 	// env is the spawn's environment overlay (pinstall's Manager.PathEnv). Load-bearing:
@@ -52,7 +52,6 @@ type execCLIRunner struct {
 	env func() []string
 }
 
-// command builds the spawn both methods run.
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	if r.env != nil {
@@ -79,14 +78,12 @@ func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...
 	return stdout.Bytes(), stdout.Truncated(), err
 }
 
-// cliTimeouts holds the timeout budget for each kiro-cli subprocess invocation.
 type cliTimeouts struct {
 	Version     time.Duration
 	Diagnostics time.Duration
 	Settings    time.Duration
 }
 
-// defaultCLITimeouts returns the production timeout budget.
 func defaultCLITimeouts() cliTimeouts {
 	return cliTimeouts{
 		Version:     2 * time.Second,
@@ -113,7 +110,6 @@ const (
 	kiroFalse = "false"
 )
 
-// settingMeta carries validation metadata for an allowed kiro-cli setting.
 type settingMeta struct {
 	Seed string
 	Kind settingKind
@@ -217,8 +213,7 @@ func unknownKiroSettingsQuery(q url.Values) bool {
 	return false
 }
 
-// requestedKiroSettings resolves ?keys= to the allowlisted keys, sorted; absent means every
-// key, and unknown names are dropped.
+// Absent means every key, and unknown names are dropped.
 func requestedKiroSettings(spec string) []string {
 	if strings.TrimSpace(spec) == "" {
 		return slices.Sorted(maps.Keys(allowedKiroSettings))

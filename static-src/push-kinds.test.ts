@@ -104,9 +104,8 @@ describe("keyed push kinds", () => {
   });
 });
 
-/** Each keyed kind against the Go constant that declares its polarity. The Go name is spelled
- *  rather than derived from the settings key: any snake-to-Pascal rule yields `NotifyPrStatus`
- *  where the server declares `NotifyPRStatus`. */
+/** The Go name is spelled rather than derived from the settings key: any snake-to-Pascal rule yields
+ *  `NotifyPrStatus` where the server declares `NotifyPRStatus`. */
 const polarities = [
   { kind: "agent_finished", goConst: "DefaultNotifyAgentFinished" },
   { kind: "pr_status", goConst: "DefaultNotifyPRStatus" },

@@ -19,15 +19,11 @@ const (
 	subjectEllipsis     = "..."
 )
 
-// commitPrefixes is the canonical list of allowed commit-message type
-// prefixes. Referenced by the prompt template and available for future
-// commit-message validation.
 var commitPrefixes = [...]string{
 	"feat", "fix", "sec", "refactor", "chore", "docs", "test", "perf", "ci",
 }
 
-// promptKind is a typed key for the promptTemplates map. Using a named
-// type instead of bare strings makes typos a compile error.
+// Using a named type instead of bare strings makes typos a compile error.
 type promptKind string
 
 const (
@@ -36,7 +32,6 @@ const (
 	promptBranch promptKind = "branch"
 )
 
-// promptTemplates holds the AI prompt templates keyed by purpose.
 var promptTemplates = map[promptKind]*template.Template{
 	promptCommit: template.Must(template.New("commit").Parse(`Generate a Git commit message. Return ONLY the message, no fences.
 
@@ -99,8 +94,8 @@ DIFF:
 Generate the PR description:`)),
 }
 
-// buildCommitPrompt constructs the AI prompt for commit message generation. The templates are
-// validated at init, so a template failure is logged and the partial buffer returned.
+// The templates are validated at init, so a template failure is logged and the partial buffer
+// returned.
 func buildCommitPrompt(commitHistory, fullDiff string) string {
 	var b strings.Builder
 	if err := promptTemplates[promptCommit].Execute(&b, map[string]any{
@@ -113,7 +108,6 @@ func buildCommitPrompt(commitHistory, fullDiff string) string {
 	return b.String()
 }
 
-// buildPRPrompt constructs the AI prompt for PR description generation.
 // See buildCommitPrompt for the error-handling rationale.
 func buildPRPrompt(log, diff string) string {
 	var b strings.Builder
@@ -126,9 +120,8 @@ func buildPRPrompt(log, diff string) string {
 	return b.String()
 }
 
-// extractCommitMessage cleans up raw model output into a proper commit message.
-// Strips markdown fences, "COMMIT MESSAGE:" prefix, surrounding quotes.
-// Formats bullet-point bodies. Caps subject line at 72 chars.
+// Strips markdown fences, "COMMIT MESSAGE:" prefix, surrounding quotes. Formats bullet-point
+// bodies. Caps subject line at 72 chars.
 func extractCommitMessage(raw string) string {
 	msg := strings.TrimSpace(raw)
 	// Strip markdown fences (including language-tagged variants like
@@ -183,9 +176,8 @@ func stripSurroundingQuotes(msg string) string {
 	}
 }
 
-// capSubject caps the subject line at subjectMaxRunes, preferring a word boundary past
-// subjectWordBreakMin. RUNES, not bytes: a byte cut splits a multi-byte rune into U+FFFD. Only a
-// literal space is a word break.
+// RUNES, not bytes: a byte cut splits a multi-byte rune into U+FFFD. Only a literal space is a word
+// break.
 func capSubject(subject string) string {
 	if utf8.RuneCountInString(subject) <= subjectMaxRunes {
 		return subject
@@ -211,7 +203,6 @@ func truncateRunes(s string, n int) string {
 	return s
 }
 
-// buildBranchPrompt constructs the AI prompt for branch-name suggestion.
 // See buildCommitPrompt for the error-handling rationale.
 func buildBranchPrompt(branches, context string) string {
 	var b strings.Builder

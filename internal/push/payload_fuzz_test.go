@@ -20,9 +20,9 @@ func FuzzPayloadTruncation(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, title, body string) {
 		// Apply the same truncation the Service.Send path uses.
-		gotTitle, gotBody, _ := fitToCap(title, body, marotte.PushSubject{}, "")
+		fit, _ := fitToCap(&marotte.NotificationPayload{Title: title, Body: body})
 
-		payload, err := json.Marshal(pushPayload{Title: gotTitle, Body: gotBody})
+		payload, err := json.Marshal(fit)
 		if err != nil {
 			t.Fatalf("json.Marshal failed: %v", err)
 		}

@@ -115,12 +115,12 @@ func (v *nameVisitor) consider(e *walkEntry, kind FileMatchKind) {
 	}
 }
 
-func (v *nameVisitor) leave(*walkDir) {}
+func (*nameVisitor) leave(*walkDir) {}
 
-func (v *nameVisitor) full() bool { return false }
+func (*nameVisitor) full() bool { return false }
 
 // rootFile answers nothing: a root is the frame of a search, never a result inside it.
-func (v *nameVisitor) rootFile(*os.File, string, os.FileInfo) bool { return true }
+func (*nameVisitor) rootFile(*os.File, string, os.FileInfo) bool { return true }
 
 func (v *nameVisitor) result(truncated bool) FileSearchResult {
 	rows := slices.Clone(v.top)

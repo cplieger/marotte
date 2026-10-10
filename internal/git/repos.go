@@ -34,7 +34,6 @@ func IsRepo(ctx context.Context, dir string) bool {
 // cannot block the handler indefinitely.
 const maxRepoEntries = 1024
 
-// repoEntry is a discovered git repository with its name and absolute path.
 type repoEntry struct {
 	Name string
 	Dir  string
@@ -95,9 +94,8 @@ func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	return r
 }
 
-// ownerOf resolves which discovered repository owns a workspace-relative path, returning the repo
-// name and the repo-relative path; ok is false when none owns it. Longest name first, so a nested
-// repo wins, and the root repo (".") owns whatever no subdirectory repo claims.
+// Ok is false when none owns it. Longest name first, so a nested repo wins, and the root repo (".")
+// owns whatever no subdirectory repo claims.
 func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo string, ok bool) {
 	repos := h.cachedDiscoverRepos(ctx)
 	best := -1

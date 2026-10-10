@@ -28,7 +28,6 @@ interface Row {
   verdict: string;
 }
 
-/** Every ANSI measurement the script makes, in one process. */
 function rows(): Row[] {
   const out = execFileSync("python3", [script, "ansi-check", "--tsv"], { encoding: "utf8" });
   const parsed = out
@@ -65,7 +64,6 @@ function tableRows(): string[][] {
     .map((line) => line.split("\t"));
 }
 
-/** `#rgb` or `#rrggbb` to its three channel values. */
 function expandHex(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
   const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
@@ -73,7 +71,6 @@ function expandHex(hex: string): [number, number, number] {
   return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) as [number, number, number];
 }
 
-/** The 16 ANSI codes, each in both roles. */
 const CODES = [
   "black",
   "red",

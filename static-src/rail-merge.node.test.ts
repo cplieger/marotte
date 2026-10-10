@@ -171,23 +171,22 @@ describe("validating the index", () => {
   });
 
   it("answers an empty set for a payload that is not an array", () => {
-    expect(validateTurnIndex(undefined)).toEqual({ turns: [], dropped: 0 });
-    expect(validateTurnIndex({ turns: [] })).toEqual({ turns: [], dropped: 0 });
+    expect(validateTurnIndex(undefined)).toEqual({ turns: [] });
+    expect(validateTurnIndex({ turns: [] })).toEqual({ turns: [] });
   });
 
   it("drops a row whose id cannot be read", () => {
-    const { turns, dropped } = validateTurnIndex([
+    const { turns } = validateTurnIndex([
       { id: 7, n: 1, ts: 1, outcome: "completed" },
       { id: "", n: 2, ts: 2, outcome: "completed" },
       { n: 3, ts: 3, outcome: "completed" },
       { id: "t-4", n: 4, ts: 4, outcome: "completed" },
     ]);
     expect(turns.map((t) => t.n)).toEqual([4]);
-    expect(dropped).toBe(3);
   });
 
   it("drops a row whose n cannot be read", () => {
-    const { turns, dropped } = validateTurnIndex([
+    const { turns } = validateTurnIndex([
       { id: "a", n: Number.NaN, ts: 1, outcome: "completed" },
       { id: "b", n: Number.POSITIVE_INFINITY, ts: 1, outcome: "completed" },
       { id: "c", n: 0, ts: 1, outcome: "completed" },
@@ -197,23 +196,20 @@ describe("validating the index", () => {
       { id: "g", n: 2, ts: 1, outcome: "completed" },
     ]);
     expect(turns.map((t) => t.id)).toEqual(["g"]);
-    expect(dropped).toBe(6);
   });
 
   it("drops a row that is not an object at all", () => {
-    const { turns, dropped } = validateTurnIndex([null, "row", 4, { id: "t-1", n: 1, ts: 1 }]);
+    const { turns } = validateTurnIndex([null, "row", 4, { id: "t-1", n: 1, ts: 1 }]);
     expect(turns).toHaveLength(1);
-    expect(dropped).toBe(3);
   });
 
   it("keeps a row whose ts cannot be read and sits it on its predecessor", () => {
-    const { turns, dropped } = validateTurnIndex([
+    const { turns } = validateTurnIndex([
       { id: "a", n: 1, ts: 1000, outcome: "completed" },
       { id: "b", n: 2, ts: "soon", outcome: "completed" },
       { id: "c", n: 3, ts: 3000, outcome: "completed" },
     ]);
     expect(turns.map((t) => t.id)).toEqual(["a", "b", "c"]);
-    expect(dropped).toBe(0);
     // A plausible start time rather than the epoch: `ts` is the wire's field and answering for a
     // malformed one is the validator's job.
     expect(turns[1]?.ts).toBe(1000);
@@ -228,7 +224,7 @@ describe("validating the index", () => {
   });
 
   it("coerces an outcome the wire does not carry to unknown", () => {
-    const { turns, dropped } = validateTurnIndex([
+    const { turns } = validateTurnIndex([
       { id: "a", n: 1, ts: 1, outcome: "exploded" },
       { id: "b", n: 2, ts: 2, outcome: 7 },
       { id: "c", n: 3, ts: 3 },
@@ -247,7 +243,6 @@ describe("validating the index", () => {
       "unknown",
       "empty",
     ]);
-    expect(dropped).toBe(0);
   });
 
   it("coerces a first_line that is not a string to no label", () => {
@@ -271,7 +266,7 @@ describe("validating the index", () => {
   });
 
   it("keeps a finite positive elapsed_ms and omits every other value without dropping the row", () => {
-    const { turns, dropped } = validateTurnIndex([
+    const { turns } = validateTurnIndex([
       { id: "a", n: 1, ts: 1, outcome: "completed", elapsed_ms: 1234 },
       { id: "b", n: 2, ts: 2, outcome: "completed", elapsed_ms: Number.NaN },
       { id: "c", n: 3, ts: 3, outcome: "completed", elapsed_ms: -5 },
@@ -279,7 +274,6 @@ describe("validating the index", () => {
       { id: "e", n: 5, ts: 5, outcome: "completed", elapsed_ms: 0 },
       { id: "f", n: 6, ts: 6, outcome: "completed", elapsed_ms: Number.POSITIVE_INFINITY },
     ]);
-    expect(dropped).toBe(0);
     expect(turns.map((t) => t.elapsed_ms)).toEqual([
       1234,
       undefined,

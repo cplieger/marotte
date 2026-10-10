@@ -20,7 +20,7 @@ import (
 func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 	for i := range 40 {
 		store := testsupport.NewInMemoryChatStore()
-		mem, st, _ := newRacedMembership(t, store)
+		mem, st := newRacedMembership(t, store)
 		first := createChat(t, mem, "op-race")
 		chatID := marotte.ChatID(first.Chat.ID)
 
@@ -52,7 +52,7 @@ func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 func TestMembership_TwoOpensRaceForTheFinalSlot(t *testing.T) {
 	for i := range 20 {
 		store := testsupport.NewInMemoryChatStore()
-		mem, st, _ := newRacedMembership(t, store)
+		mem, st := newRacedMembership(t, store)
 		fillTabs(t, mem, tabs.MaxOpenTabs-1)
 		seedRecord(t, store, "c-alpha")
 		seedRecord(t, store, "c-beta")
@@ -120,19 +120,18 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 	}
 }
 
-// newRacedMembership is newTabbedMembership plus the teardown seam the delete
-// path needs. Separate from newFlakyMembership because these cases want the REAL
-// store's behaviour, failure injection included only where a case asks for it.
-func newRacedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store, *tabBus) {
+// Separate from newFlakyMembership because these cases want the REAL store's behaviour, failure
+// injection included only where a case asks for it.
+func newRacedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return NewMembership(&MembershipDeps{
+	return newMembership(&membershipDeps{
 		Chats: chats, Tabs: st, Bus: bus, Teardown: &recordingTeardown{},
-	}), st, bus
+	}), st
 }
 
 // hookedChats runs a hook the first time Get is called for a chat, inside the coordinator's
@@ -161,7 +160,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 		t.Fatalf("open tab store: %v", err)
 	}
 	chats := &hookedChats{InMemoryChatStore: inner}
-	mem := NewMembership(&MembershipDeps{
+	mem := newMembership(&membershipDeps{
 		Chats: chats, Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
 	})
 	first := createChat(t, mem, "op-race")

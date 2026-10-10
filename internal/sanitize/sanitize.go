@@ -48,8 +48,7 @@ func Unicode(s string) string {
 	}, s)
 }
 
-// isHidden reports whether r is an invisible codepoint used for prompt injection. The bidi
-// set is runesafe.IsBidiControl (the exact unicode.Bidi_Control set).
+// The bidi set is runesafe.IsBidiControl (the exact unicode.Bidi_Control set).
 func isHidden(r rune) bool {
 	if r >= 0xE0000 && r <= 0xE007F {
 		return true // TAG characters

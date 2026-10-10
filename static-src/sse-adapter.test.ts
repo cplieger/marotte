@@ -153,7 +153,6 @@ function tabCtx(over: Partial<TabRevalidateContext> = {}): TabRevalidateContext 
   return { ...ctx(), ...over };
 }
 
-/** A digest answer for the subjects the request named, `changed` and `removed` by key. */
 function digestAnswer(
   changed: { kind: string; ref: string; version: string }[],
   removed: { kind: string; ref: string; reason: "gone" | "forbidden" }[] = [],
@@ -172,7 +171,7 @@ function digestAnswer(
 }
 
 // The wire's own decoders, so a frame in this file is refused exactly where production refuses it.
-// Without them `decodeEnvelope` passes every payload through untyped and a retired-shape fixture
+// Without them `decodeEnvelope` passes every payload through untyped and an invalid fixture
 // would be IGNORED rather than refused.
 registerAllSSEDecoders();
 
@@ -211,7 +210,6 @@ afterEach(() => {
   hosted = null;
 });
 
-/** Boot the adapter against a scripted stream and answer its first hello. */
 async function connect(): Promise<ReturnType<ScriptedFetch["connections"]["at"]>> {
   init(
     (evt) => {
@@ -346,8 +344,8 @@ describe("frames", () => {
     conn?.frame({
       type: "chat_updated",
       chat_id: "c9",
-      // A whole ChatHeader, because the wire's own decoder runs here: the retired `message_count`
-      // is `turn_count`, and `usage` / `created_at` are required rather than optional.
+      // A whole ChatHeader, because the wire's own decoder runs here: `chat_updated` requires
+      // `turn_count`, `usage` and `created_at`.
       payload: {
         id: "c9",
         name: "n",
@@ -442,9 +440,9 @@ describe("frames", () => {
   });
 
   it("refuses an entry_appended frame carrying the retired message shape", async () => {
-    // The wire's own decoder is what makes a retired-shape payload unrenderable rather than merely
+    // The wire's own decoder makes a message-shaped payload unrenderable rather than merely
     // ignored: `decodeEntryAppendedPayload` requires `entry`, so a `{id, role, ts, content}`
-    // message body throws and the frame reaches no handler.
+    // body throws and the frame reaches no handler.
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const conn = await connect();

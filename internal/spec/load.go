@@ -18,6 +18,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// MaxFileBytes is the per-document read cap the spec page and the approval share.
+const MaxFileBytes = 2 << 20
+
 // ErrNoDocs reports a spec directory holding no markdown document.
 var ErrNoDocs = errors.New("spec: directory holds no markdown document")
 
@@ -116,7 +119,7 @@ func loadDoc(ctx context.Context, r *os.Root, p string, maxBytes int64) (marotte
 		doc.Hash = hex.EncodeToString(sum[:])
 		doc.Content = string(data)
 		if doc.Role == marotte.SpecDocRoleTasks {
-			parsed := Parse(data)
+			parsed := parse(data)
 			doc.Tasks = parsed.Tasks
 			doc.Progress = &parsed.Progress
 			doc.UnreadableLines = parsed.UnreadableLines

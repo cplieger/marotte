@@ -872,7 +872,10 @@ describe("the agent-capability selects and the shell timeout", () => {
     document.body.innerHTML = `
       <select id="spec-planning"><option value="off">Off</option><option value="quick">Quick</option><option value="full">Full</option></select>
       <div id="spec-planning-ask-row" class="hidden"><input type="checkbox" id="flag-spec-ask-first"></div>
-      <input type="checkbox" id="flag-work-validation">
+      <select id="work-validation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
+      <p id="work-validation-default" class="hidden"></p>
+      <select id="auto-routing"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
+      <select id="auto-delegation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <input type="checkbox" id="flag-cloudformation-safety">
       <select id="output-style"><option value="default">Default</option><option value="concise">Concise</option></select>
       <input type="number" id="shell-command-timeout">`;
@@ -902,24 +905,76 @@ describe("the agent-capability selects and the shell timeout", () => {
     ["an unset", "", "unchecked"],
     ["an off", "off", "unchecked"],
     ["an on", "on", "checked"],
-  ] as const)("renders %s feature switch %s", (_name, value, shown) => {
-    applyGeneralPanel(
-      settingsPayload({ work_validation: value, cloudformation_safety_check: value }),
-    );
-    expect(box("flag-work-validation").checked).toBe(shown === "checked");
+  ] as const)("renders %s CloudFormation switch %s", (_name, value, shown) => {
+    applyGeneralPanel(settingsPayload({ cloudformation_safety_check: value }));
     expect(box("flag-cloudformation-safety").checked).toBe(shown === "checked");
   });
 
-  it("stores a flipped feature switch as on or off, never unset", async () => {
+  it.each(["", "on", "off"] as const)(
+    "selects the stored %j on every three-state control",
+    (value) => {
+      applyGeneralPanel(
+        settingsPayload({ work_validation: value, auto_routing: value, auto_delegation: value }),
+      );
+      expect(sel("work-validation").value).toBe(value);
+      expect(sel("auto-routing").value).toBe(value);
+      expect(sel("auto-delegation").value).toBe(value);
+    },
+  );
+
+  it("states what an unset Work validation resolves to and which layer set it", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        work_validation: "",
+        kiro_defaults: {
+          work_validation: { value: "on", layer: "kiro-service", layer_name: "Kiro" },
+        },
+      }),
+    );
+    const line = document.getElementById("work-validation-default") as HTMLElement;
+    expect(line.textContent).toBe("Default: on, set by Kiro.");
+    expect(line.classList.contains("hidden")).toBe(false);
+    expect(sel("work-validation").options[0]?.textContent).toBe("Default (on)");
+  });
+
+  it("names KAS's built-in default when no layer states it", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        kiro_defaults: { work_validation: { value: "off", layer: "", layer_name: "" } },
+      }),
+    );
+    expect(document.getElementById("work-validation-default")?.textContent).toBe(
+      "Default: off, Kiro's built-in default.",
+    );
+  });
+
+  it("hides the Default line once the reader has chosen, or while nothing is known", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        kiro_defaults: {
+          work_validation: { value: "on", layer: "kiro-agent", layer_name: "Kiro Agent" },
+        },
+      }),
+    );
+    applyGeneralPanel(settingsPayload({ work_validation: "off" }));
+    const line = document.getElementById("work-validation-default") as HTMLElement;
+    expect(line.classList.contains("hidden")).toBe(true);
+    expect(sel("work-validation").options[0]?.textContent).toBe("Default");
+  });
+
+  it("stores each three-state choice, Default included, and the CloudFormation switch as on or off", async () => {
     const { patchSettings } = await import("./persist.js");
     initRetention(settingsPayload());
     vi.mocked(patchSettings).mockClear();
-    box("flag-work-validation").checked = true;
-    box("flag-work-validation").dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith(
-      { work_validation: "on" },
-      box("flag-work-validation"),
-    );
+    sel("auto-routing").value = "on";
+    sel("auto-routing").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ auto_routing: "on" });
+    sel("auto-delegation").value = "off";
+    sel("auto-delegation").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ auto_delegation: "off" });
+    sel("work-validation").value = "";
+    sel("work-validation").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ work_validation: "" });
     box("flag-cloudformation-safety").checked = false;
     box("flag-cloudformation-safety").dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenLastCalledWith(

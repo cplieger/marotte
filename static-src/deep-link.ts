@@ -11,7 +11,7 @@ import { getActiveTabRoute, tabIdForRoute } from "./tabs.js";
 import { error as toastError } from "./toast.js";
 
 /** What settling did, for a test: `held` and `stale` look identical from outside. */
-export type DeepLinkOutcome =
+type DeepLinkOutcome =
   /** The chat exists and its tab is open. */
   | "opened"
   /** The SERVER said there is no such chat: the URL was canonicalized and the
@@ -40,7 +40,7 @@ function canonicalize(): void {
 }
 
 /** What a location was allowed to mean, for the caller and for a test to read. */
-export type LocationVerdict =
+type LocationVerdict =
   /** It may open the view it names. */
   | "opens"
   /** It named a view this workspace no longer holds, so the URL was pointed at

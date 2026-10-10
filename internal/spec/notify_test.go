@@ -10,7 +10,7 @@ import (
 
 const testWindow = 500 * time.Millisecond
 
-// recorder collects emits; the mutex is for the emit goroutine the timer runs.
+// The mutex is for the emit goroutine the timer runs.
 type recorder struct {
 	mu   sync.Mutex
 	dirs []string

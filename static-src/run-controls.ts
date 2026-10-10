@@ -4,10 +4,6 @@
 /** The run-control verbs, in the order a row presents them. */
 export type RunVerb = "pause" | "resume" | "extend" | "finish_loop" | "cancel" | "retry";
 
-/** KAS's WorkflowStatusSchema. Exported so a test can be exhaustive over it rather than over
- *  whatever subset a table happens to name. */
-export const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborted"] as const;
-
 /** Button text per verb. */
 export const CONTROL_LABEL: Record<RunVerb, string> = {
   pause: "Pause",

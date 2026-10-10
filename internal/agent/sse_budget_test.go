@@ -31,7 +31,6 @@ const (
 	fixtureBusyChats       = 6
 	fixtureManyBusyChats   = 24
 	fixtureFlatnessBudget  = 24 * 1024
-	fixtureFrameSeparator  = "\n\n"
 	fixtureConnectDeadline = 150 * time.Millisecond
 )
 
@@ -69,7 +68,6 @@ func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID 
 	return ids
 }
 
-// fillTurn writes a turn through the accumulator's own methods.
 func fillTurn(tb testing.TB, log *turnlog.Turn, chatID string) {
 	tb.Helper()
 	ctx := tb.Context()
@@ -100,7 +98,6 @@ func fillTurn(tb testing.TB, log *turnlog.Turn, chatID string) {
 	}
 }
 
-// openBudgetChatTab puts the chat in the server-owned open-tab set.
 func openBudgetChatTab(tb testing.TB, rt *Runtime, id marotte.ChatID) {
 	tb.Helper()
 	if _, _, _, err := rt.tabs.Open(tb.Context(), marotte.OpenTab{
@@ -119,7 +116,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	}
 	for i := range fixturePendingPerms {
 		requestID := int64(i + 1)
-		rt.bus.pendingPerms.Add(requestID, marotte.NewEvent(
+		rt.bus.pendingPerms.add(requestID, marotte.NewEvent(
 			marotte.EventPermissionNeeded, ids[i%len(ids)], marotte.PermissionNeededPayload{
 				RequestID:  requestID,
 				ToolCallID: fmt.Sprintf("perm-%d", requestID),
@@ -130,10 +127,10 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 					{OptionID: "reject", Name: "Reject", Kind: "reject_once"},
 				},
 			},
-		))
+		), nil)
 	}
 	for i := range fixturePendingRunAsks {
-		if !rt.runs.asks.Add(&runAsk{chatID: ids[0], payload: marotte.RunInputNeededPayload{
+		if !rt.runs.asks.add(&runAsk{chatID: ids[0], payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf-budget",
 			AskID:      fmt.Sprintf("ask-%d", i+1),
 			Question:   "Which branch should the step target?",
@@ -143,7 +140,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	}
 }
 
-// coldConnect drives one cold v3 connect; the recorder's Body is the measured bytes.
+// The recorder's Body is the measured bytes.
 func coldConnect(t *testing.T, rt *Runtime, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	return coldConnectAs(t, rt, false, query)
@@ -193,7 +190,6 @@ func TestHandleSSE_ColdConnectIsFlatInTheNumberOfBusyChats(t *testing.T) {
 	}
 }
 
-// measureColdConnect returns one cold connect's wire bytes and asserts no turn content reached the wire.
 func measureColdConnect(t *testing.T, n int) int {
 	t.Helper()
 	rt := newBudgetRuntime(t)

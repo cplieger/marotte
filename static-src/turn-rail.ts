@@ -31,7 +31,6 @@ import type { CardTop, TurnOffsets } from "./rail-activation.js";
 /** One row of the session-wide turn index. Declared by the module that MERGES the
  *  set, which is a pure leaf, and re-exported here because this is where the map's
  *  consumers already read it from. */
-export type { TurnSummary };
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. Equal to `BOTTOM_TOLERANCE_PX` by coincidence;
@@ -85,11 +84,11 @@ let summaryByID = new Map<string, TurnSummary>();
  *  out: `mergeTurnSets` keeps the INDEX's id for that row, so `summaryByID` never
  *  holds the card's key. */
 let residentN = new Map<string, number>();
-/** The last turn number a held id resolved to. An id the store window no longer holds
- *  must move the mark, never clear it, so the mark is latched here. */
+/** An id the store window no longer holds must move the mark, never clear it, so the mark is latched
+ *  here. */
 let heldN: number | undefined;
-/** The turn the scroll offset names. A turn ID rather than a number, because the id
- *  is the turn's identity and the number is a value the index can restate. */
+/** A turn ID rather than a number, because the id is the turn's identity and the number is a value
+ *  the index can restate. */
 let activeID = "";
 /** The turn the READER picked, which outranks `activeID` until they say otherwise.
  *
@@ -336,11 +335,9 @@ export function setResidentTurns(cards: Iterable<HTMLElement>): void {
 // Activation
 // ---------------------------------------------------------------------------
 
-/** The transcript's turn cards, in paint order. */
 let residentCards: HTMLElement[] = [];
 /** The cached offset table, rebuilt lazily on the next read. */
 let offsets: TurnOffsets | undefined;
-/** The scroll-coalesced activation read. */
 let pickFrame = 0;
 /** The resize-coalesced render, deferred out of the map's own resize delivery. */
 let renderFrame = 0;
@@ -370,7 +367,6 @@ function scheduleRailRender(): void {
   });
 }
 
-/** Coalesce scroll events into one activation read per frame. */
 function schedulePick(): void {
   if (pickFrame !== 0) {
     return;
@@ -424,7 +420,6 @@ function readOffsets(): TurnOffsets {
   return offsets;
 }
 
-/** Measure the resident cards into the scroller's own frame. */
 function cardTops(): CardTop[] {
   const out: CardTop[] = [];
   for (const card of residentCards) {
@@ -822,7 +817,6 @@ function markedN(): number | undefined {
   return heldN;
 }
 
-/** Drop the reader's pick and repaint, if there was one to drop. */
 function clearSelection(): void {
   releaseIntent();
   if (selectedID === undefined) {
@@ -853,8 +847,8 @@ export function initTurnRailCallbacks(cbs: {
   }
 }
 
-/** The jump that owns the scroller. A SUPERSEDED jump may not act: closing the epoch from its
- *  `finally` hands the reader to the live edge mid-flight. */
+/** A SUPERSEDED jump may not act: closing the epoch from its `finally` hands the reader to the live
+ *  edge mid-flight. */
 let jumpGeneration = 0;
 
 function ownsJump(gen: number): boolean {
@@ -867,7 +861,6 @@ function invalidateJumps(): void {
   jumpGeneration++;
 }
 
-/** Whether the click's intent is suppressing offset-driven activation. */
 let intentOpen = false;
 let intentTimer = 0;
 
@@ -945,7 +938,6 @@ async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promis
   }
 }
 
-/** Where the scroller has to sit for `card`'s top to land on the reading line. */
 function landingFor(card: HTMLElement): number | null {
   const top = scrollFrameTop(card);
   return top === null ? null : top - readingLineOffset();

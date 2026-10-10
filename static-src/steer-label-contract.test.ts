@@ -59,7 +59,7 @@ describe("the steer label contract shared with the Go implementation", () => {
   const compared = fixture.triples.filter((r) => r.compared);
 
   it("reads a fixture with both origins, both states and at least one declared edge", () => {
-    expect(fixture.origins).toEqual(["agent", "user"]);
+    expect(fixture.origins).toEqual(["agent", "parent", "step", "user"]);
     expect(fixture.states).toEqual(["dropped", "read"]);
     expect(compared.length).toBeGreaterThan(0);
     expect(fixture.triples.length).toBeGreaterThan(compared.length);

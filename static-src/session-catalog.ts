@@ -85,14 +85,13 @@ export function fetchCatalog(
   );
 }
 
-/** Merge a model list into the picker cache + context-size table. `activeModel` moves the active
- *  highlight; pass "" when no session is active yet. */
+/** `activeModel` moves the active highlight; pass "" when no session is active yet. */
 function populatePickerModels(models: ModelInfo[], activeModel: string): void {
   for (const m of models) {
-    if (m.description !== undefined && MODEL_CONTEXT_SIZES[m.model_id] === undefined) {
+    if (m.description !== undefined && !MODEL_CONTEXT_SIZES.has(m.model_id)) {
       const size = parseContextSize(m.description);
       if (size !== undefined) {
-        MODEL_CONTEXT_SIZES[m.model_id] = size;
+        MODEL_CONTEXT_SIZES.set(m.model_id, size);
       }
     }
   }

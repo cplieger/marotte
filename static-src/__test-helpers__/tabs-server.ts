@@ -8,11 +8,11 @@
 
 import { vi } from "vitest";
 
-import type { TabKind, TabList, TabSubject, TabsChangedPayload } from "../types.js";
+import type { TabKind, TabSubject, TabsChangedPayload } from "../types.js";
+import type { TabList } from "../wire/types.gen.js";
 
-/** The two entry points of the sync layer this harness drives. Handed in, not imported: the
- *  `api-client.js` mock's factory imports THIS module, so a static `../tabs-sync.js` import
- *  deadlocks the mocker silently and the run never starts. */
+/** Handed in, not imported: the `api-client.js` mock's factory imports THIS module, so a static
+ *  `../tabs-sync.js` import deadlocks the mocker silently and the run never starts. */
 export interface SyncSeam {
   ingest: (frame: TabsChangedPayload) => void;
   /** `unknown`, so the real `listTabs` (which reports whether it adopted) is accepted. */
@@ -48,7 +48,6 @@ interface State {
   mode: Interleaving;
   /** Frames the harness has committed but not yet handed to the sync layer. */
   pending: TabsChangedPayload[];
-  /** Every command the projection dispatched, in order. */
   sent: Sent[];
   /** Command types the next dispatch of which fails, with the status to use. */
   failures: { type: string; status: number; error: string }[];
@@ -73,8 +72,7 @@ const state: State = {
 };
 
 export const tabServer = {
-  /** Drop every trace of a previous case. Call FIRST in a beforeEach, before
-   *  `_resetForTest()` re-registers the projection. */
+  /** Call FIRST in a beforeEach, before `_resetForTest()` re-registers the projection. */
   reset(mode: Interleaving = "event-first"): void {
     state.subjects = [];
     state.version = 0;
@@ -88,12 +86,10 @@ export const tabServer = {
     state.held = null;
   },
 
-  /** Switch the interleaving mid-case. */
   setMode(mode: Interleaving): void {
     state.mode = mode;
   },
 
-  /** Hand every committed-but-unemitted frame to the sync layer, oldest first. */
   flushFrames(): void {
     const frames = state.pending;
     state.pending = [];
@@ -114,7 +110,6 @@ export const tabServer = {
     state.held = [];
   },
 
-  /** Resolve every held response, oldest first. */
   releaseResponses(): void {
     const held = state.held ?? [];
     state.held = null;
@@ -130,7 +125,6 @@ export const tabServer = {
     ingest(frame);
   },
 
-  /** The collection as the server holds it. */
   subjects(): readonly TabSubject[] {
     return state.subjects;
   },
@@ -145,7 +139,6 @@ export const tabServer = {
     return state.subjects.find((s) => s.kind === kind && s.ref === ref)?.id ?? "";
   },
 
-  /** Every command the projection dispatched. */
   sent(): readonly Sent[] {
     return state.sent;
   },
@@ -272,8 +265,6 @@ interface SendResultLike {
   body?: unknown;
 }
 
-/** Answer one command against the collection, and schedule its frame per the
- *  current interleaving. */
 function handle(type: string, payload: Record<string, unknown>): SendResultLike {
   const failAt = state.failures.findIndex((f) => f.type === type);
   if (failAt >= 0) {
@@ -487,12 +478,10 @@ function answerWith(result: SendResultLike): Promise<SendResultLike> {
   });
 }
 
-/** A subject built by hand, for the frames a test feeds through `emitRaw`. */
 export function fakeSubject(id: string, over: Partial<TabSubject> = {}): TabSubject {
   return { id, kind: "chat", ref: id, parent: "", pinned: false, owns: true, ...over };
 }
 
-/** Let every microtask and the response-first `setTimeout(0)` run. */
 export function settleTabs(): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, 0);

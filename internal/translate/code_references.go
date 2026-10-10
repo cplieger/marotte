@@ -11,14 +11,12 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// v3CodeReferences is the _kiro/code_references notification payload.
 type v3CodeReferences struct {
 	SessionID  string            `json:"sessionId"`
 	References []v3CodeReference `json:"references"`
 }
 
-// v3CodeReference is one entry in the references list. Only licenseName,
-// repository, and url survive KAS's ACP-layer mapping.
+// Only licenseName, repository, and url survive KAS's ACP-layer mapping.
 type v3CodeReference struct {
 	LicenseName string `json:"licenseName"`
 	Repository  string `json:"repository"`

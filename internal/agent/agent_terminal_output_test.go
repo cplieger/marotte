@@ -3,9 +3,12 @@ package agent
 import (
 	"cmp"
 	"encoding/json"
+	"maps"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -23,10 +26,9 @@ func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *
 	return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
-// waitForTermExit drives one terminal/create to completion and returns its ring.
 func waitForTermExit(t *testing.T, h *Runtime, msg *marotte.RPCResponse) string {
 	t.Helper()
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 	return term.rawOutput()
@@ -69,7 +71,7 @@ func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 		// A shell would print an empty line; a direct exec finds no such program and prints nothing.
 		empty := []string{}
-		h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "echo hi", &empty))
+		h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, "echo hi", &empty))
 		h.agentTerms.mu.Lock()
 		n := len(h.agentTerms.terms)
 		h.agentTerms.mu.Unlock()
@@ -134,7 +136,7 @@ func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 			br := newRecordingTermBridge()
 			h := hubWithBridge(t, t.TempDir(), br)
 
-			h.translateACPEvent("c1", tc.msg(t))
+			h.translateACPEvent("c1", h.originOf("c1"), tc.msg(t))
 
 			if !strings.Contains(logs.String(), "agent terminal create failed") {
 				t.Errorf("no server-side line for %s\nlogs: %s", tc.reason, logs.String())
@@ -217,7 +219,6 @@ func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) 
 	}
 }
 
-// terminalOutputPayloads decodes every broadcast terminal_output, in event-id order.
 func terminalOutputPayloads(t *testing.T, h *Runtime) []marotte.TerminalOutputPayload {
 	t.Helper()
 	type idPayload struct {
@@ -279,13 +280,13 @@ func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 // so only the retired record, evicted at the turn boundary, makes adoption possible.
 func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, `printf '\033[31mfail\033[0m\n'`, nil))
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, `printf '\033[31mfail\033[0m\n'`, nil))
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 	termID := onlyTermID(t, h)
 
 	// KAS's release, which lands long before the completion that needs the bytes.
-	if _, ok := h.agentTerms.release(termID); !ok {
+	if _, ok := h.agentTerms.release("c1", termID); !ok {
 		t.Fatalf("release(%q) found no terminal", termID)
 	}
 	text, spans, ok := h.agentTerms.Output(termID)
@@ -306,7 +307,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	}
 
 	// The boundary is the closing turn's id; a record spawned with no turn open belongs to the next close.
-	h.agentTerms.CloseTurn("c1", "t-next")
+	h.agentTerms.closeTurn("c1", "t-next")
 	if _, _, ok := h.agentTerms.Output(termID); ok {
 		t.Error("the record survived the turn boundary, so it grows with the session")
 	}
@@ -315,7 +316,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 // A silent command is known, not missing; the translate diagnostic keys on this boolean.
 func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "true", nil))
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, "true", nil))
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 	termID := onlyTermID(t, h)
@@ -328,7 +329,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 		}
 	})
 	t.Run("Retired", func(t *testing.T) {
-		if _, ok := h.agentTerms.release(termID); !ok {
+		if _, ok := h.agentTerms.release("c1", termID); !ok {
 			t.Fatal("release found no terminal")
 		}
 		text, _, ok := h.agentTerms.Output(termID)
@@ -348,13 +349,13 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 func TestKillForChat_DropsRetiredOutput(t *testing.T) {
 	at := bareTerminals()
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
-	term.output.Write([]byte("secret\n"))
+	term.output.write([]byte("secret\n"))
 	at.terms["t1"] = term
 	at.byChatID["c1"] = []string{"t1"}
 	// A record from an earlier command in the same chat.
-	at.retire("t0", term)
+	at.retire("t0", term, term.turn)
 
-	at.KillForChat("c1")
+	at.killForChat("c1")
 
 	at.mu.Lock()
 	n := len(at.retired)
@@ -364,7 +365,6 @@ func TestKillForChat_DropsRetiredOutput(t *testing.T) {
 	}
 }
 
-// onlyTermID returns the sole registered terminal's id.
 func onlyTermID(t *testing.T, h *Runtime) string {
 	t.Helper()
 	h.agentTerms.mu.Lock()
@@ -384,7 +384,7 @@ func onlyTermID(t *testing.T, h *Runtime) string {
 func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// A steady writer, so the pump is mid-flight when the release lands.
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`i=0; while [ $i -lt 400 ]; do printf 'line %s\n' "$i"; i=$((i+1)); done; sleep 0.5`, nil))
 	term := singleTerm(t, h)
 	termID := onlyTermID(t, h)
@@ -397,7 +397,7 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if _, ok := h.agentTerms.release(termID); !ok {
+	if _, ok := h.agentTerms.release("c1", termID); !ok {
 		t.Fatalf("release(%q) found no terminal", termID)
 	}
 	if _, _, ok := h.agentTerms.Output(termID); !ok {
@@ -406,7 +406,7 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 	waitClosed(t, term.done, "terminal")
 }
 
-// withTerminalGroupGrace shortens the group wait for one test. Not parallel-safe: it writes a package var.
+// Not parallel-safe: it writes a package var.
 func withTerminalGroupGrace(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := terminalGroupGrace
@@ -426,7 +426,7 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// The head prints and exits; `sleep` inherits the write end past the grace.
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
 
@@ -456,7 +456,7 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 	withTerminalGroupGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// `sleep` joins the head's group and outlives it, with its pipe ends closed.
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
 
@@ -484,7 +484,6 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 	}
 }
 
-// terminalExitedPayloads returns every broadcast terminal_exited, oldest first.
 func terminalExitedPayloads(t *testing.T, h *Runtime) []marotte.TerminalExitedPayload {
 	t.Helper()
 	type idPayload struct {
@@ -515,7 +514,7 @@ func terminalExitedPayloads(t *testing.T, h *Runtime) []marotte.TerminalExitedPa
 // TestTerminalExited_CleanExitCarriesTheExitCode pins exactly one of exit_code and signal; neither reads as still running.
 func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "true", nil))
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, "true", nil))
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 
@@ -553,7 +552,7 @@ func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 		"outputByteLimit": 2 * outputBufferLimit,
 	})}
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 	termID := onlyTermID(t, h)
@@ -574,14 +573,13 @@ func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 	at := bareTerminals()
 	for _, turn := range []string{"t2", "t3"} {
 		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
-		term.turn = turn // what termCreate stamps: the chat's open turn
-		term.output.Write([]byte(turn + "\n"))
+		term.output.write([]byte(turn + "\n"))
 		at.mu.Lock()
-		at.retire("term-"+turn, term)
+		at.retire("term-"+turn, term, turn)
 		at.mu.Unlock()
 	}
 
-	at.CloseTurn("c1", "t3")
+	at.closeTurn("c1", "t3")
 	if raw, ok := at.peekRetired("term-t3"); ok {
 		t.Errorf("peekRetired(term-t3) = (%q, true) after t3 closed, want it evicted", raw)
 	}
@@ -589,9 +587,102 @@ func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 		t.Error("t3's close evicted t2's record: eviction is by equality on the turn id")
 	}
 
-	at.CloseTurn("c1", "t2")
+	at.closeTurn("c1", "t2")
 	if raw, ok := at.peekRetired("term-t2"); ok {
 		t.Errorf("peekRetired(term-t2) = (%q, true) after t2 closed, want it evicted", raw)
+	}
+}
+
+// A background process stopped in a later turn leaves its record to that turn's close: its own
+// turn already closed, so tagging it with the spawning turn would keep it until the chat is deleted.
+func TestCloseTurn_EvictsARecordReleasedInALaterTurn(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t1"}}
+	h.agentTerms.currentTurn = turns.read
+	termID, _ := spawnSleeper(t, h, "c1", br, 1)
+
+	h.agentTerms.closeTurn("c1", "t1")
+	turns.cur["c1"] = "t2"
+	h.translateACPEvent("c1", br, termIDMsg(t, 2, methodTermRelease, termID))
+	br.awaitResponseTo(t, 2)
+	if _, ok := h.agentTerms.peekRetired(termID); !ok {
+		t.Fatal("Setup: the released terminal left no record")
+	}
+
+	h.agentTerms.closeTurn("c1", "t2")
+	if raw, ok := h.agentTerms.peekRetired(termID); ok {
+		t.Errorf("peekRetired(%s) = (%q, true) after the releasing turn closed, want it evicted", termID, raw)
+	}
+}
+
+// A turn read before the release takes at.mu can close in between; output tagged with that turn
+// would wait on a close that already ran, so the next close must take it instead.
+func TestTerminalRelease_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	turns := &closingTurnStub{turn: "t2"}
+	h.agentTerms.currentTurn = turns.read
+	termID, _ := spawnSleeper(t, h, "c1", br, 1)
+
+	turns.closeOnNextRead(func() { h.agentTerms.closeTurn("c1", "t2") })
+	h.translateACPEvent("c1", br, termIDMsg(t, 2, methodTermRelease, termID))
+	br.awaitResponseTo(t, 2)
+	if _, _, ok := h.agentTerms.Output(termID); !ok {
+		t.Fatalf("Setup: Output(%s) found nothing right after terminal/release", termID)
+	}
+
+	h.agentTerms.closeTurn("c1", "t3")
+	if _, _, ok := h.agentTerms.Output(termID); ok {
+		t.Errorf("Output(%s) still answers after t3 closed: tagged with t2, whose close ran"+
+			" during the release, it outlives every later close", termID)
+	}
+}
+
+// The same race through a bridge's end, whose release reads the turn on the forward loop.
+func TestBridgeEnd_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *testing.T) {
+	ending := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), ending)
+	turns := &closingTurnStub{turn: "t2"}
+	h.agentTerms.currentTurn = turns.read
+	ending.deliver(termCreateMsg(t, 1, "sleep", []string{"30"}, nil))
+	ending.awaitResponseTo(t, 1)
+	termID, term := onlyTermOf(t, h, ending)
+	pid := term.cmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	turns.closeOnNextRead(func() { h.agentTerms.closeTurn("c1", "t2") })
+	ending.endStream()
+	// The bridge end kills only after it retired the output.
+	waitClosed(t, term.done, "the ended bridge's terminal")
+	if _, _, ok := h.agentTerms.Output(termID); !ok {
+		t.Fatalf("Setup: Output(%s) found nothing right after the bridge ended", termID)
+	}
+
+	h.agentTerms.closeTurn("c1", "t3")
+	if _, _, ok := h.agentTerms.Output(termID); ok {
+		t.Errorf("Output(%s) still answers after t3 closed: tagged with t2, whose close ran"+
+			" during the bridge end's release, it outlives every later close", termID)
+	}
+}
+
+// A run chat has no turn whose close evicts its records, so its bridge's end takes them.
+func TestReleaseForBridge_DropsARunChatsRecords(t *testing.T) {
+	t.Parallel()
+	at := bareTerminals()
+	run := runChatID("wf_1")
+	at.mu.Lock()
+	at.retire("run-term", newAgentTerminal(&exec.Cmd{}, run, 64), "")
+	at.retire("chat-term", newAgentTerminal(&exec.Cmd{}, "c1", 64), "")
+	at.mu.Unlock()
+
+	at.releaseForBridge(run, newRecordingTermBridge())
+
+	if _, ok := at.peekRetired("run-term"); ok {
+		t.Error("ReleaseForBridge(run chat) kept the run's record; no turn close would ever evict it")
+	}
+	if _, ok := at.peekRetired("chat-term"); !ok {
+		t.Error("ReleaseForBridge(run chat) evicted another chat's record")
 	}
 }
 
@@ -618,7 +709,7 @@ func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) 
 	}
 }
 
-// The teardown line is logged only when something was torn down. No t.Parallel: captureLogs swaps the slog default.
+// The teardown line is logged only when something was killed. No t.Parallel: captureLogs swaps the slog default.
 func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	const wantLine = "interrupt: killed the turn's terminals"
 
@@ -632,23 +723,22 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	})
 
 	t.Run("one_terminal_killed", func(t *testing.T) {
-		at := newAgentTerminals(nil, nil, nil,
-			(&turnStub{cur: map[marotte.ChatID]string{"c1": "t4"}}).read)
-		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
-		term.turn = "t4" // this turn's, so the cancel is its to take
-		at.terms["t1"] = term
-		at.byChatID["c1"] = []string{"t1"}
+		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+		h.stagePromptTurn(t, "c1")
+		_, term := spawnSleeper(t, h, "c1", h.originOf("c1"), 1)
 
 		logs := captureLogs(t)
-		at.KillForTurn("c1")
+		h.agentTerms.KillForTurn("c1")
 		if got := logs.String(); !strings.Contains(got, wantLine) {
 			t.Errorf("KillForTurn(chat with a live terminal) logged %q, want a teardown line", got)
 		}
-		at.mu.Lock()
-		left := len(at.terms)
-		at.mu.Unlock()
-		if left != 0 {
-			t.Errorf("terms size = %d after KillForTurn, want 0", left)
+		waitClosed(t, term.done, "the cancelled turn's terminal")
+
+		// Already dead: a second cancel has nothing to kill.
+		logs = captureLogs(t)
+		h.agentTerms.KillForTurn("c1")
+		if got := logs.String(); strings.Contains(got, wantLine) {
+			t.Errorf("KillForTurn(turn whose terminal already exited) logged %q, want no teardown line", got)
 		}
 	})
 }
@@ -663,7 +753,7 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	t.Run("refusal_refused", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
 		logs := captureLogs(t)
-		h.handleTerminalRequest(t.Context(), "c1", "terminal/not_a_verb", msg)
+		h.handleTerminalRequest(t.Context(), "c1", h.originOf("c1"), "terminal/not_a_verb", msg)
 		if got := logs.String(); !strings.Contains(got, wantLine) {
 			t.Errorf("handleTerminalRequest(unimplemented verb, refusing bridge) logged %q,"+
 				" want an undeliverable-refusal line", got)
@@ -673,7 +763,7 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	t.Run("refusal_delivered", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 		logs := captureLogs(t)
-		h.handleTerminalRequest(t.Context(), "c1", "terminal/not_a_verb", msg)
+		h.handleTerminalRequest(t.Context(), "c1", h.originOf("c1"), "terminal/not_a_verb", msg)
 		if got := logs.String(); strings.Contains(got, wantLine) {
 			t.Errorf("handleTerminalRequest(unimplemented verb, accepting bridge) logged %q,"+
 				" want no undeliverable-refusal line", got)
@@ -681,7 +771,7 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	})
 }
 
-// turnStub is a controllable current-turn reader; a chat absent from the map is idle.
+// A chat absent from the map is idle.
 type turnStub struct {
 	cur map[marotte.ChatID]string
 }
@@ -691,15 +781,61 @@ func (s *turnStub) read(chatID marotte.ChatID) (string, bool) {
 	return turn, ok
 }
 
-// stageTerminal registers a terminal the way termCreate does, reading the turn through turnOf.
-func stageTerminal(h *Runtime, id string, chatID marotte.ChatID) {
-	turn := h.agentTerms.turnOf(chatID)
+// closingTurnStub reports one turn for every chat; once armed, the next read runs a close
+// before it returns, which lands that close between a reader's turn read and its next step.
+type closingTurnStub struct {
+	onRead func()
+	turn   string
+	mu     sync.Mutex
+}
+
+func (s *closingTurnStub) read(marotte.ChatID) (string, bool) {
+	s.mu.Lock()
+	onRead := s.onRead
+	s.onRead = nil
+	s.mu.Unlock()
+	if onRead != nil {
+		onRead()
+	}
+	return s.turn, true
+}
+
+func (s *closingTurnStub) closeOnNextRead(onRead func()) {
+	s.mu.Lock()
+	s.onRead = onRead
+	s.mu.Unlock()
+}
+
+// spawnSleeper runs `sleep 30` through the real terminal/create dispatch; test cleanup kills it.
+func spawnSleeper(t *testing.T, h *Runtime, chatID marotte.ChatID, origin acpResponder, reqID int64) (string, *agentTerminal) {
+	t.Helper()
+	h.agentTerms.mu.Lock()
+	before := maps.Clone(h.agentTerms.terms)
+	h.agentTerms.mu.Unlock()
+	h.translateACPEvent(chatID, origin, termCreateMsg(t, reqID, "sleep", []string{"30"}, nil))
 	h.agentTerms.mu.Lock()
 	defer h.agentTerms.mu.Unlock()
-	term := newAgentTerminal(&exec.Cmd{}, chatID, 64)
-	term.turn = turn
-	h.agentTerms.terms[id] = term
-	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
+	for id, term := range h.agentTerms.terms {
+		if _, old := before[id]; old {
+			continue
+		}
+		pid := term.cmd.Process.Pid
+		t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+		return id, term
+	}
+	t.Fatalf("Setup: terminal/create on %q registered no terminal", chatID)
+	return "", nil
+}
+
+func awaitDead(t *testing.T, pid int, what string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for processAlive(pid) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s (pid %d) is still alive 3s after it should have been killed", what, pid)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals pins that cancelling a prompt
@@ -710,76 +846,92 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 
 	// A turn marotte did not prompt: the first frame of the bracket opens it.
 	h.stageWireTurn(t, "c1")
-	stageTerminal(h, "agent-bg", "c1")
+	_, agentBG := spawnSleeper(t, h, "c1", h.originOf("c1"), 1)
 
 	// It ends on the wire's own bracket.
 	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn)
 
 	// The user's next turn, with a command of its own.
 	h.stagePromptTurn(t, "c1")
-	stageTerminal(h, "prompt-cmd", "c1")
+	_, promptCmd := spawnSleeper(t, h, "c1", h.originOf("c1"), 2)
 
 	h.agentTerms.KillForTurn("c1")
 
-	h.agentTerms.mu.Lock()
-	defer h.agentTerms.mu.Unlock()
-	if _, ok := h.agentTerms.terms["agent-bg"]; !ok {
+	awaitDead(t, promptCmd.cmd.Process.Pid, "the cancelled turn's own terminal")
+	if !processAlive(agentBG.cmd.Process.Pid) {
 		t.Error("cancelling the user's turn killed the AGENT-initiated turn's terminal: " +
 			"that background command was not this cancel's to take")
-	}
-	if _, ok := h.agentTerms.terms["prompt-cmd"]; ok {
-		t.Error("the cancelled turn's own terminal survived the interrupt")
 	}
 }
 
 // TestKillForTurn_ScopedToTheOpenTurn pins that a cancel kills only the current turn's terminals.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t7", "c2": "t3"}}
-	at := newAgentTerminals(nil, nil, nil, turns.read)
-	add := func(id string, chat marotte.ChatID) {
-		turn := at.turnOf(chat)
-		at.mu.Lock()
-		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
-		term.turn = turn
-		at.terms[id] = term
-		at.byChatID[chat] = append(at.byChatID[chat], id)
-		at.mu.Unlock()
-	}
+	h.agentTerms.currentTurn = turns.read
+	origin := h.originOf("c1")
 
-	add("t1-old", "c1")    // turn t7's background command
-	turns.cur["c1"] = "t8" // turn t7 closed and turn t8 opened
-	add("t2-cur", "c1")    // turn t8, the open turn
-	add("t2-cur-b", "c1")
-	add("other-chat", "c2")
+	_, old := spawnSleeper(t, h, "c1", origin, 1) // turn t7's background command
+	turns.cur["c1"] = "t8"                        // turn t7 closed and turn t8 opened
+	_, cur := spawnSleeper(t, h, "c1", origin, 2) // turn t8, the open turn
+	_, curB := spawnSleeper(t, h, "c1", origin, 3)
+	_, other := spawnSleeper(t, h, "c2", newRecordingTermBridge(), 4)
 
-	at.KillForTurn("c1")
+	h.agentTerms.KillForTurn("c1")
 
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	if _, ok := at.terms["t1-old"]; !ok {
-		t.Error("an earlier turn's terminal was killed — that background command was not the cancel's to take")
+	awaitDead(t, cur.cmd.Process.Pid, "the open turn's terminal")
+	awaitDead(t, curB.cmd.Process.Pid, "the open turn's second terminal")
+	if !processAlive(old.cmd.Process.Pid) {
+		t.Error("an earlier turn's terminal was killed: that background command was not the cancel's to take")
 	}
-	if _, ok := at.terms["t2-cur"]; ok {
-		t.Error("the open turn's terminal survived the interrupt")
-	}
-	if _, ok := at.terms["t2-cur-b"]; ok {
-		t.Error("the open turn's second terminal survived the interrupt")
-	}
-	if _, ok := at.terms["other-chat"]; !ok {
+	if !processAlive(other.cmd.Process.Pid) {
 		t.Error("another chat's terminal was killed")
-	}
-	if got := len(at.byChatID["c1"]); got != 1 {
-		t.Errorf("c1's index holds %d ids, want 1 (the survivor)", got)
 	}
 }
 
-// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals touches nothing.
+// TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased pins that a cancelled turn's terminal
+// stays registered: KAS reads its output and exit and stops it after the cancel.
+func TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	h.stagePromptTurn(t, "c1")
+	termID, term := spawnSleeper(t, h, "c1", br, 1)
+
+	h.agentTerms.KillForTurn("c1")
+	waitClosed(t, term.done, "the cancelled turn's terminal")
+
+	h.translateACPEvent("c1", br, termIDMsg(t, 2, methodTermOutput, termID))
+	out := br.awaitResponseTo(t, 2)
+	res, ok := out.result.(map[string]any)
+	if out.err != nil || !ok {
+		t.Fatalf("terminal/output after the cancel = (%v, %v), want a result", out.result, out.err)
+	}
+	if st, _ := res["exitStatus"].(map[string]any); st[keySignal] == nil {
+		t.Errorf("terminal/output after the cancel: exitStatus = %v, want a signal", res["exitStatus"])
+	}
+
+	h.translateACPEvent("c1", br, termIDMsg(t, 3, methodTermKill, termID))
+	if kill := br.awaitResponseTo(t, 3); kill.err != nil {
+		t.Errorf("terminal/kill after the cancel answered %v, want {}", kill.err)
+	}
+
+	h.translateACPEvent("c1", br, termIDMsg(t, 4, methodTermRelease, termID))
+	br.awaitResponseTo(t, 4)
+	h.agentTerms.mu.Lock()
+	_, still := h.agentTerms.terms[termID]
+	h.agentTerms.mu.Unlock()
+	if still {
+		t.Error("terminal/release left the cancelled terminal registered")
+	}
+}
+
 func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
-	at := newAgentTerminals(nil, nil, nil, (&turnStub{}).read) // every chat idle
-	at.KillForTurn("c1")                                       // must not panic or create entries
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {
-		t.Errorf("no-op kill mutated the registry: %d terms", len(at.terms))
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	_, idle := spawnSleeper(t, h, "c1", h.originOf("c1"), 1) // created while the chat is idle
+
+	h.agentTerms.KillForTurn("c1")
+
+	if !processAlive(idle.cmd.Process.Pid) {
+		t.Error("KillForTurn(idle chat) killed a terminal")
 	}
 }

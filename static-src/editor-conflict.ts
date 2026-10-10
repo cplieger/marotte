@@ -16,8 +16,8 @@ import {
 } from "./conflict.js";
 import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
-import { getActiveFilePath, fileStates } from "./editor-types.js";
-import { updateGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
+import { enterView, getActiveFilePath, fileStates, isShown, repaint } from "./editor-types.js";
+import { paintCommonControls, showEditSurface } from "./editor-ui.js";
 import { registerCleanup } from "./actions/index.js";
 
 registerCleanup(() => {
@@ -77,14 +77,12 @@ export function renderConflictModeUI(state: FileState): void {
       editing: true,
     };
   }
-  $.editorContent.value = state.current.value;
-  showEditMode();
-  updateGutter(state.current.value);
+  showEditSurface(state);
   $.editorEditBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
   $.editorDiffBtn.classList.add("hidden");
-  renderConflictOverlay(state);
+  paintCommonControls(state);
 }
 
 /** One element of the overlay: the live status line, one hunk's control row, or the
@@ -132,7 +130,11 @@ function overlayEntries(conflict: ConflictFile, state: FileState): OverlayEntry[
  *  reliably re-announced from. A key carrying content would re-key on every change. */
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
-  if (state.mode.value.kind !== "conflict" || state.mode.value.conflict.hunks.length === 0) {
+  if (
+    state.error.value !== "" ||
+    state.mode.value.kind !== "conflict" ||
+    state.mode.value.conflict.hunks.length === 0
+  ) {
     overlay.replaceChildren();
     overlay.classList.add("hidden");
     return;
@@ -328,14 +330,13 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
     return;
   }
   const newContent = resolveHunk(state.mode.value.conflict, hunkIndex, resolution);
-  state.current.value = newContent;
+  // A resolution re-arranges lines the file already had, so their endings must survive.
+  writeBuffer(state, newContent, "moved");
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
-  $.editorContent.value = newContent;
-  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode.value = { kind: "edit", editing: false };
-    renderEditModeUI(state);
+    enterView(state, { kind: "text", editing: false });
+    repaint(state);
     return;
   }
   state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
@@ -372,19 +373,15 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     context,
   };
   const resp = await suggestResolution.dispatch(body);
-  // Stale-dispatch guard: if abortSuggestion(state.path) or another
-  // requestSuggestion on this file ran while we were awaiting, the
-  // path's gen has incremented. Bail silently.
-  if (myDispatchId !== currentSuggestionGen(state.path)) {
+  // A later request or an abort on this path supersedes this one. The path's counter restarts
+  // when the tab closes, so only `isShown` tells a reopened record from this one.
+  if (myDispatchId !== currentSuggestionGen(state.path) || !isShown(state)) {
     return;
   }
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (state.mode.value.kind !== "conflict") {
     return;
   }
-  if (getActiveFilePath() !== state.path) {
-    return;
-  } // stale file switch
   const current = state.mode.value.conflict.hunks[hunkIndex];
   if (current?.startLine !== hunk.startLine) {
     return;
@@ -421,18 +418,26 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
     ...state.mode.value.conflict.lines.slice(hunk.endLine + 1),
   ];
   const newContent = out.join("\n") + (state.mode.value.conflict.trailingNewline ? "\n" : "");
-  state.current.value = newContent;
+  // The suggestion is new text, so its breaks take the neighbouring ending.
+  writeBuffer(state, newContent, "new");
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
-  $.editorContent.value = newContent;
-  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode.value = { kind: "edit", editing: false };
-    renderEditModeUI(state);
+    enterView(state, { kind: "text", editing: false });
+    repaint(state);
     return;
   }
   state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   renderConflictOverlay(state);
+}
+
+/** A programmatic write to the edit buffer: the textarea, the line-ending record and `current`
+ *  move together. */
+function writeBuffer(state: FileState, text: string, kind: "moved" | "new"): void {
+  state.eol?.tracker.replace(text, kind);
+  state.current.value = text;
+  $.editorContent.value = text;
+  showEditSurface(state);
 }
 
 function rejectSuggestion(state: FileState, startLine: number): void {

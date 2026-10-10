@@ -16,7 +16,7 @@ import (
 func TestFitImage_InCapImagePassesThroughByteIdentical(t *testing.T) {
 	data := pngBytes(t, 120, 80)
 
-	out, mime, reason := fitImage(data, MaxImageEdgePx, MaxInlineEncodedBytes)
+	out, mime, reason := fitImage(data, maxImageEdgePx, maxInlineEncodedBytes)
 
 	if reason != "" {
 		t.Fatalf("fitImage(120x80 png) reason = %q, want none", reason)
@@ -36,7 +36,7 @@ func TestFitImage_ShrinksUntilTheEncodedCapFits(t *testing.T) {
 		t.Fatalf("Setup: fixture encodes to %d, want it over %d", base64.StdEncoding.EncodedLen(len(data)), maxEncoded)
 	}
 
-	out, _, reason := fitImage(data, MaxImageEdgePx, maxEncoded)
+	out, _, reason := fitImage(data, maxImageEdgePx, maxEncoded)
 
 	if reason != "" {
 		t.Fatalf("fitImage(600x600 noise, cap %d) reason = %q, want a fit", maxEncoded, reason)
@@ -48,8 +48,8 @@ func TestFitImage_ShrinksUntilTheEncodedCapFits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fitted bytes are not a PNG: %v", err)
 	}
-	if long := max(cfg.Width, cfg.Height); long >= 600 || long < MinImageEdgePx {
-		t.Errorf("fitImage(600x600 noise) long edge = %d, want under 600 and at least %d", long, MinImageEdgePx)
+	if long := max(cfg.Width, cfg.Height); long >= 600 || long < minImageEdgePx {
+		t.Errorf("fitImage(600x600 noise) long edge = %d, want under 600 and at least %d", long, minImageEdgePx)
 	}
 }
 
@@ -58,7 +58,7 @@ func TestFitImage_ShrinksUntilTheEncodedCapFits(t *testing.T) {
 func TestFitImage_RefusesPastThePixelCeilingWithoutDecoding(t *testing.T) {
 	data := pngHeaderOnly(t, 30000, 30000)
 
-	_, _, reason := fitImage(data, MaxImageEdgePx, MaxInlineEncodedBytes)
+	_, _, reason := fitImage(data, maxImageEdgePx, maxInlineEncodedBytes)
 
 	if !strings.Contains(reason, "megapixels") {
 		t.Errorf("fitImage(30000x30000 header) reason = %q, want the pixel-ceiling reason", reason)
@@ -71,7 +71,7 @@ func TestFitImage_OverCapWebPReencodesAsPNG(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, mime, reason := fitImage(data, 300, MaxInlineEncodedBytes)
+	out, mime, reason := fitImage(data, 300, maxInlineEncodedBytes)
 
 	if reason != "" {
 		t.Fatalf("fitImage(600x400 webp, edge 300) reason = %q, want a fit", reason)
@@ -85,7 +85,7 @@ func TestFitImage_OverCapWebPReencodesAsPNG(t *testing.T) {
 }
 
 func TestFitImage_UndecodableBytesAreRefused(t *testing.T) {
-	if _, _, reason := fitImage([]byte("not an image"), MaxImageEdgePx, MaxInlineEncodedBytes); reason == "" {
+	if _, _, reason := fitImage([]byte("not an image"), maxImageEdgePx, maxInlineEncodedBytes); reason == "" {
 		t.Error("fitImage(garbage) reason empty, want a refusal")
 	}
 }

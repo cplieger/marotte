@@ -15,8 +15,8 @@ interface Call {
   host?: HTMLElement;
   entryCount?: number;
   live?: boolean;
-  /** The chat id the call was handed. Always "" here — a step's entries are the RUN's, so a
-   *  delegate's page link has no destination and the dispatcher withholds it on "". */
+  /** Always "" here — a step's entries are the RUN's, so a delegate's page link has no destination
+   *  and the dispatcher withholds it on "". */
   chatID?: string;
 }
 
@@ -62,20 +62,24 @@ vi.mock("./messages-blocks.js", () => ({
 
 const { createRunStepStream } = await import("./run-chat-steps.js");
 
-/** One sealed entry of a step's turn at the position its own `seq` claims. */
 function entry(turn: string, seq: number, kind: Entry["kind"] = "text"): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind, seq, ts: 0, payload: {} };
 }
 
 /** A step turn as the pane paints it. Only the fields this module reads are filled; the
  *  dispatcher's own view of a turn is `messages-blocks.test.ts`'s subject. */
-function paint(turnID: string, kinds: readonly Entry["kind"][], live = true): RunStepPaint {
+function paint(
+  turnID: string,
+  kinds: readonly Entry["kind"][],
+  live = true,
+  prompt?: string,
+): RunStepPaint {
   const body = kinds.map((kind, i) => entry(turnID, i + 1, kind));
   return {
     turn: {
       id: turnID,
       n: 1,
-      trigger: undefined,
+      trigger: prompt === undefined ? undefined : { id: `p-${turnID}`, text: prompt },
       body,
       openEntries: new Map(),
       ts: 0,
@@ -163,6 +167,25 @@ describe("run step stream", () => {
     expect(builds(h)[0]?.host).not.toBe(builds(h)[1]?.host);
     expect(builds(h)[0]?.host?.parentElement).toBe(h.host("a/coder"));
     expect(h.host("a/coder").childElementCount).toBe(2);
+  });
+
+  // A message that resumed a paused step opened its next turn: the user's words head that turn, the
+  // way a prompt heads a chat turn, and leave with it.
+  it("heads a turn the user's message opened with their words", () => {
+    const h = harness();
+    h.apply({
+      "a/ask": [paint("t-asked", ["text"], false), paint("t-resumed", ["text"], true, "teal")],
+    });
+    const host = h.host("a/ask");
+    const [first, heading, resumed] = [...host.children];
+    expect(first).toBe(builds(h)[0]?.host);
+    expect(heading?.classList.contains("turn-header")).toBe(true);
+    expect(heading?.getAttribute("data-trigger")).toBe("user");
+    expect(heading?.textContent).toBe("teal");
+    expect(resumed).toBe(builds(h)[1]?.host);
+
+    h.apply({ "a/ask": [paint("t-asked", ["text"], false)] });
+    expect(host.childElementCount).toBe(1);
   });
 
   // The dispatcher's incremental update appends past a watermark, so it is correct only while the

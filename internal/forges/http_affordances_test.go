@@ -15,7 +15,6 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
-// affordedRepo is what o/r allows, as the library answers it.
 func affordedRepo(strategies ...string) forgeapi.RepoAffordances {
 	return forgeapi.RepoAffordances{
 		MergeStrategies: strategies,
@@ -39,7 +38,6 @@ func decodeAffordances(t *testing.T, rec *httptest.ResponseRecorder) RepoAfforda
 	return got
 }
 
-// affordancesPath is the affordances route of the GitHub row's o/r.
 var affordancesPath = githubRepoPath("v1.6f2f72", "affordances")
 
 func TestAffordancesRoute_CarriesStrategiesAndCanPush(t *testing.T) {

@@ -112,11 +112,11 @@ func NewCatalog(client *http.Client, registryURL string) *Catalog {
 	return &Catalog{client: client, url: registryURL, servers: map[string]serverList{}}
 }
 
-// Entries returns the catalogue, fetching it when the cached copy is older
+// catalogEntries returns the catalogue, fetching it when the cached copy is older
 // than an hour. A stale copy is served at once while another caller refreshes it
 // and for failureBackoff after a failed fetch, so an outage costs one fetch per
 // backoff rather than one per caller.
-func (c *Catalog) Entries(ctx context.Context) ([]Entry, error) {
+func (c *Catalog) catalogEntries(ctx context.Context) ([]Entry, error) {
 	c.mu.Lock()
 	if entries, done, err := c.cachedLocked(); done {
 		c.mu.Unlock()
@@ -174,16 +174,17 @@ func (c *Catalog) cachedLocked() (entries []Entry, done bool, err error) {
 	return nil, false, nil
 }
 
-// Revalidate returns the row named name from a catalogue fetched after the call
+// revalidate returns the row named name from a catalogue fetched after the call
 // began, because `kiro-cli powers install` reads the registry as it is now.
-func (c *Catalog) Revalidate(ctx context.Context, name string) (Entry, bool, error) {
+func (c *Catalog) revalidate(ctx context.Context, name string) (Entry, bool, error) {
 	return c.lookupSince(ctx, name, time.Now())
 }
 
-// Admit returns the row named name from a catalogue fetched within serversTTL, so
+// admit reports whether a catalogue fetched within serversTTL holds a row named name, so
 // an install right after its confirmation installs the entry that confirmation named.
-func (c *Catalog) Admit(ctx context.Context, name string) (Entry, bool, error) {
-	return c.lookupSince(ctx, name, time.Now().Add(-serversTTL))
+func (c *Catalog) admit(ctx context.Context, name string) (bool, error) {
+	_, ok, err := c.lookupSince(ctx, name, time.Now().Add(-serversTTL))
+	return ok, err
 }
 
 func (c *Catalog) lookupSince(ctx context.Context, name string, since time.Time) (Entry, bool, error) {
@@ -266,10 +267,10 @@ func (c *Catalog) fetch(ctx context.Context) ([]Entry, error) {
 	return out, nil
 }
 
-// Servers names the MCP servers a catalogue Power declares in its mcp.json,
+// catalogServerNames names the MCP servers a catalogue Power declares in its mcp.json,
 // cached per Power for serversTTL. known is false when the Power's files could not
 // be read or declare servers in a shape this cannot list (an agent plugin's manifest).
-func (c *Catalog) Servers(ctx context.Context, e *Entry) (names []string, known bool) {
+func (c *Catalog) catalogServerNames(ctx context.Context, e *Entry) (names []string, known bool) {
 	c.mu.Lock()
 	cached, ok := c.servers[e.Name]
 	c.mu.Unlock()
@@ -351,8 +352,7 @@ func rawBase(repoURL, branch, pathInRepo string) string {
 	return "https://raw.githubusercontent.com/" + strings.Join(segs, "/")
 }
 
-// serverNames sanitizes the declared names for a one-line confirmation; false when
-// there are more than the confirmation lists.
+// False when there are more than the confirmation lists.
 func serverNames(m map[string]json.RawMessage) ([]string, bool) {
 	if len(m) > maxServerNames {
 		return nil, false

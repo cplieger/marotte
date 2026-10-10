@@ -13,7 +13,7 @@ import (
 
 // The merge is idempotent and order-preserving: every id survives, in relative order within its turn, turns contiguous by n.
 
-// turnPlan is one turn of a generated transcript; one plan builds both sides, so a paired turn is never generated unpairable.
+// One plan builds both sides, so a paired turn is never generated unpairable.
 type turnPlan struct {
 	// InRecord and InProjected pick one of the three populations: paired, record-only, replay-only.
 	InRecord    bool
@@ -63,9 +63,8 @@ func genTurnPlans() *rapid.Generator[[]turnPlan] {
 	return rapid.SliceOfN(plan, 1, 4)
 }
 
-// buildSides turns a plan into both accounts; stamp sets each entry's Ts, so the same plan
-// builds with and without timestamps.
-func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []RecordTurn, projected []translate.ProjectedTurn) {
+// stamp sets each entry's Ts, so the same plan builds with and without timestamps.
+func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []recordTurn, projected []translate.ProjectedTurn) {
 	for i, p := range plans {
 		recTurnID := fmt.Sprintf("T%d", i)
 		projTurnID := fmt.Sprintf("P%d", i)
@@ -145,7 +144,7 @@ func buildSides(t *rapid.T, plans []turnPlan, stamp func(int) int64) (record []R
 }
 
 // rapidTurn is recTurn without a *testing.T, so the generator can build a turn.
-func rapidTurn(t *rapid.T, turn string, rows []entryRow) RecordTurn {
+func rapidTurn(t *rapid.T, turn string, rows []entryRow) recordTurn {
 	entries := make([]marotte.Entry, 0, len(rows))
 	for i, r := range rows {
 		entries = append(entries, marotte.Entry{
@@ -153,7 +152,7 @@ func rapidTurn(t *rapid.T, turn string, rows []entryRow) RecordTurn {
 			Payload: mustJSONRapid(t, r.payload),
 		})
 	}
-	return RecordTurn{Entries: entries}
+	return recordTurn{Entries: entries}
 }
 
 func mustJSONRapid(t *rapid.T, v any) []byte {
@@ -165,7 +164,7 @@ func mustJSONRapid(t *rapid.T, v any) []byte {
 }
 
 // stampTurn writes each entry's Ts through the caller's own rule.
-func stampTurn(turn RecordTurn, stamp func(int) int64) RecordTurn {
+func stampTurn(turn recordTurn, stamp func(int) int64) recordTurn {
 	for i := range turn.Entries {
 		turn.Entries[i].Ts = stamp(i)
 	}
@@ -178,12 +177,12 @@ func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
 		record, projected := buildSides(rt, plans, func(i int) int64 { return int64(1000 + i) })
 
-		merged, _ := MergeEntries(record, projected, "sid-1")
+		merged, _ := mergeEntries(record, projected, "sid-1")
 		assertMergeShape(rt, record, merged)
 		assertArms(rt, plans, record, merged)
 
 		// Idempotence: a second merge of the same replay changes nothing.
-		again, changed := MergeEntries(mergedAsRecord(merged), projected, "sid-1")
+		again, changed := mergeEntries(mergedAsRecord(merged), projected, "sid-1")
 		if changed {
 			rt.Fatalf("second merge reported a change:\nfirst:\n%s\nsecond:\n%s",
 				dumpMerged(merged), dumpMerged(again))
@@ -202,16 +201,15 @@ func TestMergeEntries_ReadsNoTimestamp(t *testing.T) {
 		withTs, projWithTs := buildSides(rt, plans, func(i int) int64 { return int64(9000 - i*7) })
 		zeroed, projZeroed := buildSides(rt, plans, func(int) int64 { return 0 })
 
-		a, _ := MergeEntries(withTs, projWithTs, "sid-1")
-		b, _ := MergeEntries(zeroed, projZeroed, "sid-1")
+		a, _ := mergeEntries(withTs, projWithTs, "sid-1")
+		b, _ := mergeEntries(zeroed, projZeroed, "sid-1")
 		if got, want := shapeOf(a), shapeOf(b); got != want {
 			rt.Fatalf("the merge's order depends on ts:\nwith ts:\n%s\nzeroed:\n%s", got, want)
 		}
 	})
 }
 
-// shapeOf is a merged log's turn and entry ids in order, payloads and timestamps dropped.
-func shapeOf(turns []MergedTurn) string {
+func shapeOf(turns []mergedTurn) string {
 	var b strings.Builder
 	for i := range turns {
 		fmt.Fprintf(&b, "turn %d:\n", i)
@@ -222,8 +220,7 @@ func shapeOf(turns []MergedTurn) string {
 	return b.String()
 }
 
-// assertMergeShape holds the invariants both properties share.
-func assertMergeShape(rt *rapid.T, record []RecordTurn, merged []MergedTurn) {
+func assertMergeShape(rt *rapid.T, record []recordTurn, merged []mergedTurn) {
 	// Every record entry survives, in relative order within its turn.
 	byTurn := make(map[string][]string, len(merged))
 	for i := range merged {
@@ -271,13 +268,12 @@ func assertMergeShape(rt *rapid.T, record []RecordTurn, merged []MergedTurn) {
 	}
 }
 
-// assertArms checks each generated arm's outcome per turn, with the record as the segment oracle.
-func assertArms(rt *rapid.T, plans []turnPlan, record []RecordTurn, merged []MergedTurn) {
+func assertArms(rt *rapid.T, plans []turnPlan, record []recordTurn, merged []mergedTurn) {
 	at := make(map[string]int, len(merged))
 	for i := range merged {
 		at[merged[i].Entries[0].Turn] = i
 	}
-	recordAt := make(map[string]RecordTurn, len(record))
+	recordAt := make(map[string]recordTurn, len(record))
 	for i := range record {
 		recordAt[record[i].Entries[0].Turn] = record[i]
 	}
@@ -324,8 +320,7 @@ func assertArms(rt *rapid.T, plans []turnPlan, record []RecordTurn, merged []Mer
 	}
 }
 
-// assertPairedTurn is the union's account of one paired turn.
-func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got MergedTurn) {
+func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec recordTurn, got mergedTurn) {
 	_, closer := closerOf(rt, got)
 	switch {
 	case !p.Placeholder:
@@ -355,7 +350,7 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got Merged
 	have := sayTexts(rt, got.Entries, say)
 	if len(have) != len(want) || len(want) != p.Segments {
 		rt.Fatalf("plan %d: say %s has %d segments after the merge, record had %d, plan said %d:\n%s",
-			i, say, len(have), len(want), p.Segments, dumpMerged([]MergedTurn{got}))
+			i, say, len(have), len(want), p.Segments, dumpMerged([]mergedTurn{got}))
 	}
 	want[len(want)-1] += strings.Repeat("y", p.TailBytes)
 	for k := range want {
@@ -366,10 +361,10 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec RecordTurn, got Merged
 }
 
 // assertKeptTurn is rule 2: an unpaired record turn stays put, only seq and n rewritten.
-func assertKeptTurn(rt *rapid.T, i int, rec RecordTurn, got MergedTurn) {
+func assertKeptTurn(rt *rapid.T, i int, rec recordTurn, got mergedTurn) {
 	if len(got.Entries) != len(rec.Entries) {
 		rt.Fatalf("plan %d: unpaired record turn gained entries, %d -> %d:\n%s",
-			i, len(rec.Entries), len(got.Entries), dumpMerged([]MergedTurn{got}))
+			i, len(rec.Entries), len(got.Entries), dumpMerged([]mergedTurn{got}))
 	}
 	for k := range rec.Entries {
 		if got.Entries[k].ID != rec.Entries[k].ID {
@@ -383,7 +378,7 @@ func assertKeptTurn(rt *rapid.T, i int, rec RecordTurn, got MergedTurn) {
 
 // assertInsertedTurn is rules 3 and 4: an inserted turn is whole, steers dropped/restart,
 // closer KAS's or the placeholder. headMissed reports a predecessor-less turn not at the head.
-func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got MergedTurn, headMissed bool) {
+func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got mergedTurn, headMissed bool) {
 	closerID, closer := closerOf(rt, got)
 	if p.ProjClosed {
 		if closer.Outcome != marotte.TurnOutcomeCancelled || closerID != got.Entries[0].Turn+":e1" {
@@ -393,7 +388,7 @@ func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got MergedTurn, headMiss
 		rt.Fatalf("plan %d: inserted turn with no turn_end has closer %+v (id %q), want the synthesized placeholder", i, closer, closerID)
 	}
 	if got.Entries[len(got.Entries)-1].Kind != marotte.EntryKindTurnClose {
-		rt.Fatalf("plan %d: inserted turn does not end with its closer:\n%s", i, dumpMerged([]MergedTurn{got}))
+		rt.Fatalf("plan %d: inserted turn does not end with its closer:\n%s", i, dumpMerged([]mergedTurn{got}))
 	}
 	assertLostSteer(rt, i, p, got)
 	if headMissed {
@@ -402,7 +397,7 @@ func assertInsertedTurn(rt *rapid.T, i int, p turnPlan, got MergedTurn, headMiss
 }
 
 // assertLostSteer is rule 3's stamp: dropped/restart, never read or not-known.
-func assertLostSteer(rt *rapid.T, i int, p turnPlan, got MergedTurn) {
+func assertLostSteer(rt *rapid.T, i int, p turnPlan, got mergedTurn) {
 	id := fmt.Sprintf("steer-lost-%d", i)
 	found := false
 	for _, e := range got.Entries {
@@ -419,12 +414,12 @@ func assertLostSteer(rt *rapid.T, i int, p turnPlan, got MergedTurn) {
 		}
 	}
 	if found != p.SteerLost {
-		rt.Fatalf("plan %d: lost steer present=%v, plan said %v:\n%s", i, found, p.SteerLost, dumpMerged([]MergedTurn{got}))
+		rt.Fatalf("plan %d: lost steer present=%v, plan said %v:\n%s", i, found, p.SteerLost, dumpMerged([]mergedTurn{got}))
 	}
 }
 
 // closerOf is a turn's one turn_close: its entry id and its payload.
-func closerOf(rt *rapid.T, turn MergedTurn) (string, marotte.EntryTurnClose) {
+func closerOf(rt *rapid.T, turn mergedTurn) (string, marotte.EntryTurnClose) {
 	var closer marotte.EntryTurnClose
 	for _, e := range turn.Entries {
 		if e.Kind != marotte.EntryKindTurnClose {
@@ -435,11 +430,10 @@ func closerOf(rt *rapid.T, turn MergedTurn) (string, marotte.EntryTurnClose) {
 		}
 		return e.ID, closer
 	}
-	rt.Fatalf("turn %s holds no turn_close:\n%s", turn.Entries[0].Turn, dumpMerged([]MergedTurn{turn}))
+	rt.Fatalf("turn %s holds no turn_close:\n%s", turn.Entries[0].Turn, dumpMerged([]mergedTurn{turn}))
 	return "", closer
 }
 
-// sayTexts is the text of every segment of one say, in order.
 func sayTexts(rt *rapid.T, entries []marotte.Entry, say string) []string {
 	var texts []string
 	for i := range entries {
@@ -455,8 +449,7 @@ func sayTexts(rt *rapid.T, entries []marotte.Entry, say string) []string {
 	return texts
 }
 
-// entryOpenPayload is a merged turn's turn_open payload bytes.
-func entryOpenPayload(turn MergedTurn) []byte {
+func entryOpenPayload(turn mergedTurn) []byte {
 	for _, e := range turn.Entries {
 		if e.Kind == marotte.EntryKindTurnOpen {
 			return e.Payload
@@ -465,7 +458,6 @@ func entryOpenPayload(turn MergedTurn) []byte {
 	return nil
 }
 
-// isSubsequence reports whether want appears in got in order, with insertions allowed.
 func isSubsequence(want, got []string) bool {
 	i := 0
 	for _, g := range got {

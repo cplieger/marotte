@@ -2,11 +2,9 @@
 import { vi } from "vitest";
 // Type-only, so the mocked module is not loaded; the types widen the mocks' return types (else
 // `readingState` would be the literal "following" and "reading" would not typecheck).
-import type { ReadingState, ViewScrollState } from "../scroll.js";
+import type { ReadingState, ViewScrollState } from "../scroll-controller.js";
 
 export const scrollMock = {
-  // The real value: `readingLineOffset` is mocked to 0, so a reader does its own arithmetic.
-  READING_LINE_FRACTION: 1 / 3,
   getScrollEl: vi.fn(() => document.createElement("div")),
   // The default snapshot is a fresh view's state, so a mocked park/unpark round-trips unprimed.
   attach: vi.fn(),
@@ -40,8 +38,6 @@ export const scrollMock = {
     mutate();
   }),
   fillViewport: vi.fn(),
-  // The previous value is the real default, so a caller's restore round-trips.
-  setPinSettleMs: vi.fn((_ms: number) => 700),
   // Non-zero: the turn rail hides below MIN_SCROLL_PX, so 0 would withdraw it from every suite.
   scrollableBy: vi.fn(() => 500),
 };

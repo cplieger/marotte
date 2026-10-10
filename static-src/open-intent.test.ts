@@ -105,6 +105,8 @@ vi.mock("./deep-link.js", () => ({
 vi.mock("./chat.js", () => ({ switchSession: vi.fn() }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
 vi.mock("./files.js", () => ({ pointFilesTab: vi.fn() }));
+// The push handler shows a notification through the cue module, whose graph reaches the decision dock.
+vi.mock("./agent-finished-cue.js", () => ({ deliverNotification: vi.fn() }));
 vi.mock("./settings-tabs.js", () => ({ forceSettingsTab: vi.fn() }));
 vi.mock("./settings-highlight.js", () => ({ flushURLHighlight: vi.fn() }));
 vi.mock("./git-tabs.js", () => ({ forceGitTab: mocks.forceGitTab }));

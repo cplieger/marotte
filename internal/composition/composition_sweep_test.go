@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 )
 
-// staleTemp writes an atomicfile-shaped temp aged past the sweep cutoff.
 func staleTemp(t *testing.T, dir, name string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o750); err != nil {

@@ -10,7 +10,6 @@ const host = document.createElement("div");
 
 const noop = (): void => undefined;
 
-/** As `history.ts` `buildRow` assembles one. */
 function mountRow(opts: { delete: boolean; sub?: boolean }): {
   row: HTMLElement;
   open: HTMLElement;

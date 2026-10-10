@@ -84,19 +84,6 @@ function tailOfLane(lane: LaneRead, want: number): string[] {
   return lines.slice(-want);
 }
 
-/** One delegate's trailing output from its LANE alone; an empty id or unknown chat answers nothing. */
-export function subagentTail(
-  chatID: string,
-  subtaskID: string,
-  want: number = TAIL_LINES,
-): string[] {
-  const session = get(chatID);
-  if (session === undefined || subtaskID === "") {
-    return [];
-  }
-  return tailOfLane(readLane(session, subtaskID), want);
-}
-
 /** Repaint ONE delegate's tail as its output grows; returns the disposer. TWO dependencies: the
  *  chat's TRANSCRIPT version (exists before the lane, and bumps for laned entries too) and the
  *  narrow LANE signal. */

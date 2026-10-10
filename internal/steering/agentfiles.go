@@ -45,8 +45,6 @@ func DedupeAgentFiles(entries []fs.DirEntry) []AgentFile {
 	return out
 }
 
-// agentBaseName returns the base name of an agent config file (stripping a `.md`
-// or `.json` extension) and whether the file is an agent config at all.
 func agentBaseName(filename string) (string, bool) {
 	switch {
 	case strings.HasSuffix(filename, ".md"):

@@ -31,10 +31,9 @@ var (
 	errExpiredToken = errors.New("preview token expired")
 )
 
-// Capability is what a verified token grants: read access to Folder and
-// everything beneath it until Expiry.
-type Capability struct {
-	Expiry time.Time
+// capability is what a verified token grants: read access to Folder and
+// everything beneath it.
+type capability struct {
 	Folder string
 }
 
@@ -60,11 +59,11 @@ func NewSigner() (*Signer, error) {
 	return s, nil
 }
 
-// Epoch identifies this process's key; it changes on every restart.
-func (s *Signer) Epoch() string { return s.epoch }
+// currentEpoch identifies this process's key; it changes on every restart.
+func (s *Signer) currentEpoch() string { return s.epoch }
 
-// Mint returns a token granting folder until exp.
-func (s *Signer) Mint(folder string, exp time.Time) string {
+// mint returns a token granting folder until exp.
+func (s *Signer) mint(folder string, exp time.Time) string {
 	payload := make([]byte, 0, 9+len(folder))
 	payload = append(payload, tokenVersion)
 	secs := max(exp.Unix(), 0)
@@ -74,40 +73,40 @@ func (s *Signer) Mint(folder string, exp time.Time) string {
 	return enc.EncodeToString(payload) + "." + enc.EncodeToString(s.sign(payload))
 }
 
-// Verify checks tok's signature, expiry and version and returns the
+// verify checks tok's signature, expiry and version and returns the
 // capability it carries. Every failure is errBadToken or errExpiredToken.
-func (s *Signer) Verify(tok string) (Capability, error) {
+func (s *Signer) verify(tok string) (capability, error) {
 	if len(tok) > tokenMaxLen {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	p64, s64, ok := strings.Cut(tok, ".")
 	if !ok {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	enc := base64.RawURLEncoding
 	payload, err := enc.DecodeString(p64)
 	if err != nil {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	sig, err := enc.DecodeString(s64)
 	if err != nil || !hmac.Equal(sig, s.sign(payload)) {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	if len(payload) < 9 {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	raw := binary.BigEndian.Uint64(payload[1:9])
 	if raw > math.MaxInt64 {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
 	exp := time.Unix(int64(raw), 0)
 	if !s.now().Before(exp) {
-		return Capability{}, errExpiredToken
+		return capability{}, errExpiredToken
 	}
 	if payload[0] != tokenVersion {
-		return Capability{}, errBadToken
+		return capability{}, errBadToken
 	}
-	return Capability{Folder: string(payload[9:]), Expiry: exp}, nil
+	return capability{Folder: string(payload[9:])}, nil
 }
 
 func (s *Signer) sign(payload []byte) []byte {

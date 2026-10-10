@@ -148,7 +148,6 @@ function pointAt(spot: Spot): Range {
   return at;
 }
 
-/** One slice of a text node that belongs to a hit. */
 interface Piece {
   readonly from: number;
   readonly to: number;

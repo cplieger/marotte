@@ -59,6 +59,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdCreateChat:        dischargeNo,
 	marotte.CmdResumeSession:     dischargeNo,
 	marotte.CmdForkChat:          dischargeNo,
+	marotte.CmdMergeTangent:      dischargeNo,
 	marotte.CmdCancel:            dischargeNo,
 	marotte.CmdDeleteChat:        dischargeNo,
 	marotte.CmdSwitchModel:       dischargeNo,
@@ -67,7 +68,6 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdSetDraft:          dischargeNo,
 	marotte.CmdSetAttachments:    dischargeNo,
 	marotte.CmdSetMode:           dischargeNo,
-	marotte.CmdCreateHook:        dischargeNo,
 	marotte.CmdSetSupervisedMode: dischargeNo,
 	marotte.CmdSteerClear:        dischargeNo,
 	marotte.CmdUnqueuePrompt:     dischargeNo,
@@ -80,23 +80,22 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdPinTab:            dischargeNo,
 	marotte.CmdReparentTab:       dischargeNo,
 	// An approval is a statement ABOUT a document, not an answer to a question the
-	// agent asked: the spec gate's own ask travels on CmdUserInputResponse, so a phase
+	// agent asked: the spec gate's own ask travels on cmdUserInputResponse, so a phase
 	// approved from the spec tab leaves any waiting claim standing.
 	marotte.CmdApproveSpecPhase: dischargeNo,
 }
 
-// ChatStatus is the one thing a command handler needs of the agent's self-declared
+// chatStatus is the one thing a command handler needs of the agent's self-declared
 // chat status: end the retained waiting_on_user claim, because this command IS the
 // user answering. Write-only, like SteerRecorder.
-type ChatStatus interface {
+type chatStatus interface {
 	DischargeWaiting(ctx context.Context, chatID marotte.ChatID)
 }
 
-// answersAgent reports whether cmd's payload states the user SUPPLYING an answer on a structured
-// channel the agent asks on. It FAILS TOWARD KEEPING the claim: an absent or malformed payload, an
-// unknown action and a walk-away all answer false, because a wrongly-cleared claim hides that the
-// agent needs somebody while a wrongly-kept one is cleared by the next prompt. Read after the
-// handler succeeded; the checks tell an answer from the walk-away the same handler accepts.
+// It FAILS TOWARD KEEPING the claim: an absent or malformed payload, an unknown action and a
+// walk-away all answer false, because a wrongly-cleared claim hides that the agent needs somebody
+// while a wrongly-kept one is cleared by the next prompt. Read after the handler succeeded; the
+// checks tell an answer from the walk-away the same handler accepts.
 func answersAgent(cmd *marotte.ClientCommand) bool {
 	switch cmd.Type {
 	case marotte.CmdUserInputResponse:
@@ -144,8 +143,7 @@ func discharges(cmd *marotte.ClientCommand) bool {
 	return false
 }
 
-// noteAnswer discharges the chat's waiting_on_user claim when this command answered the agent;
-// called only after a handler succeeded. The run verbs are not commands: a parked step's question
+// Called only after a handler succeeded. The run verbs are not commands: a parked step's question
 // belongs to another agent's session.
 func (d *Dispatcher) noteAnswer(ctx context.Context, cmd *marotte.ClientCommand) {
 	if d.status == nil || cmd.ChatID == "" {

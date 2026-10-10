@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/runesafe/v2"
 )
 
@@ -58,9 +60,9 @@ const reasonOverran = "still running when its next slot came due, so it was canc
 
 // permissionWithUnattendedFloor wraps the permission handler: the request reaches the client unchanged, plus
 // a deadline after which marotte answers.
-func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
-	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-		inner(ctx, chatID, msg)
+func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
+		inner(ctx, chatID, origin, msg)
 
 		// The lease's mark, so the floor survives a restart. The key yields "" for anything but a `run:` chat id.
 		l, held := rs.lease(workflowIDOf(chatID))
@@ -68,25 +70,21 @@ func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 			return
 		}
 		scheduleID := l.ScheduleID
-		requestID := *msg.ID
+		acpID := *msg.ID
 		tool := permissionToolName(msg.Params)
 		// AfterFunc parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
-			rs.answerUnattended(chatID, requestID, scheduleID, tool, params)
+			rs.answerUnattended(chatID, origin, acpID, scheduleID, tool, params)
 		})
 	}
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, scheduleID, tool string, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
-	sb := rs.bridges.get(chatID)
-	if sb == nil {
-		return
-	}
 	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
 	// An administrator `ask` needs a person; KAS would count any allow_once, so the switch must not answer it.
 	adminAsk := adminConsentAsk(msgParams)
@@ -112,19 +110,25 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, schedul
 			verb = outcomeApproved
 		}
 	}
-	// The claim decides the race with a human on the page; losing it gives up. It retires the entry and
-	// announces the answer as the machine's.
-	if !rs.perms.TakePendingPerm(chatID, requestID, marotte.SettledByUnattended) {
+	// The claim decides the race with a human on the page; losing it, or the bridge ending first, gives
+	// up. Claimed by the bridge and its own id: a successor reuses ids from zero.
+	reply, ok := rs.perms.TakePendingPermOn(origin, acpID, marotte.SettledByUnattended)
+	if !ok {
+		return
+	}
+	switch answered, err := reply.Respond(ctx, outcome); answered {
+	case command.AnswerDelivered:
+	case command.AnswerWithdrawn:
+		// The ask settled first, so no answer reached the run to report or explain.
+		return
+	default:
+		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
 		return
 	}
 	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", tool,
 		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
-	if err := sb.Respond(ctx, requestID, outcome, nil); err != nil {
-		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
-		return
-	}
 	if verb == outcomeApproved {
 		// An approval is not a failure.
 		return
@@ -154,7 +158,7 @@ func permissionToolName(params json.RawMessage) string {
 			Kind  string `json:"kind"`
 		} `json:"toolCall"`
 		Meta struct {
-			// Decoded here: translate.ACPPermissionKiroBlock carries neither name.
+			// Decoded here: translate.acpPermissionKiroBlock carries neither name.
 			Kiro struct {
 				// ToolID is KAS's own tool id, always present on a tool approval.
 				ToolID string `json:"toolId"`
@@ -191,7 +195,6 @@ func safeToolName(s string) string {
 // consentScopeAdministration is the `_meta.kiro.consent.scope` KAS stamps on an administrator ask.
 const consentScopeAdministration = "administration"
 
-// adminConsentAsk reports whether a permission request is an administrator ask.
 func adminConsentAsk(params json.RawMessage) bool {
 	var p struct {
 		Meta struct {
@@ -205,7 +208,7 @@ func adminConsentAsk(params json.RawMessage) bool {
 	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.Consent.Scope == consentScopeAdministration
 }
 
-// scheduledAutoApprove reads the opt-out; absent or unreadable is off.
+// Absent or unreadable is off.
 func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, &b) {

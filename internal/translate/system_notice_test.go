@@ -86,7 +86,7 @@ func TestHandleSystemNotify_NamesAChatWhoseRecordWentBeforeItsBridge(t *testing.
 	deps, events := newEventCaptureDeps()
 	deps.store = store
 	tr := New(rolesOf(deps))
-	if err := store.Delete(t.Context(), "c1"); err != nil {
+	if _, err := store.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	tr.HandleSystemNotify(t.Context(), "c1", systemNotifyFrame(t, "warning", "High load"))

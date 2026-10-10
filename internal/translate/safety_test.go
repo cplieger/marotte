@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// safetyStatusPayloads collects every EventSafetyStatus payload broadcast.
 func safetyStatusPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.SafetyStatusPayload {
 	t.Helper()
 	var got []marotte.SafetyStatusPayload
@@ -27,7 +26,6 @@ func safetyStatusPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte
 	return got
 }
 
-// safetyPropsPayloads collects every EventSafetyProperties payload broadcast.
 func safetyPropsPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.SafetyPropertiesPayload {
 	t.Helper()
 	var got []marotte.SafetyPropertiesPayload

@@ -1,6 +1,5 @@
-// Legacy ~/.git-credentials scrubbing: an earlier integration wrote the forge token there in
-// cleartext, and a stale line keeps answering git, so every connect and disconnect scrubs the
-// host's lines.
+// ~/.git-credentials scrubbing: a cleartext forge token there keeps answering git, so every
+// connect and disconnect scrubs the host's lines.
 
 package forges
 

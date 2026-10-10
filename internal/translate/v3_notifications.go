@@ -26,8 +26,7 @@ type v3MCPStatus struct {
 	RegistryServers []v3RegistryServer `json:"registryServers"`
 }
 
-// v3RegistryServer is one entry of the organization's MCP catalog; Enabled reports
-// whether it is running.
+// Enabled reports whether it is running.
 type v3RegistryServer struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
@@ -38,7 +37,7 @@ type v3RegistryServer struct {
 // mcpAccessModeRegistry is the access mode under which KAS runs registry entries only.
 const mcpAccessModeRegistry = "registry"
 
-// registry projects the status's registry fields; nil outside registry mode.
+// nil outside registry mode.
 func (s *v3MCPStatus) registry() *marotte.GovernanceMCPRegistry {
 	if s.AccessMode != mcpAccessModeRegistry {
 		return nil
@@ -109,14 +108,11 @@ type v3MCPServerMeta struct {
 	} `json:"kiro"`
 }
 
-// source projects the provenance stamp onto the recorder's type.
 func (s *v3MCPServer) source() marotte.MCPSource {
 	src := s.Meta.Kiro.Resource.Source
 	return marotte.MCPSource{Origin: src.Origin, Root: src.Root, Power: src.Power.Name}
 }
 
-// failureReason is the reason recorded for a failed entry with no
-// authorization URL.
 func (s *v3MCPServer) failureReason() string {
 	msg := strings.TrimSpace(s.ErrorMessage)
 	if s.FailedAuthorization {
@@ -144,7 +140,6 @@ type v3MCPPrompt struct {
 	} `json:"arguments"`
 }
 
-// v3MCPResource mirrors one resource entry in a connected server's status.
 type v3MCPResource struct {
 	Name        string `json:"name"`
 	URI         string `json:"uri"`
@@ -223,7 +218,6 @@ func ReadMCPPool(msg *marotte.RPCResponse) (servers []MCPPoolServer, ok bool) {
 	return servers, true
 }
 
-// mcpToolNames extracts the tool-name list from a v3 MCP server entry.
 func mcpToolNames(tools []struct {
 	Name string `json:"name"`
 },

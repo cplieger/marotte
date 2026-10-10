@@ -14,14 +14,13 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// terminalsAnswering gives one fixed answer per chat, for refill arithmetic; scoping is terminalsBySession's.
+// Scoping is terminalsBySession's.
 type terminalsAnswering map[marotte.ChatID]bool
 
 func (t terminalsAnswering) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
 	return len(sessions) > 0 && t[chatID]
 }
 
-// stagedExpiry leases, arms and stages a past deadline, returning it.
 func stagedExpiry(t *testing.T, rs *Runs, id string, launch launchOrigin) time.Time {
 	t.Helper()
 	rs.grantLease(t.Context(), id, "publish", launch)
@@ -167,7 +166,7 @@ func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 		"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Run tests", "kind": "execute"},
 		"options":   []map[string]any{{"optionId": "allow", "kind": "allow_once"}},
 	})
-	h.chatHandlers[marotte.MethodRequestPermission](t.Context(), chatID, &marotte.RPCResponse{
+	h.askHandlers[marotte.MethodRequestPermission](t.Context(), chatID, h.originOf(chatID), &marotte.RPCResponse{
 		ID: &reqID, Method: marotte.MethodRequestPermission, Params: params,
 	})
 

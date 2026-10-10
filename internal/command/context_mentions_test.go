@@ -98,13 +98,13 @@ const marker50k = "\n[truncated at 50000 characters]"
 
 func TestBuildPromptBlocks_MentionCapsEachItemAt50000CharactersWithTheFenceClosed(t *testing.T) {
 	ws := testWorkspace(t)
-	writeFile(t, ws.Dir, "big.txt", strings.Repeat("é", MaxMentionChars+10))
+	writeFile(t, ws.Dir, "big.txt", strings.Repeat("é", maxMentionChars+10))
 	token := "#[[file:big.txt]]"
 
 	got := mentionText(t, BuildPromptBlocks(t.Context(), token, nil, 0, ws, nil), token)
 
-	if n := utf8.RuneCountInString(got); n != MaxMentionChars {
-		t.Errorf("capped mention is %d runes, want exactly %d", n, MaxMentionChars)
+	if n := utf8.RuneCountInString(got); n != maxMentionChars {
+		t.Errorf("capped mention is %d runes, want exactly %d", n, maxMentionChars)
 	}
 	if !strings.HasPrefix(got, "File: big.txt\n```\n") || !strings.HasSuffix(got, "é\n```"+marker50k) {
 		t.Errorf("capped mention does not close its fence before the marker: head %q tail %q", got[:20], got[len(got)-50:])
@@ -128,8 +128,8 @@ func TestBuildPromptBlocks_MentionFenceStaysBoundedByAPathologicalBody(t *testin
 
 			got := mentionText(t, BuildPromptBlocks(t.Context(), token, nil, 0, ws, nil), token)
 
-			if n := utf8.RuneCountInString(got); n > MaxMentionChars {
-				t.Errorf("mention is %d runes, want at most %d", n, MaxMentionChars)
+			if n := utf8.RuneCountInString(got); n > maxMentionChars {
+				t.Errorf("mention is %d runes, want at most %d", n, maxMentionChars)
 			}
 			if got != tc.want {
 				t.Errorf("mention = %.120q, want %.120q", got, tc.want)
@@ -150,7 +150,6 @@ func TestBuildPromptBlocks_MentionLineRangePastTheEndSendsAReason(t *testing.T) 
 	}
 }
 
-// countingReader serves n bytes of 99-byte lines and counts what was read.
 type countingReader struct {
 	left, read int64
 }
@@ -210,8 +209,8 @@ func TestBuildPromptBlocks_MentionGitCapKeepsEveryFenceClosed(t *testing.T) {
 
 	got := mentionText(t, BuildPromptBlocks(t.Context(), token, nil, 0, ws, nil), token)
 
-	if n := utf8.RuneCountInString(got); n > MaxMentionChars {
-		t.Errorf("capped git mention is %d runes, want at most %d", n, MaxMentionChars)
+	if n := utf8.RuneCountInString(got); n > maxMentionChars {
+		t.Errorf("capped git mention is %d runes, want at most %d", n, maxMentionChars)
 	}
 	if !strings.HasSuffix(got, marker50k) {
 		t.Fatalf("capped git mention has no marker: tail %q", got[len(got)-60:])
@@ -224,15 +223,15 @@ func TestBuildPromptBlocks_MentionGitCapKeepsEveryFenceClosed(t *testing.T) {
 func TestBuildPromptBlocks_MentionOverflowNoteStaysWithinTheCap(t *testing.T) {
 	ws := testWorkspace(t)
 	var text strings.Builder
-	for i := range MaxMentionsPerPrompt + 1 {
-		writeFile(t, ws.Dir, fmt.Sprintf("f%d.txt", i), strings.Repeat("x", MaxMentionChars))
+	for i := range maxMentionsPerPrompt + 1 {
+		writeFile(t, ws.Dir, fmt.Sprintf("f%d.txt", i), strings.Repeat("x", maxMentionChars))
 		fmt.Fprintf(&text, "#[[file:f%d.txt]] ", i)
 	}
 
 	last := mentionText(t, BuildPromptBlocks(t.Context(), text.String(), nil, 0, ws, nil), "#[[file:f31.txt]]")
 
-	if n := utf8.RuneCountInString(last); n > MaxMentionChars {
-		t.Errorf("last mention with the overflow note is %d runes, want at most %d", n, MaxMentionChars)
+	if n := utf8.RuneCountInString(last); n > maxMentionChars {
+		t.Errorf("last mention with the overflow note is %d runes, want at most %d", n, maxMentionChars)
 	}
 	if !strings.Contains(last, "1 more context references were not resolved") {
 		t.Errorf("last mention lost the overflow note: tail %q", last[len(last)-120:])
@@ -300,7 +299,7 @@ func gitInit(t *testing.T, repo string) {
 func TestBuildPromptBlocks_MentionsResolveAtMost32DistinctReferences(t *testing.T) {
 	ws := testWorkspace(t)
 	var text strings.Builder
-	for i := range MaxMentionsPerPrompt + 3 {
+	for i := range maxMentionsPerPrompt + 3 {
 		writeFile(t, ws.Dir, fmt.Sprintf("f%d.txt", i), "x")
 		fmt.Fprintf(&text, "#[[file:f%d.txt]] ", i)
 	}
@@ -308,8 +307,8 @@ func TestBuildPromptBlocks_MentionsResolveAtMost32DistinctReferences(t *testing.
 
 	blocks := BuildPromptBlocks(t.Context(), text.String(), nil, 0, ws, nil)
 
-	if got := len(blocks) - 1; got != MaxMentionsPerPrompt {
-		t.Fatalf("resource blocks = %d, want %d", got, MaxMentionsPerPrompt)
+	if got := len(blocks) - 1; got != maxMentionsPerPrompt {
+		t.Fatalf("resource blocks = %d, want %d", got, maxMentionsPerPrompt)
 	}
 	last := mentionText(t, blocks, "#[[file:f31.txt]]")
 	if !strings.Contains(last, "3 more context references were not resolved") {
@@ -452,8 +451,8 @@ func TestMentionMCP_CapsAnOversizedResourceBeforeItIsKept(t *testing.T) {
 		t.Errorf("mentionMCP(big) kept %d bytes (valid UTF-8 %v), want at most %d on a rune boundary",
 			len(text), utf8.ValidString(text), maxMentionReadBytes)
 	}
-	if n := utf8.RuneCountInString(text); n <= MaxMentionChars {
-		t.Errorf("mentionMCP(big) kept %d runes, want more than %d so the render marks the cut", n, MaxMentionChars)
+	if n := utf8.RuneCountInString(text); n <= maxMentionChars {
+		t.Errorf("mentionMCP(big) kept %d runes, want more than %d so the render marks the cut", n, maxMentionChars)
 	}
 }
 
@@ -467,9 +466,9 @@ func TestBuildPromptBlocks_SeveralOversizedMCPResourcesEachFitTheItemCap(t *test
 
 	for _, token := range tokens {
 		got := mentionText(t, blocks, token)
-		if n := utf8.RuneCountInString(got); n > MaxMentionChars || !strings.HasSuffix(got, truncationMarker) {
+		if n := utf8.RuneCountInString(got); n > maxMentionChars || !strings.HasSuffix(got, truncationMarker) {
 			t.Errorf("block %s = %d runes ending %q, want at most %d ending with the truncation marker",
-				token, n, got[max(len(got)-40, 0):], MaxMentionChars)
+				token, n, got[max(len(got)-40, 0):], maxMentionChars)
 		}
 	}
 }

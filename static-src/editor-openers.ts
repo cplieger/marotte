@@ -1,40 +1,50 @@
 // ---------------------------------------------------------------------------
-// Editor openers: file open, load, and fetch logic.
+// Editor openers: file open, load, and adoption.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { effect, el } from "@cplieger/reactive";
+import { batch, effect, el } from "@cplieger/reactive";
 import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
-import { apiGet, apiGetOrError } from "./api-client.js";
+import { apiGetTypedOrError } from "./api-client.js";
 import { editorDocSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import type { SkeletonTimingController } from "@cplieger/ui-primitives/skeleton";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
+  commitBaseline,
+  enterView,
   fileStates,
   getActiveFilePath,
+  gitDiffSource,
+  invalidate,
+  isShown,
+  issuedNow,
   setActiveFilePath,
   routeForPath,
   freshState,
-  unsavedDiffSource,
 } from "./editor-types.js";
-import { isViewableImage } from "./file-extensions.js";
 import {
-  showReadMode,
   applyPendingLine,
   fetchAgentLines,
-  pendingLines,
   clearAgentLineCache,
-  renderEditModeUI,
+  requestedBy,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { captureSelection, restoreEditorView } from "./editor-scroll.js";
 import { registerCleanup } from "./actions/index.js";
-import { BUS_EDITOR_FILE_LOADED, emitBus } from "./bus.js";
+import { BUS_EDITOR_VIEW_CHANGED, emitBus } from "./bus.js";
+import { decodeFileStat } from "./wire/decoders.gen.js";
+import type { FileRead, FileStat } from "./wire/types.gen.js";
+import { rulesFor, type FileFacts, type Requested } from "./viewer-rules.js";
+import { EolTracker, normalize } from "./viewer-eol.js";
+import { isFileId, isIdentifiedText, statIdentity } from "./file-identity.js";
+import { liveActivate, liveDispose, setLiveReload } from "./viewer-live.js";
+import { paneBody, viewer } from "./editor-pane.js";
+import { readFile } from "./viewer-reads.js";
 import { configFilePath } from "./versions.js";
 import { error as toastError } from "./toast.js";
 
@@ -47,15 +57,8 @@ registerCleanup(() => activeLoadController?.abort());
 // --- Public openers ---
 
 export function openFile(path: string, line?: number): void {
-  // An image opens in image mode, not edit mode: `/api/file` refuses a binary
-  // with a 415 and caps the read at 2 MB, so the text path could only ever show
-  // that error. `.svg` lands here too, which is the point — it is DISPLAYED in
-  // an `<img>`, where it is inert, and never offered as a link on this origin.
-  if (isViewableImage(path)) {
-    open(path, { mode: { kind: "image" } });
-    return;
-  }
-  const opts: OpenOpts = { mode: { kind: "edit", editing: false } };
+  // The view (text, markdown, image, binary, too large) is the rules' to pick once stat answers.
+  const opts: OpenOpts = { mode: { kind: "text", editing: false } };
   if (line !== undefined) {
     opts.line = line;
   }
@@ -77,79 +80,47 @@ export async function openConfigFile(name: "tools.json" | "config.json"): Promis
 
 export function openFileDiff(
   path: string,
-  oldContent: string,
-  newContent: string,
+  oldText: string,
+  newText: string,
   opts: { oldLabel?: string; newLabel?: string } = {},
 ): void {
   open(path, {
     mode: {
       kind: "diff",
       diffSource: {
-        oldContent,
-        newContent,
+        kind: "pair",
+        oldText,
+        newText,
         oldLabel: opts.oldLabel ?? "before",
         newLabel: opts.newLabel ?? "after",
-        fromGit: false,
       },
     },
   });
 }
 
-/** Open a file in a BACKGROUND tab: no activation, no URL write. Not `open()` with a
- *  flag, whose tail (pending line, re-activation, `pushRoute`) is all about the tab
- *  the reader is TAKEN to; the shared part is `ensureFileState`'s dirty-mark binding. */
+/** Open a file in a BACKGROUND tab: no activation, no URL write. */
 export function openFileInBackground(path: string): void {
-  const st = ensureFileState(path);
-  st.mode.value = isViewableImage(path) ? { kind: "image" } : { kind: "edit", editing: false };
+  enterView(ensureFileState(path), { kind: "text", editing: false });
   void openEditorView(path, { activate: false });
 }
 
-/** Open a file's diff against a git ref, FETCHING both sides: `fromGit: true` routes
- *  `open` into fetchGitDiffSources. The opener for a caller holding only a path, where
- *  `openFileDiff` demands both contents up front. */
+/** Open a file's diff against a git ref; its activation fetches both sides. */
 export function openFileGitDiff(path: string, ref = "HEAD"): void {
-  open(path, {
-    mode: {
-      kind: "diff",
-      diffSource: {
-        oldContent: "",
-        newContent: "",
-        oldLabel: ref,
-        newLabel: "working tree",
-        fromGit: true,
-      },
-    },
-    ref,
-  });
+  open(path, { mode: { kind: "diff", diffSource: gitDiffSource(ref) } });
 }
-
-// openPendingDiff is GONE. It opened a `pending:<chat>:<toolCall>` virtual path
-// served from GET /api/pending-changes/, and neither the path family nor the
-// endpoint exists: KAS holds staged content and reviews a whole turn at once.
 
 interface OpenOpts {
   mode: FileMode;
   line?: number;
   repo?: string;
-  ref?: string;
 }
 
 // Per-file dirty->tab-indicator effects, disposed on close.
 const dirtyTabUnbinds = new Map<string, () => void>();
 
-/** This module's state for one path, created on first sight.
- *
- *  TWO callers, and that is what the tab collection made necessary: `open()`,
- *  which is a reader deliberately opening a file, and `activateFile`, which is
- *  the editor tab's `onShow` and therefore also runs for a tab this device did
- *  not open — one restored from the server's set at boot, or opened on another
- *  device. Before the collection there was a third path
- *  (`restoreEditorTabs(ui.editor_files)`) seeding the map from a second list of
- *  the same paths; an editor tab's path IS its subject's `ref` now, so the seed is
- *  the activation itself.
- *
- *  The dirty binding is installed here rather than at `open()` for the same
- *  reason: a restored tab is entitled to its unsaved mark. */
+/** This module's state for one path, created on first sight: by `open()`, or by `activateFile`
+ *  for a tab this device did not open (restored at boot, or opened on another device). The dirty
+ *  binding lives here so a restored tab is entitled to its unsaved mark. */
 function ensureFileState(path: string): FileState {
   const existing = fileStates.get(path);
   if (existing !== undefined) {
@@ -160,11 +131,7 @@ function ensureFileState(path: string): FileState {
   dirtyTabUnbinds.set(
     path,
     effect(() => {
-      // Resolved on every run rather than captured: the tab id is opaque and
-      // server-minted, so it does not exist until `open_tab` has answered, and
-      // this effect's first run happens before that. `setTabDirty` no-ops on ""
-      // and the effect re-runs on the next dirty change, by which time the row is
-      // there.
+      // Resolved per run: the tab id is server-minted and does not exist on this effect's first run.
       setTabDirty(tabIdFor("editor", path), created.dirty.value);
     }),
   );
@@ -174,35 +141,19 @@ function ensureFileState(path: string): FileState {
 function open(path: string, opts: OpenOpts): void {
   saveCurrentState();
   const state = ensureFileState(path);
-  state.mode.value = opts.mode;
+  enterView(state, opts.mode);
+  state.note = "";
   if (opts.repo !== undefined) {
     state.repo = opts.repo;
   }
   if (opts.line !== undefined && opts.line > 0) {
-    pendingLines.set(path, opts.line);
+    state.pendingLine = opts.line;
   }
-  // activateTab skips onShow for exactly one case: the tab was ALREADY active,
-  // so activation is a no-op and nothing loads the file. Read before the open,
-  // because openEditorView is what changes the answer.
-  //
-  // Activating unconditionally afterwards ran a FIRST open twice, and each
-  // activation issues a /api/file read against a fresh AbortController — the
-  // second one aborted the first, so the wasted round trip was invisible.
-  //
-  // The non-empty check is what keeps that true under OPAQUE ids: `tabIdFor`
-  // answers "" for a file with no tab and `getActiveTabId` answers "" for an empty
-  // strip, so a bare comparison reads two absences as a match and re-fires the
-  // fallback on the first open into an empty strip — the same wasted round trip,
-  // through a different door.
+  // activateTab skips onShow when the tab was ALREADY active, so nothing would load it; read
+  // before the open, which changes the answer. The non-empty check keeps two absences ("" for no
+  // tab, "" for an empty strip) from reading as a match.
   const openID = tabIdFor("editor", path);
   const wasActive = openID !== "" && getActiveTabId() === openID;
-  // Only the TAB half of this function moved to the projection. Everything above
-  // — the mode, the repo, the pending line — is written BEFORE the tab exists and
-  // has to be: they are this opener's arguments, and `activateFile` reads them the
-  // moment the tab is activated. So the open is fired and the route is pushed
-  // without waiting, exactly as before, and the two halves that DO need the row
-  // (the already-active re-activation, and the dirty binding above) find it
-  // through the one lookup.
   void openEditorView(path).then(() => {
     if (wasActive) {
       activateFile(path);
@@ -210,148 +161,176 @@ function open(path: string, opts: OpenOpts): void {
   });
   const line = opts.line;
   pushRoute(line !== undefined && line > 0 ? { kind: "file", path, line } : { kind: "file", path });
-
-  if (opts.mode.kind === "diff" && opts.mode.diffSource.fromGit) {
-    void fetchGitDiffSources(state, opts.repo ?? "", opts.ref ?? "HEAD");
-  }
 }
+
+type DiffOutcome = Awaited<ReturnType<typeof loadDiffAction.dispatch>["outcome"]>;
 
 export async function fetchGitDiffSources(
   state: FileState,
   repo: string,
   ref: string,
 ): Promise<void> {
+  const current = issuedNow(state);
   const o = await loadDiffAction.dispatch({ path: state.path, repo, ref }).outcome;
-  if (o.status === "cancelled") {
-    // A superseded/cancelled load is not an error state for the pane.
+  if (current()) {
+    settleGitDiff(state, o);
+  }
+}
+
+/** Start the load a git diff on screen waits on; an inactive one's starts on its activation. */
+export function startGitDiffLoad(state: FileState): void {
+  const m = state.mode.value;
+  if (isShown(state) && m.kind === "diff" && m.diffSource.kind === "git" && m.diffSource.pending) {
+    void fetchGitDiffSources(state, state.repo, m.diffSource.ref);
+  }
+}
+
+/** Paint a git diff's answer. Its working side and a clean buffer are adopted from one verified
+ *  read; a dirty buffer is never replaced, so it keeps its own identity. The caller has checked
+ *  the answer is still current. */
+function settleGitDiff(state: FileState, o: DiffOutcome): void {
+  const m = state.mode.value;
+  if (o.status === "cancelled" || m.kind !== "diff" || m.diffSource.kind !== "git") {
     return;
   }
   if (o.status === "error") {
-    state.loaded = true;
-    // The diff pane is the primary failure surface; show the real reason
-    // alongside the framework's toast instead of a generic placeholder.
-    state.error.value = `Failed to load diff: ${o.error.message}`;
-    if (getActiveFilePath() === state.path) {
-      restoreUI(state);
-    }
+    failGitDiff(state, `Failed to load diff: ${o.error.message}`);
     return;
   }
   const result = o.value;
-  const m = state.mode.value;
-  if (m.kind !== "diff") {
+  if (result.kind === "too_large" || result.kind === "binary") {
+    if (result.kind === "too_large") {
+      state.note = TOO_LARGE_TO_DIFF;
+    }
+    state.mode.value = { kind: "text", editing: false };
+    state.loaded = false;
+    if (isShown(state)) {
+      restoreUI(state);
+      // loadFile announces the view it settles on.
+      void loadFile(state, activeLoadController?.signal);
+    } else {
+      emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
+    }
     return;
   }
-  if (!fileStates.has(state.path)) {
-    return;
+  const { oldContent, base, baseLabel, workingLabel, read } = result;
+  const firstLoad = !state.loaded;
+  if (read !== null) {
+    const refusal = verifyRead(read);
+    if (refusal !== null) {
+      failGitDiff(state, refusal);
+      return;
+    }
+    if (!state.dirty.value) {
+      adoptDiskBytes(state, read);
+    }
   }
-  const { oldContent, newContent, error, baseLabel, workingLabel } = result;
   state.mode.value = {
     kind: "diff",
     diffSource: {
       ...m.diffSource,
-      // Both captions are whatever the load FOUND there, not what was asked for:
-      // a file git owns no revision of gets "not in git" rather than an empty pane
-      // captioned "HEAD", which would claim HEAD holds the file and holds it
-      // empty, and a file that is gone from the working tree gets "deleted"
-      // rather than an empty pane captioned "working tree".
+      // Both captions are what the load FOUND there, not what was asked for.
       oldLabel: baseLabel,
       newLabel: workingLabel,
-      oldContent,
-      newContent,
+      oldText: oldContent,
+      newText: read?.content ?? "",
+      base,
+      pending: false,
     },
   };
-  if (!state.loaded) {
-    state.original.value = newContent;
-    state.current.value = newContent;
-  }
   state.loaded = true;
-  state.error.value = error;
-  if (getActiveFilePath() === state.path) {
+  state.error.value = "";
+  if (isShown(state)) {
     repaint(state);
+    // activateFile skipped the machine for an unloaded diff, so its first settle starts it.
+    if (firstLoad) {
+      liveActivate(state.path);
+    }
   }
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
 }
 
+function failGitDiff(state: FileState, message: string): void {
+  state.loaded = true;
+  state.error.value = message;
+  if (isShown(state)) {
+    restoreUI(state);
+  }
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
+}
+
+/** Whether live refresh may adopt a git diff's answer; anything else leaves the view as it is. */
+function liveAdoptable(o: DiffOutcome): boolean {
+  if (o.status !== "success") {
+    return false;
+  }
+  const r = o.value;
+  return r.kind !== "diff" || r.read === null || verifyRead(r.read) === null;
+}
+
+/** The note a diff that fell back to the file view shows in the header. */
+export const TOO_LARGE_TO_DIFF = "Too large to diff. Showing the file.";
+
 /** Whether the pane paints from content the state already holds, leaving the
- *  buffer read to serve only the Edit button. True for a card's own before/after
- *  pair, false for a git diff, which has nothing until its fetch answers. */
+ *  buffer read to serve only the Edit button. */
 function paintsWithoutBuffer(state: FileState): boolean {
   const m = state.mode.value;
-  return m.kind === "diff" && !m.diffSource.fromGit;
+  return m.kind === "diff" && m.diffSource.kind === "pair";
 }
 
 export function activateFile(path: string): void {
+  const leaving = fileStates.get(getActiveFilePath());
   saveCurrentState();
-  abortSuggestion(); // cancel any in-flight suggestion for the old file
+  if (leaving !== undefined) {
+    invalidate(leaving);
+  }
+  abortSuggestion();
   activeLoadController?.abort();
   activeLoadController = new AbortController();
-  // CREATED if absent. This is the editor tab's `onShow`, so it runs for a tab
-  // this device did not open — restored from the server's set at boot, or opened
-  // on another device — and returning early there left the view blank with a tab
-  // above it. The path is all the state needs.
-  //
-  // BEFORE `setActiveFilePath`, which is load-bearing: that write is the active-path
-  // signal, and editor-core's git-diff effect re-runs on it and reads this file's
-  // `error` and `mode` signals. Created afterwards, the effect's run for this path
-  // finds no state, so it subscribes to neither and never re-runs for the load that
-  // follows — leaving the control's answer for a restored tab pinned until the next
-  // git-status scan. `open()` already creates the state first, which is why only the
-  // restored-tab route was affected.
+  // Created BEFORE `setActiveFilePath`: that write is the signal editor-core's effects re-run on,
+  // and a state created afterwards would leave them subscribed to nothing.
   const state = ensureFileState(path);
   setActiveFilePath(path);
   // A <bdi>, so the RTL path box (20-editor.css) keeps the path's own order.
   $.editorFilename.replaceChildren(el("bdi", {}, routeForPath(path).displayPath));
-  $.editorError.classList.add("hidden");
-  // The pane is shared by every editor tab, so a file shown for the first time
-  // must not inherit the previous file's offset; a known file is restored below.
+  // The pane is shared by every editor tab, so a file shown for the first time must not inherit
+  // the previous file's offset; a known file is restored by line.
   if (state.view === null) {
-    $.editorHighlight.parentElement?.scrollTo(0, 0);
+    paneBody().scrollTo(0, 0);
+    $.editorContent.scrollTop = 0;
     $.editorContent.scrollLeft = 0;
-  }
-
-  const m = state.mode.value;
-  // An image has no text buffer, so there is nothing for `loadFile` to fetch
-  // (the JSON route would answer 415) and no lines for the agent-line gutter to
-  // mark. Both are skipped rather than tolerated: the surface paints from the
-  // path alone, and `loaded` is set so a re-activation does not try again.
-  if (m.kind === "image") {
-    state.loaded = true;
-    paint(state);
-    return;
   }
 
   void fetchAgentLines(path);
 
-  if (m.kind === "diff" && m.diffSource.fromGit && !state.loaded) {
-    $.editorCode.textContent = "Loading diff...";
-    showReadMode();
-    return;
-  }
-  if (!state.loaded) {
-    // A diff holding both sides is painted BEFORE the read, not behind it: the
-    // read fills the buffer Edit needs, and until it lands the pane would
-    // otherwise sit on the file the reader came from.
-    if (paintsWithoutBuffer(state)) {
-      paint(state);
+  const m = state.mode.value;
+  if (m.kind === "diff" && m.diffSource.kind === "git" && m.diffSource.pending) {
+    restoreUI(state);
+    startGitDiffLoad(state);
+    // A first load starts the machine when it settles; a file already read follows the disk now.
+    if (state.loaded) {
+      liveActivate(path);
     }
-    void loadFile(state, activeLoadController.signal);
     return;
   }
   paint(state);
-  applyPendingLine(state.path);
+  if (!state.loaded) {
+    void loadFile(state, activeLoadController.signal);
+    return;
+  }
+  applyPendingLine(state);
+  liveActivate(path);
 }
 
-/** Repaint a file onto the shared pane and put the pane back where this file was
- *  left. A `#L<line>` deep link runs after it and wins. */
+/** Repaint a file onto the shared pane and put the pane back where this file was left. */
 function repaint(state: FileState): void {
   captureSelection(state);
   paint(state);
 }
 
-/** `repaint` without the capture, for an activation: the textarea still holds the
- *  outgoing file, which `saveCurrentState` has already recorded. */
 function paint(state: FileState): void {
   restoreUI(state);
-  if (getActiveFilePath() === state.path) {
+  if (isShown(state)) {
     restoreEditorView(state);
   }
 }
@@ -365,7 +344,7 @@ function saveCurrentState(): void {
   if (
     state !== undefined &&
     state.loaded &&
-    ((state.mode.value.kind === "edit" && state.mode.value.editing) ||
+    ((state.mode.value.kind === "text" && state.mode.value.editing) ||
       state.mode.value.kind === "conflict")
   ) {
     state.current.value = $.editorContent.value;
@@ -373,11 +352,8 @@ function saveCurrentState(): void {
   }
 }
 
-/** A failed buffer read, which is not always a failed PANE.
- *
- *  Where the pane paints itself the diff stays and `loaded` stays false, which is
- *  what withholds Edit from a file there is nothing to edit. Deliberately silent:
- *  the reader asked for a diff and got one, and the absent control is the signal. */
+/** A failed buffer read, which is not always a failed PANE: where the pane paints itself the
+ *  diff stays and `loaded` stays false, which withholds Edit. */
 function failBufferLoad(state: FileState, message: string): void {
   if (paintsWithoutBuffer(state)) {
     return;
@@ -385,206 +361,294 @@ function failBufferLoad(state: FileState, message: string): void {
   state.error.value = message;
   state.loaded = true;
   restoreUI(state);
-  emitBus(BUS_EDITOR_FILE_LOADED, { path: state.path });
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
 }
 
+const LOAD_FAILED = "Failed to load file";
+
+/** The sentence for a failed read: the server's own when it gave one, else LOAD_FAILED. A
+ *  network failure's `error` is the transport's, never a sentence for the reader. */
+function failureSentence(r: { status: number; error: string }): string {
+  if (r.status === 0 || r.error === "") {
+    return LOAD_FAILED;
+  }
+  return r.error;
+}
+
+/** The server's facts from a stat. */
+function factsOf(stat: FileStat): FileFacts {
+  if (stat.large) {
+    return { kind: "large", size: stat.size };
+  }
+  return {
+    kind: "unread",
+    binary: stat.binary,
+    utf8: stat.utf8,
+    readOnly: stat.read_only,
+    size: stat.size,
+  };
+}
+
+/** The mode the rules pick for the facts on hand and what the reader asked for. */
+function modeFor(state: FileState, requested: Requested): FileMode {
+  const facts = state.facts.value;
+  if (facts === null) {
+    return state.mode.value;
+  }
+  const rules = rulesFor(facts, state.path, requested);
+  switch (rules.view) {
+    case "large":
+    case "image":
+    case "binary":
+    case "markdown":
+      return { kind: rules.view };
+    case "conflict":
+      return { kind: "conflict", conflict: parseConflicts(state.current.value), editing: true };
+    case "diff":
+    case "undiffable":
+      return state.mode.value;
+    case "text":
+      return { kind: "text", editing: requested === "edit" && rules.edit };
+  }
+}
+
+/** Read the file for its view. restoreUI has shown the loading surface; the placeholder fills
+ *  it when the read is slow. */
 async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
-  // The placeholder is for a pane with nothing of its own to show. Writing it over
-  // a self-contained diff is the read taking the pane down with it.
   let skeleton: SkeletonTimingController | null = null;
   if (!paintsWithoutBuffer(state)) {
-    // The pane still holds the OUTGOING file's bytes: this buffer has never
-    // loaded (the one caller is `activateFile`'s `!state.loaded` branch), so
-    // nothing here belongs to the file being opened and the clear leads. It is
-    // also what makes the pane empty for the door below — measured on the live
-    // app, a known extension leaves 157 `span.hl-*` children and an unknown one
-    // leaves a bare text node, so no child selector can tell one file's content
-    // from another's.
-    $.editorCode.replaceChildren();
-    showReadMode();
-    $.editorEditBtn.disabled = true;
-    skeleton = skeletonTiming(() => paintPlaceholder($.editorCode, editorDocSkeleton), {
+    skeleton = skeletonTiming(() => paintPlaceholder($.editorNotice, editorDocSkeleton), {
       ...(signal !== undefined ? { signal } : {}),
     });
   }
-
-  const d = await apiGet<FileRead>(routeForPath(state.path).readURL, signal);
-  skeleton?.cancel();
-  if (signal?.aborted === true) {
-    return;
-  }
-  if (d === null) {
-    failBufferLoad(state, "Failed to load file");
-    return;
-  }
-  if (d.error !== undefined) {
-    failBufferLoad(state, d.error);
-    return;
-  }
-  state.readOnly = d.read_only === true;
-  adoptDiskBytes(state, d.content ?? "", d.content_hash ?? "");
-  state.loaded = true;
-  repaint(state);
-  applyPendingLine(state.path);
-  emitBus(BUS_EDITOR_FILE_LOADED, { path: state.path });
-}
-
-/** Take the bytes on disk as this buffer's clean state, and let them decide the
- *  mode. TWO callers, `loadFile`'s tail and `refreshFile`'s clean-and-moved arm: a
- *  second copy of the conflict rule is a second thing that can disagree about what
- *  mode a buffer is in. The demotion arm is `editor-conflict.ts`'s, so a conflict
- *  resolved ON DISK is answered the same way as one resolved in the buffer. */
-function adoptDiskBytes(state: FileState, content: string, hash: string): void {
-  state.original.value = content;
-  state.current.value = content;
-  state.loadedHash = hash;
-  state.error.value = "";
-  const parsed = parseConflicts(content);
-  const mode = state.mode.value.kind;
-  if (!state.readOnly && parsed.hunks.length > 0 && (mode === "edit" || mode === "conflict")) {
-    state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
-  } else if (parsed.hunks.length === 0 && mode === "conflict") {
-    state.mode.value = { kind: "edit", editing: false };
-  }
-}
-
-// --- Refresh: re-read a buffer that already holds bytes ---
-
-/** Supersedes an older refresh for one path, and nothing else in this file can:
- *  `activeLoadController` is aborted only by `activateFile`, so two refreshes for one
- *  path otherwise run to completion side by side with nothing saying which is newer. */
-let refreshGen = 0;
-
-/** Re-read this file's bytes and adopt them if they moved. An editor tab's `refresh`,
- *  and the one door that may overwrite a buffer — a DIRTY buffer is the only copy of
- *  the reader's text and keeps it. */
-export function refreshFile(path: string): void {
-  const state = fileStates.get(path);
-  // The OPEN path owns the never-loaded read: `activateFile`'s `!state.loaded` branch
-  // has one in flight through the controller this function would otherwise reuse, and
-  // both readings of sharing it are bad — aborting kills that read, reusing puts two
-  // concurrent reads on one buffer.
-  if (state?.loaded !== true) {
-    return;
-  }
-  const m = state.mode.value;
-  if (m.kind === "image") {
-    return; // the surface paints from the path; there is no buffer to be stale
-  }
-  if (m.kind === "diff" && m.diffSource.fromGit) {
-    // Both sides come from git, so the buffer read says nothing about this pane.
-    // `oldLabel` IS the ref (`gitDiffSource`), and the repo rides the state.
-    void fetchGitDiffSources(state, state.repo, m.diffSource.oldLabel);
-    return;
-  }
-  const gen = ++refreshGen;
-  void apiGetOrError<FileRead>(routeForPath(path).readURL, activeLoadController?.signal).then(
-    (r) => {
-      // Guards EVERY write below, `renderEditModeUI` and the `$.editorError` sentence
-      // included.
-      if (gen !== refreshGen) {
-        return;
-      }
-      applyRefreshedRead(state, r);
-    },
-  );
-}
-
-interface FileRead {
-  content?: string;
-  content_hash?: string;
-  error?: string;
-  read_only?: boolean;
-}
-
-function applyRefreshedRead(
-  state: FileState,
-  r: { ok: boolean; status: number; data: FileRead | null },
-): void {
-  if (!r.ok || r.data === null) {
-    // The reader's move, so it goes to the pane's own failure channel and the buffer
-    // is KEPT in `current` — it may be the only copy. Every other status is a
-    // background read failing over valid content, which must say nothing.
-    const gone = readGoneSentence(r.status);
-    if (gone !== null) {
-      state.error.value = gone;
-      restoreUI(state);
+  const requested = requestedBy(state);
+  const current = issuedNow(state);
+  let read: FileRead | null = null;
+  // Two passes at most: a file that turned binary between the stat and the read is refused by
+  // the read, and a second stat names the view it now gets.
+  for (let pass = 0; read === null; pass++) {
+    const st = await apiGetTypedOrError(routeForPath(state.path).statURL, decodeFileStat, signal);
+    if (!current()) {
+      skeleton?.cancel();
+      return;
     }
+    if (!st.ok || st.data === null) {
+      skeleton?.cancel();
+      failBufferLoad(state, failureSentence(st));
+      return;
+    }
+    const stat = st.data;
+    const fileId = statIdentity(stat);
+    if (fileId === null) {
+      skeleton?.cancel();
+      failBufferLoad(state, INCOMPLETE_READ);
+      return;
+    }
+    const facts = factsOf(stat);
+    const view = rulesFor(facts, state.path, requested).view;
+    if (view === "large" || view === "image" || view === "binary") {
+      skeleton?.cancel();
+      adoptUnread(state, view, facts, stat.modified, fileId);
+      finishLoad(state);
+      return;
+    }
+    state.facts.value = facts;
+    state.notice = { size: stat.size, modified: stat.modified };
+    const answer = await readFile(state.path, signal);
+    if (!current()) {
+      skeleton?.cancel();
+      return;
+    }
+    switch (answer.kind) {
+      case "read":
+        read = answer.read;
+        break;
+      case "too_large":
+        skeleton?.cancel();
+        adoptUnread(state, "large", { kind: "large", size: answer.size }, stat.modified, "");
+        finishLoad(state);
+        return;
+      case "binary":
+        if (pass > 0) {
+          skeleton?.cancel();
+          failBufferLoad(state, answer.error === "" ? LOAD_FAILED : answer.error);
+          return;
+        }
+        break;
+      case "failed":
+        skeleton?.cancel();
+        failBufferLoad(state, failureSentence(answer));
+        return;
+    }
+  }
+  skeleton?.cancel();
+  const refusal = verifyRead(read);
+  if (refusal !== null) {
+    failBufferLoad(state, refusal);
     return;
   }
-  const d = r.data;
-  if (d.error !== undefined) {
-    state.error.value = d.error;
-    restoreUI(state);
-    return;
+  adoptDiskBytes(state, read);
+  if (state.mode.value.kind !== "diff") {
+    state.mode.value = modeFor(state, requested);
   }
-  const content = d.content ?? "";
-  const hash = d.content_hash ?? "";
-  // An absent hash on either side compares "" === "" and reads as UNCHANGED, so a
-  // refresh never replaces a buffer it cannot prove moved.
-  if (hash === state.loadedHash) {
-    return;
-  }
-  if (!state.dirty.value) {
-    adoptDiskBytes(state, content, hash);
-    repaint(state);
-    return;
-  }
-  state.original.value = content;
-  state.loadedHash = hash;
-  if (state.mode.value.kind === "edit") {
-    state.mode.value = {
-      kind: "diff",
-      diffSource: unsavedDiffSource(content, state.current.value),
-    };
-  }
-  // `state.mode` has no painting subscriber, so the repaint is explicit; and
-  // `restoreUI` reads a non-empty `state.error.value` as a failed PANE and would blank
-  // the very diff this arm exists to show, so the sentence goes to `$.editorError`.
-  renderEditModeUI(state);
-  $.editorError.textContent = "This file changed on disk. Your unsaved edits are kept.";
-  $.editorError.classList.remove("hidden");
+  finishLoad(state);
 }
 
-/** The two read statuses that are an ANSWER about the file rather than a failed read. */
-function readGoneSentence(status: number): string | null {
-  if (status === 404) {
-    return "This file is no longer on disk.";
+/** Take a view picked without a read: too large, an image or a binary file. */
+function adoptUnread(
+  state: FileState,
+  view: "large" | "image" | "binary",
+  facts: FileFacts,
+  modified: string,
+  fileId: string,
+): void {
+  batch(() => {
+    state.facts.value = facts;
+    state.notice = { size: facts.size, modified };
+    commitBaseline(state, { fileId });
+    state.error.value = "";
+    state.mode.value = { kind: view };
+  });
+}
+
+function finishLoad(state: FileState): void {
+  state.loaded = true;
+  if (isShown(state)) {
+    repaint(state);
+    applyPendingLine(state);
+    liveActivate(state.path);
   }
-  if (status === 415) {
-    return "This file is no longer text.";
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
+}
+
+export const INCOMPLETE_READ = "The file arrived incomplete. Reload the tab to try again.";
+
+/** A read is adopted only under a valid identity, and a UTF-8 one only when its bytes are the
+ *  whole file that identity names. Null when it may be adopted, else the sentence to show. A
+ *  non-UTF-8 read's bytes cannot be checked (JSON replaced them) and it is never offered for
+ *  editing. */
+function verifyRead(read: FileRead): string | null {
+  if (!isFileId(read.file_id)) {
+    return INCOMPLETE_READ;
+  }
+  if (read.utf8 && !isIdentifiedText(read.content, read.size, read.file_id)) {
+    return INCOMPLETE_READ;
   }
   return null;
 }
 
-// persistOpenFiles is GONE, and so is `ui-state.editor_files`. An editor tab's
-// path IS its subject's `ref`, so the open set is already in the one collection
-// that decides what is open — a second list of the same paths could only disagree
-// with it, and did: a path in `editor_files` with no tab in `tab_order` was
-// recovered as a synthetic id, which is the last consumer of the retired
-// `editor:<path>` convention.
+/** Take the bytes on disk as this buffer's clean state in one transition, so no reader sees the
+ *  text of one read with the identity of another. The conflict fact comes from the adopted text. */
+export function adoptDiskBytes(state: FileState, read: FileRead): void {
+  const { text, record } = normalize(read.content);
+  batch(() => {
+    commitBaseline(state, {
+      fileId: read.file_id,
+      text,
+      eol: { saved: record, tracker: new EolTracker(text, record) },
+    });
+    state.current.value = text;
+    state.facts.value = {
+      kind: "small",
+      binary: false,
+      utf8: read.utf8,
+      conflict: parseConflicts(text).hunks.length > 0,
+      readOnly: read.read_only,
+      size: read.size,
+    };
+    state.notice = { size: read.size, modified: read.modified };
+    state.error.value = "";
+  });
+  state.rows = null;
+  state.runs = null;
+}
 
-/** Tear down one open file's client state.
- *
- *  This is the editor tab's `onClose`, and nothing else calls it. It does NOT
- *  close the tab: the tab store is what invoked it, and calling back into
- *  closeTab was both redundant and the second half of an infinite loop — the
- *  store fired onClose while the tab was still present, so the call re-entered,
- *  fired onClose again, and recursed until the stack died. Every editor tab was
- *  unclosable.
- *
- *  Ownership runs one way now. The store owns the tab, this owns the file state,
- *  and neither reaches into the other. To close a file programmatically, close
- *  its tab: `closeTab(tabIdFor("editor", path))`. */
+/** Live refresh's re-read: reclassify a file that crossed the cap or turned binary, otherwise
+ *  re-read and adopt at the same line, a view at the bottom staying pinned. */
+async function reloadForLive(
+  state: FileState,
+  stat: FileStat,
+  stillCurrent: () => boolean,
+): Promise<void> {
+  const requested = requestedBy(state);
+  const facts = factsOf(stat);
+  const view = rulesFor(facts, state.path, requested).view;
+  const atBottom =
+    isShown(state) && !$.editorViewer.classList.contains("hidden") && viewer().atBottom();
+  if (view === "large" || view === "image" || view === "binary") {
+    if (stillCurrent()) {
+      // statFile answers only a stat carrying the identity its view needs.
+      adoptUnread(state, view, facts, stat.modified, statIdentity(stat) ?? "");
+      repaintAndAnnounce(state);
+    }
+    return;
+  }
+  const m = state.mode.value;
+  if (m.kind === "diff" && m.diffSource.kind === "git") {
+    const o = await loadDiffAction.dispatch({
+      path: state.path,
+      repo: state.repo,
+      ref: m.diffSource.ref,
+    }).outcome;
+    if (stillCurrent() && liveAdoptable(o)) {
+      settleGitDiff(state, o);
+    }
+    return;
+  }
+  const answer = await readFile(state.path);
+  if (!stillCurrent()) {
+    return;
+  }
+  if (answer.kind === "too_large") {
+    adoptUnread(state, "large", { kind: "large", size: answer.size }, stat.modified, "");
+    repaintAndAnnounce(state);
+    return;
+  }
+  if (answer.kind !== "read" || verifyRead(answer.read) !== null) {
+    return;
+  }
+  captureSelection(state);
+  adoptDiskBytes(state, answer.read);
+  if (m.kind !== "diff") {
+    state.mode.value = modeFor(state, requested);
+  }
+  if (isShown(state)) {
+    paint(state);
+    if (atBottom) {
+      viewer().pinBottom();
+    }
+  }
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
+}
+
+function repaintAndAnnounce(state: FileState): void {
+  if (isShown(state)) {
+    repaint(state);
+  }
+  emitBus(BUS_EDITOR_VIEW_CHANGED, { path: state.path });
+}
+
+setLiveReload(reloadForLive);
+
+/** The tab's refresh: one immediate live check. */
+export function refreshEditorFile(path: string): void {
+  if (fileStates.get(path)?.loaded === true) {
+    liveActivate(path);
+  }
+}
+
+/** Tear down one open file's client state. This is the editor tab's `onClose`, and nothing else
+ *  calls it; to close a file programmatically, close its tab. Deleting the record retires it, so
+ *  every answer still in flight for it is dropped (`owns`). */
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
   if (state?.mode.value.kind === "conflict") {
     abortSuggestion(path);
   }
+  liveDispose(path);
   dirtyTabUnbinds.get(path)?.();
   dirtyTabUnbinds.delete(path);
   fileStates.delete(path);
-  pendingLines.delete(path);
   clearAgentLineCache(path);
   clearSuggestionState(path);
   const activeFilePath = getActiveFilePath();

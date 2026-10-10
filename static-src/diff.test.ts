@@ -11,6 +11,16 @@ import {
   type DiffLine,
 } from "./diff.js";
 
+/** Context lines: every line of the script that is neither an add nor a del. */
+function ctxCount(d: readonly DiffLine[]): number {
+  return d.filter((l) => l.kind !== "add" && l.kind !== "del").length;
+}
+
+/** `stats` with the context count beside it, for an assertion over all three. */
+function statsWithCtx(d: DiffLine[]): { adds: number; dels: number; ctx: number } {
+  return { ...stats(d), ctx: ctxCount(d) };
+}
+
 /**
  * What a valid edit script reconstructs from `newText`: every line, without the final newline. Shared by the
  * time-budget case and the reconstruction invariant so the two cannot drift.
@@ -162,8 +172,8 @@ describe("lineDiff", () => {
     const result = lineDiff(oldText, newText);
     const s = stats(result);
     // The fallback is still a valid edit script.
-    expect(s.dels + s.ctx).toBe(n);
-    expect(s.adds + s.ctx).toBe(n);
+    expect(s.dels + ctxCount(result)).toBe(n);
+    expect(s.adds + ctxCount(result)).toBe(n);
     const reconstructed = result.filter((l) => l.kind !== "del").map((l) => l.text);
     // Against the invariant's own expression, not a raw `split`, so the two keep agreeing if the generator changes.
     expect(reconstructed.join("\n")).toBe(withoutFinalNewline(newText));
@@ -181,7 +191,7 @@ describe("lineDiff", () => {
     const s = stats(result);
     expect(s.dels).toBe(1);
     expect(s.adds).toBe(1);
-    expect(s.ctx).toBe(n - 1);
+    expect(ctxCount(result)).toBe(n - 1);
   });
 });
 
@@ -260,18 +270,18 @@ describe("windowHunks", () => {
 });
 
 describe("stats", () => {
-  it("counts adds, dels, and ctx", () => {
+  it("counts adds and dels", () => {
     const lines: DiffLine[] = [
       { kind: "add", oldNo: 0, newNo: 1, text: "a" },
       { kind: "del", oldNo: 1, newNo: 0, text: "b" },
       { kind: "ctx", oldNo: 2, newNo: 2, text: "c" },
       { kind: "add", oldNo: 0, newNo: 3, text: "d" },
     ];
-    expect(stats(lines)).toEqual({ adds: 2, dels: 1, ctx: 1 });
+    expect(stats(lines)).toEqual({ adds: 2, dels: 1 });
   });
 
   it("returns zeros for empty input", () => {
-    expect(stats([])).toEqual({ adds: 0, dels: 0, ctx: 0 });
+    expect(stats([])).toEqual({ adds: 0, dels: 0 });
   });
 });
 
@@ -383,7 +393,7 @@ describe("a file's final newline is not a line", () => {
     ] as const) {
       const d = lineDiff(before, after);
       expect(d.map((l) => l.kind)).toEqual(["ctx", "ctx"]);
-      expect(stats(d)).toEqual({ adds: 0, dels: 0, ctx: 2 });
+      expect(statsWithCtx(d)).toEqual({ adds: 0, dels: 0, ctx: 2 });
     }
   });
 });
@@ -418,7 +428,7 @@ describe("lineDiff property-based invariants", () => {
       fc.property(smallText, smallText, (a, b) => {
         const d = lineDiff(a, b);
         const s = stats(d);
-        expect(s.adds + s.ctx).toBe(countLines(b));
+        expect(s.adds + ctxCount(d)).toBe(countLines(b));
       }),
     );
   });
@@ -428,7 +438,7 @@ describe("lineDiff property-based invariants", () => {
       fc.property(smallText, smallText, (a, b) => {
         const d = lineDiff(a, b);
         const s = stats(d);
-        expect(s.dels + s.ctx).toBe(countLines(a));
+        expect(s.dels + ctxCount(d)).toBe(countLines(a));
       }),
     );
   });
@@ -492,8 +502,8 @@ describe("lineDiff property-based invariants", () => {
       fc.property(largeText, largeText, (a, b) => {
         const d = lineDiff(a, b);
         const s = stats(d);
-        expect(s.adds + s.ctx).toBe(countLines(b));
-        expect(s.dels + s.ctx).toBe(countLines(a));
+        expect(s.adds + ctxCount(d)).toBe(countLines(b));
+        expect(s.dels + ctxCount(d)).toBe(countLines(a));
         expect(reconstructNew(d)).toBe(withoutFinalNewline(b));
       }),
       { numRuns: 3, interruptAfterTimeLimit: 60_000 },
@@ -649,7 +659,7 @@ describe("lineDiff on the linear-space path", () => {
 
   it("keeps every line the two files still share", () => {
     // 2000 body lines minus the one deletion, plus the 4 trimmed shared lines.
-    expect(stats(sparseDiff())).toEqual({ adds: 3, dels: 3, ctx: 2003 });
+    expect(statsWithCtx(sparseDiff())).toEqual({ adds: 3, dels: 3, ctx: 2003 });
   });
 
   it("numbers an interior deletion and insertion against their own files", () => {
@@ -725,7 +735,7 @@ describe("lineDiff on the linear-space path", () => {
       ["shared-1", "shared-2", ...changedA, "shared-3", "shared-4"].join("\n"),
       ["shared-1", "shared-2", ...changedB, "shared-3", "shared-4"].join("\n"),
     );
-    expect(stats(d)).toEqual({ adds: 668, dels: 668, ctx: 1340 });
+    expect(statsWithCtx(d)).toEqual({ adds: 668, dels: 668, ctx: 1340 });
   });
 
   it("finds every match when the body is 40 copies of every line", () => {
@@ -746,7 +756,7 @@ describe("lineDiff on the linear-space path", () => {
       ["shared-1", "shared-2", "A-HEAD", ...dup, "A-TAIL", "shared-3", "shared-4"].join("\n"),
       ["shared-1", "shared-2", "B-HEAD", ...dupNew, "B-TAIL", "shared-3", "shared-4"].join("\n"),
     );
-    expect(stats(d)).toEqual({ adds: 4, dels: 5, ctx: 2001 });
+    expect(statsWithCtx(d)).toEqual({ adds: 4, dels: 5, ctx: 2001 });
     expect(d.find((l) => l.text === "FRESH-1")).toEqual({
       kind: "add",
       oldNo: 0,
@@ -767,12 +777,14 @@ describe("lineDiff on the linear-space path", () => {
     };
     const left = ["shared-1", "shared-2", "A-HEAD", ...noise(1), "A-TAIL", "shared-3"].join("\n");
     const right = ["shared-1", "shared-2", "B-HEAD", ...noise(7), "B-TAIL", "shared-3"].join("\n");
-    const forward = stats(lineDiff(left, right));
-    const backward = stats(lineDiff(right, left));
-    expect(forward.ctx).toBe(backward.ctx);
+    const forwardLines = lineDiff(left, right);
+    const backwardLines = lineDiff(right, left);
+    const forward = stats(forwardLines);
+    const backward = stats(backwardLines);
+    expect(ctxCount(forwardLines)).toBe(ctxCount(backwardLines));
     expect(forward.adds).toBe(backward.dels);
     expect(forward.dels).toBe(backward.adds);
-    expect(forward.ctx).toBeGreaterThan(100);
+    expect(ctxCount(forwardLines)).toBeGreaterThan(100);
     expect(forward.adds).toBeGreaterThan(1000);
   });
 });
@@ -788,7 +800,7 @@ describe("lineDiff past the time budget", () => {
     );
 
   it("gives up on context it could have found, rather than the main thread", () => {
-    expect(stats(coarseDiff())).toEqual({ adds: 5002, dels: 5002, ctx: 0 });
+    expect(statsWithCtx(coarseDiff())).toEqual({ adds: 5002, dels: 5002, ctx: 0 });
   });
 
   it("still numbers the coarse script from the top of each file", () => {
@@ -836,7 +848,7 @@ describe("lineDiff on the linear-space path, one old line against many new", () 
   const scatteredDiff = (): DiffLine[] => lineDiff(oldText, newText);
 
   it("keeps every insertion, including the one behind the last match", () => {
-    expect(stats(scatteredDiff())).toEqual({ adds: 501, dels: 0, ctx: 2001 });
+    expect(statsWithCtx(scatteredDiff())).toEqual({ adds: 501, dels: 0, ctx: 2001 });
   });
 
   it("numbers an insertion that follows its matched line", () => {
@@ -882,7 +894,7 @@ describe("lineDiff at the time budget", () => {
       ["A-HEAD", ...body, "A-TAIL"].join("\n"),
       ["B-HEAD", ...body, "B-TAIL"].join("\n"),
     );
-    expect(stats(d)).toEqual({ adds: 2, dels: 2, ctx: 4998 });
+    expect(statsWithCtx(d)).toEqual({ adds: 2, dels: 2, ctx: 4998 });
   });
 });
 

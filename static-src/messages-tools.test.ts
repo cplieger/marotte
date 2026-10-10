@@ -26,10 +26,9 @@ vi.mock("./tool-card.js", () => ({
   syncInteractionFact: vi.fn(),
 }));
 
-import { applyOutputUpdate, updateToolCall } from "./messages-tools.js";
+import { applyOutputUpdate, applyToolCallUpdate } from "./messages-tools.js";
 import { syncInteractionFact, syncOffloadLink } from "./tool-card.js";
 
-/** A card whose depth 1 is a windowed output (execute / shell / command). */
 function commandCard(): HTMLDivElement {
   const card = document.createElement("div");
   card.className = "tool-call";
@@ -40,7 +39,6 @@ function commandCard(): HTMLDivElement {
   return card;
 }
 
-/** A card with a plain (unwindowed) output region. */
 function simpleCard(): HTMLDivElement {
   const card = document.createElement("div");
   card.className = "tool-call";
@@ -92,7 +90,7 @@ describe("applyOutputUpdate (cumulative output → replace, not append)", () => 
   });
 });
 
-describe("updateToolCall title", () => {
+describe("applyToolCallUpdate title", () => {
   it("keeps a late title frame human-readable", () => {
     const card = document.createElement("div");
     card.className = "tool-call";
@@ -104,7 +102,7 @@ describe("updateToolCall title", () => {
     header.appendChild(title);
     card.appendChild(header);
 
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       {
         id: "late-title",
@@ -139,7 +137,7 @@ describe("updateToolCall title", () => {
   // KAS repeats its placeholder on routine frames; the update must not put "Run Command" back over the command title.
   it("keeps a shell card's command title through a placeholder update frame", () => {
     const { card, header, title } = titledCard("make lint");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       {
         id: "shell-update",
@@ -156,7 +154,7 @@ describe("updateToolCall title", () => {
 
   it("keeps a described title verbatim on update", () => {
     const { card, header, title } = titledCard("Running");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       {
         id: "prose-update",
@@ -179,7 +177,7 @@ describe("an offloaded output reaching a card already on screen", () => {
       path: "/config/.kiro/sessions/cli/sess_1/tool-outputs/shell-0a1b2c3d.txt",
       total_chars: 90000,
     };
-    updateToolCall(card, { id: "off-update", offload } as ToolCall, "c1");
+    applyToolCallUpdate(card, { id: "off-update", offload } as ToolCall, "c1");
     expect(vi.mocked(syncOffloadLink)).toHaveBeenCalledWith(card, offload);
   });
 });
@@ -188,7 +186,7 @@ describe("an answered ask reaching a card already on screen", () => {
   it("hands the update frame's interaction to the card's fact writer", () => {
     const card = simpleCard();
     const interaction = { type: "tool_approval", outcome: "selected", choice: "allow_once" };
-    updateToolCall(card, { id: "ask-update", interaction } as ToolCall, "c1");
+    applyToolCallUpdate(card, { id: "ask-update", interaction } as ToolCall, "c1");
     expect(vi.mocked(syncInteractionFact)).toHaveBeenCalledWith(card, interaction);
   });
 });

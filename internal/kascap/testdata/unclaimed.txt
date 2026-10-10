@@ -9,13 +9,11 @@
 # Read from kiro-cli 2.28.0 by TestCapabilityCensus.
 # Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
 capability c2sViews
-capability configurationState
 capability findFiles
 capability helpDocs
 capability specLinks
 capability telemetry
 capability textSearch
 setting c2s
-setting cascade
 setting sessionRecap
 setting verifyFirstWorkflow

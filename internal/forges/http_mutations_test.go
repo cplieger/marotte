@@ -20,7 +20,6 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
-// mutationCall is one mutation as the library received it.
 type mutationCall struct {
 	newPR      forgeapi.NewPullRequest
 	newIssue   forgeapi.NewIssue
@@ -77,7 +76,6 @@ func (c *mutationCore) RepoAffordances(_ context.Context, repo forgeapi.RepoRef)
 	return forgeapi.RepoAffordances{}, nil
 }
 
-// affordanceReads is how many affordance reads of repoID reached the library.
 func (c *mutationCore) affordanceReads(repoID string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -125,7 +123,6 @@ func (c *mutationCore) CloseIssue(_ context.Context, repo forgeapi.RepoRef, issu
 	return c.issue, c.err
 }
 
-// releasingMutationCore is a mutationCore that also serves the release role.
 type releasingMutationCore struct {
 	*mutationCore
 	release forgeapi.Release
@@ -140,18 +137,14 @@ func (c releasingMutationCore) CreateRelease(_ context.Context, repo forgeapi.Re
 	return c.release, c.err
 }
 
-// repoPath is a sub-resource route of row's repository.
 func (row mergeRow) repoPath(tail string) string {
 	return "/api/forges/" + url.PathEscape(row.rec.ID) + "/repos/" + row.repoID + "/" + tail
 }
 
-// decoded is the repository the library receives for row's route.
 func (row mergeRow) decoded() forgeapi.RepoRef {
 	return forgeapi.RepoRef{ID: row.repoID, Family: row.family, Selector: row.sel, DisplayPath: row.sel}
 }
 
-// answeredPR is pull request n of row's repository in state, as the library
-// answers a mutation of it.
 func answeredPR(row mergeRow, n int, state forgeapi.PRState) forgeapi.PullRequest {
 	return forgeapi.PullRequest{
 		Ref:   forgeapi.PRRef{Number: n},
@@ -416,8 +409,6 @@ func TestCreateReleaseRoute_AbsentRoleIs501(t *testing.T) {
 	})
 }
 
-// everyMutation is each mutation a repository route serves, with the library
-// call it makes.
 var everyMutation = []struct{ op, tail, body string }{
 	{op: "ClosePR", tail: "prs/3/close"},
 	{op: "ReopenPR", tail: "prs/3/reopen"},
@@ -428,8 +419,6 @@ var everyMutation = []struct{ op, tail, body string }{
 	{op: "CreateRelease", tail: "releases", body: `{"tag_name":"v1"}`},
 }
 
-// failEveryMutation sends every mutation to a client whose library answers err,
-// requiring each to reach the library, and answers each response by op.
 func failEveryMutation(t *testing.T, err error) map[string]map[string]any {
 	t.Helper()
 	row := githubMergeRow()

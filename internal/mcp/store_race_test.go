@@ -12,14 +12,14 @@ import (
 func TestStore_CreateDeleteConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	ctx := t.Context()
-	s, err := New(ctx, dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(ctx, dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var (
 		mu      sync.Mutex
-		created []ServerID
+		created []serverID
 	)
 
 	var wg sync.WaitGroup
@@ -54,7 +54,7 @@ func TestStore_CreateDeleteConcurrent(t *testing.T) {
 			id := created[0]
 			created = created[1:]
 			mu.Unlock()
-			_ = s.Delete(ctx, id)
+			_ = s.delete(ctx, id)
 		}
 	})
 

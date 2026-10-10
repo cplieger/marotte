@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// newTestFrameReader wraps s with a small ReadSlice window to exercise multi-chunk ErrBufferFull reads cheaply.
 func newTestFrameReader(s string, window int) *frameReader {
 	return newFrameReader(bufio.NewReaderSize(strings.NewReader(s), window))
 }

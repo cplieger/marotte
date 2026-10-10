@@ -10,15 +10,12 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// laneSteer is a steer entry decoded with its id and its lane, which is the fact
-// under test here.
 type laneSteer struct {
 	marotte.EntrySteer
 	ID   string
 	Lane string
 }
 
-// laneSteerRows is steerRows carrying each row's lane.
 func laneSteerRows(t *testing.T, deps *baseDeps, chatID marotte.ChatID) []laneSteer {
 	t.Helper()
 	var out []laneSteer

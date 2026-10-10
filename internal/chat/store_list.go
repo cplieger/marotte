@@ -38,18 +38,17 @@ func (s *Store) ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool) {
 	return s.listWithCompleteness(ctx)
 }
 
-// ListStamped is List plus the `chats` stamp the REST envelope carries. The scan
+// listStamped is List plus the `chats` stamp the REST envelope carries. The scan
 // takes no lock, so the version is read FIRST: a Mutate landing during the scan
 // puts its header in the list and its bump outside the stamp, and the client then
 // holds a list at least as new as its version, which the next digest reads as one
 // spurious changed and never as a false unchanged.
-func (s *Store) ListStamped(ctx context.Context) ([]marotte.ChatHeader, *marotte.SubjectStamp) {
+func (s *Store) listStamped(ctx context.Context) ([]marotte.ChatHeader, *marotte.SubjectStamp) {
 	version, _ := s.versions.Current(subject.KindChats, "")
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers, s.restStamp(subject.KindChats, "", version)
 }
 
-// listResult carries a scan and its completeness through one singleflight slot.
 type listResult struct {
 	headers  []marotte.ChatHeader
 	complete bool

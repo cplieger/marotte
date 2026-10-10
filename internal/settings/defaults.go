@@ -72,8 +72,9 @@ const (
 
 	// The Agent capabilities that ride KAS's doors, resolved per spawn by
 	// internal/agent's agentFeatures (values in agent_features.go).
-	// KeyWorkValidation and KeyCloudFormationSafety are three-state: empty sends
-	// nothing, so kiro-cli's own experiment decides.
+	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
+	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
+	// experiment decides.
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
 	KeyInlineAgents         = "inline_agents_enabled"
@@ -81,6 +82,8 @@ const (
 	KeyWorkflowsEnabled     = "workflows_enabled"
 	KeyWorkValidation       = "work_validation"
 	KeyCloudFormationSafety = "cloudformation_safety_check"
+	KeyAutoRouting          = "auto_routing"
+	KeyAutoDelegation       = "auto_delegation"
 
 	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
@@ -116,6 +119,8 @@ var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:         {},
 	KeyAutoCompactionEnabled:    {},
 	KeyAutoCompactPct:           {},
+	KeyAutoDelegation:           {},
+	KeyAutoRouting:              {},
 	KeyChatRetentionDays:        {},
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},

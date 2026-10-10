@@ -44,9 +44,6 @@ beforeAll(async () => {
   ({ buildAssistantBody, resetBlockRenders, initBlockRenderer } =
     await import("./messages-blocks.js"));
   initBlockRenderer({
-    pushStreamingEffect: () => {
-      /* messages.ts owns the effect registry; no case here reads it */
-    },
     pushEntryEffect: () => {
       /* same */
     },
@@ -63,7 +60,6 @@ beforeAll(async () => {
   setActive(CHAT_ID);
 });
 
-/** The invocation call that dispatched the delegate, at `status`. */
 function invocation(status: ToolStatus): EntryToolCall {
   return {
     id: "tc-inv",
@@ -75,7 +71,6 @@ function invocation(status: ToolStatus): EntryToolCall {
   };
 }
 
-/** One turn holding that invocation in the transcript's own lane. */
 function turnWith(status: ToolStatus): Turn {
   const turnID = "t-stale";
   return {
@@ -118,7 +113,6 @@ function seedChat(turnLive: boolean): void {
   setTurnOpen(CHAT_ID, turnLive);
 }
 
-/** Mount the turn and hand back the delegate's card. */
 function mount(status: ToolStatus): HTMLElement {
   const body = document.createElement("div");
   document.getElementById("messages")?.appendChild(body);

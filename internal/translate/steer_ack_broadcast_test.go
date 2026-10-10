@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerAcksOf decodes every steer_ack entry in entries, in seal order.
 func steerAcksOf(t *testing.T, entries []marotte.Entry) []marotte.EntrySteerAck {
 	t.Helper()
 	var out []marotte.EntrySteerAck
@@ -25,14 +24,12 @@ func steerAcksOf(t *testing.T, entries []marotte.Entry) []marotte.EntrySteerAck 
 	return out
 }
 
-// feedChunk streams one text delta through the live handler.
 func feedChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, text string) {
 	t.Helper()
 	feedLaneChunk(t, tr, chatID, "", text)
 }
 
-// feedLaneChunk streams one text delta attributed to lane, a delegate's subtask
-// id; an empty lane is the agent's own stream.
+// An empty lane is the agent's own stream.
 func feedLaneChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, lane, text string) {
 	t.Helper()
 	body := map[string]any{
@@ -207,7 +204,6 @@ func TestHandleAssistantChunk_EmptyAcknowledgementIsNotRecorded(t *testing.T) {
 	}
 }
 
-// textOf decodes the text of one sealed text entry.
 func textOf(t *testing.T, e marotte.Entry) string {
 	t.Helper()
 	var p marotte.EntryText

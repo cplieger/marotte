@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// EntryKind is the discriminator of an Entry's payload: the seventeen kinds a turn
-// log holds. The chat log and the run log share the vocabulary.
+// EntryKind is the discriminator of an Entry's payload, shared by the chat log and the
+// run log.
 type EntryKind string
 
 // EntryKindTurnOpen and the following constants are the valid EntryKind values.
@@ -22,11 +22,13 @@ const (
 	EntryKindToolResult       EntryKind = "tool_result"
 	EntryKindSteer            EntryKind = "steer"
 	EntryKindSteerAck         EntryKind = "steer_ack"
+	EntryKindSteerDelivered   EntryKind = "steer_delivered"
 	EntryKindPlan             EntryKind = "plan"
 	EntryKindCompaction       EntryKind = "compaction"
 	EntryKindCompactionFailed EntryKind = "compaction_failed"
 	EntryKindSafetyBlocked    EntryKind = "safety_blocked"
 	EntryKindModelSwitched    EntryKind = "model_switched"
+	EntryKindModelRouted      EntryKind = "model_routed"
 	EntryKindModeSwitched     EntryKind = "mode_switched"
 	EntryKindTurnRevert       EntryKind = "turn_revert"
 	EntryKindReconciled       EntryKind = "reconciled"
@@ -39,12 +41,11 @@ const (
 type Entry struct {
 	ID   string `json:"id"`
 	Turn string `json:"turn"`
-	// Lane is "" for the agent that owns the log's turn (the chat's agent, or
-	// the step's own agent in a run log), or a delegate's uuid. There is no
-	// other lane value.
+	// Lane is "" for the agent owning the log's turn (the chat's, or the step's in a
+	// run log), else a delegate's uuid.
 	Lane string    `json:"lane,omitempty"`
 	Kind EntryKind `json:"kind"`
-	// Payload is one of the seventeen payload types, chosen by Kind.
+	// Payload is the payload type Kind selects.
 	Payload json.RawMessage `json:"payload"`
 	// Seq is per turn, contiguous from 0 (turn_open), assigned at append.
 	Seq uint64 `json:"seq"`
@@ -52,10 +53,8 @@ type Entry struct {
 	Ts int64 `json:"ts"`
 }
 
-// OpenEntry is a text or thinking entry still coalescing deltas. It has no Seq:
-// a position is assigned when it seals and becomes an Entry. It lives in the
-// appender's memory and travels as entry_opened and as a GET's open_entries; it
-// never reaches the log.
+// OpenEntry is a text or thinking entry still coalescing deltas. It has no Seq until it
+// seals into an Entry, and travels as entry_opened and a GET's open_entries, never the log.
 type OpenEntry struct {
 	Turn string `json:"turn"`
 	ID   string `json:"id"`
@@ -68,11 +67,9 @@ type OpenEntry struct {
 	N uint64 `json:"n"`
 }
 
-// TurnOpenSourceName is the wire spelling of what opened a turn. The five
-// TurnOpenSource members map onto it through Name; `event` and `revert` are the
-// two names with no int member behind them — one for a turn an event row opens,
-// one for the headerless carrier a revert opens when no turn survives it — and
-// `workflow_step` is set on a run log's turns.
+// TurnOpenSourceName is the wire spelling of what opened a turn; TurnOpenSource maps onto
+// it through Name. `event` (a turn an event row opens) and `revert` (the carrier a revert
+// opens when no turn survives it) have no TurnOpenSource member.
 type TurnOpenSourceName string
 
 // TurnOpenNamePrompt and the following constants are the valid TurnOpenSourceName
@@ -99,19 +96,20 @@ func (s TurnOpenSource) Name() TurnOpenSourceName {
 		return TurnOpenNameWireTurnStart
 	case TurnSourceEmptyRetry:
 		return TurnOpenNameEmptyRetry
-	case TurnSourceWorkflowStep:
+	case turnSourceWorkflowStep:
 		return TurnOpenNameWorkflowStep
 	}
 	return ""
 }
 
-// EntryPrompt is the prompt a turn_open carries when the reader opened the turn:
-// the client-minted message id, the text and the files staged beside it. Resends
-// names the steer rows (their dock keys) whose words this prompt carries; absent
-// means not a resend. The record owns it and the projection never synthesises it.
+// EntryPrompt is the prompt a turn_open carries when the reader opened the turn; ID is
+// the client-minted message id. Resends names the steer rows (their dock keys) whose words
+// this prompt carries; the record owns it and the projection never synthesises it. Label is
+// the PromptCommand.DisplayText the prompt was sent with, which KAS's replay gives as the text.
 type EntryPrompt struct {
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
+	Label       string       `json:"label,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
 }
@@ -145,6 +143,15 @@ type RewindTarget struct {
 	// LaunchedRuns are the workflow ids the entries inside the cut launched: the
 	// runs whose launching tool call the rewind un-says.
 	LaunchedRuns []string
+}
+
+// PromptReceipt is what a chat's log holds of one prompt id: whether any turn opened under it,
+// whether KAS bound any of those turns (on any session), and the words and label it went out with.
+type PromptReceipt struct {
+	Text   string
+	Label  string
+	Opened bool
+	Bound  bool
 }
 
 // EntryText is the text payload.
@@ -194,18 +201,14 @@ type EntryToolResult struct {
 	Offload    *ToolOffload    `json:"offload,omitempty"`
 	// Interaction is how the call's approval or question was answered.
 	Interaction *ToolInteraction `json:"interaction,omitempty"`
-	// Truncated is what the STORE dropped to bound this result on disk, nil on
-	// every result that fit; OutputBytes and HasFull are the served PREVIEW's
-	// markers, as on EntryToolCall. The three sit on the result as well as on the
-	// call because the result is where the settled output and diffs live.
+	// Truncated is what the STORE dropped to bound this result on disk, nil when it
+	// fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
 	Truncated *ToolTruncation `json:"truncated,omitempty"`
 	Title     string          `json:"title,omitempty"`
 	Kind      ToolKind        `json:"kind,omitempty"`
-	// Status keeps its closed enum ONLY because every value is marotte's own: the
-	// close rule mints aborted, and a result is otherwise written solely from a
-	// TERMINAL upstream status the projection and the live path normalise. The
-	// client decoder validates it with reqOneOf, so a value copied verbatim off the
-	// wire (a status-less or unknown replayed update) would fail the whole window.
+	// Status is a closed enum because every value is marotte's own (aborted, or a
+	// normalised terminal status). The client validates it with reqOneOf, so a value
+	// copied verbatim off the wire would fail the whole window.
 	Status      ToolStatus     `json:"status"`
 	Output      string         `json:"output,omitempty"`
 	TerminalID  string         `json:"terminal_id,omitempty"`
@@ -219,34 +222,31 @@ type EntryToolResult struct {
 	Declined    bool           `json:"declined,omitempty"`
 }
 
-// SteerReason is why a steer was never read. An enum rather than a free string
-// because the client WORDS it — the note reads "Not read · <clause>" — so the
-// wording table has to be total over the vocabulary: a reason with no clause
-// renders the bare state, which reads as if nothing had gone wrong.
+// SteerReason is why a steer was never read. A closed enum because the client's
+// "Not read · <clause>" wording table must be total; a reason with no clause reads as fine.
 type SteerReason string
 
 const (
-	// SteerReasonRestart is the merge's reason on a projected steer the record
-	// never held, because KAS persists a steer's text at send time while its
-	// pending state dies with the process.
+	// SteerReasonRestart is the merge's reason on a projected steer the record never
+	// held: KAS persists a steer's text at send, its pending state dies with the process.
 	SteerReasonRestart SteerReason = "restart"
-	// SteerReasonBoundary is the reason on a steer whose turn ended first: a user
-	// steer still unread when its chat's tab closed (the close cancels the turn and
-	// no prompt carries the steer), or an agent note KAS's turn-end clear named.
+	// SteerReasonBoundary is a steer whose turn ended first: a user steer still unread when its
+	// chat's tab closed (the close cancels the turn and no prompt carries the steer), or an agent
+	// note KAS's turn-end clear named.
 	SteerReasonBoundary SteerReason = "boundary"
 	// SteerReasonDeleted is the reason on a steer the reader deleted from the
 	// dock before the agent read it.
 	SteerReasonDeleted SteerReason = "deleted"
 )
 
-// EntrySteer is the steer payload. Text is the bare text, the `[notification/<sev>]`
-// prefix stripped. Severity is KAS's vocabulary (`info`, `success`, `warning`,
-// `error`), present on an agent-origin note only. OriginRun and ProducedTs are the
-// provenance of a note a finished run left: the run's id and when it finished, so a
-// note read long after the fact can say so. Absent on a user steer and on a step's
-// mid-run note. ProducedTs labels; it never orders. Resends names the steer rows (dock
-// keys) this one re-sends under its own id, taken from the steer record at the read;
-// the projection never synthesises it, so the merge keeps the record's.
+// EntrySteer is the steer payload. Text has the `[notification/<sev>]` prefix stripped;
+// Severity (KAS's vocabulary) is set on a note KAS's buffer carried. OriginRun is the run a note
+// came from. ProducedTs is when the words were sent (a workflow message, a finished run's end) and
+// ReadTs when its receiver took a workflow message up; both label and never order. A log read
+// fills ReadTs (or the dropped state) from the message's steer_delivered. Step names the run step on
+// the other side of a workflow message, in the launching chat's log only; StepPath is that step's
+// node path on both sides' rows, and Chat the launching chat on the step's row. Resends names the
+// steer rows (dock keys) this one re-sends, taken from the steer record at the read.
 type EntrySteer struct {
 	Text       string      `json:"text"`
 	Origin     SteerOrigin `json:"origin"`
@@ -254,8 +254,12 @@ type EntrySteer struct {
 	Reason     SteerReason `json:"reason,omitempty"`
 	Severity   string      `json:"severity,omitempty"`
 	OriginRun  string      `json:"origin_run,omitempty"`
+	Step       string      `json:"step,omitempty"`
+	StepPath   string      `json:"step_path,omitempty"`
+	Chat       ChatID      `json:"chat,omitempty"`
 	Resends    []string    `json:"resends,omitempty"`
 	ProducedTs int64       `json:"produced_ts,omitempty"`
+	ReadTs     int64       `json:"read_ts,omitempty"`
 }
 
 // EntrySteerAck is the steer_ack payload: KAS's acknowledgement of a steer,
@@ -263,6 +267,22 @@ type EntrySteer struct {
 type EntrySteerAck struct {
 	SteerID string `json:"steer_id"`
 	Text    string `json:"text"`
+}
+
+// EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
+// SteerID names, recorded at send, at ReadTs; Dropped instead says KAS cleared it unread at a turn
+// boundary. It renders on that message's row, not where it sits. KASID is the id KAS persisted the
+// message under, which its replay row carries.
+type EntrySteerDelivered struct {
+	SteerID string `json:"steer_id"`
+	KASID   string `json:"kas_id,omitempty"`
+	ReadTs  int64  `json:"read_ts"`
+	Dropped bool   `json:"dropped,omitempty"`
+}
+
+// SteerDeliveredID is the steer_delivered entry id for a steer: `<steer>:delivered`.
+func SteerDeliveredID(steerID string) string {
+	return steerID + ":delivered"
 }
 
 // EntryPlan is the plan payload, one per distinct plan state.
@@ -292,14 +312,18 @@ type EntrySafetyBlocked struct {
 type EntryModelSwitched struct {
 	From string `json:"from"`
 	To   string `json:"to"`
-	// Effort is the reasoning tier in force, omitempty so every persisted entry
-	// written before this field existed still decodes. A plain string rather than
-	// EffortLevel for Chat.Effort's reason: a level another build wrote must decode
-	// rather than throw, which a closed wire enum would not.
+	// Effort is the reasoning tier in force; a plain string, as Chat.Effort, so a
+	// level another build wrote decodes rather than throws.
 	Effort string `json:"effort,omitempty"`
-	// Reason is set only on a switch KAS made by itself; absent on the reader's
-	// own picks.
+	// Reason is set only on a switch KAS made by itself.
 	Reason ModelSwitchReason `json:"reason,omitempty"`
+}
+
+// EntryModelRouted is the model_routed payload: KAS's Auto routing moved the chat's requests up a
+// model category inside a turn. It names no model, because KAS keeps reporting Auto; Message is
+// KAS's own notice text, treated at the decode door.
+type EntryModelRouted struct {
+	Message string `json:"message"`
 }
 
 // ModelSwitchReason says why KAS moved a chat off its model. A closed enum
@@ -310,9 +334,8 @@ type ModelSwitchReason string
 // use, seen as an unsolicited config_option_update moving the chat's model.
 const ModelSwitchReasonUnavailable ModelSwitchReason = "unavailable"
 
-// ModeSwitchSource says who applied a mode switch. The renderer BRANCHES on it —
-// an agent-initiated switch is labelled as the agent's — so it is a closed enum
-// rather than a plain string.
+// ModeSwitchSource says who applied a mode switch; a closed enum because the renderer
+// branches on it.
 type ModeSwitchSource string
 
 // The two sources. Each string is the wire value AND the client's
@@ -320,75 +343,60 @@ type ModeSwitchSource string
 const (
 	// ModeSwitchSourceUser is a switch the reader asked for, from set_mode.
 	ModeSwitchSourceUser ModeSwitchSource = "user"
-	// ModeSwitchSourceAgent is a switch KAS applied on its own, arriving as
-	// current_mode_update: the Plan-to-Execute flip at turn end, or a mode the
-	// agent switched to through an approved switch_mode tool call.
+	// ModeSwitchSourceAgent is a switch KAS applied on its own (current_mode_update):
+	// the Plan-to-Execute flip at turn end, or an approved switch_mode tool call.
 	ModeSwitchSourceAgent ModeSwitchSource = "agent"
 )
 
-// EntryModeSwitched is the mode_switched payload. From and To are mode ids, not
-// display names: the catalog resolves the name, and a mode the catalog no longer
-// offers still renders as its id rather than as nothing. From is empty for a chat
-// whose mode was never recorded.
+// EntryModeSwitched is the mode_switched payload. From and To are mode ids, so a mode the
+// catalog no longer offers still renders; From is empty when no mode was recorded.
 type EntryModeSwitched struct {
 	From   string           `json:"from"`
 	To     string           `json:"to"`
 	Source ModeSwitchSource `json:"source"`
 }
 
-// EntryTurnRevert is the turn_revert payload: the record that a rewind happened,
-// which is what makes the reverted range unreadable rather than absent. From names
-// the reverted turn — the addressed prompt's turn — and FromN its turn_open.n, so a
-// client holding a partial window can place the cut without the carrier's position.
-// KASMessageID is the id the revert was issued against, which is what makes this
-// record and KAS's own checkpoint_revert tombstone one fact stated twice.
+// EntryTurnRevert is the turn_revert payload, the record that makes a reverted range
+// unreadable rather than absent. From names the reverted turn and FromN its turn_open.n,
+// so a partial window can place the cut. KASMessageID ties it to KAS's checkpoint_revert.
 type EntryTurnRevert struct {
 	From string `json:"from"`
-	// Through is the id of the NEWEST turn in the log when the revert landed: the
-	// window's upper bound STATED, never implied by this entry's own file offset.
-	// The merge's rewrite regroups entries by turn (groupByTurn), and this record is
-	// lane-less and belongs to the CARRIER, whose group sits BELOW the turns the
-	// revert took — so a rewrite relocates the record above them, and a window
-	// bounded by its offset would un-revert the range on the next open. A stated
-	// bound cannot move.
+	// Through is the NEWEST turn when the revert landed: the upper bound STATED, never
+	// implied by this entry's offset. groupByTurn relocates this carrier-owned record
+	// above the reverted turns, so an offset bound would un-revert them on the next open.
 	Through      string          `json:"through"`
 	KASMessageID string          `json:"kas_message_id"`
 	Cause        TurnRevertCause `json:"cause"`
 	FromN        uint64          `json:"from_n"`
 }
 
-// TurnRevertCause is why a range was reverted. ONE member, and the client's wording
-// is total over the TYPE rather than over a string, so a second member cannot compile
-// without wording of its own.
+// TurnRevertCause is why a range was reverted. The client's wording is total over the
+// type, so a second member cannot compile without wording of its own.
 type TurnRevertCause string
 
 // TurnRevertCauseRewind is the only cause: a rewind the reader asked for.
 const TurnRevertCauseRewind TurnRevertCause = "rewind"
 
-// EntryReconciled records that a merge has looked at something and had nothing to add,
-// which is the only fact that can stop a reconcile signal honestly. EXACTLY ONE field is
-// set: Turn for the per-turn signals (a synthesized closer, an empty steer) and Session
-// for the per-session one, because the fact it clears is "this record has adopted that
-// session's history". One kind rather than two, because the reader is the same map build
-// in the same scan arm.
+// EntryReconciled records that a merge looked and had nothing to add, the only fact that
+// stops a reconcile signal. EXACTLY ONE field is set: Turn for a per-turn signal (a
+// synthesized closer, an empty steer), Session for "this record adopted that history".
 type EntryReconciled struct {
 	Turn    string `json:"turn,omitempty"`
 	Session string `json:"session,omitempty"`
 }
 
-// EntryTurnClose is the turn_close payload: TurnConclusion's three persisted
-// fields plus the turn's aggregate footer. StopReasonRaw is whatever the upstream
-// said, a plain string on the wire: KAS may add a stop reason at any time (measured:
-// `tool_use`), and a closed enum here made every chat holding one undecodable.
-// Outcome is the closed enum, because ConcludeStopReason derives it.
+// EntryTurnClose is the turn_close payload: TurnConclusion's persisted fields plus the
+// turn's footer. StopReasonRaw is a plain string because KAS adds stop reasons (`tool_use`)
+// and a closed enum would make such a chat undecodable; Outcome is derived, so closed.
 type EntryTurnClose struct {
-	ChangedFiles  map[string]*FileChange `json:"changed_files,omitempty"`
-	Refusal       *RefusalInfo           `json:"refusal,omitempty"`
-	Outcome       TurnOutcome            `json:"outcome"`
-	StopReasonRaw string                 `json:"stop_reason_raw,omitempty"`
-	FailureReason string                 `json:"failure_reason,omitempty"`
+	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
+	Refusal      *RefusalInfo           `json:"refusal,omitempty"`
+	// ContextBreakdown is KAS's measure of the turn's last model request.
+	ContextBreakdown *ContextBreakdown `json:"context_breakdown,omitempty"`
+	Outcome          TurnOutcome       `json:"outcome"`
+	StopReasonRaw    string            `json:"stop_reason_raw,omitempty"`
+	FailureReason    string            `json:"failure_reason,omitempty"`
 	// FailureKind classifies a failed turn the client offers a remedy for.
-	// Empty for every other ending.
 	FailureKind    FailureKind     `json:"failure_kind,omitempty"`
 	Model          string          `json:"model,omitempty"`
 	CodeReferences []CodeReference `json:"code_references,omitempty"`
@@ -399,11 +407,9 @@ type EntryTurnClose struct {
 	Throughput *TurnThroughput `json:"throughput,omitempty"`
 	// RequestIDs are the backend request ids of the turn's model calls.
 	RequestIDs []string `json:"request_ids,omitempty"`
-	// Recoveries are KAS's wire names for the recoveries the turn needed
-	// (`empty`, `streamError`, `authExpiry`, …); an open vocabulary.
+	// Recoveries are KAS's names for the turn's recoveries; an open vocabulary.
 	Recoveries []string `json:"recoveries,omitempty"`
-	// Steering is the ids (file URIs for documents on disk) of the steering KAS
-	// added to the context during the turn, first-seen order.
+	// Steering is the ids of the steering KAS added during the turn, first-seen order.
 	Steering  []string `json:"steering,omitempty"`
 	Credits   float64  `json:"credits,omitempty"`
 	ElapsedMs float64  `json:"elapsed_ms,omitempty"`
@@ -411,6 +417,56 @@ type EntryTurnClose struct {
 	// Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
 	// source cannot say so: a replayed `event` turn can be one KAS ran.
 	Carrier bool `json:"carrier,omitempty"`
+}
+
+// ContextBreakdown is what one model request carried, in characters as KAS measures them (the
+// turn_completion contextBreakdown, kiro-cli 2.28). Categories are ordered by size; Key is KAS's
+// category name, an open vocabulary.
+type ContextBreakdown struct {
+	Media      *ContextMedia     `json:"media,omitempty"`
+	Categories []ContextCategory `json:"categories"`
+	TotalChars int64             `json:"total_chars"`
+	ModelCalls int               `json:"model_calls"`
+	Compacted  bool              `json:"compacted,omitempty"`
+}
+
+// ContextCategory is one category's share. Parts are its named sub-totals (history's user and
+// assistant text); Items are KAS's largest members, the rest counted in Omitted*.
+type ContextCategory struct {
+	Key          string        `json:"key"`
+	Parts        []ContextPart `json:"parts,omitempty"`
+	Items        []ContextItem `json:"items,omitempty"`
+	Chars        int64         `json:"chars"`
+	Percent      float64       `json:"percent"`
+	OmittedChars int64         `json:"omitted_chars,omitempty"`
+	Count        int           `json:"count,omitempty"`
+	OmittedCount int           `json:"omitted_count,omitempty"`
+}
+
+// ContextItem is one member of a category: a steering document, a tool, an MCP server, an
+// attached file. URI is set only for a file: link; Inclusion is KAS's open vocabulary (always,
+// fileMatch, auto, …).
+type ContextItem struct {
+	Name      string  `json:"name"`
+	URI       string  `json:"uri,omitempty"`
+	Inclusion string  `json:"inclusion,omitempty"`
+	Chars     int64   `json:"chars"`
+	Percent   float64 `json:"percent"`
+	Count     int     `json:"count,omitempty"`
+}
+
+// ContextPart is one named sub-total of a category.
+type ContextPart struct {
+	Key   string `json:"key"`
+	Chars int64  `json:"chars"`
+}
+
+// ContextMedia counts the images and documents a request attached.
+type ContextMedia struct {
+	ImageBytes    int64 `json:"image_bytes"`
+	DocumentBytes int64 `json:"document_bytes"`
+	Images        int   `json:"images"`
+	Documents     int   `json:"documents"`
 }
 
 // TurnThroughput is KAS's estimate of a turn's streamed model output: tokens
@@ -462,10 +518,8 @@ func SteerAckID(steerID string) string {
 	return steerID + ":ack"
 }
 
-// CompactionEntryID is a compaction entry's id, derived from the summary bytes so
-// the live handler and the replay projection mint one id for one compaction:
-// `compaction-` plus the first 16 hex digits of SHA-256 over summary, or
-// `compaction-empty-<emptyOrdinal>` for an empty summary, emptyOrdinal counting
+// CompactionEntryID derives a compaction's id from its summary so the live handler and the
+// replay projection agree. An empty summary is `compaction-empty-<emptyOrdinal>`, counting
 // the log's empty-summary compactions from 1.
 func CompactionEntryID(summary []byte, emptyOrdinal int) string {
 	if len(summary) == 0 {
@@ -475,8 +529,8 @@ func CompactionEntryID(summary []byte, emptyOrdinal int) string {
 	return "compaction-" + hex.EncodeToString(sum[:8])
 }
 
-// EntryToolCallOf is the tool_call payload for a call as the wire created it: the
-// same fields as the card type minus the v2 sub-session attribution.
+// EntryToolCallOf is the tool_call payload for a call as the wire created it: the card's
+// fields minus Offload and Interaction, which only a result carries.
 func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 	return EntryToolCall{
 		ID:             tc.ID,

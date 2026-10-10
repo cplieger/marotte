@@ -18,19 +18,17 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// mcpServerState aliases marotte.MCPServerState.
 type mcpServerState = marotte.MCPServerState
 
 const (
-	mcpStateIdle      mcpServerState = "idle"
 	mcpStateConnected mcpServerState = "connected"
 	mcpStateOAuth     mcpServerState = "needs_auth"
 	mcpStateFailed    mcpServerState = "failed"
 	mcpStateDisabled  mcpServerState = "disabled"
 )
 
-// mcpServerRuntime is one server's record. Origin "user" attaches it to marotte's own row;
-// anything else gives it a read-only row. Shadows marks one occupying a configured name.
+// Origin "user" attaches it to marotte's own row; anything else gives it a read-only row. Shadows
+// marks one occupying a configured name.
 type mcpServerRuntime struct {
 	Name              string
 	State             mcpServerState
@@ -49,7 +47,6 @@ type mcpServerRuntime struct {
 	Shadows bool
 }
 
-// mcpRegistry is the in-memory view of connected MCP servers plus its routes and live-chat-bridge calls.
 type mcpRegistry struct {
 	// bridges looks up a chat's live bridge; live control needs a chat bridge, not the utility one.
 	bridges *bridgeManager
@@ -83,8 +80,8 @@ func newMCPRegistry(bridges *bridgeManager, b *bus, lt *lifetime, cfg mcpNameSet
 	return r
 }
 
-// SetOnChange wires an invalidation callback fired outside the lock on every mutation, starting the debounce goroutine on first call.
-func (reg *mcpRegistry) SetOnChange(fn func()) {
+// setOnChange wires an invalidation callback fired outside the lock on every mutation, starting the debounce goroutine on first call.
+func (reg *mcpRegistry) setOnChange(fn func()) {
 	reg.mu.Lock()
 	first := reg.onChange == nil && fn != nil
 	reg.onChange = fn
@@ -94,8 +91,8 @@ func (reg *mcpRegistry) SetOnChange(fn func()) {
 	}
 }
 
-// Snapshot returns a deep copy of the registry, sorted by server name.
-func (reg *mcpRegistry) Snapshot() []mcpServerRuntime {
+// snapshot returns a deep copy of the registry, sorted by server name.
+func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
 	out := make([]mcpServerRuntime, 0, len(reg.servers))
@@ -128,7 +125,6 @@ func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, src ma
 	reg.signalChange()
 }
 
-// setPool replaces bridge's pool with one status frame's snapshot.
 func (reg *mcpRegistry) setPool(bridge ACPBridge, servers []translate.MCPPoolServer) {
 	pool := make([]poolServerJSON, 0, len(servers))
 	for _, s := range servers {
@@ -191,9 +187,8 @@ var poolSelected = func() {}
 // servingPoolAttempts bounds the re-reads a bridge replacement can force.
 const servingPoolAttempts = 3
 
-// servingPool is the pool of the bridge serving chatID at read time. A failed session/load can
-// swap the bridge mid-read while the old pool is still held, so the selection is re-checked;
-// one that keeps moving answers no pool.
+// A failed session/load can swap the bridge mid-read while the old pool is still held, so the
+// selection is re-checked; one that keeps moving answers no pool.
 func (reg *mcpRegistry) servingPool(chatID marotte.ChatID) []poolServerJSON {
 	if reg.bridges == nil {
 		return nil
@@ -247,7 +242,7 @@ func (reg *mcpRegistry) RecordDisabled(ctx context.Context, name string, src mar
 	reg.signalChange()
 }
 
-// install replaces a server's record; every transition installs a fresh one, the pointer identity the relay reservation keys on.
+// Every transition installs a fresh one, the pointer identity the relay reservation keys on.
 func (reg *mcpRegistry) install(rec *mcpServerRuntime) {
 	reg.mu.Lock()
 	reg.servers[rec.Name] = rec
@@ -264,9 +259,7 @@ type oauthAttempt struct {
 	authURL string
 }
 
-// beginOAuthRelay reserves the relay for a server's pending authorization, returning the attempt
-// and the URL to check against. All under one lock: a concurrent paste gets errRelayAlreadyDone,
-// any other state errRelayNoFlow.
+// All under one lock: a concurrent paste gets errRelayAlreadyDone, any other state errRelayNoFlow.
 func (reg *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -311,7 +304,6 @@ func (reg *mcpRegistry) clearAll(ctx context.Context) {
 	reg.signalChange()
 }
 
-// mcpProvenance is where a reported server came from, resolved by originFor.
 type mcpProvenance struct {
 	origin  marotte.Origin
 	root    string
@@ -319,7 +311,6 @@ type mcpProvenance struct {
 	shadows bool
 }
 
-// record builds a fresh runtime record carrying this provenance.
 func (p mcpProvenance) record(name string, state mcpServerState) *mcpServerRuntime {
 	return &mcpServerRuntime{
 		Name:        name,
@@ -365,8 +356,8 @@ func (reg *mcpRegistry) userOrigin(ctx context.Context, name string) marotte.Ori
 	return marotte.OriginUnknown
 }
 
-// statusServer is the JSON projection of mcpServerRuntime. Field order must match that struct:
-// handleStatus converts directly, so a reorder is a compile error, not a silent swap.
+// Field order must match that struct: handleStatus converts directly, so a reorder is a compile
+// error, not a silent swap.
 type statusServer struct {
 	Name  string                 `json:"name"`
 	State marotte.MCPServerState `json:"state"`
@@ -387,13 +378,12 @@ type statusServer struct {
 	Shadows bool `json:"shadows,omitempty"`
 }
 
-// mcpStatusResponse is the typed response for the MCP status endpoint.
 type mcpStatusResponse struct {
 	Servers []statusServer `json:"servers"`
 }
 
 func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	snap := reg.Snapshot()
+	snap := reg.snapshot()
 	out := make([]statusServer, len(snap))
 	for i := range snap {
 		out[i] = statusServer(snap[i])

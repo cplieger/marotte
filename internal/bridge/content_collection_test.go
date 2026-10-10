@@ -113,7 +113,7 @@ func TestContentCollectionApplied_IsKnownOnlyOnceKASConfirmedTheValue(t *testing
 			}
 			defer b.Stop()
 
-			enabled, known := b.ContentCollectionApplied()
+			enabled, known := b.contentCollectionState()
 			if known != tc.wantKnown || (known && !enabled) {
 				t.Errorf("ContentCollectionApplied() after the session door against a reply reporting enabled = (%v, %v), want known %v",
 					enabled, known, tc.wantKnown)
@@ -151,7 +151,7 @@ func TestAssertContentCollection_AStaleDoorWriteNeverLandsLast(t *testing.T) {
 			return false, true
 		}
 		go func() {
-			_, err := b.AssertContentCollection(t.Context())
+			_, err := b.assertContentCollection(t.Context())
 			pushDone <- err
 		}()
 		select {

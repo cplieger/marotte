@@ -27,12 +27,12 @@ func TestTagOf_MatchesTheCrossLanguageGolden(t *testing.T) {
 		t.Fatal("golden holds no case")
 	}
 	for _, tc := range cases {
-		got := TagOf(tc.Endpoint)
+		got := tagOf(tc.Endpoint)
 		if got != tc.Tag {
 			t.Errorf("TagOf(%q) = %q, want %q", tc.Endpoint, got, tc.Tag)
 		}
-		if len(got) != TagLen {
-			t.Errorf("TagOf(%q) has length %d, want %d", tc.Endpoint, len(got), TagLen)
+		if len(got) != tagLen {
+			t.Errorf("TagOf(%q) has length %d, want %d", tc.Endpoint, len(got), tagLen)
 		}
 		if !webhttp.ValidRequestID(got) {
 			t.Errorf("TagOf(%q) = %q is outside the SSE-Client grammar", tc.Endpoint, got)
@@ -44,8 +44,8 @@ func TestTagOf_MatchesTheCrossLanguageGolden(t *testing.T) {
 // their token part fold to two tags: a truncation that collided them would let
 // one device's presence silence another's pushes.
 func TestTagOf_DistinctEndpointsDistinctTags(t *testing.T) {
-	a := TagOf("https://fcm.googleapis.com/fcm/send/aaa")
-	b := TagOf("https://fcm.googleapis.com/fcm/send/aab")
+	a := tagOf("https://fcm.googleapis.com/fcm/send/aaa")
+	b := tagOf("https://fcm.googleapis.com/fcm/send/aab")
 	if a == b {
 		t.Errorf("TagOf collided two endpoints on %q", a)
 	}

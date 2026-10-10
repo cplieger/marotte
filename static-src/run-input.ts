@@ -10,8 +10,7 @@ import type { RunInputNeededPayload } from "./types.js";
 /** `null` is "continue without answering"; a string is the answer. */
 type SubmitFn = (text: string | null) => void;
 
-/** Hand the question to the agent that launched this run. Rejects when the hand-off did not go
- *  out, which is what re-enables the button. */
+/** Rejects when the hand-off did not go out, which is what re-enables the button. */
 type DeferFn = () => void | Promise<void>;
 
 /** Build the dock card for one parked workflow step. `onDefer`'s PRESENCE is the chat-parented

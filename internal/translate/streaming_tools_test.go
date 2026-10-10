@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// lineRec is a recording LineRecorder so the diff gates are observable.
+// lineRec is a recording lineRecorder so the diff gates are observable.
 type lineRec struct {
 	lastDiffs []marotte.ToolDiff
 	calls     int
@@ -27,7 +27,6 @@ func (r *lineRec) RecordFromDiffs(_ marotte.ChatID, diffs []marotte.ToolDiff, re
 	r.lastRecency = recency
 }
 
-// lineDeps wraps baseDeps and records the line-tracking calls.
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
@@ -40,7 +39,6 @@ func (d *lineDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDi
 	d.rec.RecordFromDiffs(chatID, diffs, turn, kind)
 }
 
-// workDirDeps wraps baseDeps and overrides WorkDir for relPath tests.
 type workDirDeps struct {
 	*baseDeps
 	workDir string
@@ -58,14 +56,12 @@ type hookStatusDeps struct {
 func (d *hookStatusDeps) IsHookStatusEnabled() bool { return d.enabled }
 
 var (
-	_ LineRecorder = (*lineRec)(nil)
+	_ lineRecorder = (*lineRec)(nil)
 	_ hostDouble   = (*lineDeps)(nil)
 	_ hostDouble   = (*workDirDeps)(nil)
 	_ hostDouble   = (*hookStatusDeps)(nil)
 )
 
-// newLineCaptureDeps builds an event-capturing baseDeps with a recording
-// LineTracker spliced in.
 func newLineCaptureDeps() (*lineDeps, *lineRec, *[]marotte.ServerEvent) {
 	base, events := newEventCaptureDeps()
 	rec := &lineRec{}
@@ -158,7 +154,6 @@ func foldToolCallUpdates(t *testing.T, seed marotte.ToolCall, events *[]marotte.
 	return out, sawUpdate
 }
 
-// decodePayload is the entry's payload as T.
 func decodePayload[T any](t *testing.T, e *marotte.Entry) T {
 	t.Helper()
 	var v T
@@ -980,23 +975,69 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 	}
 }
 
+// TestToolCallUpdate_RefusedWorkflowSaveReadsAsDeclined pins the same outcome for
+// `save_workflow_definition`, which concludes Success with `saved: false` on a refusal.
+func TestToolCallUpdate_RefusedWorkflowSaveReadsAsDeclined(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		raw          any
+		wantDeclined bool
+	}{
+		{"a refused save", map[string]any{"saved": false, "errorCount": 1}, true},
+		// `saved` travels on every reply, so reading its PRESENCE would mark every save refused.
+		{"a saved definition", map[string]any{"saved": true, "workflowRef": "wf-def:x"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, deps, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "completed",
+				"rawOutput":  c.raw,
+			}), FrameAttribution{})
+
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_progress or tool_result frame emitted")
+			}
+			if got.Declined != c.wantDeclined {
+				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
+			}
+			if got.Status != marotte.ToolCompleted {
+				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, marotte.ToolCompleted)
+			}
+		})
+	}
+}
+
 // TestToolCallUpdate_DeclinedOnlyGradesASettledCall pins the status gate: an in-flight
-// frame has reported nothing yet.
+// frame has reported nothing yet, whichever workflow tool's verdict it carries.
 func TestToolCallUpdate_DeclinedOnlyGradesASettledCall(t *testing.T) {
 	t.Parallel()
-	tr, _, deps, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"status":     "in_progress",
-		"rawOutput":  map[string]any{"updated": false, "message": "not yet"},
-	}), FrameAttribution{})
+	for name, raw := range map[string]map[string]any{
+		"update": {"updated": false, "message": "not yet"},
+		"save":   {"saved": false, "errorCount": 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, deps, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "in_progress",
+				"rawOutput":  raw,
+			}), FrameAttribution{})
 
-	got, ok := lastToolCallUpdate(t, deps, events)
-	if !ok {
-		t.Fatal("no tool_progress or tool_result frame emitted")
-	}
-	if got.Declined {
-		t.Error("ToolCall.Declined on an in_progress frame = true, want false")
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_progress or tool_result frame emitted")
+			}
+			if got.Declined {
+				t.Errorf("ToolCall.Declined on an in_progress frame with rawOutput %v = true, want false", raw)
+			}
+		})
 	}
 }
 
@@ -1128,6 +1169,50 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 	}
 	if got.Output != "FAIL: 2 tests failed\n" {
 		t.Errorf("ToolCall.Output = %q, want the command's own output alone", got.Output)
+	}
+}
+
+// TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted pins the stop grade: KAS
+// settles a call its cancel stopped as `failed`, the reader's stop makes it `aborted`, and a
+// completion or a failure with no stop keeps KAS's status.
+func TestHandleToolCallUpdate_AFailureAfterTheReadersStopSettlesAborted(t *testing.T) {
+	t.Parallel()
+	const l6 = "This tool was interrupted before it reported a result, so it may or may not have taken effect."
+	cases := []struct {
+		name    string
+		status  string
+		want    marotte.ToolStatus
+		stopped bool
+	}{
+		{name: "failed after the stop", status: "failed", stopped: true, want: marotte.ToolAborted},
+		{name: "failed with no stop", status: "failed", want: marotte.ToolFailed},
+		{name: "completed after the stop", status: "completed", stopped: true, want: marotte.ToolCompleted},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, deps, events, chatID := primeToolCall(t)
+			deps.stopped = map[string]bool{deps.turns.chats[chatID].ID(): c.stopped}
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     c.status,
+				"rawOutput":  l6,
+				"content": []map[string]any{
+					{"type": "content", "content": map[string]any{"type": "text", "text": l6}},
+				},
+			}), FrameAttribution{})
+
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_progress or tool_result frame emitted")
+			}
+			if got.Status != c.want {
+				t.Errorf("ToolCall.Status for a %q frame (stopped=%v) = %q, want %q", c.status, c.stopped, got.Status, c.want)
+			}
+			if got.Output != l6+"\n" {
+				t.Errorf("ToolCall.Output = %q, want KAS's sentence kept on the card", got.Output)
+			}
+		})
 	}
 }
 
@@ -1422,7 +1507,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
 
-		got := tr.parseToolUpdateContent("tc-1", []ACPToolCallContentBlock{
+		got := tr.parseToolUpdateContent("tc-1", []acpToolCallContentBlock{
 			{Type: "structuredContent"},
 		})
 
@@ -1456,10 +1541,10 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 		// rather than on whether an arm matched.
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
-		tr.parseToolUpdateContent("tc-3", []ACPToolCallContentBlock{
-			{Type: ContentTypeContent},
-			{Type: ContentTypeDiff},
-			{Type: ContentTypeTerminal},
+		tr.parseToolUpdateContent("tc-3", []acpToolCallContentBlock{
+			{Type: contentTypeContent},
+			{Type: contentTypeDiff},
+			{Type: contentTypeTerminal},
 		})
 		line := logs.String()
 		if strings.Contains(line, "unmodelled type") {
@@ -1474,10 +1559,10 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	t.Run("a block that renders logs nothing", func(t *testing.T) {
 		var logs bytes.Buffer
 		t.Cleanup(captureSlog(&logs))
-		// ACPToolCallContentBlock.Content is an anonymous struct, so a literal would restate it.
-		blk := ACPToolCallContentBlock{Type: ContentTypeContent}
+		// acpToolCallContentBlock.Content is an anonymous struct, so a literal would restate it.
+		blk := acpToolCallContentBlock{Type: contentTypeContent}
 		blk.Content.Text = "hello"
-		got := tr.parseToolUpdateContent("tc-4", []ACPToolCallContentBlock{blk})
+		got := tr.parseToolUpdateContent("tc-4", []acpToolCallContentBlock{blk})
 		if got.output == "" {
 			t.Fatal("a content block with text produced no output")
 		}
@@ -1490,7 +1575,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 // TestKnownToolContentType lists the closed set rather than deriving it, which would agree
 // with any switch.
 func TestKnownToolContentType(t *testing.T) {
-	for _, known := range []string{ContentTypeContent, ContentTypeDiff, ContentTypeTerminal} {
+	for _, known := range []string{contentTypeContent, contentTypeDiff, contentTypeTerminal} {
 		if !knownToolContentType(known) {
 			t.Errorf("knownToolContentType(%q) = false, want true", known)
 		}
@@ -1538,7 +1623,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			got := toolCallFromWire(
-				&ACPToolCallWire{ToolCallID: "tc", Title: tc.in},
+				&acpToolCallWire{ToolCallID: "tc", Title: tc.in},
 				"", toolUpdateContent{}, 0,
 			)
 			if got.Title != tc.want {
@@ -1552,7 +1637,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 // snapshot or the working pill.
 func TestToolCallTitle_IsBounded(t *testing.T) {
 	long := strings.Repeat("x", 4096)
-	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", toolUpdateContent{}, 0)
+	got := toolCallFromWire(&acpToolCallWire{ToolCallID: "tc", Title: long}, "", toolUpdateContent{}, 0)
 	// The preset's "..." sits OUTSIDE the cap.
 	if maxLen := maxDisplayTextBytes + len("..."); len(got.Title) > maxLen {
 		t.Errorf("title length = %d, want at most %d bytes", len(got.Title), maxLen)
@@ -1583,7 +1668,7 @@ func TestToolCallUpdate_OffloadAdoptedFromTheSettlingFrame(t *testing.T) {
 }
 
 func TestOffloadFrom_RefusesWhatIsNotAnOffloadedFile(t *testing.T) {
-	for name, in := range map[string]*ACPOutputTransformation{
+	for name, in := range map[string]*acpOutputTransformation{
 		"absent":        nil,
 		"other_kind":    {Kind: "clipped", AbsFilePath: "/a/b.txt", TotalChars: 1},
 		"relative_path": {Kind: "offloaded", AbsFilePath: "b.txt", TotalChars: 1},

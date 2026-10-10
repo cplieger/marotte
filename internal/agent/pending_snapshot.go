@@ -35,11 +35,11 @@ func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (marotte.PendingSnapsh
 	}
 	version, _ := rt.versions.Current(subject.KindPending, "")
 	step(0)
-	events := rt.bus.pendingPerms.List("")
+	events := rt.bus.pendingPerms.list("")
 	step(1)
-	events = append(events, rt.runs.asks.List("")...)
+	events = append(events, rt.runs.asks.list("")...)
 	step(2)
-	events = append(events, rt.bus.steers.List("")...)
+	events = append(events, rt.bus.steers.list("")...)
 	step(3)
 	items := make([]json.RawMessage, 0, len(events))
 	for i := range events {

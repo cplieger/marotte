@@ -11,12 +11,10 @@ export const H = {
   apiGetTyped: vi.fn(),
   apiPost: vi.fn(),
   ensureForges: vi.fn(),
-  /** Every handler the tab registered on the bus, by event name. */
   sse: new Map<string, (chatID: string, payload: unknown) => void>(),
   bus: new Map<string, (payload: unknown) => void>(),
 };
 
-/** The two callbacks the tab hands to its filter popup. */
 interface FilterSeam {
   note?: boolean;
   query: (q: string, ctx: unknown) => unknown;
@@ -24,7 +22,6 @@ interface FilterSeam {
 }
 
 let filterSeam: FilterSeam | null = null;
-/** Every note the tab wrote; the last one is what the box shows. */
 export const notes: string[] = [];
 
 /** Type into the filter box, exactly as the popup does: `query` records the
@@ -38,7 +35,6 @@ export function applyFilter(q: string): void {
   filterSeam.render(result, q);
 }
 
-/** What each suite's `vi.mock` factory lays over the real module. */
 export const mocks = {
   apiClient: () => ({ apiGet: H.apiGet, apiGetTyped: H.apiGetTyped, apiPost: H.apiPost }),
   forgeStore: () => ({ ensureForges: H.ensureForges }),
@@ -159,7 +155,6 @@ function action(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-/** One open pull request in `repos[repo]`. */
 export function pr(
   number: number,
   repo = 0,
@@ -205,7 +200,6 @@ export function entry(
   };
 }
 
-/** The inventory read's answer over `entries`, each with its stamp. */
 export function inventory(...entries: Record<string, unknown>[]): Record<string, unknown> {
   return {
     entries,
@@ -224,7 +218,6 @@ export const inventoryAnswer: { next: () => Promise<unknown> } = {
   next: () => Promise.resolve(inventory()),
 };
 
-/** Serve the forge list and the inventory. */
 export function routeAPI(opts: { forgesNull?: boolean; forges?: readonly Forge[] } = {}): void {
   const forges = opts.forges ?? [githubForge];
   H.ensureForges.mockImplementation(() =>
@@ -238,7 +231,6 @@ export function routeAPI(opts: { forgesNull?: boolean; forges?: readonly Forge[]
   });
 }
 
-/** Answer the inventory read with these entries from now on. */
 export function serve(...entries: Record<string, unknown>[]): void {
   inventoryAnswer.next = () => Promise.resolve(inventory(...entries));
 }
@@ -252,7 +244,6 @@ export function serveRows(
   serve(entry(forge, cycle, rows));
 }
 
-/** Deliver one forge_inventory frame, as the stream does. */
 export function frame(e: Record<string, unknown>): void {
   const fn = H.sse.get("forge_inventory");
   if (fn === undefined) {
@@ -280,7 +271,6 @@ export function mount(): HTMLElement {
   return el;
 }
 
-/** Every URL the tab read or asked for, through either GET helper. */
 export function requestedURLs(): string[] {
   return [...H.apiGet.mock.calls, ...H.apiGetTyped.mock.calls].map((c: unknown[]) => String(c[0]));
 }
@@ -295,7 +285,6 @@ export function handle(outcome: Promise<Record<string, unknown>>): unknown {
   return Object.assign(value, { outcome, abort: vi.fn() });
 }
 
-/** A handle that succeeds with `value`. */
 export function succeeds(value: unknown): unknown {
   return handle(Promise.resolve({ status: "success", value }));
 }

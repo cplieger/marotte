@@ -4,9 +4,8 @@ import { type Subject, type VersionMap, createVersionMap } from "@cplieger/sse";
 
 import type { SubjectStamp } from "./wire/types.gen.js";
 
-/** Where a recorded stamp is reported beyond this map. Under the worker host the tab
- *  forwards it, so the host's map holds every version the profile's tabs hold and one
- *  digest serves them all. */
+/** Under the worker host the tab forwards it, so the host's map holds every version the profile's
+ *  tabs hold and one digest serves them all. */
 type ObserveSink = (subject: Subject, version: string, epoch: string) => void;
 
 let map: VersionMap = createVersionMap();
@@ -49,6 +48,7 @@ export function forgetSubject(kind: string, ref: string): void {
 }
 
 /** A fresh, unbound map with no reporter. Test isolation only; production never resets. */
+// deadset:ignore DS1004 -- test seam: resets the subject version map and its reporter
 export function _resetForTest(): void {
   map = createVersionMap();
   sink = null;

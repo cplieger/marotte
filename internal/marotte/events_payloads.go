@@ -100,8 +100,10 @@ type PermissionNeededPayload struct {
 	Files []ApprovalFile `json:"files,omitempty"`
 	// ConsentRound counts the asks one tool call has raised, from 1; KAS can ask
 	// again for the same toolCallId.
-	ConsentRound int   `json:"consent_round,omitempty"`
-	RequestID    int64 `json:"request_id"`
+	ConsentRound int `json:"consent_round,omitempty"`
+	// RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
+	// never the ACP request id, which every bridge mints from zero. All three asks share it.
+	RequestID int64 `json:"request_id"`
 	// AdminRequired marks an ask raised by the administrator's rules, which a
 	// person must answer: the card says so, and unattended runs refuse it.
 	AdminRequired bool `json:"admin_required,omitempty"`
@@ -173,10 +175,14 @@ const (
 	// operator knows a machine made the choice, and on which side it defaults.
 	SettledByUnattended SettledBy = "unattended"
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
-	// answerable. The other two both ASSERT an answer, so retiring a discarded ask under
+	// answerable. User and unattended both ASSERT an answer, so retiring a discarded ask under
 	// one of them would tell the reader their question was decided. A run ask carries it,
 	// and so does a request KAS withdrew itself (interaction_resolved, outcome cancelled).
 	SettledByMoot SettledBy = "moot"
+	// SettledByEnded means nobody answered and nobody now can: the bridge the ask arrived on
+	// ended, and an answer may only go back on that bridge. Separate from moot because the
+	// reader is owed the reason the card went.
+	SettledByEnded SettledBy = "ended"
 )
 
 // DecisionSettledPayload is the payload for type="decision_settled": the request named
@@ -264,12 +270,17 @@ const (
 	// ErrCodeAuthTokenUnavailable means the backend rejected the active credential.
 	// The client offers sign-in instead of retrying the turn.
 	ErrCodeAuthTokenUnavailable ErrorCode = "auth_token_unavailable" //nolint:gosec // G101: an SSE error code, not a credential
+	// ErrCodeTangentMergeFailed means a tangent merge stopped after it was accepted: the summary
+	// turn did not finish cleanly, or its summary could not be delivered.
+	ErrCodeTangentMergeFailed ErrorCode = "tangent_merge_failed"
 )
 
 // ErrorPayload is the payload for type="error"; Code lets clients react per-class.
 type ErrorPayload struct {
 	Code    ErrorCode `json:"code"`
 	Message string    `json:"message"`
+	// OpID is the client-minted op_id of the command this failure ends, when it carried one.
+	OpID string `json:"op_id,omitempty"`
 	// TurnScoped reports that this failure finalized a turn whose entry log now carries
 	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
 	// not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
@@ -632,6 +643,13 @@ type ToolJobOutputPayload struct {
 // SettingsUpdatedPayload is the payload for type="settings_updated".
 type SettingsUpdatedPayload struct{}
 
+// TangentMergedPayload is the payload for type="tangent_merged": the summary reached
+// ParentChatID as a prompt or a queued follow-up. OpID echoes the merge_tangent command's.
+type TangentMergedPayload struct {
+	ParentChatID string `json:"parent_chat_id"`
+	OpID         string `json:"op_id,omitempty"`
+}
+
 // SteerQueuedPayload is the payload for type="steer_queued": a mid-turn steer reached KAS's
 // per-session buffer and is waiting for the next node boundary. Text travels even though the
 // sender has it, because the chip row is a projection of server state and must be
@@ -646,6 +664,10 @@ type SteerQueuedPayload struct {
 	Origin SteerOrigin `json:"origin"`
 	// State is the row's dock state; a batch frame is always queued.
 	State SteerRowState `json:"state"`
+	// WorkflowID and NodePath are set on a RUN STEP's row (its frame carries no chat id): the run
+	// tab's dock for that step holds it.
+	WorkflowID string `json:"workflow_id,omitempty"`
+	NodePath   string `json:"node_path,omitempty"`
 	// Replaces is set on a BATCH frame: SteerID is an id KAS holds several rows (or one
 	// re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
 	// a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.

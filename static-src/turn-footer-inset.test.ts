@@ -12,20 +12,15 @@ let phone: Document;
 
 type Trailing = "actions" | "rewind";
 
-/** The card this helper last mounted, per document. */
 const mounted = new WeakMap<Document, HTMLElement>();
 
 interface Mounted {
   card: HTMLElement;
   footer: HTMLElement;
   ledger: HTMLElement;
-  /** The `i`, whose leading edge is the ink the gutter is about. */
   info: HTMLElement;
-  /** The header's request text, the ink the footer's has to line up with. */
   headerText: HTMLElement;
   last: HTMLElement;
-  /** The panel the ledger opens, and the two rows of ink the gutter has to hold off
-   *  its four edges. */
   panel: HTMLElement;
   title: HTMLElement;
   lastRow: HTMLElement;
@@ -142,9 +137,7 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
 interface MountedDelegate {
   footer: HTMLElement;
   ledger: HTMLElement;
-  /** The `i`, whose leading edge is the ink the gutter is about. */
   info: HTMLElement;
-  /** The header's identity glyph, the ink this card's foot has to line up with. */
   headerInk: Element;
   last: HTMLElement;
 }
@@ -213,7 +206,6 @@ function band(footer: HTMLElement): number {
   return +footer.getBoundingClientRect().height.toFixed(2);
 }
 
-/** The gaps between a child's box and the band it sits in. */
 function insets(
   footer: HTMLElement,
   child: HTMLElement,

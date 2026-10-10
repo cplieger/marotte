@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// zipNames reads an archive back into name -> contents.
 func zipNames(t *testing.T, raw []byte) map[string]string {
 	t.Helper()
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))

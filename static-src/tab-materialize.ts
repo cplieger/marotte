@@ -13,9 +13,8 @@ import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 
 // --- The injected half ---
 
-/** Chat behaviour, from chat.ts. `dot` is injected because the pending-ask half of
- *  it reads the decision dock, which is not a leaf module; `close` is the chat's
- *  CLIENT-LOCAL teardown, whoever closed the tab. */
+/** `dot` is injected because the pending-ask half of it reads the decision dock, which is not a leaf
+ *  module; `close` is the chat's CLIENT-LOCAL teardown, whoever closed the tab. */
 interface ChatTabOpener {
   show: (chatID: string) => void;
   refresh: (chatID: string) => void;
@@ -23,32 +22,30 @@ interface ChatTabOpener {
   dot: (chatID: string) => TabDotStatus | "";
 }
 
-/** Editor behaviour, from editor-openers.ts. A subject carries the path and nothing
- *  else; content, dirty state, mode and line selection live in `fileStates`. */
+/** A subject carries the path and nothing else; content, dirty state, mode and line selection live
+ *  in `fileStates`. */
 interface EditorTabOpener {
   show: (path: string) => void;
   refresh: (path: string) => void;
   close: (path: string) => void;
 }
 
-/** Run behaviour, from run-view.ts. No `owns` and no `cancel`: a run tab is always a
- *  VIEW, and nothing that closes a tab cancels a run. */
+/** No `owns` and no `cancel`: a run tab is always a VIEW, and nothing that closes a tab cancels a
+ *  run. */
 interface RunTabOpener {
   show: (workflowID: string) => void;
   refresh: (workflowID: string) => void;
 }
 
-/** Subagent behaviour, from subagent-view.ts. No `close` half: the tab is a reading
- *  surface over blocks the chat store owns, so it starts nothing and can stop
- *  nothing, and every door opens it with `owns: false`. */
+/** No `close` half: the tab is a reading surface over blocks the chat store owns, so it starts
+ *  nothing and can stop nothing, and every door opens it with `owns: false`. */
 interface SubagentTabOpener {
   show: (chatID: string, subtaskID: string) => void;
   refresh: (chatID: string, subtaskID: string) => void;
 }
 
-/** Spec behaviour, from spec-view.ts. No `close` half for the subagent opener's
- *  reason: the page is a view over documents Kiro writes on disk, so closing it
- *  stops nothing, and every door opens it with `owns: false`. */
+/** No `close` half for the subagent opener's reason: the page is a view over documents Kiro writes
+ *  on disk, so closing it stops nothing, and every door opens it with `owns: false`. */
 interface SpecTabOpener {
   show: (dir: string) => void;
   refresh: (dir: string) => void;
@@ -83,6 +80,7 @@ function requireOpeners(kind: TabKind): TabOpeners {
 }
 
 /** Drop the registration. Test isolation only; production never unregisters. */
+// deadset:ignore DS1004 -- test seam: resets the registered tab openers
 export function _resetTabOpenersForTest(): void {
   openers = null;
 }

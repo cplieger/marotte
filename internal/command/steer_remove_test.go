@@ -16,8 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// steerBridge answers each method from a script and records every call in order,
-// with whether the call's context was still live when it went out.
 type steerBridge struct {
 	*recordingBridge
 	results   map[string]any
@@ -135,7 +133,7 @@ func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 			q := clearingQueue()
 			q.removeRef = tc.refuse
 
-			_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-a"))
+			_, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-a"))
 
 			if statusOf(err) != tc.wantStatus || reasonOf(err) != tc.wantReason {
 				t.Errorf("CmdSteerRemove(refused %q) = %d %q, want %d %q",
@@ -152,7 +150,7 @@ func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 func TestCmdSteerRemove_ARowKASDoesNotHoldGoesWithoutAClear(t *testing.T) {
 	b := newSteerBridge()
 
-	body, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), newStubSteerQueue()), removeReq(t, "c1", "steer-a"))
+	body, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), newStubSteerQueue()), removeReq(t, "c1", "steer-a"))
 	if err != nil {
 		t.Fatalf("CmdSteerRemove = %v, want success", err)
 	}
@@ -173,7 +171,7 @@ func TestCmdSteerRemove_ClearsThenResendsTheKeptRowsAsOneSteer(t *testing.T) {
 	q.removeRes = SteerOpResult{Resend: &SteerSend{ID: "steer-p", Text: "first\n\nthird", Keys: []string{"steer-a", "steer-c"}}}
 	ledger := NewSteerLedger()
 
-	body, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), ledger, q), removeReq(t, "c1", "steer-b"))
+	body, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), ledger, q), removeReq(t, "c1", "steer-b"))
 	if err != nil {
 		t.Fatalf("CmdSteerRemove = %v, want success", err)
 	}
@@ -207,7 +205,7 @@ func TestCmdSteerRemove_AClearWithNoReplyIsAGatewayErrorAndSendsNothing(t *testi
 	q := clearingQueue()
 	q.removeRes = SteerOpResult{Reason: SteerRefuseNoReply}
 
-	_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
+	_, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
@@ -229,7 +227,7 @@ func TestCmdSteerRemove_AClearWhoseFramesNeverFoldChangesNothing(t *testing.T) {
 	q.unfolded = true
 	q.removeRes = SteerOpResult{Reason: SteerRefuseNoReply}
 
-	_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
+	_, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
@@ -251,7 +249,7 @@ func TestCmdSteerRemove_AFailedResubmitStillAnswersDeleted(t *testing.T) {
 	q := clearingQueue()
 	q.removeRes = SteerOpResult{Resend: &SteerSend{ID: "steer-p", Text: "first", Keys: []string{"steer-a"}}}
 
-	body, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
+	body, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
 	if err != nil {
 		t.Fatalf("CmdSteerRemove = %v, want success", err)
 	}
@@ -270,7 +268,7 @@ func TestCmdSteerRemove_AConsumedTargetStillResubmitsTheKeptRows(t *testing.T) {
 	q := clearingQueue()
 	q.removeRes = SteerOpResult{Reason: SteerRefuseConsumed, Resend: &SteerSend{ID: "steer-p", Text: "kept", Keys: []string{"steer-a"}}}
 
-	_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
+	_, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseNotWaiting {
 		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseNotWaiting)
@@ -286,7 +284,7 @@ func TestCmdSteerRemove_ATurnThatClosedUnderTheOpEndsTheOpBeforeTheUnlock(t *tes
 	b := newSteerBridge()
 	q := clearingQueue()
 
-	if _, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
+	if _, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
 		t.Fatalf("CmdSteerRemove = %v, want success", err)
 	}
 	log := q.callLog()
@@ -306,7 +304,7 @@ func TestCmdSteerClear_AStaleBindUnderTheClearRoutesBeforeTheUnlock(t *testing.T
 	q.parked = []string{"steer-w"}
 	host := &promptHolderHost{hostDouble: removeHost(b), turn: "t-p"}
 
-	_, err := CmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), q), clearReq("c1"))
+	_, err := cmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), q), clearReq("c1"))
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
 	}
@@ -317,7 +315,6 @@ func TestCmdSteerClear_AStaleBindUnderTheClearRoutesBeforeTheUnlock(t *testing.T
 	}
 }
 
-// promptHolderHost names a started prompt as the admission's prompt holder.
 type promptHolderHost struct {
 	hostDouble
 	turn string
@@ -325,7 +322,7 @@ type promptHolderHost struct {
 
 func (h *promptHolderHost) PromptHolder(marotte.ChatID) (string, bool) { return h.turn, h.turn != "" }
 
-func (h *promptHolderHost) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+func (*promptHolderHost) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return marotte.TurnSourcePrompt, true
 }
 
@@ -342,7 +339,7 @@ func TestCmdSteerRemove_ADisconnectMidOpStillResubmits(t *testing.T) {
 	q := clearingQueue()
 	q.removeRes = SteerOpResult{Resend: &SteerSend{ID: "steer-p", Text: "kept", Keys: []string{"steer-a"}}}
 
-	if _, err := CmdSteerRemove(ctx, steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
+	if _, err := cmdSteerRemove(ctx, steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
 		t.Fatalf("CmdSteerRemove = %v, want success", err)
 	}
 	steers := b.callsOf(marotte.MethodSessionSteer)
@@ -356,7 +353,7 @@ func TestCmdSteerClear_ARefusalReachesTheReaderAsItsClass(t *testing.T) {
 	q := clearingQueue()
 	q.discardRef = SteerRefuseChatGone
 
-	_, err := CmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
+	_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseChatGone {
 		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseChatGone)
@@ -382,7 +379,7 @@ func TestCmdSteerClear_AClearWithNoReplyIsAGatewayError(t *testing.T) {
 			tc.setup(b, q)
 			q.discardRes = SteerOpResult{Reason: SteerRefuseNoReply}
 
-			_, err := CmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
+			_, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), clearReq("c1"))
 
 			if statusOf(err) != http.StatusBadGateway {
 				t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
@@ -398,7 +395,7 @@ func TestCmdSteerClear_AClearWithNoReplyIsAGatewayError(t *testing.T) {
 func TestCmdSteerClear_NothingInKASCostsNoClear(t *testing.T) {
 	b := newSteerBridge()
 
-	body, err := CmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), newStubSteerQueue()), clearReq("c1"))
+	body, err := cmdSteerClear(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), newStubSteerQueue()), clearReq("c1"))
 	if err != nil {
 		t.Fatalf("CmdSteerClear = %v, want success", err)
 	}
@@ -410,8 +407,6 @@ func TestCmdSteerClear_NothingInKASCostsNoClear(t *testing.T) {
 	}
 }
 
-// resendHost scripts admission for the turn-end resend and records the prompt
-// entry the resend opens.
 type resendHost struct {
 	*bridgeDeps
 	onReserve func()
@@ -450,7 +445,7 @@ func (h *resendHost) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen
 }
 
 // OpenBridge refuses, so the prompt goroutine the resend starts ends at once.
-func (h *resendHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (*resendHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return nil, errors.New("no bridge in this test")
 }
 
@@ -478,7 +473,6 @@ func (h *resendHost) InflightDone() {
 	}
 }
 
-// waitInflight waits for every goroutine registered in flight to finish.
 func (h *resendHost) waitInflight(t *testing.T) {
 	t.Helper()
 	select {
@@ -488,7 +482,6 @@ func (h *resendHost) waitInflight(t *testing.T) {
 	}
 }
 
-// drainRoles wires a resend host and a scripted record into the drain's roles.
 func drainRoles(h hostDouble, q *stubSteerQueue) *promptRoles {
 	return steerRolesOf(h, NewSteerLedger(), q)
 }
@@ -510,6 +503,9 @@ func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	}
 	if p := h.opened[0]; p.Text != "first\n\nsecond" || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
 		t.Errorf("prompt = %+v, want the rows joined in order, naming both keys", p)
+	}
+	if got, want := h.opened[0].Label, "Resending 2 messages the agent had not read"; got != want {
+		t.Errorf("prompt label = %q, want %q: a resend is a message marotte wrote, so it is labelled", got, want)
 	}
 	if !slices.Equal(q.delivered, []string{"steer-a", "steer-b"}) {
 		t.Errorf("delivered = %v, want both keys retired after the open", q.delivered)
@@ -564,7 +560,7 @@ func TestResolveEnds_LeavesANewerTurnsEnd(t *testing.T) {
 	q.ends = []SteerEnd{{Owner: "end-1", End: SteerTurnEnd{TurnSeq: 1}}, {Owner: "end-2", End: SteerTurnEnd{TurnSeq: 2}}}
 	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first"}}
 
-	ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
+	resolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
 	if got := q.Ends("c1"); len(got) != 1 || got[0].Owner != "end-2" {
 		t.Errorf("ends left = %+v, want only the newer turn's", got)
@@ -602,7 +598,7 @@ func TestResolveEnds_AStrayIsClearedOnlyWithNoHolder(t *testing.T) {
 			q.ends = []SteerEnd{{Owner: "end-1", End: tc.end}}
 			q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
 
-			ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
+			resolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
 			log := q.callLog()
 			if !slices.Contains(log, tc.wantLog) || !slices.Contains(log, "end-unsent") {
@@ -629,7 +625,7 @@ func TestResolveEnds_ADeadBridgeThatHasNotDrainedIsReported(t *testing.T) {
 	q.ends = []SteerEnd{{Owner: "end-1", End: SteerTurnEnd{BridgeDeath: true, Exit: make(chan struct{})}}}
 	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
 
-	facts := ResolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
+	facts := resolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
 	if !facts.Death || !facts.Undrained {
 		t.Errorf("facts = %+v, want an undrained death", facts)
@@ -660,7 +656,7 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 			host := removeHost(b)
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			if _, err := CmdCancel(t.Context(), host, host, host, host, q, cmd); err != nil {
+			if _, err := cmdCancel(t.Context(), host, host, host, host, q, cmd); err != nil {
 				t.Fatalf("CmdCancel = %v", err)
 			}
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
@@ -686,10 +682,6 @@ func (o orderTeardown) CloseChatState(context.Context, marotte.ChatID) {
 	*o.log = append(*o.log, "close")
 }
 
-func (o orderTeardown) DeleteChatState(context.Context, marotte.ChatID) {
-	*o.log = append(*o.log, "delete")
-}
-
 func (o orderTeardown) DeleteChatStateByChain(_ context.Context, _ marotte.ChatID, _ []string, cause RunStopCause) {
 	entry := "delete-by-chain"
 	if cause == RunStopTabClosed {
@@ -703,15 +695,15 @@ func (o orderTeardown) DeleteChatStateByChain(_ context.Context, _ marotte.ChatI
 // that is closing.
 func TestChatTeardown_TheSteerRecordGoesBeforeTheCancel(t *testing.T) {
 	for _, tc := range []struct {
-		run  func(ctx context.Context, h hostDouble, td ChatTeardown)
+		run  func(ctx context.Context, h hostDouble, td chatTeardown)
 		name string
 		want []string
 	}{
-		{name: "close", run: func(ctx context.Context, h hostDouble, td ChatTeardown) {
-			closeChatTeardown(ctx, h, h, h, td, "c1")
+		{name: "close", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
+			closeChatTeardown(ctx, h, h, td, "c1")
 		}, want: []string{"begin keep=true", marotte.MethodCancel, "close"}},
-		{name: "delete", run: func(ctx context.Context, h hostDouble, td ChatTeardown) {
-			deleteChatTeardown(ctx, h, h, h, td, "c1", []string{"sess-1"})
+		{name: "delete", run: func(ctx context.Context, h hostDouble, td chatTeardown) {
+			deleteChatTeardown(ctx, h, h, td, "c1", []string{"sess-1"})
 		}, want: []string{"begin keep=false", marotte.MethodCancel, "delete-by-chain tab-closed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

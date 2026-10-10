@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// v3GovernanceState is the _kiro/governance/state notification payload.
 type v3GovernanceState struct {
 	SessionID      string               `json:"sessionId"`
 	DisabledReason string               `json:"disabledReason"`

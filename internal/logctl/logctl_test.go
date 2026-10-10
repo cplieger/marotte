@@ -11,9 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// snapshotLevel returns the currently-active slog level on the package's
-// shared levelVar. Package-internal access is intentional: it is the only
-// observable signal of Install/SetDebug, so the test lives in-package.
+// Package-internal access is intentional: it is the only observable signal of Install/SetDebug, so
+// the test lives in-package.
 func snapshotLevel() slog.Level { return levelVar.Level() }
 
 // restoreDefaultLogger snapshots slog.Default and restores it at cleanup, so Install's

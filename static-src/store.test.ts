@@ -1185,6 +1185,13 @@ describe("the steer dock holds what the agent has NOT read", () => {
     expect(get("a")?.steers).toBeUndefined();
   });
 
+  it("keeps a row a frame confirmed, which a lost reply's rollback cannot take back", () => {
+    recordSteerSent("a", "m1", "one");
+    recordSteerQueued("a", { id: "steer-m1", text: "one", origin: "user" });
+    forgetSteer("a", "steer-m1");
+    expect(get("a")?.steers).toEqual([{ id: "steer-m1", text: "one", origin: "user" }]);
+  });
+
   it("is a no-op when the id to forget is not held", () => {
     recordSteerSent("a", "m1", "one");
     const before = get("a");

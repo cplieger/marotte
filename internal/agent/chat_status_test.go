@@ -11,11 +11,10 @@ import (
 
 // Merge is MergeStamped without the stamp.
 func (c *chatStatusCache) Merge(chatID marotte.ChatID, p marotte.ChatStatusPayload) marotte.ChatStatusPayload {
-	merged, _ := c.MergeStamped(chatID, p)
+	merged, _ := c.mergeStamped(chatID, p)
 	return merged
 }
 
-// Get returns a chat's last status.
 func (c *chatStatusCache) Get(chatID marotte.ChatID) marotte.ChatStatusPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -43,7 +42,7 @@ func TestChatStatusCache(t *testing.T) {
 	}
 
 	// Cleared, so a later connect cannot report a finished turn's label.
-	c.Clear("c1")
+	c.clear("c1")
 	if got := c.Get("c1"); got.Status != "" {
 		t.Errorf("status %q survived the turn", got.Status)
 	}
@@ -51,13 +50,13 @@ func TestChatStatusCache(t *testing.T) {
 	// waiting_on_user is the one status ClearAtTurnEnd retains. It also ends when the user answers
 	// a structured channel (internal/command/discharge.go's dischargeByAnswer rows).
 	c.Merge("c2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
-	c.ClearAtTurnEnd("c2")
+	c.clearAtTurnEnd("c2")
 	if got := c.Get("c2"); got.Status != marotte.ChatStatusWaitingOnUser || got.Description != "needs a decision" {
 		t.Errorf("got %+v, want waiting_on_user retained whole past turn end", got)
 	}
 	// Every other status goes.
 	c.Merge("c3", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
-	c.ClearAtTurnEnd("c3")
+	c.clearAtTurnEnd("c3")
 	if got := c.Get("c3"); got.Status != "" {
 		t.Errorf("status %q survived turn end; only waiting_on_user is retained", got.Status)
 	}
@@ -71,7 +70,7 @@ func TestChatStatusCache(t *testing.T) {
 	// A both-empty payload must leave no entry; only Snapshot can tell.
 	c.Merge("c4", marotte.ChatStatusPayload{Status: "in_progress", Description: "x"})
 	c.Merge("c4", marotte.ChatStatusPayload{})
-	if _, ok := c.Snapshot()["c4"]; ok {
+	if _, ok := c.snapshot()["c4"]; ok {
 		t.Error("a both-empty Merge left a phantom entry; Get cannot see one, so assert through Snapshot")
 	}
 	// A status with no description is a real declaration and stays.
@@ -82,18 +81,18 @@ func TestChatStatusCache(t *testing.T) {
 
 	// ClearWaiting is narrower than Clear: it never deletes a status the running turn declared.
 	c.Merge("c6", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
-	if !c.ClearWaiting("c6") {
+	if !c.clearWaiting("c6") {
 		t.Error("ClearWaiting reported no claim for a retained waiting_on_user entry")
 	}
 	if got := c.Get("c6"); got.Status != "" {
 		t.Errorf("status %q survived ClearWaiting", got.Status)
 	}
-	if c.ClearWaiting("c6") {
+	if c.clearWaiting("c6") {
 		t.Error("ClearWaiting reported a claim for a chat with no entry")
 	}
 	// An in_progress entry belongs to its turn.
 	c.Merge("c7", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"})
-	if c.ClearWaiting("c7") {
+	if c.clearWaiting("c7") {
 		t.Error("ClearWaiting reported a claim for an in_progress entry")
 	}
 	if got := c.Get("c7"); got.Status != "in_progress" || got.Description != "reading the parser" {
@@ -216,8 +215,8 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 			}
 			if !tc.nextS && !tc.nextD {
 				// Get cannot tell an absent key from a stored {"",""}.
-				if n := len(c.Snapshot()); n != 0 {
-					t.Errorf("a both-empty next left %d entries, want 0: %+v", n, c.Snapshot())
+				if n := len(c.snapshot()); n != 0 {
+					t.Errorf("a both-empty next left %d entries, want 0: %+v", n, c.snapshot())
 				}
 				return
 			}
@@ -236,7 +235,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 		if got != declared {
 			t.Errorf("Merge returned %+v, want the declaration %+v: emit publishes this", got, declared)
 		}
-		if n := len(c.Snapshot()); n != 0 {
+		if n := len(c.snapshot()); n != 0 {
 			t.Errorf("an empty chat id recorded %d entries, want 0", n)
 		}
 	})
@@ -325,7 +324,6 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	}
 }
 
-// chatStatusFrames decodes the chat_status payloads out of a replay slice.
 func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStatusPayload {
 	t.Helper()
 	var out []marotte.ChatStatusPayload

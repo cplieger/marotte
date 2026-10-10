@@ -440,3 +440,73 @@
   color: var(--c-text-secondary);
   white-space: nowrap;
 }
+
+.docs-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+
+  & > .seg-bar {
+    flex: 1;
+    min-inline-size: 0;
+  }
+}
+
+/* Sized on every tab, empty or not, so switching tabs moves nothing. */
+.docs-new-slot {
+  flex: none;
+  inline-size: max(var(--btn-h), var(--hit-floor));
+  display: flex;
+  justify-content: center;
+}
+
+.docs-new-btn {
+  inline-size: 100%;
+  block-size: var(--btn-h);
+}
+
+.docs-new-popover {
+  z-index: 100;
+  inline-size: min(24rem, 100vw - 2rem);
+  max-block-size: 80dvh;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.5rem 1.5rem oklch(0% 0 none / 30%);
+}
+
+.docs-new-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
+}
+
+.docs-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+
+  & > .btn-small {
+    align-self: flex-end;
+  }
+}
+
+.docs-new-text {
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.docs-new-error {
+  margin: 0;
+  color: var(--c-red);
+  font-size: var(--fs-sm);
+
+  &:empty {
+    display: none;
+  }
+}

@@ -23,7 +23,7 @@ document.body.appendChild(scrollBottom);
 const { buildToolCard } = await import("./tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader, autoCollapseGroup } =
   await import("./tool-group.js");
-const { updateToolCall, mountToolCallCard, appendTerminalChunk, disposeAllToolEffects } =
+const { applyToolCallUpdate, mountToolCallCard, appendTerminalChunk, disposeAllToolEffects } =
   await import("./messages-tools.js");
 
 /** A live call with nothing disclosable yet; `other` gives depth 1 a details region. */
@@ -46,14 +46,18 @@ function frame(id: string, tc: Partial<ToolCall>): ToolCall {
 describe("a terminal frame carrying the failure AND its output", () => {
   it("auto-expands the card", () => {
     const card = liveCard("st-open");
-    updateToolCall(card, frame("st-open", { status: "failed", output: "exit status 2\n" }), "c1");
+    applyToolCallUpdate(
+      card,
+      frame("st-open", { status: "failed", output: "exit status 2\n" }),
+      "c1",
+    );
     expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("true");
     card.remove();
   });
 
   it("keeps the chevron", () => {
     const card = liveCard("st-chevron");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-chevron", { status: "failed", output: "exit status 2\n" }),
       "c1",
@@ -65,7 +69,7 @@ describe("a terminal frame carrying the failure AND its output", () => {
   it("offers Explain this error", () => {
     // Status applied before output would reach the Explain gate with an unpainted region and offer no button.
     const card = liveCard("st-explain");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-explain", { status: "failed", output: "exit status 2\n" }),
       "c1",
@@ -89,7 +93,7 @@ describe("a live call that has produced nothing YET", () => {
 
   it("gains one on its first output frame, still in flight", () => {
     const card = liveCard("st-inflight-out");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-inflight-out", { status: "in_progress", output: "step 1 of 3\n" }),
       "c1",
@@ -103,14 +107,22 @@ describe("a terminal frame whose output is blank", () => {
   it("paints nothing into the region", () => {
     // The predicate and the Explain gate both read this region as empty, so a `<pre>` here would be unreachable DOM.
     const card = liveCard("st-blank-pre");
-    updateToolCall(card, frame("st-blank-pre", { status: "completed", output: "   \n  \n" }), "c1");
+    applyToolCallUpdate(
+      card,
+      frame("st-blank-pre", { status: "completed", output: "   \n  \n" }),
+      "c1",
+    );
     expect(card.querySelector(".tool-output pre")).toBeNull();
     card.remove();
   });
 
   it("offers no Explain button on a failure", () => {
     const card = liveCard("st-blank-explain");
-    updateToolCall(card, frame("st-blank-explain", { status: "failed", output: "  \n" }), "c1");
+    applyToolCallUpdate(
+      card,
+      frame("st-blank-explain", { status: "failed", output: "  \n" }),
+      "c1",
+    );
     expect(card.querySelector(".tool-explain-btn")).toBeNull();
     // By name: an icon-only control that lost its `aria-label` and kept its class would satisfy the line above.
     expect(card.querySelector('[aria-label="Explain this error"]')).toBeNull();
@@ -121,24 +133,24 @@ describe("a terminal frame whose output is blank", () => {
 describe("a call that failed having produced nothing", () => {
   it("is not force-opened", () => {
     const card = liveCard("st-bare-open");
-    updateToolCall(card, frame("st-bare-open", { status: "failed" }), "c1");
+    applyToolCallUpdate(card, frame("st-bare-open", { status: "failed" }), "c1");
     expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
     card.remove();
   });
 
   it("loses its chevron", () => {
     const card = liveCard("st-bare-chevron");
-    updateToolCall(card, frame("st-bare-chevron", { status: "failed" }), "c1");
+    applyToolCallUpdate(card, frame("st-bare-chevron", { status: "failed" }), "c1");
     expect(card.querySelector(".tool-disclosure")).toBeNull();
     card.remove();
   });
 
   it("gets the chevron back if output arrives on a later frame", () => {
     const card = liveCard("st-bare-late");
-    updateToolCall(card, frame("st-bare-late", { status: "failed" }), "c1");
+    applyToolCallUpdate(card, frame("st-bare-late", { status: "failed" }), "c1");
     expect(card.querySelector(".tool-disclosure")).toBeNull();
 
-    updateToolCall(card, frame("st-bare-late", { output: "late stderr\n" }), "c1");
+    applyToolCallUpdate(card, frame("st-bare-late", { output: "late stderr\n" }), "c1");
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
     card.remove();
   });
@@ -149,7 +161,7 @@ describe("a call that failed having produced nothing", () => {
     const tc = frame("st-bare-term", { status: "in_progress", terminal_id: "term-1" });
     const card = mountToolCallCard("c1", tc);
     document.body.appendChild(card);
-    updateToolCall(card, frame("st-bare-term", { status: "failed" }), "c1");
+    applyToolCallUpdate(card, frame("st-bare-term", { status: "failed" }), "c1");
     expect(card.querySelector(".tool-disclosure")).toBeNull();
 
     appendTerminalChunk("term-1", "late stderr\n", [], 0);
@@ -170,8 +182,8 @@ describe("a group whose members ran LIVE and then settled", () => {
     document.body.appendChild(group);
     refreshGroupHeader(group);
 
-    updateToolCall(a, frame("st-fold-a", { status: "completed", duration_ms: 1200 }), "c1");
-    updateToolCall(b, frame("st-fold-b", { status: "completed", duration_ms: 3400 }), "c1");
+    applyToolCallUpdate(a, frame("st-fold-a", { status: "completed", duration_ms: 1200 }), "c1");
+    applyToolCallUpdate(b, frame("st-fold-b", { status: "completed", duration_ms: 3400 }), "c1");
     expect(a.dataset["startMs"]).toBeUndefined();
     expect(b.dataset["startMs"]).toBeUndefined();
 
@@ -188,7 +200,7 @@ describe("a group whose members ran LIVE and then settled", () => {
 describe("a frame carrying a refusal", () => {
   it("takes the refusal as its outcome, not the completed it rides on", () => {
     const card = liveCard("st-dec-mark");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-dec-mark", { status: "completed", declined: true, output: "plan rejected\n" }),
       "c1",
@@ -201,7 +213,7 @@ describe("a frame carrying a refusal", () => {
 
   it("opens the region without a click, because the reason IS the output", () => {
     const card = liveCard("st-dec-open");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-dec-open", { status: "completed", declined: true, output: "plan rejected\n" }),
       "c1",
@@ -213,7 +225,7 @@ describe("a frame carrying a refusal", () => {
   it("offers no Explain this error", () => {
     // Widening the failure branch to include `declined` would also offer this button, for a tool that did as asked.
     const card = liveCard("st-dec-explain");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-dec-explain", { status: "completed", declined: true, output: "plan rejected\n" }),
       "c1",
@@ -227,7 +239,7 @@ describe("a frame carrying a refusal", () => {
   it("is not force-opened when the region is bare", () => {
     // `expandToolDetails` refuses a card with no chevron whatever the caller, so the refusal path needs no gate.
     const card = liveCard("st-dec-bare");
-    updateToolCall(card, frame("st-dec-bare", { status: "completed", declined: true }), "c1");
+    applyToolCallUpdate(card, frame("st-dec-bare", { status: "completed", declined: true }), "c1");
     expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
     card.remove();
   });
@@ -236,12 +248,12 @@ describe("a frame carrying a refusal", () => {
     // `declined` is `omitempty` and only ever true, so an absent one means unchanged; clearing it would repaint the
     // card as a plain success.
     const card = liveCard("st-dec-latch");
-    updateToolCall(
+    applyToolCallUpdate(
       card,
       frame("st-dec-latch", { status: "completed", declined: true, output: "plan rejected\n" }),
       "c1",
     );
-    updateToolCall(card, frame("st-dec-latch", { status: "completed" }), "c1");
+    applyToolCallUpdate(card, frame("st-dec-latch", { status: "completed" }), "c1");
     expect(card.dataset["declined"]).toBe("1");
     expect(card.dataset["outcome"]).toBe("declined");
     card.remove();

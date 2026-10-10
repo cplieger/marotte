@@ -47,7 +47,7 @@ func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 				t.Errorf("ValidAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
 			case !tt.wantRefusal && err != nil:
 				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
-			case tt.wantRefusal && !errors.Is(err, ErrAgentIgnoreEntry):
+			case tt.wantRefusal && !errors.Is(err, errAgentIgnoreEntry):
 				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
 			}
 		})
@@ -92,7 +92,7 @@ func TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet(t *testing.T) {
 				t.Errorf("ValidAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
 			case !tt.wantRefusal && err != nil:
 				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
-			case tt.wantRefusal && !errors.Is(err, ErrAgentIgnoreEntry):
+			case tt.wantRefusal && !errors.Is(err, errAgentIgnoreEntry):
 				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
 			}
 		})

@@ -39,7 +39,7 @@ export const POLL_SLOW_MS = 15000;
 export const FAST_WINDOW_MS = 20000;
 
 /** Which tasks a Run all covers. KAS's after-tasks.md checkpoint offers both. */
-export type RunScope = "required" | "all";
+type RunScope = "required" | "all";
 
 /** The two answers of KAS's after-tasks.md phase checkpoint that the CLIENT has to carry out,
  *  verbatim from the spec-mode prompt (read on the pinned 2.21.4 bundle). That prompt tells the
@@ -115,7 +115,6 @@ interface PageEls {
 
 const states = new Map<string, SpecPageState>();
 
-/** The ref on screen, or "". */
 let shown = "";
 
 /** `.page-content` is shared by every spec tab, so each spec keeps its own offset. */
@@ -257,9 +256,8 @@ function installOnce(): void {
   });
 }
 
-/** The target chat's thinking edge. The FALLING edge after a dispatch from this page is a
- *  refetch trigger (the agent's write landed); either edge repaints, because Run's disabled
- *  state reads it. */
+/** The FALLING edge after a dispatch from this page is a refetch trigger (the agent's write landed);
+ *  either edge repaints, because Run's disabled state reads it. */
 function onThinking(ref: string, thinking: boolean): void {
   const st = states.get(ref);
   if (st === undefined || st.lastThinking === thinking) {
@@ -329,7 +327,6 @@ function checkpointTarget(chatID: string): string {
   return candidates.includes(shown) ? shown : "";
 }
 
-/** Owe `ref` a Run all, and fire it at the moment the target can take a prompt. */
 function armRunAll(ref: string, scope: RunScope): void {
   const st = states.get(ref);
   if (st === undefined) {
@@ -341,7 +338,6 @@ function armRunAll(ref: string, scope: RunScope): void {
   }
 }
 
-/** Spend `ref`'s armed Run all. A no-op when nothing is armed. */
 async function fireArmedRunAll(ref: string): Promise<void> {
   const st = states.get(ref);
   const scope = st?.armedRunAll;
@@ -358,7 +354,7 @@ async function fireArmedRunAll(ref: string): Promise<void> {
 }
 
 /** The chat a Run goes to: the tab's parent chat, read now. "" when parentless. */
-export function targetChat(ref: string): string {
+function targetChat(ref: string): string {
   const id = tabIdFor("spec", ref);
   return id === "" ? "" : parentChatRef(id);
 }
@@ -369,7 +365,7 @@ function specPath(ref: string): string {
 
 /** Fetch `ref` once, with one in-flight request and one trailing refetch remembered. Resolves
  *  when a fetch issued at or after this call has landed. */
-export function refetch(ref: string): Promise<void> {
+function refetch(ref: string): Promise<void> {
   const st = states.get(ref);
   if (st === undefined) {
     return Promise.resolve();
@@ -489,11 +485,11 @@ function pageVisible(ref: string): boolean {
   return view !== null && view.offsetParent !== null;
 }
 
-export function tasksDoc(spec: Spec): SpecDoc | undefined {
+function tasksDoc(spec: Spec): SpecDoc | undefined {
   return spec.docs.find((d) => d.role === "tasks");
 }
 
-export function findNode(nodes: readonly SpecTaskNode[], id: string): SpecTaskNode | undefined {
+function findNode(nodes: readonly SpecTaskNode[], id: string): SpecTaskNode | undefined {
   for (const n of nodes) {
     if (n.id === id) {
       return n;
@@ -508,7 +504,7 @@ export function findNode(nodes: readonly SpecTaskNode[], id: string): SpecTaskNo
 
 /** The phase pill's word, from the known roles only. Null when no expected document exists (an
  *  `other` document never names a phase). */
-export function phaseOf(spec: Spec): { role: Exclude<SpecDocRole, "other">; label: string } | null {
+function phaseOf(spec: Spec): { role: Exclude<SpecDocRole, "other">; label: string } | null {
   for (const e of [...EXPECTED].reverse()) {
     if (spec.docs.some((d) => d.role === e.role)) {
       return { role: e.role, label: e.label };
@@ -527,7 +523,7 @@ interface Segment {
 
 /** One segment per expected role (present or missing) then every `other` document, in the
  *  reply's order. */
-export function segmentsFor(spec: Spec): Segment[] {
+function segmentsFor(spec: Spec): Segment[] {
   const out: Segment[] = [];
   for (const e of EXPECTED) {
     const doc = spec.docs.find((d) => d.role === e.role);
@@ -551,7 +547,7 @@ export function unreadableLine(n: number): string {
     : `${String(n)} lines look like tasks but Kiro cannot read them`;
 }
 
-export function progressText(p: {
+function progressText(p: {
   readonly completed: number;
   readonly total: number;
   readonly in_progress: number;
@@ -581,6 +577,17 @@ export function taskPrompt(spec: { name: string; dir: string }, node: SpecTaskNo
     parts.push(INTERRUPTED_SENTENCE);
   }
   return parts.join("\n\n");
+}
+
+function taskLabel(spec: { name: string }, node: SpecTaskNode): string {
+  const which = node.number === "" ? `"${node.text}"` : node.number;
+  return `Run task ${which} of spec ${spec.name}`;
+}
+
+function runAllLabel(spec: { name: string }, scope: RunScope = "required"): string {
+  return scope === "all"
+    ? `Run all tasks of spec ${spec.name}, optional ones included`
+    : `Run the required tasks of spec ${spec.name}`;
 }
 
 /** The Run all prompt. Both scopes open on the same stem, which is what KAS's local classifier
@@ -614,7 +621,7 @@ export function promptFits(prompt: string): boolean {
   return new TextEncoder().encode(prompt).byteLength <= MAX_PROMPT_BYTES;
 }
 
-export type Eligibility =
+type Eligibility =
   | { readonly ok: true; readonly node: SpecTaskNode }
   | { readonly ok: false; readonly reason: string };
 
@@ -690,7 +697,11 @@ async function runTask(ref: string, id: string, hash: string): Promise<void> {
     paint(ref);
     return;
   }
-  applyResult(ref, id, await sendPromptTo(chat, prompt));
+  applyResult(
+    ref,
+    id,
+    await sendPromptTo(chat, prompt, { displayText: taskLabel(st.spec, verdict.node) }),
+  );
 }
 
 async function runAll(ref: string, scope: RunScope = "required"): Promise<void> {
@@ -705,7 +716,11 @@ async function runAll(ref: string, scope: RunScope = "required"): Promise<void> 
     return;
   }
   const prompt = runAllPrompt(st.spec, scope);
-  applyResult(ref, "all", await sendPromptTo(chat, prompt));
+  applyResult(
+    ref,
+    "all",
+    await sendPromptTo(chat, prompt, { displayText: runAllLabel(st.spec, scope) }),
+  );
 }
 
 /** Fold a send result into the page. Exported for the mapping test. */
@@ -740,7 +755,7 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
 
 /** What the approval control on one phase segment says, decided once so the words and the
  *  button's presence are testable without a DOM. */
-export interface ApprovalView {
+interface ApprovalView {
   /** The badge's words, or "" when there is nothing to state. */
   readonly badge: string;
   /** The badge's tooltip: when it was recorded, or "". */
@@ -756,7 +771,7 @@ export interface ApprovalView {
 const NO_APPROVAL: ApprovalView = { badge: "", detail: "", offer: false, label: "", busy: false };
 
 /** Resolve one segment's approval state. */
-export function approvalView(
+function approvalView(
   seg: { readonly role: SpecDocRole; readonly doc: SpecDoc | undefined },
   spec: Spec,
   approving: ReadonlySet<string>,
@@ -865,7 +880,7 @@ function pageFor(ref: string, st: SpecPageState): PageEls {
 
 /** Repaint `ref`'s page from its state. Head and bar rebuild on a change of what they show; the
  *  pane rebuilds on a document switch or a content change. */
-export function paint(ref: string): void {
+function paint(ref: string): void {
   const st = states.get(ref);
   if (!st?.page) {
     return;
@@ -1038,8 +1053,7 @@ function buildHead(ref: string, st: SpecPageState, chat: string, thinking: boole
   return out;
 }
 
-/** The "Run in" picker a parentless page shows over the open chats. Picking one re-parents the
- *  tab, after which the ordinary Run rule applies. */
+/** Picking one re-parents the tab, after which the ordinary Run rule applies. */
 function runInPicker(ref: string, disabled: boolean): HTMLElement {
   const select = el("select", {
     className: "spec-run-in-select",
@@ -1287,7 +1301,6 @@ interface NodeCtx {
   readonly truncated: boolean;
 }
 
-/** One task row and its disclosure (detail as markdown, then children). */
 function renderTaskNode(node: SpecTaskNode, depth: number, ctx: NodeCtx): HTMLElement {
   const hasKids = node.children.length > 0;
   const hasBody = hasKids || node.detail !== "";
@@ -1402,16 +1415,19 @@ function renderTaskNode(node: SpecTaskNode, depth: number, ctx: NodeCtx): HTMLEl
 }
 
 /** @internal The state map's keys, for the lifetime test. */
+// deadset:ignore DS1004 -- test seam: observes the spec page state map's keys
 export function _openStates(): string[] {
   return [...states.keys()];
 }
 
 /** @internal One ref's state, for the tests. */
+// deadset:ignore DS1004 -- test seam: observes one ref's spec page state
 export function _stateOf(ref: string): SpecPageState | undefined {
   return states.get(ref);
 }
 
 /** @internal Drop every state and the shown ref between cases. */
+// deadset:ignore DS1004 -- test seam: resets every spec page state and the shown ref
 export function _resetForTest(): void {
   for (const ref of [...states.keys()]) {
     release(ref);

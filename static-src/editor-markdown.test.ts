@@ -8,17 +8,20 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // The editor's import graph is heavy; only the read surfaces in .editor-body and
 // the gutter matter here, so dom.ts is a stub over real elements. Hoisted with
 // the mock: vi.mock's factory runs before module-level statements.
-const { surfaces } = vi.hoisted(() => ({
-  surfaces: {
-    editorHighlight: document.createElement("pre"),
-    editorCode: document.createElement("code"),
+const { surfaces } = vi.hoisted(() => {
+  const s = {
+    editorViewer: document.createElement("div"),
+    editorEditGutter: document.createElement("div"),
     editorContent: document.createElement("textarea"),
     editorMarkdown: document.createElement("div"),
     editorImage: document.createElement("div"),
+    editorNotice: document.createElement("div"),
     editorDiffPane: document.createElement("div"),
-    editorGutter: document.createElement("pre"),
-  },
-}));
+  };
+  // `.editor-body`, the viewer's scroller.
+  document.createElement("div").append(...Object.values(s));
+  return { surfaces: s };
+});
 
 vi.mock("./dom.js", () => ({
   $: surfaces,
@@ -49,20 +52,6 @@ vi.mock("./dom.js", () => ({
       el.removeAttribute("aria-busy");
     }
   },
-}));
-// highlight() escapes its input by construction and emits only <span> wrappers;
-// the identity stub keeps the raw-source assertion about what the editor SHOWS
-// rather than about the highlighter's markup.
-vi.mock("./highlight.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  highlightByLang: undefined,
-  normalizeLang: undefined,
-  resolveLangHint: undefined,
-  highlightMarked: undefined,
-  highlight: (s: string) => s,
 }));
 // `get` is reached through the tab factory, which reads the chat store for a chat
 // tab's display NAME. Present-but-inert: no tab is materialized here.
@@ -102,24 +91,41 @@ vi.mock("./editor-scroll.js", () => ({
 
 import { renderMarkdownDoc } from "./editor-markdown.js";
 import { renderReadSurface } from "./editor-ui.js";
-import { freshState, rendersMarkdown } from "./editor-types.js";
+import { freshState, type FileMode } from "./editor-types.js";
+import { rendersMarkdown } from "./viewer-rules.js";
 
 function hidden(el: HTMLElement): boolean {
   return el.classList.contains("hidden");
 }
 
+/** A loaded file in the view the rules pick for its path. */
 function loaded(path: string, content: string): ReturnType<typeof freshState> {
   const state = freshState(path);
   state.original.value = content;
   state.current.value = content;
   state.loaded = true;
+  state.facts.value = {
+    kind: "small",
+    binary: false,
+    utf8: true,
+    conflict: false,
+    readOnly: false,
+    size: content.length,
+  };
+  const mode: FileMode = rendersMarkdown(path)
+    ? { kind: "markdown" }
+    : { kind: "text", editing: false };
+  state.mode.value = mode;
   return state;
 }
 
 beforeEach(() => {
   for (const el of Object.values(surfaces)) {
     el.className = "";
-    el.replaceChildren();
+    // The viewer owns its spacer and row host for the page's life.
+    if (el !== surfaces.editorViewer) {
+      el.replaceChildren();
+    }
   }
 });
 
@@ -143,7 +149,7 @@ describe("read mode for a markdown document", () => {
   it("renders the markdown and hides the source surfaces", () => {
     renderReadSurface(loaded("docs/guide.md", "# Title\n\nSome **bold** prose.\n"));
     expect(hidden(surfaces.editorMarkdown)).toBe(false);
-    expect(hidden(surfaces.editorHighlight)).toBe(true);
+    expect(hidden(surfaces.editorViewer)).toBe(true);
     expect(hidden(surfaces.editorContent)).toBe(true);
     expect(surfaces.editorMarkdown.querySelector("h1")?.textContent).toBe("Title");
     expect(surfaces.editorMarkdown.querySelector("strong")?.textContent).toBe("bold");
@@ -153,11 +159,12 @@ describe("read mode for a markdown document", () => {
 
   // Source line numbers beside rendered prose would number something that is no
   // longer on screen.
-  it("hides the gutter, and restores it for a source file", () => {
+  it("shows no line numbers, and the source view brings them back", () => {
     renderReadSurface(loaded("docs/guide.md", "# Title\n"));
-    expect(hidden(surfaces.editorGutter)).toBe(true);
+    expect(hidden(surfaces.editorViewer)).toBe(true);
     renderReadSurface(loaded("main.go", "package main\n"));
-    expect(hidden(surfaces.editorGutter)).toBe(false);
+    expect(hidden(surfaces.editorViewer)).toBe(false);
+    expect(surfaces.editorViewer.querySelector(".viewer-ln")?.textContent).toBe("1");
   });
 
   // Reuses the app's one rendered-markdown prose skin rather than a second copy
@@ -188,8 +195,8 @@ describe("read mode for a non-markdown file", () => {
   it("shows raw source and hides the markdown surface", () => {
     renderReadSurface(loaded("main.go", "package main\n"));
     expect(hidden(surfaces.editorMarkdown)).toBe(true);
-    expect(hidden(surfaces.editorHighlight)).toBe(false);
-    expect(surfaces.editorCode.textContent).toContain("package main");
+    expect(hidden(surfaces.editorViewer)).toBe(false);
+    expect(surfaces.editorViewer.textContent).toContain("package main");
   });
 
   // A markdown-looking file that is not markdown must not be rendered: the read
@@ -197,7 +204,7 @@ describe("read mode for a non-markdown file", () => {
   it("does not render a source file that happens to contain markdown", () => {
     renderReadSurface(loaded("notes.ts", "# Title\n"));
     expect(surfaces.editorMarkdown.querySelector("h1")).toBeNull();
-    expect(surfaces.editorCode.textContent).toContain("# Title");
+    expect(surfaces.editorViewer.textContent).toContain("# Title");
   });
 });
 

@@ -24,12 +24,12 @@ require (
 	github.com/cplieger/keyenc v1.0.9
 	github.com/cplieger/pathinside/v2 v2.0.1
 	github.com/cplieger/pinstall/v3 v3.0.4
-	github.com/cplieger/runesafe/v2 v2.1.0
+	github.com/cplieger/runesafe/v2 v2.1.1
 	github.com/cplieger/slogx v1.6.5
 	github.com/cplieger/sse v1.1.1
 	github.com/cplieger/ssrf/v4 v4.1.3
 	github.com/cplieger/toolbelt/v3 v3.8.1
-	github.com/cplieger/web-terminal-engine/v6 v6.1.0
+	github.com/cplieger/web-terminal-engine/v6 v6.2.0-dev.6
 	github.com/cplieger/webhttp/v3 v3.0.0
 	github.com/cplieger/wiregen/v3 v3.1.2
 	github.com/evanw/esbuild v0.28.2
@@ -37,7 +37,7 @@ require (
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	pgregory.net/rapid v1.3.0
 )
 

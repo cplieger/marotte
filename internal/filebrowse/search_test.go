@@ -23,11 +23,9 @@ import (
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// searchHandlerAt builds a handler whose single mount CLAIMS policyDir
-// (e.g. "/config", so the real sensitive prefixes apply) while its os.Root is
-// backed by a throwaway tree the test can populate. testHandlerAt does the same
-// thing but discards the backing path, and a content search has to write files
-// into it.
+// searchHandlerAt's single mount CLAIMS policyDir (e.g. "/config", so the real sensitive prefixes
+// apply) while its os.Root is backed by a throwaway tree the test can populate; testHandlerAt
+// discards the backing path, and a content search has to write files into it.
 func searchHandlerAt(t *testing.T, policyDir string) (h *Handler, backing string) {
 	t.Helper()
 	backing = t.TempDir()
@@ -42,8 +40,6 @@ func searchHandlerAt(t *testing.T, policyDir string) (h *Handler, backing string
 	}}}, backing
 }
 
-// writeTree creates every named file (relative to dir) with its content,
-// including any parent directories.
 func writeTree(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	for rel, content := range files {
@@ -57,7 +53,6 @@ func writeTree(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// searchReq runs one GET /api/files/search with the given query parameters.
 func searchReq(t *testing.T, h *Handler, params map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	return searchReqCtx(t, h, t.Context(), params)
@@ -89,7 +84,6 @@ func decodeSearch(t *testing.T, rec *httptest.ResponseRecorder) FileSearchResult
 	return res
 }
 
-// matchPaths is the set of paths a result names, for order-insensitive asserts.
 func matchPaths(res FileSearchResult) []string {
 	out := make([]string, 0, len(res.Matches))
 	for _, m := range res.Matches {

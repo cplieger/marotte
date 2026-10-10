@@ -32,12 +32,9 @@ const { scrollable } = vi.hoisted(() => {
       by: 500,
       /** Scroller geometry reads (`scrollableBy()`, `clientHeight`), each a forced layout. */
       geometry,
-      /** Where the reading line sits inside the scrollport. */
       line: 0,
-      /** The scroller's published edge verdict. */
       atLiveEdge: false,
       el,
-      /** Absolute landings the jump asked for, in order. */
       landings: [] as { px: number; behavior: string }[],
       /** `begin` / `end`, so a case can see the epoch bracket the whole operation. */
       epochs: [] as string[],
@@ -126,8 +123,8 @@ import {
   invalidateTurnRails,
   resetTurnRail,
   initTurnRailCallbacks,
-  type TurnSummary,
 } from "./turn-rail.js";
+import type { TurnSummary } from "./rail-merge.js";
 import { apiGet } from "./api-client.js";
 import { loadMessages } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
@@ -160,7 +157,7 @@ function turn(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
     n,
     outcome: "completed",
     // One minute apart by default. `ts` is still required by `TurnSummary`, so the
-    // field stays; nothing renders it now that the rail reports no pause.
+    // field stays; nothing renders it, since the rail reports no pause.
     ts: n * MINUTE,
     ...over,
   };
@@ -170,7 +167,6 @@ function turns(count: number, outcome: TurnOutcome = "completed"): TurnSummary[]
   return Array.from({ length: count }, (_, i) => turn(i + 1, { outcome }));
 }
 
-/** One sealed entry of `turnID`, at `seq`. */
 function entry(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
     id: `${turnID}-e${String(at)}`,
@@ -214,8 +210,8 @@ function residentTurn(id: string, n: number, opts: ResidentOpts = {}): TurnState
 
 type Resident = Pick<Session, "turns" | "turn_order">;
 
-/** The resident slice a Session carries, in file order. The ids are `m<n>` because
- *  `turn(n)` mints the same one, which is the key the index merge joins on. */
+/** The ids are `m<n>` because `turn(n)` mints the same one, which is the key the index merge joins
+ *  on. */
 function residentTurns(ids: string[], opts: ResidentOpts = {}): Resident {
   const turnStates = new Map<string, TurnState>();
   for (const id of ids) {

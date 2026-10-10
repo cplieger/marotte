@@ -79,7 +79,6 @@ vi.mock("./dom.js", () => ({
   },
 }));
 
-/** Drop files onto the browser's list wrapper and return the action's args. */
 async function dropInBrowser(files: File[], currentPath = "/workspace"): Promise<void> {
   document.body.innerHTML = "";
   const { initBrowserDragDrop } = await import("./files-browser-drop.js");

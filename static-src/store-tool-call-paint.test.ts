@@ -87,8 +87,8 @@ function mountedCall(chatID: string, entry: EntryToolCall, shown: ToolCall): str
   return turn;
 }
 
-/** Did the fetched window reach the card? Identity, because that is what the card's own effect
- *  compares and therefore the only thing that decides whether it repaints. */
+/** Identity, because that is what the card's own effect compares and therefore the only thing that
+ *  decides whether it repaints. */
 function republished(chatID: string, turn: string, callID: string): boolean {
   const before = peekToolCallSig(chatID, callID);
   republishWindowToolCalls(chatID, [turn]);

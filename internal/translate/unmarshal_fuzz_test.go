@@ -25,13 +25,12 @@ func FuzzUnmarshalParams(f *testing.F) {
 			Method:  "test",
 			Params:  json.RawMessage(data),
 		}
-		assertUnmarshalParamsConsistent[ACPChunkWire](t, msg, data)
+		assertUnmarshalParamsConsistent[acpChunkWire](t, msg, data)
 		assertUnmarshalParamsConsistent[usageUpdate](t, msg, data)
-		assertUnmarshalParamsConsistent[ACPToolCallWire](t, msg, data)
+		assertUnmarshalParamsConsistent[acpToolCallWire](t, msg, data)
 	})
 }
 
-// assertUnmarshalParamsConsistent checks unmarshalParams[T] against a json.Unmarshal oracle.
 func assertUnmarshalParamsConsistent[T any](t *testing.T, msg *marotte.RPCResponse, data []byte) {
 	t.Helper()
 	got, ok := unmarshalParams[T](msg, "test")

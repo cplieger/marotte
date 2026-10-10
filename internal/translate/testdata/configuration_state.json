@@ -1,0 +1,221 @@
+{
+ "note": "_kiro/configuration/state params captured from kiro-cli 2.28.0 (KAS 0.66.26) with configurationState declared and clientInfo marotte: an unallocated account's connection view, the same with KIRO_FEATURE_VALIDATION_ENABLED=true in the environment, and that run's session view.",
+ "unallocated_connection": {
+  "view": {
+   "observer": "connection"
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "marotte"
+   }
+  ],
+  "settings": [],
+  "resources": []
+ },
+ "env_connection": {
+  "view": {
+   "observer": "connection"
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "marotte"
+   }
+  ],
+  "settings": [
+   {
+    "krn": "krn:::setting/validation",
+    "value": "on",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-agent",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-agent",
+      "stated": {
+       "value": "on",
+       "used": true
+      }
+     }
+    ]
+   }
+  ],
+  "resources": []
+ },
+ "env_session": {
+  "view": {
+   "observer": "session",
+   "sessionId": "sess_fixture"
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "marotte"
+   },
+   {
+    "id": "workspace",
+    "name": "Workspace"
+   },
+   {
+    "id": "agent",
+    "name": "Agent"
+   },
+   {
+    "id": "session",
+    "name": "This Session"
+   }
+  ],
+  "settings": [
+   {
+    "krn": "krn:::setting/validation",
+    "value": "on",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-agent",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-agent",
+      "stated": {
+       "value": "on",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/workflows",
+    "value": "off",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "session",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "session",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/fta",
+    "value": "off",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "session",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "session",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   }
+  ],
+  "resources": []
+ }
+}

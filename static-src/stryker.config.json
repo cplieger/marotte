@@ -16,6 +16,7 @@
     "persist.ts",
     "store.ts",
     "scroll.ts",
+    "scroll-controller.ts",
     "diff.ts",
     "conflict.ts",
     "highlight.ts",

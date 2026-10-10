@@ -24,8 +24,7 @@ import { STATE_WORD, stateOf, withAsk, type ExecState } from "./exec-view/status
 import type { TabRunDotStatus } from "./tabs.js";
 import { formatElapsed } from "./strings.js";
 
-/** The state a row paints when nothing has been fetched for its run yet. NOT
- *  `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
+/** NOT `stateOf(undefined)`, which is `pending` and reads "not started" — a run in the live
  *  inventory has demonstrably started, so that word would be false. */
 const UNKNOWN_STATE = "unknown";
 
@@ -33,8 +32,8 @@ const UNKNOWN_STATE = "unknown";
  *  and a row with no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** A row's clock hold. The element is re-pointed on every render rather than re-registered, so
- *  the refcount in `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
+/** The element is re-pointed on every render rather than re-registered, so the refcount in
+ *  `messages-blocks.ts` sees one holder per run for as long as the bar shows it. */
 interface Hold extends RunClockHolder {
   clock: HTMLElement | null;
 }
@@ -325,6 +324,7 @@ function reconcileHolds(ids: readonly string[]): void {
  *  of it is module state, and the browser project's module registry is URL-keyed, so
  *  `vi.resetModules()` does not re-evaluate this file. Stopping the effect is the load-bearing
  *  half. */
+// deadset:ignore DS1004 -- test seam: resets the render effect, run clock holds and previous counts
 export function _resetRunBarForTest(): void {
   stopRender?.();
   stopRender = null;

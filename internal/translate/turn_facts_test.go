@@ -40,7 +40,6 @@ func resolvedFrame(t *testing.T, callID, outcome, selected string) json.RawMessa
 	return liveInfoFrame(t, fields)
 }
 
-// toolResultInteraction is the interaction the turn's one tool_result carries.
 func toolResultInteraction(t *testing.T, entries []marotte.Entry) *marotte.ToolInteraction {
 	t.Helper()
 	results := entriesOfKind(entries, marotte.EntryKindToolResult)
@@ -145,6 +144,42 @@ func TestHandleSessionInfoUpdate_CompletionFactsReachTheTurnClose(t *testing.T) 
 	}
 	if footer.Credits != 0.5 {
 		t.Errorf("credits = %v, want the completion's 0.5 still metered", footer.Credits)
+	}
+}
+
+// A turn that metered nothing sends promptTurnSummaries as [], and its request ids and
+// recoveries still reach the turn_close, as they do on replay.
+func TestHandleSessionInfoUpdate_CompletionWithNoUsageKeepsItsFacts(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	ctx := t.Context()
+	turn := startedTurn(deps, "c1")
+
+	tr.HandleSessionInfoUpdate(ctx, "c1", liveInfoFrame(t, map[string]any{
+		"kind":                "turn_completion",
+		"promptTurnSummaries": []any{},
+		"elapsedTime":         300,
+		"status":              "error",
+		"requestIds":          []string{"req-7"},
+		"recoveries":          []string{"streamError"},
+	}), FrameAttribution{})
+	if _, err := turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	closes := entriesOfKind(deps.turns.entriesOf(turn), marotte.EntryKindTurnClose)
+	if len(closes) != 1 {
+		t.Fatalf("turn sealed %d turn_close entries, want 1", len(closes))
+	}
+	var footer marotte.EntryTurnClose
+	if err := json.Unmarshal(closes[0].Payload, &footer); err != nil {
+		t.Fatalf("parse turn_close: %v", err)
+	}
+	if want := []string{"req-7"}; !slices.Equal(footer.RequestIDs, want) {
+		t.Errorf("request_ids = %v, want %v", footer.RequestIDs, want)
+	}
+	if want := []string{"streamError"}; !slices.Equal(footer.Recoveries, want) {
+		t.Errorf("recoveries = %v, want %v", footer.Recoveries, want)
 	}
 }
 

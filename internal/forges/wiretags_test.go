@@ -23,8 +23,6 @@ var (
 	forgeapiPkgPath = wiregen.TypeRef[forgeapi.RepoRef]().PkgPath
 )
 
-// typeDecl is one type declared in this package's source, with the names its
-// file imports forgeapi (or one of its packages) under.
 type typeDecl struct {
 	spec     *ast.TypeSpec
 	forgeapi map[string]bool
@@ -66,8 +64,6 @@ func forgeTypeDecls(t *testing.T) map[string]typeDecl {
 	return out
 }
 
-// forgeapiImportNames answers the local names file imports the forgeapi module's
-// packages under.
 func forgeapiImportNames(file *ast.File) map[string]bool {
 	names := map[string]bool{}
 	for _, imp := range file.Imports {
@@ -84,8 +80,6 @@ func forgeapiImportNames(file *ast.File) map[string]bool {
 	return names
 }
 
-// forgeapiTypeIn answers the first forgeapi type expr reaches, following this
-// package's own named types to their definitions, or "" when it reaches none.
 func forgeapiTypeIn(decls map[string]typeDecl, expr ast.Expr, imported, seen map[string]bool) string {
 	found := ""
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -178,8 +172,6 @@ func wireFieldNames(field *ast.Field) []string {
 	return exported
 }
 
-// jsonKey answers the key field's json tag names, "-" included, or "" when the
-// tag names none.
 func jsonKey(field *ast.Field) string {
 	if field.Tag == nil {
 		return ""

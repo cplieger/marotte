@@ -22,7 +22,6 @@ const (
 	maxMethods = 12
 )
 
-// ifaceDecl is one interface type declaration and its shape.
 type ifaceDecl struct {
 	pkgDir   string
 	file     string
@@ -77,8 +76,6 @@ func transitiveMethods(byName map[string]ifaceDecl, d ifaceDecl, seen map[string
 	return total
 }
 
-// collectInterfaces parses the production files of each directory and returns
-// every interface type declaration in them.
 func collectInterfaces(t *testing.T, dirs ...string) []ifaceDecl {
 	t.Helper()
 	var out []ifaceDecl
@@ -117,7 +114,6 @@ func collectInterfaces(t *testing.T, dirs ...string) []ifaceDecl {
 	return out
 }
 
-// describe splits an interface's fields into embedded interfaces and methods.
 func describe(dir, file, name string, it *ast.InterfaceType) ifaceDecl {
 	d := ifaceDecl{pkgDir: dir, file: filepath.Join(dir, file), name: name}
 	for _, f := range it.Methods.List {
@@ -138,7 +134,6 @@ func describe(dir, file, name string, it *ast.InterfaceType) ifaceDecl {
 	return d
 }
 
-// exprName renders a qualified embedded name for the failure message.
 func exprName(e *ast.SelectorExpr) string {
 	if x, ok := e.X.(*ast.Ident); ok {
 		return x.Name + "." + e.Sel.Name

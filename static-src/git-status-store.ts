@@ -221,6 +221,7 @@ export function currentRepos(): readonly GitRepoStatus[] {
 }
 
 /** @internal Test seam: inject a repos array without a fetch. */
+// deadset:ignore DS1004 -- test seam: seeds the published repo statuses without a fetch
 export function _setReposForTest(list: readonly GitRepoStatus[]): void {
   publish(list, workspaceRoot());
 }

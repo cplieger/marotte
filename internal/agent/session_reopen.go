@@ -12,10 +12,10 @@ import (
 	"github.com/cplieger/marotte/internal/securityprofile"
 )
 
-// ReopenChatSessions is the one way a setting a live session only reads at open reaches open
+// reopenChatSessions is the one way a setting a live session only reads at open reaches open
 // chats: every chat bridge is marked, and each chat respawns and reloads its session at its next
-// open (OpenBridge). A busy chat switches after its turn, one hosting a live run after the run.
-func (rt *Runtime) ReopenChatSessions(reason string) {
+// open (openBridge). A busy chat switches after its turn, one hosting a live run after the run.
+func (rt *Runtime) reopenChatSessions(reason string) {
 	marked := rt.bridge.mgr.markChatBridgesForReopen()
 	slog.Info("open chats reopen their session at their next message", "reason", reason, "marked", marked)
 }
@@ -159,7 +159,7 @@ func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string, 
 		retired = rt.claimUtilityRetire(ctx, start)
 	}
 	if reopen {
-		rt.ReopenChatSessions(reason)
+		rt.reopenChatSessions(reason)
 	}
 	b.mu.Unlock()
 	syncCtx, cancel := context.WithDeadline(ctx, deadline)

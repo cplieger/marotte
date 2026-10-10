@@ -18,7 +18,7 @@ func newPowersStore(t *testing.T, seed string) (*Store, string) {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -96,9 +96,10 @@ type RPCErrorOut struct {
 // path for callers that need errors.Is classification.
 var ErrNotIdle = errors.New("session not idle")
 
-// ErrBridgeExited is the sentinel a Call returns (wrapped in a TransportError) when the ACP
-// subprocess died with the request pending. Distinct from a transient write failure because the two
-// want opposite actions: a dead bridge's readLoop has closed for good, so a retry only burns time.
+// ErrBridgeExited is the sentinel for an ACP subprocess whose read loop has closed for good: a Call
+// pending when it died returns it wrapped in a TransportError, and a Respond after it returns it
+// wrapped directly, having written nothing. Distinct from a transient write failure because the two
+// want opposite actions: a retry on a dead bridge only burns time.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
 // ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable TransportError) when

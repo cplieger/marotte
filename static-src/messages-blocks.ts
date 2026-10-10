@@ -36,6 +36,7 @@ import {
   delegateStatusFor,
   get,
   getActiveId,
+  paintsTheSame,
   settledToolCall,
   turnLive,
 } from "./store.js";
@@ -58,6 +59,7 @@ import {
 } from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import { buildSteerNote, type SteerNoteData } from "./fundamentals/steer-note.js";
+import { groupWorkflowUpdates, WORKFLOW_UPDATE_SELECTOR } from "./workflow-delivery.js";
 import {
   buildSubagentCard,
   buildSubagentContainer,
@@ -78,7 +80,7 @@ import {
 
 // Re-exported for messages.ts to inject into messages-tools' status-flip path.
 export { refreshGroupHeader };
-import { iconForSubagent, inlineAgentDetail, subagentLabel, subagentName } from "./roles.js";
+import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./roles.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import { invalidateRun, runPlan, runState, runStepEnds, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -87,13 +89,8 @@ import { buildPath } from "./route-path.js";
 // Injected by messages.ts, which owns avatar markup and the streaming-effect registry.
 
 interface BlockCbs {
-  /** Register a cleanup disposed on turn finalize / turn unmount. */
-  pushStreamingEffect(turnID: string, cleanup: () => void): void;
-  /** Register a cleanup disposed when this ENTRY leaves the window. */
   pushEntryEffect(turnID: string, seq: number, cleanup: () => void): void;
-  /** Run the cleanups for the entries a window drop removed. */
   disposeEntryEffects(turnID: string, seqs: Iterable<number>): void;
-  /** Build an avatar row for a top-level assistant bubble. */
   makeRow(): HTMLDivElement;
   /**
    * The event row an event kind draws; `messages.ts` owns that markup. Non-nullable, since `indexGroups` posts a run
@@ -103,9 +100,6 @@ interface BlockCbs {
 }
 
 let cbs: BlockCbs = {
-  pushStreamingEffect: () => {
-    /* until init */
-  },
   pushEntryEffect: () => {
     /* until init */
   },
@@ -138,7 +132,6 @@ export function getLiveAnchor(): HTMLElement | null {
   return liveAnchor?.el ?? null;
 }
 
-/** Point the slot at the active chat's newest still-live top-level bubble, or null. */
 function rescanLiveAnchor(): void {
   const activeChat = getActiveId();
   for (const [id, st] of renders) {
@@ -148,7 +141,7 @@ function rescanLiveAnchor(): void {
   }
 }
 
-/** Identity-guarded clear by the registered element's own seal. Only the active chat's renders are rescanned. */
+/** Only the active chat's renders are rescanned. */
 function clearLiveAnchor(el: HTMLElement): void {
   if (liveAnchor?.el !== el) {
     return;
@@ -192,7 +185,6 @@ function containerOpen(key: string): boolean | undefined {
   return openContainers.get(key);
 }
 
-/** Carry a dropped card's disclosure (its `.tool-disclosure` `aria-expanded`) into the registry for the re-mount. */
 function recordDisclosure(el: HTMLElement, toolID: string): void {
   const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
   if (toolID !== "" && toggle !== null) {
@@ -200,7 +192,6 @@ function recordDisclosure(el: HTMLElement, toolID: string): void {
   }
 }
 
-/** Drop a render's container keys. */
 function pruneContainers(st: TurnRender): void {
   if (st.detached) {
     return; // never registered
@@ -222,7 +213,6 @@ interface TurnToolCall {
   entryID: string;
   seq: number;
   lane: string;
-  /** The call as a card paints it, `store.ts`'s own join of the create and its result. */
   call: ToolCall;
   /** The call's effective workflow id: its own, else its `tool_result`'s. */
   runID: string;
@@ -252,7 +242,6 @@ type OpenTail =
 interface TurnRender {
   /** The chat this render belongs to, carried: the subagent page renders a chat other than the active one. */
   chatID: string;
-  /** The `.turn-body` holding this turn's entries, owned by the card. */
   bodyEl: HTMLElement;
   /** The `seq` range held now; `renderRange` widens it and only `dropEntryRange` narrows it. */
   window: EntryRange;
@@ -294,7 +283,7 @@ interface TurnRender {
   runEffects: Map<string, () => void>;
   /**
    * Cleanups that outlive the turn, bucketed by entry `seq` (`-1` for the render's own). A run card's run outlives
-   * its turn, which `pushStreamingEffect`'s turn-end disposal would cut short.
+   * its turn, which a turn-end disposal would cut short.
    */
   disposers: Map<number, (() => void)[]>;
   /**
@@ -464,6 +453,7 @@ function buildBody(
 function guardPass(st: TurnRender, pass: () => void): void {
   try {
     pass();
+    regroupWorkflowUpdates(st);
     st.failed = false;
   } catch (err) {
     if (!st.failed) {
@@ -531,6 +521,21 @@ function refreshTurn(st: TurnRender, turn: Turn): void {
   indexPipelines(st);
 }
 
+/** A render no chat owns (a run step's, chat "") is its cards' only writer: no store publishes a `tool_result` at a
+ *  card it mounted, so without this the card paints its spinner for good. A chat's render leaves its cards to the
+ *  store, whose signal may carry progress newer than the entries. */
+function publishUnownedCalls(st: TurnRender): void {
+  if (st.chatID !== "") {
+    return;
+  }
+  for (const held of st.calls) {
+    const sig = toolCallSigs.get(toolCallSigKey(st.chatID, held.call.id));
+    if (sig !== undefined && !paintsTheSame(sig.peek(), held.call)) {
+      sig.value = held.call;
+    }
+  }
+}
+
 /** The joined call for one TOOL id (KAS's, which the entry payload carries as `id`). */
 function callByToolID(st: TurnRender, toolID: string): TurnToolCall | undefined {
   return st.callByTool.get(toolID);
@@ -558,7 +563,6 @@ function pushDisposer(st: TurnRender, seq: number, cleanup: () => void): void {
   }
 }
 
-/** Run and drop `seq`'s bucket. */
 function runDisposers(st: TurnRender, seq: number): void {
   const arr = st.disposers.get(seq);
   if (arr === undefined) {
@@ -702,6 +706,7 @@ function updatePass(st: TurnRender, turn: Turn, want: EntryRange, streaming: boo
   // Every pass: out-of-order SSE can deliver a stage's entries before its invocation, and only `indexPipelines` maps
   // stages to pipelines.
   refreshTurn(st, turn);
+  publishUnownedCalls(st);
   // The index leads: `rehomeStages` can create a box via `stageHostFor`, and a creation site reading a stale
   // `st.boxExpanded` would force the collapse sync to open things.
   const idx = indexGroups(st);
@@ -921,6 +926,18 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
   const out: Placement[] = [];
   for (let seq = from; seq < to; seq++) {
     const e = entryAt(st.turn, seq);
+    if (e?.kind === "steer_delivered") {
+      // Draws nothing here: its message's row, which may sit in another turn, redraws settled.
+      const d = payloadOf(e, "steer_delivered");
+      if (d !== undefined) {
+        redrawSettledRows((id) => id === d.steer_id);
+      }
+      continue;
+    }
+    if (e?.kind === "turn_revert") {
+      // The store returned the rows whose take-up the rewind took to waiting (`releaseWorkflowTakeUps`).
+      redrawSettledRows((_id, steer) => steer.origin === "parent" || steer.origin === "step");
+    }
     if (e === undefined || !entryRenders(e, st.lane, st.firstPlan)) {
       continue;
     }
@@ -1113,7 +1130,6 @@ export function dropTail(turn: Turn, keep: EntryRange): void {
   dropEntryRange(st, { from: st.window.from, to: keep.to });
 }
 
-/** Release everything the mounted `seq`s outside `keep` own. `openContainers` keys survive the window move. */
 function dropEntryRange(st: TurnRender, keep: EntryRange): void {
   const removed: number[] = [];
   for (let seq = st.window.from; seq < st.window.to; seq++) {
@@ -1144,6 +1160,20 @@ function dropEntryRange(st: TurnRender, keep: EntryRange): void {
   // After the loop: `st` may claim, and mid-loop its `entryEls` holds ordinals being dropped.
   for (const [runID, card] of orphaned) {
     resolveRunCardFate(st, runID, card);
+  }
+  regroupWorkflowUpdates(st);
+}
+
+/** Once per pass, after every child is seated: a group's tail state turns on rows mounted after it. */
+function regroupWorkflowUpdates(st: TurnRender): void {
+  const hosts = new Set<HTMLElement>();
+  for (const row of st.bodyEl.querySelectorAll<HTMLElement>(WORKFLOW_UPDATE_SELECTOR)) {
+    if (row.parentElement !== null) {
+      hosts.add(row.parentElement);
+    }
+  }
+  for (const host of hosts) {
+    groupWorkflowUpdates(host);
   }
 }
 
@@ -1302,10 +1332,7 @@ function isContainerRoot(st: TurnRender, el: HTMLElement, card: RunCardView | un
   return false;
 }
 
-/**
- * Remove every delegate card the surviving range has no invocation for. Takes `keep`, so it runs before
- * `pruneEmptyContainers`.
- */
+/** Takes `keep`, so it runs before `pruneEmptyContainers`. */
 function pruneOrphanedCards(st: TurnRender, keep: EntryRange): void {
   if (st.subagents.size === 0) {
     return;
@@ -1464,7 +1491,6 @@ function entryIsLive(st: TurnRender, e: Entry): boolean {
   return (st.laneTail.get(e.lane ?? "") ?? -1) <= e.seq;
 }
 
-/** End the bubble currently carrying the caret, if any. */
 function sealLiveBubble(st: TurnRender): void {
   // finishNow, not end: the lane's tail moved, and one streaming caret is the invariant. The last entry drains.
   st.liveBubble?.finishNow();
@@ -1884,6 +1910,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "turn_bind":
     case "tool_result":
     case "reconciled":
+    case "steer_delivered":
       // Rendered elsewhere or nowhere (`reconciled` says a merge added nothing); `entryRenders` refuses these, so this
       // arm is totality.
       return;
@@ -1913,6 +1940,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "compaction_failed":
     case "safety_blocked":
     case "model_switched":
+    case "model_routed":
     case "mode_switched":
     case "turn_revert": {
       const row = cbs.makeEvent(u);
@@ -1965,7 +1993,6 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
   }
 }
 
-/** A `steer_ack`'s own words, which the payload carries as `text`. */
 function ackText(e: Entry): string {
   return payloadOf(e, "steer_ack")?.text ?? "";
 }
@@ -1986,7 +2013,6 @@ function stampEntry(st: TurnRender, el: HTMLElement, seq: number): void {
   st.entryEls.set(seq, el);
 }
 
-/** One member's own source text, whichever kind supplies it. */
 function entryTextAt(st: TurnRender, seq: number): string {
   const e = entryAt(st.turn, seq);
   if (e === undefined) {
@@ -2131,7 +2157,6 @@ function joinProseRun(st: TurnRender, view: ProseRun, seq: number): void {
   view.bubble.setText(runText(st, view));
 }
 
-/** The run's member ids in stream order, open tail last, standing in for marker nodes. */
 function writeRunEntries(st: TurnRender, view: ProseRun): void {
   const ids = view.seqs.map((seq) => entryAt(st.turn, seq)?.id ?? "");
   if (view.openID !== null) {
@@ -2284,6 +2309,12 @@ function lastRenderedSeq(st: TurnRender): number {
  * read. The ack fold reads every lane, since an ack keeps the lane of the text it came from.
  */
 function mountSteerNote(st: TurnRender, container: HTMLElement, e: Entry, steer: EntrySteer): void {
+  const note = buildSteerNote(steerNoteData(st, e, steer));
+  stampEntry(st, note, e.seq);
+  appendEntry(st, container, note);
+}
+
+function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteData {
   const data: SteerNoteData = {
     text: steer.text,
     origin: steer.origin,
@@ -2294,9 +2325,44 @@ function mountSteerNote(st: TurnRender, container: HTMLElement, e: Entry, steer:
   if (steer.reason !== undefined) {
     data.reason = steer.reason;
   }
-  const note = buildSteerNote(data);
-  stampEntry(st, note, e.seq);
-  appendEntry(st, container, note);
+  if (steer.step !== undefined) {
+    data.step = steer.step;
+  }
+  if (steer.origin_run !== undefined) {
+    data.run = steer.origin_run;
+  }
+  const workflowMessage = steer.origin === "parent" || steer.origin === "step";
+  if (workflowMessage && steer.produced_ts !== undefined) {
+    data.sentAt = steer.produced_ts;
+    if (steer.read_ts !== undefined) {
+      data.deliveredAt = steer.read_ts;
+    }
+  }
+  return data;
+}
+
+/** Redraw every mounted workflow-message row `pick` names from its entry, which the store settled
+ *  or returned to waiting. The reader's open-or-closed pick on a group rides the row it was made
+ *  on. */
+function redrawSettledRows(pick: (id: string, steer: EntrySteer) => boolean): void {
+  for (const st of renders.values()) {
+    for (const [seq, old] of st.entryEls) {
+      const e = entryAt(st.turn, seq);
+      const steer = e === undefined ? undefined : payloadOf(e, "steer");
+      if (e === undefined || steer === undefined || !pick(e.id, steer)) {
+        continue;
+      }
+      const note = buildSteerNote(steerNoteData(st, e, steer));
+      const picked = old.dataset["groupOpen"];
+      if (picked !== undefined) {
+        note.dataset["groupOpen"] = picked;
+      }
+      note.hidden = old.hidden;
+      stampEntry(st, note, seq);
+      old.replaceWith(note);
+      regroupWorkflowUpdates(st);
+    }
+  }
 }
 
 function mountThinking(
@@ -2465,10 +2531,8 @@ function pipelineSummary(st: TurnRender, invocation: ToolCall): TurnSummaryData 
   return out;
 }
 
-/**
- * Write the invocation's identity, status and ledger onto a card. `live` is the chat's turn liveness: an
- * `in_progress` call with no live turn is a stale spinner and paints stopped (`delegateStatusFor`).
- */
+/** `live` is the chat's turn liveness: an `in_progress` call with no live turn is a stale spinner
+ *  and paints stopped (`delegateStatusFor`). */
 function paintSubagent(
   st: TurnRender,
   subtask: string,
@@ -2477,7 +2541,7 @@ function paintSubagent(
   live: boolean,
 ): void {
   sa.setName(subagentLabel(tc));
-  sa.setDetail(inlineAgentDetail(tc));
+  sa.setDetail(delegateDetail(tc));
   sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(delegateStatusFor(tc.status, live));
   sa.setSummary(subagentSummary(st, subtask, tc));
@@ -2547,8 +2611,8 @@ function bindSubagent(
       sa.setName(label);
       sa.setIcon(iconForSubagent(subagentName(next)));
     }
-    const detail = inlineAgentDetail(next);
-    if (detail !== inlineAgentDetail(last)) {
+    const detail = delegateDetail(next);
+    if (detail !== delegateDetail(last)) {
       sa.setDetail(detail);
     }
     // The members settle before the invocation, so the settle tick sees their final diffs.
@@ -2713,7 +2777,6 @@ function placeContainer(
   host.insertBefore(el, seat);
 }
 
-/** The group a card at run `runStart` joins, built on first use. */
 function toolGroupFor(
   st: TurnRender,
   container: HTMLElement,
@@ -2870,10 +2933,8 @@ function runFollowed(idx: GroupIndex, key: string, runStart: number): boolean {
   return (starts[starts.length - 1] ?? -1) > runStart;
 }
 
-/**
- * Apply the newest-element verdict to every collapsible container. Collapse-only, so idempotent. A box's verdict
- * is per seat (`st.boxExpanded`), a group's needs `starts`; an absent seat reads expanded.
- */
+/** Collapse-only, so idempotent. A box's verdict is per seat (`st.boxExpanded`), a group's needs
+ *  `starts`; an absent seat reads expanded. */
 function syncContainerCollapse(st: TurnRender, idx: GroupIndex): void {
   for (const [key, bucket] of st.toolGroups) {
     for (const [runStart, group] of bucket) {
@@ -2892,7 +2953,6 @@ function syncContainerCollapse(st: TurnRender, idx: GroupIndex): void {
 
 // Plan (an entry at its own position, with every later one folding into its card)
 
-/** Mount the turn's first `plan` entry as a card, or bring it to the newest plan state read off the store. */
 function mountPlan(st: TurnRender, container: HTMLElement, e: Entry): void {
   const newest = st.newestPlan;
   if (newest.entries.length === 0) {
@@ -2916,10 +2976,7 @@ function mountPlan(st: TurnRender, container: HTMLElement, e: Entry): void {
 const STAGE_PREFIX = "invoke_subagent_";
 const STAGE_SEP = "_stage_";
 
-/**
- * The orchestrate id a stage belongs to, or "". `indexOf`, since the stage name is author-supplied; parsed the same
- * way in `subagent-slice.ts`.
- */
+/** `indexOf`, since the stage name is author-supplied; parsed the same way in `subagent-slice.ts`. */
 function stagePipelineID(tc: ToolCall): string {
   const id = tc.id;
   if (!id.startsWith(STAGE_PREFIX)) {
@@ -2933,7 +2990,6 @@ function stagePipelineID(tc: ToolCall): string {
   return rest.slice(0, sep);
 }
 
-/** The tool call that STARTS a subagent-orchestration pipeline. */
 function isPipelineInvocation(tc: ToolCall): boolean {
   return tc.title === "Orchestrate Sub-agent";
 }

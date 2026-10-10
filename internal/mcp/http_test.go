@@ -84,8 +84,8 @@ func TestHandleCollection_POST_createsAndPersists(t *testing.T) {
 	if got.ID == "" || got.Name != "gh" {
 		t.Errorf("POST response = %+v, want non-empty ID + Name=gh", got)
 	}
-	if len(s.List(t.Context())) != 1 {
-		t.Errorf("store after POST has %d servers, want 1", len(s.List(t.Context())))
+	if len(s.list(t.Context())) != 1 {
+		t.Errorf("store after POST has %d servers, want 1", len(s.list(t.Context())))
 	}
 }
 
@@ -109,7 +109,7 @@ func TestHandleCollection_POST_invalidJSON_is400(t *testing.T) {
 func TestHandleCollection_POST_validationFail_is400(t *testing.T) {
 	_, mux := newRoutedStore(t)
 
-	// Missing command on stdio → Validate error → writeErr default → 400.
+	// Missing command on stdio → validate error → writeErr default → 400.
 	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", &Server{
 		Transport: TransportStdio, Name: "x", Command: "",
 	})
@@ -177,7 +177,7 @@ func TestHandleCollection_POST_oversize_is413(t *testing.T) {
 	_, mux := newRoutedStore(t)
 
 	// Build a JSON object whose Name field is big enough that the full
-	// body exceeds webhttp.MaxJSONBody (1 MiB). Using a field that Validate
+	// body exceeds webhttp.MaxJSONBody (1 MiB). Using a field that validate
 	// will also reject is fine; we're not expecting the body to parse.
 	big := strings.Repeat("a", int(webhttp.MaxJSONBody)+1)
 	body := `{"transport":"stdio","name":"` + big + `","command":"bash"}`
@@ -201,7 +201,7 @@ func TestHandleOne_GET_returnsMaskedSecrets(t *testing.T) {
 	s, mux := newRoutedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
+		Env: []keyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -219,8 +219,8 @@ func TestHandleOne_GET_returnsMaskedSecrets(t *testing.T) {
 	if got.ID != orig.ID || got.Name != "gh" {
 		t.Errorf("GET /api/mcp/%s = %+v, want ID=%s Name=gh", orig.ID, got, orig.ID)
 	}
-	if len(got.Env) != 1 || got.Env[0].Value != SecretMask {
-		t.Errorf("GET secret value = %q, want %q (mask)", got.Env[0].Value, SecretMask)
+	if len(got.Env) != 1 || got.Env[0].Value != secretMask {
+		t.Errorf("GET secret value = %q, want %q (mask)", got.Env[0].Value, secretMask)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	s, mux := newRoutedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
+		Env: []keyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -386,13 +386,13 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	// Send mask back; store must preserve the stored value.
 	rec := doJSON(t, mux, http.MethodPut, "/api/mcp/"+string(orig.ID), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []KeyPair{{Name: "TOKEN", Value: SecretMask}},
+		Env: []keyPair{{Name: "TOKEN", Value: secretMask}},
 	})
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || len(raw[0].Env) != 1 || raw[0].Env[0].Value != "secret-abc" {
 		t.Errorf("PUT with mask clobbered secret: got %+v, want secret-abc",
 			raw[0].Env)
@@ -414,7 +414,7 @@ func TestHandleOne_PATCH_togglesEnabled(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil || got.Enabled {
 		t.Errorf("PATCH did not disable the server: %+v", got)
 	}
@@ -432,14 +432,14 @@ func TestHandleOne_DELETE_removes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d", rec.Code)
 	}
-	if s.Get(t.Context(), orig.ID) != nil {
+	if s.get(t.Context(), orig.ID) != nil {
 		t.Error("DELETE did not remove server")
 	}
 }
 
 // DELETE's persist-failure branch routes through writeErr to 500 with
 // the generic "persist failed" body. No filesystem path leaks in the
-// response; full detail stays in slog.Error via writeErr's ErrPersist
+// response; full detail stays in slog.Error via writeErr's errPersist
 // case. Rollback leaves the record in place so a retry is possible.
 func TestHandleOne_DELETE_persistFailure_is500(t *testing.T) {
 	if os.Geteuid() == 0 {
@@ -473,12 +473,12 @@ func TestHandleOne_DELETE_persistFailure_is500(t *testing.T) {
 		t.Errorf("DELETE 500 body leaked filesystem path: %q", body)
 	}
 	// Server must still hold the record (rollback on persist failure).
-	if s.Get(t.Context(), orig.ID) == nil {
+	if s.get(t.Context(), orig.ID) == nil {
 		t.Error("DELETE rollback failed: record disappeared despite 500")
 	}
 }
 
-// writeErr's ErrPersist branch routes to
+// writeErr's errPersist branch routes to
 // 500 with a generic body, NOT a leaked err.Error() string. Provoked
 // via POST with a writable-then-read-only dir.
 func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
@@ -510,7 +510,6 @@ func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
 	}
 }
 
-// decodeValidation400 reads the validation envelope off a 400 recorder.
 func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationErrorBody {
 	t.Helper()
 	if rec.Code != http.StatusBadRequest {

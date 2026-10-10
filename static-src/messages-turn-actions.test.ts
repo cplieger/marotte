@@ -42,7 +42,7 @@ afterEach(() => {
   initTurnActionsBodyProbe(() => true);
 });
 
-/** One sealed entry. `seq` is its position (read for the plan rule); `lane` is `""` for the turn's agent. */
+/** `seq` is its position (read for the plan rule); `lane` is `""` for the turn's agent. */
 function entry(seq: number, kind: EntryKind, payload: unknown = {}, lane = ""): Entry {
   return { id: `e${seq}`, turn: "t1", lane, kind, payload, seq, ts: seq };
 }
@@ -100,7 +100,7 @@ function fixture(body: Entry[], rendered = "rendered reply", outcome = "complete
 }
 
 /** Fold the fixture card and give it the face a folded turn renders. */
-function fold(f: Fixture, faceText = "face prose"): HTMLElement {
+function fold(f: Fixture, faceText = "face prose"): void {
   f.card.setAttribute("data-folded", "");
   const face = document.createElement("div");
   face.className = "turn-face";
@@ -109,7 +109,6 @@ function fold(f: Fixture, faceText = "face prose"): HTMLElement {
   prose.textContent = faceText;
   face.appendChild(prose);
   f.footer.before(face);
-  return face;
 }
 
 /** The default body: one prose entry. */

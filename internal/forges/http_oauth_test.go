@@ -17,16 +17,12 @@ const (
 	githubGrantStart  = "/api/forges/oauth/github/start"
 	githubGrantPoll   = "/api/forges/oauth/github/poll"
 	githubGrantCancel = "/api/forges/oauth/github/cancel"
-	// applianceClientID is the OAuth application a GitHub Enterprise
-	// administrator registered, which a start names for its own instance.
 	applianceClientID = "Iv1.appliance"
 )
 
 const approvedAnswer = `{"access_token":"token-new","token_type":"bearer","scope":"repo,read:org,workflow",` +
 	`"expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
 
-// startBody is a start for e's instance, an appliance on a loopback address,
-// naming clientID as its application.
 func (e *grantEndpoint) startBody(clientID string) string {
 	return fmt.Sprintf(`{"host":%q,"client_id":%q,"web_base_url":%q,"private_addresses":true,"plaintext_http":true}`,
 		e.host(), clientID, e.srv.URL)
@@ -36,7 +32,6 @@ func (e *grantEndpoint) host() string { return strings.TrimPrefix(e.srv.URL, "ht
 
 func (e *grantEndpoint) id() string { return MakeID(KindGitHub, e.host()) }
 
-// startGrant starts a grant on e through the route and answers its id.
 func (h *connectHarness) startGrant(t *testing.T, e *grantEndpoint) string {
 	t.Helper()
 	rec := h.do(t, http.MethodPost, githubGrantStart, e.startBody(applianceClientID))
@@ -154,7 +149,7 @@ func TestDeviceGrant_CompleteSavesTheRecordWithItsAccount(t *testing.T) {
 	if got, want := helperValuesFor(t, e.srv.URL), []string{"", h.helperValue(t)}; !slices.Equal(got, want) {
 		t.Errorf("credential.%s.helper = %q, want %q", e.srv.URL, got, want)
 	}
-	if row := h.m.Get(e.id()); row == nil || !row.Connected || row.Username != "alice" {
+	if row := h.m.get(e.id()); row == nil || !row.Connected || row.Username != "alice" {
 		t.Errorf("row after the grant = %+v, want alice connected", row)
 	}
 	if again := decodeBody(t, h.pollGrant(t, t.Context(), grant)); again["code"] != codeGrantNotFound {

@@ -8,7 +8,7 @@ import type { PolicyExplainResult } from "../types.js";
 
 /** Add, remove, or update a native policy rule. "add" defaults an empty effect to "ask"; "remove"
  *  and "update" need the exact existing rule; any widening change needs confirm=true. */
-export interface NativeRuleArgs {
+interface NativeRuleArgs {
   op: "add" | "remove" | "update";
   scope: "user" | "workspace";
   capability: string;

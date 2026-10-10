@@ -25,19 +25,19 @@ func stageOpenat2(t *testing.T, errs ...error) *int {
 	return &calls
 }
 
-func openDemo(t *testing.T, f *fixture) (int, error) {
+func openDemo(t *testing.T, f *fixture) error {
 	t.Helper()
 	fd, err := openDir(f.h.workFD, "demo")
 	if err == nil {
 		t.Cleanup(func() { _ = unix.Close(fd) })
 	}
-	return fd, err
+	return err
 }
 
 func TestOpenBeneath_RetriesATransientEAGAIN(t *testing.T) {
 	f := newFixture(t)
 	calls := stageOpenat2(t, unix.EAGAIN, unix.EINTR)
-	if _, err := openDemo(t, f); err != nil {
+	if err := openDemo(t, f); err != nil {
 		t.Fatalf("openDir after one EAGAIN and one EINTR = %v, want success", err)
 	}
 	if *calls != 3 {
@@ -52,7 +52,7 @@ func TestOpenBeneath_APersistentEAGAINFailsClosed(t *testing.T) {
 		errs[i] = unix.EAGAIN
 	}
 	calls := stageOpenat2(t, errs...)
-	if _, err := openDemo(t, f); !errors.Is(err, errResolveBusy) {
+	if err := openDemo(t, f); !errors.Is(err, errResolveBusy) {
 		t.Fatalf("openDir under endless EAGAIN = %v, want errResolveBusy", err)
 	}
 	if *calls != maxResolveAttempts {
@@ -73,7 +73,7 @@ func TestOpenBeneath_AnUnsupportedKernelRefusesEveryRoute(t *testing.T) {
 				errs[i] = kerr
 			}
 			calls := stageOpenat2(t, errs...)
-			if _, err := openDemo(t, f); !errors.Is(err, errResolveUnsupported) {
+			if err := openDemo(t, f); !errors.Is(err, errResolveUnsupported) {
 				t.Errorf("openDir on %v = %v, want errResolveUnsupported", kerr, err)
 			}
 			if *calls != 1 {

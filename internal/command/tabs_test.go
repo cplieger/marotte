@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// tabCmd builds a command envelope for one of the four tab types.
 func tabCmd(t *testing.T, typ marotte.CommandType, payload any) *marotte.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)
@@ -24,8 +23,7 @@ func tabCmd(t *testing.T, typ marotte.CommandType, payload any) *marotte.ClientC
 	return &marotte.ClientCommand{Type: typ, Payload: raw}
 }
 
-// bodyField reads one field out of a command's success body. A Fatalf rather than
-// a skip: a response missing the field the client resolves on is the defect.
+// A Fatalf rather than a skip: a response missing the field the client resolves on is the defect.
 func bodyField(t *testing.T, body any, key string) any {
 	t.Helper()
 	m, ok := body.(map[string]any)
@@ -50,11 +48,11 @@ func TestCmdOpenTab_ReturnsTheSubjectAndTheCreatedFlag(t *testing.T) {
 		Kind: marotte.TabKindChat, Ref: "c-open", OpID: "op-1",
 	})
 
-	first, err := CmdOpenTab(t.Context(), mem, cmd)
+	first, err := cmdOpenTab(t.Context(), mem, cmd)
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
-	second, err := CmdOpenTab(t.Context(), mem, cmd)
+	second, err := cmdOpenTab(t.Context(), mem, cmd)
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("repeat: status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
@@ -114,7 +112,7 @@ func TestCmdOpenTab_PayloadRefusals(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem, st, bus := newTabbedMembership(t, store)
 
-			_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab, tc.payload))
+			_, err := cmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab, tc.payload))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
@@ -136,7 +134,7 @@ func TestCmdOpenTab_ForAMissingChatIs404(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
 
-	_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
+	_, err := cmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
 		marotte.OpenTabCommand{Kind: marotte.TabKindChat, Ref: "c-gone"}))
 
 	if statusOf(err) != http.StatusNotFound {
@@ -153,7 +151,7 @@ func TestCmdCloseTab_ReturnsEveryClosedID(t *testing.T) {
 	parent := createChat(t, mem, "op-parent")
 	child := openChild(t, mem, store, "c-child", parent.Subject.ID)
 
-	body, err := CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
+	body, err := cmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
 		marotte.CloseTabCommand{ID: parent.Subject.ID, OpID: "op-close"}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -167,7 +165,7 @@ func TestCmdCloseTab_ReturnsEveryClosedID(t *testing.T) {
 		t.Errorf("closed = %v, want both the parent %q and its child %q", closed, parent.Subject.ID, child.Subject.ID)
 	}
 
-	again, err := CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
+	again, err := cmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
 		marotte.CloseTabCommand{ID: parent.Subject.ID}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("closing twice: status = %d, want 200: two devices can close one tab (%s)",
@@ -198,7 +196,7 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+			_, err := cmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
 				marotte.ReorderTabsCommand{Order: tc.order, OpID: "op-drag"}))
 
 			if statusOf(err) != http.StatusConflict {
@@ -209,7 +207,7 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 
 	t.Run("a valid order is accepted and reports its version", func(t *testing.T) {
 		_, before := st.List()
-		body, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+		body, err := cmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
 			marotte.ReorderTabsCommand{Order: []string{b.Subject.ID, a.Subject.ID}, OpID: "op-drag"}))
 		if statusOf(err) != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -224,7 +222,7 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 		for i := range order {
 			order[i] = "x"
 		}
-		_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+		_, err := cmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
 			marotte.ReorderTabsCommand{Order: order}))
 
 		if statusOf(err) != http.StatusRequestEntityTooLarge {
@@ -253,7 +251,7 @@ func TestCmdPinTab_RefusesAnAbsentTab(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			_, err := CmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, tc.payload))
+			_, err := cmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, tc.payload))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
@@ -292,7 +290,7 @@ func TestCmdReparentTab_ValidatesBothIDsAndReturnsTheSubject(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			body, err := CmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab, tc.payload))
+			body, err := cmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab, tc.payload))
 
 			if statusOf(err) != tc.want {
 				t.Fatalf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
@@ -327,21 +325,21 @@ func TestTabCommands_AnUnwiredStoreIs503(t *testing.T) {
 		call func() (any, error)
 	}{
 		{desc: "open", call: func() (any, error) {
-			return CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
+			return cmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
 				marotte.OpenTabCommand{Kind: marotte.TabKindChat, Ref: "c-a"}))
 		}},
 		{desc: "close", call: func() (any, error) {
-			return CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab, marotte.CloseTabCommand{ID: "t1"}))
+			return cmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab, marotte.CloseTabCommand{ID: "t1"}))
 		}},
 		{desc: "reorder", call: func() (any, error) {
-			return CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+			return cmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
 				marotte.ReorderTabsCommand{Order: []string{"t1"}}))
 		}},
 		{desc: "pin", call: func() (any, error) {
-			return CmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, marotte.PinTabCommand{ID: "t1"}))
+			return cmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, marotte.PinTabCommand{ID: "t1"}))
 		}},
 		{desc: "reparent", call: func() (any, error) {
-			return CmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab,
+			return cmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab,
 				marotte.ReparentTabCommand{ID: "t1", Parent: "t2"}))
 		}},
 	}
@@ -366,10 +364,10 @@ func TestCmdCreateChat_RetryFinishesTheTabWrite(t *testing.T) {
 		return createReq(t, "", marotte.CreateChatCommand{OpID: "op-retry", Name: "Half made"})
 	}
 
-	if _, err := CmdCreateChat(t.Context(), mem, req()); err == nil {
+	if _, err := cmdCreateChat(t.Context(), mem, req()); err == nil {
 		t.Fatal("the first attempt reported success, so the fixture injected nothing")
 	}
-	body, err := CmdCreateChat(t.Context(), mem, req())
+	body, err := cmdCreateChat(t.Context(), mem, req())
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("the retry: status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
@@ -399,7 +397,7 @@ func TestCmdCreateChat_AtTheLimitLeavesNoOrphan(t *testing.T) {
 	fillTabs(t, mem, tabs.MaxOpenTabs)
 	before := storedChatIDs(t, store)
 
-	_, err := CmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{OpID: "op-full"}))
+	_, err := cmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{OpID: "op-full"}))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (%s)", statusOf(err), errText(err))

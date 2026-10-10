@@ -8,9 +8,8 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// statusBinaries is the set of binaries /api/tools/status probes. Each
-// key is a name kiro-cli or a marotte feature panel expects on PATH
-// (the MCP add modal gates on node/npx/uv).
+// Each key is a name kiro-cli or a marotte feature panel expects on PATH (the MCP add modal gates
+// on node/npx/uv).
 var statusBinaries = []string{
 	"node", "npm", "npx",
 	"go", "gofmt",

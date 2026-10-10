@@ -16,19 +16,24 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// steerRecords holds every chat's user steer rows and what KAS's buffer holds of them, in memory. KAS's read
-// cursor does not rewind on a clear (kirodotdev/Kiro#11449), so a send after an in-turn clear is one combined
-// probe whose fate is observed.
+// steerRecords holds every steering buffer's user rows and what KAS's buffer holds of them, in memory, keyed by
+// the session a record steers: a chat id names the chat's own session, marotte.StepSteerKey a run step's. KAS's
+// read cursor does not rewind on a clear (kirodotdev/Kiro#11449), so a send after an in-turn clear is one
+// combined probe whose fate is observed.
 type steerRecords struct {
 	chats     map[marotte.ChatID]*steerRecord
 	versions  *subject.Versions
 	note      func(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) `wiring:"optional"`
 	broadcast func(marotte.ServerEvent)                                                                   `wiring:"optional"`
+	// stepEvent addresses a step key's row frame to its run tab; nil drops step frames.
+	stepEvent func(key marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.ServerEvent, bool) `wiring:"optional"`
 	// promptHeld decides a cleared row's fate when no turn is bound.
 	promptHeld func(marotte.ChatID) bool `wiring:"optional"`
 	runJob     func(command.SteerJob)
-	endSeq     uint64
-	mu         sync.Mutex
+	// stepJob runs a step key's flush on the step's carrier; a chat key's goes to runJob.
+	stepJob func(command.SteerJob) `wiring:"optional"`
+	endSeq  uint64
+	mu      sync.Mutex
 }
 
 type steerRecord struct {
@@ -63,9 +68,11 @@ type steerRecord struct {
 	gone       bool
 	flushing   bool
 	opEndStale bool
+	// noCarry marks a run step's record: a finished step stays finished, so its turn end leaves every
+	// unread row "not read" instead of carrying it.
+	noCarry bool
 }
 
-// pendingEnd is a turn end and the owner its collected rows carry.
 type pendingEnd struct {
 	owner string
 	end   command.SteerTurnEnd
@@ -113,10 +120,21 @@ func newSteerRecords() *steerRecords {
 func (r *steerRecords) record(chatID marotte.ChatID, create bool) *steerRecord {
 	rec := r.chats[chatID]
 	if create && rec == nil {
-		rec = &steerRecord{}
+		_, step := chatID.StepSession()
+		rec = &steerRecord{noCarry: step}
 		r.chats[chatID] = rec
 	}
 	return rec
+}
+
+func (r *steerRecords) eventFor(key marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.ServerEvent, bool) {
+	if _, step := key.StepSession(); !step {
+		return marotte.NewEvent(marotte.EventSteerQueued, key, *p), true
+	}
+	if r.stepEvent == nil {
+		return marotte.ServerEvent{}, false
+	}
+	return r.stepEvent(key, p)
 }
 
 // step runs fn under the lock, then publishes in step order; false for a torn-down chat. Never call it from
@@ -177,15 +195,25 @@ func (r *steerRecords) publish(ctx context.Context, rec *steerRecord, fx *steerF
 	r.mu.Lock()
 	gone := rec.gone
 	r.mu.Unlock()
-	for _, f := range fx.frames {
-		if !gone && r.broadcast != nil {
-			r.broadcast(marotte.NewEvent(marotte.EventSteerQueued, fx.chat, f))
+	if !gone && r.broadcast != nil {
+		for i := range fx.frames {
+			if ev, ok := r.eventFor(fx.chat, &fx.frames[i]); ok {
+				r.broadcast(ev)
+			}
 		}
 	}
 	for _, j := range fx.jobs {
-		if r.runJob != nil {
-			r.runJob(j)
-		}
+		r.runSteerJob(j)
+	}
+}
+
+func (r *steerRecords) runSteerJob(j command.SteerJob) {
+	run := r.runJob
+	if _, step := j.Chat.StepSession(); step {
+		run = r.stepJob
+	}
+	if run != nil {
+		run(j)
 	}
 }
 
@@ -297,6 +325,12 @@ func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
 func deletedSteer(w *dockRow) *marotte.EntrySteer {
 	return &marotte.EntrySteer{
 		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonDeleted,
+	}
+}
+
+func boundarySteer(w *dockRow) *marotte.EntrySteer {
+	return &marotte.EntrySteer{
+		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
 	}
 }
 
@@ -433,8 +467,7 @@ func (rec *steerRecord) probeReadLocked(ev steerEvent, fx *steerFx) {
 	}
 }
 
-// owe hands un-owned waiting rows to a job as the next probe; with none waiting the
-// channel is UNCONFIRMED.
+// With none waiting the channel is UNCONFIRMED.
 func (rec *steerRecord) owe(fx *steerFx) {
 	rec.probe = ""
 	if len(rec.unownedWaiting()) == 0 {
@@ -495,9 +528,9 @@ func (r *steerRecords) heldByPrompt(chatID marotte.ChatID) bool {
 	return r.promptHeld != nil && r.promptHeld(chatID)
 }
 
-// TakeAgentRows drains the agent rows a dead bridge leaves unread, for the death
+// takeAgentRows drains the agent rows a dead bridge leaves unread, for the death
 // closer's text-less entries. It works on a torn-down record too.
-func (r *steerRecords) TakeAgentRows(chatID marotte.ChatID) []string {
+func (r *steerRecords) takeAgentRows(chatID marotte.ChatID) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.chats[chatID]
@@ -513,9 +546,9 @@ func (r *steerRecords) TakeAgentRows(chatID marotte.ChatID) []string {
 	return out
 }
 
-// TurnStarted records the turn StartTurn began. It runs under the turn registry's
+// turnStarted records the turn StartTurn began. It runs under the turn registry's
 // lock, so it must not wait on a publication.
-func (r *steerRecords) TurnStarted(chatID marotte.ChatID, turnID string) {
+func (r *steerRecords) turnStarted(chatID marotte.ChatID, turnID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if rec := r.record(chatID, true); !rec.gone {
@@ -523,9 +556,9 @@ func (r *steerRecords) TurnStarted(chatID marotte.ChatID, turnID string) {
 	}
 }
 
-// TurnBound opens the channel for a turn that became own; unbound rows already in
+// turnBound opens the channel for a turn that became own; unbound rows already in
 // KAS join it, because that turn's execution is the one whose cursor reads them.
-func (r *steerRecords) TurnBound(chatID marotte.ChatID, turnID string) {
+func (r *steerRecords) turnBound(chatID marotte.ChatID, turnID string) {
 	r.step(chatID, true, func(rec *steerRecord, fx *steerFx) {
 		if channelRule(rec.channel, evBind) == cImpossible {
 			slog.Warn("a steer channel was still open when another turn bound", "chat_id", chatID, "turn", rec.turnID)
@@ -538,7 +571,7 @@ func (r *steerRecords) TurnBound(chatID marotte.ChatID, turnID string) {
 	})
 }
 
-func (r *steerRecords) TurnRevised(chatID marotte.ChatID, turnID string) {
+func (r *steerRecords) turnRevised(chatID marotte.ChatID, turnID string) {
 	r.step(chatID, false, func(rec *steerRecord, _ *steerFx) {
 		if channelRule(rec.channel, evRevise) == cKeep {
 			rec.turnID = turnID
@@ -546,19 +579,22 @@ func (r *steerRecords) TurnRevised(chatID marotte.ChatID, turnID string) {
 	})
 }
 
-// TurnEnded hands the closing turn's un-owned rows to a pending end, which the
+// turnEnded hands the closing turn's un-owned rows to a pending end, which the
 // close's pipeline (or the next starting prompt) resolves; a row an op owns
 // records the end for the op.
-func (r *steerRecords) TurnEnded(chatID marotte.ChatID, end command.SteerTurnEnd) {
+func (r *steerRecords) turnEnded(chatID marotte.ChatID, end command.SteerTurnEnd) {
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
 		rec.endLocked(r, end, false, fx)
 	})
 }
 
-// endLocked collects what a turn end takes. A stale bind has no pipeline to
-// resolve a pending end, so its unowned rows are settled here and a flush job
-// routes them.
+// A stale bind has no pipeline to resolve a pending end, so its unowned rows are settled here and a
+// flush job routes them.
 func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, stale bool, fx *steerFx) {
+	if rec.noCarry {
+		rec.endStepLocked(end, fx)
+		return
+	}
 	own := end.TurnID != "" && end.TurnID == rec.turnID
 	unbound := rec.channel == chanNone && end.Source.PromptClass()
 	ev := evTurnEnd
@@ -584,6 +620,21 @@ func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, sta
 	default:
 		r.pendEndLocked(rec, collected, end, fx)
 	}
+}
+
+// Whatever the channel. A row an op owns records the end for that op, whose EndOp retires it the same way.
+func (rec *steerRecord) endStepLocked(end command.SteerTurnEnd, fx *steerFx) {
+	rec.live(func(w *dockRow) {
+		switch {
+		case w.state == rowRead:
+		case w.owner != "" && w.owner == rec.op:
+			rec.noteOpEnd(w, end, false)
+		default:
+			w.owner = ""
+			retire(w, boundarySteer(w), fx)
+		}
+	})
+	rec.turnID, rec.channel, rec.probe, rec.starting = "", chanNone, "", ""
 }
 
 // settleStaleLocked: a row KAS holds is released to the binding execution, whose
@@ -658,9 +709,9 @@ func endCollects(s rowState, own, unbound, promptClass bool) bool {
 	return false
 }
 
-// BridgeGone leaves the rows a dead buffer held with no turn to collect them unsent
+// bridgeGone leaves the rows a dead buffer held with no turn to collect them unsent
 // for the chat's next prompt; KAS's log may re-inject them on load.
-func (r *steerRecords) BridgeGone(chatID marotte.ChatID) {
+func (r *steerRecords) bridgeGone(chatID marotte.ChatID) {
 	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
 		if rec.channel != chanNone {
 			return
@@ -674,10 +725,10 @@ func (r *steerRecords) BridgeGone(chatID marotte.ChatID) {
 	})
 }
 
-// BeginTeardown runs before the teardown's cancel, so every later fold, job and op finds the record gone. It
+// beginTeardown runs before the teardown's cancel, so every later fold, job and op finds the record gone. It
 // answers the unread rows for the close's notes, keeps agent rows for the death closer, and returns once
 // earlier steps published.
-func (r *steerRecords) BeginTeardown(chatID marotte.ChatID, exit <-chan struct{}) []marotte.SteerQueuedPayload {
+func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}) []marotte.SteerQueuedPayload {
 	r.mu.Lock()
 	rec := r.record(chatID, true)
 	if rec.gone {
@@ -708,9 +759,9 @@ type shutdownRow struct {
 	Agent   bool
 }
 
-// ShutdownTake marks the record gone and takes every live row in one section, lead first, then the agent rows;
+// shutdownTake marks the record gone and takes every live row in one section, lead first, then the agent rows;
 // it returns once earlier steps published.
-func (r *steerRecords) ShutdownTake(chatID marotte.ChatID) []shutdownRow {
+func (r *steerRecords) shutdownTake(chatID marotte.ChatID) []shutdownRow {
 	r.mu.Lock()
 	rec := r.chats[chatID]
 	if rec == nil || rec.gone {
@@ -740,7 +791,6 @@ func (r *steerRecords) ShutdownTake(chatID marotte.ChatID) []shutdownRow {
 	return out
 }
 
-// sortLeadFirst orders rows the lead first, then by acceptance.
 func sortLeadFirst(rows []*dockRow, lead string) {
 	slices.SortStableFunc(rows, func(a, b *dockRow) int {
 		if (a.key == lead) != (b.key == lead) {
@@ -753,10 +803,10 @@ func sortLeadFirst(rows []*dockRow, lead string) {
 	})
 }
 
-// EndTeardown forgets the record once the chat's last forward goroutine and every
+// endTeardown forgets the record once the chat's last forward goroutine and every
 // queued step have drained, bounded, so a late fold cannot recreate it for a chat
 // that is gone.
-func (r *steerRecords) EndTeardown(chatID marotte.ChatID) {
+func (r *steerRecords) endTeardown(chatID marotte.ChatID) {
 	r.mu.Lock()
 	rec := r.chats[chatID]
 	r.mu.Unlock()
@@ -779,9 +829,9 @@ func (r *steerRecords) EndTeardown(chatID marotte.ChatID) {
 	}
 }
 
-// List answers the connect replay: every visible row with its wire state, a batch
+// list answers the connect replay: every visible row with its wire state, a batch
 // frame for every id a row is held under that is not its key, then agent rows.
-func (r *steerRecords) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
+func (r *steerRecords) list(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	chats := make([]marotte.ChatID, 0, len(r.chats))
@@ -793,16 +843,21 @@ func (r *steerRecords) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	slices.Sort(chats)
 	var out []marotte.ServerEvent
 	for _, id := range chats {
-		out = r.chats[id].appendReplay(out, id)
+		out = r.appendReplay(out, r.chats[id], id)
 	}
 	return out
 }
 
-func (rec *steerRecord) appendReplay(out []marotte.ServerEvent, id marotte.ChatID) []marotte.ServerEvent {
+func (r *steerRecords) appendReplay(out []marotte.ServerEvent, rec *steerRecord, id marotte.ChatID) []marotte.ServerEvent {
+	add := func(p marotte.SteerQueuedPayload) {
+		if ev, ok := r.eventFor(id, &p); ok {
+			out = append(out, ev)
+		}
+	}
 	batches := map[string][]*dockRow{}
 	var order []string
 	rec.live(func(w *dockRow) {
-		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, rowFrame(w)))
+		add(rowFrame(w))
 		if w.kasID != "" && w.kasID != w.key {
 			if _, seen := batches[w.kasID]; !seen {
 				order = append(order, w.kasID)
@@ -811,17 +866,54 @@ func (rec *steerRecord) appendReplay(out []marotte.ServerEvent, id marotte.ChatI
 		}
 	})
 	for _, kas := range order {
-		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, batchFrame(kas, batches[kas])))
+		add(batchFrame(kas, batches[kas]))
 	}
 	for _, o := range rec.others {
-		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, o))
+		add(o)
 	}
 	return out
 }
 
-// SetLead records the send-now arrow's row, sent first until it is sent or
+// forgetStep drops a step's record once earlier steps published and nothing in it is live: the
+// step's turn ended and no op holds a row. A record still holding rows stays for its op to finish.
+func (r *steerRecords) forgetStep(key marotte.ChatID) {
+	if _, step := key.StepSession(); !step {
+		return
+	}
+	r.mu.Lock()
+	rec := r.chats[key]
+	if rec == nil {
+		r.mu.Unlock()
+		return
+	}
+	r.awaitLocked(rec, &steerFx{chat: key, done: make(chan struct{})})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	idle := rec.op == "" && len(rec.others) == 0
+	rec.live(func(*dockRow) { idle = false })
+	if idle && r.chats[key] == rec {
+		delete(r.chats, key)
+	}
+}
+
+func (r *steerRecords) boundTo(key marotte.ChatID, turnID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[key]
+	return rec != nil && !rec.gone && rec.channel != chanNone && rec.turnID == turnID
+}
+
+// A step's steer may be sent only while this holds.
+func (r *steerRecords) stepOpen(key marotte.ChatID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[key]
+	return rec != nil && !rec.gone && rec.channel != chanNone
+}
+
+// setLead records the send-now arrow's row, sent first until it is sent or
 // terminal.
-func (r *steerRecords) SetLead(chatID marotte.ChatID, key string) (undo func()) {
+func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.record(chatID, false)
@@ -838,9 +930,9 @@ func (r *steerRecords) SetLead(chatID marotte.ChatID, key string) (undo func()) 
 	}
 }
 
-// NeedsPostLoadClear: KAS may hold copies this record also holds, nothing bound is
+// needsPostLoadClear: KAS may hold copies this record also holds, nothing bound is
 // reading, and no agent row would be lost to the clear.
-func (r *steerRecords) NeedsPostLoadClear(chatID marotte.ChatID) bool {
+func (r *steerRecords) needsPostLoadClear(chatID marotte.ChatID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.chats[chatID]

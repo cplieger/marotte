@@ -51,6 +51,6 @@ func refuseTooLarge(w http.ResponseWriter, r *http.Request, err error) bool {
 		"method", r.Method, "path", logsafe.Field(r.URL.Path),
 		"limit", webhttp.MaxJSONBody, "error", maxErr)
 	webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-		map[string]string{JSONKeyError: "request body too large"})
+		map[string]string{jsonKeyError: "request body too large"})
 	return true
 }

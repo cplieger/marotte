@@ -127,7 +127,7 @@ func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
 	}
 }
 
-// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins ChatID as additive at Version 1:
+// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins ChatID as additive at version 1:
 // an empty chat id already means "no chat"; a version bump would discard every live lease.
 func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 	t.Parallel()

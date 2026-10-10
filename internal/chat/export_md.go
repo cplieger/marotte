@@ -34,8 +34,6 @@ func renderChatMarkdown(c *marotte.Chat, entries []marotte.Entry) string {
 	return b.String()
 }
 
-// groupTurns partitions entries by turn, turns in order of first appearance and
-// entries in file order within a turn.
 func groupTurns(entries []marotte.Entry) [][]marotte.Entry {
 	byTurn := make(map[string]int)
 	var turns [][]marotte.Entry
@@ -108,17 +106,16 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindPlan:
 		r.writePlanOnce(b)
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
-		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched,
+		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
 		marotte.EntryKindModeSwitched, marotte.EntryKindTurnRevert:
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
-	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled:
-		// Neither renders: turn_bind is bookkeeping, and reconciled is a fact about the record, not the conversation.
+	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered:
+		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, and steer_delivered a time on its message's row.
 	}
 }
 
-// writeEventMarkdown renders the six kinds the client draws as boundary rows (EventEntryKind).
 func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 	switch e.Kind {
 	case marotte.EntryKindCompaction:
@@ -129,6 +126,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeSafetyBlockedMarkdown(b, e)
 	case marotte.EntryKindModelSwitched:
 		writeModelSwitchedMarkdown(b, e)
+	case marotte.EntryKindModelRouted:
+		writeModelRoutedMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
 	case marotte.EntryKindTurnRevert:
@@ -151,7 +150,7 @@ func (r *turnRender) writeToolCall(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeUnpairedResult renders a result whose call a rewind cut away; paired results fold into their call.
+// paired results fold into their call.
 func (r *turnRender) writeUnpairedResult(b *strings.Builder, e *marotte.Entry) {
 	if _, paired := r.calls[toolCallIDOfResult(e.ID)]; paired {
 		return
@@ -246,6 +245,14 @@ func writeModelSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	fmt.Fprintf(b, "%s\n\n", line)
 }
 
+func writeModelRoutedMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryModelRouted
+	if !decodePayload(e, &p) {
+		return
+	}
+	fmt.Fprintf(b, "**Event: model_routed** %s\n\n", oneLine(p.Message))
+}
+
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModeSwitched
 	if !decodePayload(e, &p) {
@@ -282,8 +289,7 @@ func writeTurnCloseEntry(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// indexResults decodes a turn's tool_results keyed by call, plus the turn's call ids; a result whose call was cut
-// away renders alone.
+// A result whose call was cut away renders alone.
 func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolResult, calls map[string]struct{}) {
 	results = make(map[string]*marotte.EntryToolResult)
 	calls = make(map[string]struct{})
@@ -302,7 +308,6 @@ func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolRe
 	return results, calls
 }
 
-// newestPlan returns the turn's last plan entry's entries, or nil.
 func newestPlan(turn []marotte.Entry) []marotte.PlanEntry {
 	for _, e := range slices.Backward(turn) {
 		if e.Kind != marotte.EntryKindPlan {
@@ -316,12 +321,11 @@ func newestPlan(turn []marotte.Entry) []marotte.PlanEntry {
 	return nil
 }
 
-// decodePayload decodes an entry's payload into p, reporting success; an undecodable entry is skipped.
+// An undecodable entry is skipped.
 func decodePayload(e *marotte.Entry, p any) bool {
 	return json.Unmarshal(e.Payload, p) == nil
 }
 
-// writeTurnOpenMarkdown emits the turn heading, its timestamp, and the prompt with attachment names for a reader turn.
 func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var open marotte.EntryTurnOpen
 	if !decodePayload(e, &open) {
@@ -349,14 +353,13 @@ func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeLaneNote marks a delegate's entry with whose words they are; lane "" gets no note.
+// lane "" gets no note.
 func writeLaneNote(b *strings.Builder, lane string) {
 	if lane != "" {
 		fmt.Fprintf(b, "_Delegate `%s`_\n\n", oneLine(lane))
 	}
 }
 
-// writeParagraph emits trimmed text as a paragraph, nothing for empty text.
 func writeParagraph(b *strings.Builder, text string) {
 	if text = strings.TrimSpace(text); text != "" {
 		b.WriteString(text)
@@ -367,8 +370,20 @@ func writeParagraph(b *strings.Builder, text string) {
 // steerHeading names a mid-turn message's origin and, for a user steer, whether the agent read it, so an unseen
 // correction stays distinct from the prompt.
 func steerHeading(p *marotte.EntrySteer) string {
-	if p.Origin == marotte.SteerOriginAgent {
+	switch p.Origin {
+	case marotte.SteerOriginAgent:
 		return "**Agent note**\n\n"
+	case marotte.SteerOriginParent:
+		if p.Step != "" {
+			return fmt.Sprintf("**Message to step %#q**\n\n", oneLine(p.Step))
+		}
+		return "**Message from the parent agent**\n\n"
+	case marotte.SteerOriginStep:
+		if p.Step != "" {
+			return fmt.Sprintf("**Message from step %#q**\n\n", oneLine(p.Step))
+		}
+		return "**Message to the parent agent**\n\n"
+	case marotte.SteerOriginUser:
 	}
 	if p.State == marotte.SteerStateDropped {
 		return "**User (mid-turn, not delivered)**\n\n"
@@ -393,7 +408,6 @@ func writePlanMarkdown(b *strings.Builder, plan []marotte.PlanEntry) {
 	b.WriteString("\n")
 }
 
-// untitledTool heads a tool call or result whose frame carried no title.
 const untitledTool = "tool"
 
 // writeToolCallMarkdown renders one tool call as a collapsible block: summary, duration, locations, then sanitised
@@ -449,8 +463,8 @@ func writeToolResultMarkdown(b *strings.Builder, res *marotte.EntryToolResult) {
 	b.WriteString("</details>\n\n")
 }
 
-// toolStatusWord is the summary line's status. A declined call says declined rather than its bare `completed`, as
-// the card paints a fifth outcome.
+// A declined call says declined rather than its bare `completed`, as the card paints a fifth
+// outcome.
 func toolStatusWord(status marotte.ToolStatus, declined bool) string {
 	if declined {
 		return "declined"
@@ -461,7 +475,6 @@ func toolStatusWord(status marotte.ToolStatus, declined bool) string {
 	return string(status)
 }
 
-// writeToolLocations renders the tool call's file locations as a list.
 func writeToolLocations(b *strings.Builder, locs []marotte.ToolLocation) {
 	if len(locs) == 0 {
 		return
@@ -495,7 +508,7 @@ func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 	}
 }
 
-// formatToolInput pretty-prints a tool call's JSON input, or returns the trimmed raw string; empty or null yields "".
+// Empty or null yields "".
 func formatToolInput(raw json.RawMessage) string {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {

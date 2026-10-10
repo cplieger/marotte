@@ -9,7 +9,7 @@ import {
   SEARCH_DEBOUNCE_MS,
   wireSearchKeys,
 } from "./search-shell.js";
-import type { SearchShellSpec } from "./search-shell.js";
+import type { SearchShell, SearchShellSpec } from "./search-shell.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -150,6 +150,16 @@ describe("wireSearchKeys", () => {
 // The spec is named with its own result type rather than reached through `Parameters<typeof
 // createSearchShell>[0]`, which resolves the generic to `unknown` and then poisons `query`'s return
 // type at the spread below.
+/** The `Aa` toggle the shell built, found the way a reader finds it. */
+function caseButtonOf(shell: SearchShell): HTMLButtonElement | null {
+  return shell.region.querySelector<HTMLButtonElement>('button[aria-label="Match case"]');
+}
+
+/** The status note, by the id the shell gives it. */
+function noteOf(shell: SearchShell): HTMLElement | null {
+  return shell.region.querySelector<HTMLElement>("#t-search-note");
+}
+
 function harness(over: Partial<SearchShellSpec<string>> = {}) {
   const query = vi.fn();
   const render = vi.fn();
@@ -199,8 +209,8 @@ describe("createSearchShell: the region", () => {
     // FALSE is a real answer, not a default. The cross-chat endpoint is case-insensitive by
     // decision, so a toggle there would be wired to nothing.
     const { shell } = harness();
-    expect(shell.caseButton).toBeNull();
-    expect(shell.note).toBeNull();
+    expect(caseButtonOf(shell)).toBeNull();
+    expect(noteOf(shell)).toBeNull();
     expect(shell.region.querySelector(".t-btn")).toBeNull();
   });
 
@@ -223,16 +233,16 @@ describe("createSearchShell: the region", () => {
     const row = shell.region.querySelector(".custom-row");
     expect(row).not.toBeNull();
     expect(row?.firstElementChild).toBe(shell.input);
-    expect(shell.region.lastElementChild).toBe(shell.note);
+    expect(shell.region.lastElementChild).toBe(noteOf(shell));
   });
 
   it("makes the note a polite live region, because it lands after the results", () => {
     const { shell } = harness({ note: true });
-    expect(shell.note?.getAttribute("role")).toBe("status");
-    expect(shell.note?.getAttribute("aria-live")).toBe("polite");
-    expect(shell.note?.getAttribute("aria-atomic")).toBe("true");
+    expect(noteOf(shell)?.getAttribute("role")).toBe("status");
+    expect(noteOf(shell)?.getAttribute("aria-live")).toBe("polite");
+    expect(noteOf(shell)?.getAttribute("aria-atomic")).toBe("true");
     shell.setNote("read 3 files");
-    expect(shell.note?.textContent).toBe("read 3 files");
+    expect(noteOf(shell)?.textContent).toBe("read 3 files");
   });
 });
 
@@ -351,14 +361,14 @@ describe("createSearchShell: the match-case toggle", () => {
     shell.input.value = "todo";
     shell.run();
     expect(query).toHaveBeenLastCalledWith("todo", false);
-    shell.caseButton?.click();
+    caseButtonOf(shell)?.click();
     expect(query).toHaveBeenCalledTimes(2);
     expect(query).toHaveBeenLastCalledWith("todo", true);
   });
 
   it("carries the flip into every later query", () => {
     const { shell, query } = harness({ matchCase: true });
-    shell.caseButton?.click();
+    caseButtonOf(shell)?.click();
     expect(shell.caseSensitive).toBe(true);
     shell.input.value = "z";
     shell.run();

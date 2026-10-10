@@ -40,7 +40,7 @@ import { initShellPanel, revealShellKeys } from "./shell.js";
 import { initSidebarResize } from "./sidebar-resize.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
-import { activateFile, closeEditorFile, refreshFile } from "./editor-openers.js";
+import { activateFile, closeEditorFile, refreshEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
@@ -100,11 +100,13 @@ import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/knowledge-indexing.js";
 import "./handlers/run.js";
+import "./handlers/notification.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import { installChatRunDotSubscriber } from "./chat-run-dots.js";
 import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
-import { installNotifyAskGesture } from "./notify.js";
+import { installNotifyAskGesture, setOnScreen } from "./notify.js";
+import { targetOnScreen } from "./notify-on-screen.js";
 import { chatSettled } from "./chat-settled.js";
 import "./handlers/steer.js";
 import "./handlers/system-notice.js";
@@ -160,7 +162,7 @@ function init(): void {
       close: closeChatTab,
       dot: chatTabDot,
     },
-    editor: { show: activateFile, refresh: refreshFile, close: closeEditorFile },
+    editor: { show: activateFile, refresh: refreshEditorFile, close: closeEditorFile },
     run: {
       // `parentless` comes from the run store's record of the launching chat. No `cancel`: a
       // run tab is a VIEW, so its × stops nothing.
@@ -232,6 +234,9 @@ function init(): void {
   // The other half: an agent-finished cue withheld while a run the turn launched is
   // still going is released here, when the last outstanding thing for that chat ends.
   installDeferredCueSubscriber();
+
+  // A notification is silent only while its own chat or run is the tab on screen.
+  setOnScreen(targetOnScreen);
 
   // A cue that could not notify arms this; the reader's next click raises the browser
   // prompt, which needs a gesture.

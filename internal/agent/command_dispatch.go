@@ -7,10 +7,10 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
-// registerCommandHandlers populates the dispatcher with the dispatch table.
 func (rt *Runtime) registerCommandHandlers() {
 	rt.membership = command.RegisterDefaults(rt.dispatcher, &command.Roles{
 		Bridges:   bridgeRole{coord: rt.coord},
+		Loader:    rt.coord,
 		Chats:     rt.chatStore,
 		Sessions:  rt.chatStore,
 		Bus:       rt.bus,
@@ -43,6 +43,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Compactor:     rt,
 		Renamer:       rt,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
+		Tangents:      rt,
 	})
 
 	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)

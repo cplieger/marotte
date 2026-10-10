@@ -29,8 +29,6 @@ func (b *pendingInteractionBlock) askOptions() []turnlog.AskOption {
 	return out
 }
 
-// turnThroughput is the two members of turn_completion's throughput object the
-// footer reads.
 type turnThroughput struct {
 	EstimatedTokens   *int64   `json:"estimatedTokens"`
 	ActiveStreamingMs *float64 `json:"activeStreamingMs"`
@@ -52,8 +50,7 @@ func (p *turnThroughput) summary() *marotte.TurnThroughput {
 	return &tp
 }
 
-// steeringDocIDs is a steering_inclusion block's document ids. KAS sends each as
-// its id string; an object form is read for its id.
+// KAS sends each as its id string; an object form is read for its id.
 func steeringDocIDs(raw []json.RawMessage) []string {
 	out := make([]string, 0, len(raw))
 	for _, r := range raw {
@@ -106,9 +103,9 @@ func (t *Translator) noteTurnFacts(chatID marotte.ChatID, k *sessionInfoKiroBloc
 	return false
 }
 
-// handleAskInfo consumes the ask and steering sub-kinds. A resolution always withdraws its
-// pending ask; facts are recorded on the chat's own turn only (a subagent's land on its
-// parent turn, a workflow step's nowhere), and an answer to an unnoted ask records nothing.
+// A resolution always withdraws its pending ask; facts are recorded on the chat's own turn only (a
+// subagent's land on its parent turn, a workflow step's nowhere), and an answer to an unnoted ask
+// records nothing.
 func (t *Translator) handleAskInfo(chatID marotte.ChatID, k *sessionInfoKiroBlock, attr FrameAttribution) bool {
 	if r := k.InteractionResolved; r != nil {
 		t.handleInteractionResolved(chatID, r)
@@ -118,7 +115,6 @@ func (t *Translator) handleAskInfo(chatID marotte.ChatID, k *sessionInfoKiroBloc
 	return !attr.Step && t.noteTurnFacts(chatID, k)
 }
 
-// noteAnswer records how a tool call's ask was answered on the chat's own turn.
 func (t *Translator) noteAnswer(chatID marotte.ChatID, r *interactionResolvedBlock) {
 	if turn, ok := t.turns.OwnTurn(chatID); ok {
 		turn.NoteAnswer(r.ToolCallID, r.Outcome, displayText(r.SelectedOption))

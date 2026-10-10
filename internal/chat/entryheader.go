@@ -27,7 +27,6 @@ type EntryHeader struct {
 // NewEntryHeader names the header beside the log under root.
 func NewEntryHeader(root string) EntryHeader { return EntryHeader{root: root} }
 
-// path is the header file.
 func (h EntryHeader) path() string { return filepath.Join(h.root, headerFileName) }
 
 // Read returns the stored header, or os.ErrNotExist when the root has no chat.json.
@@ -54,9 +53,9 @@ func (h EntryHeader) Read(ctx context.Context) (*marotte.Chat, error) {
 	return &c, nil
 }
 
-// Write replaces the header atomically through atomicfile (temp, fsync, rename, dir fsync). The directory is 0700:
+// write replaces the header atomically through atomicfile (temp, fsync, rename, dir fsync). The directory is 0700:
 // a header carries the name, draft and attachment paths.
-func (h EntryHeader) Write(ctx context.Context, c *marotte.Chat) error {
+func (h EntryHeader) write(ctx context.Context, c *marotte.Chat) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
@@ -83,10 +82,9 @@ func (h EntryHeader) Update(ctx context.Context, apply func(c *marotte.Chat) boo
 	if !apply(c) {
 		return false, nil
 	}
-	return true, h.Write(ctx, c)
+	return true, h.write(ctx, c)
 }
 
-// EntryHeader is the header policy a CHAT root supplies to its log.
 var _ LogHeader = EntryHeader{}
 
 // Counters caches the log's turn_count and last_turn_outcome, writing only on disagreement, so the header catches up
@@ -113,7 +111,7 @@ func (h EntryHeader) CloserModel() string {
 }
 
 // Reconcilable is true: a chat's header names the session whose history may be lost.
-func (h EntryHeader) Reconcilable() bool { return true }
+func (EntryHeader) Reconcilable() bool { return true }
 
 // SessionID is the session the header names, condition (i) of the log's reconcile predicate against its turn_bind
 // entries. Empty when the header is unreadable, making the condition false.

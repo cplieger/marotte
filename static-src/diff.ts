@@ -15,18 +15,15 @@ export interface DiffLine {
 export interface DiffStats {
   adds: number;
   dels: number;
-  ctx: number;
 }
 
 export function stats(lines: DiffLine[]): DiffStats {
-  const s: DiffStats = { adds: 0, dels: 0, ctx: 0 };
+  const s: DiffStats = { adds: 0, dels: 0 };
   for (const l of lines) {
     if (l.kind === "add") {
       s.adds++;
     } else if (l.kind === "del") {
       s.dels++;
-    } else {
-      s.ctx++;
     }
   }
   return s;
@@ -363,9 +360,8 @@ interface WordToken {
   readonly start: number;
 }
 
-/** Split a line into identifier runs, whitespace runs, and single other
- *  characters. Every character lands in exactly one token, so a token's `start`
- *  plus its length addresses the original line. */
+/** Every character lands in exactly one token, so a token's `start` plus its length addresses the
+ *  original line. */
 function splitWords(s: string): WordToken[] {
   const out: WordToken[] = [];
   let i = 0;

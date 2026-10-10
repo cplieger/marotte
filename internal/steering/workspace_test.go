@@ -590,8 +590,6 @@ func TestClassifyEntries(t *testing.T) {
 	}
 }
 
-// isValidUTF8 reports whether s is valid UTF-8 (round-trips through
-// ToValidUTF8 unchanged).
 func isValidUTF8(s string) bool {
 	return strings.ToValidUTF8(s, "\uFFFD") == s
 }

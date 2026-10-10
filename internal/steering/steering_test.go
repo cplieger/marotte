@@ -592,7 +592,6 @@ func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 	})
 }
 
-// connectedEverywhere is one provider of every forge kind Sources connects.
 var connectedEverywhere = ForgeSnapshot{Providers: []ForgeProvider{
 	{Kind: "github", Host: "github.com", User: "alice"},
 	{Kind: "gitlab", Host: "gitlab.com", User: "alice"},

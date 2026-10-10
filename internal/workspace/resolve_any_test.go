@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// twoRoots builds a workspace and a SIBLING uploads directory, each with one real file,
-// plus a directory neither root contains. Symlink-resolved for canonTmp's reason.
+// The uploads directory is a SIBLING of the workspace. Symlink-resolved for canonTmp's reason.
 func twoRoots(t *testing.T) (work, uploads, outside string) {
 	t.Helper()
 	work = canonTmp(t)

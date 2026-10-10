@@ -26,46 +26,29 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// pushPayload is the Web Push payload wire shape. PushSubject is EMBEDDED so fitToCap's
-// marshaled-size check charges every subject field against the cap.
-type pushPayload struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-	marotte.PushSubject
-	// ChatName is the chat's display name when the push was sent, because the page
-	// that toasts it may already have dropped the chat's row.
-	ChatName string `json:"chat_name,omitempty"`
-}
-
-// pushChatNameCap bounds ChatName: the page shows 40 characters of it
-// (notice-subject.ts MAX_NAME_CHARS), and 160 bytes hold 40 of the widest runes.
-const pushChatNameCap = 160
-
-// Send delivers a push notification to all subscribers, debounced per kind AND subject.
-// A zero subject is workspace-global; chatName is empty when the subject is not a chat.
-// preflightSend's nil means do not send; a non-nil empty slice has stamped the debounce.
-func (s *Service) Send(
-	ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject, chatName string,
-) {
-	slog.Debug("push: send", "kind", string(notifyType))
+// Send delivers n to all subscribers, debounced per kind AND subject. The payload is n
+// itself, so the service worker shows what the page would. preflightSend's nil means do
+// not send; a non-nil empty slice has stamped the debounce.
+func (s *Service) Send(ctx context.Context, sent *marotte.NotificationPayload) {
+	n := *sent
+	slog.Debug("push: send", "kind", string(n.Kind))
 	// Trim against the MARSHALED size: the JSON envelope and escaping count toward pushBodyCap,
 	// and push() drops an over-cap payload rather than truncating it.
-	chatName, _ = runesafe.SanitizeSingleLineCapped(chatName, pushChatNameCap, pushTruncMarker)
-	if t, b, truncated := fitToCap(title, body, subject, chatName); truncated {
+	if fit, truncated := fitToCap(&n); truncated {
 		slog.Warn("push: payload too large, truncating",
-			"bytes", len(title)+len(body), "cap", pushBodyCap)
-		title, body = t, b
+			"bytes", len(n.Title)+len(n.Body), "cap", pushBodyCap)
+		n = fit
 	}
-	subs := s.preflightSend(notifyType, subject)
+	subs := s.preflightSend(n.Kind, n.PushSubject)
 	if subs == nil {
 		return
 	}
-	payload, err := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject, ChatName: chatName})
+	payload, err := json.Marshal(n)
 	if err != nil {
 		slog.Error("push: marshal payload", "error", err)
 		return
 	}
-	s.fanOut(ctx, s.absent(subs, notifyType, subject, payload), payload, notifyType)
+	s.fanOut(ctx, s.absent(subs, n.Kind, n.PushSubject, payload), payload, n.Kind)
 }
 
 // absent is the send filter: subscriptions whose profile is not receiving the event on a
@@ -80,7 +63,7 @@ func (s *Service) absent(
 	}
 	out := make([]marotte.PushSubscription, 0, len(subs))
 	for _, sub := range subs {
-		tag := TagOf(sub.Endpoint)
+		tag := tagOf(sub.Endpoint)
 		if s.presence.Gone(tag) {
 			out = append(out, sub)
 			continue
@@ -94,8 +77,6 @@ func (s *Service) absent(
 	return out
 }
 
-// fanOut delivers payload to every subscription, pushFanOutLimit at a time, and
-// prunes the ones the service said are gone.
 func (s *Service) fanOut(
 	ctx context.Context, subs []marotte.PushSubscription, payload []byte, kind marotte.PushKind,
 ) {
@@ -134,7 +115,7 @@ func (s *Service) PresenceRows() []PresenceRow {
 	if s.presence == nil {
 		return []PresenceRow{}
 	}
-	return s.presence.Rows()
+	return s.presence.snapshotRows()
 }
 
 // PresenceTransitions is the table's alive and expired counts; zero when no
@@ -143,7 +124,7 @@ func (s *Service) PresenceTransitions() (alive, expired uint64) {
 	if s.presence == nil {
 		return 0, 0
 	}
-	return s.presence.Transitions()
+	return s.presence.transitions()
 }
 
 // fanOut is what one notification's deliveries came to (see prunable).
@@ -168,10 +149,9 @@ func (f *fanOut) record(d disposition, endpoint string) {
 	}
 }
 
-// prunable is the endpoint set this fan-out may delete; it logs the verdict because only a
-// re-subscribe undoes a prune. A 404/410 goes on its own answer. A 401/403 goes only when
-// another subscriber accepted this notification: that proves this server's credentials
-// work, while a server-side mistake refuses everyone and so deletes nothing.
+// It logs the verdict because only a re-subscribe undoes a prune. A 404/410 goes on its own answer.
+// A 401/403 goes only when another subscriber accepted this notification: that proves this server's
+// credentials work, while a server-side mistake refuses everyone and so deletes nothing.
 func (f *fanOut) prunable() []string {
 	switch {
 	case len(f.authRejected) == 0:
@@ -188,12 +168,10 @@ func (f *fanOut) prunable() []string {
 	}
 }
 
-// pushResubscribeHint is the remedy for a subscription no key on this server can
-// sign for. RFC 8292 section 4.2 requires the USER AGENT to create the
-// replacement, so nothing server-side repairs one.
+// RFC 8292 section 4.2 requires the USER AGENT to create the replacement, so nothing server-side
+// repairs one.
 const pushResubscribeHint = "re-subscribe from a browser tab; a subscription bound to a replaced VAPID key cannot be repaired server-side"
 
-// disposition is what to do about a push service's answer.
 type disposition int
 
 const (
@@ -237,7 +215,7 @@ func (s *Service) deliver(
 	payload []byte,
 	kind marotte.PushKind,
 ) disposition {
-	tag := TagOf(sub.Endpoint)
+	tag := tagOf(sub.Endpoint)
 	deadline := time.Now().Add(pushRetryBudget)
 	backoff := pushRetryBase
 
@@ -293,7 +271,7 @@ func withoutEndpoint(err error) error {
 // waitRetry sleeps before the next attempt and reports whether to make one: no once the
 // attempt cap or budget is spent, or a Retry-After lands past the notification's usefulness.
 // Full jitter keeps a recovering vendor from receiving every subscriber's retry at once.
-func (s *Service) waitRetry(
+func (*Service) waitRetry(
 	ctx context.Context,
 	attempt int,
 	deadline time.Time,
@@ -328,8 +306,8 @@ func (s *Service) waitRetry(
 	}
 }
 
-// permanentHint names what a permanent failure means; each is marotte's bug. Authorization
-// refusals have their own disposition, because whose key is wrong decides pruning.
+// Each is marotte's bug. Authorization refusals have their own disposition, because whose key is
+// wrong decides pruning.
 func permanentHint(code int) string {
 	switch code {
 	case http.StatusBadRequest:
@@ -408,7 +386,7 @@ func (s *Service) pruneDebounceLocked() {
 	}
 }
 
-// pruneStale deletes the listed endpoints from s.subs and persists the set; no-op on empty.
+// No-op on empty.
 func (s *Service) pruneStale(stale []string) {
 	if len(stale) == 0 {
 		return
@@ -444,16 +422,16 @@ func urgencyFor(kind marotte.PushKind) string {
 const (
 	// The dock replays an unanswered permission ask on reconnect, so this buys only promptness.
 	ttlPermission = 10 * time.Minute
-	// "The agent finished" is moot an hour later: by then the reader has either come
-	// back to the chat or stopped waiting.
+	// A finished turn is moot an hour later: by then the reader has either come back
+	// to the chat or stopped waiting.
 	ttlAgentFinished = time.Hour
 	// A pull request's verdict does not expire — it is still true tomorrow — so
 	// this is the one kind worth delivering to a device that was away all day.
 	ttlPRStatus = 24 * time.Hour
 )
 
-// ttlFor maps a kind onto its TTL header value. An unknown kind (the wire grew one this
-// build lacks) takes the longest window: delivering late beats dropping it.
+// An unknown kind (the wire grew one this build lacks) takes the longest window: delivering late
+// beats dropping it.
 func ttlFor(kind marotte.PushKind) string {
 	return ttlSeconds(ttlDuration(kind))
 }
@@ -471,7 +449,6 @@ func ttlDuration(kind marotte.PushKind) time.Duration {
 	}
 }
 
-// ttlSeconds renders a TTL as the decimal seconds the header carries.
 func ttlSeconds(d time.Duration) string {
 	return strconv.FormatInt(int64(d/time.Second), 10)
 }
@@ -601,35 +578,35 @@ func encryptPayload(sub marotte.PushSubscription, payload []byte) ([]byte, error
 const pushTruncMarker = "..."
 
 // fitToCap trims the body, then (only if an empty body still overflows) the title, until
-// the marshaled pushPayload fits pushBodyCap, and reports whether it trimmed. runesafe's
+// the marshaled payload fits pushBodyCap, and reports whether it trimmed. runesafe's
 // Capped pair never splits a rune and charges the marker inside the cap.
-func fitToCap(title, body string, subject marotte.PushSubject, chatName string) (fitTitle, fitBody string, truncated bool) {
-	if marshaledLen(title, body, subject, chatName) <= pushBodyCap {
-		return title, body, false
+func fitToCap(in *marotte.NotificationPayload) (fit marotte.NotificationPayload, truncated bool) {
+	n := *in
+	if marshaledLen(&n) <= pushBodyCap {
+		return n, false
 	}
-	for marshaledLen(title, body, subject, chatName) > pushBodyCap {
-		over := marshaledLen(title, body, subject, chatName) - pushBodyCap
+	for marshaledLen(&n) > pushBodyCap {
+		over := marshaledLen(&n) - pushBodyCap
 		switch {
-		case len(body) > over:
-			body, _ = runesafe.SanitizeCapped(body, len(body)-over, pushTruncMarker)
-		case body != "":
-			body = "" // too small to absorb the overflow; drop it
-		case len(title) > over:
-			title, _ = runesafe.SanitizeSingleLineCapped(title, len(title)-over, pushTruncMarker)
+		case len(n.Body) > over:
+			n.Body, _ = runesafe.SanitizeCapped(n.Body, len(n.Body)-over, pushTruncMarker)
+		case n.Body != "":
+			n.Body = "" // too small to absorb the overflow; drop it
+		case len(n.Title) > over:
+			n.Title, _ = runesafe.SanitizeSingleLineCapped(n.Title, len(n.Title)-over, pushTruncMarker)
 		default:
-			title = "" // pathological: cap below the JSON envelope size
+			n.Title = "" // pathological: cap below the JSON envelope size
 		}
 	}
-	return title, body, true
+	return n, true
 }
 
-// marshaledLen is the byte length of the JSON-encoded payload; marshaling cannot fail here.
-func marshaledLen(title, body string, subject marotte.PushSubject, chatName string) int {
-	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject, ChatName: chatName})
+// Marshaling cannot fail here.
+func marshaledLen(n *marotte.NotificationPayload) int {
+	p, _ := json.Marshal(n)
 	return len(p)
 }
 
-// mergeCtx returns a context derived from primary that is also cancelled when secondary is done.
 func mergeCtx(primary, secondary context.Context) (ctx context.Context, cleanup func()) {
 	ctx, cancel := context.WithCancel(primary)
 	stop := context.AfterFunc(secondary, func() { cancel() })

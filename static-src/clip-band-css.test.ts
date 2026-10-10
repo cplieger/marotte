@@ -85,7 +85,6 @@ function mount(node: HTMLElement): HTMLElement {
   return node;
 }
 
-/** The bar as `mcp-panels.ts` builds it, inside `.inline-install-banner`. */
 function installBanner(): { banner: HTMLElement; bar: HTMLDivElement } {
   const bar = document.createElement("div");
   bar.className = "rolling-output hidden";

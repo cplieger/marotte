@@ -13,11 +13,11 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 		name string
 		spec Spec
 	}{
-		{"hourly", Spec{Freq: FreqHourly, Interval: 6, Minute: 15}},
+		{"hourly", Spec{Freq: freqHourly, Interval: 6, Minute: 15}},
 		{"daily", Spec{Freq: FreqDaily, Hour: 2, Minute: 30}},
-		{"weekly", Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
-		{"monthly", Spec{Freq: FreqMonthly, MonthDay: 1, Hour: 3}},
-		{"monthly on the last day", Spec{Freq: FreqMonthly, MonthDay: LastDay, Hour: 3}},
+		{"weekly", Spec{Freq: freqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
+		{"monthly", Spec{Freq: freqMonthly, MonthDay: 1, Hour: 3}},
+		{"monthly on the last day", Spec{Freq: freqMonthly, MonthDay: lastDay, Hour: 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 					t.Errorf("stale by %s: got %s, which is not after now (%s)", staleBy, got, now)
 				}
 				// The floored answer is the first slot after now, not one further out.
-				want, err := NextRun(tt.spec, now)
+				want, err := nextRun(tt.spec, now)
 				if err != nil {
 					t.Fatalf("NextRun: %v", err)
 				}
@@ -79,7 +79,7 @@ func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
 	if !got.Equal(wantDue) {
 		t.Errorf("got %s, want the unfloored slot %s", got, wantDue)
 	}
-	raw, err := NextRun(spec, anchor)
+	raw, err := nextRun(spec, anchor)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestNextRunFromPassesValidationErrorsThrough(t *testing.T) {
 	if _, err := NextRunFrom(Spec{Freq: "yearly"}, now, now); err == nil {
 		t.Error("expected an error for an unknown frequency")
 	}
-	if _, err := NextRunFrom(Spec{Freq: FreqWeekly, Hour: 9}, now, now); err == nil {
+	if _, err := NextRunFrom(Spec{Freq: freqWeekly, Hour: 9}, now, now); err == nil {
 		t.Error("expected an error for a weekly spec with no weekdays")
 	}
 }

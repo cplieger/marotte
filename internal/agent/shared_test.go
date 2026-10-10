@@ -21,13 +21,13 @@ import (
 	"github.com/cplieger/sse"
 )
 
-// newTestHub roots the Runtime's lifetime at context.Background(); call Shutdown to tear it down.
+// Call Shutdown to tear it down.
 func newTestHub() (*Runtime, *testChatStore, *fakeBridge) {
 	return newTestHubIn("/tmp/work")
 }
 
-// newTestHubIn builds a runtime rooted at workDir; reassigning workDir afterwards misses the wiring's one read.
-// Order-sensitive: cs.Bus can only be set once New returned.
+// Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
+// set once New returned.
 func newTestHubIn(workDir string) (*Runtime, *testChatStore, *fakeBridge) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
@@ -38,7 +38,16 @@ func newTestHubIn(workDir string) (*Runtime, *testChatStore, *fakeBridge) {
 	return h, cs, br
 }
 
-// joinInflight waits for the inflight group to drain; call only once nothing else will Add.
+// originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
+// the one registered under chatID now, or nil when none is.
+func (rt *Runtime) originOf(chatID marotte.ChatID) acpResponder {
+	if sb := rt.bridge.mgr.get(chatID); sb != nil {
+		return sb.current()
+	}
+	return nil
+}
+
+// Call only once nothing else will Add.
 func joinInflight(t *testing.T, h *Runtime) {
 	t.Helper()
 	drained := make(chan struct{})
@@ -76,7 +85,6 @@ func postCmd(t *testing.T, h *Runtime, cmd marotte.ClientCommand) *httptest.Resp
 	return rec
 }
 
-// bufferedSince filters the hub Snapshot by offset.
 func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	var out []sse.ReplayEvent
 	for _, e := range h.bus.fanout.Snapshot() {
@@ -87,7 +95,6 @@ func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	return out
 }
 
-// extractTypes returns the events' types in order, for asserting an emit sequence.
 func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
@@ -122,7 +129,7 @@ func errorPayloadsSince(t *testing.T, h *Runtime, sinceID uint64) []marotte.Erro
 	return out
 }
 
-// missingEvents ignores order; the assertion stays at the call site.
+// The assertion stays at the call site.
 func missingEvents(got []string, want ...string) []string {
 	var missing []string
 	for _, w := range want {
@@ -149,7 +156,7 @@ func newChunkMsg(text string) *marotte.RPCResponse {
 	return newSessionChunkMsg("", text)
 }
 
-// newSessionChunkMsg sets the envelope's `sessionId`, which the utility bridge's own-session screen reads; empty omits it.
+// Empty omits it.
 func newSessionChunkMsg(sessionID, text string) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
@@ -218,13 +225,11 @@ func captureLogs(t *testing.T) *logCapture {
 	return out
 }
 
-// quietLogs silences the default handler for a benchmark that logs per iteration.
 func quietLogs(b *testing.B) {
 	b.Helper()
 	swapDefaultLogger(b, slog.DiscardHandler)
 }
 
-// stageWireTurn opens a wireTurnStart turn when none is open, as a first unprompted frame does, and answers its accumulator.
 func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {
 	tb.Helper()
 	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
@@ -251,7 +256,6 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 	return id, log
 }
 
-// endTurn settles the chat's turn through the prompt-response closer with a clean end_turn.
 func endTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, turnID string) {
 	t.Helper()
 	h.SettleTurnOnResponse(t.Context(), chatID, turnID, 0,
@@ -360,7 +364,6 @@ func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want marotte
 	return out
 }
 
-// hasText reports whether the chat's log holds a sealed text entry containing want.
 func (s *testChatStore) hasText(tb testing.TB, chatID marotte.ChatID, want string) bool {
 	tb.Helper()
 	entries, err := s.All(tb.Context(), chatID)

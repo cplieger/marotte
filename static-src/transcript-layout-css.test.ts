@@ -5,9 +5,8 @@
 // transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
-import scrollSource from "./scroll.ts?raw";
+import scrollSource from "./scroll-controller.ts?raw";
 
-/** The selectors that carry the bulk, and the file each is authored in. */
 const BULK: readonly { selector: string; file: string }[] = [
   { selector: ".msg-row", file: "13-messages.css" },
   { selector: ".tool-call", file: "14-tools.css" },
@@ -38,7 +37,7 @@ describe("transcript containment", () => {
     expect(body).toMatch(/content-visibility:\s*hidden\s*;/u);
   });
 
-  it("is the set scroll.ts lays out ahead of the scrollport", () => {
+  it("is the set scroll-controller.ts lays out ahead of the scrollport", () => {
     // A box missing there first takes its real size on screen in WebKit, where anchoring cannot hide it.
     const declared = /const SKIPPABLE = "([^"]+)";/u.exec(scrollSource)?.[1]?.split(", ") ?? [];
     expect(declared.toSorted()).toEqual(BULK.map((b) => b.selector).toSorted());
@@ -46,7 +45,9 @@ describe("transcript containment", () => {
 });
 
 describe("composer layout independence", () => {
-  const form = (): string => ruleBody(loadCSS("15-input.css"), '[id="prompt-form"]');
+  // `ruleContaining`: the rule is a selector list shared with the run tab's composer.
+  const form = (): string =>
+    ruleContaining(loadCSS("15-input.css"), '[id="prompt-form"]', "top").body;
 
   it("declares LAYOUT containment, and only that", () => {
     // Not `paint`/`content`/`strict`: pill cards open UPWARD out of this bar and paint containment
@@ -75,7 +76,7 @@ describe("composer layout independence", () => {
   it("does not put the containment on the bottom bar every view shares", () => {
     // `.bottom-bar` is also the editor, files and run toolbars; none of them
     // sits beside a live transcript, and containing them would be a claim about
-    // three surfaces this finding never measured.
+    // three surfaces nothing here measures.
     expect(ruleBody(loadCSS("19-files.css"), ".bottom-bar")).not.toMatch(/contain:/u);
   });
 });

@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/translate"
@@ -23,11 +24,9 @@ import (
 type turnCloser int
 
 const (
-	// closerPromptResponse is the session/prompt response settling.
 	closerPromptResponse turnCloser = iota
 	// closerPromptFailure is the prompt call failing before the turn could end.
 	closerPromptFailure
-	// closerLocalShell is a `!cmd` turn marotte ran itself.
 	closerLocalShell
 	// closerBridgeDeath is the bridge's stream ending, or a deliberate stop, with a turn open.
 	closerBridgeDeath
@@ -41,7 +40,7 @@ const (
 // observed: nothing reads the exit status, so a closed pipe is not an exit.
 const deathInterruptCause = "The connection to the agent closed before the turn finished."
 
-// shutdownInterruptCause is the public sentence for a turn this server's shutdown cut; "type continue" is the remedy.
+// "type continue" is the remedy.
 const shutdownInterruptCause marotte.InterruptCause = "The server restarted while this turn was running. Send the prompt again, or type continue."
 
 // maxReasonBytes bounds a persisted failure reason, as rpcerr.Text does.
@@ -61,7 +60,6 @@ func reasonFor(o marotte.TurnOutcome, supplied string) string {
 	return capped
 }
 
-// turnClose is what a closer knows about the stop it is reporting.
 type turnClose struct {
 	// Resp is the session/prompt response, on closerPromptResponse only.
 	Resp *marotte.RPCResponse
@@ -83,7 +81,7 @@ type turnClose struct {
 
 // finalizeTurn claims one turn and runs the turn end rule: claim, effects, publish, with mu held for none of the
 // effects, so racing closers produce one set (the second loses the claim).
-func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc *turnClose) {
+func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc *turnClose) {
 	// The wait precedes the claim: the claim makes folds wait, so the settle would block on itself. A failure's wait
 	// only orders the close after a queued turn_end; a dead ctx or gone forward still closes.
 	if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Turn, tc.Seq) && tc.Closer != closerPromptFailure {
@@ -122,8 +120,7 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	bc.publishClose(ctx, t, cf)
 }
 
-// publishClose is a won close's announcements and pipeline.
-func (bc *BridgeCoordinator) publishClose(ctx context.Context, t *Turn, cf closeFacts) {
+func (bc *bridgeCoordinator) publishClose(ctx context.Context, t *activeTurn, cf closeFacts) {
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
@@ -138,7 +135,7 @@ func (bc *BridgeCoordinator) publishClose(ctx context.Context, t *Turn, cf close
 // engineAccount is a broken turn's sentence when the closer supplied none: the engine's latched display_error,
 // through the prompt-failure remedy table. A clean close ignores it, and so does a stop that classifies itself, as
 // the replay projection does.
-func engineAccount(t *Turn, stop marotte.StopReason) (string, marotte.FailureKind) {
+func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.FailureKind) {
 	e := t.Log.EngineError()
 	c := marotte.ConcludeStopReason(stop)
 	if e == nil || c.FailureKind != "" || marotte.SeverityOf(c.Outcome) != marotte.TurnSeverityBroken {
@@ -162,7 +159,7 @@ type closeFacts struct {
 // afterTurnClose runs the between-turns follow-ups in order: steer ends, a model switch (it changes the
 // compaction's window), the compaction (a queued prompt would abort it upstream), then the drain graded by the
 // close's outcome. Nothing once shutdown began.
-func (bc *BridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.ChatID, cf closeFacts) {
+func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.ChatID, cf closeFacts) {
 	var ends command.EndFacts
 	if bc.resolveEnds != nil && !bc.draining() {
 		// A death drains its forwarder here, lock-free.
@@ -184,7 +181,7 @@ func (bc *BridgeCoordinator) afterTurnClose(ctx context.Context, chatID marotte.
 	bc.drainAfterClose(ctx, chatID, command.CloseFacts{Outcome: cf.outcome, Fence: cf.fence}, ends)
 }
 
-func (bc *BridgeCoordinator) draining() bool {
+func (bc *bridgeCoordinator) draining() bool {
 	return bc.lifecycle != nil && bc.lifecycle.draining.Load()
 }
 
@@ -201,7 +198,7 @@ func waitForwarder(exit <-chan struct{}) {
 
 // claimForCloser claims the turn a closer ends: an id that turn, Own the chat's own. Neither opens a turn, so a late
 // bracket makes no phantom; an empty id closes nothing.
-func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc *turnClose) (*Turn, bool) {
+func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc *turnClose) (*activeTurn, bool) {
 	if tc.Own {
 		return bc.turns.claimOwn(ctx, chatID)
 	}
@@ -221,7 +218,7 @@ func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 // closeTurn runs the turn end rule on a claimed turn: the accumulator seals lanes, aborts unsettled calls and
 // appends the turn_close with its aggregate; sealed entries are announced, the header counters follow, and the
 // push fires. It returns the outcome the turn_close states.
-func (bc *BridgeCoordinator) closeTurn(ctx context.Context, t *Turn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
+func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
 	statusDesc := bc.turns.statusDescription(t)
@@ -256,15 +253,13 @@ func (bc *BridgeCoordinator) closeTurn(ctx context.Context, t *Turn, stop marott
 	}, concluded.Outcome
 }
 
-// broadcastFunc adapts the broadcast closure to the translator's Broadcaster role.
 type broadcastFunc func(ctx context.Context, e marotte.ServerEvent)
 
 // Broadcast publishes e.
 func (f broadcastFunc) Broadcast(ctx context.Context, e marotte.ServerEvent) { f(ctx, e) }
 
-// concludeStop grades the stop; a closer's own reason or kind replaces the stop's account as a pair. An unmapped
-// stop logs once per value.
-func (bc *BridgeCoordinator) concludeStop(
+// A closer's own reason or kind replaces the stop's account as a pair. An unmapped stop logs once per value.
+func (bc *bridgeCoordinator) concludeStop(
 	chatID marotte.ChatID,
 	stop marotte.StopReason,
 	reason string,
@@ -290,18 +285,9 @@ func (bc *BridgeCoordinator) concludeStop(
 	return c
 }
 
-// failurePushBody is a broken turn's push sentence: the outcome's default, except a model-call-limit stop, which the
-// default ("reported an error") misstates. The client's notifyBodyFor (static-src/handlers/turn.ts) applies the same rule.
-func failurePushBody(c marotte.TurnConclusion) string {
-	if c.FailureKind == marotte.FailureKindModelCallLimit && c.Reason != "" {
-		return c.Reason
-	}
-	return marotte.DefaultFailureReason(c.Outcome)
-}
-
-// pushTurnOutcome sends a finished turn's off-screen push, reading the severity so it never claims success. The client
-// (static-src/handlers/turn.ts) reads the same fixture table. On the detached context: the push fans out on its own goroutine.
-func (bc *BridgeCoordinator) pushTurnOutcome(
+// pushTurnOutcome sends a finished turn's notification, reading the severity so it never claims success. On the
+// detached context: the push fans out on its own goroutine.
+func (bc *bridgeCoordinator) pushTurnOutcome(
 	ctx context.Context,
 	chatID marotte.ChatID,
 	c marotte.TurnConclusion,
@@ -316,9 +302,11 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 	}
 	switch marotte.SeverityOf(c.Outcome) {
 	case marotte.TurnSeverityClean:
-		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), marotte.PushKindAgentFinished, chatID)
+		n := notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
+		bc.Notify(ctx, chatID, &n)
 	case marotte.TurnSeverityBroken:
-		bc.NotifyPush(ctx, failurePushBody(c), marotte.PushKindAgentFinished, chatID)
+		n := notice.TurnFailed(bc.NoticeTarget(ctx, chatID, ""), c.Reason)
+		bc.Notify(ctx, chatID, &n)
 	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:
 		// A cancel was asked for and an unreadable end says nothing, so neither pushes; `running` cannot close.
 	}

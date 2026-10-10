@@ -16,9 +16,8 @@ interface Pair {
   action: HTMLElement;
 }
 
-/** A turn footer with a control at each end. The action button is the plain `Copy as
- *  text` rather than the `…` summary, which collapses the group behind itself below
- *  40rem; this page is 1280 wide. */
+/** The action button is the plain `Copy as text` rather than the `…` summary, which collapses the
+ *  group behind itself below 40rem; this page is 1280 wide. */
 function mountPair(): Pair {
   const card = document.createElement("div");
   card.className = "turn";

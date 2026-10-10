@@ -22,7 +22,7 @@ func SteerIDFor(messageID string) string {
 // server records the steers IT sent, and everything else is the agent's.
 type SteerOrigin string
 
-// The two origins. Each string is the wire value AND the client's SteerOrigin
+// The origins. Each string is the wire value AND the client's SteerOrigin
 // union member, so a rename here is a cross-language change.
 //
 // There is deliberately no "unknown": the ledger answers for every id, and a
@@ -30,10 +30,22 @@ type SteerOrigin string
 const (
 	// SteerOriginUser is a steer this server sent on the user's behalf.
 	SteerOriginUser SteerOrigin = "user"
-	// SteerOriginAgent is a steer that arrived from KAS's own buffer: a
-	// workflow step's report, or a run-completion nudge.
+	// SteerOriginAgent is a steer that arrived from KAS's own buffer that no
+	// `_kiro/session/notify` claimed, a run-completion nudge among them.
 	SteerOriginAgent SteerOrigin = "agent"
+	// SteerOriginParent is an orchestrator's send_message to one of its run's steps
+	// (KAS's `sender: "parent"`).
+	SteerOriginParent SteerOrigin = "parent"
+	// SteerOriginStep is a step's send_message to the session that launched its run
+	// (KAS's `sender: "step"`).
+	SteerOriginStep SteerOrigin = "step"
 )
+
+// WorkflowMessage reports a send_message between a chat and its run's step, whose read state a
+// replay does not record.
+func (o SteerOrigin) WorkflowMessage() bool {
+	return o == SteerOriginParent || o == SteerOriginStep
+}
 
 // SteerState says whether the model ever READ a mid-turn steer. Rendering an
 // undelivered correction like a delivered one is a false statement about the

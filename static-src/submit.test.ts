@@ -75,7 +75,7 @@ vi.mock("./composer-state.js", () => ({
   _resetComposerStateForTest: vi.fn(),
 }));
 
-import { submitPrompt } from "./submit.js";
+import { submitPrompt, submitLabelled, forgetDeletedChat } from "./submit.js";
 import {
   get,
   setSessions,
@@ -83,6 +83,7 @@ import {
   setThinking,
   steerCount,
   openTurn,
+  recordSteerQueued,
   setChatInterruptMode,
 } from "./store.js";
 import type { Session } from "./types.js";
@@ -132,7 +133,6 @@ function echoTurnOpen(chatID: string, messageID: string, text: string): void {
   openTurn(chatID, entry);
 }
 
-/** The steer text passed to the action on the Nth dispatch. */
 function steeredText(call = 0): string {
   return (mockSteer.mock.calls[call]?.[0] as { text: string } | undefined)?.text ?? "";
 }
@@ -154,12 +154,10 @@ function steerRefused(message: string, code?: string): { outcome: Promise<unknow
   });
 }
 
-/** The args the queue action was dispatched with on the Nth call. */
 function queuedArgs(call = 0): Record<string, unknown> | undefined {
   return mockQueue.mock.calls[call]?.[0] as Record<string, unknown> | undefined;
 }
 
-/** The message id the send primitive was called with on the Nth dispatch. */
 function sentMessageID(call = 0): string {
   return (
     (mockSendPromptTo.mock.calls[call]?.[2] as { messageID: string } | undefined)?.messageID ?? ""
@@ -378,6 +376,22 @@ describe("submitPrompt during a turn", () => {
   });
 });
 
+// A frame confirmed the steer before its reply was lost: the agent will read it, so nothing goes back.
+describe("a steer whose reply was lost after its frame confirmed it", () => {
+  it("counts as steered and hands nothing back", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    mockSteer.mockImplementationOnce((args: { messageID: string; text: string }) => {
+      recordSteerQueued("c1", { id: `steer-${args.messageID}`, text: args.text, origin: "user" });
+      return steerRefused("connection lost", "network");
+    });
+
+    expect(await submitPrompt("c1", "use tabs")).toBe("steered");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    expect(mockReportSendRefused).not.toHaveBeenCalled();
+  });
+});
+
 // `no_turn`: the chat was idle when the steer landed, so submit converts it into a prompt.
 describe("a steer refused with no_turn", () => {
   const noTurn = (): { outcome: Promise<unknown> } =>
@@ -473,7 +487,7 @@ describe("submitPrompt on a 409-starting refusal", () => {
   it("re-sends the same text under the same id, so the server dedupes the append", async () => {
     // The id is recorded whatever the restore gate decides: a retry has to land on the row
     // the attempt persisted IF it persisted one, and this refusal is the case where it did
-    // not — the same slot serves both, so a later attempt can never mint a second row.
+    // not — the same record serves both, so a later attempt can never mint a second row.
     resetStore("c1");
     starting();
     await submitPrompt("c1", "hello");
@@ -571,6 +585,100 @@ describe("retrying in the same thread", () => {
     await submitPrompt("c1", "same text");
     await submitPrompt("c2", "same text");
     expect(sentMessageID(1)).not.toBe(sentMessageID(0));
+  });
+
+  it("keeps a chat's failed id when another chat's typed send succeeds", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    mockSendPromptTo.mockResolvedValue("sent");
+    await submitPrompt("c2", "other text");
+
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(2)).toBe(sentMessageID(0));
+  });
+
+  it("keeps the failed id when a labelled send on the same chat succeeds in between", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    mockSendPromptTo.mockResolvedValue("sent");
+    await submitLabelled("c1", "the whole instruction", "Run task 2");
+
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(2)).toBe(sentMessageID(0));
+  });
+
+  it("mints a fresh id once the chat was deleted", async () => {
+    resetStore("c-deleted-a");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c-deleted-a", "same text");
+    forgetDeletedChat("c-deleted-a");
+
+    await submitPrompt("c-deleted-a", "same text");
+    expect(sentMessageID(1)).not.toBe(sentMessageID(0));
+  });
+
+  it("keeps a chat's failed id when another chat is deleted", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    forgetDeletedChat("c-deleted-b");
+
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(1)).toBe(sentMessageID(0));
+  });
+
+  it("keeps nothing from a send that fails after its chat was deleted", async () => {
+    resetStore("c-deleted-c");
+    let settle: (result: string) => void = () => undefined;
+    mockSendPromptTo.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const inFlight = submitPrompt("c-deleted-c", "same text");
+    forgetDeletedChat("c-deleted-c");
+    settle("failed");
+    await inFlight;
+
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c-deleted-c", "same text");
+    expect(sentMessageID(1)).not.toBe(sentMessageID(0));
+  });
+
+  it("leaves nothing of a deletion once the sends it crossed have settled", async () => {
+    resetStore("c-deleted-d");
+    forgetDeletedChat("c-deleted-d");
+    mockSendPromptTo.mockResolvedValue("failed");
+
+    await submitPrompt("c-deleted-d", "same text");
+    await submitPrompt("c-deleted-d", "same text");
+
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c-deleted-d", "same text");
+    expect(sentMessageID(1)).toBe(sentMessageID(0));
+  });
+
+  it("keeps the failed id of a send that fails after its chat's tab closed", async () => {
+    resetStore("c-closed");
+    let settle: (result: string) => void = () => undefined;
+    mockSendPromptTo.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const inFlight = submitPrompt("c-closed", "same text");
+    setSessions([]);
+    settle("failed");
+    await inFlight;
+
+    resetStore("c-closed");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c-closed", "same text");
+    expect(sentMessageID(1)).toBe(sentMessageID(0));
   });
 
   it("forgets the failed id after a send succeeds", async () => {
@@ -732,5 +840,58 @@ describe("submitPrompt guards", () => {
         attachments: [{ path: "shot.png", name: "shot.png" }],
       }),
     );
+  });
+});
+
+describe("submitLabelled", () => {
+  it("sends the label beside the text and takes nothing from the composer", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitLabelled("c1", "the whole instruction", "Run task 2")).toBe("sent");
+    const opts = mockSendPromptTo.mock.calls[0]?.[2] as { displayText?: string } | undefined;
+    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("the whole instruction");
+    expect(opts?.displayText).toBe("Run task 2");
+    expect(mockTakeAttachments).not.toHaveBeenCalled();
+    expect(mockTypedCommand).not.toHaveBeenCalled();
+  });
+
+  it("queues with the label on a busy Queue-mode chat", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    setChatInterruptMode("c1", "queue");
+
+    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
+    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
+    expect(queuedArgs()?.["text"]).toBe("the findings");
+  });
+
+  it("queues with the label on a busy Steer-mode chat instead of steering it", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    setChatInterruptMode("c1", "steer");
+
+    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
+    expect(queuedArgs()?.["text"]).toBe("the findings");
+  });
+
+  it("queues with the label when an idle send meets a turn that started underneath it", async () => {
+    resetStore("c1");
+    setChatInterruptMode("c1", "steer");
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
+  });
+
+  it("never hands its words to the composer when the send fails", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+
+    expect(await submitLabelled("c1", "the whole instruction", "Run task 2")).toBe("failed");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
   });
 });

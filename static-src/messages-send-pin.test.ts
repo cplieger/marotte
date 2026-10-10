@@ -17,7 +17,6 @@ import type { TurnSummary } from "./rail-merge.js";
 // describes take `testTimeoutFor` of this budget or the deadline preempts the wait as a bare timeout.
 const PIN_CONTEST_BUDGET_MS = framesBudgetMs(16);
 
-// The DOM the import graph resolves at load, nested as the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
@@ -83,7 +82,6 @@ function session(id: string, over: SessionOverrides = {}): Session {
   return makeSession({ id, name: id, ...over });
 }
 
-/** A sealed entry of any kind at `seq`. */
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
     id: `${turnID}-e${String(at)}`,
@@ -159,7 +157,6 @@ function nextChat(): string {
   return `c${String(seq)}`;
 }
 
-/** The active view's turn cards, in document order. */
 function cards(): HTMLElement[] {
   const root = messages.activeTranscriptView();
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
@@ -235,7 +232,6 @@ function readerScrollTo(top: number): void {
   wrap.scrollTop = top;
 }
 
-/** Park the reader at `top` with a real gesture, confirming both the listener's verdict and the position. */
 async function park(top: number): Promise<void> {
   await quiet();
   readerScrollTo(top);

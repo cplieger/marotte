@@ -1,14 +1,8 @@
-// The delegated-work boxes. `buildSubagentCard` is a LEAF and renders NONE of its
-// delegate's output — that lives on the delegate's own page — so it has no
-// disclosure and its HEAD is the control that opens that page.
-// `buildSubagentContainer` is a pipeline over its stages, and its body holds THEIR
-// cards, so the container is the one that discloses.
-//
-// Two consequences of the leaf having no body: the tail is PUSHED IN through
-// `setTail` (`subagent-tail.ts` derives it from the store), and the state word is an
-// `.sr-only` span — but only on an INERT head, because a screen reader ignores
-// `aria-label` on a plain div while an anchor head carries the name and the word in
-// an `aria-label` of its own.
+// The delegated-work boxes. `buildSubagentCard` is a LEAF with no body (its output is on
+// the delegate's own page), so its HEAD opens that page and its tail is pushed in through
+// `setTail`. `buildSubagentContainer`'s body holds its stages' cards, so it discloses.
+// The state word is an `.sr-only` span only on an INERT head: a screen reader ignores
+// `aria-label` on a plain div, while an anchor head carries both in its own label.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -39,17 +33,13 @@ interface SubagentBox {
   /** Swap the identity glyph (SVG string; roles.ts iconForSubagent). The
    *  spinner still owns the slot while the delegate is active. */
   setIcon(svg: string): void;
-  /** Render the footer ledger (turn-footer, reused). No-op until the data has
-   *  something worth a row — an empty footer is chrome claiming a result that
-   *  is not there. */
+  /** Render the footer ledger; a no-op until the data earns a row. */
   setSummary(d: TurnSummaryData): void;
 }
 
 /** One delegate's card. No body: its output is on its own page. */
 export interface SubagentCard extends SubagentBox {
-  /** Replace the rolling tail, oldest line first, capped by its producer
-   *  (`subagent-tail.ts`). A no-op once the delegate has settled and the tail is
-   *  gone. */
+  /** Replace the rolling tail, oldest line first; a no-op once the delegate settled. */
   setTail(lines: readonly string[]): void;
 }
 
@@ -57,39 +47,32 @@ export interface SubagentCard extends SubagentBox {
 export interface SubagentContainer extends SubagentBox {
   /** The container the composition renders this pipeline's stage cards into. */
   readonly body: HTMLElement;
-  /** Whether another element has been posted after this box in the store. Pushed in
-   *  because only the dispatcher holds the block index that answers it. True FOLDS
-   *  the box, subject to the carve-outs; false never opens one, because the
-   *  carve-outs are refusals to collapse rather than reasons to expand. */
+  /** Whether another element has been posted after this box in the store (only the
+   *  dispatcher knows). True FOLDS the box, subject to the carve-outs; false never
+   *  opens one. */
   setSuperseded(superseded: boolean): void;
 }
 
-/** The way to this delegate's own page, injected because a `fundamentals/`
- *  view must not import the feature module that owns tabs. `href` makes the head a
- *  real anchor (middle-click, copy-link); `open` routes an ordinary click
- *  through the app instead of reloading. */
+/** The way to this delegate's own page, injected because a `fundamentals/` view must not
+ *  import the tabs feature. `href` makes the head a real anchor; `open` routes a plain
+ *  click through the app. */
 export interface SubagentOpener {
   href: string;
   open: () => void;
 }
 
 export interface SubagentCardOptions {
-  /** What the card's HEAD opens. Absent = the head stays inert, which is what a
-   *  DETACHED render (it IS the delegate's page) and a delegate with no chat to open
-   *  it in get. */
+  /** What the card's HEAD opens; absent leaves it inert (a DETACHED render, or no chat
+   *  to open it in). */
   open?: SubagentOpener;
 }
 
 export interface SubagentContainerOptions {
-  /** Fired when the READER flips the disclosure; composition keys its
-   *  open-container bookkeeping on ids this view never learns. An auto collapse
-   *  and the failure auto-open are silent here, or the registry would record the
-   *  view's own decisions as the reader's. */
+  /** Fired only when the READER flips the disclosure; an automatic fold or open is
+   *  silent, or the registry would record the view's decisions as the reader's. */
   onOpenChange?: (open: boolean) => void;
-  /** Where the disclosure starts. Default TRUE, which is the policy's floor: a box
-   *  nothing has been posted after renders expanded, and only composition can say
-   *  otherwise — it resolves the reader's own recorded state first, then the
-   *  newest-element verdict. */
+  /** Where the disclosure starts. Default TRUE: a box nothing was posted after renders
+   *  expanded, and only composition can say otherwise. */
   startOpen?: boolean;
   /** Whether the reader has ALREADY decided about this box in a previous mount, so
    *  the auto path is off for its whole life. Default false. */
@@ -185,16 +168,14 @@ function buildShell(
       }
       return;
     }
-    // `<thing>, <state word>`, plus the detail when there is one: the role already
-    // says the head opens something (run-card.ts's `.run-step-head` makes the same call).
+    // `<thing>, <state word>`: the link role already says the head opens something.
     const parts = displayDetail === "" ? [displayName] : [displayName, displayDetail];
     headLink.setAttribute("aria-label", `${parts.join(", ")}, ${stateWord(s)}`);
   };
 
   const applyIcon = (s: ToolStatus): void => {
     const failed = s === "failed";
-    // A delegate the reader STOPPED is neither a success nor a failure of the work, so it
-    // takes the yellow `warn` mark rather than the red one or the identity glyph.
+    // A delegate the reader STOPPED is neither success nor failure: the yellow `warn` mark.
     const aborted = s === "aborted";
     const active = isToolActive(s);
     icon.classList.toggle("is-fail", failed);
@@ -242,8 +223,7 @@ function buildShell(
       },
       setSummary(d: TurnSummaryData): void {
         lastSummary = d;
-        // No extras: Rewind and the turn actions are turn-card affordances, and a
-        // delegate card has neither, so its footer is earned by the ledger alone.
+        // No extras: Rewind and the turn actions are turn-card affordances.
         if (!earnsTurnFooter(d)) {
           return;
         }
@@ -265,8 +245,6 @@ export function buildSubagentCard(
   opts: SubagentCardOptions = {},
 ): SubagentCard {
   const shell = buildShell(name, status, false, opts.open);
-  // Between the header and the foot, and outside nothing: this card has no
-  // disclosure for the tail to sit outside of.
   const tail = el("div", { className: "subagent-tail", "aria-hidden": "true", [CHROME_ATTR]: "" });
   shell.root.insertBefore(tail, shell.foot);
   let live = isToolActive(status);
@@ -277,8 +255,7 @@ export function buildSubagentCard(
     ...shell.box,
     setStatus(s: ToolStatus): void {
       shell.box.setStatus(s);
-      // Settled: the tail's job is done and the footer takes over. Removed rather
-      // than hidden, and `live` is what stops a late tail write putting it back.
+      // Settled: removed, and `live` stops a late tail write putting it back.
       if (live && !isToolActive(s)) {
         live = false;
         tail.remove();
@@ -325,23 +302,17 @@ export function buildSubagentContainer(
 ): SubagentContainer {
   const shell = buildShell(name, status, true);
   const startOpen = opts.startOpen ?? true;
-  // Built in its FULL form; `syncDisclosure` below takes the control away when there
-  // is nothing to reveal.
+  // Built in its FULL form; `syncDisclosure` withdraws the control while the body is empty.
   shell.root.classList.add("subagent-container", "has-disclosure");
   shell.root.classList.toggle("collapsed", !startOpen);
-  // A span, not a button: the header is `role="button"` and carries the
-  // disclosure's activation, so a `<button>` chevron inside it is axe's
-  // `nested-interactive` (aria-hidden + tabindex="-1" does not clear it).
+  // A span, not a button: inside the `role="button"` header a `<button>` is axe's
+  // `nested-interactive`, which aria-hidden + tabindex="-1" does not clear.
   const chevron = el("span", { className: "subagent-toggle", "aria-hidden": "true" }, chevronEl());
-  // The chevron LEADS, because it DISCLOSES the stage cards below it, and the LEAF's
-  // navigation chevron trails (`buildShell`). That difference is the whole point:
-  // both boxes are `.subagent-header` with the same glyph, so before this a
-  // collapsed container and a leaf card were pixel-identical while one expands in
-  // place and the other opens a page. See chevron.ts for the rule.
+  // A disclosure chevron LEADS; the leaf's navigation chevron trails, so a collapsed
+  // container and a leaf card never look alike (chevron.ts owns the rule).
   shell.header.prepend(chevron);
   shell.header.append(
-    // Shown only while collapsed+running (14-tools.css): open, the stages' own
-    // rings are on screen.
+    // Shown only while collapsed and running (14-tools.css).
     el(
       "span",
       { className: "subagent-busy activity-dots", "aria-hidden": "true" },
@@ -354,13 +325,8 @@ export function buildSubagentContainer(
   shell.header.setAttribute("tabindex", "0");
   const body = el("div", { className: "subagent-body" });
   shell.root.insertBefore(body, shell.foot);
-  // ONE flag, one meaning, two writers: the creation seed below and the reader's own
-  // toggle. A user toggle outranks every automatic path, in both directions.
-  //
-  // It is read off the toggle's own `source` rather than inferred from a click, which
-  // is what retired the header's click/keydown listeners: a withdrawn (region-only)
-  // disclosure has no trigger, so it emits no user toggle at all and a click on such
-  // a header cannot be mistaken for the reader taking over.
+  // A reader's toggle outranks every automatic path. Read off the toggle's `source`, not
+  // a click: a withdrawn disclosure has no trigger, so a click there is not the reader.
   let userToggled = opts.userDecided ?? false;
   let lastStatus = status;
   let superseded = false;
@@ -377,11 +343,7 @@ export function buildSubagentContainer(
   let pendingAutoOpen = false;
 
   /** The newest-element fold, and the only place the carve-outs are spelled.
-   *
-   *  COLLAPSE-ONLY, which is what makes it trivially idempotent: the verdict is
-   *  monotone (once something is posted after this box in the store it stays posted,
-   *  and a rewind rebuilds the transcript), so "apply the verdict every pass" and
-   *  "collapse when superseded" are the same function. */
+   *  COLLAPSE-ONLY, so idempotent: the superseded verdict is monotone. */
   const applyAutoCollapse = (): void => {
     if (
       !superseded ||
@@ -396,8 +358,7 @@ export function buildSubagentContainer(
     ctl.close();
   };
 
-  /** The disclosure's ONE writer. An EMPTY body gets the primitive's region-only mode,
-   *  so the header keeps its glyph, name and state word and loses the control: no
+  /** The disclosure's ONE writer. An EMPTY body gets the primitive's region-only mode: no
    *  `aria-expanded` over an empty region, no tab stop, no chevron. */
   const syncDisclosure = (): void => {
     const populated = body.firstElementChild !== null;
@@ -405,27 +366,13 @@ export function buildSubagentContainer(
       wired = populated;
       ctl.dispose();
       if (populated) {
-        // Re-created rather than re-wired; the primitive re-installs `role` and
-        // `tabindex` because the withdrawal took both away. `aria-controls` survives
-        // the swap because the primitive assigns `region.id` only when it is empty.
-        //
-        // From `startOpen` and NOT from `ctl.isOpen`, because a body only ever goes
-        // empty→populated: this box is withdrawn exactly once, on the construction
-        // microtask before its first stage arrives, and the withdrawn controller is
-        // built `open: false`, so reading the current state would born-collapse every
-        // box the stage path fills a task late — including one the verdict says is the
-        // newest element. The reverse transition cannot reach here: once the box is in
-        // `st.pipelines`, `stageHostFor` returns its body for every one of its stages,
-        // so nothing moves a stage OUT, and the one path that removes the last one
-        // (`pruneOrphanedCards`) is followed synchronously by `pruneEmptyContainers`,
-        // which releases the box and removes its root in the same drop pass. So a
-        // populated body cannot empty and refill, and there is no current state for
-        // the seed to overwrite. `userToggled` is a closure variable either way, so a
-        // reader who has decided keeps their auto path off across the swap.
+        // Re-created, so the primitive re-installs the `role` and `tabindex` the
+        // withdrawal removed. Seeded from `startOpen`, NOT `ctl.isOpen`: the withdrawn
+        // controller is `open: false`, so reading it would born-collapse every box filled
+        // a task late. A populated body never empties and refills, because
+        // `pruneEmptyContainers` removes the box in the same pass that drops its last stage.
         ctl = createDisclosure(shell.header, body, { open: startOpen, onToggle });
-        // PREPEND, matching where the build put it: a disclosure chevron leads.
-        // Appending here would restore it to the trailing edge, where it would read
-        // as the leaf card's navigation glyph.
+        // PREPEND: a trailing chevron reads as the leaf card's navigation glyph.
         shell.header.prepend(chevron);
         shell.root.classList.add("has-disclosure");
         shell.root.classList.toggle("collapsed", !startOpen);
@@ -446,8 +393,7 @@ export function buildSubagentContainer(
       // through the one enforcement point.
       openBody();
     }
-    // A supersede that arrived while the body was empty was refused then; the body
-    // gaining its first stage is when it becomes answerable.
+    // A supersede refused while the body was empty becomes answerable now.
     applyAutoCollapse();
   };
 
@@ -467,12 +413,11 @@ export function buildSubagentContainer(
   if (status === "failed") {
     openBody();
   }
-  // A MICROTASK for the box built empty: the pass that builds it fills it
-  // synchronously or never will, and a microtask lands before the frame is painted,
-  // so the withdrawal is invisible where a task-late wiring would pop the chevron in.
+  // A microtask lands before paint, so withdrawing a box built empty is invisible where
+  // a task-late wiring would pop the chevron in.
   queueMicrotask(syncDisclosure);
-  // The observer covers the rest of the container's life: a stage can arrive after the
-  // driver's status frame, and `pipelineBoxFor` re-parents a promoted stage in.
+  // A stage can arrive after the driver's status frame, or be re-parented in by
+  // `pipelineBoxFor`.
   new MutationObserver(syncDisclosure).observe(body, { childList: true });
 
   return {
@@ -482,15 +427,11 @@ export function buildSubagentContainer(
       lastStatus = s;
       shell.box.setStatus(s);
       if (s === "failed" && !userToggled) {
-        // Both directions of the failure carve-out: it BLOCKS a fold (through
-        // `applyAutoCollapse`) and RE-OPENS a box that folded before the failing
-        // stage settled — the one state the header cannot substitute for.
+        // A failure BLOCKS a fold and RE-OPENS a box that folded before it settled.
         openBody();
         return;
       }
-      // A settle is not another element being posted, so it folds nothing by itself;
-      // what it can do is release the still-running refusal for a supersede that
-      // already arrived.
+      // A settle folds nothing itself; it releases the still-running refusal.
       applyAutoCollapse();
     },
     setSuperseded(next: boolean): void {

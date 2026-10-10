@@ -12,8 +12,7 @@ import (
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
 // stays focused on persistence and life-cycle.
 
-// copyServer returns a deep copy of s. When maskSecrets is true, every
-// env/header value is replaced by SecretMask (safe to send to the
+// When maskSecrets is true, every env/header value is replaced by secretMask (safe to send to the
 // browser). When false, values are preserved (for kiro-cli / pre-warm).
 func copyServer(s *Server, maskSecrets bool) *Server {
 	if s == nil {
@@ -23,13 +22,13 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 	c.Args = append([]string(nil), s.Args...)
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
 	if maskSecrets {
-		c.Env = make([]KeyPair, len(s.Env))
+		c.Env = make([]keyPair, len(s.Env))
 		for i, kv := range s.Env {
-			c.Env[i] = KeyPair{Name: kv.Name, Value: SecretMask}
+			c.Env[i] = keyPair{Name: kv.Name, Value: secretMask}
 		}
-		c.Headers = make([]KeyPair, len(s.Headers))
+		c.Headers = make([]keyPair, len(s.Headers))
 		for i, kv := range s.Headers {
-			c.Headers[i] = KeyPair{Name: kv.Name, Value: SecretMask}
+			c.Headers[i] = keyPair{Name: kv.Name, Value: secretMask}
 		}
 	} else {
 		c.Env = copyPairs(s.Env)
@@ -39,25 +38,23 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 }
 
 // maskedCopy returns a deep copy of s with every env/header value
-// replaced by SecretMask. Safe to send to the browser.
+// replaced by secretMask. Safe to send to the browser.
 func maskedCopy(s *Server) *Server { return copyServer(s, true) }
 
-// rawCopy returns a deep copy with secrets intact. Used to pass values
-// to kiro-cli and to the npx pre-warm scheduler.
 func rawCopy(s *Server) *Server { return copyServer(s, false) }
 
-func copyPairs(in []KeyPair) []KeyPair {
+func copyPairs(in []keyPair) []keyPair {
 	if in == nil {
 		return nil
 	}
-	out := make([]KeyPair, len(in))
+	out := make([]keyPair, len(in))
 	copy(out, in)
 	return out
 }
 
 // preserveNilSlice keeps the existing value when the update omitted the field
 // entirely (nil patch) and otherwise takes the patch, so an explicit empty
-// slice is a CLEAR. Both tool lists need that distinction; Store.Update states
+// slice is a CLEAR. Both tool lists need that distinction; Store.update states
 // what a dropped disabled_tools would cost.
 func preserveNilSlice(patch, existing []string) []string {
 	if patch == nil {
@@ -66,19 +63,18 @@ func preserveNilSlice(patch, existing []string) []string {
 	return append([]string(nil), patch...)
 }
 
-// mergeSecrets returns a new slice that mirrors `patch` in order and
-// key-set, but substitutes the previously-stored value wherever the
-// client sent SecretMask. Preserves the user's intended ordering while
-// keeping secrets round-trip safe.
-func mergeSecrets(patch, existing []KeyPair) []KeyPair {
-	out := make([]KeyPair, len(patch))
+// mergeSecrets returns a new slice that mirrors `patch` in order and key-set, but substitutes the
+// previously-stored value wherever the client sent secretMask. Preserves the user's intended
+// ordering while keeping secrets round-trip safe.
+func mergeSecrets(patch, existing []keyPair) []keyPair {
+	out := make([]keyPair, len(patch))
 	index := make(map[string]string, len(existing))
 	for _, kv := range existing {
 		index[kv.Name] = kv.Value
 	}
 	for i, kv := range patch {
 		out[i] = kv
-		if kv.Value == SecretMask {
+		if kv.Value == secretMask {
 			if prev, ok := index[kv.Name]; ok {
 				out[i].Value = prev
 			} else {
@@ -115,7 +111,7 @@ func sameSpec(a, b *Server) bool {
 // sortedPairNames returns the pair names in sorted order, lowercased when the
 // field dedupes case-insensitively (headers do, env does not — the same split
 // validateKeyPairs makes).
-func sortedPairNames(pairs []KeyPair, fold bool) []string {
+func sortedPairNames(pairs []keyPair, fold bool) []string {
 	out := make([]string, 0, len(pairs))
 	for _, kv := range pairs {
 		if fold {
@@ -137,12 +133,12 @@ func guardOriginChange(in, existing *Server) error {
 		return nil
 	}
 	for _, kv := range in.Headers {
-		if kv.Value != SecretMask {
+		if kv.Value != secretMask {
 			continue
 		}
 		// Exact-name lookup mirrors mergeSecrets: a name it would not match
 		// preserves nothing, so there is nothing to refuse.
-		if idx := slices.IndexFunc(existing.Headers, func(p KeyPair) bool {
+		if idx := slices.IndexFunc(existing.Headers, func(p keyPair) bool {
 			return p.Name == kv.Name && p.Value != ""
 		}); idx >= 0 {
 			return fmt.Errorf(
@@ -154,9 +150,8 @@ func guardOriginChange(in, existing *Server) error {
 	return nil
 }
 
-// changesOrigin reports whether next names a different scheme+host than prev.
-// An unparseable or empty value counts as different: the conservative answer is
-// the one that refuses to hand a credential over.
+// An unparseable or empty value counts as different: the conservative answer is the one that
+// refuses to hand a credential over.
 func changesOrigin(prev, next string) bool {
 	return originLabel(prev) != originLabel(next)
 }

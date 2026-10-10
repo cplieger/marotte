@@ -6,7 +6,7 @@ import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
 
-/** One whitespace character. No `g` flag, so `test` stays stateless. */
+/** No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
 
 /** Words `chunk` adds to a trace ending `openWord`, and whether it ends mid-word. Whitespace

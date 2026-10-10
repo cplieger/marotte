@@ -27,8 +27,8 @@ afterAll(() => {
   host?.remove();
 });
 
-/** The editor view in DIFF mode as `showDiffMode` leaves it: the gutter and the
- *  highlight hidden, the diff pane the only surface in the grid. */
+/** The editor view in DIFF mode: the viewer and the edit gutter hidden, the diff
+ *  pane the only surface in the grid. */
 function mount(): void {
   host?.remove();
   host = document.createElement("div");
@@ -43,8 +43,8 @@ function mount(): void {
       <div id="editor-view" data-tab-view>
         <div class="editor-page">
           <div class="editor-body">
-            <pre id="editor-gutter" class="editor-gutter hidden"></pre>
-            <pre id="editor-highlight" class="editor-highlight hidden"><code id="editor-code"></code></pre>
+            <div id="editor-viewer" class="viewer hidden"></div>
+            <div id="editor-edit-gutter" class="viewer-edit-gutter hidden"></div>
             <div id="editor-diff-pane" class="editor-diff-pane">
               <div class="diff-pane diff-pane-mapped">
                 <div class="diff-pane-toolbar"></div>

@@ -20,14 +20,13 @@ import (
 // cannot disable both subsystems.
 const FileName = "runs.json"
 
-// Version is the on-disk format version, and why the file's top-level value is an
+// version is the on-disk format version, and why the file's top-level value is an
 // OBJECT rather than the array schedules.json uses.
-const Version = 1
+const version = 1
 
 // ErrNotFound means no lease owns the given workflow id.
 var ErrNotFound = errors.New("run lease not found")
 
-// file is the on-disk shape.
 type file struct {
 	Leases  []Lease `json:"leases"`
 	Version int     `json:"version"`
@@ -64,12 +63,12 @@ func NewStore(dir string) (*Store, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return s, fmt.Errorf("parse %s: %w", s.path, err)
 	}
-	if f.Version != Version {
-		return s, fmt.Errorf("%s: unsupported version %d (this build writes %d)", s.path, f.Version, Version)
+	if f.Version != version {
+		return s, fmt.Errorf("%s: unsupported version %d (this build writes %d)", s.path, f.Version, version)
 	}
 	for i := range f.Leases {
 		l := f.Leases[i]
-		if l.WorkflowID == "" || !l.Origin.Valid() {
+		if l.WorkflowID == "" || !l.Origin.valid() {
 			continue
 		}
 		// A deadline read from disk describes a dead process: park it; the next start re-arms.
@@ -120,7 +119,7 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	if l.WorkflowID == "" {
 		return errors.New("lease workflow id is required")
 	}
-	if !l.Origin.Valid() {
+	if !l.Origin.valid() {
 		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent", l.Origin)
 	}
 	s.mu.Lock()
@@ -183,7 +182,7 @@ func (s *Store) persistLocked(ctx context.Context) error {
 	if s.path == "" {
 		return nil
 	}
-	data, err := json.MarshalIndent(file{Version: Version, Leases: s.sortedLocked()}, "", "  ")
+	data, err := json.MarshalIndent(file{Version: version, Leases: s.sortedLocked()}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode run leases: %w", err)
 	}

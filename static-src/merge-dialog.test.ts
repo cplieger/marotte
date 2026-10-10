@@ -19,7 +19,6 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { WALKERS } from "./audit/walkers.js";
 
-/** The dialog markup from index.html, reduced to the ids, the method group and the close hooks. */
 function mountDialog(): void {
   document.body.innerHTML = `
     <dialog id="pr-merge-dialog">

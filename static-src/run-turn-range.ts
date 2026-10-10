@@ -111,10 +111,9 @@ async function runRange(workflowID: string, turnID: string, afterSeq?: number): 
   adopt(workflowID, turnID, d.entries, d.open_entries, before);
 }
 
-/** Commit one answer to the run store, then say whether the turn is whole. The turn's open tails
- *  are REPLACED by the answer's, after the sealed entries: the answer is authoritative about
- *  them (`run-store.ts` `adoptRunOpenEntries` states why), and it must run after the seats or it
- *  would replace the tails of a turn the answer had not created yet. */
+/** The turn's open tails are REPLACED by the answer's, after the sealed entries: the answer is
+ *  authoritative about them (`run-store.ts` `adoptRunOpenEntries` states why), and it must run after
+ *  the seats or it would replace the tails of a turn the answer had not created yet. */
 function adopt(
   workflowID: string,
   turnID: string,

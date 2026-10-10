@@ -17,8 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// launchOrigin is what a launch verb knows beyond the recipe name; a struct because the scheduled
-// fields only make sense together.
+// A struct because the scheduled fields only make sense together.
 type launchOrigin struct {
 	// slotAt is this run's next slot, an input to the deadline; launch fills it for a manual run (manualSlot).
 	slotAt     time.Time
@@ -134,7 +133,7 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 	}
 }
 
-// releaseLease forgets a run's envelope. Idempotent: the terminal frame and cancel both release.
+// Idempotent: the terminal frame and cancel both release.
 func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
@@ -144,7 +143,6 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	}
 }
 
-// lease reads a run's envelope.
 func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
 }
@@ -153,10 +151,9 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 // boundary, so it covers a tool call finishing. A var for tests.
 var rewindCancelWait = 20 * time.Second
 
-// rewindCancelPoll is how often CancelRun re-reads the lease while it waits.
 const rewindCancelPoll = 50 * time.Millisecond
 
-// LiveRuns filters workflowIDs to those still leased, labelled by recipe, satisfying command.RunCutter.
+// LiveRuns filters workflowIDs to those still leased, labelled by recipe, satisfying command.runCutter.
 func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
 	var live []command.LiveRunRef
 	for _, id := range workflowIDs {
@@ -191,7 +188,7 @@ func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 	}
 }
 
-// RunChat answers which chat launched a run (command.RunOwner), so an orphan run tab nests under its
+// RunChat answers which chat launched a run (command.runOwner), so an orphan run tab nests under its
 // conversation. ok reports whether a lease exists: a parentless run has one and no chat. Lock order
 // Membership.mu -> Runs.mu -> the lease store's.
 func (rs *Runs) RunChat(workflowID string) (marotte.ChatID, bool) {

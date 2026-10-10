@@ -61,7 +61,12 @@ import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
 import { refreshRetention } from "./retention.js";
-import { registerRunStateDemand, registerRunTurnRepair } from "./run-store.js";
+import {
+  registerRunLogObserver,
+  registerRunStateDemand,
+  registerRunTurnRepair,
+} from "./run-store.js";
+import { forgetRunStepSteers, retireStepSteers } from "./run-step-steers.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { chatTabFoldsRun } from "./chat-run-dots.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
@@ -72,7 +77,7 @@ import { applyShareTarget } from "./share-target.js";
 import { error as toastError } from "./toast.js";
 
 /** What the boot chain needs from the composition root. */
-export interface BootDeps {
+interface BootDeps {
   /**
    * Navigate to a route (owned by `app.ts`). RESOLVES when the view is open; the router's
    * location claim is held across it.
@@ -307,10 +312,8 @@ function reload(): void {
   location.reload();
 }
 
-/**
- * Say what the reader saw and what it cost. Not dismissible; its link is the only control
- * that clears the count. No duration claim: the count is an unbounded sliding run.
- */
+/** Not dismissible; its link is the only control that clears the count. No duration claim: the count
+ *  is an unbounded sliding run. */
 function announceReloadLoop(): void {
   const n = reloadCount();
   showBanner(
@@ -370,6 +373,7 @@ export function initPostAuth(): void {
   // The run log's twin: `run-store.ts` detects the `seq` hole and `run-turn-range.ts`
   // owns the read, so the repair is injected here rather than imported.
   registerRunTurnRepair(requestRunTurnRange);
+  registerRunLogObserver({ steer: retireStepSteers, forget: forgetRunStepSteers });
   // A step's entries are the RUN's, so only the delegate page pins a chat's window.
   registerEvictionExemption(subagentTabProjectsChat);
   // Who still needs a run's state cell, so `forgetRun` needs no enumeration of its readers.
@@ -425,7 +429,6 @@ let bootChatsRead: boolean | undefined;
  */
 let bootTabsRead: boolean | undefined;
 
-/** Whether the EventSource is open, as last reported. */
 let streamUp = false;
 
 /**

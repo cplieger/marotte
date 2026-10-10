@@ -7,11 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// readKAS decodes the rendered KAS config file.
 func readKAS(t *testing.T, path string) map[string]json.RawMessage {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -25,7 +22,6 @@ func readKAS(t *testing.T, path string) map[string]json.RawMessage {
 	return doc
 }
 
-// readKASServers decodes just the mcpServers block.
 func readKASServers(t *testing.T, path string) map[string]map[string]any {
 	t.Helper()
 	doc := readKAS(t, path)
@@ -40,12 +36,11 @@ func readKASServers(t *testing.T, path string) map[string]map[string]any {
 	return out
 }
 
-// newIsolatedStore builds a store whose BOTH files live under t.TempDir().
 func newIsolatedStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	kas := filepath.Join(dir, "kas", "mcp.json")
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -54,14 +49,14 @@ func newIsolatedStore(t *testing.T) (*Store, string) {
 
 // TestNew_DefaultKASPathIsUnderKiroHome pins that PRODUCTION gets the real path,
 // which is the other half of the isolation option: every test overrides the path,
-// so without this nothing would notice if the default silently changed (or if a
-// refactor left it empty and started writing to the process's cwd).
+// so without this nothing would notice if the default silently changed, or went
+// empty and wrote to the process's cwd.
 //
 // A default resolved eagerly in `New` would make the package's own tests write the
 // developer's own ~/.kiro/settings/mcp.json.
 func TestNew_DefaultKASPathIsUnderKiroHome(t *testing.T) {
 	home := t.TempDir()
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
+	t.Setenv("HOME", home)
 
 	dir := t.TempDir()
 	s, err := New(t.Context(), dir, nil)
@@ -85,7 +80,7 @@ func TestWriteKASConfig_StdioShape(t *testing.T) {
 	srv := &Server{
 		Transport: TransportStdio, Name: "gh", Enabled: true,
 		Command: "npx", Args: []string{"-y", "gh-mcp"},
-		Env: []KeyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}},
+		Env: []keyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}},
 	}
 	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -175,7 +170,7 @@ func TestNew_BootRenderKeepsClientMetadataURL(t *testing.T) {
 		t.Fatalf("seed mcp.json: %v", err)
 	}
 	kas := filepath.Join(dir, "kas", "mcp.json")
-	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(kas)); err != nil {
+	if _, err := New(t.Context(), dir, nil, withKASConfigPath(kas)); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	oauth, _ := readKASServers(t, kas)["cimd"]["oauth"].(map[string]any)
@@ -225,7 +220,7 @@ func TestWriteKASConfig_DisabledServerStaysWithFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.SetEnabled(t.Context(), created.ID, false); err != nil {
+	if _, err := s.setEnabled(t.Context(), created.ID, false); err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 
@@ -249,7 +244,7 @@ func TestWriteKASConfig_PreservesForeignKeys(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -309,7 +304,7 @@ func TestRenderKASServers_SkipsUnknownTransport(t *testing.T) {
 // store keeps ordered KeyPairs so the editor can round-trip duplicates, and
 // KAS's schema cannot represent them.
 func TestPairsRecord_LastDuplicateWins(t *testing.T) {
-	got := pairsRecord([]KeyPair{{Name: "K", Value: "first"}, {Name: "K", Value: "second"}})
+	got := pairsRecord([]keyPair{{Name: "K", Value: "first"}, {Name: "K", Value: "second"}})
 	if len(got) != 1 || got["K"] != "second" {
 		t.Errorf("pairsRecord = %v, want {K: second}", got)
 	}
@@ -369,7 +364,7 @@ func TestReadKASConfig_SizeCapIsInclusive(t *testing.T) {
 
 	t.Run("at_the_cap", func(t *testing.T) {
 		kas := seed(t, kasFileMaxBytes)
-		if _, err := New(t.Context(), filepath.Dir(kas), nil, WithKASConfigPath(kas)); err != nil {
+		if _, err := New(t.Context(), filepath.Dir(kas), nil, withKASConfigPath(kas)); err != nil {
 			t.Fatalf("New: %v", err)
 		}
 		doc := readKAS(t, kas)
@@ -386,7 +381,7 @@ func TestReadKASConfig_SizeCapIsInclusive(t *testing.T) {
 	t.Run("one_past_the_cap", func(t *testing.T) {
 		logs := captureSlog(t)
 		kas := seed(t, kasFileMaxBytes+1)
-		if _, err := New(t.Context(), filepath.Dir(kas), nil, WithKASConfigPath(kas)); err != nil {
+		if _, err := New(t.Context(), filepath.Dir(kas), nil, withKASConfigPath(kas)); err != nil {
 			t.Fatalf("New: %v", err)
 		}
 		if _, ok := readKAS(t, kas)[kasPowersKey]; ok {

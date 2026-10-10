@@ -1,13 +1,14 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
 import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan, type RunAsks } from "./run-exec-source.js";
+import { runToExec, indexPlan } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
 import { flatten, workNodes, counters } from "./exec-view/model.js";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
+import type { RunAsks } from "./run-asks.js";
 
-const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
+const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
 // `root` stays `unknown`: the builders spell a node's status as the raw string KAS sends, which
 // `RunNode`'s classified status would refuse.
@@ -351,6 +352,65 @@ describe("runToExec container state", () => {
     expect(run.nodes[0]?.state).toBe("ok");
   });
 
+  // KAS's inspect reply carries no end on a completed repeat, so without one its duration ran on.
+  it("ends a finished container with no end of its own at its last child's end", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          {
+            nodeId: "loop",
+            type: "repeat",
+            status: "completed",
+            startedAt: "2026-10-07T22:02:46.471Z",
+            children: [
+              step("a", "completed", {
+                startedAt: "2026-10-07T22:02:46.474Z",
+                endedAt: "2026-10-07T22:03:13.060Z",
+              }),
+              step("b", "completed", {
+                startedAt: "2026-10-07T22:02:46.474Z",
+                endedAt: "2026-10-07T22:03:00.595Z",
+              }),
+            ],
+          },
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes[0]?.end).toBe("2026-10-07T22:03:13.060Z");
+  });
+
+  it("leaves a running container's end open", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          {
+            nodeId: "loop",
+            type: "repeat",
+            status: "running",
+            startedAt: "2026-10-07T22:02:46.471Z",
+            children: [
+              step("a", "completed", { endedAt: "2026-10-07T22:03:00.595Z" }),
+              step("b", "running"),
+            ],
+          },
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes[0]?.end).toBeUndefined();
+  });
+
   /** A loop whose pass 1 `a` failed and whose pass 2 `a` carries `last`. */
   function loopAfterFailure(last: string): RunState {
     const pass = (i: number, status: string): Record<string, unknown> => ({
@@ -436,6 +496,86 @@ describe("runToExec reads what nothing read before", () => {
     expect(labels).toContain("At the cap");
   });
 
+  it("names a watch's handler from KAS's nodePlan shape", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "build", type: "watch", status: "running", children: [] }],
+      }),
+      [{ nodeId: "build", type: "watch", agentName: "background-process" }],
+      NO_ASKS,
+    );
+    const watch = run.nodes[0];
+    expect(watch?.subtitle).toBe("polls background-process");
+    expect((watch?.facts ?? []).find((f) => f.label === "Handler")?.value).toBe(
+      "background-process",
+    );
+  });
+
+  it("reads a settled background-process watch's exit record", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          {
+            nodeId: "build",
+            type: "watch",
+            status: "completed",
+            children: [],
+            capturedOutput: JSON.stringify({
+              terminalId: "t1",
+              status: "exited",
+              exitCode: 1,
+              signal: null,
+              startedAt: "2026-10-06T00:00:00.000Z",
+              outputFile: "/tmp/build.log",
+              outputTail: "ok\nFAIL x",
+            }),
+          },
+        ],
+      }),
+      [{ nodeId: "build", type: "watch", agentName: "background-process" }],
+      NO_ASKS,
+    );
+    const watch = run.nodes[0];
+    expect(watch?.subtitle).toBe("exited 1");
+    const facts = Object.fromEntries((watch?.facts ?? []).map((f) => [f.label, f.value]));
+    expect(facts["Handler"]).toBe("background-process");
+    expect(facts["Exit"]).toBe("1");
+    expect(facts["Output file"]).toBe("/tmp/build.log");
+    expect(watch?.output).toBe("```text\nok\nFAIL x\n```");
+  });
+
+  it("keeps a watch capture that is not KAS's record verbatim", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          {
+            nodeId: "pr",
+            type: "watch",
+            status: "completed",
+            children: [],
+            capturedOutput: "merged",
+          },
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes[0]?.output).toBe("merged");
+    expect(run.nodes[0]?.subtitle).toBe("polls");
+  });
+
   // Four more fields with zero render sites before the exec view.
   it("surfaces the per-step facts nothing rendered", () => {
     const run = runToExec(
@@ -517,6 +657,16 @@ describe("indexPlan tolerance", () => {
     );
   });
 
+  // KAS's nodePlan names a watch's handler in `agentName`; on any other node that field is not one.
+  it("reads a watch's handler from agentName on a watch node only", () => {
+    const idx = indexPlan([
+      { nodeId: "build", type: "watch", agentName: "background-process" },
+      { nodeId: "code", type: "step", agentName: "wf-coder" },
+    ]);
+    expect(idx.get("build")?.watch).toBe("background-process");
+    expect(idx.has("code")).toBe(false);
+  });
+
   // A node the plan mentions with nothing interesting on it earns no entry, so a caller can treat
   // "present" as "has a fact".
   it("indexes only nodes that carry a fact", () => {
@@ -535,7 +685,7 @@ describe("runToExec alert precedence", () => {
       undefined,
       {
         count: 2,
-        nodes: new Set(["a"]),
+        asked: [{ nodeID: "a", sessionID: "", answer: false }],
         label: "Run tests?",
       },
     );
@@ -561,7 +711,7 @@ describe("runToExec alert precedence", () => {
       NO_ASKS,
     );
     expect(stopped.alert?.kind).toBe("stopped");
-    expect(stopped.alert?.text).toBe("Stopped by you: changed my mind");
+    expect(stopped.alert?.text).toBe("Stopped by user: changed my mind");
 
     const paused = runToExec(
       "wf_1",
@@ -569,7 +719,7 @@ describe("runToExec alert precedence", () => {
       undefined,
       NO_ASKS,
     );
-    expect(paused.alert?.text).toBe("Paused by you");
+    expect(paused.alert?.text).toBe("Paused by user");
 
     const pending = runToExec(
       "wf_1",
@@ -642,8 +792,7 @@ describe("runToExec alert precedence", () => {
       );
       expect(run.alert?.kind, reason).toBe("paused");
       expect(run.alert?.text, reason).toBe(
-        "A step is waiting for your answer. Resume alone will park it again, " +
-          "so answer or waive it in the dock",
+        "A step is waiting for your answer. Resume alone will park it again",
       );
       // The literal itself never reaches the reader: it names a tool and a node id where the reader
       // needs to know somebody owes an answer.
@@ -672,8 +821,7 @@ describe("runToExec alert precedence", () => {
     );
     expect(run.alert?.kind).toBe("paused");
     expect(run.alert?.text).toBe(
-      "A step is waiting for your answer. Resume alone will park it again, " +
-        "so answer or waive it in the dock",
+      "A step is waiting for your answer. Resume alone will park it again",
     );
   });
 
@@ -700,6 +848,112 @@ describe("runToExec alert precedence", () => {
 });
 
 // Both fields stay on `RunState`, which is a documented verbatim passthrough of KAS's own schema.
+
+describe("runToExec question targeting", () => {
+  // The run tab answers where the server would: a repeat's iterations share a node id, so only the
+  // execution the ask resolves to is the one the box's words answer.
+  it("marks only the paused execution of a shared node id as answered", () => {
+    const loop = {
+      nodeId: "loop",
+      type: "repeat",
+      status: "paused",
+      children: [
+        { ...step("review", "completed", { sessionId: "sess_0" }), iteration: 0 },
+        { ...step("review", "paused", { sessionId: "sess_1" }), iteration: 1 },
+      ],
+    };
+    const run = runToExec("wf_1", stateWith(loop, { status: "paused" }), undefined, {
+      count: 1,
+      asked: [{ nodeID: "review", sessionID: "", answer: true }],
+      label: "Which colour?",
+    });
+    const answered = workNodes(run.nodes)
+      .filter((n) => n.verb === "answer")
+      .map((n) => n.path);
+    expect(answered).toEqual([nodePathKey(["loop", "iter-1"])]);
+  });
+
+  it("answers a question naming no step at the run's only paused step", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("ask", "paused", { sessionId: "sess_a" }), { status: "paused" }),
+      undefined,
+      { count: 1, asked: [{ nodeID: "", sessionID: "", answer: true }], label: "" },
+    );
+    expect(workNodes(run.nodes).map((n) => n.verb)).toEqual(["answer"]);
+  });
+});
+
+describe("a step's detail line", () => {
+  it("names a retry wait on a running step and a pause on a paused one, verbatim", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("coder", "running", { retryReason: "Waiting 30s to retry." })),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes[0]?.state).toBe("running");
+    expect(run.nodes[0]?.subtitle).toBe("Retrying: Waiting 30s to retry.");
+
+    const paused = runToExec(
+      "wf_1",
+      stateWith(step("coder", "paused", { pauseReason: "Step paused." })),
+      undefined,
+      NO_ASKS,
+    );
+    expect(paused.nodes[0]?.subtitle).toBe("Paused: Step paused.");
+  });
+});
+
+describe("the plan revision notice", () => {
+  it.each([
+    [
+      { outcome: "queued", pending: 3, after: "build" },
+      "Plan revised: 3 steps queued after build",
+      false,
+    ],
+    [
+      { outcome: "applied", pending: 1, after: "build" },
+      "Plan revised: 1 step queued after build \u00b7 applied",
+      false,
+    ],
+    [
+      { outcome: "rejected", pending: 2, reason: "unknown agent" },
+      "Plan revised: 2 steps queued \u00b7 rejected: unknown agent",
+      true,
+    ],
+    [
+      { outcome: "dropped", pending: 2 },
+      "Plan revised: 2 steps queued \u00b7 dropped, the run ended first",
+      false,
+    ],
+    [
+      { outcome: "superseded", pending: 2 },
+      "Plan revised: 2 steps queued \u00b7 superseded",
+      false,
+    ],
+  ] as const)("words %o", (u, text, failed) => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("a", "running"), { planUpdate: u }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.notice).toEqual({ text, failed });
+  });
+
+  it("reaches the exec model from the run read", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("a", "running"), {
+        planUpdate: { outcome: "queued", pending: 2, after: "a" },
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.notice?.text).toBe("Plan revised: 2 steps queued after a");
+  });
+});
 
 // KAS grades a step `completed` when the model refused or kiro-cli stopped it at its model-call
 // limit; only the run log's close knows, and it arrives as the reply's `step_ends`.

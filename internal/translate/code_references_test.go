@@ -38,7 +38,6 @@ func countCodeRefEvents(events *[]marotte.ServerEvent) int {
 	return n
 }
 
-// startedTurn opens the chat's turn, the one OwnTurn answers with.
 func startedTurn(deps *baseDeps, chatID marotte.ChatID) *turnlog.Turn {
 	return deps.turns.chatTurn(chatID)
 }

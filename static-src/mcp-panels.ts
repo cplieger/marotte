@@ -35,7 +35,7 @@ import {
   cleanupSearch,
 } from "./mcp-panels-search.js";
 
-export type AddMode = "search" | "remote" | "npm" | "raw";
+type AddMode = "search" | "remote" | "npm" | "raw";
 
 interface EditingContext {
   id: string;
@@ -239,7 +239,7 @@ async function submitServer(
   body: Partial<Server>,
   errEl: HTMLElement,
   saveBtn: HTMLButtonElement | null,
-): Promise<boolean> {
+): Promise<void> {
   errEl.classList.add("hidden");
   errEl.replaceChildren();
   clearFieldMarks();
@@ -266,13 +266,12 @@ async function submitServer(
 
   if (o.status !== "success") {
     showSubmitError(errEl, o.status === "error" ? o.error : undefined, "Save failed.");
-    return false;
+    return;
   }
   closeModal($.mcpModal);
   mcpState.refetchServers();
   // A save can change what KAS runs, so status is re-read; both fetches coalesce per microtask.
   mcpState.refetchStatus();
-  return true;
 }
 
 setSwitchMode((kind, slug, identifier, fields) => {
@@ -438,7 +437,7 @@ function declaredRows(fields: InstallField[]): EditablePair[] {
 
 const NPX_COMMAND = "npx";
 
-/** `prewarm.NpmPkgSpecRe`, transcribed. A leading `-` fails the first class, refusing a flag. */
+/** `prewarm.npmPkgSpecRe`, transcribed. A leading `-` fails the first class, refusing a flag. */
 const NPM_PKG_SPEC =
   /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$/;
 
@@ -639,7 +638,6 @@ function showRawEditNote(editing: boolean): void {
   panel.querySelector(".mcp-mode-hint")?.after(note);
 }
 
-/** The label is the one text node beside the icon. */
 function setSaveLabel(btn: HTMLButtonElement, label: string): void {
   for (const node of btn.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "") {
@@ -697,11 +695,8 @@ interface ToolListSection {
   readonly chipsID: string;
   readonly inputID: string;
   readonly addID: string;
-  /** A chip's remove tooltip, said as what removal does. */
   readonly removeTitle: string;
-  /** The list as the record holds it. */
   stored(server: Server): string[] | undefined;
-  /** The list as the modal is editing it. */
   read(): string[];
   write(names: string[]): void;
 }

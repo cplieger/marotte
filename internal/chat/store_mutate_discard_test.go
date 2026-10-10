@@ -17,10 +17,9 @@ import (
 // error impossible and leaves exactly this population.
 var discardedMutate = regexp.MustCompile(`_\s*=\s*[^=\n]*\bMutate\(`)
 
-// scanSkipDirs are directories with nothing to say about production callers.
-// `.worktrees` holds checkouts of this same repo at other commits, so its
-// production files are another branch's, not this tree's — scanning them makes
-// the verdict depend on whoever has a worktree open.
+// `.worktrees` holds checkouts of this same repo at other commits, so its production files are
+// another branch's, not this tree's — scanning them makes the verdict depend on whoever has a
+// worktree open.
 var scanSkipDirs = map[string]bool{
 	".git":         true,
 	".kiro":        true,
@@ -31,9 +30,8 @@ var scanSkipDirs = map[string]bool{
 	"testdata":     true,
 }
 
-// productionFileFloor guards against a broken walk passing vacuously. The tree
-// holds hundreds of production Go files; a scan that finds a handful has
-// stopped looking rather than found nothing.
+// productionFileFloor guards against a broken walk passing vacuously. The tree holds hundreds of
+// production Go files; a scan that finds a handful has stopped looking rather than found nothing.
 const productionFileFloor = 100
 
 // TestNoProductionSiteDiscardsMutateError guards ErrTombstoned: a `_ = store.Mutate(...)` still
@@ -88,7 +86,6 @@ func TestNoProductionSiteDiscardsMutateError(t *testing.T) {
 	}
 }
 
-// repoRoot walks up from the test's working directory to the module root.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

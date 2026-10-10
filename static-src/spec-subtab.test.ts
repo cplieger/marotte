@@ -198,8 +198,8 @@ function registerOpeners(): void {
 const SPEC_DIR = ".kiro/specs/marotte-spec-tab";
 
 /** A spec tab is always a VIEW, so `owns: false` rides every open. */
-function openSpec(dir: string, parent?: string): Promise<unknown> {
-  return openTab(
+async function openSpec(dir: string, parent?: string): Promise<void> {
+  await openTab(
     parent === undefined
       ? { kind: "spec", ref: dir, owns: false }
       : { kind: "spec", ref: dir, parent, owns: false },
@@ -215,8 +215,8 @@ function paint(): Promise<void> {
   });
 }
 
-/** The rendered row for an id. It THROWS rather than asserting, so a case's own
- *  `expect.assertions` count stays the count of what that case checks. */
+/** It THROWS rather than asserting, so a case's own `expect.assertions` count stays the count of
+ *  what that case checks. */
 async function rowFor(id: string): Promise<HTMLElement> {
   await paint();
   const list = document.getElementById("tab-list");

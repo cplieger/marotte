@@ -1283,7 +1283,6 @@ export function initMCP(): void {
   mcpState.refetchStatus();
 }
 
-/** Map an npx prewarm event (keyed by package) to its server's prewarm signal. */
 function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
   for (const server of configuredServers()) {
     const serverPkg = extractNpxPackage(server);

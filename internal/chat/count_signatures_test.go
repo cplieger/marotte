@@ -14,8 +14,7 @@ import (
 // size or byte cap is a value; an entry count crossing a signature is a coordinate the log spells as seq. An entry
 // added here needs a checkable reason.
 var allowedBareN = map[string]string{
-	"WithEntryFileCap": "a BYTE cap on the whole log, not a count of anything in it",
-	"WithChatFileCap":  "a BYTE cap on the chat file, not a count of anything in it",
+	"withEntryFileCap": "a BYTE cap on the whole log, not a count of anything in it",
 	"nthIndex":         "counts occurrences of one byte in a string",
 	"lastNthIndex":     "counts occurrences of one byte in a string",
 	"ordinalAsInt":     "converts ONE ordinal, so the parameter is that ordinal",

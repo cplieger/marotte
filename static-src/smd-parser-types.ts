@@ -80,7 +80,6 @@ export const {
   MAYBE_EQ_BLOCK,
 } = TOKENS;
 
-/** All valid attribute values. */
 const ATTRS = {
   HREF: 1,
   SRC: 2,
@@ -337,7 +336,7 @@ export function end_tokens_to_indent(p: Parser, indent: number): number {
 
 /** What `continue_or_add_list` did with the marker. `no_room` means it did NOTHING — not even a
  *  close — so the caller must keep the marker as text. */
-export type ListOpen = "created" | "continued" | "no_room";
+type ListOpen = "created" | "continued" | "no_room";
 
 /** Open or continue the list the marker belongs to, leaving `add_list_item` one slot to push
  *  into. */

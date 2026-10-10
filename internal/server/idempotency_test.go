@@ -14,8 +14,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// idemHandler returns a handler writing the given status, Content-Type and body, plus a
-// counter of how many times it ran.
 func idemHandler(status int, ct, body string) (http.Handler, *atomic.Int32) {
 	var calls atomic.Int32
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

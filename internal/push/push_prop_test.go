@@ -38,7 +38,7 @@ func TestSubscriptionLifecycle_RapidInvariants(t *testing.T) {
 				expected[endpoint] = true
 
 			case 1: // Unsubscribe (idempotent)
-				svc.Unsubscribe(endpoint)
+				svc.unsubscribe(endpoint)
 				delete(expected, endpoint)
 			}
 		}

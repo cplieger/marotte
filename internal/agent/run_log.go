@@ -25,7 +25,6 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// runLogDir is the directory beside chats/ holding one entry log per run.
 const runLogDir = "runs"
 
 // errRunLogRemoved reports an append or open against a run a delete removed: the in-process tombstone.
@@ -43,8 +42,10 @@ type runTurn struct {
 	// rawStop is the last turn_end's stop reason, carried by the close.
 	rawStop marotte.StopReason
 	path    string
-	// nodeID is the step's own id, held because path is never split back (workflow.PathKey).
+	// nodeID is the step's own id and top the run's top-level step it sits under ("" when unknown), held
+	// because path is never split back (workflow.PathKey).
 	nodeID string
+	top    string
 	// session is the step's ACP session, as its turn_open records. Held here because the open set is this registry's alone.
 	session string
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
@@ -70,6 +71,9 @@ type runRecord struct {
 	log    *chat.EntryLog
 	open   map[string]*runTurn
 	closed map[string]string
+	// staged holds, per path, the user's words a paused step resumes on, until KAS reopens the path's
+	// turn: they become that turn's prompt.
+	staged map[string]*marotte.EntryPrompt
 	// ends is each path whose newest turn closed broken, nil until a read scans the log; every close then keeps it current.
 	ends map[string]marotte.RunStepEnd
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
@@ -79,15 +83,13 @@ type runRecord struct {
 	removed bool
 }
 
-// runLog is the registry the content, lifecycle and death handlers and Runs.Delete reach. One mutex, held
-// across the store call; nothing here runs under the log's own lock.
+// One mutex, held across the store call; nothing here runs under the log's own lock.
 type runLog struct {
 	runs map[string]*runRecord
 	root string
 	mu   sync.Mutex
 }
 
-// newRunLog builds the registry over `<configDir>/runs`.
 func newRunLog(configDir string) *runLog {
 	return &runLog{
 		runs: make(map[string]*runRecord),
@@ -103,7 +105,7 @@ func (r *runLog) dir(workflowID string) (string, error) {
 	return filepath.Join(r.root, workflowID), nil
 }
 
-// recordLocked answers the run's record, opening its log on first use; a deleted run answers errRunLogRemoved until restart.
+// A deleted run answers errRunLogRemoved until restart.
 func (r *runLog) recordLocked(ctx context.Context, workflowID string) (*runRecord, error) {
 	rec, ok := r.runs[workflowID]
 	if ok && rec.removed {
@@ -128,8 +130,8 @@ func (r *runLog) recordLocked(ctx context.Context, workflowID string) (*runRecor
 	return rec, nil
 }
 
-// Log answers a run's log for a read, or nil with no directory: a read must not create one.
-func (r *runLog) Log(ctx context.Context, workflowID string) (*chat.EntryLog, error) {
+// log answers a run's log for a read, or nil with no directory: a read must not create one.
+func (r *runLog) log(ctx context.Context, workflowID string) (*chat.EntryLog, error) {
 	if workflowID == "" {
 		return nil, nil
 	}
@@ -164,7 +166,7 @@ func (r *runLog) Log(ctx context.Context, workflowID string) (*chat.EntryLog, er
 // open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
 // outside the lock. found is false with no such turn.
 func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
-	l, err := r.Log(ctx, workflowID)
+	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
 	}
@@ -191,7 +193,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 // turnRange is one step turn's tail from seq `from` inclusive (0 the whole turn), its open tails and its
 // stamp, over EntryLog.TurnPage like the chat's. found is false for no log or no such turn; err is an unreadable log (500).
 func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
-	l, err := r.Log(ctx, workflowID)
+	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
 	}
@@ -220,7 +222,6 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 	return entries, open, stamps, true, nil
 }
 
-// stepEntries keeps the entries of every turn whose turn_open names nodePath, with each turn's newest seq.
 func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry, newest map[string]uint64) {
 	newest = make(map[string]uint64)
 	for i := range all {
@@ -239,8 +240,18 @@ func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry,
 	return entries, newest
 }
 
+// turn answers the open turn for a step, or nil.
+func (r *runLog) turn(workflowID, nodePath string) *turnlog.Turn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t := r.openLocked(workflowID, nodePath); t != nil {
+		return t.turn
+	}
+	return nil
+}
+
 // foldTurn answers the step's open turn, or nil, naming its node when the turn was opened with none.
-func (r *runLog) foldTurn(step translate.RunStep) *turnlog.Turn {
+func (r *runLog) foldTurn(step *translate.RunStep) *turnlog.Turn {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	t := r.openLocked(step.RunID, step.NodePath)
@@ -259,7 +270,6 @@ func (t *runTurn) learnNodeID(id string) {
 	}
 }
 
-// hasClosed reports whether the step path has a closed turn this process knows.
 func (r *runLog) hasClosed(workflowID, nodePath string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -270,7 +280,6 @@ func (r *runLog) hasClosed(workflowID, nodePath string) bool {
 	return false
 }
 
-// hostsOpen reports whether any run hosted by the chat holds an open step turn.
 func (r *runLog) hostsOpen(chatID marotte.ChatID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -282,9 +291,9 @@ func (r *runLog) hostsOpen(chatID marotte.ChatID) bool {
 	return false
 }
 
-// OpenSeqs answers every open turn of a run as turn id to newest seq: the digest's
+// openSeqs answers every open turn of a run as turn id to newest seq: the digest's
 // `run_turn` arm.
-func (r *runLog) OpenSeqs(workflowID string) map[string]uint64 {
+func (r *runLog) openSeqs(workflowID string) map[string]uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -298,9 +307,9 @@ func (r *runLog) OpenSeqs(workflowID string) map[string]uint64 {
 	return out
 }
 
-// OpenSessions answers the ACP sessions of the run's open step turns, for the idle window's terminal
+// openSessions answers the ACP sessions of the run's open step turns, for the idle window's terminal
 // check. A session-less step adds nothing; no record answers empty.
-func (r *runLog) OpenSessions(workflowID string) map[string]struct{} {
+func (r *runLog) openSessions(workflowID string) map[string]struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -316,8 +325,41 @@ func (r *runLog) OpenSessions(workflowID string) map[string]struct{} {
 	return out
 }
 
-// OpenNodeIDs answers each open step turn's node id, or nil for no record. A turn opened with no id adds nothing.
-func (r *runLog) OpenNodeIDs(workflowID string) map[string]struct{} {
+func (r *runLog) openPathOf(workflowID, session string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || session == "" {
+		return ""
+	}
+	for path, t := range rec.open {
+		if t.session == session {
+			return path
+		}
+	}
+	return ""
+}
+
+// openTops answers, in node path order, the top-level step each of the run's open step turns sits
+// under, skipping a turn whose opening frame carried no path.
+func (r *runLog) openTops(workflowID string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return nil
+	}
+	var tops []string
+	for _, path := range slices.Sorted(maps.Keys(rec.open)) {
+		if top := rec.open[path].top; top != "" {
+			tops = append(tops, top)
+		}
+	}
+	return tops
+}
+
+// openNodeIDs answers each open step turn's node id, or nil for no record. A turn opened with no id adds nothing.
+func (r *runLog) openNodeIDs(workflowID string) map[string]struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -333,10 +375,10 @@ func (r *runLog) OpenNodeIDs(workflowID string) map[string]struct{} {
 	return out
 }
 
-// Open opens the step's turn, keyed by its NodePath, when none is open and answers it; opened is the
+// open opens the step's turn, keyed by its NodePath, when none is open and answers it; opened is the
 // appended turn_open, nil when already open. The frame's chat id becomes the run's host when unset
 // (`run:<id>` for an empty one).
-func (r *runLog) Open(ctx context.Context, step translate.RunStep, chatID marotte.ChatID) (turn *turnlog.Turn, opened *marotte.Entry, err error) {
+func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marotte.ChatID) (turn *turnlog.Turn, opened *marotte.Entry, err error) {
 	workflowID, nodePath := step.RunID, step.NodePath
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -349,9 +391,13 @@ func (r *runLog) Open(ctx context.Context, step translate.RunStep, chatID marott
 	}
 	if t := rec.open[nodePath]; t != nil {
 		t.learnNodeID(step.NodeID)
+		if t.top == "" {
+			t.top = topStepOf(step)
+		}
 		return t.turn, nil, nil
 	}
 	e, err := rec.log.OpenTurn(ctx, &chat.TurnSpec{
+		Prompt:    rec.staged[nodePath],
 		Source:    marotte.TurnOpenNameWorkflowStep,
 		Run:       workflowID,
 		NodePath:  nodePath,
@@ -360,13 +406,55 @@ func (r *runLog) Open(ctx context.Context, step translate.RunStep, chatID marott
 	if err != nil {
 		return nil, nil, err
 	}
-	t := &runTurn{path: nodePath, nodeID: step.NodeID, session: step.SessionID}
+	delete(rec.staged, nodePath)
+	t := &runTurn{path: nodePath, nodeID: step.NodeID, top: topStepOf(step), session: step.SessionID}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	rec.open[nodePath] = t
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
 	}
 	return t.turn, e, nil
+}
+
+// False when the path's turn is open: KAS continues an open turn, so no turn_open would carry them.
+func (r *runLog) stagePrompt(ctx context.Context, workflowID, nodePath string, p *marotte.EntryPrompt) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, err := r.recordLocked(ctx, workflowID)
+	if err != nil {
+		return false, err
+	}
+	if rec.open[nodePath] != nil {
+		return false, nil
+	}
+	if rec.staged == nil {
+		rec.staged = make(map[string]*marotte.EntryPrompt)
+	}
+	rec.staged[nodePath] = p
+	return true, nil
+}
+
+func (r *runLog) unstagePrompt(workflowID, nodePath, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.staged[nodePath] == nil || rec.staged[nodePath].ID != id {
+		return
+	}
+	delete(rec.staged, nodePath)
+}
+
+// For a run that will open no further turn.
+func (r *runLog) takeStaged(workflowID string) map[string]*marotte.EntryPrompt {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || len(rec.staged) == 0 {
+		return nil
+	}
+	out := rec.staged
+	rec.staged = nil
+	return out
 }
 
 // hostFor is the host a frame's chat id names: itself, or the parentless bridge's key for an empty id.
@@ -377,8 +465,8 @@ func hostFor(workflowID string, chatID marotte.ChatID) marotte.ChatID {
 	return chatID
 }
 
-// AppendAfterClosed files a content entry after the newest closed turn of its path; false when none is known, so the caller opens one.
-func (r *runLog) AppendAfterClosed(ctx context.Context, workflowID, nodePath string, e *marotte.Entry) (bool, error) {
+// appendAfterClosed files a content entry after the newest closed turn of its path; false when none is known, so the caller opens one.
+func (r *runLog) appendAfterClosed(ctx context.Context, workflowID, nodePath string, e *marotte.Entry) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -396,8 +484,8 @@ func (r *runLog) AppendAfterClosed(ctx context.Context, workflowID, nodePath str
 	return true, rec.log.Append(ctx, e)
 }
 
-// Meter folds a step's turn_completion into its open turn; false with no open turn.
-func (r *runLog) Meter(workflowID, nodePath string, credits, elapsedMs float64) bool {
+// meter folds a step's turn_completion into its open turn; false with no open turn.
+func (r *runLog) meter(workflowID, nodePath string, credits, elapsedMs float64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	t := r.openLocked(workflowID, nodePath)
@@ -408,8 +496,8 @@ func (r *runLog) Meter(workflowID, nodePath string, credits, elapsedMs float64) 
 	return true
 }
 
-// StopReason records a step's turn_end stop reason on its open turn; the last wins.
-func (r *runLog) StopReason(workflowID, nodePath string, raw marotte.StopReason) bool {
+// stopReason records a step's turn_end stop reason on its open turn; the last wins.
+func (r *runLog) stopReason(workflowID, nodePath string, raw marotte.StopReason) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	t := r.openLocked(workflowID, nodePath)
@@ -427,9 +515,9 @@ func (r *runLog) openLocked(workflowID, nodePath string) *runTurn {
 	return nil
 }
 
-// CloseNode closes the step's turn with KAS's node_complete status, answering everything it sealed; closed
+// closeNode closes the step's turn with KAS's node_complete status, answering everything it sealed; closed
 // is false with no open turn.
-func (r *runLog) CloseNode(ctx context.Context, workflowID, nodePath, status, reason string) (sealed []turnlog.Sealed, closed bool, err error) {
+func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, reason string) (sealed []turnlog.Sealed, closed bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -460,8 +548,8 @@ func (r *runLog) CloseNode(ctx context.Context, workflowID, nodePath, status, re
 	return sealed, true, err
 }
 
-// CloseRun closes every open turn of a run with one outcome and, when terminal, drops the host.
-func (r *runLog) CloseRun(ctx context.Context, workflowID string, c marotte.TurnConclusion, terminal bool) ([]turnlog.Sealed, error) {
+// closeRunTurns closes every open turn of a run with one outcome and, when terminal, drops the host.
+func (r *runLog) closeRunTurns(ctx context.Context, workflowID string, c marotte.TurnConclusion, terminal bool) ([]turnlog.Sealed, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -475,9 +563,9 @@ func (r *runLog) CloseRun(ctx context.Context, workflowID string, c marotte.Turn
 	return sealed, err
 }
 
-// CloseHost closes every open turn of every run the dead bridge hosted (the death closer's run arm),
+// closeHost closes every open turn of every run the dead bridge hosted (the death closer's run arm),
 // answering sealed entries per run.
-func (r *runLog) CloseHost(ctx context.Context, chatID marotte.ChatID, c marotte.TurnConclusion) (map[string][]turnlog.Sealed, error) {
+func (r *runLog) closeHost(ctx context.Context, chatID marotte.ChatID, c marotte.TurnConclusion) (map[string][]turnlog.Sealed, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out map[string][]turnlog.Sealed
@@ -500,9 +588,9 @@ func (r *runLog) CloseHost(ctx context.Context, chatID marotte.ChatID, c marotte
 	return out, errors.Join(errs...)
 }
 
-// Delete closes every open turn `cancelled`, drops the maps and tombstones the log; RemoveDir is last,
+// delete closes every open turn `cancelled`, drops the maps and tombstones the log; RemoveDir is last,
 // after KAS's delete and clearEnd.
-func (r *runLog) Delete(ctx context.Context, workflowID string) ([]turnlog.Sealed, error) {
+func (r *runLog) delete(ctx context.Context, workflowID string) ([]turnlog.Sealed, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -513,6 +601,7 @@ func (r *runLog) Delete(ctx context.Context, workflowID string) ([]turnlog.Seale
 	sealed, err := r.closeAllLocked(ctx, rec, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCancelled, RawStop: marotte.StopReasonCancelled, Known: true})
 	rec.open = nil
 	rec.closed = nil
+	rec.staged = nil
 	rec.host = ""
 	rec.removed = true
 	if rec.log != nil {
@@ -521,8 +610,8 @@ func (r *runLog) Delete(ctx context.Context, workflowID string) ([]turnlog.Seale
 	return sealed, err
 }
 
-// RemoveDir removes the run's directory, only after Delete: the tombstone stops a late frame recreating it.
-func (r *runLog) RemoveDir(workflowID string) error {
+// removeDir removes the run's directory, only after Delete: the tombstone stops a late frame recreating it.
+func (r *runLog) removeDir(workflowID string) error {
 	if workflowID == "" {
 		return nil
 	}
@@ -537,7 +626,6 @@ func (r *runLog) RemoveDir(workflowID string) error {
 	return nil
 }
 
-// closeAllLocked closes every open turn of a run, in path order.
 func (r *runLog) closeAllLocked(ctx context.Context, rec *runRecord, c marotte.TurnConclusion) ([]turnlog.Sealed, error) {
 	var out []turnlog.Sealed
 	var errs []error
@@ -551,9 +639,8 @@ func (r *runLog) closeAllLocked(ctx context.Context, rec *runRecord, c marotte.T
 	return out, errors.Join(errs...)
 }
 
-// closeLocked closes one turn and moves it to closed. The path leaves `open` whatever the close answered:
-// a refused write latched the log.
-func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c marotte.TurnConclusion) ([]turnlog.Sealed, error) {
+// The path leaves `open` whatever the close answered: a refused write latched the log.
+func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c marotte.TurnConclusion) ([]turnlog.Sealed, error) {
 	sealed, err := t.turn.Close(ctx, c)
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
@@ -575,10 +662,10 @@ func noteStepEnd(ends map[string]marotte.RunStepEnd, path string, o marotte.Turn
 	ends[path] = marotte.RunStepEnd{Outcome: o, FailureReason: reason, FailureKind: kind}
 }
 
-// StepEnds answers the run's broken step ends by node path, scanning the log on the first read of the process;
+// stepEnds answers the run's broken step ends by node path, scanning the log on the first read of the process;
 // nil with no log.
-func (r *runLog) StepEnds(ctx context.Context, workflowID string) (map[string]marotte.RunStepEnd, error) {
-	l, err := r.Log(ctx, workflowID)
+func (r *runLog) stepEnds(ctx context.Context, workflowID string) (map[string]marotte.RunStepEnd, error) {
+	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}
@@ -663,10 +750,10 @@ func noteAttemptClose(starts map[string]stepAttempt, path string, o marotte.Turn
 	starts[path] = a
 }
 
-// StepStarts answers each node path's current attempt, scanning the log on the first read of the process; nil with
+// stepStarts answers each node path's current attempt, scanning the log on the first read of the process; nil with
 // no log.
-func (r *runLog) StepStarts(ctx context.Context, workflowID string) (map[string]marotte.RunStepStart, error) {
-	l, err := r.Log(ctx, workflowID)
+func (r *runLog) stepStarts(ctx context.Context, workflowID string) (map[string]marotte.RunStepStart, error) {
+	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}

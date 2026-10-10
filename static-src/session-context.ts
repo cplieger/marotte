@@ -7,8 +7,8 @@ import { patchSettings } from "./persist.js";
 class SessionContextController {
   private currentModel = "auto";
   private lastModelCache = "auto";
-  /** The level last picked under each model. A model with no entry has nothing for a new chat to
-   *  open with and falls through to that model's own default tier. */
+  /** A model with no entry has nothing for a new chat to open with and falls through to that model's
+   *  own default tier. */
   private lastEffortByModel: Record<string, string> = {};
 
   getCurrentModel(): string {

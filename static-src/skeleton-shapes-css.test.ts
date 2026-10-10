@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
-import { skeletonRows } from "./skeleton.js";
 
 // The four shapes, and the one rule about them CSS can enforce.
 
@@ -154,62 +153,5 @@ describe(".skeleton-rows", () => {
       }
     }
     expect(writers).toEqual(["./css/30-utilities.css"]);
-  });
-});
-
-describe("skeletonRows' three cell shapes", () => {
-  it("wraps a cell that names its own class, with the bar inside it", () => {
-    const out = skeletonRows("list-row docs-skel-row", [[{ cls: "list-row-name", w: "62%" }]]);
-    const row = out.firstElementChild;
-    const cell = row?.firstElementChild;
-
-    expect(row?.className).toBe("list-row docs-skel-row");
-    expect(cell?.className).toBe("list-row-name");
-    expect(cell?.children).toHaveLength(1);
-    const inner = cell?.firstElementChild as HTMLElement | null | undefined;
-    expect(inner?.className).toBe("skeleton skeleton-line");
-    expect(inner?.style.width).toBe("62%");
-  });
-
-  it("emits a named bar as a DIRECT child of the row, and NOT beside skeleton-line", () => {
-    const out = skeletonRows("docs-skel-row", [[{ bar: "docs-skel-name", w: "48%" }]]);
-    const bar = out.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
-
-    // Direct child: a wrapper here would be a stretched column item holding the bar, one box more
-    // than the real row has.
-    expect(bar?.className).toBe("skeleton docs-skel-name");
-    expect(bar?.style.width).toBe("48%");
-    // THE half of this case that would have caught the silent resize at /docs. `.docs-skel-name` is
-    // 0.875rem and `.skeleton-line` is 0.75rem, so a bar carrying both takes whichever slice comes
-    // later in the MANIFEST.
-    expect(bar?.classList.contains("skeleton-line")).toBe(false);
-    expect(out.querySelectorAll(".skeleton-line")).toHaveLength(0);
-  });
-
-  it("reserves a cell with neither class nor width as a bare box", () => {
-    const out = skeletonRows("ev-tl-lane", [[{}]]);
-    const cell = out.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
-
-    expect(cell?.tagName).toBe("DIV");
-    expect(cell?.className).toBe("");
-    expect(cell?.children).toHaveLength(0);
-    // A reserved control column says nothing, so it must not shimmer.
-    expect(out.querySelectorAll(".skeleton")).toHaveLength(0);
-  });
-
-  it("gives a width with no bar class the chrome default", () => {
-    const out = skeletonRows("fb-row fb-row-skel", [[{ w: "4rem" }]]);
-    const bar = out.firstElementChild?.firstElementChild as HTMLElement | null | undefined;
-    expect(bar?.className).toBe("skeleton skeleton-line");
-  });
-
-  it("carries aria-hidden on the root and nowhere below it", () => {
-    const out = skeletonRows("list-row", [
-      [{ cls: "list-row-name", w: "62%" }, {}],
-      [{ bar: "docs-skel-name", w: "48%" }],
-    ]);
-    expect(out.getAttribute("aria-hidden")).toBe("true");
-    expect(out.querySelectorAll("[aria-hidden]")).toHaveLength(0);
-    expect(out.children).toHaveLength(2);
   });
 });

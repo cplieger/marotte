@@ -269,8 +269,8 @@ function isFolded(turnID: string): boolean {
   return card(turnID).hasAttribute("data-folded");
 }
 
-/** The entry ordinals this turn's body holds, ascending. A prose RUN is stamped for
- *  its first member alone, which is why the heavy fixture is `thinking` entries. */
+/** A prose RUN is stamped for its first member alone, which is why the heavy fixture is `thinking`
+ *  entries. */
 function mountedSeqs(turnID: string): number[] {
   return [...card(turnID).querySelectorAll<HTMLElement>("[data-entry-seq]")]
     .map((e) => Number(e.dataset["entrySeq"]))
@@ -281,7 +281,6 @@ function ordinalsIn(turnID: string): number {
   return mountedSeqs(turnID).length;
 }
 
-/** Press the turn footer's "Copy as text", the reader's own gesture. */
 function copyAsText(turnID: string): void {
   const btn = card(turnID).querySelector<HTMLButtonElement>(
     '.turn-action-btn[aria-label="Copy as text"]',
@@ -292,9 +291,8 @@ function copyAsText(turnID: string): void {
   btn.click();
 }
 
-/** The spacer sides this card carries, in document order. The head is the body's first
- *  child; the tail is the body's next SIBLING, since the renderer seats a streamed entry
- *  with `appendChild`. */
+/** The head is the body's first child; the tail is the body's next SIBLING, since the renderer seats
+ *  a streamed entry with `appendChild`. */
 function spacersIn(turnID: string): string[] {
   return [
     ...card(turnID).querySelectorAll<HTMLElement>(

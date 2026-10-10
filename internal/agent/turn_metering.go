@@ -12,9 +12,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// AccumulateSpend adds a turn_completion's credits to the chat, step or not (translate.TurnMetering). Zero is
+// AccumulateSpend adds a turn_completion's credits to the chat, step or not (translate.turnMetering). Zero is
 // skipped: HasRealData must not report a measured 0.00 the account never confirmed.
-func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
+func (bc *bridgeCoordinator) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
 	if credits <= 0 {
 		return
 	}
@@ -24,9 +24,9 @@ func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID marotte
 	})
 }
 
-// StageConversationTurnSummary records a conversation turn's duration on the header (translate.TurnMetering). The
+// StageConversationTurnSummary records a conversation turn's duration on the header (translate.turnMetering). The
 // per-turn sum is the open turn's aggregate; the count is WriteCounters'.
-func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
+func (bc *bridgeCoordinator) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
 	if elapsedMs <= 0 {
 		return
 	}
@@ -35,9 +35,9 @@ func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, c
 	})
 }
 
-// mutateUsage applies a usage write to the chat. Every write here lands after its frame, on a chat that may be
-// deleted by then, so chat.ErrTombstoned is the designed outcome, not a fault.
-func (bc *BridgeCoordinator) mutateUsage(ctx context.Context, chatID marotte.ChatID, apply func(*marotte.Usage)) {
+// Every write here lands after its frame, on a chat that may be deleted by then, so
+// chat.ErrTombstoned is the designed outcome, not a fault.
+func (bc *bridgeCoordinator) mutateUsage(ctx context.Context, chatID marotte.ChatID, apply func(*marotte.Usage)) {
 	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false

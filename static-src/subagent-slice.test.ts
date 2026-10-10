@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   blockShape,
   findSubagentInvocation,
-  groupOf,
+  resolveGroup,
   pipelineOf,
   readLane,
   shapeExtends,
@@ -55,7 +55,6 @@ function text(turnID: string, seq: number, body: string, lane?: string): Entry {
   return sealed(turnID, seq, "text", { text: body }, lane === undefined ? {} : { lane });
 }
 
-/** An invocation call. `id` carries the pipeline join when it is stage-shaped. */
 function invocation(id: string, subtask: string, status: EntryToolCall["status"] = "completed") {
   return makeToolCall({
     id,
@@ -76,7 +75,6 @@ function driver(id: string) {
   });
 }
 
-/** Work a delegate did, in its own lane. */
 function work(id: string) {
   return makeToolCall({
     id,
@@ -191,7 +189,7 @@ describe("the stage/driver join", () => {
         ],
       ],
     ]);
-    const group = groupOf(src, "sub_b");
+    const group = resolveGroup(src, "sub_b").group;
     expect(group.pipeline).toBe("orc_1");
     expect(group.driver?.id).toBe("orc_1");
     expect(group.members.map((m) => m.subtaskID)).toEqual(["sub_a", "sub_b"]);
@@ -202,7 +200,7 @@ describe("the stage/driver join", () => {
     const src = source([
       ["t1", [turnOpen("t1", 1), toolCall("t1", 1, invocation("tooluse_plain", "sub_d"))]],
     ]);
-    expect(groupOf(src, "sub_d")).toEqual({
+    expect(resolveGroup(src, "sub_d").group).toEqual({
       pipeline: "",
       driver: undefined,
       members: [],

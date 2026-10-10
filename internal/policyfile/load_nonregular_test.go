@@ -18,23 +18,19 @@ import (
 // makes this run to the go-test timeout instead of reporting a failure. The
 // permissions file lives under $HOME/.kiro, which the agent's own shell can
 // write, so one mkfifo wedged every request on the permissions REST surface.
-func loadWithin(t *testing.T, budget time.Duration, path string) (*File, error) {
+func loadWithin(t *testing.T, budget time.Duration, path string) error {
 	t.Helper()
-	type res struct {
-		f   *File
-		err error
-	}
-	out := make(chan res, 1)
+	out := make(chan error, 1)
 	go func() {
-		f, err := Load(path)
-		out <- res{f, err}
+		_, err := Load(path)
+		out <- err
 	}()
 	select {
-	case r := <-out:
-		return r.f, r.err
+	case err := <-out:
+		return err
 	case <-time.After(budget):
 		t.Fatalf("Load still blocked after %v: the read followed a non-regular file into open(2)", budget)
-		return nil, nil
+		return nil
 	}
 }
 
@@ -43,7 +39,7 @@ func TestLoad_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
-	if _, err := loadWithin(t, 3*time.Second, path); !errors.Is(err, atomicfile.ErrNotRegular) {
+	if err := loadWithin(t, 3*time.Second, path); !errors.Is(err, atomicfile.ErrNotRegular) {
 		t.Errorf("Load over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 	}
 }

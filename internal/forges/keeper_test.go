@@ -45,7 +45,6 @@ func newTokenServer(t *testing.T, body string) *tokenServer {
 	return ts
 }
 
-// record is a GitHub connection record addressing the server through its own CA.
 func (ts *tokenServer) record() connectionRecord {
 	host := strings.TrimPrefix(ts.srv.URL, "https://")
 	return connectionRecord{
@@ -55,8 +54,6 @@ func (ts *tokenServer) record() connectionRecord {
 	}
 }
 
-// rotatingCredential is an eight-hour GitHub token issued for webBase that
-// expires in expiresIn, with a month left on its refresh token.
 func rotatingCredential(webBase string, expiresIn time.Duration) creds.Record {
 	now := time.Now().Truncate(time.Second)
 	return creds.Record{
@@ -66,8 +63,6 @@ func rotatingCredential(webBase string, expiresIn time.Duration) creds.Record {
 	}
 }
 
-// keeperManager is a manager over a fresh config directory holding rec and its
-// stored credential cred, with the real family clients.
 func keeperManager(t *testing.T, rec *connectionRecord, cred *creds.Record) *Manager {
 	t.Helper()
 	m := NewManager(t.TempDir())
@@ -100,7 +95,7 @@ func TestKeeper_RefreshesARotatingRecordBeforeExpiry(t *testing.T) {
 	if n := ts.hits.Load(); n != 1 {
 		t.Errorf("the forge saw %d requests during the pass, want the one refresh", n)
 	}
-	if row := m.Get(rec.ID); row.ReconnectRequired || !row.Connected {
+	if row := m.get(rec.ID); row.ReconnectRequired || !row.Connected {
 		t.Errorf("row after a successful refresh = %+v, want connected and not reconnect-required", row)
 	}
 }
@@ -123,7 +118,7 @@ func TestKeeper_LeavesAStaticRecordAlone(t *testing.T) {
 	if got, _, err := m.store.Load(rec.ID); err != nil || got.Token != "pat" || got.Usability != creds.UsabilityUnmarked {
 		t.Errorf("stored credential after the pass = token %q, usability %v (err %v); want pat, unmarked", got.Token, got.Usability, err)
 	}
-	if row := m.Get(rec.ID); row.ReconnectRequired || !row.Connected || changes != 0 {
+	if row := m.get(rec.ID); row.ReconnectRequired || !row.Connected || changes != 0 {
 		t.Errorf("row after the pass = %+v with %d changes announced, want it untouched and nothing announced", row, changes)
 	}
 }
@@ -144,7 +139,7 @@ func TestKeeper_ARecordWithNoCredentialIsNotReannounced(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: Refresh() = %v", err)
 	}
-	if row := m.Get(rec.ID); !row.ReconnectRequired || row.ErrorCode != forgeapi.CodeReconnectRequired {
+	if row := m.get(rec.ID); !row.ReconnectRequired || row.ErrorCode != forgeapi.CodeReconnectRequired {
 		t.Errorf("row with no stored credential = %+v, want reconnect-required", row)
 	}
 	changes := 0
@@ -169,7 +164,7 @@ func TestKeeper_TerminalRefreshMarksTheRowReconnectRequired(t *testing.T) {
 
 	k.pass(t.Context())
 
-	row := m.Get(rec.ID)
+	row := m.get(rec.ID)
 	if !row.ReconnectRequired || row.Connected || row.LastError == "" || row.ErrorCode != forgeapi.CodeReconnectRequired {
 		t.Errorf("row after a refused refresh = %+v, want reconnect-required, disconnected, with the reason and its code", row)
 	}
@@ -183,7 +178,7 @@ func TestKeeper_TerminalRefreshMarksTheRowReconnectRequired(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Refresh() = %v", err)
 	}
-	if row := m.Get(rec.ID); !row.ReconnectRequired || row.Connected {
+	if row := m.get(rec.ID); !row.ReconnectRequired || row.Connected {
 		t.Errorf("row after a refresh of the list = %+v, want the reconnect state kept from the marked record", row)
 	}
 }
@@ -200,14 +195,12 @@ func TestKeeper_FailedRefreshOfAnExpiredTokenLeavesTheRowUnmarked(t *testing.T) 
 	if n := ts.hits.Load(); n == 0 {
 		t.Fatal("the pass sent no refresh for an expired token; the fixture is not exercising a failed refresh")
 	}
-	if row := m.Get(rec.ID); row.ReconnectRequired || changes != 0 {
+	if row := m.get(rec.ID); row.ReconnectRequired || changes != 0 {
 		t.Errorf("row after a refresh the forge failed without refusing = %+v with %d changes announced, "+
 			"want it not reconnect-required and nothing announced: the next pass refreshes again", row, changes)
 	}
 }
 
-// cursorCore is a fake client whose budget state reports the rotation cursor
-// set last.
 type cursorCore struct {
 	fakeCore
 	cursor forgeapi.RotationCursor
@@ -307,7 +300,6 @@ func TestKeeper_StopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// whoamiCore is a fake client whose identity read answers err.
 type whoamiCore struct {
 	fakeCore
 	err error
@@ -344,10 +336,10 @@ func TestManagerProbe_ASharedProbeSurvivesTheFirstCallerLeaving(t *testing.T) {
 		core.release = make(chan struct{})
 		first, cancel := context.WithCancel(t.Context())
 		var wg sync.WaitGroup
-		wg.Go(func() { _ = m.Probe(first, "github:github.com") })
+		wg.Go(func() { _ = m.probeConnection(first, "github:github.com") })
 		synctest.Wait()
 		var err error
-		wg.Go(func() { err = m.Probe(t.Context(), "github:github.com") })
+		wg.Go(func() { err = m.probeConnection(t.Context(), "github:github.com") })
 		synctest.Wait()
 		cancel()
 		synctest.Wait()
@@ -357,7 +349,7 @@ func TestManagerProbe_ASharedProbeSurvivesTheFirstCallerLeaving(t *testing.T) {
 		if err != nil {
 			t.Errorf("Probe() of a caller still waiting after the first left = %v, want nil", err)
 		}
-		if f := m.Get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
+		if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
 			t.Errorf("row after the shared probe = %+v, want connected", f)
 		}
 	})
@@ -369,24 +361,24 @@ func TestManagerProbe_ReconnectRefusalMarksTheRow(t *testing.T) {
 	}}
 	m := recordManager(t, core)
 
-	if err := m.Probe(t.Context(), "github:github.com"); err == nil {
+	if err := m.probeConnection(t.Context(), "github:github.com"); err == nil {
 		t.Fatal("Probe() over a reconnect refusal = nil, want the refusal")
 	}
-	if row := m.Get("github:github.com"); !row.ReconnectRequired || row.Connected || row.ErrorCode != forgeapi.CodeReconnectRequired {
+	if row := m.get("github:github.com"); !row.ReconnectRequired || row.Connected || row.ErrorCode != forgeapi.CodeReconnectRequired {
 		t.Errorf("row after a reconnect refusal = %+v, want reconnect-required, disconnected and coded so", row)
 	}
 
 	core.err = &forgeapi.Error{Kind: forgeapi.KindTransient, Message: "upstream timed out"}
-	_ = m.Probe(t.Context(), "github:github.com")
-	if row := m.Get("github:github.com"); !row.ReconnectRequired {
+	_ = m.probeConnection(t.Context(), "github:github.com")
+	if row := m.get("github:github.com"); !row.ReconnectRequired {
 		t.Errorf("row after a transient probe failure = %+v, want the reconnect state kept", row)
 	}
 
 	core.err = nil
-	if err := m.Probe(t.Context(), "github:github.com"); err != nil {
+	if err := m.probeConnection(t.Context(), "github:github.com"); err != nil {
 		t.Fatalf("Probe() after a new sign-in = %v", err)
 	}
-	if row := m.Get("github:github.com"); row.ReconnectRequired || !row.Connected {
+	if row := m.get("github:github.com"); row.ReconnectRequired || !row.Connected {
 		t.Errorf("row after a successful probe = %+v, want the reconnect state cleared", row)
 	}
 }
@@ -399,7 +391,7 @@ func TestManagerList_MarkedCredentialReadsReconnectRequired(t *testing.T) {
 	}
 	m := keeperManager(t, &rec, &cred)
 
-	row := m.Get(rec.ID)
+	row := m.get(rec.ID)
 	if !row.ReconnectRequired || row.Connected || row.LastError == "" || row.ErrorCode != forgeapi.CodeReconnectRequired {
 		t.Errorf("row of a record marked reconnect-required = %+v, want reconnect-required, disconnected, with the reason and its code", row)
 	}

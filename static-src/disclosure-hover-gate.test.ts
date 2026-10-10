@@ -6,11 +6,9 @@ import { describe, it, expect } from "vitest";
 import { manifestSheets } from "./__test-helpers__/css-rules.js";
 
 interface Trigger {
-  /** The stylesheet the rule lives in, as `css/MANIFEST` spells it. */
   readonly file: string;
   /** The selector EXACTLY as authored, so a member of a list is findable. */
   readonly selector: string;
-  /** What the reader is hovering, for a failure message that names the surface. */
   readonly what: string;
 }
 

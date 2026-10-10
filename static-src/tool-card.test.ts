@@ -1,4 +1,3 @@
-// Unit tests for tool-card.ts pure functions (extractSubtitle, mcpHue).
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import fc from "fast-check";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
@@ -39,9 +38,8 @@ vi.mock("./editor-openers.js", () => ({
   },
 }));
 
-// The bulk a previewed card fetches on first open, plus one line per request so a
-// case can assert that ONE fetch serves every deferred piece. Hoisted because the
-// factory below is lifted above every module-scope binding.
+// The bulk a previewed card fetches, plus one line per request so a case can assert ONE
+// fetch serves every deferred piece. Hoisted above the mock factory.
 const stubBulk = vi.hoisted(() => ({
   output: "",
   diffs: [] as { path: string; old_text?: string; new_text: string }[],
@@ -65,10 +63,6 @@ const {
   syncOffloadLink,
 } = await import("./tool-card.js");
 const { toolCardOptsFor } = await import("./tool-card-opts.js");
-
-// ---------------------------------------------------------------------------
-// extractSubtitle — table-driven
-// ---------------------------------------------------------------------------
 
 describe("extractSubtitle", () => {
   const cases: {
@@ -114,10 +108,6 @@ describe("extractSubtitle", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// mcpHue — table-driven snapshot tests
-// ---------------------------------------------------------------------------
-
 describe("mcpHue", () => {
   const knownServers: { server: string; hue: number }[] = [
     { server: "github", hue: mcpHue("github") },
@@ -128,7 +118,6 @@ describe("mcpHue", () => {
   ];
 
   it.each(knownServers)("deterministic for $server → $hue", ({ server, hue }) => {
-    // Call multiple times to verify determinism.
     expect(mcpHue(server)).toBe(hue);
     expect(mcpHue(server)).toBe(hue);
   });
@@ -141,14 +130,9 @@ describe("mcpHue", () => {
 
   it("different inputs produce different hues (for known distinct servers)", () => {
     const hues = new Set(knownServers.map((s) => s.hue));
-    // With 5 distinct server names, we expect at least 3 distinct hues.
     expect(hues.size).toBeGreaterThanOrEqual(3);
   });
 });
-
-// ---------------------------------------------------------------------------
-// mcpHue — property-based tests
-// ---------------------------------------------------------------------------
 
 describe("mcpHue properties", () => {
   it("output is always in [0, 360)", () => {
@@ -185,12 +169,6 @@ describe("mcpHue properties", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// The depth ladder's visible contract. These are task E's own done-when
-// criteria, and none of them had a test before: the status word had no coverage
-// at all, which is how a card printing `completed` survived.
-// ---------------------------------------------------------------------------
 
 describe("outcome is the row's one mark, not a word and not a badge", () => {
   it("a finished card prints no status word anywhere in its text", async () => {
@@ -341,9 +319,8 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       disclosed: null,
       denial: null,
     } as const;
-    // Same state twice, then a change, then the same state again: the writer
-    // REPLACES the slot's child rather than appending to it, so stacking two
-    // marks in one glyph is unrepresentable.
+    // Same state twice, then a change, then the same state again: the writer REPLACES the
+    // slot's child, so two marks in one glyph is unrepresentable.
     applyOutcome(card, "completed", "Run Command", info);
     applyOutcome(card, "completed", "Run Command", info);
     expect(icon?.querySelectorAll("svg")).toHaveLength(1);
@@ -365,9 +342,8 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       live: false,
     });
     const icon = card.querySelector(".tool-icon");
-    // Named off the icon registry, not read back off the card: a snapshot taken
-    // after buildToolCard has already been through applyOutcome once, so it would
-    // move with any regression that made `ok` paint a general mark.
+    // Named off the icon registry, not read back off the card, which has already been
+    // through applyOutcome once.
     const identity = (iconEl(toolIcon("execute", "executePwsh")) as HTMLElement).outerHTML;
     expect(icon?.querySelector("svg")?.outerHTML).toBe(identity);
     const info = {
@@ -391,10 +367,8 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
 
   it("does not strand a glyph-less slot on the silhouette it borrowed", async () => {
     const { applyOutcome } = await import("./tool-card.js");
-    // A caller that mounts no identity glyph. Every caller in the tree mounts one
-    // before its first call, so this pins the contract for the next one rather
-    // than a live path: the writer owns the silhouette it wrote, so a return to
-    // `ok` must not leave a red triangle standing under an `is-ok` class.
+    // A caller that mounts no identity glyph: the writer owns the silhouette it wrote, so a
+    // return to `ok` must clear it.
     const node = document.createElement("div");
     const icon = document.createElement("span");
     icon.className = "tool-icon";
@@ -436,9 +410,8 @@ describe("the depth ladder", () => {
   });
 
   it("an edit gets a details region — the old tier axis gave it none", async () => {
-    // The `output` is what makes the region non-empty: the chevron is gated on
-    // there being something to reveal (see "a card with nothing to disclose"),
-    // and an edit's diff preview is a SIBLING of the region rather than in it.
+    // The `output` makes the region non-empty (the chevron is gated on it); an edit's diff
+    // preview is a SIBLING of the region.
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "t6",
@@ -576,9 +549,7 @@ describe("a tool's output renders verbatim", () => {
 });
 
 describe("disclose_context and policy denials", () => {
-  // The agent activating a skill is the moment its body enters the prompt, so
-  // the card names the DOCUMENT rather than the tool that fetched it. This is
-  // the only signal in the transcript that a skill reached the model at all.
+  // The card names the DOCUMENT rather than the tool that fetched it.
   it("names the skill a disclose_context call loaded", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
@@ -606,9 +577,8 @@ describe("disclose_context and policy denials", () => {
     expect(card.dataset["title"]).toBe("Loaded steering: marotte");
   });
 
-  // A refusal is not a failure: the command never ran, so sending the reader to
-  // debug the tool is the wrong instruction. The state, the badge shape and the
-  // accessible name all have to say policy.
+  // A refusal is not a failure: the state, the badge shape and the accessible name all
+  // have to say policy.
   it("renders a policy denial as its own state, not a failure", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
@@ -654,9 +624,8 @@ describe("disclose_context and policy denials", () => {
         },
       },
     });
-    // Behind the disclosure, and built on first open with the rest of the body:
-    // the claim line already says "blocked by security policy" (the case above),
-    // and the rule that fired is depth 2.
+    // Behind the disclosure, built on first open: the claim line already says "blocked by
+    // security policy", and the rule that fired is depth 2.
     document.body.appendChild(card);
     card.querySelector<HTMLElement>(".tool-disclosure")?.click();
     const text = card.querySelector(".tool-denial")?.textContent ?? "";
@@ -686,18 +655,11 @@ describe("disclose_context and policy denials", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The header IS the disclosure's hit target (disclosure-row.ts).
-//
-// Before this, the chevron alone toggled a tool card while the group header it
-// sits inside took a click anywhere — the same gesture, two answers. These pin
-// the header surface, the two things inside it that must keep their own click,
-// and the claim-only card that must stay inert.
-// ---------------------------------------------------------------------------
+// The header IS the disclosure's hit target (disclosure-row.ts); the controls inside it
+// keep their own click, and a claim-only card stays inert.
 
-// Every fixture below carries an `output`, because the chevron is gated on the
-// details region having something in it — a card with nothing to reveal has no
-// toggle for a header click to reach (see "a card with nothing to disclose").
+// Every fixture carries an `output`, because a card with nothing to reveal has no toggle
+// for a header click to reach.
 describe("tool card: whole-header disclosure", () => {
   it("a click on the header toggles the card's details", () => {
     const card = buildToolCard({
@@ -746,9 +708,8 @@ describe("tool card: whole-header disclosure", () => {
   });
 
   it("a click on the description below the title toggles the card", () => {
-    // Search/fetch/generic cards put their first input fact under the title.
-    // The whole visible summary is one disclosure target, so that line cannot
-    // be a dead strip inside a box that otherwise reads as a button.
+    // Search/fetch/generic cards put their first input fact under the title, and that line
+    // is part of the one disclosure target.
     const card = buildToolCard({
       id: "hdr-subtitle",
       output: "3 results\n",
@@ -830,12 +791,9 @@ describe("tool card: whole-header disclosure", () => {
   });
 
   it("puts the PATH in the hover text and the action in the accessible name", () => {
-    // Two channels, two facts, and the split is what makes the app-wide two-line
-    // tooltip cap lossless here (`tooltip-size.test.ts`): the chip shows the
-    // basename, so the tooltip's job is the path, and a leading `Open the diff`
-    // line left the path one line of the two — which clips ~19% of real paths.
-    // The action then has to live in the NAME, or clicking a filename says
-    // nothing about opening a diff on the one channel that is always read.
+    // Two channels: the chip shows the basename, so the tooltip carries the path alone (a
+    // leading action line would clip long paths under the two-line cap, `tooltip-size.test.ts`)
+    // and the action lives in the NAME.
     const card = buildToolCard({
       id: "hdr5",
       output: "wrote 3 lines\n",
@@ -866,9 +824,8 @@ describe("tool card: whole-header disclosure", () => {
   });
 
   it("a claim-only card has no toggle and its header stays inert", () => {
-    // `readFile` resolves to kind `read`, whose depth 1 is "none": no toggle and
-    // no details region, so the header must not become a control that opens an
-    // empty one.
+    // `readFile` resolves to kind `read`, depth 1 "none": no details region, so the header
+    // must not become a control.
     const card = buildToolCard({
       id: "hdr5",
       title: "readFile",
@@ -890,15 +847,8 @@ describe("tool card: whole-header disclosure", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The card's BODY is built on first open.
-//
-// A collapsed card is a claim line, and a transcript mounts dozens of them, so
-// nothing with a cost in it — the denial rows, the input dump, painting the
-// output through the ANSI renderer — runs until a reader asks. `.tool-output` is the exception: it is part of the shell, because the
-// live update path streams chunks straight into it and a streaming card has
-// usually not been opened.
-// ---------------------------------------------------------------------------
+// The card's BODY is built on first open, because a transcript mounts dozens of collapsed
+// cards. `.tool-output` is in the shell: the live update path streams into it unopened.
 
 describe("the details body is deferred to first open", () => {
   it("mounts an EMPTY details region with the output slot in it", () => {
@@ -952,9 +902,8 @@ describe("the details body is deferred to first open", () => {
   });
 
   it("makes the output readable straight after expandToolDetails, which the failure path needs", async () => {
-    // `messages-tools.ts` force-opens a failed card and then reads
-    // `.tool-output`'s text to offer "Explain this error". So the body has to be
-    // built by the time that call returns.
+    // `messages-tools.ts` force-opens a failed card and then reads `.tool-output` to offer
+    // "Explain this error", so the body is built by the time the call returns.
     const { expandToolDetails } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "tc1",
@@ -971,25 +920,14 @@ describe("the details body is deferred to first open", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A card with nothing to disclose loses its disclosure.
-//
-// The disclosure reveals `.tool-details` and nothing else, so emptiness is a
-// property of that region. Three things a card can carry sit OUTSIDE it and stay
-// visible on a bare card: the diff preview and its fetch control, and the Explain
-// button, all siblings of the region. So an edit whose region is empty is bare and
-// correctly loses its chevron while its diff stays on screen.
-//
-// The region cannot simply be read, because `detailsBody` is deferred to first
-// open: an unopened card's region is empty for every kind. The predicate therefore
-// combines the build-time facts that guarantee content with the live output
-// region — one flag per thing `detailsBody` writes.
-// ---------------------------------------------------------------------------
+// A card with nothing to disclose loses its disclosure. Emptiness is a property of
+// `.tool-details`; the diff preview and the Explain button sit outside it and stay. The
+// region cannot simply be read before first open, so the predicate combines build-time
+// facts with the live output region.
 
-/** A settled tool call that produced nothing at all: no output, no input, no
- *  denial, replay mode. `other` resolves to depth 1 `generic`, which is what gives
- *  it a details region in the first place — the shape a subagent that failed to
- *  START arrives in, since a call with no subtask id renders as an ordinary card. */
+/** A settled tool call that produced nothing at all, in replay mode. `other` resolves to
+ *  depth 1 `generic`, which gives it a details region: the shape of a subagent that
+ *  failed to START. */
 function bareCard(id = "bare1"): HTMLDivElement {
   return buildToolCard({
     id,
@@ -1006,9 +944,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("exposes no aria-expanded anywhere on the card", () => {
-    // The bar a claim-only card already meets, and what the chevron is DETACHED
-    // for: the disclosure primitive owns `aria-expanded` and keeps writing it, so
-    // the attribute goes only when the button does.
+    // The bar a claim-only card already meets: the primitive keeps writing `aria-expanded`,
+    // so the attribute goes only when the button does.
     expect(bareCard().querySelector("[aria-expanded]")).toBeNull();
   });
 
@@ -1024,10 +961,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("opens nothing when its header is clicked", () => {
-    // Read off the REGION, not off the absent chevron: the summary forwards a
-    // click by calling the control, and a detached button's listeners ride along
-    // with it, so a forward that was not refused would open the region while the
-    // card still reported no `aria-expanded` anywhere.
+    // Read off the REGION: a detached button's listeners ride along with it, so an unrefused
+    // forward would open the region with no `aria-expanded` anywhere.
     const card = bareCard();
     document.body.appendChild(card);
 
@@ -1038,10 +973,9 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("refuses a FORCE-open, which is the door a persisted flag comes back through", () => {
-    // `messages-blocks.ts` re-opens a card the reader had open before a window drop
-    // from a `tool:<id>` flag that outlives the chevron, so the refusal has to be
-    // `expandToolDetails`'s own: opened here, the region would be stranded with no
-    // chevron to close it and no later frame to correct a settled call.
+    // `messages-blocks.ts` re-opens a card from a `tool:<id>` flag that outlives the chevron,
+    // so the refusal is `expandToolDetails`'s own; opened here, the region would be stranded
+    // with no chevron to close it.
     const card = bareCard("bare-force");
     document.body.appendChild(card);
 
@@ -1064,9 +998,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("counts output the reader cannot see as nothing", () => {
-    // One newline is the "opens on one empty line" the report described, reached by
-    // a narrower input. The Explain gate reads the same region with the same trim,
-    // so a blank-output card offers no button either.
+    // One newline is the same defect from a narrower input. The Explain gate reads the same
+    // region with the same trim, so a blank-output card offers no button either.
     const card = buildToolCard({
       id: "bare-blank",
       title: "invoke_sub_agent",
@@ -1092,9 +1025,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("keeps the chevron on an in-flight call that carries its INPUT", () => {
-    // The latch, not the status, is what covers the common case: 33,106 of the
-    // 33,119 toggle-bearing calls on the live volume carry input, and a live card's
-    // input dump is content `detailsBody` will write.
+    // The latch, not the status, covers the common case: nearly every toggle-bearing live
+    // call carries input, which `detailsBody` will write.
     const card = buildToolCard({
       id: "bare-pending-input",
       title: "executePwsh",
@@ -1107,9 +1039,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("keeps the chevron on a settled LIVE call, whose input dump is the reveal", () => {
-    // The one content source with no trace in the region and no trace in the
-    // status: `detailsBody` writes the input `<pre>` only in live mode, and this
-    // call has settled, so nothing else here says the region will fill.
+    // `detailsBody` writes the input `<pre>` only in live mode, and this call has settled,
+    // so nothing else says the region will fill.
     const card = buildToolCard({
       id: "bare-live-input",
       title: "executePwsh",
@@ -1155,10 +1086,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("goes bare when an OUTPUT-cut previewed call carries no chat id either", () => {
-    // The other member, behind the same conjunct: one chat-id condition over the whole
-    // table rather than one per member, so the output arm cannot drift from the diff
-    // arm. This omission predates the table — HEAD's `hasFull && outputBytes > 0`
-    // never consulted the chat id either — so the fix closes both.
+    // The other member behind the same conjunct: one chat-id condition over the whole table,
+    // so the output arm cannot drift from the diff arm.
     const card = buildToolCard({
       id: "bare-full-out-nochat",
       title: "executePwsh",
@@ -1172,10 +1101,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("keeps the chevron on a previewed call whose cut was DIFFS only", () => {
-    // `hasFull` fires when the store cut anything at all, and this cut was DIFFS
-    // only, so `outputBytes` is absent and no output arm holds. The DIFF is what
-    // opening this card loads, and a bare card has nothing to open — which is the
-    // whole reason the deferred pieces contribute their own disclosable arm.
+    // `hasFull` with a DIFFS-only cut: `outputBytes` is absent, so the diff member's own arm
+    // is what keeps this card openable.
     const card = buildToolCard({
       id: "bare-full-diffs",
       title: "fsWrite",
@@ -1189,11 +1116,9 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("goes bare when the previewed call carries NO CHAT ID, so nothing can be fetched", () => {
-    // The same diffs-only cut as the case above, one field short. The fetch guard is
-    // `detailsBody`'s — an empty `chatID` returns before the request — so a card with
-    // no chat id can reach neither deferred piece, and keeping its chevron would open
-    // onto a region that can never fill. `toolCardOptsFor`'s `chatID` defaults to `""`,
-    // so a card built for work no chat owns is what makes this reachable.
+    // The diffs-only cut with no chat id: `detailsBody` returns before the request, so a
+    // chevron would open onto a region that can never fill. `toolCardOptsFor` defaults
+    // `chatID` to `""`, which makes this reachable.
     const card = buildToolCard({
       id: "bare-full-nochat",
       title: "fsWrite",
@@ -1206,9 +1131,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("goes bare when the previewed call is not an EDIT, so no piece is deferred", () => {
-    // The control for the case above: `hasFull` with no `outputBytes` on a kind
-    // whose depth 1 is not a diff leaves both members answering false, so the card
-    // is bare exactly as it was before the table existed.
+    // The control: `hasFull` with no `outputBytes` on a non-diff kind leaves both members
+    // false, so the card is bare.
     const card = buildToolCard({
       id: "bare-full-search",
       title: "grepSearch",
@@ -1274,9 +1198,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("paints no output <pre> on a latched card whose output is blank", () => {
-    // The build path is the fourth consumer of one output string, and it is reachable
-    // with blank output: the INPUT arm latches this card, so the reader opens a region
-    // an untrimmed gate had put an empty `<pre>` into.
+    // The build path reads the same output string, reachable with blank output: the INPUT
+    // arm latches this card, and an untrimmed gate would put an empty `<pre>` in its region.
     const card = buildToolCard({
       id: "bare-blank-body",
       title: "executePwsh",
@@ -1293,9 +1216,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("paints no output <pre> when the FETCHED bulk is blank either", async () => {
-    // The same reading, one fetch out. Measured in `internal/chat`: a `\r`-and-spaces
-    // progress animation of 12,292 bytes persists whole and cuts on serve, so the store
-    // stamps `outputBytes`, that arm latches the card, and the bulk it opens is blank.
+    // The same, one fetch out: a `\r`-and-spaces progress animation persists whole and cuts
+    // on serve, so the store stamps `outputBytes` and the bulk it opens is blank.
     stubBulk.output = "\r      ".repeat(1757);
     const card = buildToolCard({
       id: "bare-blank-bulk",
@@ -1317,20 +1239,10 @@ describe("a card with nothing to disclose", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A card whose region the reader had open is BUILT open, not opened afterwards.
-//
-// Same rule as the tool group's, one level down: the primitive commits the closed
-// height before it writes the change, so creating the region closed and opening it
-// in the same task animates the reveal exactly as loudly as opening it a frame
-// later. The population is every path that re-mounts a card whose region was
-// already open — a window drop and re-mount in the transcript, and the run tab's
-// per-frame rebuild of a step's card.
-//
-// The stylesheet is mounted because the height transition lives on
-// `.uip-disclosure-region` in the ui-primitives base; without it neither case below
-// can fail. The second case is the control that proves it is in force.
-// ---------------------------------------------------------------------------
+// A card whose region the reader had open is BUILT open, not opened afterwards: creating
+// it closed and opening it in the same task animates the reveal. The stylesheet is
+// mounted because the height transition lives on `.uip-disclosure-region`; the second
+// case is the control that proves it is in force.
 
 describe("a card built with its details open", () => {
   let style: HTMLStyleElement;
@@ -1368,11 +1280,8 @@ describe("a card built with its details open", () => {
   });
 
   it.each([true, false])("leaves a failed call's details CLOSED, live=%s", (live) => {
-    // A failure is not a reason to be born open, on either side of the live/replay
-    // split: opening one here would expand every failed call in a reopened chat, and
-    // the expand-on-fail courtesy is the live FLIP's (`expandToolDetails`) rather than
-    // the build's. Both inputs in one case because the claim is that live-ness does not
-    // enter this decision at all.
+    // A failure is not a reason to be born open, live or replay: expand-on-fail is the live
+    // FLIP's (`expandToolDetails`), and live-ness does not enter this decision.
     const card = buildToolCard({ ...opts, live, status: "failed" });
     document.body.appendChild(card);
 
@@ -1393,22 +1302,15 @@ describe("a card built with its details open", () => {
     expect(details?.getAnimations()).toHaveLength(0);
 
     expandToolDetails(card);
-    // Two, because `.tool-details` transitions height AND opacity — asserted as
-    // non-empty rather than as a count, so adding or dropping one animated property
-    // is not a failure of the claim this control is making.
+    // `.tool-details` transitions height AND opacity; asserted non-empty rather than as a
+    // count.
     expect(details?.getAnimations().length).toBeGreaterThan(0);
     card.remove();
   });
 });
 
-// ---------------------------------------------------------------------------
-// Deferred content: what the transcript dropped, loaded when the reader OPENS
-// the card.
-//
-// On open and never on mount, which is the argument the fetch button these cases
-// replace was making: a card nobody opened costs one claim line. ONE bulk request
-// serves every dropped piece, because `toolCallBulk` answers all of them.
-// ---------------------------------------------------------------------------
+// Deferred content: what the transcript dropped, loaded when the reader OPENS the card,
+// in ONE bulk request.
 
 describe("deferred content a previewed card loads on open", () => {
   const DIFF = { path: "src/auth.go", old_text: "before\n", new_text: "after\n" };
@@ -1485,12 +1387,9 @@ describe("deferred content a previewed card loads on open", () => {
   });
 
   it("leaves exactly ONE preview when an update lands its diff mid-flight", async () => {
-    // The bulk is applied after an await, so a `tool_call_update` carrying diffs can
-    // insert the preview between the open and the answer. `messages-tools.ts`'s
-    // `applyDiffUpdate` refuses a second insert on its own side and inserts through
-    // this same exported function, which is why calling it directly IS that path for
-    // the purpose of this claim; without the table's own presence check the card ends
-    // up holding two mini-diffs for one call.
+    // After the await, a `tool_call_update` may already have inserted the preview through
+    // this same exported function (`applyDiffUpdate`); without the table's presence check
+    // the card holds two mini-diffs.
     stubBulk.diffs = [DIFF];
     const card = buildToolCard({ ...diffsOnly, id: "def-double-insert" });
     document.body.appendChild(card);
@@ -1521,9 +1420,7 @@ describe("deferred content a previewed card loads on open", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The spec door: only for a path a spec directory holds.
-// ---------------------------------------------------------------------------
 
 describe("the spec door on a file chip", () => {
   const card = (path: string): HTMLElement =>
@@ -1567,13 +1464,9 @@ describe("the spec door on a file chip", () => {
   });
 
   it("offers it for a FILE sitting directly in the specs root, which is the shared rule", () => {
-    // `specDirOf` is lexical and cannot tell a directory from a file, deliberately:
-    // it is the twin of Go's `spec.DirOf`, whose `the_directory` case exists so a
-    // DELETE of a spec directory marks it. So one segment under `specs/` reads as a
-    // spec directory whatever it is, and the door opens a page that answers 404 and
-    // renders the empty state naming it (design 1.7). Characterized rather than
-    // narrowed here: the rule has one owner across the two languages, and Kiro writes
-    // `.kiro/specs/<name>/<doc>.md`, never a loose file in that root.
+    // `specDirOf` is lexical, the twin of Go's `spec.DirOf` (whose `the_directory` case marks
+    // a DELETE of a spec directory), so one segment under `specs/` reads as a spec directory
+    // and the door opens a page answering 404 with its empty state.
     expect(
       card(".kiro/specs/tasks.md").querySelector(".tool-spec-link")?.getAttribute("data-spec-dir"),
     ).toBe(".kiro/specs/tasks.md");

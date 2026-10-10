@@ -15,12 +15,9 @@ import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
 
-/**
- * Optional clickable affordance inside a banner. `href` is an EXTERNAL navigation: the
- * server-supplied URL passes isSafeURL (http/https only) and opens in a new tab. `onClick`
- * is an IN-APP jump, a button with no URL, since a relative path would fail isSafeURL.
- * `onClick` wins if both are set.
- */
+/** `href` is an EXTERNAL navigation: the server-supplied URL passes isSafeURL (http/https only) and
+ *  opens in a new tab. `onClick` is an IN-APP jump, a button with no URL, since a relative path
+ *  would fail isSafeURL. `onClick` wins if both are set. */
 interface BannerLink {
   readonly label: string;
   readonly href?: string;
@@ -30,9 +27,6 @@ interface BannerLink {
 interface BannerEntry {
   readonly code: string;
   readonly chatID: string;
-  message: string;
-  readonly level: BannerLevel;
-  readonly dismissible: boolean;
   el: HTMLDivElement;
 }
 
@@ -211,7 +205,6 @@ export function showBanner(
     if (msg !== null) {
       msg.textContent = message;
     }
-    existing.message = message;
     if (link !== undefined) {
       updateBannerLink(existing.el, link);
     }
@@ -256,7 +249,7 @@ export function showBanner(
     });
     node.appendChild(btn);
   }
-  const entry: BannerEntry = { code, chatID, message, level, dismissible, el: node };
+  const entry: BannerEntry = { code, chatID, el: node };
   ensureBound();
   banners.upsert(entry);
 }

@@ -44,7 +44,7 @@ func TestSwapMerged_ABindForTheHeadersSessionFilesNoSessionRecord(t *testing.T) 
 				closeRow("P9:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
 			)}
 
-			changed, err := SwapMerged(t.Context(), &Swap{
+			changed, err := swapMerged(t.Context(), &swapRequest{
 				Log: f.log, Header: f.header, Record: f.record(),
 				Projected: projected, SessionID: "sess-1", Snapshot: f.snapshot(),
 			})

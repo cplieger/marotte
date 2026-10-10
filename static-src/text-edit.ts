@@ -37,9 +37,7 @@ export function applyEdit(
   try {
     if (!insertNatively(el, edit)) {
       el.setRangeText(edit.text, edit.start, edit.end, "end");
-      if (!silent) {
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
     }
   } finally {
     if (silent) {

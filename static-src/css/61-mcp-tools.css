@@ -438,13 +438,9 @@
    .uip-tooltip / .uip-ask skins in css/04-uip-skin.css (structure + motion
    from the vendored base stylesheet). */
 
-/* Editor gutter: agent-modified line indicator. No `line-height` here — a row
-   and the code line it numbers are one grid, owned by `.editor-gutter`
+/* Editor gutter: agent-modified line indicator. No `line-height` here — a line
+   cell and the code row it numbers share one line box, owned by `.viewer`
    (20-editor.css). A second value drifts every number off its own line. */
-
-.gutter-agent-modified {
-  position: relative;
-}
 
 .gutter-agent-modified::after {
   content: "";

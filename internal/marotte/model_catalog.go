@@ -8,7 +8,7 @@ import "slices"
 // still run is never refused because one read came back silent.
 //
 // The DISPLAY catalog is deliberately not here: it is workspace-wide, it lives
-// once in agent.Catalog, and copying it onto every chat is what made /api/chats
+// once in agent.catalog, and copying it onto every chat is what made /api/chats
 // 1.25 MiB (see TestChat_PersistsNoWorkspaceCatalog).
 func ApplyServedModels(c *Chat, unfiltered []SessionModel) bool {
 	if len(unfiltered) == 0 {

@@ -39,7 +39,6 @@ interface Measurement {
   bgHex: string;
 }
 
-/** `css-contrast.py pair` for one expression against another, both themes. */
 function pair(fg: string, bg: string): Record<string, Measurement> {
   const out = execFileSync("python3", [script, "pair", fg, bg], { encoding: "utf8" });
   const rows = out
@@ -171,7 +170,6 @@ function boxHeaderHovers(): HoverRule[] {
   return found;
 }
 
-/** The selector of the innermost plain block open at this offset. */
 function owningSelector(before: string): string {
   let depth = 0;
   for (const line of before.split("\n").reverse()) {
@@ -187,7 +185,6 @@ function owningSelector(before: string): string {
   return "";
 }
 
-/** The at-rules a rule at this offset sits inside, innermost first. */
 function enclosingAtRules(before: string): string[] {
   const out: string[] = [];
   let depth = 0;

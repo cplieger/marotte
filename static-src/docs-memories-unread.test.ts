@@ -67,6 +67,7 @@ const TABS = ["steering", "memories"];
 beforeAll(() => {
   document.body.innerHTML = `
     <div id="docs-view">
+      <div id="docs-new-slot"></div>
       <nav id="docs-tab-bar" class="seg-bar">${TABS.map(
         (t) =>
           `<button type="button" class="seg" data-docs-tab="${t}"><span class="seg-label">${t}</span></button>`,

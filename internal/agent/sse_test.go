@@ -218,7 +218,6 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	}
 }
 
-// cursorAt is the Last-Event-ID a client that last saw offset holds on this hub.
 func cursorAt(h *Runtime, offset uint64) string {
 	return sse.Cursor{Epoch: h.bus.fanout.Position().Epoch, Offset: offset}.String()
 }
@@ -378,8 +377,8 @@ func BenchmarkEmit(b *testing.B) {
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
 	h, _, br := newTestHub()
 
-	h.bus.pendingPerms.Add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 9}))
+	h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 9}), nil)
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 	h.stagePromptTurn(t, "c1")
 
@@ -417,7 +416,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 // A parked run has no deadline and its event does not re-fire, so a reload with no replay leaves nothing to answer.
 func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.runs.asks.Add(&runAsk{
+	h.runs.asks.add(&runAsk{
 		chatID: "c1",
 		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", Question: "which branch?",
@@ -438,7 +437,7 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	}
 
 	// The claim deleted the entry, so a second connection must not re-offer it.
-	if _, ok := h.runs.asks.TakeIfPresent("wf_1", "a1"); !ok {
+	if _, ok := h.runs.asks.takeIfPresent("wf_1", "a1"); !ok {
 		t.Fatal("Setup: the ask could not be claimed")
 	}
 	if after := coldConnectAs(t, h, true).Body.String(); strings.Contains(after, `"type":"run_input_needed"`) {

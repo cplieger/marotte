@@ -70,8 +70,6 @@ func TestResolveKnowledgePath(t *testing.T) {
 	}
 }
 
-// seedKnowledge wires a canned _kiro/knowledge result onto the shared fake so
-// the utility-bridge call the handlers make returns it.
 func seedKnowledge(br *fakeBridge, result string) {
 	br.callResults = map[string]json.RawMessage{methodKiroKnowledge: json.RawMessage(result)}
 }

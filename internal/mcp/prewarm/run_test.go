@@ -178,7 +178,7 @@ func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
 	p := NewRunner(t.Context(), fakeLister{})
 	var installs atomic.Int64
 	p.OnStatus = func(_ string, state State) {
-		if state == Installing {
+		if state == installing {
 			installs.Add(1)
 		}
 	}
@@ -282,7 +282,7 @@ printf 'MANIFEST=%s\n' "$(cat package.json 2>/dev/null)" >> `+shellQuote(log)+`
 	if _, err := os.Stat(cwd); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("staging tree %q still exists after installOne returned (stat err = %v), so every pass leaks one", cwd, err)
 	}
-	if want := []State{Installing, Done}; !slices.Equal(states, want) {
+	if want := []State{installing, done}; !slices.Equal(states, want) {
 		t.Errorf("states = %v, want %v", states, want)
 	}
 }
@@ -301,7 +301,7 @@ exit 1
 	p.reserve("bad-pkg")
 	p.installOne(t.Context(), npm, "bad-pkg")
 
-	if want := []State{Installing, Failed}; !slices.Equal(states, want) {
+	if want := []State{installing, failed}; !slices.Equal(states, want) {
 		t.Fatalf("states = %v, want %v", states, want)
 	}
 	cwd, err := os.ReadFile(log)
@@ -314,9 +314,8 @@ exit 1
 	}
 }
 
-// writeFakeNpm stages an executable stand-in for npm and returns its path. A
-// script rather than a compiled helper because installOne only ever reads argv,
-// the working directory and the exit status from it.
+// A script rather than a compiled helper because installOne only ever reads argv, the working
+// directory and the exit status from it.
 func writeFakeNpm(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "npm")

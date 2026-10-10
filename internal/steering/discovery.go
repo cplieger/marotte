@@ -10,20 +10,18 @@ import (
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
-// Doc is one classified per-repo steering markdown file: basename plus front-matter fields.
-type Doc struct {
+// docEntry is one classified per-repo steering markdown file: basename plus front-matter fields.
+type docEntry struct {
 	Filename    string // basename, e.g. "notes.md"
 	Inclusion   string // "always" | "fileMatch" | "manual" | "auto"; defaults to "always"
 	FileMatch   string // glob pattern when Inclusion == "fileMatch"; empty otherwise
 	Description string // human-readable description from the description field
 }
 
-// writeRepoSteering renders the per-repo steering inventory grouped by inclusion trigger,
-// indented under the repo bullet.
-func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
-	always := make([]Doc, 0, len(docs))
-	matched := make([]Doc, 0, len(docs))
-	manual := make([]Doc, 0, len(docs))
+func writeRepoSteering(b *strings.Builder, repo string, docs []docEntry) {
+	always := make([]docEntry, 0, len(docs))
+	matched := make([]docEntry, 0, len(docs))
+	manual := make([]docEntry, 0, len(docs))
 	for _, d := range docs {
 		switch d.Inclusion {
 		case inclusionFileMatch:
@@ -55,8 +53,7 @@ func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
 	}
 }
 
-// writeSteeringEntry renders one steering doc bullet under a group header.
-func writeSteeringEntry(b *strings.Builder, repo string, d Doc) {
+func writeSteeringEntry(b *strings.Builder, repo string, d docEntry) {
 	fmt.Fprintf(b, "    - `%s/.kiro/steering/%s`", repo, d.Filename)
 	if d.FileMatch != "" {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
@@ -111,10 +108,10 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 
 // writeRepoSkills renders the per-repo skills inventory grouped by
 // inclusion trigger, same as steering.
-func writeRepoSkills(b *strings.Builder, repo string, docs []Doc) {
-	always := make([]Doc, 0, len(docs))
-	matched := make([]Doc, 0, len(docs))
-	manual := make([]Doc, 0, len(docs))
+func writeRepoSkills(b *strings.Builder, repo string, docs []docEntry) {
+	always := make([]docEntry, 0, len(docs))
+	matched := make([]docEntry, 0, len(docs))
+	manual := make([]docEntry, 0, len(docs))
 	for _, d := range docs {
 		switch d.Inclusion {
 		case inclusionFileMatch:
@@ -146,7 +143,7 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []Doc) {
 	}
 }
 
-func writeSkillEntry(b *strings.Builder, repo string, d Doc) {
+func writeSkillEntry(b *strings.Builder, repo string, d docEntry) {
 	fmt.Fprintf(b, "    - `%s/.kiro/skills/%s`", repo, d.Filename)
 	if d.FileMatch != "" {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
@@ -159,16 +156,15 @@ func writeSkillEntry(b *strings.Builder, repo string, d Doc) {
 
 // findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion
 // mode (default "always"), via findMdDocsInDir's caps.
-func findRepoDocs(repoDir string) []Doc {
+func findRepoDocs(repoDir string) []docEntry {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
-// parseSteeringFrontmatter adapts the shared front-matter parser (Parse) onto Doc; do not
-// reintroduce a local parse here. The free-text fields are defused HERE, in the one consumer
+// Parse is the one front-matter parser. The free-text fields are defused HERE, in the one consumer
 // that writes them into agent-authoritative markdown (internal/server's JSON needs no defuse).
-func parseSteeringFrontmatter(data []byte) Doc {
+func parseSteeringFrontmatter(data []byte) docEntry {
 	fm := Parse(data)
-	return Doc{
+	return docEntry{
 		Inclusion:   fm.Inclusion,
 		FileMatch:   defuse(fm.FileMatch),
 		Description: defuse(fm.Description),
@@ -213,13 +209,13 @@ func ParseInclusion(data []byte) string {
 
 // findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md, as
 // internal/server's scanSkills does), classified by SKILL.md's inclusion mode. Capped.
-func findRepoSkills(repoDir string) []Doc {
+func findRepoSkills(repoDir string) []docEntry {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	out := make([]Doc, 0, len(entries))
+	out := make([]docEntry, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -236,28 +232,27 @@ func findRepoSkills(repoDir string) []Doc {
 	return out
 }
 
-// AgentEntry is a custom agent config found in `.kiro/agents/`.
-type AgentEntry struct {
-	Filename string
-	Name     string // from JSON "name" field
+// agentEntry is a custom agent config found in `.kiro/agents/`.
+type agentEntry struct {
+	Name string // from JSON "name" field
 }
 
 // findRepoAgents scans `.kiro/agents/` for agent configs, collapsing each
 // `.json`/`.md` pair to ONE agent through DedupeAgentFiles. Capped at 10
 // distinct agents.
-func findRepoAgents(repoDir string) []AgentEntry {
+func findRepoAgents(repoDir string) []agentEntry {
 	dir := filepath.Join(repoDir, ".kiro", "agents")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
 	agents := DedupeAgentFiles(entries)
-	out := make([]AgentEntry, 0, min(len(agents), 10))
+	out := make([]agentEntry, 0, min(len(agents), 10))
 	for _, a := range agents {
 		if len(out) >= 10 {
 			break
 		}
-		out = append(out, AgentEntry{Filename: defuse(a.File), Name: defuse(a.Base)})
+		out = append(out, agentEntry{Name: defuse(a.Base)})
 	}
 	return out
 }
@@ -311,8 +306,7 @@ func ParseHooks(data []byte) []HookEntry {
 //	{"version":"v1","hooks":[{name, trigger, matcher?,
 //	  action:{type:"command"|"agent", command|prompt}, timeout?}]}
 //
-// the format Kiro's createHook tool and internal/command/hooks.go write. Malformed JSON or
-// an empty hooks array yields nil.
+// the format Kiro's createHook tool writes. Malformed JSON or an empty hooks array yields nil.
 func parseHookDoc(data []byte) []HookEntry {
 	var doc struct {
 		Hooks []struct {
@@ -365,12 +359,12 @@ func defuse(s string) string {
 
 // findMdDocsInDir classifies each `.md` in a flat directory by its front-matter. Reads are
 // capped at 64 KiB and the result at 20 entries.
-func findMdDocsInDir(dir string) []Doc {
+func findMdDocsInDir(dir string) []docEntry {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	out := make([]Doc, 0, len(entries))
+	out := make([]docEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue

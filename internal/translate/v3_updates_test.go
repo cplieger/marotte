@@ -484,7 +484,6 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	}
 }
 
-// turnEndWithDetails builds a turn_end frame carrying stopDetails verbatim.
 func turnEndWithDetails(t *testing.T, stop string, details any) json.RawMessage {
 	t.Helper()
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{

@@ -38,7 +38,7 @@ func TestCancel_TellsKASTheUserAskedForIt(t *testing.T) {
 	}
 	leased(t, h.runs, "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Cancel reported success for a refused cancel")
 	}
 	awaitCalls(t, br, methodKiroWorkflowCancel, 2, "the refused cancel was never re-attempted")
@@ -90,7 +90,7 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowPause: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.Pause(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.pause(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestResume_IsNotAttributed(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowResume: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestDeleteChatStateByChain_AttributesByCause(t *testing.T) {
 	}
 }
 
-func TestDeleteChatState_NamesTheChatDeletion(t *testing.T) {
+func TestDeleteChatStateByChain_NamesTheChatDeletion(t *testing.T) {
 	h, cs, rig := newDeleteRig(t, kasRuns(t, map[string]any{
 		"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_cur",
 	}))
@@ -147,7 +147,7 @@ func TestDeleteChatState_NamesTheChatDeletion(t *testing.T) {
 	}
 	insertChatBridge(t, h, rig, "c1", "sess_cur")
 
-	h.DeleteChatState(t.Context(), "c1")
+	h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_cur"}, command.RunStopChatDeleted)
 
 	deletes := rig.of(methodKiroWorkflowDelete)
 	if len(deletes) != 1 {
@@ -258,7 +258,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 	t.Run("manual", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		if got, ok := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; ok {

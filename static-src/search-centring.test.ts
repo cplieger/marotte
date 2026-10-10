@@ -18,9 +18,8 @@ const searchBuilderSources: Record<string, string> = {
   "search-popup.ts": searchPopupSrc,
 };
 
-/** The three search bars, and where each one's button rules live. All three are in the table on
- *  purpose: the SAME defect was in each, so a fix in one would have left the others wrong and
- *  the bars looking different from each other. */
+/** All three are in the table on purpose: the SAME defect was in each, so a fix in one would have
+ *  left the others wrong and the bars looking different from each other. */
 const BARS: { name: string; sheet: string; button: string; caseToggle: string }[] = [
   {
     name: "find in chat",

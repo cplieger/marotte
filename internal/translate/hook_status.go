@@ -16,16 +16,13 @@ type hookUpdateBlock struct {
 	OperationID string `json:"operationId"`
 	Name        string `json:"name"`
 	Status      string `json:"status"`
-	ActionType  string `json:"actionType"`
 }
 
 // hookStatusCompleted is the wire status of a hook execution KAS reports as successful.
 const hookStatusCompleted = "completed"
 
-// handleHookUpdate appends a `Hook fired` card to the chat's open turn as a
-// tool_call entry in lane "", the way HandleToolCall appends a real tool call,
-// gated on hooks.showStatus. A step's hook update never reaches here: the
-// attribution gate drops it before the hook branch runs.
+// handleHookUpdate appends a `Hook fired` tool_call card to the chat's open turn, gated on
+// hooks.showStatus. A step's hook update never reaches here: the attribution gate drops it.
 func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID, h *hookUpdateBlock) {
 	if !t.hookStatus.IsHookStatusEnabled() {
 		return
@@ -43,8 +40,6 @@ func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID
 	}
 }
 
-// hookToolCall is the settled tool call one hook_update frame becomes: no input, no
-// output, no content.
 func hookToolCall(h *hookUpdateBlock, ts int64, workDir string) marotte.ToolCall {
 	return marotte.ToolCall{
 		ID:         "hook-" + h.OperationID,
@@ -59,11 +54,9 @@ func hookToolCall(h *hookUpdateBlock, ts int64, workDir string) marotte.ToolCall
 // hookIDFileSep separates a hook file's absolute path from the hook's index in it.
 const hookIDFileSep = "#hook-"
 
-// hookSourcePath is the workspace-relative hook file a hook id names, or "".
-//
-// KAS mints a file hook's id as `<absolute file path>#hook-<index>` and an agent
-// profile's as `<profile id>#hook-<index>`, which names no file; the frame carries
-// no other path. A file outside the workspace is a global hook and stays "".
+// hookSourcePath is the workspace-relative hook file a hook id names, or "". KAS mints a
+// file hook's id as `<absolute path>#hook-<index>` and an agent profile's as
+// `<profile id>#hook-<index>`; a file outside the workspace is a global hook.
 func hookSourcePath(workDir, hookID string) string {
 	at := strings.LastIndex(hookID, hookIDFileSep)
 	if at <= 0 || workDir == "" {
@@ -84,12 +77,9 @@ func hookSourcePath(workDir, hookID string) string {
 	return rel
 }
 
-// hookToolStatus maps the frame's status onto the card's terminal state.
-//
-// No outcome text is rendered: KAS 2.21.4's hook emitter hardcodes actionState:"Success"
-// and sends no output, so a hook that exited non-zero still arrives "completed"
-// (kirodotdev/Kiro#11369). The state is mapped from the wire rather than fixed so a
-// build that starts reporting failures paints red with no code change.
+// hookToolStatus maps the frame's status onto the card's terminal state. KAS hardcodes
+// actionState:"Success" and sends no output, so a failed hook still arrives "completed"
+// (kirodotdev/Kiro#11369); mapping from the wire paints red once a build reports failures.
 func hookToolStatus(s string) marotte.ToolStatus {
 	if s == hookStatusCompleted {
 		return marotte.ToolCompleted

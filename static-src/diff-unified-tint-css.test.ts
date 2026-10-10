@@ -39,7 +39,6 @@ function del(no: number, text: string): DiffLine {
   return { kind: "del", oldNo: no, newNo: 0, text };
 }
 
-/** The real builder, inside a definite width as the transcript gives it. */
 function mount(lines: DiffLine[]): HTMLDivElement {
   const box = document.createElement("div");
   box.style.cssText = `width: ${String(HOST_WIDTH)}px`;

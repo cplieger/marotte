@@ -1,5 +1,5 @@
-// Mode catalog: maps a session mode id to a label, description, and icon. Shared by the prompt-bar
-// mode pill (role-picker.ts) and the chat-tab icon (chat.ts openChatTab / tabs.ts).
+// Mode catalog: maps a session mode id to a label, description, and icon. The icon is drawn by
+// the prompt-bar mode pill and its picker (role-picker.ts).
 
 import {
   ICON_TAB_CHAT,
@@ -159,11 +159,12 @@ export function normalizeModeID(id: string): string {
 }
 
 /** Icon (SVG string) for a mode/role, keyed by id. Each mode in `BUILTIN_MODES` gets a distinct
- *  glyph; every other agent shares the hexagon. */
+ *  glyph, and default-v2 shares Default's; every other agent shares the hexagon. */
 export function iconForMode(id: string): string {
   switch (id) {
     case "":
     case "vibe":
+    case "default-v2":
       return ICON_TAB_CHAT;
     case "spec":
       return ICON_TAB_SPEC;
@@ -235,13 +236,28 @@ export function inlineAgentOf(tc: ToolCall): { model: string; effort: string } |
   return { model: str(rec["model"]), effort: str(rec["effort"]) };
 }
 
-/** An inline helper's model and effort as one line for its card, or "". */
-export function inlineAgentDetail(tc: ToolCall): string {
-  const inline = inlineAgentOf(tc);
-  if (inline === null) {
+/** The Auto model category the parent asked a delegate to run on (`modelCategory`, kiro-cli 2.28
+ *  dynamic delegation), or "" when absent or `auto`, which KAS ignores. A request, not proof of
+ *  placement: KAS honours it only when the agent pins no model. */
+export function modelCategoryOf(tc: ToolCall): string {
+  const input = tc.input;
+  if (input === undefined || input === null || typeof input !== "object") {
     return "";
   }
-  return [inline.model, inline.effort].filter((v) => v !== "").join(" · ");
+  const raw = (input as Record<string, unknown>)["modelCategory"];
+  const category = typeof raw === "string" ? raw.trim() : "";
+  return category === "auto" ? "" : category;
+}
+
+/** A delegate's model line for its card, or "": an inline helper's model and effort, and the
+ *  requested category unless an inline model overrides it. */
+export function delegateDetail(tc: ToolCall): string {
+  const inline = inlineAgentOf(tc);
+  const model = inline?.model ?? "";
+  const category = model === "" ? modelCategoryOf(tc) : "";
+  return [model, inline?.effort ?? "", category === "" ? "" : `Category: ${category}`]
+    .filter((v) => v !== "")
+    .join(" · ");
 }
 
 /** A delegate's display name: the invocation's own `Sub-agent: <name>` title first, then its

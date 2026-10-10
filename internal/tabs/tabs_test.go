@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chatSpec is the smallest legal spec, its ref carrying the case's label.
 func chatSpec(ref string) marotte.OpenTab {
 	return marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref}
 }
@@ -49,13 +48,13 @@ func mustOpen(t *testing.T, s *Store, spec marotte.OpenTab) marotte.TabSubject {
 // onDisk decodes the document the store wrote: the durable half of "not lost from memory OR disk".
 func onDisk(t *testing.T, dir string) file {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, FileName))
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
 	if err != nil {
-		t.Fatalf("read %s: %v", filepath.Join(dir, FileName), err)
+		t.Fatalf("read %s: %v", filepath.Join(dir, fileName), err)
 	}
 	var doc file
 	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("parse %s: %v", filepath.Join(dir, FileName), err)
+		t.Fatalf("parse %s: %v", filepath.Join(dir, fileName), err)
 	}
 	return doc
 }
@@ -92,8 +91,8 @@ func writeRaw(t *testing.T, dir string, data []byte, mode os.FileMode) {
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		t.Fatalf("Setup: mkdir %s: %v", dir, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, FileName), data, mode); err != nil {
-		t.Fatalf("Setup: write %s: %v", filepath.Join(dir, FileName), err)
+	if err := os.WriteFile(filepath.Join(dir, fileName), data, mode); err != nil {
+		t.Fatalf("Setup: write %s: %v", filepath.Join(dir, fileName), err)
 	}
 }
 
@@ -138,7 +137,7 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 // TestNewStore_WarnsAndStartsEmpty pins, for every unreadable shape, a reported error, an empty
 // set, and a store that still works (invariant 6).
 func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
-	oversized := append([]byte(`{"tabs":[{"id":"a","kind":"chat","ref":"`), []byte(strings.Repeat("x", MaxBytes))...)
+	oversized := append([]byte(`{"tabs":[{"id":"a","kind":"chat","ref":"`), []byte(strings.Repeat("x", maxBytes))...)
 
 	cases := []struct {
 		desc string
@@ -176,7 +175,7 @@ func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
 func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 	dir := t.TempDir()
 	// Valid JSON, so a parse error cannot be what refuses it.
-	padding := strings.Repeat("x", MaxBytes)
+	padding := strings.Repeat("x", maxBytes)
 	writeRaw(t, dir, []byte(`{"version":9,"tabs":[],"pad":"`+padding+`"}`), fileMode)
 
 	s, err := NewStore(dir)
@@ -192,7 +191,7 @@ func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 func TestNewStore_TightensAWideMode(t *testing.T) {
 	dir := t.TempDir()
 	writeDoc(t, dir, file{Version: 2, Tabs: []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindGit}}})
-	path := filepath.Join(dir, FileName)
+	path := filepath.Join(dir, fileName)
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("Setup: chmod 0644 %s: %v", path, err)
 	}
@@ -206,7 +205,7 @@ func TestNewStore_TightensAWideMode(t *testing.T) {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 	if got := fi.Mode().Perm(); got != fileMode {
-		t.Errorf("mode of %s after NewStore = %#o, want %#o", FileName, got, fileMode)
+		t.Errorf("mode of %s after NewStore = %#o, want %#o", fileName, got, fileMode)
 	}
 	if tabs, version := s.List(); len(tabs) != 1 || version != 2 {
 		t.Errorf("List() = %d tabs at version %d, want 1 tab at version 2: tightening the mode must not lose the document", len(tabs), version)
@@ -228,7 +227,7 @@ func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		t.Fatalf("Setup: mkdir %s: %v", dir, err)
 	}
-	if err := os.Symlink(target, filepath.Join(dir, FileName)); err != nil {
+	if err := os.Symlink(target, filepath.Join(dir, fileName)); err != nil {
 		t.Fatalf("Setup: symlink %s: %v", target, err)
 	}
 
@@ -276,7 +275,7 @@ func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 		},
 		{
 			desc:     "a ref over the byte bound",
-			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindEditor, Ref: "/" + strings.Repeat("p", MaxRefBytes)}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindEditor, Ref: "/" + strings.Repeat("p", maxRefBytes)}},
 			wantRefs: nil,
 		},
 		{
@@ -372,7 +371,7 @@ func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 }
 
 // TestBounds_AreConsistentWithEachOther pins the arithmetic: the largest document the bounds
-// permit fits MaxBytes, and MaxOpenTabs sits under MaxTabs.
+// permit fits maxBytes, and MaxOpenTabs sits under MaxTabs.
 func TestBounds_AreConsistentWithEachOther(t *testing.T) {
 	if MaxOpenTabs > MaxTabs {
 		t.Errorf("MaxOpenTabs (%d) is over MaxTabs (%d): a full strip would reload truncated", MaxOpenTabs, MaxTabs)
@@ -382,16 +381,16 @@ func TestBounds_AreConsistentWithEachOther(t *testing.T) {
 		tabs = append(tabs, marotte.TabSubject{
 			ID:   newID(),
 			Kind: marotte.TabKindEditor,
-			Ref:  fmt.Sprintf("/%0*d", MaxRefBytes-1, i),
+			Ref:  fmt.Sprintf("/%0*d", maxRefBytes-1, i),
 		})
 	}
 	data, err := json.MarshalIndent(file{Tabs: tabs, Version: 1}, "", "  ")
 	if err != nil {
 		t.Fatalf("encode %d tabs: %v", len(tabs), err)
 	}
-	if len(data) > MaxBytes {
+	if len(data) > maxBytes {
 		t.Errorf("a %d-tab document with %d-byte refs encodes to %d bytes, over MaxBytes (%d)",
-			MaxTabs, MaxRefBytes, len(data), MaxBytes)
+			MaxTabs, maxRefBytes, len(data), maxBytes)
 	}
 }
 

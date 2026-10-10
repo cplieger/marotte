@@ -1,13 +1,4 @@
-// ---------------------------------------------------------------------------
-// Tool-card rendering: one builder used by both the live `addToolCall`
-// flow and scroll-back replay. Replaces the two drifting code paths that
-// each accreted their own decoration logic.
-//
-// The builder produces a ready-to-mount `.tool-call` element with all
-// dataset fields set, all click handlers wired, and (for file-writing
-// tools) the inline diff preview inserted. Callers only need to append
-// it into a tool group or equivalent container.
-// ---------------------------------------------------------------------------
+// The live flow and replay build cards through this one builder, so the two never diverge.
 
 import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
@@ -58,9 +49,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const depth1 = toolDepth1(info.kind);
   const withToggle = hasDepth1(info.kind);
   const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
-  // A disclose_context call names its DOCUMENT, not the tool that fetched it:
-  // the activation is the moment a skill's body enters the prompt, and "which
-  // skill" is the only fact a reader wants from the row.
+  // A disclose_context call names its DOCUMENT, not the tool that fetched it.
   const displayTitle =
     info.disclosed !== null
       ? disclosedClaim(info.disclosed)
@@ -81,10 +70,8 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.dataset["denied"] = "1";
   }
   if (opts.declined === true) {
-    // The DOM is this fact's ONE source: `applyOutcome` reads it from the dataset
-    // on both paths, so the stamp has to land before the call below. Only ever
-    // set, never cleared — a refusal is terminal, and the wire field is
-    // `omitempty`, so a later frame carrying no `declined` means unchanged.
+    // The DOM is this fact's ONE source, so the stamp lands before `applyOutcome`.
+    // Never cleared: the wire field is `omitempty`, so absence means unchanged.
     node.dataset["declined"] = "1";
   }
   if (info.mcp !== null) {
@@ -95,14 +82,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.dataset["filePath"] = info.filePath;
   }
   if (opts.live && isToolActive(opts.status)) {
-    // `data-start-ms` MEANS this card is in flight: both fold guards in
-    // `tool-group.ts` refuse to collapse a group holding one. It is dropped by
-    // `applyStatusUpdate` on every settle.
+    // `data-start-ms` MEANS in flight: `tool-group.ts`'s fold guards read it, and
+    // `applyStatusUpdate` drops it on every settle.
     node.dataset["startMs"] = String(Date.now());
-    // The create IS a frame this client applied, so it seeds the silence value: a
-    // call that streams nothing at all from its first moment is the case a reader
-    // most wants the marker for, and with no seed it would be the one case that
-    // never gets one.
+    // The create seeds the silence value, or a call that never streams would never
+    // get a silence marker.
     noteToolActivity(opts.chatID ?? "", opts.id);
   }
 
@@ -113,9 +97,8 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   node.appendChild(summary);
   applyOutcome(node, opts.status, displayTitle, info);
 
-  // A claim-only kind gets no details region and no toggle. The row sits in the
-  // summary with the title, so the box is one disclosure and one hover target;
-  // a card titled by its command carries none, since it would repeat the title.
+  // The subtitle sits in the summary, so the box is one disclosure and one hover
+  // target; a card titled by its command carries none.
   if (
     shellTitle === null &&
     (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output")
@@ -134,37 +117,19 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   }
 
   if (withToggle) {
-    // The SHELL only: an empty details region plus the output slot the live
-    // update path writes into. Everything with a cost in it — the denial rows,
-    // the input dump, painting the output through the ANSI renderer — is built on
-    // first open by `detailsBody`, because a collapsed card is a claim line and a
-    // transcript mounts dozens of them.
+    // The SHELL only: everything with a cost is built on first open by `detailsBody`,
+    // because a transcript mounts dozens of collapsed cards.
     node.insertAdjacentHTML("beforeend", detailsShell());
-    // What the transcript dropped and the bulk can put back, declared once so the
-    // load below and the `data-disclosable` arms cannot disagree about it.
+    // Declared once so the load and the `data-disclosable` arms agree.
     const deferred: DeferredCtx = { opts, depth1, info };
-    // A card whose call has ALREADY failed is built OPEN, because open is that card's
-    // final state: `messages-tools.ts` opens a failed card's region so the error output
-    // is visible without a click, and a card mounted from the store is failed before it
-    // is built. Opening it after the mount animated the reveal on every re-mount —
-    // measured on the live app, 8 `Run Command` cards with `data-outcome="fail"` each
-    // running a 200ms height transition ~120ms after a tab switch, which is the reported
-    // symptom. `expandToolDetails` stays the path for the live status FLIP, where the
-    // reveal SHOULD animate. Gated on `live` like the flip it mirrors: a replay-mode card
-    // has settled and shows no expand-on-fail.
-    // The READER's own state and nothing else: a card is born open only where they had
-    // this region open before this render. A failed call is NOT born open — the
-    // expand-on-fail courtesy belongs to the live status FLIP (`expandToolDetails`,
-    // driven from `messages-tools.ts`), where the reveal is an event the reader is
-    // watching and SHOULD animate. Deriving it here instead would open every failed
-    // call in a reopened chat, which is a resting state rather than a reveal.
+    // Born open only where the reader had it open. Expand-on-fail is the live status
+    // FLIP's (`expandToolDetails`); deriving it here would open every failed call in a
+    // reopened chat.
     const buildOpen = opts.detailsOpen === true;
     wireToggle(node, detailsBody(node, deferred), buildOpen);
-    // One arm per thing that can open this card, read back by `refreshToolDisclosure`.
-    // The region itself cannot answer: it is empty until first open, so a card whose only
-    // content is deferred looks exactly like one with none. The chat id gates the whole
-    // table through `bulkChatID`, the same guard `detailsBody`'s fetch reads — without it
-    // a card with no chat id keeps a chevron over a region that can never fill.
+    // One arm per thing that can open this card, for `refreshToolDisclosure`: the region
+    // is empty until first open, so it cannot answer. `bulkChatID` is the same guard
+    // `detailsBody`'s fetch reads, so no chevron sits over a region that can never fill.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
@@ -179,9 +144,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   syncOffloadLink(node, opts.offload);
   syncInteractionFact(node, opts.interaction);
 
-  // An edit's diff IS its depth 1, which is why it is inserted here rather than
-  // deferred with the details body. It used to be inserted for every kind, which
-  // turned a merged multi-edit group into a wall of hunks by default.
+  // An edit's diff IS its depth 1, so it is inserted here, not deferred.
   const resting = depth1 === "diff" ? restingDiff(opts, info) : null;
   if (resting !== null) {
     insertDiffPreview(node, resting.path, resting.src);
@@ -191,10 +154,8 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   return node;
 }
 
-/** Give a card whose output KAS offloaded a link to the full file: after its
- *  output region, or on the claim row of a claim-only card (an offloaded
- *  `listDirectory` is a `read`). Idempotent, and one-way like the field: an
- *  absent offload leaves an existing link standing. */
+/** Give a card whose output KAS offloaded a link to the full file, after its output
+ *  region or on a claim-only card's claim row. Idempotent and one-way, like the field. */
 export function syncOffloadLink(card: HTMLElement, offload: ToolOffload | undefined): void {
   if (offload === undefined || card.querySelector(".tool-offload-link") !== null) {
     return;
@@ -224,9 +185,8 @@ export function syncOffloadLink(card: HTMLElement, offload: ToolOffload | undefi
   host.appendChild(link);
 }
 
-/** Put the answer's fact line on the card's claim row, so it reads without opening
- *  the card. Rewrites in place; an absent interaction leaves the line standing,
- *  like the field. */
+/** Put the answer's fact line on the card's claim row. Rewrites in place; an absent
+ *  interaction leaves it standing, like the field. */
 export function syncInteractionFact(
   card: HTMLElement,
   interaction: ToolInteraction | undefined,
@@ -249,13 +209,9 @@ export function syncInteractionFact(
   }
 }
 
-/** The diff a card draws in its RESTING state, or null when it has none: the
- *  call's own ToolDiff, else the before/after pair its INPUT carries.
- *
- *  ONE owner, because the deferred table's diff member is its negation — a card
- *  already drawing a diff must neither fetch a second one nor count the bulk as a
- *  reason to be openable. Two conditions restated at the table would be two things
- *  to keep in step, and a preview inserted twice is the drift they produce. */
+/** The diff a card draws at REST, or null: the call's own ToolDiff, else the pair its
+ *  INPUT carries. The deferred table's diff member is its negation, so a preview is
+ *  never inserted twice. */
 function restingDiff(
   opts: BuildToolCardOpts,
   info: ToolRenderInfo,
@@ -290,12 +246,11 @@ function moveRow(input: Record<string, unknown> | undefined): HTMLElement | null
   );
 }
 
-/** Extract a one-line subtitle from tool input for medium-tier cards. */
+/** A one-line subtitle from tool input. */
 export function extractSubtitle(input: Record<string, unknown> | undefined): string {
   if (input === undefined) {
     return "";
   }
-  // Try common input fields in priority order.
   for (const key of ["query", "pattern", "command", "url", "path", "explanation"]) {
     const val = input[key];
     if (typeof val === "string" && val !== "") {
@@ -347,18 +302,9 @@ function buildHeader(
       {
         className: "tool-file-link",
         "data-path": info.filePath,
-        // The chip shows the BASENAME, so the full path is on no other surface
-        // and rides the tooltip rather than a second native one beside it.
-        //
-        // THE PATH ALONE, and the action moved to the accessible name. Tooltips
-        // are one size class (01-tokens.css `--tooltip-lines`), and this is the
-        // only tooltip in the app whose content is long enough for that to bind:
-        // a leading `Open the diff` line left the path ONE line of the two, and
-        // one line holds 57 characters, which clips 19.26% of the 28,870 real
-        // file-path tool inputs on the live volume. Two lines hold 114 and clip
-        // 0.02%.
-        // Path-first is also what this row's tooltip is FOR — the fact the chip
-        // hides — where a tooltip restating the click says nothing.
+        // The chip shows the BASENAME, so the tooltip carries THE PATH ALONE and the
+        // action lives in the accessible name: a leading action line would leave the
+        // path one of `--tooltip-lines`, clipping long paths.
         "data-tooltip": info.filePath,
         "aria-label": fileLinkLabel(info),
       },
@@ -366,9 +312,8 @@ function buildHeader(
       el("span", { className: "tool-file-name" }, info.fileBasename),
     );
     header.appendChild(btn);
-    // A path under a spec directory is a door onto the spec page, nested under
-    // the chat this card belongs to. The chip's own click stays the
-    // file's diff, so the door is its own control beside it.
+    // A path under a spec directory gets its own door onto the spec page; the chip's
+    // click stays the file's diff.
     const specDir = specDirOf(info.filePath);
     if (specDir !== null) {
       const open = el(
@@ -395,13 +340,9 @@ function buildHeader(
     header.appendChild(spinner);
   }
 
-  // No status WORD, and no second mark either. The row carries ONE mark — the
-  // glyph above (see applyOutcome) — and a finished card printing the literal
-  // enum value `completed` was the claim "Tool call completed", which says
-  // nothing the row does not already say.
+  // No status word: the row carries ONE mark (applyOutcome).
 
-  // The claim-only kinds are decided here; a card that goes bare LATER is
-  // `refreshToolDisclosure`'s, which owns the reason the shape is a detach.
+  // A card that goes bare LATER is `refreshToolDisclosure`'s.
   if (withToggle) {
     header.appendChild(
       el(
@@ -419,67 +360,28 @@ function buildHeader(
   return header;
 }
 
-/** What a caller may state. `aborted` is a member of the tool wire enum as well as
- *  a run-level status, so one union serves both callers: the History page states a
- *  run's verdict through this same writer, and a stopped run is neither a success
- *  nor a failure of the work. */
+/** What a caller may state; the History page states a run's verdict through the same
+ *  writer, so `aborted` serves both. */
 type OutcomeStatus = ToolStatus;
 
-/** The verdicts the vocabulary paints. Not the wire enums: `pending` and
- *  `in_progress` are one thing to a reader, and a refusal is its own state. */
+/** The verdicts the vocabulary paints: `pending` and `in_progress` are one thing to a
+ *  reader, and a refusal is its own state. */
 type OutcomeState = "ok" | "fail" | "warn" | "declined" | "denied" | "running";
 
-/** What a `.tool-icon` slot holds: the glyph it was BUILT with, and the state
- *  currently painted into it. Keyed on the element so `applyOutcome` needs no
- *  signature change and no caller has to supply the identity glyph twice. */
+/** What a `.tool-icon` slot holds: the glyph it was BUILT with, and the state painted. */
 interface IconMark {
   identity: Element | null;
   painted: OutcomeState | null;
 }
 const iconMarks = new WeakMap<HTMLElement, IconMark>();
 
-/** Paint a row's ONE outcome mark, and give the row an accessible name.
- *
- *  ONE MARK PER ROW, and its SHAPE is what changes for a non-success state.
- *  `ok` and `running` keep the row's own identity glyph (per-kind for a tool
- *  card, `ICON_TAB_RUN` for a History row) and only its tint moves; `fail`,
- *  `warn`, `declined` and `denied` REPLACE that glyph with a general road-sign
- *  silhouette from `icons.ts` (`outcomeIcon`), red for a failure and yellow for
- *  the three stops, each a distinct shape. So hue stays a channel and is never
- *  the only one, and WCAG 1.4.1 is satisfied by the shape swap rather than by the
- *  second mark this replaced (a 7px character badge composited on the glyph's
- *  corner, which said the same thing twice). The status word is still not visible text:
- *  the accessible name carries it ("Edited auth.go, succeeded").
- *
- *  THE IDENTITY GLYPH IS CAPTURED, NOT RECOMPUTED. Callers mount it before the
- *  first call — this builder, the update path (`messages-tools.ts`) reusing what
- *  the builder mounted, and `history.ts`, whose glyph is `ICON_TAB_RUN` and not
- *  a `toolIcon` at all — so re-deriving it here would repaint a run row with a
- *  tool glyph. `dataset.title` cannot stand in for the raw title either: it holds
- *  the DISPLAY title, while `toolIcon` keys its overrides on the raw one. The
- *  contract is therefore that the identity glyph is in the slot before the first
- *  call. A slot with none keeps whatever it has for `ok`/`running`, because this
- *  function does not own content it never wrote — but a silhouette it wrote
- *  itself IS its own, so a return to `ok` clears that instead of leaving a red
- *  triangle standing under an `is-ok` class.
- *
- *  Repeated calls are idempotent: the mark is written with `replaceChildren` and
- *  only when the state has actually changed, so two SVGs in one `.tool-icon` is
- *  unrepresentable. The slot is `aria-hidden` — the mark is decorative, because
- *  the word is in the name.
- *
- *  TWO SITES PAINT AN OUTCOME WITHOUT CALLING THIS, and both are deliberate:
- *  `tool-group.ts` paintGroupOutcome, whose slot has no identity glyph to keep,
- *  and `fundamentals/subagent-block.ts` applyIcon, which owns its own identity
- *  glyph and spinner. What they share with this function is the GLYPH SET and its
- *  resolver in `icons.ts`, which is the thing that makes a half-migrated
- *  vocabulary unrepresentable — saying "one writer" is what previously hid the
- *  fact that a copy existed at all.
- *
- *  `nameTarget` is the element the name lands on, defaulting to the glyph's own
- *  host because on a tool card they are one element. A History row separates
- *  them: the glyph is a row column while the control is the row's open button,
- *  and a name on the plain row would reach nobody. */
+/** Paint a row's ONE outcome mark and give `nameTarget` its accessible name ("Edited
+ *  auth.go, succeeded"). `ok`/`running` keep the identity glyph and move its tint; the
+ *  other states swap in an `outcomeIcon` silhouette, so hue is never the only channel.
+ *  The identity glyph must be in the slot before the first call: it is CAPTURED, never
+ *  recomputed, because a History row's glyph is not a `toolIcon`. Idempotent.
+ *  `tool-group.ts` and `subagent-block.ts` paint through the same `icons.ts` glyph set
+ *  without calling this. */
 export function applyOutcome(
   node: HTMLElement,
   status: OutcomeStatus,
@@ -488,18 +390,11 @@ export function applyOutcome(
   nameTarget: HTMLElement = node,
 ): void {
   const icon = node.querySelector<HTMLElement>(".tool-icon");
-  // A policy refusal is its OWN state, not a failure. The command was never run,
-  // so "failed" would send the reader to debug a tool that behaved correctly;
-  // what they need is the rule. Read from the dataset as well as the info so the
-  // update path (which only has the DOM) reaches the same verdict.
+  // A policy refusal is its OWN state, not a failure. Read from the dataset too, for
+  // the update path, which only has the DOM.
   const denied = info.denial !== null || node.dataset["denied"] === "1";
-  // A DECLINED call ran correctly and refused, which is neither a success nor a
-  // failure: `completed` would paint a green check over a plan update the workflow
-  // rejected, and `failed` would send the reader to debug a tool that behaved.
-  // Read from the DATASET alone, unlike `denied`: nothing else needs the fact, so
-  // the DOM is its one source and `ToolRenderInfo` gains no field. Below `denied`
-  // because a policy refusal outranks the tool's own verdict — the command never ran
-  // at all, so the rule is what the reader needs.
+  // A DECLINED call ran correctly and refused: neither success nor failure. The DOM is
+  // its one source. `denied` outranks it, because that command never ran.
   const declined = node.dataset["declined"] === "1";
   const state: OutcomeState = denied
     ? "denied"
@@ -527,23 +422,17 @@ export function applyOutcome(
       iconMarks.set(icon, mark);
     }
     if (mark.painted !== state) {
-      // The identity glyph for a success or a live call; the shared silhouette
-      // otherwise. `replaceChildren` plus the guard is what makes a repeat paint
-      // a no-op instead of a second SVG.
       const keepIdentity = state === "ok" || state === "running";
       const wanted = keepIdentity
         ? (mark.identity?.cloneNode(true) ?? null)
         : iconEl(outcomeIcon(state));
-      // `painted` is recorded only when the slot is actually written, so it
-      // always describes what the slot HOLDS.
+      // `painted` is recorded only on a write, so it describes what the slot HOLDS.
       if (wanted !== null) {
         icon.replaceChildren(wanted);
         mark.painted = state;
       } else if (mark.painted !== null) {
-        // No identity glyph to restore, and the slot is holding a silhouette
-        // THIS function put there. It owns that content, so a return to
-        // `ok`/`running` clears it rather than leaving a red triangle under an
-        // `is-ok` class. A slot this function has never written is left alone.
+        // No identity glyph: clear the silhouette THIS function wrote. A slot it never
+        // wrote is left alone.
         icon.replaceChildren();
         mark.painted = state;
       }
@@ -553,15 +442,9 @@ export function applyOutcome(
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
-/** Bring one card's SILENCE marker up to date: state the silence past the threshold,
- *  and remove the row otherwise. Idempotent, and cheap enough for the card's own
- *  effect to call on every pass.
- *
- *  Gated on `data-start-ms`, which MEANS the card is in flight and is dropped on
- *  every settle — so a settled card cannot carry a marker whatever the value says,
- *  and the gate is the same fact `tool-group.ts`'s fold guards read. The value is
- *  TRACKED, so a caller inside an effect repaints while the call stays quiet, which
- *  is what makes the marker appear with no frame behind it. */
+/** Bring one card's SILENCE marker up to date: shown past the threshold, removed
+ *  otherwise, only while `data-start-ms` says it is in flight. Idempotent. The value is
+ *  TRACKED, so a caller inside an effect repaints while the call stays quiet. */
 export function syncSilenceMarker(card: HTMLElement, chatID: string, toolID: string): void {
   const header = card.querySelector<HTMLElement>(".tool-header");
   if (header === null) {
@@ -578,9 +461,7 @@ export function syncSilenceMarker(card: HTMLElement, chatID: string, toolID: str
     existing.textContent = words;
     return;
   }
-  // CHROME, so find-in-chat does not count a row the client composed as content, and
-  // ahead of the spinner so the fact sits with the title rather than past the row's
-  // trailing controls.
+  // CHROME, so find-in-chat does not count it; ahead of the trailing controls.
   const marker = el("span", { className: "tool-silence", [CHROME_ATTR]: "" }, words);
   header.insertBefore(
     marker,
@@ -588,8 +469,7 @@ export function syncSilenceMarker(card: HTMLElement, chatID: string, toolID: str
   );
 }
 
-/** The word the accessible name uses. Deliberately not the wire enum: "pending"
- *  and "in_progress" both mean the same thing to a listener. */
+/** The word the accessible name uses. */
 function outcomeWord(state: OutcomeState): string {
   switch (state) {
     case "ok":
@@ -607,11 +487,8 @@ function outcomeWord(state: OutcomeState): string {
   }
 }
 
-// mcpHue derives a stable integer in [0,360) from the server name so
-// per-server badges get consistent colours across renders without a
-// lookup table. Simple FNV-ish fold — collisions are visual (two
-// different server names could share a hue) but acceptable at the
-// badge size and count a single marotte user would configure.
+// mcpHue derives a stable hue in [0,360) from the server name (an FNV-1a fold); two
+// servers may share a hue.
 export function mcpHue(server: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < server.length; i++) {
@@ -621,16 +498,9 @@ export function mcpHue(server: string): number {
   return h % 360;
 }
 
-/** The empty details region, mounted with the card.
- *
- *  `.tool-output` is part of the SHELL rather than the deferred body, because the
- *  live update path writes streamed chunks straight into it
- *  (`messages-tools.ts` writeChunkToCard / applyOutputUpdate) and a card that is
- *  streaming has usually not been opened. An empty div costs nothing; what cost
- *  something was painting megabytes into it.
- *
- *  No "collapsed" class: the disclosure controller wired in wireToggle owns the
- *  collapse state (inline height + aria-hidden/inert on the region). */
+/** The empty details region, mounted with the card. `.tool-output` is in the SHELL
+ *  because the live update path streams into it before the card is ever opened. The
+ *  disclosure controller owns the collapse state. */
 function detailsShell(): string {
   return `<div class="tool-details"><div class="tool-output"></div></div>`;
 }
@@ -639,51 +509,28 @@ function detailsShell(): string {
 interface DeferredCtx {
   readonly opts: BuildToolCardOpts;
   readonly depth1: string;
-  /** The diff member needs `filePath` for a bulk diff carrying none, and
-   *  `restingDiff` for the negation its own predicate is. */
   readonly info: ToolRenderInfo;
 }
 
-/** One piece of a card's content the transcript dropped, put back from the bulk
- *  when the reader OPENS the card.
- *
- *  On open and never on mount: that is what the fetch button this replaced was
- *  defending, and the argument survives it unchanged — a card nobody opened still
- *  costs one claim line.
- *
- *  TWO predicates because they answer different questions, and for `output` they
- *  differ. The bulk is APPLIED whenever the store previewed the call, because a
- *  previewed output is sent PLAIN — TextSpan offsets are UTF-16 code units into
- *  the whole text, and remapping them onto a head-and-tail window would be a
- *  second implementation of `windowSpans` in Go against a different offset unit —
- *  so the bulk is where an ANSI-styled output regains its colour even when the
- *  text itself was not cut. Only a CUT output REVEALS anything, because otherwise
- *  the reader can already see every line of it. */
+/** One piece of a card's content the transcript dropped, put back from the bulk when the
+ *  reader OPENS the card, never on mount. For `output` the predicates differ: a previewed
+ *  output arrives without spans, so the bulk is APPLIED to restore its colour, but only a
+ *  CUT output REVEALS anything. */
 interface DeferredPart {
   /** Should the bulk be applied for this piece on open. */
   pending(ctx: DeferredCtx): boolean;
-  /** Does this piece give the card a reason to be openable at all: an arm of
-   *  `data-disclosable`. */
+  /** Does this piece make the card openable: an arm of `data-disclosable`. */
   reveals(ctx: DeferredCtx): boolean;
   apply(node: HTMLDivElement, bulk: ToolBulk, ctx: DeferredCtx): void;
 }
 
-/** A ToolDiff is a before/after pair the client runs its own line diff over, so
- *  the server sends it whole or not at all rather than a truncated pair that would
- *  render an edit nobody made — which is why a dropped diff is all-or-nothing here
- *  and the two predicates coincide. */
+/** A ToolDiff is dropped whole or not at all, so its two predicates coincide. */
 function diffDeferred({ opts, depth1, info }: DeferredCtx): boolean {
   return depth1 === "diff" && opts.hasFull === true && restingDiff(opts, info) === null;
 }
 
-/** The chat this card's bulk is keyed on, or `null` when it has none.
- *
- *  ONE owner of "can this card reach its bulk at all", read by the `data-disclosable`
- *  union — which must not offer a chevron onto a region that can never fill — and by
- *  `detailsBody`'s fetch guard, which must not issue a request it cannot key. Two
- *  spellings of one rule is how those two come to disagree, and the failure is the
- *  one this conjunct exists to prevent: a card that opens onto nothing. Resolving
- *  rather than answering a bool so the id is derived once and narrows for the caller. */
+/** The chat this card's bulk is keyed on, or `null`: the ONE owner of "can this card
+ *  reach its bulk", read by the `data-disclosable` union and `detailsBody`'s fetch. */
 function bulkChatID(opts: BuildToolCardOpts): string | null {
   const id = opts.chatID ?? "";
   return id === "" ? null : id;
@@ -709,12 +556,8 @@ const DEFERRED_PARTS: readonly DeferredPart[] = [
     pending: diffDeferred,
     reveals: diffDeferred,
     apply: (node, bulk, { info }) => {
-      // The presence check `messages-tools.ts`'s `applyDiffUpdate` already makes, and
-      // for the same reason from the other side: this runs after an await, so a
-      // `tool_call_update` carrying diffs can land between the open and the bulk and
-      // insert the preview first — leaving two mini-diffs on one card. It is about the
-      // SECOND insert rather than emptiness; `insertDiffPreview` returns early on a
-      // zero-change diff by itself.
+      // After an await, a `tool_call_update` may have inserted the preview already
+      // (`applyDiffUpdate` checks the same from its side).
       if (node.querySelector(".tool-diff-preview") !== null) {
         return;
       }
@@ -730,18 +573,10 @@ const DEFERRED_PARTS: readonly DeferredPart[] = [
   },
 ];
 
-/** The details body's builder, run at most once, on first open.
- *
- *  Registered on the toggle BEFORE the disclosure controller's own listener so it
- *  runs first: the controller measures `scrollHeight` to animate the reveal, and
- *  a region filled after that measurement would animate to zero and then jump.
- *
- *  A previewed card (`has_full`) fetches its bulk here — ONE request for every
- *  pending piece, because `toolCallBulk` answers all of them — and repaints when
- *  it lands. The preview is painted first regardless, so the reveal shows the head
- *  and tail immediately and fills in behind; the alternative, an empty region
- *  until the network answers, is a worse reveal than the one this replaced. A
- *  `null` bulk renders nothing and is not retried from here. */
+/** The details body's builder, run at most once, on first open. Registered BEFORE the
+ *  disclosure controller's listener, which measures `scrollHeight` to animate; a region
+ *  filled after that would animate to zero and jump. A previewed card paints its preview,
+ *  then fetches its bulk in ONE request and repaints; a `null` bulk is not retried. */
 function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
   const { opts, depth1 } = ctx;
   let built = false;
@@ -754,8 +589,8 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
     if (details === null) {
       return;
     }
-    // The command this prints is ALSO in `.tool-subtitle` (:99), so a reader of
-    // both — a rolling tail — has to dedupe the two.
+    // The command this prints is ALSO in `.tool-subtitle`, so a reader of both (a
+    // rolling tail) has to dedupe them.
     const inputBlock =
       opts.live && opts.input !== undefined
         ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
@@ -783,12 +618,7 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
   };
 }
 
-/** The rule that refused the call, and where it lives.
- *
- *  This is the whole point of surfacing a denial separately: the user owns the
- *  policy, so a refusal that names its rule and its file is one step from
- *  changing it. Without this the card says "blocked" and the reader has to go
- *  hunt the policy for a rule that may not even be the one that fired. */
+/** The rule that refused the call, and where it lives: the user owns the policy. */
 function denialBlock(d: ToolDenial | undefined): string {
   if (d === undefined) {
     return "";
@@ -820,13 +650,9 @@ function denialBlock(d: ToolDenial | undefined): string {
 
 // --- Wiring ---
 
-/** The filename opens the CHANGE on a card that made one, and the FILE on a card
- *  that only read it — a read card's filename has no diff to show.
- *
- *  A change opens vs HEAD rather than from the card's own before/after pair,
- *  which is the honest source: the write has already landed, so the working tree
- *  IS the after state and git holds the before. (The card's own pair is what the
- *  `+N -M` link uses, for the narrower "what did THIS call do".) */
+/** The filename opens the CHANGE on a card that made one (vs HEAD: the working tree is
+ *  the after state), and the FILE on a card that only read it. The `+N -M` link uses the
+ *  card's own pair instead. */
 function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): void {
   if (filePath === "") {
     return;
@@ -852,22 +678,15 @@ function fileLinkLabel(info: ToolRenderInfo): string {
   return `Open ${info.fileBasename}`;
 }
 
-// Per-card details disclosure controllers, for external expansion
-// (messages-tools.ts force-opens the details when a tool fails).
 const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
 
-// Per-card deferred body builders. Held beside the controller because
-// `expandToolDetails` opens a card WITHOUT a click, so it has to run the builder
-// itself — and because the failure path reads the output back out of the DOM
-// immediately afterwards to offer "Explain this error".
+// Per-card deferred body builders: `expandToolDetails` opens WITHOUT a click, so it runs
+// the builder itself before the failure path reads the output back.
 const detailBuilders = new WeakMap<HTMLElement, () => void>();
 
-/** Wire a card's details region. `initialOpen` builds the body and creates the
- *  controller ALREADY OPEN, which is the only silent way to mount an open region: the
- *  primitive commits the closed height before it writes the change, so creating it
- *  closed and opening it afterwards animates even inside the same task. `open: true`
- *  needs no measurement either — `applyHeight(true, false)` writes `height: ""` — so
- *  content arriving later is fine and the card may still be detached. */
+/** Wire a card's details region. `initialOpen` creates the controller ALREADY OPEN, the
+ *  only silent way to mount an open region: opening after creation animates even in the
+ *  same task. `open: true` needs no measurement, so the card may still be detached. */
 function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean): void {
   const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
   const details = el.querySelector<HTMLElement>(".tool-details");
@@ -877,25 +696,13 @@ function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean
   if (initialOpen) {
     buildBody();
   }
-  // BEFORE createDisclosure registers its own click handler, so this one runs
-  // first and the region is filled before the controller measures it to animate
-  // the reveal. Listeners on one element in one phase fire in registration
-  // order, and `wireRowToggle` forwards a summary click through `toggle.click()`,
-  // so the row's whole surface reaches this too.
+  // BEFORE createDisclosure's own click handler (registration order), so the region is
+  // filled before the controller measures it. `wireRowToggle` forwards row clicks here.
   toggle.addEventListener("click", buildBody);
   detailBuilders.set(el, buildBody);
   const summary = el.querySelector<HTMLElement>(".tool-summary");
-  // The disclosure primitive owns aria-expanded/aria-controls, activation,
-  // and the animated height 0↔auto with aria-hidden + inert on the collapsed
-  // region (which the old class flip never set — collapsed details stayed in
-  // the accessibility tree). Only the scroll-freeze on a user collapse stays
-  // marotte's, via onToggle.
-  //
-  // The chevron is NOT swapped here any more. Direction is CSS's, keyed off the
-  // `aria-expanded` this controller already writes (`.disclosure-chevron` in
-  // 10-shell-app.css, flipped in 14-tools.css) — so the glyph animates into its
-  // new direction instead of being replaced mid-transition, and one convention
-  // covers all eight disclosures in the app rather than this one.
+  // The primitive owns the ARIA, activation and the animated height; marotte keeps only
+  // the scroll-freeze on a user collapse. Chevron direction is CSS's, off `aria-expanded`.
   const ctl = createDisclosure(toggle, details, {
     open: initialOpen,
     onToggle: (open, source) => {
@@ -904,21 +711,16 @@ function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean
       }
     },
   });
-  // The whole visible summary activates that chevron: title row, subtitle or
-  // move row, and the blank padding between them. Wired HERE rather than in
-  // buildHeader, which is what keeps a claim-only card inert: no toggle means
-  // no `.tool-details`, an early return above, and a summary that never becomes
-  // clickable. Nested controls keep their own click through wireRowToggle.
+  // The whole summary activates the chevron. Wired HERE, past the early return, so a
+  // claim-only card's summary never becomes clickable.
   if (summary !== null) {
     wireRowToggle(summary, toggle);
   }
   detailCtls.set(el, ctl);
 }
 
-/** Force-open a card's details (e.g. when the tool fails so the error output is visible
- *  without a click). A BARE card is refused HERE rather than at each caller, because a
- *  bare card has no chevron to close the region with again. The body is built BEFORE the
- *  open: the controller measures the region to animate it. */
+/** Force-open a card's details (a failed tool's error output). A BARE card is refused,
+ *  since it has no chevron to close it again; the body is built BEFORE the open. */
 export function expandToolDetails(card: HTMLElement): void {
   if (card.querySelector(".tool-disclosure") === null) {
     return;
@@ -927,14 +729,11 @@ export function expandToolDetails(card: HTMLElement): void {
   detailCtls.get(card)?.open();
 }
 
-// Chevrons taken off bare cards. Held rather than re-queried, because the button
-// is out of the DOM: re-attaching this one keeps the controller's listeners, so a
-// card that regains content needs no second createDisclosure.
+// Chevrons taken off bare cards, held so re-attaching keeps the controller's listeners.
 const detachedToggles = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Whether the details region holds anything a reader can SEE, or will once opened. The
- *  WIRE STATUS is not consulted: emptiness is a property of the region, and both call
- *  sites pass `live: true`, so `data-outcome` cannot separate filling from never-will. */
+/** Whether the details region holds anything a reader can SEE, or will once opened.
+ *  Emptiness is a property of the region; the wire status cannot answer it. */
 function isDisclosable(card: HTMLElement): boolean {
   if (card.dataset["disclosable"] === "1") {
     return true;
@@ -944,12 +743,10 @@ function isDisclosable(card: HTMLElement): boolean {
 }
 
 /** Give a card its disclosure, or take it away: the ONE writer of bare-ness. Idempotent
- *  both ways, so output landing later restores the chevron and a card that goes bare while
- *  open is closed rather than stranded. DETACHED rather than `display: none`d, so a bare
- *  card meets the same no-`aria-expanded` bar a claim-only one does, at no CSS cost. */
+ *  both ways. The chevron is DETACHED, not hidden, so a bare card carries no
+ *  `aria-expanded`, like a claim-only one. */
 export function refreshToolDisclosure(card: HTMLElement): void {
-  // A claim-only card owns none of this: no details region, no toggle, and a
-  // summary that never became clickable.
+  // A claim-only card has no details region.
   if (card.querySelector(".tool-details") === null) {
     return;
   }
@@ -963,9 +760,8 @@ export function refreshToolDisclosure(card: HTMLElement): void {
     summary?.classList.add("has-disclosure");
     return;
   }
-  // Closed through the CONTROLLER first, while the button is still connected: that
-  // is what lands `aria-expanded="false"` on it and `aria-hidden` + `inert` on the
-  // region. Removing the button first leaves the region open and exposed.
+  // Close through the CONTROLLER while the button is connected, or the region is left
+  // open and exposed.
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
@@ -978,15 +774,9 @@ export function refreshToolDisclosure(card: HTMLElement): void {
   summary?.classList.remove("has-disclosure");
 }
 
-/** Fill a card's output region. When `windowed`, depth 1 shows the first and
- *  last N lines and a control reveals the rest IN PLACE — the only depth 2 in
- *  the ladder that does not leave the transcript.
- *
- *  It deliberately does NOT route to the shell panel. That is one global LIVE
- *  server-side PTY whose only host controls are send and reset; writing a
- *  finished command's historical bytes into it would present them as part of the
- *  current stream, where the next server frame can interleave or erase them, and
- *  would corrupt a surface the user may be using for something else. */
+/** Fill a card's output region. When `windowed`, the first and last N lines show and a
+ *  control reveals the rest IN PLACE. Never routed to the shell panel: that live PTY
+ *  would interleave historical bytes with its current stream. */
 function appendOutput(
   node: HTMLElement,
   output: string,
@@ -1040,9 +830,7 @@ export function insertDiffPreview(
 
   const wrap = el("div", { className: "tool-diff-preview" });
 
-  // `+N -M` is a link to the same diff, scrolled to the first hunk. Numbers
-  // answer "how much" where the glyph's colour only answers "whether", so they
-  // stay on the claim line and become the second entry point to depth 2.
+  // `+N -M` opens the same diff, scrolled to the first hunk.
   const statBtn = el(
     "button",
     {
@@ -1061,9 +849,7 @@ export function insertDiffPreview(
   statBtn.addEventListener("click", openDiff);
   wrap.appendChild(statBtn);
 
-  // Unified, whole hunks, line numbers ON. Line numbers are what let a reader
-  // carry their place across the click into the real document; without them the
-  // peek is a fragment with no address.
+  // Line numbers ON, so a reader carries their place into the real document.
   const win = windowHunks(diff, { maxRows: 24, context: 2 });
   const mini = renderDiffPane(win.lines, {
     unified: true,
@@ -1074,8 +860,7 @@ export function insertDiffPreview(
   mini.classList.add("tool-diff-mini");
   wrap.appendChild(mini);
 
-  // The omitted hunks are this call's own, so the count opens the same full pair
-  // the stats do; a count with no way to reach what it counts is a dead end.
+  // The omitted-hunk count opens the same full pair the stats do.
   if (win.hunksOmitted > 0) {
     const more = el(
       "button",

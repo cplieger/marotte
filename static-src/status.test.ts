@@ -167,7 +167,6 @@ describe("the model pill", () => {
 // context-ring.ts owns both computations and this module is their one writer, so what is under test
 // here is that each computed value reaches its own element.
 
-/** One paint of the ring's two halves. */
 async function paintRing(
   pct: number,
   contextSize: number,

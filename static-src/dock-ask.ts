@@ -23,7 +23,7 @@ const ASK_ROWS_PROP = "--ask-rows";
  *  ceiling in `css/26-dock.css`. */
 const DOCK_VIEWPORT_PROP = "--dock-viewport-h";
 
-export interface AskHead {
+interface AskHead {
   /** The region to append anything else the card says about its ask to. */
   readonly body: HTMLElement;
   /** The question itself, clamped. */
@@ -42,7 +42,7 @@ export function askHead(question: string): AskHead {
   return { body, text };
 }
 
-export interface AskEditor {
+interface AskEditor {
   /** The answer box's own row. No button shares it. */
   readonly editor: HTMLElement;
   readonly input: HTMLTextAreaElement;

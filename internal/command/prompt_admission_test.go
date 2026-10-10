@@ -112,7 +112,7 @@ func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (
 	return b.recordingBridge.CallAt(ctx, method, params)
 }
 
-// scriptedAdmission is a TurnOutcomeAccess with a REAL single-holder admission
+// scriptedAdmission is a turnOutcomeAccess with a REAL single-holder admission
 // slot, the shared log, and a scripted captured result. afterReservationRelease
 // runs synchronously after ReleaseTurnReservation returns — the injected pause
 // between the goroutine's releases and the recovery's re-reserve.
@@ -145,7 +145,7 @@ func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID
 	return AdmissionAcquired
 }
 
-func (a *scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
+func (*scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
 func (a *scriptedAdmission) TryReserveIdleTurn(c marotte.ChatID, s marotte.TurnOpenSource) bool {
 	return a.TryReserveTurn(c, s)
@@ -176,11 +176,10 @@ func (a *scriptedAdmission) ReleaseTurnReservation(marotte.ChatID) {
 	}
 }
 
-func (a *scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+func (*scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// admissionTurnID is the one turn the scripted admission opens.
 const admissionTurnID = "t-1"
 
 func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
@@ -198,6 +197,10 @@ func (a *scriptedAdmission) AwaitTurn(context.Context, marotte.ChatID, string) (
 	return a.result, nil
 }
 
+func (*scriptedAdmission) AwaitTurnBound(context.Context, marotte.ChatID, string) (bool, error) {
+	return false, marotte.ErrNoSuchTurn
+}
+
 func (a *scriptedAdmission) ReleaseTurn(marotte.ChatID, string) { a.rec.add("releaseTurn") }
 
 func (a *scriptedAdmission) SettleTurnOnResponse(context.Context, marotte.ChatID, string, uint64, *marotte.RPCResponse) {
@@ -209,16 +212,14 @@ func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 	return false
 }
 
-func (a *scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
+func (*scriptedAdmission) StopRequestedAfter(marotte.ChatID, string) bool { return false }
 
-func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
+func (*scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
 
 func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string, marotte.FailureKind, uint64) {
 	a.rec.add("abandon")
 }
 
-// admissionHost wires the scripted admission and the ordered bridge over the
-// store-backed host double.
 type admissionHost struct {
 	hostDouble
 	admission *scriptedAdmission
@@ -258,7 +259,6 @@ func (h *admissionHost) errorCodes() []marotte.ErrorCode {
 	return out
 }
 
-// newAdmissionFixture builds the wired prompt roles plus the join handle.
 func newAdmissionFixture(t *testing.T, result marotte.TurnResult, startRefused bool) (*admissionHost, *promptRoles, *promptJoin) {
 	t.Helper()
 	rec := &callRecorder{}
@@ -286,7 +286,7 @@ func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	blocked := &gatedBridgeAccess{inner: host, gate: gate}
 	roles.bridges = blocked
 
-	got, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+	got, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 	if err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
@@ -356,7 +356,7 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 				t.Fatalf("seed draft: %v", err)
 			}
 
-			_, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+			_, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 
 			if statusOf(err) != http.StatusConflict {
 				t.Fatalf("status = %d, want 409", statusOf(err))
@@ -388,7 +388,7 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 	t.Run("starting refusal carries it", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		writeErr(w, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy))
+		writeError(w, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy))
 		if w.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409", w.Code)
 		}
@@ -402,7 +402,7 @@ func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 	})
 	t.Run("a plain status error omits the key", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		writeErr(w, StatusError(http.StatusConflict, errBusy))
+		writeError(w, StatusError(http.StatusConflict, errBusy))
 		if strings.Contains(w.Body.String(), "reason") {
 			t.Errorf("body = %q, want no reason key on a plain refusal", w.Body.String())
 		}
@@ -410,12 +410,12 @@ func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 }
 
 // A StartTurn that answers false is a failed turn, never a silent one and never
-// an ACP call: the turn CmdPrompt opened is closed by the turn end rule, the
+// an ACP call: the turn cmdPrompt opened is closed by the turn end rule, the
 // failure is broadcast, and BOTH holds release so the chat is not wedged.
 func TestCmdPrompt_ARefusedStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) {
 	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, true)
 
-	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
 	join.join()
@@ -460,7 +460,7 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 	join := &promptJoin{}
 	roles.lifecycle = join
 
-	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
 	join.join()
@@ -492,7 +492,7 @@ func firingResult() marotte.TurnResult {
 func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.T) {
 	host, roles, join := newAdmissionFixture(t, firingResult(), false)
 
-	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
 	join.join()
@@ -527,7 +527,7 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 		competitorGotBridge = host.bridge.TryAcquireForPrompt()
 	}
 
-	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
 	join.join()
@@ -572,12 +572,12 @@ func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 	join := &promptJoin{}
 	roles.lifecycle = join
 
-	_, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+	_, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("first send status = %d, want 409 starting", statusOf(err))
 	}
 
-	got, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+	got, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 	if err != nil {
 		t.Fatalf("re-send = %v, want the ack", err)
 	}
@@ -597,20 +597,20 @@ func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 	}
 }
 
-// promptJoin is a LifecycleAccess whose in-flight count a test can join on:
-// CmdPrompt acks before its turn runs, so a test asserting on the turn's
+// promptJoin is a lifecycleAccess whose in-flight count a test can join on:
+// cmdPrompt acks before its turn runs, so a test asserting on the turn's
 // effects waits for the goroutine to deregister first. TurnContext matches the
 // production derivation (detached from the request, so the goroutine survives
 // the handler's return).
 type promptJoin struct{ wg sync.WaitGroup }
 
-func (l *promptJoin) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+func (*promptJoin) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
 func (l *promptJoin) InflightAdd(delta int) { l.wg.Add(delta) }
 func (l *promptJoin) InflightDone()         { l.wg.Done() }
-func (l *promptJoin) Draining() bool        { return false }
+func (*promptJoin) Draining() bool          { return false }
 
 // join blocks until every in-flight turn has deregistered. Safe to call after
-// CmdPrompt returned: the registration is synchronous, before the ack.
+// cmdPrompt returned: the registration is synchronous, before the ack.
 func (l *promptJoin) join() { l.wg.Wait() }

@@ -14,10 +14,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdSetSupervisedMode records the chat's supervised choice and applies it live to a running
+// cmdSetSupervisedMode records the chat's supervised choice and applies it live to a running
 // session, so a mid-session toggle takes effect at once; a bridgeless chat's value reaches
 // `session/new` through spawnBridge.
-func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *marotte.ClientCommand) (any, error) {
+func cmdSetSupervisedMode(ctx context.Context, bridges bridgeAccess, chats chatStore, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}

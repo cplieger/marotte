@@ -75,7 +75,7 @@ func TestParseRemoteSlug(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			host, slug := ParseRemoteSlug(tc.raw)
+			host, slug := parseRemoteSlug(tc.raw)
 			if host != tc.host || slug != tc.slug {
 				t.Errorf("ParseRemoteSlug(%q) = (%q, %q), want (%q, %q)",
 					tc.raw, host, slug, tc.host, tc.slug)
@@ -137,7 +137,7 @@ func FuzzParseRemoteSlug(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
-		host, slug := ParseRemoteSlug(raw)
+		host, slug := parseRemoteSlug(raw)
 		if host == "" || slug == "" {
 			if host != "" || slug != "" {
 				t.Fatalf("ParseRemoteSlug(%q) returned a half answer (%q, %q)", raw, host, slug)

@@ -83,8 +83,7 @@ type heldGrant struct {
 	cancelled atomic.Bool
 }
 
-// startedGrant is what a client renders for a grant; it never carries the
-// device code.
+// It never carries the device code.
 type startedGrant struct {
 	Expires         time.Time
 	GrantID         string
@@ -105,7 +104,6 @@ func newGrantRegistry() *grantRegistry {
 	return &grantRegistry{grants: make(map[string]*heldGrant), now: time.Now}
 }
 
-// start sends the device-code request for rec's instance and holds the grant.
 func (r *grantRegistry) start(ctx context.Context, rec *connectionRecord, req creds.GrantRequest) (startedGrant, error) {
 	r.sweep()
 	if !r.reserve() {
@@ -128,10 +126,8 @@ func (r *grantRegistry) start(ctx context.Context, rec *connectionRecord, req cr
 	}, nil
 }
 
-// poll sends one token request for the grant id names. The poll that answers
-// the credential releases the id, so exactly one caller saves it; an ended
-// grant keeps answering its end until the sweep. A cancelled or unknown id is
-// errGrantNotFound.
+// The poll that answers the credential releases the id, so exactly one caller saves it; an ended
+// grant keeps answering its end until the sweep. A cancelled or unknown id is errGrantNotFound.
 func (r *grantRegistry) poll(ctx context.Context, id string) (polledGrant, error) {
 	r.sweep()
 	h := r.lookup(id)
@@ -156,10 +152,9 @@ func (r *grantRegistry) poll(ctx context.Context, id string) (polledGrant, error
 	return polledGrant{Conn: h.conn, Record: rec, Done: done}, nil
 }
 
-// cancel withdraws and ends the grant id names, reporting whether one was
-// pollable. The grant leaves the registry at once and the library's Close ends
-// it without a request, releasing its endpoint once a poll in flight returns;
-// Close runs on its own goroutine so the cancel does not wait for that poll.
+// The grant leaves the registry at once and the library's Close ends it without a request,
+// releasing its endpoint once a poll in flight returns; Close runs on its own goroutine so the
+// cancel does not wait for that poll.
 func (r *grantRegistry) cancel(id string) bool {
 	h := r.lookup(id)
 	if h == nil || h.cancelled.Swap(true) {

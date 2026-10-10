@@ -11,6 +11,7 @@ import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
+import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
@@ -59,7 +60,6 @@ function dispatchKiroSetting(key: string, value: string, input: HTMLInputElement
   });
 }
 
-export type { EffectiveSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
 // The VALUE lives in config.json. The cache lives in this browser's localStorage, owned byte-wise
@@ -71,9 +71,8 @@ export { loadSettings } from "./persist.js";
  *  resolves (rule 3). */
 let themeChoice: ThemeChoice | null = null;
 
-/** Whether a settings payload has been folded in yet. Separates "the server says no theme is
- *  set" from "the server has not answered", which is the distinction the one-time adoption below
- *  turns on. */
+/** Separates "the server says no theme is set" from "the server has not answered", which is the
+ *  distinction the one-time adoption below turns on. */
 let themeLoaded = false;
 
 /** Set while a server value is being pushed into the live controller. The controller has one
@@ -158,6 +157,7 @@ export const themeStorage: ThemeStorage = {
 
 /** @internal Test seam: forget the loaded theme so one case's choice is not the
  *  answer in the next. */
+// deadset:ignore DS1004 -- test seam: resets the loaded theme choice
 export function _resetThemeForTest(): void {
   themeChoice = null;
   themeLoaded = false;
@@ -223,9 +223,9 @@ export function initGeneralPanelControls(): void {
 // Days-kept number field carries 0 (off) .. N (keep N days); the Keep-forever checkbox overrides it
 // to -1 (kept, never purged) and HIDES the Days-kept row.
 
-/** The retention value the server last stated. Module state because the Keep-forever listener is
- *  registered once and still has to fall back to the SERVER's number for this key — not a
- *  constant restated here — when the day box holds empty or non-numeric text. */
+/** Module state because the Keep-forever listener is registered once and still has to fall back to
+ *  the SERVER's number for this key — not a constant restated here — when the day box holds empty or
+ *  non-numeric text. */
 let serverRetentionDays = 0;
 
 function retentionEls(): {
@@ -294,8 +294,7 @@ function loadInstructionsPanel(): void {
   loadKnowledge();
 }
 
-/** Read what the General panel's controls display. Fired once, on the panel's first activation,
- *  via the settings-tabs loader map. */
+/** Fired once, on the panel's first activation, via the settings-tabs loader map. */
 function loadGeneralPanel(): void {
   initExperimentalToggles();
 }
@@ -351,9 +350,9 @@ function initLogoutButton(): void {
   });
 }
 
-/** Render the About grid from the shared version pair. It does not fetch: `versions.ts` owns
- *  GET /api/version, because the sidebar status card names both values too and a second request
- *  for the same two strings is a second thing that can disagree. */
+/** It does not fetch: `versions.ts` owns GET /api/version, because the sidebar status card names
+ *  both values too and a second request for the same two strings is a second thing that can
+ *  disagree. */
 async function loadAbout(): Promise<void> {
   await loadVersions();
   const v = getVersions();
@@ -396,7 +395,6 @@ export function extractDiagnosticVersion(report: string): string {
   return "";
 }
 
-/** Walk `obj` down `path`, returning undefined at the first non-object hop. */
 function digPath(obj: unknown, path: readonly string[]): unknown {
   let cur: unknown = obj;
   for (const key of path) {
@@ -582,9 +580,8 @@ interface KiroSettingsPayload {
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
-  /** What the control shows when the endpoint answers "" for this key; must match the key's
-   *  Seed in the server's allowedKiroSettings, because a failed seed and a failed read both
-   *  arrive as "". Per row, because the three polarities are not uniform. */
+  /** Must match the key's Seed in the server's allowedKiroSettings, because a failed seed and a failed
+   *  read both arrive as "". Per row, because the three polarities are not uniform. */
   defaultOn: boolean;
   inverted?: boolean;
 }[] = [
@@ -599,16 +596,14 @@ const experimentalFlags: readonly {
   },
 ];
 
-/** Which read of the experimental flags is the newest. The panel's loader is reached on every
- *  settings activation, and the read behind it is a `kiro-cli settings` SPAWN with no signal, no
- *  dedupe and no coalescing of its own, so a superseded answer must be discarded rather than
- *  painted over a newer one. */
+/** The panel's loader is reached on every settings activation, and the read behind it is a `kiro-cli
+ *  settings` SPAWN with no signal, no dedupe and no coalescing of its own, so a superseded answer
+ *  must be discarded rather than painted over a newer one. */
 let togglesGen = 0;
 
-/** The signal this generation of flag listeners is attached with, aborted and replaced by the
- *  next call. The loader runs on every General-tab activation, so without it each activation
- *  stacked another `change` listener on every checkbox — and one click then cost N identical
- *  PUTs, each a `kiro-cli settings` spawn. */
+/** The loader runs on every General-tab activation, so without it each activation stacked another
+ *  `change` listener on every checkbox — and one click then cost N identical PUTs, each a `kiro-cli
+ *  settings` spawn. */
 let togglesAC: AbortController | null = null;
 
 export function initExperimentalToggles(): void {
@@ -699,16 +694,57 @@ const agentChoices: readonly {
   { key: "output_style", selectID: "output-style", values: ["default", "concise"] },
 ];
 
-/** Switches over a stored "" / "on" / "off" key. Unset ("") sends nothing, so kiro-cli's own
- *  rollout decides; it renders as off, kiro-cli's shipped default. A flip always stores "on" or
- *  "off", never "". */
+/** Unset ("") sends nothing, so kiro-cli's own rollout decides; it renders as off, kiro-cli's
+ *  shipped default. A flip always stores "on" or "off", never "". */
 const agentFeatureSwitches: readonly {
-  key: "work_validation" | "cloudformation_safety_check";
+  key: "cloudformation_safety_check";
   inputID: string;
+}[] = [{ key: "cloudformation_safety_check", inputID: "flag-cloudformation-safety" }];
+
+/** The three-state agent features as a Default / On / Off select: Default ("") sends nothing, so
+ *  kiro-cli decides, and stays reachable after a choice. `defaultID` names the line stating what
+ *  Default resolves to, for a key the server reports in `kiro_defaults`. */
+const agentFeatureChoices: readonly {
+  key: "work_validation" | "auto_routing" | "auto_delegation";
+  selectID: string;
+  defaultID?: string;
 }[] = [
-  { key: "work_validation", inputID: "flag-work-validation" },
-  { key: "cloudformation_safety_check", inputID: "flag-cloudformation-safety" },
+  { key: "work_validation", selectID: "work-validation", defaultID: "work-validation-default" },
+  { key: "auto_routing", selectID: "auto-routing" },
+  { key: "auto_delegation", selectID: "auto-delegation" },
 ];
+
+const FEATURE_CHOICES = ["", "on", "off"] as const;
+
+function kiroDefaultLine(d: KiroDefault): string {
+  return d.layer === ""
+    ? `Default: ${d.value}, Kiro's built-in default.`
+    : `Default: ${d.value}, set by ${d.layer_name === "" ? d.layer : d.layer_name}.`;
+}
+
+function paintFeatureChoice(
+  choice: (typeof agentFeatureChoices)[number],
+  s: EffectiveSettings,
+): void {
+  const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+  const value = s[choice.key];
+  if (select !== null && (FEATURE_CHOICES as readonly string[]).includes(value)) {
+    select.value = value;
+  }
+  if (choice.defaultID === undefined) {
+    return;
+  }
+  const line = document.getElementById(choice.defaultID);
+  const resolved = value === "" ? s.kiro_defaults[choice.key] : undefined;
+  if (line !== null) {
+    line.textContent = resolved === undefined ? "" : kiroDefaultLine(resolved);
+    line.classList.toggle("hidden", resolved === undefined);
+  }
+  const option = select?.querySelector<HTMLOptionElement>('option[value=""]');
+  if (option !== null && option !== undefined) {
+    option.textContent = resolved === undefined ? "Default" : `Default (${resolved.value})`;
+  }
+}
 
 /** KAS's bounds for the shell timeout, in seconds (the stored value is ms). */
 const SHELL_TIMEOUT_MAX_S = 1800;
@@ -748,6 +784,9 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
       input.checked = s[sw.key] === "on";
     }
   }
+  for (const choice of agentFeatureChoices) {
+    paintFeatureChoice(choice, s);
+  }
   const memory = memorySelect();
   // The server validates the value; an unknown one from a newer build leaves the control as it is
   // rather than selecting nothing.
@@ -785,6 +824,12 @@ function initAgentCapabilityControls(): void {
     const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
     input?.addEventListener("change", () => {
       void patchSettings({ [sw.key]: input.checked ? "on" : "off" }, input);
+    });
+  }
+  for (const choice of agentFeatureChoices) {
+    const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+    select?.addEventListener("change", () => {
+      void patchSettings({ [choice.key]: select.value });
     });
   }
   const memory = memorySelect();
@@ -874,10 +919,6 @@ function initAutoCompactionControls(): void {
     void patchSettings({ auto_compact_pct: Number(range.value) }, range);
   });
 }
-
-// REMOVED: a Settings-level *default*-agent picker. Role selection now lives on the prompt-bar role
-// pill (role-picker.ts, #role-pill): it picks the agent per chat (built-in or a workspace custom
-// agent from .kiro/agents/), which fits marotte's per-chat model better than a persistent default.
 
 // Each writes one /api/settings boolean, never the kiro-cli settings endpoint. The MCP wait switch
 // lives on Settings > Tools; the other two on General.

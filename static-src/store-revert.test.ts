@@ -47,7 +47,6 @@ function revert(carrier: string, seq: number, p: Partial<EntryTurnRevert> = {}):
   };
 }
 
-/** Turns `lo..hi` resident, each closed, with the session's count at `hi`. */
 function seed(lo: number, hi: number): void {
   const turns = [];
   for (let n = lo; n <= hi; n++) {

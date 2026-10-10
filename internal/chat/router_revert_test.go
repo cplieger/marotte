@@ -27,7 +27,7 @@ func TestRevert_PageRefusesARevertedCursorWith400(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"?before="+b, nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET ?before=<a reverted turn> = %d, want %d: a reverted cursor is a caller-caused refusal, not a page and not a server error; body = %s",
 			rec.Code, http.StatusBadRequest, rec.Body.String())

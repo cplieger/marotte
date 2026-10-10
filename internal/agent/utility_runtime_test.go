@@ -17,11 +17,9 @@ import (
 func TestUtilityBridge_LazyStart(t *testing.T) {
 	h, _, br := newTestHub()
 
-	h.lifecycle.mu.Lock()
-	if u := h.utility.peek(); u != nil && u.session.started {
+	if u := h.utility.peek(); u != nil && sessionStarted(u.session) {
 		t.Error("utility bridge started before first call")
 	}
-	h.lifecycle.mu.Unlock()
 
 	// No chunks: the drain exits on the idle timer, since the response ends the turn.
 	_, err := h.UtilityPrompt(t.Context(), "test prompt", "")
@@ -30,11 +28,15 @@ func TestUtilityBridge_LazyStart(t *testing.T) {
 	}
 	_ = br // notifCh unused in this test
 
-	h.lifecycle.mu.Lock()
-	if u := h.utility.peek(); u == nil || !u.session.started {
+	if u := h.utility.peek(); u == nil || !sessionStarted(u.session) {
 		t.Error("utility bridge not started after first call")
 	}
-	h.lifecycle.mu.Unlock()
+}
+
+func sessionStarted(s *utilitySession) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.started
 }
 
 func TestUtilityBridge_DrainCollectsChunks(t *testing.T) {
@@ -56,17 +58,13 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 	h, _, _ := newTestHub()
 
 	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: newFakeBridge()}
-	h.lifecycle.mu.Lock()
 	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
-	h.lifecycle.mu.Unlock()
 
 	h.stopUtilityBridge()
 
-	h.lifecycle.mu.Lock()
 	if h.utility.peek() != nil {
 		t.Error("utility bridge not nil after stop")
 	}
-	h.lifecycle.mu.Unlock()
 }
 
 // agentForDrainTest builds an agent over a preset started session for exercising drainResponse.
@@ -601,8 +599,8 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	}
 }
 
-// TestStopUtilityBridge_ConcurrentWithCull_NoRace pins that both sides coordinate on h.lifecycle.mu for the utility slot;
-// -race catches a regression.
+// TestStopUtilityBridge_ConcurrentWithCull_NoRace pins that both sides coordinate on the utility lease's lock for the
+// slot; -race catches a regression.
 func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.utility.get()
@@ -619,7 +617,6 @@ func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	wg.Wait()
 }
 
-// countCalls returns how many times the fake bridge received method.
 func countCalls(b *fakeBridge, method string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

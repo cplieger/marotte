@@ -240,9 +240,8 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 // written definitively will not fit at the destination.
 var errNoSpace = errors.New("insufficient free space at the destination")
 
-// availableBytes reports the bytes an unprivileged writer may still consume on
-// the filesystem holding mountRoot. A package-level var so a test can drive the
-// precheck against a tiny value instead of filling a real filesystem.
+// A package-level var so a test can drive the precheck against a tiny value instead of filling a
+// real filesystem.
 var availableBytes = func(mountRoot string) (int64, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(mountRoot, &st); err != nil {
@@ -282,8 +281,7 @@ func refuseIfCannotFit(size int64, dest loc) error {
 	return nil
 }
 
-// ctxReader wraps an io.Reader with a context. Every Read first checks
-// ctx.Err() so a cancelled/disconnected request aborts on the next chunk
+// Every Read first checks ctx.Err() so a cancelled/disconnected request aborts on the next chunk
 // boundary.
 type ctxReader struct {
 	ctx context.Context

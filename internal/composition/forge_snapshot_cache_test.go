@@ -13,9 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/steering"
 )
 
-// newCacheForTest builds a forgeSnapshotCache around an injected build
-// function and a real Generator writing into an isolated kiro home.
-// Returns the cache and the environment.md path.
 func newCacheForTest(t *testing.T, build func(context.Context) steering.ForgeSnapshot) (*forgeSnapshotCache, string) {
 	t.Helper()
 	home := t.TempDir()

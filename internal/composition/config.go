@@ -31,6 +31,9 @@ type Config struct {
 	KiroCLIVersion     string
 	KiroCLISHA256      string
 	KiroCLISHA256ARM64 string
+	// KASNodePath is the node binary kiro-cli runs KAS on, resolved as kiro-cli resolves it:
+	// KIRO_KAS_NODE_PATH, else the embedded copy in kiro-cli's data dir. It may not exist yet.
+	KASNodePath string
 	// ToolsDir is the tools engine's install tree root (bin/, opt/,
 	// npm/, python/) on the persistent volume.
 	ToolsDir string
@@ -93,6 +96,7 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
 		ToolsDir:            cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh:  toolbelt.DefaultCatalogRefresh,
@@ -106,6 +110,18 @@ func ConfigFromEnv() Config {
 		AuthConfig:          auth.DefaultConfig,
 		KiroAPIKeySet:       os.Getenv(bridge.KiroAPIKeyVar) != "",
 	}
+}
+
+// embeddedKASNode is where kiro-cli extracts the node it runs KAS on: its data dir is
+// $XDG_DATA_HOME/kiro-cli, else $HOME/.local/share/kiro-cli. "" when neither is set.
+func embeddedKASNode(dataHome, home string) string {
+	if dataHome == "" {
+		if home == "" {
+			return ""
+		}
+		dataHome = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(dataHome, "kiro-cli", "node")
 }
 
 // absDir makes a configured directory absolute against the startup cwd. The browse roots, the file
@@ -135,14 +151,14 @@ func logBridgeEnvPosture(cfg *Config) {
 		"so the agent runs as the key's identity, not the signed-in account marotte shows")
 }
 
-// defaultBundledTools is the image path of marotte's bundled-tools file
-// (shipped by the Dockerfile beside the binary). A var, not a const, so a test
-// can point the default at an absent path; never reassigned in production.
+// defaultBundledTools is the image path of marotte's bundled-tools file (shipped by the Dockerfile
+// beside the binary). A var, not a const, so a test can point the default at an absent path; never
+// reassigned in production.
 var defaultBundledTools = "/opt/marotte/bundled-tools.json"
 
-// bundledToolsFiles resolves the bundled-tools list. A missing file warns: it is the only place
-// gopls, typescript, typescript-language-server and pyright exist, so every DefaultSeed template
-// would fail at enable time. Non-fatal, so a bare `go run` still works.
+// A missing file warns: it is the only place gopls, typescript, typescript-language-server and
+// pyright exist, so every DefaultSeed template would fail at enable time. Non-fatal, so a bare `go
+// run` still works.
 func bundledToolsFiles(explicit string) []string {
 	path := filepath.Clean(cmp.Or(explicit, defaultBundledTools))
 	if _, err := os.Stat(path); err != nil { // #nosec G703 -- operator-supplied env var, cleaned above; an existence probe that reads no content
@@ -170,9 +186,8 @@ func browseRoots(workDir, configDir, raw string) []string {
 	return append(roots, extra...)
 }
 
-// parseTrustedProxies parses TRUSTED_PROXIES (CIDRs or bare IPs, via webhttp.ParseCIDRs) into the
-// form webhttp.ClientIP expects; unset yields nil. LENIENT and fail-SAFE: a malformed entry is
-// logged and skipped, falling back to the socket peer, never trusting a forwarded header.
+// Unset yields nil. LENIENT and fail-SAFE: a malformed entry is logged and skipped, falling back to
+// the socket peer, never trusting a forwarded header.
 func parseTrustedProxies(raw string) []*net.IPNet {
 	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
@@ -182,9 +197,8 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 	return nets
 }
 
-// parseTrustedInstallUIDs parses TRUSTED_INSTALL_UIDS through pinstall.ParseIdentities; unset
-// yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this process.
-// Malformed entries drop with one warning that reports a count, never the values.
+// Unset yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this
+// process. Malformed entries drop with one warning that reports a count, never the values.
 func parseTrustedInstallUIDs(raw string) []int {
 	uids, rejected := pinstall.ParseIdentities(raw)
 	if rejected > 0 {

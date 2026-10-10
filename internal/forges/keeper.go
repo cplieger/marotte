@@ -82,8 +82,6 @@ func (k *Keeper) pass(ctx context.Context) {
 	}
 }
 
-// keepToken reads id's token through src and reports whether the read turned
-// the row reconnect-required.
 func (k *Keeper) keepToken(ctx context.Context, id string, src forgeapi.CredentialSource) bool {
 	tctx, cancel := context.WithTimeout(ctx, keeperTokenBudget)
 	defer cancel()

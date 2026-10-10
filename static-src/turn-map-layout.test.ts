@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import type { TurnSummary } from "./turn-rail.js";
+import type { TurnSummary } from "./rail-merge.js";
 import type * as ApiClient from "./api-client.js";
 import type * as StoreLoad from "./store-load.js";
 

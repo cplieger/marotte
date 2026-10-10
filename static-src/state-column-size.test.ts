@@ -5,7 +5,6 @@ import { outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** Off-screen, at a width that lets every column lay out normally. */
 const host = document.createElement("div");
 host.style.cssText = "position:fixed;top:-9999px;left:0;inline-size:760px;";
 document.body.appendChild(host);
@@ -34,7 +33,6 @@ afterEach(() => {
 interface Column {
   readonly name: string;
   readonly slot: string;
-  /** Build the row for a state and return the mark slot inside it. */
   readonly mount: (state: string) => HTMLElement;
   /** The in-flight states this column can paint, in ITS OWN vocabulary: two of the three read
    *  the exec vocabulary (`running`), and the run bar reads the workflow mark's (`working`)

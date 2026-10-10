@@ -4,14 +4,13 @@
 import { onSSE } from "../bus.js";
 import { appendEntry, setWorkingLabel, get, getActiveId, setTurnOpen } from "../store.js";
 import { payloadOf } from "../turns.js";
-import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { closeNotificationsFor } from "../notify.js";
 import { askTarget } from "../push-subject.js";
-import { noteAgentFinished } from "../agent-finished-cue.js";
 import {
   pushDecision,
   collapseSettledDecision,
   dropTurnDecisions,
-  type Decision,
+  type AnswerOutcome,
 } from "../decision-dock.js";
 import { setAgentDown, clearAgentDown } from "../send-state.js";
 import { reportFailure } from "../failure-notice.js";
@@ -19,39 +18,10 @@ import { refreshGitBadge } from "../git.js";
 import type { ToastRetry } from "../toast.js";
 import { openSetting } from "../settings-highlight.js";
 import { showLoginModal } from "../modals.js";
-import {
-  ALWAYS_RULE_NOT_SAVED,
-  respondPermission,
-  respondElicitation,
-  respondUserInput,
-} from "../actions/chat.js";
+import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
-import { severityOf, defaultFailureReason } from "../turn-severity.js";
-import type { EntryTurnClose } from "../types.js";
-export { ERROR_ROUTES };
-
-// Whether a cue may be raised YET is `agent-finished-cue.ts`'s; this owns what one would say.
-
-/** What an off-screen notification SAYS about a finished turn, "" for silence. A TOTAL switch on
- *  the SEVERITY with no default (a new member fails `noImplicitReturns`); `unknown` says nothing.
- *  `turn-severity.ts` owns the wording; a model-call-limit stop says its own reason, as
- *  internal/agent/turn_finalize.go `failurePushBody` does. */
-function notifyBodyFor(close: EntryTurnClose | undefined, name: string): string {
-  const outcome = close?.outcome;
-  switch (severityOf(outcome)) {
-    case "clean":
-      return `${name}: Agent finished`;
-    case "broken": {
-      const own = close?.failure_kind === "model_call_limit" ? (close.failure_reason ?? "") : "";
-      return `${name}: ${own !== "" ? own : defaultFailureReason(outcome)}`;
-    }
-    case "stopped":
-    case "running":
-      return "";
-  }
-}
 
 onSSE("working_label", (chatID, p) => {
   setWorkingLabel(chatID, p.label);
@@ -106,80 +76,62 @@ onSSE("turn_closed", (chatID, p) => {
     clearAgentDown();
   }
   refreshGitBadge();
-
-  // Inside the `settles` branch and AFTER the writes above: the cue is a statement about a
-  // turn this handler settled, and `chatSettled` reads the turn state those writes produce.
-  if (settles && agentRan) {
-    noteAgentFinished(chatID, notifyBodyFor(close, get(chatID)?.name ?? "Chat"));
-  }
 });
 
-// Each ask notifies unconditionally (master switch only): it blocks the turn, so a per-kind mute
-// would stall every later turn silently.
+// Each ask's notification is the server's `notification` frame (handlers/notification.ts).
+
+/** A dispatch resolves null on failure or cancellation; either way the ask may still be open. */
+async function outcomeOf(
+  dispatched: Promise<"answered" | "superseded" | "withdrawn" | null>,
+): Promise<AnswerOutcome> {
+  return (await dispatched) ?? "failed";
+}
 
 onSSE("permission_needed", (chatID, p) => {
-  notifyIfHidden(
-    NOTIFY_TITLE,
-    p.files !== undefined && p.files.length > 0
-      ? "Review this turn's changes"
-      : "Permission needed",
-    askTarget(chatID, p.run_id),
-  );
-  const decision: Extract<Decision, { kind: "permission" }> = {
+  pushDecision({
     kind: "permission",
     chatID,
     runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
-    submit: (answer) => {
-      void respondPermission.dispatch(
-        { chatID, requestID: p.request_id, ...answer },
-        {
-          onError: (err) => {
-            if (err.code === ALWAYS_RULE_NOT_SAVED) {
-              pushDecision(decision);
-            }
-          },
-        },
-      );
-    },
-  };
-  pushDecision(decision);
+    submit: (answer) =>
+      outcomeOf(respondPermission.dispatch({ chatID, requestID: p.request_id, ...answer })),
+  });
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
-  notifyIfHidden(NOTIFY_TITLE, "Input requested by a tool", askTarget(chatID, p.run_id));
   pushDecision({
     kind: "elicitation",
     chatID,
     runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
-    submit: (action, content) => {
-      void respondElicitation.dispatch(
-        content !== undefined
-          ? { chatID, requestID: p.request_id, action, content }
-          : { chatID, requestID: p.request_id, action },
-      );
-    },
+    submit: (action, content) =>
+      outcomeOf(
+        respondElicitation.dispatch(
+          content !== undefined
+            ? { chatID, requestID: p.request_id, action, content }
+            : { chatID, requestID: p.request_id, action },
+        ),
+      ),
   });
 });
 
 onSSE("user_input_needed", (chatID, p) => {
-  notifyIfHidden(NOTIFY_TITLE, "The agent has a question", askTarget(chatID, p.run_id));
   pushDecision({
     kind: "user_input",
     chatID,
     runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
-    submit: (action, answer) => {
-      void respondUserInput.dispatch(
-        action === "answered" && answer !== undefined
-          ? { chatID, requestID: p.request_id, action, answer }
-          : { chatID, requestID: p.request_id, action },
-      );
-    },
+    submit: (action, answer) =>
+      outcomeOf(
+        respondUserInput.dispatch(
+          action === "answered" && answer !== undefined
+            ? { chatID, requestID: p.request_id, action, answer }
+            : { chatID, requestID: p.request_id, action },
+        ),
+      ),
   });
 });
 
@@ -193,7 +145,6 @@ onSSE("decision_settled", (chatID, p) => {
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 
-/** Turns a route's declared action into the toast's one action slot. */
 function toastActionFor(action: ErrorAction | undefined): ToastRetry | undefined {
   if (action === undefined) {
     return undefined;

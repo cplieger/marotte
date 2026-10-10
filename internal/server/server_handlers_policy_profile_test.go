@@ -29,12 +29,12 @@ type fakeEngine struct {
 	reconciledOnCancellableCtx bool
 }
 
-func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
+func (*fakeEngine) RegisterRoutes(*http.ServeMux) {}
 func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	f.events = append(f.events, evt)
 }
-func (f *fakeEngine) Shutdown(context.Context) error { return nil }
-func (f *fakeEngine) Epoch() string                  { return "fake-epoch" }
+func (*fakeEngine) Shutdown(context.Context) error { return nil }
+func (*fakeEngine) Epoch() string                  { return "fake-epoch" }
 
 func (f *fakeEngine) fingerprint(ctx context.Context) string {
 	if f.sessionSettings == nil {
@@ -62,7 +62,7 @@ func (f *fakeReload) SecurityProfileChanged(context.Context) { f.profileChanges+
 
 // profileFixture stages a HOME and a workspace and returns the server plus both policy paths.
 // t.Setenv because policyfile.PathFor reads os.UserHomeDir, so this file is not parallel.
-func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeEngine, *fakeReload, string, string) {
+func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeReload, string, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -84,7 +84,7 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeEngi
 	if err != nil {
 		t.Fatalf("workspace path: %v", err)
 	}
-	return s, eng, reload, userPath, wsPath
+	return s, reload, userPath, wsPath
 }
 
 func postProfile(t *testing.T, s *Server, body profileBody) *httptest.ResponseRecorder {
@@ -114,7 +114,6 @@ func loadRules(t *testing.T, path string) []policyfile.Rule {
 	return f.Rules
 }
 
-// ruleCapabilities is the sorted capability projection of a rule set.
 func ruleCapabilities(rules []policyfile.Rule) []string {
 	out := make([]string, 0, len(rules))
 	for i := range rules {
@@ -124,7 +123,6 @@ func ruleCapabilities(rules []policyfile.Rule) []string {
 	return out
 }
 
-// readBytes returns a file's bytes, or nil when it does not exist.
 func readBytes(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -150,7 +148,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		policyfile.ProfileUnrestricted, policyfile.ProfileCustom,
 	} {
 		t.Run(id+"/staged files are left byte for byte", func(t *testing.T) {
-			s, _, reload, userPath, wsPath := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
+			s, reload, userPath, wsPath := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 			for _, path := range []string{userPath, wsPath} {
 				if err := policyfile.Save(t.Context(), path, &policyfile.File{Rules: staged}); err != nil {
 					t.Fatalf("Setup: stage %s: %v", path, err)
@@ -175,7 +173,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 			}
 		})
 		t.Run(id+"/absent files stay absent", func(t *testing.T) {
-			s, _, _, userPath, wsPath := profileFixture(t, nil)
+			s, _, userPath, wsPath := profileFixture(t, nil)
 			if rec := postProfile(t, s, profileBody{Profile: id}); rec.Code != http.StatusOK {
 				t.Fatalf("selecting %q: status = %d, body %s", id, rec.Code, rec.Body)
 			}
@@ -187,7 +185,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		})
 	}
 	t.Run("an unparseable user file is not read", func(t *testing.T) {
-		s, _, _, userPath, _ := profileFixture(t, nil)
+		s, _, userPath, _ := profileFixture(t, nil)
 		malformed := []byte("rules: [ this is not a rule list\n")
 		if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
 			t.Fatalf("Setup: %v", err)
@@ -215,7 +213,7 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 		{Capability: "fs_write", Effect: "ask", Scope: "kiro", Source: "kiro-scope"},
 		seedRule("all", policyfile.PresetAllowAll),
 	}
-	s, _, reload, userPath, wsPath := profileFixture(t, live)
+	s, reload, userPath, wsPath := profileFixture(t, live)
 	if err := s.profiles().Select(t.Context(), policyfile.ProfileTrusted); err != nil {
 		t.Fatalf("Setup: select trusted: %v", err)
 	}
@@ -259,7 +257,7 @@ func blockConfigDir(t *testing.T, s *Server) {
 // TestPolicyProfile_SeedPersistFailureRestoresTheUserFile pins that a failed persist takes
 // the copied preset rules back out.
 func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
-	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
+	s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
@@ -283,7 +281,7 @@ func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 // the state Customize found, so a file that did not exist is removed again rather
 // than left behind empty.
 func TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
+	s, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	blockConfigDir(t, s)
 
 	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
@@ -333,7 +331,7 @@ func (c *cancelOnceCopied) Err() error {
 // TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite: Customize's two files
 // must agree whenever the client leaves. Both written, or the user file as it was.
 func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
+	s, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
@@ -358,7 +356,7 @@ func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 // TestPolicyProfile_NamedPersistFailureAnswers500: a named selection has nothing on
 // disk to compensate, so a failed persist is a 500 that recycles nothing.
 func TestPolicyProfile_NamedPersistFailureAnswers500(t *testing.T) {
-	s, _, reload, _, _ := profileFixture(t, nil)
+	s, reload, _, _ := profileFixture(t, nil)
 	blockConfigDir(t, s)
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
@@ -371,7 +369,7 @@ func TestPolicyProfile_NamedPersistFailureAnswers500(t *testing.T) {
 // TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem pins 400 and no write for a user
 // file at the rule cap (the staged comment makes a rewrite visible).
 func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
-	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
+	s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 	full := make([]policyfile.Rule, 0, 512)
 	for i := range 512 {
 		full = append(full, policyfile.Rule{Capability: "cap-" + strconv.Itoa(i), Effect: policyfile.EffectAsk})
@@ -401,7 +399,7 @@ func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
 // file to add to it, so a hand-edit marotte cannot parse is refused with 409 and left
 // on disk for the user to fix.
 func TestPolicyProfile_SeedRefusesAnUnparseableUserFile(t *testing.T) {
-	s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
+	s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 	malformed := []byte("rules: [ this is not a rule list\n")
 	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
 		t.Fatalf("Setup: stage the directory: %v", err)
@@ -440,7 +438,7 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 		{"no live policy at all", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _, reload, userPath, _ := profileFixture(t, tc.live)
+			s, reload, userPath, _ := profileFixture(t, tc.live)
 			staged := []policyfile.Rule{{Capability: "shell", Effect: "allow"}}
 			if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: staged}); err != nil {
 				t.Fatalf("stage: %v", err)
@@ -475,7 +473,7 @@ func TestPolicyProfile_Refusals(t *testing.T) {
 		{"seed on a named profile", profileBody{Profile: policyfile.ProfileTrusted, Seed: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
+			s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 			if rec := postProfile(t, s, tc.body); rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
@@ -491,7 +489,7 @@ func TestPolicyProfile_Refusals(t *testing.T) {
 
 // TestPolicyProfile_PersistKeepsSiblingSettings pins that the profile write merges.
 func TestPolicyProfile_PersistKeepsSiblingSettings(t *testing.T) {
-	s, _, _, _, _ := profileFixture(t, nil)
+	s, _, _, _ := profileFixture(t, nil)
 	path := filepath.Join(s.configDir, settings.Filename)
 	if err := os.WriteFile(path, []byte(`{"last_model":"m-keep","supervised_default":true}`), 0o600); err != nil {
 		t.Fatalf("stage settings: %v", err)
@@ -514,7 +512,7 @@ func TestPolicyProfile_PersistKeepsSiblingSettings(t *testing.T) {
 // TestPolicyView_CarriesTheLadderAndTheActiveProfile: the picker renders from this,
 // so a stale or reordered ladder here is a picker that offers the wrong postures.
 func TestPolicyView_CarriesTheLadderAndTheActiveProfile(t *testing.T) {
-	s, _, _, _, _ := profileFixture(t, nil)
+	s, _, _, _ := profileFixture(t, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", nil)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)

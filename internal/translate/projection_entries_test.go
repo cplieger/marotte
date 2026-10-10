@@ -13,14 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// replayFixture is one hand-written session/load frame stream on disk. The extra
-// fields are the fixture's own statement of what the assertions must derive from the
-// same bytes, so a fixture edit cannot silently invalidate a test.
+// The extra fields are the fixture's own statement of what the assertions must derive from the same
+// bytes, so a fixture edit cannot silently invalidate a test.
 type replayFixture struct {
-	Note           string               `json:"note"`
 	Summary        string               `json:"summary"`
 	SteerID        string               `json:"steer_id"`
-	ActionID       string               `json:"action_id"`
 	ReplayedCallID string               `json:"replayed_call_id"`
 	DelegateID     string               `json:"delegate_id"`
 	Frames         []replayFixtureFrame `json:"frames"`
@@ -31,7 +28,6 @@ type replayFixtureFrame struct {
 	Update json.RawMessage       `json:"update"`
 }
 
-// loadReplayFixture reads one frame stream out of testdata.
 func loadReplayFixture(t *testing.T, name string) replayFixture {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))
@@ -48,7 +44,6 @@ func loadReplayFixture(t *testing.T, name string) replayFixture {
 	return fx
 }
 
-// projectFixture folds a fixture's whole frame stream into a fresh EntryProjection.
 func projectFixture(t *testing.T, fx replayFixture) []ProjectedTurn {
 	t.Helper()
 	p := NewEntryProjection(seqIDs(), "")
@@ -58,7 +53,6 @@ func projectFixture(t *testing.T, fx replayFixture) []ProjectedTurn {
 	return p.Turns()
 }
 
-// entryProject folds a frame list built by the helpers in projection_entries_helpers_test.go.
 func entryProject(frames [][2]any) []ProjectedTurn {
 	p := NewEntryProjection(seqIDs(), "")
 	for _, f := range frames {
@@ -80,7 +74,6 @@ func dumpTurns(turns []ProjectedTurn) string {
 	return b.String()
 }
 
-// kindsOf is one turn's entry kinds in order.
 func kindsOf(turn ProjectedTurn) []marotte.EntryKind {
 	kinds := make([]marotte.EntryKind, 0, len(turn.Entries))
 	for _, e := range turn.Entries {
@@ -89,7 +82,6 @@ func kindsOf(turn ProjectedTurn) []marotte.EntryKind {
 	return kinds
 }
 
-// saysOf is the text of every text entry of one turn, in order.
 func saysOf(t *testing.T, turn ProjectedTurn) []string {
 	t.Helper()
 	texts := make([]string, 0, len(turn.Entries))
@@ -104,7 +96,6 @@ func saysOf(t *testing.T, turn ProjectedTurn) []string {
 	return texts
 }
 
-// entryOfKind is a turn's first entry of one kind.
 func entryOfKind(t *testing.T, turn ProjectedTurn, kind marotte.EntryKind) marotte.Entry {
 	t.Helper()
 	for _, e := range turn.Entries {
@@ -116,7 +107,6 @@ func entryOfKind(t *testing.T, turn ProjectedTurn, kind marotte.EntryKind) marot
 	return marotte.Entry{}
 }
 
-// payloadOf decodes one entry's payload into v.
 func payloadOf(t *testing.T, e marotte.Entry, v any) {
 	t.Helper()
 	if err := json.Unmarshal(e.Payload, v); err != nil {
@@ -510,6 +500,33 @@ func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.
 	}
 }
 
+func TestEntryProjection_AWorkflowMessageRowCarriesItsSenderAndSendTime(t *testing.T) {
+	for _, c := range []struct {
+		sender string
+		want   marotte.SteerOrigin
+	}{{"step", marotte.SteerOriginStep}, {"parent", marotte.SteerOriginParent}} {
+		t.Run(c.sender, func(t *testing.T) {
+			k, raw := replayFrame(t, replayUserChunkKind, "part 1 done", "", map[string]any{
+				"messageId": "notify-1",
+				"timestamp": "2026-09-15T13:00:00.000Z",
+				"source":    "steer",
+				"notification": map[string]any{
+					"kind": "system-notification", "status": "success", "sender": c.sender,
+				},
+			})
+			turns := entryProject([][2]any{turnStartFrame(t), pair(k, raw), turnEndFrame(t, "end_turn")})
+			var payload marotte.EntrySteer
+			payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindSteer), &payload)
+			if payload.Origin != c.want {
+				t.Errorf("origin = %q, want %q", payload.Origin, c.want)
+			}
+			if want := int64(1789477200000); payload.ProducedTs != want {
+				t.Errorf("produced_ts = %d, want the row's own time %d", payload.ProducedTs, want)
+			}
+		})
+	}
+}
+
 // TestEntryProjection_AWorkflowProgressRowIsDropped pins the drop of the run card's JSON row.
 func TestEntryProjection_AWorkflowProgressRowIsDropped(t *testing.T) {
 	k, raw := replayFrame(t, replayUserChunkKind, `{"kind":"node_start"}`, "", map[string]any{
@@ -643,7 +660,6 @@ func toolCallFrame(t *testing.T, id string, extra map[string]any) [2]any {
 	}))
 }
 
-// toolUpdateFrame builds a replayed tool_call_update.
 func toolUpdateFrame(t *testing.T, id, status string, extra map[string]any) [2]any {
 	t.Helper()
 	kiro := map[string]any{

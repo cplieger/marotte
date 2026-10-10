@@ -27,7 +27,6 @@ type scheduleView struct {
 	Enabled    bool          `json:"enabled"`
 }
 
-// registerSchedule wires the schedule surface, a no-op with no store.
 func (rr *runRoutes) registerSchedule(mux *http.ServeMux) {
 	if rr.runs.schedules == nil {
 		return
@@ -47,7 +46,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 	webhttp.WriteJSON(w, map[string]any{"schedules": out})
 }
 
-// scheduleViewOf resolves an entry's next run; an uncomputable spec yields none, so the row still renders.
+// An uncomputable spec yields none, so the row still renders.
 func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,

@@ -43,7 +43,7 @@ document.body.appendChild(scrollBottom);
 
 const { mountAppCSS, loadCSS, allRules } = await import("./__test-helpers__/css-rules.js");
 const { buildToolCard } = await import("./tool-card.js");
-const { updateToolCall, initToolCallbacks } = await import("./messages-tools.js");
+const { applyToolCallUpdate, initToolCallbacks } = await import("./messages-tools.js");
 
 const LABEL = "Explain this error";
 const EXPLANATION = "The linker could not find libfoo.";
@@ -115,7 +115,7 @@ async function failedCard(id: string): Promise<HTMLDivElement> {
     input: { command: "go build ./..." },
   });
   host.appendChild(card);
-  updateToolCall(
+  applyToolCallUpdate(
     card,
     frame(id, {
       status: "failed",

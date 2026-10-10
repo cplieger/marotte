@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// newVersionedTestStore is newTestStore with a registry the test can read back.
 func newVersionedTestStore(t *testing.T) (*Store, *fakeBroadcaster, *subject.Versions) {
 	t.Helper()
 	s, b := newTestStore(t)
@@ -118,7 +117,7 @@ func TestRemove_ReturnsTheChatsVersionDeleteStamps(t *testing.T) {
 	}
 	before, _ := v.Current(subject.KindChats, "")
 	b.reset()
-	if err := s.Delete(t.Context(), "c1"); err != nil {
+	if _, err := s.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	after, _ := v.Current(subject.KindChats, "")
@@ -135,7 +134,7 @@ func TestRemove_ReturnsTheChatsVersionDeleteStamps(t *testing.T) {
 func TestDelete_MissingChatCarriesNoStamp(t *testing.T) {
 	s, b, v := newVersionedTestStore(t)
 	before, _ := v.Current(subject.KindChats, "")
-	if err := s.Delete(t.Context(), "c-missing"); err != nil {
+	if _, err := s.Delete(t.Context(), "c-missing"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if after, _ := v.Current(subject.KindChats, ""); after != before {

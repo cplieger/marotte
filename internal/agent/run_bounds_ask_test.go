@@ -22,9 +22,10 @@ func askFixture(t *testing.T, id string, carrier marotte.ChatID) (*Runtime, *fak
 	return h, br
 }
 
-func stepAsk(h *Runtime, carrier marotte.ChatID, reqID int64, runID, nodeID string) {
-	h.bus.PendingPermsAdd(reqID, marotte.NewEvent(marotte.EventPermissionNeeded, carrier,
-		marotte.PermissionNeededPayload{RequestID: reqID, RunID: runID, NodeID: nodeID}))
+func stepAsk(h *Runtime, carrier marotte.ChatID, reqID int64, runID, nodeID string) int64 {
+	evt := h.bus.PendingPermsAdd(reqID, marotte.NewEvent(marotte.EventPermissionNeeded, carrier,
+		marotte.PermissionNeededPayload{RunID: runID, NodeID: nodeID}), nil)
+	return evt.Payload.(marotte.PermissionNeededPayload).RequestID
 }
 
 func wantHeld(t *testing.T, h *Runtime, br *fakeBridge, id string) {
@@ -77,8 +78,8 @@ func TestCancelExpired_AnOpenAskOnAnAgentRunHoldsTheWindow(t *testing.T) {
 func TestCancelExpired_AnAnsweredAskDoesNotHoldTheWindow(t *testing.T) {
 	const id = "wf_1"
 	h, br := askFixture(t, id, runChatID(id))
-	stepAsk(h, runChatID(id), 7, id, "a")
-	if !h.bus.TakePendingPerm(runChatID(id), 7, marotte.SettledByUser) {
+	askID := stepAsk(h, runChatID(id), 7, id, "a")
+	if _, ok := h.bus.TakePendingPerm(runChatID(id), askID, marotte.SettledByUser); !ok {
 		t.Fatal("the ask was not pending")
 	}
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
@@ -108,10 +109,10 @@ func TestCancelExpired_AnAskFromAStepWithAHashedPathKeyHoldsTheWindow(t *testing
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.log = newRunLog(t.TempDir())
 	long := strings.Repeat("x", 9<<10)
-	h.dispatch(t.Context(), runChatID(id), runNotif(methodWFNodeStart, map[string]any{
+	h.dispatch(t.Context(), runChatID(id), h.originOf(runChatID(id)), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": id, "nodeId": long, "nodePath": []string{id, long}, "type": stepNodeType, "sessionId": "step-session-a",
 	}))
-	if h.runs.log.Turn(id, workflow.PathKey([]string{id, long})) == nil {
+	if h.runs.log.turn(id, workflow.PathKey([]string{id, long})) == nil {
 		t.Fatal("Setup: node_start opened no turn for the step")
 	}
 	stepAsk(h, runChatID(id), 7, id, long)
@@ -130,10 +131,10 @@ func TestCancelExpired_AnAskFromAStepOpenedByItsMetaHoldsTheWindow(t *testing.T)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.log = newRunLog(t.TempDir())
-	h.dispatch(t.Context(), runChatID(id), stepMetaChunk(t, "step-session-a", map[string]any{
+	h.dispatch(t.Context(), runChatID(id), h.originOf(runChatID(id)), stepMetaChunk(t, "step-session-a", map[string]any{
 		"workflowId": id, "nodeId": "a", "nodePath": []string{id, "a"},
 	}))
-	if h.runs.log.Turn(id, workflow.PathKey([]string{id, "a"})) == nil {
+	if h.runs.log.turn(id, workflow.PathKey([]string{id, "a"})) == nil {
 		t.Fatal("Setup: the step's content frame opened no turn")
 	}
 	stepAsk(h, runChatID(id), 7, id, "a")
@@ -219,7 +220,7 @@ func TestCancelExpired_ElicitationAndUserInputAsksHoldTheWindow(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, br := askFixture(t, id, runChatID(id))
-			h.bus.PendingPermsAdd(7, tc.evt)
+			h.bus.PendingPermsAdd(7, tc.evt, nil)
 			deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 			h.runs.cancelExpired(id, deadline)

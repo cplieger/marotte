@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/parallel"
 )
 
-// chatEntry is a chat directory's (id, full path) pair from a directory scan, for the parallel header reader.
 type chatEntry struct {
 	id   string
 	path string

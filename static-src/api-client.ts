@@ -1,5 +1,5 @@
 // Every REST-style call goes through here: each helper collapses failure to
-// `null` (`apiDelete` to `false`) and logs it once. The POST /api/command
+// `null` and logs it once. The POST /api/command
 // envelope is transport.ts's — a different contract, deliberately not shared.
 
 import {
@@ -8,8 +8,6 @@ import {
   type ApiResult as FetchResult,
   type RequestOptions,
 } from "@cplieger/fetch";
-
-export { API_TIMEOUT_MS, withTimeout } from "@cplieger/fetch";
 
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
@@ -25,8 +23,7 @@ function reqOpts<T>(base: RequestOptions<T>, signal: AbortSignal | undefined): R
   return signal ? { ...base, signal } : base;
 }
 
-/** Central failure logging for the collapsing helpers. A deliberate caller
- *  abort is expected and stays silent; every other failure gets one line. */
+/** A deliberate caller abort is expected and stays silent; every other failure gets one line. */
 function logApiError(r: ApiErr, method: string, path: string): void {
   if (r.status === 0) {
     if (r.code === "cancelled") {
@@ -90,17 +87,6 @@ export async function apiPost<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({}, signal)), "POST", path);
 }
 
-/** DELETE `path`. The body is never read (`ignoreBody`), so a 2xx carrying
- *  non-JSON counts as success and only 4xx/5xx and transport failures fail. */
-export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
-  const r = await fx.apiDeleteRaw<unknown>(path, reqOpts({ ignoreBody: true }, signal));
-  if (r.ok) {
-    return true;
-  }
-  logApiError(r, "DELETE", path);
-  return false;
-}
-
 /** A failure a caller has to distinguish rather than collapse. `error` is the
  *  server's own "error" field, or "" when the body carried none. */
 interface ApiResult<T> {
@@ -118,7 +104,7 @@ interface ApiResult<T> {
 }
 
 /**
- * The ONE mapping onto `ApiResult`, shared by the three OrError helpers. `data` is dropped
+ * The ONE mapping onto `ApiResult`, shared by the two OrError helpers. `data` is dropped
  * on failure: a body the transport rejected is not for reading.
  */
 function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
@@ -206,22 +192,6 @@ export async function apiPostTyped<T>(
   signal?: AbortSignal,
 ): Promise<T | null> {
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
-}
-
-/**
- * PUT variant that surfaces error details, for showing the server's validation message.
- * `error` falls back to "HTTP <status>". The one that LOGS: a failed mutation is a fault.
- */
-export async function apiPutOrError<T>(
-  path: string,
-  body: unknown,
-  signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  const r = await fx.apiPutRaw<T>(path, body, reqOpts({}, signal));
-  if (!r.ok) {
-    logApiError(r, "PUT", path);
-  }
-  return toApiResult(r);
 }
 
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —

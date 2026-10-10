@@ -27,7 +27,6 @@ func withinBudget(t *testing.T, budget time.Duration, fn func() error) error {
 	}
 }
 
-// mkfifoChat plants a FIFO where a chat id's header belongs and returns the id.
 func mkfifoChat(t *testing.T, dir string) marotte.ChatID {
 	t.Helper()
 	if _, err := os.Stat("/dev/null"); err != nil {
@@ -60,28 +59,24 @@ func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 		t.Errorf("load over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 	}
 	// The public read reports absence rather than wedging.
-	if _, ok := withinBudgetGet(t, s, id); ok {
+	if ok := withinBudgetGet(t, s, id); ok {
 		t.Error("Get returned ok for a FIFO planted at a chat file name")
 	}
 }
 
-func withinBudgetGet(t *testing.T, s *Store, id marotte.ChatID) (*marotte.Chat, bool) {
+func withinBudgetGet(t *testing.T, s *Store, id marotte.ChatID) bool {
 	t.Helper()
-	type res struct {
-		c  *marotte.Chat
-		ok bool
-	}
-	out := make(chan res, 1)
+	out := make(chan bool, 1)
 	go func() {
-		c, ok := s.Get(t.Context(), id)
-		out <- res{c, ok}
+		_, ok := s.Get(t.Context(), id)
+		out <- ok
 	}()
 	select {
-	case r := <-out:
-		return r.c, r.ok
+	case ok := <-out:
+		return ok
 	case <-time.After(3 * time.Second):
 		t.Fatal("Get still blocked after 3s over a FIFO")
-		return nil, false
+		return false
 	}
 }
 

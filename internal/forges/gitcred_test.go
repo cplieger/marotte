@@ -49,8 +49,6 @@ func runIsolatedFromGitConfig(m *testing.M) int {
 	return m.Run()
 }
 
-// isolateGit gives the test its own HOME and global git config, hides the
-// system one, and returns the global config's path.
 func isolateGit(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -92,7 +90,6 @@ func ownedBy(configDir string) func(string) bool {
 	return func(v string) bool { return ownsHelperValue(v, configDir) }
 }
 
-// seedCredential saves a static token for one connection in configDir's store.
 func seedCredential(t *testing.T, configDir, key string, rec creds.Record) {
 	t.Helper()
 	store, reason := openCredentialStore(configDir)

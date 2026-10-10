@@ -6,13 +6,14 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 // HandleUserInput processes a _kiro/userInput request (KAS 2.14+, advertised through the
 // _meta.kiro.userInput capability): it surfaces a question dialog whose reply
 // CmdUserInputResponse sends. The correlation id is msg.ID, and the pending tracker
 // replays the dialog on reconnect. KAS completes the matching user_input tool_call itself.
-func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// Without an id no response can be routed, and KAS would stall the question forever.
 		slog.Warn("user input request missing id", "chat_id", chatID)
@@ -27,7 +28,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 	reqID := *msg.ID
 	p, err := decodeParams[userInputParams](msg)
 	if err != nil {
-		t.refuseAsk(ctx, chatID, marotte.MethodKiroUserInput, reqID,
+		refuseAsk(ctx, chatID, origin, marotte.MethodKiroUserInput, reqID,
 			marotte.UserInputResult{Action: marotte.UserInputActionDismissed}, err)
 		return
 	}
@@ -37,20 +38,21 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 
 	step := t.steps.refFor(p.SessionID)
+	question := displayText(p.Question)
 	evt := marotte.NewEvent(marotte.EventUserInputNeeded, chatID, marotte.UserInputNeededPayload{
-		RequestID: reqID,
 		// The question is model-composed and unbounded on the wire; same rule as a permission title.
-		Question:     displayText(p.Question),
+		Question:     question,
 		Options:      options,
 		ToolCallID:   p.ToolCallID,
 		SubSessionID: subSessionID,
 		RunID:        step.WorkflowID,
 		NodeID:       step.NodeID,
 	})
-	t.bus.Broadcast(ctx, evt)
-	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
-	t.push.NotifyPush(ctx, "The agent has a question", marotte.PushKindPermission, chatID)
+	n := notice.Question(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
+		step.NodeID, question)
+	t.push.Notify(ctx, chatID, &n)
 }
 
 // wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option shapes.

@@ -23,8 +23,7 @@ import (
 
 const port = "9847"
 
-// listenPort is the port the listener binds; a -tags marotte_test binary may move it
-// (testhooks_marottetest.go).
+// A -tags marotte_test binary may move it (testhooks_marottetest.go).
 var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
@@ -43,11 +42,13 @@ type Server struct {
 	policy        policyProvider
 	policyReload  policyReloader
 	// governance answers the administrator's lock map; nil means nothing is locked.
-	governance  governanceLocks
-	agent       chatEngine
-	steering    SteeringGenerator
-	mcpRegistry routeHandler
-	staticFS    fs.FS
+	governance governanceLocks
+	// kiroDefaults fills GET /api/settings' kiro_defaults; nil leaves it empty.
+	kiroDefaults kiroDefaultsReader
+	agent        chatEngine
+	steering     SteeringGenerator
+	mcpRegistry  routeHandler
+	staticFS     fs.FS
 	// tabs is the open-tab set; nil (no config dir) answers an empty collection at version 0.
 	tabs tabReader
 	// preview serves /preview/ and its grant and stamp endpoints; nil leaves them unmounted.
@@ -55,7 +56,7 @@ type Server struct {
 	// specApprovals is the spec-phase approval record; nil (no config dir) means
 	// the spec GET carries no approvals.
 	specApprovals specApprovalReader
-	cliRunner     CLIRunner
+	cliRunner     cliRunner
 	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
 	kiroDocs *docsCache
 	tools    toolsSource
@@ -72,6 +73,8 @@ type Server struct {
 	onListen  func()
 	configDir string
 	workDir   string
+	// kasNode is the node binary KAS runs on; "" means it cannot be located.
+	kasNode string
 	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
@@ -151,6 +154,11 @@ func WithGovernanceLocks(g governanceLocks) Option {
 	return func(s *Server) { s.governance = g }
 }
 
+// WithKiroDefaults sets what GET /api/settings reports an unset three-state setting resolves to.
+func WithKiroDefaults(k kiroDefaultsReader) Option {
+	return func(s *Server) { s.kiroDefaults = k }
+}
+
 // WithPolicyReload wires what a security-profile change needs after it persisted. Optional:
 // unwired, live sessions keep the old presets and no client is told.
 func WithPolicyReload(p policyReloader) Option {
@@ -219,6 +227,10 @@ func WithSpecApprovals(st *specapproval.Store) Option {
 	}
 }
 
+// WithKASNode sets the node binary KAS runs on, which compiles hook matchers exactly as KAS
+// will. Unset, a hook with a matcher cannot be created.
+func WithKASNode(path string) Option { return func(s *Server) { s.kasNode = path } }
+
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 
@@ -253,12 +265,12 @@ func New(opts ...Option) *Server {
 	return s
 }
 
-// ListenAndServe registers all routes and starts the HTTP server, blocking until SIGTERM/SIGINT.
+// routes is the route table ListenAndServe serves.
 //
 // Every route is a PLAIN PATH with the method gated in the handler: ServeMux's 405 fires only
 // when no pattern matched, and the "/" SPA mount matches everything. Do not put a method
 // back on a pattern here.
-func (s *Server) ListenAndServe() error {
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
 	registerAPIFallback(mux)
@@ -292,6 +304,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/tabs", s.handleTabs)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
+	mux.HandleFunc("/api/workspace/kiro-docs/new", s.handleKiroDocNew)
 	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
 	s.mcpConfig.RegisterRoutes(mux)
 	s.mcpStatus.RegisterRoutes(mux)
@@ -311,7 +324,12 @@ func (s *Server) ListenAndServe() error {
 		s.preview.RegisterRoutes(mux)
 	}
 	s.registerTestHooks(mux)
+	return mux
+}
 
+// ListenAndServe registers all routes and starts the HTTP server, blocking until SIGTERM/SIGINT.
+func (s *Server) ListenAndServe() error {
+	mux := s.routes()
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
 		return fmt.Errorf("build CSP: %w", err)
@@ -366,7 +384,6 @@ func (s *Server) ListenAndServe() error {
 	return runErr
 }
 
-// msgUnknownAPIEndpoint is what an /api/ path no route claims answers with.
 const msgUnknownAPIEndpoint = "unknown endpoint"
 
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
@@ -408,7 +425,6 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 	}
 }
 
-// requirePOST returns true if r.Method is POST, and otherwise writes 405 and returns false.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
@@ -419,8 +435,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// healthBody is the readiness envelope handleHealth and handleKiroRescan both answer with. A
-// struct, not a map, so the key order matches webhttp.ReadinessHandler's byte for byte.
+// A struct, not a map, so the key order matches webhttp.ReadinessHandler's byte for byte.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`

@@ -8,8 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// modeSwitchSpy records what the command asked to persist. It embeds the host double
-// so every other role it fills is unchanged, and shadows the one method under test.
+// It embeds the host double so every other role it fills is unchanged, and shadows the one method
+// under test.
 type modeSwitchSpy struct {
 	hostDouble
 	switches []marotte.EntryModeSwitched
@@ -30,10 +30,10 @@ func newModeSwitchSpy(t *testing.T) *modeSwitchSpy {
 func TestCmdSetMode_RecordsTheSwitchItApplied(t *testing.T) {
 	spy := newModeSwitchSpy(t)
 
-	if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("first pick: %v", err)
 	}
-	if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "vibe")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "vibe")); err != nil {
 		t.Fatalf("second pick: %v", err)
 	}
 
@@ -59,11 +59,11 @@ func TestCmdSetMode_RecordsTheSwitchItApplied(t *testing.T) {
 func TestCmdSetMode_RepeatPickRecordsNothing(t *testing.T) {
 	spy := newModeSwitchSpy(t)
 
-	if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("first pick: %v", err)
 	}
 	before := len(spy.switches)
-	if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+	if _, err := cmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
 		t.Fatalf("repeat pick: %v", err)
 	}
 

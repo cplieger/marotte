@@ -1,6 +1,6 @@
 // A DOM-free leaf so the anchor exports and the Kiro session download share one rule.
 
-export type ExportFormat = "md" | "json" | "kiro-session";
+type ExportFormat = "md" | "json" | "kiro-session";
 
 const EXT: Record<ExportFormat, string> = {
   md: ".md",

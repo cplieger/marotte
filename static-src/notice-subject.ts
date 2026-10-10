@@ -20,7 +20,7 @@ const RUN_PREFIX = "run:";
 /** A run this client has fetched nothing for, the same words its tab reads as. */
 const FALLBACK_RUN_NAME = "Workflow run";
 
-export interface NoticeSubject {
+interface NoticeSubject {
   /** The display name to lead the message with; "" names nothing. */
   readonly name: string;
   /** The jump to the subject's tab, when it has one that is not on screen. */

@@ -26,8 +26,6 @@ func hookUpdateFrame(t *testing.T, name, status string) map[string]any {
 	}
 }
 
-// hookCardCase drives one hook_update through the translator and returns the events it
-// broadcast and the tool_call entries the chat's turn sealed.
 func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.EntryToolCall) {
 	t.Helper()
 	base, events := newEventCaptureDeps()
@@ -38,9 +36,6 @@ func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAt
 	return events, toolCallsOf(t, base.chatEntries(chatID))
 }
 
-// TestHandleSessionInfoUpdate_HookUpdateCard pins the `Hook fired` card: one settled
-// tool call per hook_update frame, gated on hooks.showStatus, naming the hook and
-// carrying no outcome text.
 func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	t.Run("ShownWhenEnabled", func(t *testing.T) {
 		events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
@@ -102,8 +97,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 			"hookId": "h1", "operationId": "op-1", "name": "probe", "status": hookStatusCompleted, "actionType": "runCommand",
 		}
 		frames := map[string]map[string]any{
-			// The block under params._meta rather than params.update._meta: the
-			// update object the handler receives then carries no kiro block at all.
+			// Block under params._meta, so the update object carries no kiro block.
 			"no_meta_on_update": {"sessionUpdate": "session_info_update"},
 			// One level too shallow: a decoder reading update._meta.hook.
 			"under_meta_not_kiro": {
@@ -157,9 +151,6 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	})
 }
 
-// TestHandleSessionInfoUpdate_HookCardSourcePath pins the hook file a Hook fired card
-// opens: the workspace-relative file KAS's hook id names, and "" whenever the id names
-// no file inside the workspace.
 func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {
 	cases := map[string]struct {
 		workDir, hookID, want string
@@ -194,9 +185,7 @@ func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {
 	}
 }
 
-// TestKnownSessionInfoKinds_HookUpdateIsConsumed pins hook_update out of the
-// deliberately-ignored table: a consumed kind listed there would log a decode miss as a
-// known drop.
+// A consumed kind listed in the ignored table would log a decode miss as a known drop.
 func TestKnownSessionInfoKinds_HookUpdateIsConsumed(t *testing.T) {
 	if _, ok := knownSessionInfoKinds["hook_update"]; ok {
 		t.Fatal("knownSessionInfoKinds lists hook_update, which is consumed by handleHookUpdate")

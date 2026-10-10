@@ -13,8 +13,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-// laneless are the kinds belonging to no lane. They render in EVERY view, which is
-// what makes them part of both orderings the property checks.
+// They render in EVERY view, which is what makes them part of both orderings the property checks.
 var laneless = map[marotte.EntryKind]bool{
 	marotte.EntryKindTurnBind:         true,
 	marotte.EntryKindSteer:            true,
@@ -85,7 +84,7 @@ func TestArrivalOrderIsPersistedOrder(t *testing.T) {
 		}
 		d.step(n+1, -1, "")
 
-		persisted, err := lg.TurnRange(opened.Turn, 0)
+		persisted, _, err := lg.TurnPage(opened.Turn, 0)
 		if err != nil {
 			rt.Fatalf("read the turn back: %v", err)
 		}
@@ -97,8 +96,6 @@ func TestArrivalOrderIsPersistedOrder(t *testing.T) {
 	})
 }
 
-// driver folds one generated interleaving and records, per entry id, the arrival
-// ordinal of the event that produced it.
 type driver struct {
 	rt   *rapid.T
 	ctx  context.Context
@@ -143,7 +140,6 @@ func (d *driver) arrivalOf(e *marotte.Entry, at int) int {
 	return at
 }
 
-// noteOpenEntries records the ordinal at which each still-open entry opened.
 func (d *driver) noteOpenEntries(at int) {
 	for _, oe := range d.turn.OpenEntries() {
 		if _, known := d.openedAt[oe.ID]; !known {
@@ -207,8 +203,6 @@ func (d *driver) apply(at, kind int, lane string) ([]Sealed, error) {
 	return nil, nil
 }
 
-// checkPersistedMatchesBroadcast checks the log read back off disk against the sequence
-// handed to the caller to broadcast.
 func (d *driver) checkPersistedMatchesBroadcast(persisted []marotte.Entry) {
 	if len(persisted) != len(d.broadcast) {
 		d.rt.Fatalf("the log holds %d entries and %d were handed back for broadcast:\n log %v\n bus %v",

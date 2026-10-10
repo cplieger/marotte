@@ -14,7 +14,7 @@ import (
 // lateWrite is one handler that persists something AFTER the frame that caused it.
 type lateWrite func(*Translator, context.Context, marotte.ChatID)
 
-// headerWrites are the sites that write the chat HEADER through ChatRecords.Mutate, keyed
+// headerWrites are the sites that write the chat HEADER through chatRecords.Mutate, keyed
 // by the log message the site emits on a real failure.
 func headerWrites() map[string]lateWrite {
 	permID := int64(1)

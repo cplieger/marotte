@@ -26,7 +26,6 @@ func userMessageIDParams(t *testing.T, sessionID, kasID string) []byte {
 	})
 }
 
-// bindsOf decodes every turn_bind in entries, in file order.
 func bindsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnBind {
 	t.Helper()
 	var out []marotte.EntryTurnBind

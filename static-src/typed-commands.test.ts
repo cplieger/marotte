@@ -206,3 +206,52 @@ describe("handleTypedCommand /drop", () => {
     expect(store.isThinking("c1")).toBe(true);
   });
 });
+
+describe("handleTypedCommand /tangent merge", () => {
+  function seed(tangent: boolean): void {
+    store.setSessions([
+      {
+        id: "c1",
+        name: "test",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        turns: new Map(),
+        turn_order: [],
+        turn_count: 1,
+        has_more: false,
+        thinking: false,
+        working_label: "Thinking",
+        tangent,
+      },
+    ]);
+    store.setActive("c1");
+  }
+
+  it("claims the two-word verb with any spacing, and explains itself on an ordinary chat", () => {
+    seed(false);
+    expect(handleTypedCommand("c1", "/tangent   MERGE")).toBe(true);
+    expect(toasts).toEqual([
+      "This chat has no parent chat to merge into. Start a tangent with /tangent.",
+    ]);
+  });
+
+  it("refuses mid-turn rather than queueing a summary behind the turn", () => {
+    seed(true);
+    store.setThinking("c1", true);
+    expect(handleTypedCommand("c1", "/tangent merge")).toBe(true);
+    expect(toasts).toEqual(["Wait for this turn to finish, then merge."]);
+  });
+
+  it("still leaves a sentence that starts with the verb alone", () => {
+    seed(true);
+    expect(handleTypedCommand("c1", "/tangent merge it all")).toBe(false);
+  });
+});

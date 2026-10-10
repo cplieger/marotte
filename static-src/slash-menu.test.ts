@@ -76,6 +76,7 @@ describe("menuEntries", () => {
       "marotte:memories",
       "marotte:rewind",
       "marotte:tangent",
+      "marotte:tangent merge",
       "prompt:review",
       "steering:api-style",
       "goal:goal",
@@ -104,13 +105,13 @@ describe("slashQuery", () => {
 describe("matchEntries", () => {
   it("puts prefix matches ahead of substring ones", () => {
     const got = matchEntries("t", menuEntries(CATALOG)).map((e) => e.name);
-    expect(got).toEqual(["tangent", "compact", "api-style"]);
+    expect(got).toEqual(["tangent", "tangent merge", "compact", "api-style"]);
   });
 });
 
 describe("entryEnabled", () => {
   it("greys only server-resolved rows while a turn runs", () => {
-    const [verb, , , , , prompt] = menuEntries(CATALOG);
+    const [verb, , , , , , prompt] = menuEntries(CATALOG);
     expect(verb && entryEnabled(verb, true)).toBe(true);
     expect(prompt && entryEnabled(prompt, true)).toBe(false);
     expect(prompt && entryEnabled(prompt, false)).toBe(true);
@@ -331,7 +332,6 @@ describe("the # context menu", () => {
         repo: "marotte",
         is_repo: true,
         branch: "main",
-        remote: "",
         ahead: 0,
         behind: 0,
         files: [],

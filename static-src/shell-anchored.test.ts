@@ -18,7 +18,6 @@ function windowH(): number {
   return doc.documentElement.clientHeight;
 }
 
-/** Resize the iframe and wait one frame for layout. */
 async function resizeFrame(h: number): Promise<void> {
   frame.height = String(h);
   await new Promise<void>((r) => {

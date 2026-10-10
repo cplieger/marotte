@@ -28,6 +28,14 @@ import {
   steerIDFor,
   steerCount,
 } from "../store.js";
+import {
+  beginStepMessage,
+  forgetAllStepSteers,
+  forgetRunStepSteers,
+  retireStepSteers,
+  stepSteers,
+} from "../run-step-steers.js";
+import { appendRunEntry, forgetRun, openRunTurn, registerRunLogObserver } from "../run-store.js";
 import type { Session } from "../types.js";
 import type { Entry } from "../wire/types.gen.js";
 
@@ -266,5 +274,98 @@ describe("agent_notice", () => {
     fireSSE("agent_notice", "c1", { severity: "info", text: "progress" });
     expect(steerCount("c1")).toBe(0);
     expect(get("c1")?.steers).toBeUndefined();
+  });
+});
+
+// A run step's row names its run and step: it is that step's dock row, never a chat's.
+describe("a run step's steer_queued", () => {
+  const WF = "wf_sm";
+  const REVIEW = "root/review";
+
+  // As boot.ts wires it: the run's log reports each steer entry and each forgotten run.
+  registerRunLogObserver({ steer: retireStepSteers, forget: forgetRunStepSteers });
+
+  beforeEach(() => {
+    forgetRun(WF);
+  });
+
+  /** A step turn in the run's log, so the step's `steer` entry has somewhere to land. */
+  function stepTurn(turn: string, nodePath: string): void {
+    openRunTurn(WF, {
+      id: `${turn}-open`,
+      turn,
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "workflow_step", node_path: nodePath, n: 1 },
+    });
+  }
+
+  function stepSteerRead(turn: string, steerID: string, seq = 1): void {
+    appendRunEntry(WF, {
+      id: steerID,
+      turn,
+      kind: "steer",
+      seq,
+      ts: 2,
+      payload: { text: "check the tests", origin: "user", state: "read" },
+    });
+  }
+
+  function frame(steerID: string): Record<string, unknown> {
+    return {
+      steer_id: steerID,
+      text: "check the tests",
+      origin: "user",
+      workflow_id: WF,
+      node_path: REVIEW,
+    };
+  }
+
+  it("lands on the step's dock and on no chat's", () => {
+    fireSSE("steer_queued", "c1", frame("steer-s1"));
+    expect(stepSteers(WF, REVIEW)).toEqual([
+      { id: "steer-s1", text: "check the tests", origin: "user" },
+    ]);
+    expect(steerCount("c1")).toBe(0);
+  });
+
+  it("confirms the row Send drew, leaving one row", () => {
+    beginStepMessage(WF, REVIEW, "m-1", "check the tests", true);
+    fireSSE("steer_queued", "c1", frame("steer-m-1"));
+    expect(stepSteers(WF, REVIEW)).toEqual([
+      { id: "steer-m-1", text: "check the tests", origin: "user" },
+    ]);
+  });
+
+  it("leaves the dock on the step's steer entry in the run's log", () => {
+    stepTurn("t-review", REVIEW);
+    fireSSE("steer_queued", "c1", frame("steer-s2"));
+    stepSteerRead("t-review", "steer-s2");
+    expect(stepSteers(WF, REVIEW)).toEqual([]);
+  });
+
+  it("stays when the same id is read in another step's turn", () => {
+    stepTurn("t-build", "root/build");
+    fireSSE("steer_queued", "c1", frame("steer-s3"));
+    stepSteerRead("t-build", "steer-s3");
+    expect(stepSteers(WF, REVIEW).map((r) => r.id)).toEqual(["steer-s3"]);
+  });
+
+  it("stays retired when a reconnect replays the frame of a row the log read", () => {
+    stepTurn("t-review", REVIEW);
+    fireSSE("steer_queued", "c1", frame("steer-s4"));
+    fireSSE("steer_queued", "c1", frame("steer-s5"));
+    stepSteerRead("t-review", "steer-s4");
+    stepSteerRead("t-review", "steer-s5", 2);
+    forgetAllStepSteers();
+    fireSSE("steer_queued", "c1", frame("steer-s4"));
+    expect(stepSteers(WF, REVIEW)).toEqual([]);
+  });
+
+  it("goes with its run when the run is forgotten", () => {
+    fireSSE("steer_queued", "c1", frame("steer-s6"));
+    forgetRun(WF);
+    expect(stepSteers(WF, REVIEW)).toEqual([]);
   });
 });

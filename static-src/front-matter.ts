@@ -11,7 +11,7 @@ export interface FrontMatterField {
   items: string[];
 }
 
-export interface FrontMatterSplit {
+interface FrontMatterSplit {
   /** Whether a well-formed `---` fenced block opened the document. */
   present: boolean;
   fields: FrontMatterField[];
@@ -182,7 +182,6 @@ function parseFlowSequence(val: string): string[] {
   return out;
 }
 
-/** Count a line's indentation, treating a tab as one level. */
 function leadingSpaces(line: string): number {
   let n = 0;
   for (const c of line) {

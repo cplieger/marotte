@@ -1,6 +1,6 @@
 // Package settings is the one reader for <configDir>/config.json: Field (typed key), FieldInto
 // (pointer target) and FieldStrict (unreadable kept apart from absent, for a caller gating a
-// destructive action), all through one freshness-checked cache capped at MaxBytes.
+// destructive action), all through one freshness-checked cache capped at maxBytes.
 //
 // There is no exported raw-bytes reader: the cache's slice is shared by every caller, so an
 // exported accessor would let any caller corrupt every other's settings.
@@ -22,18 +22,16 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// MaxBytes caps config.json reads, matching the HTTP path's webhttp.MaxJSONBody.
-const MaxBytes = 1 << 20
+// maxBytes caps config.json reads, matching the HTTP path's webhttp.MaxJSONBody.
+const maxBytes = 1 << 20
 
-// filename is the canonical settings file name.
 const filename = "config.json"
 
 // Filename is the basename of marotte's config file (not kiro-cli's cli.json).
 const Filename = filename
 
-// cache provides freshness-checked caching for config.json reads. Staleness is three legs,
-// atomicfile.FileIdentity (mtime AND os.SameFile) plus size: neither pair alone catches both
-// a same-length rename within one tick and a different-length in-place rewrite.
+// Staleness is three legs, atomicfile.FileIdentity (mtime AND os.SameFile) plus size: neither pair
+// alone catches both a same-length rename within one tick and a different-length in-place rewrite.
 type cache struct {
 	id        atomicfile.FileIdentity
 	sfGroup   singleflight.Group
@@ -113,7 +111,7 @@ func (c *cache) reload() generation {
 	return generation{data: data, gen: c.store(data, readInfo)}
 }
 
-// readRegular reads path under MaxBytes, refusing anything but a regular file (and a final
+// readRegular reads path under maxBytes, refusing anything but a regular file (and a final
 // symlink), and returns the FileInfo of the descriptor read. OpenRegular because os.Open
 // blocks forever on a FIFO, which inside the singleflight slot would wedge every reader.
 func readRegular(path string) (data []byte, info os.FileInfo, err error) {
@@ -122,15 +120,14 @@ func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 		return nil, nil, err
 	}
 	defer func() { _ = f.Close() }()
-	data, err = io.ReadAll(io.LimitReader(f, MaxBytes))
+	data, err = io.ReadAll(io.LimitReader(f, maxBytes))
 	if err != nil {
 		return nil, nil, err
 	}
 	return data, info, nil
 }
 
-// hit reports the cached bytes when info matches what they were read from; a zero identity
-// reports Changed.
+// A zero identity reports Changed.
 func (c *cache) hit(info os.FileInfo) (generation, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -140,7 +137,6 @@ func (c *cache) hit(info os.FileInfo) (generation, bool) {
 	return generation{data: c.data, gen: c.gen}, true
 }
 
-// store records freshly read bytes under the identity they were read at.
 func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -163,13 +159,6 @@ func (c *cache) forget() uint64 {
 		c.gen++
 	}
 	return c.gen
-}
-
-// readBytes returns the raw config.json content for configDir, cached; (nil, nil) when the
-// file is missing or configDir is empty. UNEXPORTED: the slice IS the shared cache's own.
-func readBytes(ctx context.Context, configDir string) ([]byte, error) {
-	g := readGeneration(ctx, configDir)
-	return g.data, g.err
 }
 
 func readGeneration(ctx context.Context, configDir string) generation {

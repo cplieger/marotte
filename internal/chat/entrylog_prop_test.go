@@ -44,7 +44,7 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 		}
 		defer func() { _ = lg.Close() }()
 
-		survived, err := lg.Window(len(written)+8, "")
+		survived, err := lg.window(len(written)+8, "")
 		if err != nil {
 			rt.Fatalf("read the surviving log: %v", err)
 		}
@@ -56,15 +56,13 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 	})
 }
 
-// writeUnterminatedLog builds a log of one or two turns with nothing closed, as a mid-turn crash leaves, and returns
-// the entries in append order.
 func writeUnterminatedLog(rt *rapid.T, ctx context.Context, root string, h EntryHeader) []marotte.Entry {
 	lg, err := OpenEntryLog(ctx, root, h)
 	if err != nil {
 		rt.Fatalf("open entry log: %v", err)
 	}
 	defer func() { _ = lg.Close() }()
-	if err := h.Write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := h.write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
 		rt.Fatalf("write header: %v", err)
 	}
 
@@ -323,7 +321,7 @@ func appendStep(t *testing.T, ctx context.Context, lg *EntryLog, turn, tag strin
 
 func mustRunRange(t *testing.T, _ context.Context, lg *EntryLog, turn string) []marotte.Entry {
 	t.Helper()
-	entries, err := lg.TurnRange(turn, 0)
+	entries, err := turnRange(lg, turn, 0)
 	if err != nil {
 		t.Fatalf("read turn %s: %v", turn, err)
 	}
@@ -332,7 +330,7 @@ func mustRunRange(t *testing.T, _ context.Context, lg *EntryLog, turn string) []
 
 func nodePathOf(t *testing.T, lg *EntryLog, turn string) string {
 	t.Helper()
-	entries, err := lg.TurnRange(turn, 0)
+	entries, err := turnRange(lg, turn, 0)
 	if err != nil {
 		t.Fatalf("read turn %s: %v", turn, err)
 	}
@@ -414,8 +412,8 @@ type revertScene struct {
 	records  []recordedRevert
 }
 
-// recordedRevert is one record with its carrier. A later revert taking that carrier hides the record too: the older
-// cut is inside the newer range, so one boundary row shows.
+// A later revert taking that carrier hides the record too: the older cut is inside the newer range,
+// so one boundary row shows.
 type recordedRevert struct{ id, carrier string }
 
 func openRevertScene(rt *rapid.T, ctx context.Context, root string) *revertScene {
@@ -628,9 +626,9 @@ func (s *revertScene) betweenTurns(tag string) {
 	if !ok {
 		s.rt.Fatalf("%s: the model holds no surviving turn, which the carrier rule makes impossible", tag)
 	}
-	before, _ := s.log.NewestSeq(turn)
+	before, _ := s.log.newestSeq(turn)
 	e := entryOf("", "", "compaction-"+tag, marotte.EntryKindCompaction, marotte.EntryCompaction{Summary: tag})
-	minted, err := s.log.AppendBetweenTurns(s.ctx, e)
+	minted, err := s.log.appendBetweenTurns(s.ctx, e)
 	if err != nil {
 		s.rt.Fatalf("%s: AppendBetweenTurns: %v", tag, err)
 	}
@@ -651,7 +649,7 @@ func (s *revertScene) betweenTurns(tag string) {
 	if !holdsEntryID(entries, e.ID) {
 		s.rt.Fatalf("%s: All() does not hold the between-turns entry %q, so it landed where no reader looks", tag, e.ID)
 	}
-	w, err := s.log.Window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "")
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", tag, err)
 	}
@@ -674,7 +672,7 @@ func (s *revertScene) check(when string) {
 	if got := railIDs(s.log); !slices.Equal(got, surviving) {
 		s.rt.Fatalf("%s: RailRows() names %v, want %v", when, got, surviving)
 	}
-	count, _ := s.log.Counters()
+	count, _ := counters(s.log)
 	if want := uint64(len(surviving)); count != want {
 		s.rt.Fatalf("%s: turn_count is %d, want the surviving count %d over %v", when, count, want, surviving)
 	}
@@ -687,7 +685,7 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: openTurnsLocked() names %v, want none: every generated turn is closed and no carrier is left open",
 			when, open)
 	}
-	w, err := s.log.Window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "")
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", when, err)
 	}
@@ -698,15 +696,15 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: HasMore is true over a page of every one of the %d surviving turns", when, len(surviving))
 	}
 	for id := range s.reverted {
-		if _, err := s.log.TurnRange(id, 0); !errors.Is(err, ErrTurnNotInLog) {
+		if _, err := turnRange(s.log, id, 0); !errors.Is(err, ErrTurnNotInLog) {
 			s.rt.Fatalf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog for a reverted turn", when, id, err)
 		}
-		if _, err := s.log.Window(1, id); err == nil {
+		if _, err := s.log.window(1, id); err == nil {
 			s.rt.Fatalf("%s: Window(1, %q) refused nothing, want the refusal the chat route renders as 400", when, id)
 		}
 	}
 	for _, id := range surviving {
-		if _, err := s.log.TurnRange(id, 0); err != nil {
+		if _, err := turnRange(s.log, id, 0); err != nil {
 			s.rt.Fatalf("%s: TurnRange(%q) = %v, want the surviving turn's own entries", when, id, err)
 		}
 	}
@@ -749,7 +747,7 @@ func (s *revertScene) check(when string) {
 // checkStraddlerSurvivedWhole pins that the straddled turn keeps its three entries and its closer, with no aborted result or
 // second closer.
 func (s *revertScene) checkStraddlerSurvivedWhole(when, turn string) {
-	entries, err := s.log.TurnRange(turn, 0)
+	entries, err := turnRange(s.log, turn, 0)
 	if err != nil {
 		s.rt.Fatalf("%s: TurnRange(the straddler %q) = %v, want it whole", when, turn, err)
 	}

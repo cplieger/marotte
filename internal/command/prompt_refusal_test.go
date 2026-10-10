@@ -15,7 +15,7 @@ import (
 
 // tombstonedChats is a chat store that refuses every write the way the real one
 // refuses a write to an id deleted inside the tombstone window.
-type tombstonedChats struct{ ChatStore }
+type tombstonedChats struct{ chatStore }
 
 func (tombstonedChats) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", chat.ErrTombstoned
@@ -31,7 +31,7 @@ type promptSpy struct {
 
 // OpenTurn relays the store's tombstone the way the registry does: the turn_open
 // is the first write a prompt makes, and a tombstoned chat refuses it.
-func (s *promptSpy) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
+func (*promptSpy) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, error) {
 	return "", chat.ErrTombstoned
 }
 
@@ -62,7 +62,7 @@ func TestCmdPrompt_RefusesATombstonedChatBeforeSpawningABridge(t *testing.T) {
 	roles.bridges = spy
 	roles.bus = spy
 
-	_, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+	_, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 
 	if err == nil {
 		t.Fatal("CmdPrompt on a tombstoned chat returned no error; the turn ran against a chat with no record")
@@ -75,8 +75,6 @@ func TestCmdPrompt_RefusesATombstonedChatBeforeSpawningABridge(t *testing.T) {
 	}
 }
 
-// promptBridgeSpy hands the prompt path a live bridge and records the events the
-// turn broadcasts.
 type promptBridgeSpy struct {
 	hostDouble
 	bridge Bridge
@@ -131,7 +129,7 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			join := &promptJoin{}
 			roles.lifecycle = join
 
-			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+			if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 				t.Fatalf("CmdPrompt = %v, want the early ack", err)
 			}
 			join.join()
@@ -187,7 +185,7 @@ func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
 			join := &promptJoin{}
 			roles.lifecycle = join
 
-			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+			if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 				t.Fatalf("CmdPrompt = %v, want the early ack", err)
 			}
 			join.join()
@@ -205,7 +203,7 @@ func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
 		bridge:     &recordingBridge{},
 	}
 	readiness := new(AuthReadiness)
-	readiness.Record(errors.New("backend rejected the credential"))
+	readiness.record(errors.New("backend rejected the credential"))
 	roles := promptRolesOf(spy)
 	roles.bridges = spy
 	roles.bus = spy
@@ -213,7 +211,7 @@ func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
 	join := &promptJoin{}
 	roles.lifecycle = join
 
-	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
 	}
 	join.join()

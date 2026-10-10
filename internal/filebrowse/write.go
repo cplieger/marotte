@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/filemode"
@@ -15,42 +16,46 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// errStaleWrite is the client sentinel for a refused stale write. Named so the
-// editor can branch on it rather than matching prose.
+// errStaleWrite is the sentence on a refused stale save.
 const errStaleWrite = "file changed on disk since you opened it"
 
-// chmodInRoot is a test seam over os.Root.Chmod.
+// writeBodyLimit bounds the JSON body: a WholeFileMax file of control bytes encodes each
+// byte as a six-byte \u00XX escape.
+const writeBodyLimit = 6*WholeFileMax + 1024
+
 var chmodInRoot = (*os.Root).Chmod
 
-// writeBody is the PUT /api/file payload.
 type writeBody struct {
-	Content string `json:"content"`
-	// ExpectedHash is the content_hash the client received when it loaded the file. Optional:
-	// omitting it writes unconditionally, for non-editor writers.
-	ExpectedHash string `json:"expected_hash"`
+	// FileID is the identity the client's buffer was read under. Absent (or null) writes
+	// unconditionally, for non-editor writers and the editor's explicit Overwrite.
+	FileID  *string `json:"file_id"`
+	Content string  `json:"content"`
 }
 
 func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
-	webhttp.LimitBody(w, r, MaxFileSize)
-	var body writeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("filebrowse: write body too large",
-				"path", logsafe.Field(l.abs), "limit", MaxFileSize, "error", logsafe.Field(maxErr.Error()))
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpreply.ErrorJSON(errFileTooLarge))
-			return
-		}
-		httpreply.BadRequest(w, "invalid json")
+	body, ok := decodeWriteBody(w, r, l)
+	if !ok {
 		return
 	}
-	// A clean 400 for a directory target rather than a 500 whose EISDIR text leaks the resolved
-	// path.
-	if info, err := l.m.root.Stat(l.rel()); err == nil && info.IsDir() {
+	if l.isMountPoint() {
 		httpreply.BadRequest(w, "path is a directory")
 		return
 	}
-	if !staleWriteAllowed(w, r, l, body) {
+	// Pinned once: the stale read, the mode carry-over, the write and the chmod all name
+	// the basename through this root, so an ancestor swapped for a symlink after the policy
+	// check cannot redirect any of them.
+	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	if err != nil {
+		writeFileError(w, l, err)
+		return
+	}
+	defer parent.Close()
+	existing, statErr := parent.Lstat(base)
+	if statErr == nil && existing.IsDir() {
+		httpreply.BadRequest(w, "path is a directory")
+		return
+	}
+	if body.FileID != nil && !staleWriteAllowed(w, r, l, parent, base, *body.FileID) {
 		return
 	}
 	if refusedBySaveHook(w, l, hook, []byte(body.Content)) {
@@ -61,29 +66,56 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	// no mode and the directory decides.
 	var opts []atomicfile.Option
 	var restore os.FileMode
-	if info, err := l.m.root.Lstat(l.rel()); err == nil && info.Mode().IsRegular() {
-		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
+	if statErr == nil && existing.Mode().IsRegular() {
+		opts, restore = filemode.RewriteOptions(existing.Mode().Perm())
 	}
-	// One confined atomic write. O_NOFOLLOW would be inert here (os.Root.OpenFile adds it and
-	// re-resolves on ELOOP, go1.27.0 src/os/root_unix.go:85-101), and the sensitive paths live
-	// inside the /config mount. Temp-then-rename refuses a symlink target up front, and a lost race
-	// replaces only the link.
-	if _, err := atomicfile.WriteFileInRoot(r.Context(), l.m.root, l.rel(),
-		[]byte(body.Content), opts...); err != nil {
+	data := []byte(body.Content)
+	if _, err := atomicfile.WriteFileInRoot(r.Context(), parent, base, data, opts...); err != nil {
 		writeFileError(w, l, err)
 		return
 	}
 	if restore != 0 {
-		if err := chmodInRoot(l.m.root, l.rel(), restore); err != nil {
+		if err := chmodInRoot(parent, base, restore); err != nil {
 			slog.Debug("filebrowse: could not restore the file's mode after a write",
 				"path", logsafe.Field(l.abs), "mode", restore, "error", logsafe.Field(err.Error()))
 		}
 	}
-	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(body.Content))
+	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(data))
 	if hook.Saved != nil {
 		hook.Saved()
 	}
-	webhttp.Ok(w)
+	webhttp.WriteJSON(w, FileWriteResult{OK: true, FileID: fileIDOf(data), Size: int64(len(data))})
+}
+
+// decodeWriteBody reads and validates the PUT body before anything on disk is opened.
+func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, bool) {
+	webhttp.LimitBody(w, r, writeBodyLimit)
+	var body writeBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			slog.Warn("filebrowse: write body too large",
+				"path", logsafe.Field(l.abs), "limit", writeBodyLimit, "error", logsafe.Field(maxErr.Error()))
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				FileRefusal{Error: "file too large", Code: RefusalTooLarge})
+			return writeBody{}, false
+		}
+		httpreply.BadRequest(w, "invalid json")
+		return writeBody{}, false
+	}
+	if body.FileID != nil {
+		if _, err := parseFileID(*body.FileID); err != nil {
+			webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+				FileRefusal{Error: errInvalidFileID.Error(), Code: RefusalInvalidFileID})
+			return writeBody{}, false
+		}
+	}
+	if len(body.Content) > WholeFileMax {
+		size := int64(len(body.Content))
+		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			FileRefusal{Error: "file too large", Code: RefusalTooLarge, Size: &size})
+		return writeBody{}, false
+	}
+	return body, true
 }
 
 func refusedBySaveHook(w http.ResponseWriter, l loc, hook SaveHook, content []byte) (answered bool) {
@@ -100,8 +132,7 @@ func refusedBySaveHook(w http.ResponseWriter, l loc, hook SaveHook, content []by
 	return true
 }
 
-// writeFileError maps a confined-write failure onto the HTTP status the client needs, off
-// atomicfile's sentinels and the errno beneath; a full volume gets its own status and message.
+// A full volume gets its own status and message.
 func writeFileError(w http.ResponseWriter, l loc, err error) {
 	switch {
 	case errors.Is(err, atomicfile.ErrSymlinkTarget), errors.Is(err, atomicfile.ErrNotRegular):
@@ -121,35 +152,60 @@ func writeFileError(w http.ResponseWriter, l loc, err error) {
 }
 
 // staleWriteAllowed is the stale-write guard: it reports whether the write may proceed, having
-// written the 409 (or 500) itself when not. Not locked: the compare-then-write race needs
-// cross-process locking, which the single atomic writer does not warrant. An absent file is not
-// stale.
-func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, body writeBody) bool {
-	if body.ExpectedHash == "" {
-		return true
-	}
-	current, err := atomicfile.ReadBoundedInRoot(r.Context(), l.m.root, l.rel(), MaxFileSize)
+// written the refusal itself when not. It compares a fresh read's identity, never a stored one.
+// Not locked: the compare-then-write race needs cross-process locking, which the single atomic
+// writer does not warrant. An absent file is not stale.
+func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, parent *os.Root, base, want string) bool {
+	f, _, err := atomicfile.OpenRegularInRootNoFollow(parent, base)
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
 	if err != nil {
-		slog.Warn("filebrowse: stale-check read failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON("write failed"))
+		if errors.Is(err, atomicfile.ErrRaced) {
+			writeChanged(w, "")
+			return false
+		}
+		writeFileError(w, l, err)
 		return false
 	}
-	got := contentHash(current)
-	if got == body.ExpectedHash {
+	defer f.Close()
+	current, _, err := readStable(r.Context(), f)
+	if err != nil {
+		// Not writeStableError: that is the viewer's mapping, and a save refused for size is a
+		// stale save the editor offers Overwrite and Download for.
+		if tl, ok := errors.AsType[*tooLargeError](err); ok {
+			size := tl.size
+			webhttp.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
+				Error: errStaleWrite, Code: RefusalChanged, ContentKind: ContentTooLarge, Size: &size,
+			})
+			return false
+		}
+		writeOpenError(w, l.abs, err)
+		return false
+	}
+	got := fileIDOf(current)
+	if got == want {
 		return true
 	}
 	slog.Info("filebrowse: refused a stale write",
-		"path", logsafe.Field(l.abs), "expected", logsafe.Field(body.ExpectedHash), "actual", got)
-	// The current content rides the 409 so the client can show what changed
-	// instead of asking the user to reload and compare by eye.
-	webhttp.WriteJSONStatus(w, http.StatusConflict, map[string]string{
-		"error":         errStaleWrite,
-		"content":       string(current),
-		"content_hash":  got,
-		"expected_hash": body.ExpectedHash,
-	})
+		"path", logsafe.Field(l.abs), "expected", logsafe.Field(want), "actual", got)
+	webhttp.WriteJSONStatus(w, http.StatusConflict, staleRefusal(current, got))
 	return false
+}
+
+// staleRefusal carries the disk text only when JSON can carry it exactly: a NUL or invalid
+// UTF-8 would arrive as U+FFFD, which the client could then save over the real bytes.
+func staleRefusal(current []byte, id string) FileRefusal {
+	size := int64(len(current))
+	out := FileRefusal{Error: errStaleWrite, Code: RefusalChanged, FileID: id, Size: &size}
+	switch {
+	case looksBinary(current):
+		out.ContentKind = ContentBinary
+	case !utf8.Valid(current):
+		out.ContentKind = ContentNotUTF8
+	default:
+		text := string(current)
+		out.ContentKind, out.Content = ContentText, &text
+	}
+	return out
 }

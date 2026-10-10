@@ -28,10 +28,10 @@ var CancelGrace = 10 * time.Second
 // shutdown and the grace fires first decides the outcome.
 var ErrCancelGraceExpired = errors.New("cancel grace expired")
 
-// CmdCreateChat creates a new chat, opens its tab, and returns both, so the caller can address what
+// cmdCreateChat creates a new chat, opens its tab, and returns both, so the caller can address what
 // it created. It mints the id when the envelope carries none; a client-minted id is still accepted
 // (validChatID gates it).
-func CmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -45,7 +45,7 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 	if len(name) > marotte.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ValidIdent(p.Model) || !ValidIdent(p.OpID) {
+	if !validIdent(p.Model) || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
@@ -77,17 +77,15 @@ func openedResponse(opened *ChatOpened, extra map[string]any) any {
 	return responseWith(body)
 }
 
-// CmdDeleteChat removes a chat: tear down its side effects, remove the
-// record, then close its tabs. The order is the coordinator's — the record
-// leads, so an open_tab that slips in after finds no chat and is refused.
-func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+// cmdDeleteChat removes a chat through Membership.DeleteChatAndCloseTabs, which owns the order.
+func cmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.CloseTabCommand
 	if len(cmd.Payload) > 0 {
 		// Optional and carries only an op_id; ignored rather than refused if
 		// unreadable, since the subject is the envelope's chat id.
 		_ = json.Unmarshal(cmd.Payload, &p)
 	}
-	if !ValidIdent(p.OpID) {
+	if !validIdent(p.OpID) {
 		p.OpID = ""
 	}
 	if err := mem.DeleteChatAndCloseTabs(ctx, cmd.ChatID, p.OpID); err != nil {
@@ -96,15 +94,15 @@ func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 	return responseOK, nil
 }
 
-// CmdCancel cancels the active turn, if any. The turn's end leaves its unread
+// cmdCancel cancels the active turn, if any. The turn's end leaves its unread
 // steers for the next send; a payload lead names the row the reader wants first. It
 // never waits on the steer lock, so a stop never queues behind a delete.
-func CmdCancel(
+func cmdCancel(
 	ctx context.Context,
-	bridges BridgeAccess,
-	perms PendingPermAccess,
-	terms TerminalAccess,
-	stops TurnStopper,
+	bridges bridgeAccess,
+	perms pendingPermAccess,
+	terms terminalAccess,
+	stops turnStopper,
 	queue SteerQueue,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
@@ -133,7 +131,7 @@ func CmdCancel(
 	if queue != nil && p.Lead != "" {
 		undoLead = queue.SetSteerLead(cmd.ChatID, p.Lead)
 	}
-	if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
+	if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
 		undoLead()
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
@@ -149,14 +147,14 @@ func CmdCancel(
 // closeChatTeardown is the tab-close teardown: the turn, the runs and the process go; the chat
 // RECORD stays. Ordering is the contract: the turn is cancelled first (graceful stop), then the
 // runs (durable state a dead process would only pause), then the process teardown, which flushes
-// the in-flight buffer and kills the chat's agent terminals.
-func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, stops TurnStopper, teardown ChatTeardown, chatID marotte.ChatID) {
+// the in-flight buffer and kills the chat's agent terminals. Pending asks are left for that bridge's
+// end to retire as ended: a clear here would drop the cards without saying why.
+func closeChatTeardown(ctx context.Context, bridges bridgeAccess, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID) {
 	slog.Info("chat tab closed; tearing down its bridge", "chat_id", chatID)
 	stops.RequestStop(chatID)
-	perms.ClearPendingPermsForChat(chatID)
 	teardown.BeginChatTeardown(chatID, true)
 	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
+		if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
 		}
 	}
@@ -165,29 +163,24 @@ func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingP
 
 // deleteChatTeardown is closeChatTeardown's delete grade, for a chat the
 // retention-off close escalation has already erased: same graceful cancel
-// first, then the delete-grade teardown driven from the session chain
-// captured before the record went (a record-reading teardown would no-op on
-// a deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
-func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, stops TurnStopper, teardown ChatTeardown, chatID marotte.ChatID, sessionChain []string) {
+// first, then the delete-grade teardown driven from the session chain the
+// record's delete answered (a record-reading teardown would no-op on a
+// deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
+func deleteChatTeardown(ctx context.Context, bridges bridgeAccess, stops turnStopper, teardown chatTeardown, chatID marotte.ChatID, sessionChain []string) {
 	stops.RequestStop(chatID)
-	perms.ClearPendingPermsForChat(chatID)
 	teardown.BeginChatTeardown(chatID, false)
 	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
+		if err := sb.Notify(ctx, marotte.MethodCancel, sessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
 		}
 	}
 	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain, RunStopTabClosed)
 }
 
-// CmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer
+// cmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer
 // saves its rule at user scope: the profile is switched to Custom first (Customize), and only
 // once that write landed does kiro-cli get the answer, whose rule it writes into the same file.
-func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, profiles ProfileSwitcher, cmd *marotte.ClientCommand) (any, error) {
-	sb := bridges.Bridge(cmd.ChatID)
-	if sb == nil {
-		return nil, StatusError(http.StatusBadRequest, errNoBridge)
-	}
+func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profileSwitcher, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -210,7 +203,7 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	// Claim the request before answering it: two tabs on one chat can both
 	// see the card, and kiro-cli silently discards the second answer for a
 	// request id already resolved.
-	pending, offered := perms.TakePendingPermissionOption(cmd.ChatID, p.RequestID, p.OptionID, marotte.SettledByUser)
+	reply, pending, offered := perms.TakePendingPermissionOption(cmd.ChatID, p.RequestID, p.OptionID, marotte.SettledByUser)
 	if !pending {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
@@ -229,18 +222,32 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	default:
 		outcome = marotte.PermissionOutcomeWithRejectionReason(p.OptionID, reason)
 	}
+	return answerResponse(ctx, "permission", cmd.ChatID, reply, outcome)
+}
+
+// answerResponse answers the answering surface with how its claimed ask settled. Only a delivered
+// answer succeeds, so the dispatcher discharges waiting for nothing else: a withdrawn ask is 410
+// ask_withdrawn (the settlement that won retires the card), a reopened one 502 answer_not_delivered
+// (the chat stays waiting and the surface re-offers its card).
+func answerResponse(ctx context.Context, kind string, chatID marotte.ChatID, reply AskReply, result any) (any, error) {
 	// A claimed ask must be answered or the turn waits forever, and Respond refuses a done
 	// context: the client may have gone during the switch to Custom.
-	if err := sb.Respond(durable.Context(ctx), p.RequestID, outcome, nil); err != nil {
-		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
+	switch outcome, err := reply.Respond(durable.Context(ctx), result); outcome {
+	case AnswerDelivered:
+		return responseOK, nil
+	case AnswerWithdrawn:
+		return nil, StatusError(http.StatusGone, errAskWithdrawn)
+	default:
+		slog.Warn("decision answer not delivered; the ask is pending again",
+			"kind", kind, "chat_id", chatID, keyError, err)
+		return nil, StatusError(http.StatusBadGateway, errAnswerNotDelivered)
 	}
-	return responseOK, nil
 }
 
 // alwaysConsent is the user-scope rule an always answer saves, nil for any other answer. A
 // chosen pattern other than the ask's own subject is checked against the rule format before
 // anything is claimed or written; an unknown request or option is left to the claim.
-func alwaysConsent(perms PendingPermAccess, chatID marotte.ChatID, p *marotte.PermissionResponseCommand) (*marotte.PermissionConsentAnswer, error) {
+func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.PermissionResponseCommand) (*marotte.PermissionConsentAnswer, error) {
 	ask, ok := perms.PendingPermission(chatID, p.RequestID)
 	if !ok {
 		return nil, nil

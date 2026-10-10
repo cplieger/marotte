@@ -38,7 +38,6 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** The real bar at a stated chat-area width, on the coarse tier. */
 function mountBar(width: string): HTMLElement {
   styleEl = mountAppCSS();
   app = document.createElement("div");

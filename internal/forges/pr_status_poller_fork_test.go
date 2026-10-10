@@ -8,8 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// forkSource answers one authored row targeting upstream from a head in source,
-// for a connection whose one clone is tracked.
 type forkSource struct {
 	upstream, source, tracked string
 	check                     string
@@ -21,8 +19,8 @@ func (f *forkSource) Read(context.Context, bool, func(PRConnection, Scope) forge
 		Title: "A fix", Number: 9, Action: PRAction{Checks: f.check},
 	}
 	clone := CloneRepo{Dir: "loki", ForgeID: testConn.ID, RepoID: repoIDOf(f.tracked)}
-	page := ScopePage{Scope: authoredScope, Rows: []PR{row}}
-	return []ConnectionRead{{Conn: testConn, Clones: []CloneRepo{clone}, Pages: []ScopePage{page}}}
+	page := scopePage{Scope: authoredScope, Rows: []PR{row}}
+	return []ConnectionRead{{Conn: testConn, Clones: []CloneRepo{clone}, Pages: []scopePage{page}}}
 }
 
 // A pull request opened from a clone of a fork targets the upstream, which no

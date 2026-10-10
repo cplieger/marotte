@@ -121,6 +121,7 @@ function raise(
 }
 
 /** Test-only: drop the dedupe latch and every tracked toast handle. */
+// deadset:ignore DS1004 -- test seam: resets the dedupe latch and tracked toast handles
 export function _resetForTest(): void {
   latched.clear();
   live.clear();

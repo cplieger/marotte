@@ -76,12 +76,8 @@ beforeEach(() => {
   reads.length = 0;
   reply = null;
   vi.mocked(store.getActive).mockReturnValue(undefined);
-  // The table is module state shared with the real store, so each case starts from an empty one;
-  // reassigning the export is not available, hence the per-key wipe.
-  for (const k of Object.keys(MODEL_CONTEXT_SIZES)) {
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- the keys ARE dynamic: they are model ids a case just landed.
-    delete MODEL_CONTEXT_SIZES[k];
-  }
+  // The table is module state shared with the real store, so each case starts from an empty one.
+  MODEL_CONTEXT_SIZES.clear();
 });
 
 describe("the one catalog reader", () => {
@@ -113,6 +109,27 @@ describe("the one catalog reader", () => {
 
     expect(active.usage.context_size).toBe(200_000);
     expect(mockRefreshContextUI).toHaveBeenCalledWith(active);
+  });
+
+  // A model id is server text: one spelled like an Object.prototype member is just an unknown id.
+  it("reads no window for a model id the prototype also names", async () => {
+    const active = session({ model: "constructor" });
+    vi.mocked(store.getActive).mockReturnValue(active);
+    reply = catalog({ models: [model("m-big", "200k context")] });
+
+    await fetchCatalog();
+
+    expect(active.usage.context_size).toBe(0);
+  });
+
+  it("seeds a model whose id the prototype also names", async () => {
+    const active = session({ model: "toString" });
+    vi.mocked(store.getActive).mockReturnValue(active);
+    reply = catalog({ models: [model("toString", "200k context")] });
+
+    await fetchCatalog();
+
+    expect(active.usage.context_size).toBe(200_000);
   });
 
   it("leaves a context size that is already stated alone", async () => {

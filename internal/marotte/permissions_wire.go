@@ -3,12 +3,12 @@ package marotte
 // PermissionOutcome is the typed wire shape for ACP permission-outcome
 // responses. Replaces anonymous map[string]any for compile-time safety.
 type PermissionOutcome struct {
-	Meta    *PermissionOutcomeMeta `json:"_meta,omitempty"`
-	Outcome PermissionOutcomeInner `json:"outcome"`
+	Meta    *permissionOutcomeMeta `json:"_meta,omitempty"`
+	Outcome permissionOutcomeInner `json:"outcome"`
 }
 
-// PermissionOutcomeInner is the nested outcome payload.
-type PermissionOutcomeInner struct {
+// permissionOutcomeInner is the nested outcome payload.
+type permissionOutcomeInner struct {
 	Outcome  string `json:"outcome"`
 	OptionID string `json:"optionId,omitempty"`
 }
@@ -17,7 +17,7 @@ type PermissionOutcomeInner struct {
 // for a selected option. Single source of truth for the wire shape.
 func PermissionOutcomeSelected(optionID string) *PermissionOutcome {
 	return &PermissionOutcome{
-		Outcome: PermissionOutcomeInner{Outcome: "selected", OptionID: optionID},
+		Outcome: permissionOutcomeInner{Outcome: "selected", OptionID: optionID},
 	}
 }
 
@@ -27,7 +27,7 @@ func PermissionOutcomeSelected(optionID string) *PermissionOutcome {
 func PermissionOutcomeWithFileDecisions(optionID string, decisions map[string]bool) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
 	if len(decisions) > 0 {
-		out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{FileDecisions: decisions}}
+		out.Meta = &permissionOutcomeMeta{Kiro: permissionOutcomeKiro{FileDecisions: decisions}}
 	}
 	return out
 }
@@ -40,7 +40,7 @@ func PermissionOutcomeWithFileDecisions(optionID string, decisions map[string]bo
 func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
 	if reason != "" {
-		out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{RejectionReason: reason}}
+		out.Meta = &permissionOutcomeMeta{Kiro: permissionOutcomeKiro{RejectionReason: reason}}
 	}
 	return out
 }
@@ -50,7 +50,7 @@ func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOu
 // capability is the ask's own), the shape the kiro-cli TUI sends.
 func PermissionOutcomeAlways(optionID string, consent PermissionConsentAnswer) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
-	out.Meta = &PermissionOutcomeMeta{Kiro: PermissionOutcomeKiro{Consent: &consent}}
+	out.Meta = &permissionOutcomeMeta{Kiro: permissionOutcomeKiro{Consent: &consent}}
 	return out
 }
 
@@ -64,13 +64,13 @@ type PermissionConsentAnswer struct {
 // ConsentScopeUser saves a rule to the user permissions file, which every session reads.
 const ConsentScopeUser = "user"
 
-// PermissionOutcomeMeta is the `_meta` envelope on a permission reply.
-type PermissionOutcomeMeta struct {
-	Kiro PermissionOutcomeKiro `json:"kiro"`
+// permissionOutcomeMeta is the `_meta` envelope on a permission reply.
+type permissionOutcomeMeta struct {
+	Kiro permissionOutcomeKiro `json:"kiro"`
 }
 
-// PermissionOutcomeKiro is the vendor block inside that envelope.
-type PermissionOutcomeKiro struct {
+// permissionOutcomeKiro is the vendor block inside that envelope.
+type permissionOutcomeKiro struct {
 	FileDecisions   map[string]bool          `json:"fileDecisions,omitempty"`
 	Consent         *PermissionConsentAnswer `json:"consent,omitempty"`
 	RejectionReason string                   `json:"rejectionReason,omitempty"`
@@ -80,6 +80,6 @@ type PermissionOutcomeKiro struct {
 // for a cancelled/denied permission. Single source of truth for the wire shape.
 func PermissionOutcomeCancelled() *PermissionOutcome {
 	return &PermissionOutcome{
-		Outcome: PermissionOutcomeInner{Outcome: string(StopReasonCancelled)},
+		Outcome: permissionOutcomeInner{Outcome: string(StopReasonCancelled)},
 	}
 }

@@ -21,9 +21,8 @@ export function suppressPush(v: boolean): void {
   suppressDepth = v ? suppressDepth + 1 : Math.max(0, suppressDepth - 1);
 }
 
-/** The path the router is mid-way through applying, or "" when none. A CLAIM rather than a
- *  second suppression window: a window silences every push, a claim silences only a push to a
- *  DIFFERENT location, so the claimed location's own activation still lands. */
+/** A CLAIM rather than a second suppression window: a window silences every push, a claim silences
+ *  only a push to a DIFFERENT location, so the claimed location's own activation still lands. */
 let claimedPath = "";
 
 /** Claim a location for the duration of applying it. `releaseLocation` in a `finally`; a second
@@ -82,7 +81,6 @@ export function onPopState(handler: (route: Route) => void): void {
   popstateHandler = handler;
 }
 
-// Cache the last parsed route to skip redundant URL parsing on rapid popstate.
 let cachedKey = "";
 let cachedRoute: Route | undefined;
 

@@ -7,21 +7,21 @@
 // handed back and native find opens. And the ANSWER: a hit over source is marked
 // on its glyphs and selected in the textarea, a hit over a diff pane or rendered
 // prose is a real <mark>, a buffer that has not arrived says nothing yet, and one
-// that could not be read says so rather than "No matches".
-import { describe, it, expect, vi, beforeEach } from "vitest";
+// that could not be read says so rather than "No matches". Placing a buffer hit
+// (scroll, flash, mark, the textarea's selection) is editor-scroll.ts's, pinned in
+// editor-scroll.test.ts; here it is the span the bar hands over.
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const scrollToLine = vi.fn();
-const flashLine = vi.fn();
-const markSpan = vi.fn();
+const revealHit = vi.fn();
 const clearMark = vi.fn();
 vi.mock("./editor-scroll.js", () => ({
-  scrollToEditorLine: (n: number, behavior: string) => scrollToLine(n, behavior),
-  flashEditorLine: (n: number) => flashLine(n),
-  markEditorSpan: (line: number, prefix: string, match: string) => markSpan(line, prefix, match),
+  revealBufferHit: (_text: string, offset: number, length: number, line: number) =>
+    revealHit(offset, length, line),
   clearEditorMark: () => clearMark(),
 }));
 
 import { findInBuffer } from "./editor-find.js";
+import { mountEditorView } from "./__test-helpers__/editor-dom.js";
 import type * as EditorFind from "./editor-find.js";
 import type * as Bus from "./bus.js";
 import { lineDiff } from "./diff.js";
@@ -97,28 +97,17 @@ describe("findInBuffer", () => {
 
 const BUFFER = "package main\n\nfunc target() {}\n// target again\n";
 
+let host: HTMLElement | null = null;
+
 function editorDOM(): void {
-  document.body.innerHTML = `
-    <div id="editor-view" data-tab-view>
-      <div class="editor-page">
-        <div id="editor-error" class="editor-error hidden"></div>
-        <div id="editor-conflict-overlay" class="editor-conflict-overlay hidden"></div>
-        <div class="editor-body">
-          <pre id="editor-gutter"></pre>
-          <pre id="editor-highlight"><code id="editor-code"></code></pre>
-          <textarea id="editor-content" class="hidden"></textarea>
-          <div id="editor-markdown" class="hidden"></div>
-          <div id="editor-image" class="hidden"></div>
-          <div id="editor-diff-pane" class="hidden"></div>
-        </div>
-      </div>
-    </div>`;
+  host?.remove();
+  host = mountEditorView();
 }
 
 /** Register one open file in the editor's real state, in the given mode. */
 async function openFile(
   path: string,
-  mode: "edit" | "editing" | "diff" | "image" | "conflict",
+  mode: "text" | "editing" | "markdown" | "diff" | "refused-diff" | "image" | "conflict",
   content = BUFFER,
 ): Promise<void> {
   const types = await import("./editor-types.js");
@@ -127,25 +116,44 @@ async function openFile(
   state.current.value = content;
   state.original.value = content;
   switch (mode) {
-    case "edit":
-      state.mode.value = { kind: "edit", editing: false };
+    case "text":
+      state.mode.value = { kind: "text", editing: false };
       break;
     case "editing":
-      state.mode.value = { kind: "edit", editing: true };
+      state.mode.value = { kind: "text", editing: true };
       break;
     case "diff":
       state.mode.value = {
         kind: "diff",
-        // fromGit false: both sides are in memory here. True would send the left
+        // A pair: both sides are in memory here. A git diff would send the left
         // pane to GET /api/git/show, which this suite neither needs nor stubs.
         diffSource: {
-          oldContent: "",
-          newContent: content,
+          oldText: "",
+          newText: content,
           oldLabel: "a",
           newLabel: "b",
-          fromGit: false,
+          kind: "pair",
         },
       };
+      break;
+    case "refused-diff":
+      // Set as a settled load leaves it, so nothing asks GET /api/git/show.
+      state.mode.value = {
+        kind: "diff",
+        diffSource: {
+          oldText: "",
+          newText: content,
+          oldLabel: "HEAD",
+          newLabel: "working tree",
+          kind: "git",
+          ref: "HEAD",
+          base: "binary",
+          pending: false,
+        },
+      };
+      break;
+    case "markdown":
+      state.mode.value = { kind: "markdown" };
       break;
     case "image":
       state.mode.value = { kind: "image" };
@@ -160,13 +168,12 @@ async function openFile(
   types.setActiveFilePath(path);
 }
 
-/** What `showEditMode` does for the textarea: reveal it over the buffer. */
-function showTextarea(content: string): HTMLTextAreaElement {
-  document.getElementById("editor-highlight")?.classList.add("hidden");
+/** What the edit surface does for the textarea: reveal it over the buffer. */
+function showTextarea(content: string): void {
+  document.getElementById("editor-viewer")?.classList.add("hidden");
   const ta = document.getElementById("editor-content") as HTMLTextAreaElement;
   ta.classList.remove("hidden");
   ta.value = content;
-  return ta;
 }
 
 /** The editor's diff pane over a one-line change, with the option set
@@ -199,9 +206,7 @@ describe("the in-file find bar", () => {
   beforeEach(async () => {
     vi.resetModules();
     bootSeq++;
-    scrollToLine.mockReset();
-    flashLine.mockReset();
-    markSpan.mockReset();
+    revealHit.mockReset();
     clearMark.mockReset();
     editorDOM();
     mod = (await import(
@@ -210,6 +215,11 @@ describe("the in-file find bar", () => {
     // The SAME module registry `mod` came from, or the emit reaches a second copy
     // of the bus that this bar never subscribed to.
     bus = await import("./bus.js");
+  });
+
+  afterEach(() => {
+    host?.remove();
+    host = null;
   });
 
   function input(): HTMLInputElement | null {
@@ -252,68 +262,71 @@ describe("the in-file find bar", () => {
     // Not floating: `.editor-body` is the scroller, so a bar in the flex column
     // shrinks it and covers no line — where a floating box would sit over the
     // first lines, which on a jump-to-match is exactly where the reader looks.
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     expect(mod.openEditorFind()).toBe(true);
     const bar = document.querySelector(".editor-find");
     expect(bar).not.toBeNull();
     expect(bar?.previousElementSibling?.id).toBe("editor-conflict-overlay");
-    expect(bar?.nextElementSibling?.classList.contains("editor-body")).toBe(true);
+    const body = document.querySelector(".editor-body");
+    expect(bar?.parentElement).toBe(body?.parentElement);
+    expect(
+      bar !== null &&
+        body !== null &&
+        bar.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     // An empty box is not a query: no count, no no-results tint.
     expect(count()).toBe("");
     expect(noResults()).toBe(false);
   });
 
   it("is a role=search landmark and finds the buffer's matches", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     mod.openEditorFind();
     expect(document.querySelector(".editor-find")?.getAttribute("role")).toBe("search");
     type("target");
     expect(count()).toBe("1 of 2");
   });
 
-  it("takes the cursor to the matched LINE, marks the match, and steps through", async () => {
-    await openFile("/workspace/a.go", "edit");
+  it("reveals the match's span and LINE, and steps through", async () => {
+    await openFile("/workspace/a.go", "text");
     mod.openEditorFind();
     type("target");
     // Synchronous: the surface is laid out under an open bar, and a held Enter
     // has to settle on the hit it stopped at rather than on a frame behind it.
-    expect(scrollToLine).toHaveBeenLastCalledWith(3, "instant");
-    expect(flashLine).toHaveBeenLastCalledWith(3);
-    expect(markSpan).toHaveBeenLastCalledWith(3, "func ", "target");
+    expect(revealHit).toHaveBeenLastCalledWith(19, 6, 3);
 
     type("target"); // same query -> step
     expect(count()).toBe("2 of 2");
-    expect(scrollToLine).toHaveBeenLastCalledWith(4, "instant");
-    expect(markSpan).toHaveBeenLastCalledWith(4, "// ", "target");
+    expect(revealHit).toHaveBeenLastCalledWith(34, 6, 4);
   });
 
   it("tells two hits on ONE line apart by their column", async () => {
     // The old reveal flashed the line and nothing else, so Next between two hits
     // on one line moved nothing a reader could see.
-    await openFile("/workspace/a.go", "edit", "alpha beta alpha\n");
+    await openFile("/workspace/a.go", "text", "alpha beta alpha\n");
     mod.openEditorFind();
     type("alpha");
     expect(count()).toBe("1 of 2");
-    expect(markSpan).toHaveBeenLastCalledWith(1, "", "alpha");
+    expect(revealHit).toHaveBeenLastCalledWith(0, 5, 1);
     enter();
     expect(count()).toBe("2 of 2");
-    expect(markSpan).toHaveBeenLastCalledWith(1, "alpha beta ", "alpha");
+    expect(revealHit).toHaveBeenLastCalledWith(11, 5, 1);
   });
 
-  it("selects the match in the textarea while EDITING, so leaving the box lands on it", async () => {
+  it("steps through the buffer while EDITING, keeping the find box focused", async () => {
     await openFile("/workspace/a.go", "editing");
-    const ta = showTextarea(BUFFER);
+    showTextarea(BUFFER);
     mod.openEditorFind();
     type("target");
-    expect([ta.selectionStart, ta.selectionEnd]).toEqual([19, 25]);
+    expect(revealHit).toHaveBeenLastCalledWith(19, 6, 3);
     enter();
-    expect([ta.selectionStart, ta.selectionEnd]).toEqual([34, 40]);
+    expect(revealHit).toHaveBeenLastCalledWith(34, 6, 4);
     // The find box keeps focus: Enter has to keep stepping.
     expect(document.activeElement).toBe(input());
   });
 
   it("wraps at the end and steps backwards on Shift+Enter", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     mod.openEditorFind();
     type("target");
     type("target");
@@ -324,7 +337,7 @@ describe("the in-file find bar", () => {
   });
 
   it("settles on the hit a burst of steps stopped at", async () => {
-    await openFile("/workspace/a.go", "edit", "t\nt\nt\n");
+    await openFile("/workspace/a.go", "text", "t\nt\nt\n");
     mod.openEditorFind();
     type("t");
     for (let i = 0; i < 41; i++) {
@@ -332,23 +345,22 @@ describe("the in-file find bar", () => {
     }
     // 1 + 41 steps over three hits lands on the third.
     expect(count()).toBe("3 of 3");
-    expect(markSpan).toHaveBeenCalledTimes(42);
-    expect(markSpan).toHaveBeenLastCalledWith(3, "", "t");
-    expect(scrollToLine).toHaveBeenLastCalledWith(3, "instant");
+    expect(revealHit).toHaveBeenCalledTimes(42);
+    expect(revealHit).toHaveBeenLastCalledWith(4, 1, 3);
   });
 
   it("marks the no-results state rather than saying nothing", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     mod.openEditorFind();
     type("target");
     clearMark.mockReset();
-    markSpan.mockReset();
+    revealHit.mockReset();
     type("nowhere");
     expect(count()).toBe("No matches");
     expect(noResults()).toBe(true);
     // The previous query's mark comes down with its hits.
     expect(clearMark).toHaveBeenCalled();
-    expect(markSpan).not.toHaveBeenCalled();
+    expect(revealHit).not.toHaveBeenCalled();
   });
 
   it("searches the UNSAVED buffer, which is what the reader is looking at", async () => {
@@ -380,8 +392,14 @@ describe("the in-file find bar", () => {
     expect(document.querySelector(".editor-find")).toBeNull();
   });
 
+  it("declines over a git diff whose base git refused, which shows a notice and no pane", async () => {
+    await openFile("/workspace/blob.dat", "refused-diff");
+    expect(mod.editorFindAvailable()).toBe(false);
+    expect(mod.openEditorFind()).toBe(false);
+  });
+
   it("marks hits in rendered markdown across inline elements", async () => {
-    await openFile("/workspace/notes.md", "edit");
+    await openFile("/workspace/notes.md", "markdown");
     const host = document.getElementById("editor-markdown");
     if (host === null) {
       throw new Error("missing host");
@@ -427,7 +445,7 @@ describe("the in-file find bar", () => {
     // A mode swap under the open bar: the pane's marks go before the buffer is
     // searched, or they are welded into a pane the next render reconciles around.
     const types = await import("./editor-types.js");
-    types.fileStates.get("/workspace/a.go")!.mode.value = { kind: "edit", editing: false };
+    types.fileStates.get("/workspace/a.go")!.mode.value = { kind: "text", editing: false };
     host.classList.add("hidden");
     type("target");
     expect(count()).toBe("1 of 2");
@@ -454,13 +472,12 @@ describe("the in-file find bar", () => {
     expect(count()).toBe("2 of 2");
     expect(host.querySelectorAll("mark.find-hit-current")).toHaveLength(1);
     // No line geometry over a diff pane: the browser scrolls the mark itself.
-    expect(scrollToLine).not.toHaveBeenCalled();
-    expect(markSpan).not.toHaveBeenCalled();
+    expect(revealHit).not.toHaveBeenCalled();
     mod.closeEditorFind();
   });
 
   it("honours Match case over a rendered surface too", async () => {
-    await openFile("/workspace/notes.md", "edit");
+    await openFile("/workspace/notes.md", "markdown");
     const host = document.getElementById("editor-markdown");
     if (host === null) {
       throw new Error("missing host");
@@ -478,7 +495,7 @@ describe("the in-file find bar", () => {
   it("searches the conflict overlay and the buffer as ONE list, in reading order", async () => {
     const conflicted = "a\n<<<<<<< HEAD\ntarget one\n=======\ntarget two\n>>>>>>> incoming\n";
     await openFile("/workspace/a.go", "conflict", conflicted);
-    const ta = showTextarea(conflicted);
+    showTextarea(conflicted);
     const overlay = document.getElementById("editor-conflict-overlay");
     if (overlay === null) {
       throw new Error("missing overlay");
@@ -495,23 +512,22 @@ describe("the in-file find bar", () => {
     type("merged");
     expect(count()).toBe("1 of 1");
     expect(overlay.querySelectorAll("mark.find-hit-current")).toHaveLength(1);
-    expect(markSpan).not.toHaveBeenCalled();
+    expect(revealHit).not.toHaveBeenCalled();
 
     // One overlay hit sits above two buffer hits: the overlay comes first.
     type("target");
     expect(count()).toBe("1 of 3");
     expect(overlay.querySelector("mark.find-hit-current")?.textContent).toBe("Target");
-    expect(markSpan).not.toHaveBeenCalled();
+    expect(revealHit).not.toHaveBeenCalled();
     enter();
     expect(count()).toBe("2 of 3");
     // The overlay keeps its highlight and loses its "current": one cursor.
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(1);
     expect(overlay.querySelectorAll("mark.find-hit-current")).toHaveLength(0);
-    expect(markSpan).toHaveBeenLastCalledWith(3, "", "target");
-    expect([ta.selectionStart, ta.selectionEnd]).toEqual([15, 21]);
+    expect(revealHit).toHaveBeenLastCalledWith(15, 6, 3);
     enter();
     expect(count()).toBe("3 of 3");
-    expect(markSpan).toHaveBeenLastCalledWith(5, "", "target");
+    expect(revealHit).toHaveBeenLastCalledWith(34, 6, 5);
     clearMark.mockReset();
     enter();
     expect(count()).toBe("1 of 3");
@@ -523,7 +539,7 @@ describe("the in-file find bar", () => {
     document.querySelector<HTMLButtonElement>(".editor-find-case")?.click();
     expect(count()).toBe("1 of 2");
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(0);
-    expect(markSpan).toHaveBeenLastCalledWith(3, "", "target");
+    expect(revealHit).toHaveBeenLastCalledWith(15, 6, 3);
 
     mod.closeEditorFind();
     expect(overlay.querySelectorAll("mark.find-hit")).toHaveLength(0);
@@ -555,12 +571,33 @@ describe("the in-file find bar", () => {
     state.current.value = "here is anything\n";
     state.loaded = true;
     // Another file's load says nothing about this one.
-    bus.emitBus(bus.BUS_EDITOR_FILE_LOADED, { path: "/workspace/other.go" });
+    bus.emitBus(bus.BUS_EDITOR_VIEW_CHANGED, { path: "/workspace/other.go" });
     expect(count()).toBe("");
-    bus.emitBus(bus.BUS_EDITOR_FILE_LOADED, { path: "/workspace/slow.go" });
+    bus.emitBus(bus.BUS_EDITOR_VIEW_CHANGED, { path: "/workspace/slow.go" });
     expect(count()).toBe("1 of 1");
-    expect(markSpan).toHaveBeenLastCalledWith(1, "here is ", "anything");
+    expect(revealHit).toHaveBeenLastCalledWith(8, 8, 1);
     mod.closeEditorFind();
+  });
+
+  it("re-runs an open query when a live refresh changes the text under it", async () => {
+    await openFile("/workspace/log.txt", "text", "target\n");
+    mod.openEditorFind();
+    type("target");
+    expect(count()).toBe("1 of 1");
+    const types = await import("./editor-types.js");
+    types.fileStates.get("/workspace/log.txt")!.current.value = "target\ntarget\n";
+    bus.emitBus(bus.BUS_EDITOR_VIEW_CHANGED, { path: "/workspace/log.txt" });
+    expect(count()).toBe("1 of 2");
+  });
+
+  it("closes when a live refresh leaves the file a view with nothing to find", async () => {
+    await openFile("/workspace/log.txt", "text", "target\n");
+    mod.openEditorFind();
+    type("target");
+    const types = await import("./editor-types.js");
+    types.fileStates.get("/workspace/log.txt")!.mode.value = { kind: "large" };
+    bus.emitBus(bus.BUS_EDITOR_VIEW_CHANGED, { path: "/workspace/log.txt" });
+    expect(mod._isEditorFindOpen()).toBe(false);
   });
 
   it("says the file was not read when the load failed, rather than No matches", async () => {
@@ -576,7 +613,7 @@ describe("the in-file find bar", () => {
     type("anything");
     expect(count()).toBe("File not read");
     expect(noResults()).toBe(true);
-    expect(markSpan).not.toHaveBeenCalled();
+    expect(revealHit).not.toHaveBeenCalled();
     mod.closeEditorFind();
   });
 
@@ -588,7 +625,7 @@ describe("the in-file find bar", () => {
   });
 
   it("claims the chord and pre-empts native find over a source buffer", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     const e = new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true });
     expect(mod.handleEditorFindHotkey(e)).toBe(true);
     expect(e.defaultPrevented).toBe(true);
@@ -596,7 +633,7 @@ describe("the in-file find bar", () => {
   });
 
   it("lets a SECOND press fall through, the escape hatch every destination owns", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     mod.openEditorFind();
     input()?.focus();
     const second = new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true });
@@ -605,7 +642,7 @@ describe("the in-file find bar", () => {
   });
 
   it("ignores a chord that is not Ctrl/Cmd-F", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     for (const e of [
       new KeyboardEvent("keydown", { key: "g", ctrlKey: true, cancelable: true }),
       new KeyboardEvent("keydown", { key: "f", cancelable: true }),
@@ -627,7 +664,7 @@ describe("the in-file find bar", () => {
         /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
       )) as typeof EditorFind;
       const freshBus = await import("./bus.js");
-      await openFile("/workspace/a.go", "edit");
+      await openFile("/workspace/a.go", "text");
       fresh.openEditorFind();
       const el = document.getElementById("editor-find-input") as HTMLInputElement;
       el.value = "target";
@@ -655,7 +692,7 @@ describe("the in-file find bar", () => {
   });
 
   it("toggles: the button closes an open bar rather than re-running it", async () => {
-    await openFile("/workspace/a.go", "edit");
+    await openFile("/workspace/a.go", "text");
     mod.toggleEditorFind();
     expect(mod._isEditorFindOpen()).toBe(true);
     mod.toggleEditorFind();
@@ -666,7 +703,7 @@ describe("the in-file find bar", () => {
     // One bar serves every editor tab, so a retained query searched the NEXT file
     // for a string typed against the previous one and reported a count for it.
     // Closing the bar alone left the text in place, and the open path re-runs.
-    await openFile("/workspace/a.go", "edit", "target here\n");
+    await openFile("/workspace/a.go", "text", "target here\n");
     mod.openEditorFind();
     type("target");
     const el = document.getElementById("editor-find-input") as HTMLInputElement;
@@ -676,12 +713,12 @@ describe("the in-file find bar", () => {
   });
 
   it("re-runs on the Aa toggle without retyping, and honours case", async () => {
-    await openFile("/workspace/a.go", "edit", "Target\ntarget\n");
+    await openFile("/workspace/a.go", "text", "Target\ntarget\n");
     mod.openEditorFind();
     type("target");
     expect(count()).toBe("1 of 2");
     document.querySelector<HTMLButtonElement>(".editor-find-case")?.click();
     expect(count()).toBe("1 of 1");
-    expect(markSpan).toHaveBeenLastCalledWith(2, "", "target");
+    expect(revealHit).toHaveBeenLastCalledWith(7, 6, 2);
   });
 });

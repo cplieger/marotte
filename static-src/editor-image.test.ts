@@ -1,56 +1,55 @@
 //
 // The image read surface, and the SVG rule that rides on it.
 //
-// Two things are being pinned. First, that an image never reaches the JSON read
-// route: `GET /api/file` refuses a binary with a 415 (a NUL byte in the first
-// 8 KiB) and caps the read at 2 MB, so the text path could only ever paint that
-// error — the bytes come from `GET /api/file/download` instead. Second, that a
-// `.svg` is DISPLAYED and never offered as something to open: the download route
-// answers `Content-Type: image/svg+xml`, which is script-capable when navigated
-// to as a document, while an SVG referenced as an image is inert by
-// specification.
+// Pinned: an image never reaches the whole-read route (its bytes come from the download route,
+// keyed by the identity stat reported, so the server refuses any other bytes); a `.svg` is
+// DISPLAYED and never offered as something to open, because the download route answers
+// `Content-Type: image/svg+xml`, script-capable when navigated to, while an SVG referenced as an
+// image is inert by specification.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { surfaces, apiGet, tabs } = vi.hoisted(() => ({
-  surfaces: {
-    editorHighlight: document.createElement("pre"),
-    editorCode: document.createElement("code"),
+const { surfaces, apiGetTypedOrError, tabs, live, diff } = vi.hoisted(() => {
+  const s = {
+    editorViewer: document.createElement("div"),
+    editorEditGutter: document.createElement("div"),
     editorContent: document.createElement("textarea"),
     editorMarkdown: document.createElement("div"),
     editorImage: document.createElement("div"),
+    editorNotice: document.createElement("div"),
     editorDiffPane: document.createElement("div"),
-    editorGutter: document.createElement("pre"),
     editorFilename: document.createElement("span"),
     editorError: document.createElement("div"),
+    editorConflictOverlay: document.createElement("div"),
     editorEditBtn: document.createElement("button"),
     editorSaveBtn: document.createElement("button"),
     editorCancelBtn: document.createElement("button"),
     editorDiffBtn: document.createElement("button"),
-  },
-  apiGet: vi.fn(),
-  /** The projection's own tab bookkeeping, minimal and OPAQUE.
-   *
-   *  Ids are server-minted, so this mints one per path and hands it back through
-   *  `tabIdFor` — a test that composed `editor:<path>` would be reaching a row by a
-   *  route the app cannot. The activation hook is the FACTORY's, so the open calls
-   *  it through the same registration the composition root uses rather than through
-   *  a callback argument that no longer exists. */
-  tabs: {
-    active: "",
-    minted: new Map<string, string>(),
-    show: (_path: string) => {
-      /* pointed at the real activateFile below */
+    editorDownloadBtn: document.createElement("button"),
+    editorGotoBtn: document.createElement("button"),
+    editorGoto: document.createElement("form"),
+    editorReadonlyLabel: document.createElement("span"),
+  };
+  document.createElement("div").append(s.editorViewer);
+  return {
+    surfaces: s,
+    apiGetTypedOrError: vi.fn(),
+    tabs: {
+      active: "",
+      minted: new Map<string, string>(),
+      show: (_path: string) => {
+        /* pointed at the real activateFile below */
+      },
     },
-  },
-}));
+    live: {
+      reload: null as
+        null | ((state: unknown, stat: unknown, stillCurrent: () => boolean) => Promise<void>),
+    },
+    diff: { outcome: { status: "cancelled" } as unknown },
+  };
+});
 
 vi.mock("./dom.js", () => ({
   $: surfaces,
-  // `skeleton.ts` in this graph imports the name, and Browser Mode links for real
-  // rather than reading properties off a namespace object — so an absent export
-  // fails the whole FILE at collection. `setBusy`'s own body rather than
-  // `undefined`, because the editor's open path reaches an admitted
-  // `paintPlaceholder` and a placeholder marks its host busy through this name.
   setBusy: (el: Element, busy: boolean) => {
     if (busy) {
       el.setAttribute("aria-busy", "true");
@@ -59,64 +58,37 @@ vi.mock("./dom.js", () => ({
     }
   },
 }));
-vi.mock("./highlight.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  highlightByLang: undefined,
-  normalizeLang: undefined,
-  resolveLangHint: undefined,
-  highlightMarked: undefined,
-  highlight: (s: string) => s,
-}));
 vi.mock("./store.js", () => ({ getActiveId: () => "", get: vi.fn(() => undefined) }));
-// The read route. Nothing in this file may reach it — the assertion is that it
-// stays uncalled for an image.
 vi.mock("./api-client.js", () => ({
-  apiGet,
-  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+  apiGetTypedOrError,
+  apiGet: vi.fn(),
+  apiGetOrError: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
   suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
-  loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  getActive: vi.fn(() => undefined),
-  getSessions: vi.fn(() => []),
-  tabStatusFor: vi.fn(() => ""),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  apiGet: vi.fn(),
-  apiGetTyped: vi.fn(),
+  loadDiff: { dispatch: () => ({ outcome: Promise.resolve(diff.outcome) }) },
+}));
+vi.mock("./viewer-live.js", () => ({
+  GONE_SENTENCE: "This file is no longer on disk.",
+  liveActivate: vi.fn(),
+  liveDispose: vi.fn(),
+  paintLiveButton: vi.fn(),
+  setLiveReload: (
+    fn: (state: unknown, stat: unknown, stillCurrent: () => boolean) => Promise<void>,
+  ) => {
+    live.reload = fn;
+  },
 }));
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: () => undefined,
   flashEditorLine: () => undefined,
-  // Present so real-ESM linking succeeds; editor-diff and editor-openers import them.
   trackEditorView: () => undefined,
   captureSelection: () => undefined,
   restoreEditorView: () => undefined,
   bindDiffView: () => undefined,
 }));
 vi.mock("./tabs.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  setGitTab: undefined,
-  openGitView: undefined,
-  // A round trip that ENDS in the tab's activation hook, which is what a real open
-  // does: the frame paints the row, `openTab` activates it, and the factory's
-  // `onShow` is `activateFile`. The editor's own fallback then correctly does
-  // nothing, because the tab was not already active.
   openEditorView: (path: string) => {
     let id = tabs.minted.get(path);
     if (id === undefined) {
@@ -130,18 +102,34 @@ vi.mock("./tabs.js", () => ({
     return Promise.resolve();
   },
   getActiveTabId: () => tabs.active,
+  getActiveTabKind: () => "editor",
   tabIdFor: (_kind: string, ref = "") => tabs.minted.get(ref) ?? "",
   setTabDirty: () => undefined,
 }));
 vi.mock("./router.js", () => ({ pushRoute: () => undefined }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: () => undefined }));
 
-import { activateFile, openFile } from "./editor-openers.js";
+import { activateFile, openFile, openFileGitDiff } from "./editor-openers.js";
 
-// The registration the composition root performs.
 tabs.show = activateFile;
 import { fileStates } from "./editor-types.js";
 import { isViewableImage } from "./file-extensions.js";
+
+const IMG_ID = `sha256:${"b".repeat(64)}`;
+const NEXT_ID = `sha256:${"c".repeat(64)}`;
+
+function statOf(path: string, id = IMG_ID): Record<string, unknown> {
+  return {
+    path,
+    file_id: id,
+    modified: "2026-10-01T00:00:00Z",
+    size: 10,
+    large: false,
+    binary: true,
+    utf8: false,
+    read_only: false,
+  };
+}
 
 function img(): HTMLImageElement | null {
   return surfaces.editorImage.querySelector<HTMLImageElement>("img");
@@ -151,17 +139,32 @@ function hidden(el: HTMLElement): boolean {
   return el.classList.contains("hidden");
 }
 
+function urls(): string[] {
+  return apiGetTypedOrError.mock.calls.map((c) => String(c[0]));
+}
+
+async function open(path: string): Promise<void> {
+  openFile(path);
+  for (let i = 0; i < 6; i++) {
+    await Promise.resolve();
+  }
+}
+
 beforeEach(() => {
-  apiGet.mockReset();
-  apiGet.mockResolvedValue({ content: "" });
+  apiGetTypedOrError.mockReset();
+  apiGetTypedOrError.mockImplementation((url: string) => {
+    const path = decodeURIComponent(url.slice(url.indexOf("path=") + 5));
+    return Promise.resolve({ ok: true, status: 200, data: statOf(path), error: "" });
+  });
   fileStates.clear();
-  // Ids are minted per open, so the bookkeeping resets with the file states or the
-  // second case would find the first case's tab already active.
+  diff.outcome = { status: "cancelled" };
   tabs.active = "";
   tabs.minted.clear();
   for (const el of Object.values(surfaces)) {
     el.className = "";
-    el.replaceChildren();
+    if (el !== surfaces.editorViewer) {
+      el.replaceChildren();
+    }
   }
 });
 
@@ -191,7 +194,6 @@ describe("isViewableImage", () => {
     }
   });
 
-  // A dotfile's leading dot names the file rather than typing it.
   it("does not read a dotfile's name as an extension", () => {
     expect(isViewableImage(".png")).toBe(false);
     expect(isViewableImage("a/.svg")).toBe(false);
@@ -199,103 +201,181 @@ describe("isViewableImage", () => {
 });
 
 describe("opening an image", () => {
-  it("never calls the JSON read route", () => {
-    openFile("out/shot.png");
-    expect(apiGet).not.toHaveBeenCalled();
+  it("asks stat and never the whole-read route", async () => {
+    await open("out/shot.png");
+    expect(urls()).toEqual(["/api/file/stat?path=out%2Fshot.png"]);
   });
 
-  // The control: the same call path DOES reach the read route for a text file,
-  // so "not called" above is about the image branch rather than about the
-  // harness. It is a COUNT now: `open()` used to activate twice on a first open
-  // (once through the tab's onShow, once unconditionally afterwards), and the
-  // second load aborted the first, which is the wasted round trip this asserts
-  // is gone.
-  it("still calls the JSON read route for a text file, exactly once", () => {
-    openFile("main.go");
-    expect(apiGet).toHaveBeenCalledTimes(1);
-    expect(apiGet.mock.calls[0]?.[0]).toBe("/api/file?path=main.go");
+  // The control: the same call path DOES read a text file, once.
+  it("reads a text file after its stat, exactly once", async () => {
+    apiGetTypedOrError.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.startsWith("/api/file/stat")
+          ? {
+              ok: true,
+              status: 200,
+              data: { ...statOf("main.go"), binary: false, utf8: true },
+              error: "",
+            }
+          : { ok: false, status: 0, data: null, error: "" },
+      ),
+    );
+    await open("main.go");
+    expect(urls()).toEqual(["/api/file/stat?path=main.go", "/api/file?path=main.go"]);
   });
 
-  it("paints an <img> pointed at the byte-serving route", () => {
-    openFile("out/shot.png");
-    expect(img()?.getAttribute("src")).toBe("/api/file/download?path=out%2Fshot.png");
+  // The image's bytes are pinned to the identity the shell shows.
+  it("points the <img> at the byte route keyed by the file's identity", async () => {
+    await open("out/shot.png");
+    expect(img()?.getAttribute("src")).toBe(
+      `/api/file/download?path=out%2Fshot.png&file_id=${encodeURIComponent(IMG_ID)}`,
+    );
   });
 
-  it("shows the image surface and hides every text surface", () => {
-    openFile("out/shot.png");
+  it("swaps the identity key when live refresh sees the file change", async () => {
+    await open("out/shot.png");
+    const state = fileStates.get("out/shot.png");
+    await live.reload?.(state, statOf("out/shot.png", NEXT_ID), () => true);
+    expect(img()?.getAttribute("src")).toContain(encodeURIComponent(NEXT_ID));
+  });
+
+  it("shows the image surface and hides every text surface", async () => {
+    await open("out/shot.png");
     expect(hidden(surfaces.editorImage)).toBe(false);
-    expect(hidden(surfaces.editorHighlight)).toBe(true);
-    expect(hidden(surfaces.editorContent)).toBe(true);
-    expect(hidden(surfaces.editorMarkdown)).toBe(true);
-    expect(hidden(surfaces.editorDiffPane)).toBe(true);
+    for (const el of [
+      surfaces.editorViewer,
+      surfaces.editorContent,
+      surfaces.editorEditGutter,
+      surfaces.editorMarkdown,
+      surfaces.editorDiffPane,
+      surfaces.editorNotice,
+    ]) {
+      expect(hidden(el)).toBe(true);
+    }
   });
 
-  // Source line numbers beside a picture number nothing on screen — the same
-  // argument the rendered-markdown surface makes.
-  it("hides the gutter", () => {
-    openFile("out/shot.png");
-    expect(hidden(surfaces.editorGutter)).toBe(true);
+  it("hides every text-editing control and offers Download", async () => {
+    await open("out/shot.png");
+    for (const el of [
+      surfaces.editorEditBtn,
+      surfaces.editorSaveBtn,
+      surfaces.editorCancelBtn,
+      surfaces.editorDiffBtn,
+      surfaces.editorGotoBtn,
+    ]) {
+      expect(hidden(el)).toBe(true);
+    }
+    expect(hidden(surfaces.editorDownloadBtn)).toBe(false);
   });
 
-  // There is no buffer to edit and a two-pane text diff over a PNG compares
-  // nothing, so the controls are gone rather than disabled-but-present.
-  it("hides every text-editing control", () => {
-    openFile("out/shot.png");
-    expect(hidden(surfaces.editorEditBtn)).toBe(true);
-    expect(hidden(surfaces.editorSaveBtn)).toBe(true);
-    expect(hidden(surfaces.editorCancelBtn)).toBe(true);
-    expect(hidden(surfaces.editorDiffBtn)).toBe(true);
-  });
-
-  it("names the file in the alt text so a failed load is legible", () => {
-    openFile("out/shot.png");
+  it("names the file in the alt text so a failed load is legible", async () => {
+    await open("out/shot.png");
     expect(img()?.alt).toBe("out/shot.png");
   });
 
-  it("repaints from scratch, leaving no trace of the previous image", () => {
-    openFile("out/a.png");
-    openFile("out/b.png");
+  it("repaints from scratch, leaving no trace of the previous image", async () => {
+    await open("out/a.png");
+    await open("out/b.png");
     expect(surfaces.editorImage.querySelectorAll("img")).toHaveLength(1);
-    expect(img()?.getAttribute("src")).toBe("/api/file/download?path=out%2Fb.png");
+    expect(img()?.getAttribute("src")).toContain("path=out%2Fb.png");
   });
 
-  it("marks the state loaded so a re-activation does not try to fetch", () => {
-    openFile("out/shot.png");
+  it("marks the state loaded so a re-activation does not fetch again", async () => {
+    await open("out/shot.png");
     expect(fileStates.get("out/shot.png")?.loaded).toBe(true);
     expect(fileStates.get("out/shot.png")?.mode.value.kind).toBe("image");
   });
 });
 
-// D21b. The trap is easy to add later by accident, so it is asserted rather than
-// only commented: `<img>` is inert, a same-origin navigation to the same `.svg`
-// is not, and neither is an `<iframe>` pointing at it.
+describe("an image over the viewer's cap", () => {
+  it("shows the too-large sentence and Download where Edit would be, and nothing else", async () => {
+    apiGetTypedOrError.mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        data: { ...statOf("big.jpg"), file_id: undefined, large: true, size: 5 << 20 },
+        error: "",
+      }),
+    );
+    await open("big.jpg");
+    expect(img()).toBeNull();
+    expect(surfaces.editorNotice.textContent).toBe(
+      "File is too large to display. Download it to view.",
+    );
+    expect(hidden(surfaces.editorDownloadBtn)).toBe(false);
+    for (const el of [
+      surfaces.editorEditBtn,
+      surfaces.editorSaveBtn,
+      surfaces.editorCancelBtn,
+      surfaces.editorDiffBtn,
+      surfaces.editorGotoBtn,
+      surfaces.editorReadonlyLabel,
+    ]) {
+      expect(hidden(el)).toBe(true);
+    }
+  });
+});
+
+describe("a file over the cap reached from a diff too large to show", () => {
+  it("shows the sentence and Download, with no note beside them", async () => {
+    diff.outcome = { status: "success", value: { kind: "too_large" } };
+    apiGetTypedOrError.mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        data: { ...statOf("big.log"), file_id: undefined, large: true, size: 5 << 20 },
+        error: "",
+      }),
+    );
+    openFileGitDiff("big.log");
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(fileStates.get("big.log")?.mode.value).toEqual({ kind: "large" });
+    expect(surfaces.editorNotice.textContent).toBe(
+      "File is too large to display. Download it to view.",
+    );
+    expect(hidden(surfaces.editorReadonlyLabel)).toBe(true);
+    expect(hidden(surfaces.editorDownloadBtn)).toBe(false);
+  });
+});
+
+describe("a binary working copy reached from a diff", () => {
+  it("shows the file's binary view and Download, with no note beside them", async () => {
+    diff.outcome = { status: "success", value: { kind: "binary" } };
+    openFileGitDiff("blob.dat");
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(fileStates.get("blob.dat")?.mode.value).toEqual({ kind: "binary" });
+    expect(fileStates.get("blob.dat")?.error.value).toBe("");
+    expect(surfaces.editorNotice.querySelector("p")?.textContent).toBe(
+      "This is a binary file. Download it to open it.",
+    );
+    expect(hidden(surfaces.editorDownloadBtn)).toBe(false);
+    for (const el of [
+      surfaces.editorError,
+      surfaces.editorEditBtn,
+      surfaces.editorDiffPane,
+      surfaces.editorReadonlyLabel,
+    ]) {
+      expect(hidden(el)).toBe(true);
+    }
+  });
+});
+
 describe("an SVG is an image to display, never a page to open", () => {
-  it("renders it as an image", () => {
-    openFile("docs/arch.svg");
+  it("renders it as an image without the whole-read route", async () => {
+    await open("docs/arch.svg");
     expect(hidden(surfaces.editorImage)).toBe(false);
-    expect(img()).not.toBeNull();
-    expect(img()?.getAttribute("src")).toBe("/api/file/download?path=docs%2Farch.svg");
+    expect(img()?.getAttribute("src")).toContain("/api/file/download?path=docs%2Farch.svg");
+    expect(urls().some((u) => u.startsWith("/api/file?"))).toBe(false);
   });
 
-  it("reaches the surface without the JSON route", () => {
-    openFile("docs/arch.svg");
-    expect(apiGet).not.toHaveBeenCalled();
-  });
-
-  it("offers no raw link, frame or embed for it", () => {
-    openFile("docs/arch.svg");
+  it("offers no raw link, frame or embed for it, and nothing but the image", async () => {
+    await open("docs/arch.svg");
     const host = surfaces.editorImage;
-    expect(host.querySelector("a")).toBeNull();
-    expect(host.querySelector("iframe")).toBeNull();
-    expect(host.querySelector("object")).toBeNull();
-    expect(host.querySelector("embed")).toBeNull();
-    // Nothing anywhere on the surface carries a navigable href.
-    expect(host.querySelector("[href]")).toBeNull();
-  });
-
-  // Belt and braces on the same rule: the only child of the surface is the image.
-  it("puts nothing but the image on the surface", () => {
-    openFile("docs/arch.svg");
-    expect([...surfaces.editorImage.children].map((c) => c.tagName)).toEqual(["IMG"]);
+    expect(host.querySelector("a, iframe, object, embed, [href]")).toBeNull();
+    expect([...host.children].map((c) => c.tagName)).toEqual(["IMG"]);
   });
 });

@@ -3,7 +3,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { rendersNothing, turnCost } from "./block-window.js";
+import { entryRenders, firstPlanSeq, rendersNothing } from "./block-window.js";
 import { makeTurn } from "./__test-helpers__/model.js";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryKind } from "./wire/types.gen.js";
@@ -17,11 +17,13 @@ const KIND_SET: Record<EntryKind, true> = {
   tool_result: true,
   steer: true,
   steer_ack: true,
+  steer_delivered: true,
   plan: true,
   compaction: true,
   compaction_failed: true,
   safety_blocked: true,
   model_switched: true,
+  model_routed: true,
   mode_switched: true,
   turn_revert: true,
   reconciled: true,
@@ -35,6 +37,12 @@ const bodyArb = fc.array(
   fc.record({ kind: fc.constantFrom(...KINDS), lane: fc.constantFrom(...LANES) }),
   { maxLength: 8 },
 );
+
+/** The count `rendersNothing` replaced: every entry the body draws in `lane`, read over the whole body. */
+function drawnCount(t: Turn, lane = ""): number {
+  const firstPlan = firstPlanSeq(t, lane);
+  return t.body.filter((e) => entryRenders(e, lane, firstPlan)).length;
+}
 
 /** `body` whose entries past the first THROW when read, so a scan that does not stop at the
  *  first rendering entry fails rather than merely costing more. */
@@ -54,7 +62,7 @@ describe("rendersNothing", () => {
     fc.assert(
       fc.property(bodyArb, fc.constantFrom(...LANES), (body, lane) => {
         const t = makeTurn({ body });
-        expect(rendersNothing(t, lane)).toBe(turnCost(t, lane).entries === 0);
+        expect(rendersNothing(t, lane)).toBe(drawnCount(t, lane) === 0);
       }),
     );
   });
@@ -76,6 +84,6 @@ describe("rendersNothing", () => {
     const guarded: Turn = { ...t, body: poisonedAfterFirst(t.body) };
     expect(rendersNothing(guarded)).toBe(false);
     // The fixture can fail: the count this predicate replaced reads the whole body.
-    expect(() => turnCost(guarded)).toThrow("read body[1]");
+    expect(() => drawnCount(guarded)).toThrow("read body[1]");
   });
 });

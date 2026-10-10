@@ -6,6 +6,7 @@ package translate
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -16,29 +17,47 @@ import (
 // supervisor in this tier — see logAgentRun.
 const runOriginAgent = "agent"
 
-// kasRunStart mirrors _kiro/workflow/run_start. `nodeTree` and `inputs` are not decoded:
-// the client refetches `inspect`, whose tree is fresher. `parentSessionId` is not decoded
-// either (see logAgentRun).
+// `nodeTree` and `inputs` are not decoded: the client refetches `inspect`, whose tree is fresher.
+// `parentSessionId` is not decoded either (see logAgentRun). Initiator and InitiatorReason are set
+// on the run_start a resume emits.
 type kasRunStart struct {
-	WorkflowID   string `json:"workflowId"`
-	WorkflowName string `json:"workflowName"`
+	WorkflowID      string `json:"workflowId"`
+	WorkflowName    string `json:"workflowName"`
+	Initiator       string `json:"initiator"`
+	InitiatorReason string `json:"initiatorReason"`
 }
 
-// kasRunNode is the shape shared by the seven progress frames. Every field is optional across
-// the set: `paused` carries only the workflow id, and `loop_iteration` names its node in
-// `loopId` rather than `nodeId`.
+// Every field is optional across the set: `paused` carries only the workflow id, and
+// `loop_iteration` names its node in `loopId` rather than `nodeId`.
 type kasRunNode struct {
-	WorkflowID string   `json:"workflowId"`
-	NodeID     string   `json:"nodeId"`
-	LoopID     string   `json:"loopId"`
-	SessionID  string   `json:"sessionId"`
-	Status     string   `json:"status"`
-	Reason     string   `json:"reason"`
-	NodePath   []string `json:"nodePath"`
+	// Resolution settles a `steps_queued` revision; PendingSteps queues one.
+	Resolution *struct {
+		Outcome string `json:"outcome"`
+		Reason  string `json:"reason"`
+	} `json:"resolution"`
+	WorkflowID string `json:"workflowId"`
+	NodeID     string `json:"nodeId"`
+	LoopID     string `json:"loopId"`
+	SessionID  string `json:"sessionId"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	// Kind is set on `node_paused` only, and only to retryWaitKind.
+	Kind string `json:"kind"`
+	// Initiator and InitiatorReason attribute a run-level `paused`.
+	Initiator       string            `json:"initiator"`
+	InitiatorReason string            `json:"initiatorReason"`
+	PendingSteps    []json.RawMessage `json:"pendingSteps"`
+	NodePath        []string          `json:"nodePath"`
 }
 
-// kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is read only for
-// `workflowName`, the one lifecycle frame with no top-level name; the client refetches.
+// retryWaitKind marks a `node_paused` KAS sends while a step waits out a transient failure: the
+// step keeps running and KAS re-sends node_start after the wait, so it is no pause.
+const retryWaitKind = "retry-wait"
+
+func (p *kasRunNode) retryWait() bool { return p.Kind == retryWaitKind }
+
+// `finalState` is read only for `workflowName`, the one lifecycle frame with no top-level name; the
+// client refetches.
 type kasRunComplete struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
@@ -74,8 +93,10 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, 
 	}
 	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStarted, chatID, marotte.RunStartedPayload{
-		WorkflowID: p.WorkflowID,
-		Name:       cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), p.WorkflowName),
+		WorkflowID:      p.WorkflowID,
+		Name:            cmp.Or(t.runOrigin.RunLabel(p.WorkflowID), p.WorkflowName),
+		Initiator:       p.Initiator,
+		InitiatorReason: p.InitiatorReason,
 		// Keyed on the workflow id: this frame's chat id is empty for exactly these runs.
 		Scheduled: t.runOrigin.IsScheduled(p.WorkflowID),
 	}))
@@ -116,17 +137,22 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 				t.steps.record(p.SessionID, p.WorkflowID, node, path)
 			}
 			// The run turn's opening bracket; a path already open is a no-op on the log.
-			t.runs.RunNodeStart(ctx, RunStep{RunID: p.WorkflowID, NodePath: path, NodeID: node, SessionID: p.SessionID}, chatID)
+			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, NodeID: node, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
 		case marotte.RunProgressNodeComplete:
 			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.Reason)
+		case marotte.RunProgressNodePaused:
+			if !p.retryWait() {
+				t.runs.RunNodePaused(ctx, p.WorkflowID, nodePathOf(p.NodePath, node))
+			}
+		case marotte.RunProgressStepsQueued:
+			t.runs.RunPlanUpdate(ctx, chatID, p.WorkflowID, planUpdateOf(&p))
 		}
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, chatID,
 			runProgress(kind, node, &p, time.Now())))
 	}
 }
 
-// runProgress builds the frame for one progress kind. An empty node path is the signal:
-// a client applies a named node and refetches otherwise.
+// An empty node path is the signal: a client applies a named node and refetches otherwise.
 func runProgress(
 	kind marotte.RunProgressKind, node string, p *kasRunNode, at time.Time,
 ) marotte.RunProgressPayload {
@@ -137,6 +163,7 @@ func runProgress(
 		out.NodePath = nodePathOf(p.NodePath, node)
 		out.Status = runNodeStatusRunning
 		out.StartedAt = stamp
+		out.SessionID = p.SessionID
 	case marotte.RunProgressNodeComplete:
 		out.NodePath = nodePathOf(p.NodePath, node)
 		// KAS's word is already the client tree's NodeState vocabulary.
@@ -145,14 +172,32 @@ func runProgress(
 		out.FailureReason = p.Reason
 	case marotte.RunProgressNodePaused:
 		out.NodePath = nodePathOf(p.NodePath, node)
-		out.Status = runNodeStatusPaused
+		if p.retryWait() {
+			out.Status = runNodeStatusRunning
+			out.RetryReason = p.Reason
+		} else {
+			out.Status = runNodeStatusPaused
+			out.PauseReason = p.Reason
+		}
 	case marotte.RunProgressWatchPoll:
 		// A poll re-states `running`: a frame stating nothing cannot be applied.
 		out.NodePath = nodePathOf(p.NodePath, node)
 		out.Status = runNodeStatusRunning
-	case marotte.RunProgressLoopIteration, marotte.RunProgressPaused, marotte.RunProgressStepsQueued:
+	case marotte.RunProgressPaused:
+		out.Initiator = p.Initiator
+		out.InitiatorReason = p.InitiatorReason
+	case marotte.RunProgressLoopIteration, marotte.RunProgressStepsQueued:
 	}
 	return out
+}
+
+// planUpdateOf reads a `steps_queued`: steps without a resolution queue a revision, a resolution
+// settles the queued one. An outcome outside KAS's three is kept as KAS's word.
+func planUpdateOf(p *kasRunNode) marotte.RunPlanUpdate {
+	if p.Resolution == nil {
+		return marotte.RunPlanUpdate{Outcome: marotte.RunPlanQueued, Pending: len(p.PendingSteps)}
+	}
+	return marotte.RunPlanUpdate{Outcome: marotte.RunPlanOutcome(p.Resolution.Outcome), Reason: p.Resolution.Reason}
 }
 
 // The two KAS NodeState words this translator asserts rather than forwards.

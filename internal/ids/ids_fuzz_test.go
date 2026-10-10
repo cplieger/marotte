@@ -17,7 +17,7 @@ func FuzzNew(f *testing.F) {
 			return
 		}
 		enc := Encoding(encInt)
-		if enc != HexUpper && enc != StdLower {
+		if enc != hexUpper && enc != StdLower {
 			return
 		}
 
@@ -29,7 +29,7 @@ func FuzzNew(f *testing.F) {
 		}
 
 		switch enc {
-		case HexUpper:
+		case hexUpper:
 			for _, c := range result {
 				//nolint:staticcheck // QF1001: explicit two-range check reads more naturally than the De Morgan form
 				if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'V')) {

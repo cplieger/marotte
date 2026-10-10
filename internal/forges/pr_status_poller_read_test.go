@@ -45,7 +45,7 @@ func TestNotice_GitLabRowFlipToFailedNotifies(t *testing.T) {
 	p.sweep(t.Context())
 
 	want := []sentPush{{
-		body: "group/app #4 checks failed: PR group/app", kind: marotte.PushKindPRStatus,
+		title: "group/app #4", body: "Checks failed · PR group/app", kind: marotte.PushKindPRStatus,
 		subject: marotte.PRSubject(rec.ID, repoIDOf(sel), 4),
 	}}
 	if !slices.Equal(n.sent, want) {
@@ -67,7 +67,7 @@ func TestNotice_GiteaRowFlipToPassedNotifies(t *testing.T) {
 	p.sweep(t.Context())
 
 	want := []sentPush{{
-		body: "bob/app #7 checks passed: PR bob/app", kind: marotte.PushKindPRStatus,
+		title: "bob/app #7", body: "Checks passed · PR bob/app", kind: marotte.PushKindPRStatus,
 		subject: marotte.PRSubject(rec.ID, repoIDOf(sel), 7),
 	}}
 	if !slices.Equal(n.sent, want) {
@@ -165,7 +165,7 @@ func TestNotice_ReadsAreBoundedPendingFirst(t *testing.T) {
 		t.Errorf("the second push-only cycle read %q, want the pending rows, the two the bound left, then the newest "+
 			"settled ones %q", got, second)
 	}
-	if got, want := sortedBodies(n.sent), []string{"group/app #12 checks passed: PR group/app"}; !slices.Equal(got, want) {
+	if got, want := sortedBodies(n.sent), []string{"group/app #12: Checks passed · PR group/app"}; !slices.Equal(got, want) {
 		t.Errorf("notices after two cycles = %q, want %q: #12 flipped, #5 is still pending, #1 and #2 seed", got, want)
 	}
 }
@@ -199,7 +199,7 @@ func TestNotice_FailedReadSendsNothing(t *testing.T) {
 	core.reads[readKey(sel, 1)] = gitlabRead(a, forgeapi.CheckPassing)
 	core.reads[readKey(sel, 2)] = gitlabRead(b, forgeapi.CheckFailing)
 	p.sweep(t.Context())
-	want := []string{"group/app #1 checks passed: PR group/app", "group/app #2 checks failed: PR group/app"}
+	want := []string{"group/app #1: Checks passed · PR group/app", "group/app #2: Checks failed · PR group/app"}
 	if got := sortedBodies(n.sent); !slices.Equal(got, want) {
 		t.Errorf("after the reads answered again, notices = %q, want %q: the pending verdict held through the failure", got, want)
 	}
@@ -235,7 +235,7 @@ func TestNotice_UnknownReadAndFirstSightingAreSilent(t *testing.T) {
 	core.pages[""] = page(waiting, moved)
 	core.reads[readKey(sel, 2)] = gitlabRead(moved, forgeapi.CheckFailing)
 	p.sweep(t.Context())
-	if got, want := sortedBodies(n.sent), []string{"group/app #2 checks failed: PR group/app"}; !slices.Equal(got, want) {
+	if got, want := sortedBodies(n.sent), []string{"group/app #2: Checks failed · PR group/app"}; !slices.Equal(got, want) {
 		t.Errorf("a row seeded passing, moved and read failing sent %q, want %q", got, want)
 	}
 }
@@ -294,7 +294,7 @@ func TestNotice_ASettledRowIsReadEveryCycle(t *testing.T) {
 			core.reads[readKey(tc.sel, 1)] = tc.read(pr, forgeapi.CheckFailing)
 			p.sweep(t.Context())
 
-			want := []string{tc.sel + " #1 checks failed: PR " + tc.sel}
+			want := []string{tc.sel + " #1: Checks failed · PR " + tc.sel}
 			if got := sortedBodies(n.sent); len(core.asked) != 2 || !slices.Equal(got, want) {
 				t.Errorf("two cycles over one listed row read passing then failing read %q and sent %q, want two reads and %q",
 					core.asked, got, want)
@@ -363,7 +363,7 @@ func TestNotice_AGiteaPullRequestFromAClonedForkNotifies(t *testing.T) {
 	p.sweep(t.Context())
 
 	want := []sentPush{{
-		body: "upstream/lib #4 checks passed: PR upstream/lib", kind: marotte.PushKindPRStatus,
+		title: "upstream/lib #4", body: "Checks passed · PR upstream/lib", kind: marotte.PushKindPRStatus,
 		subject: marotte.PRSubject(rec.ID, repoIDOf("upstream/lib"), 4),
 	}}
 	if !slices.Equal(n.sent, want) {
@@ -386,7 +386,7 @@ func TestNotice_AGiteaPullRequestFromAClonedForkNotifies(t *testing.T) {
 	core.reads[readKey("upstream/lib", 4)] = readFrom(fromFork, "bob/lib", forgeapi.CheckFailing)
 	p.sweep(t.Context())
 	if got, want := sortedBodies(n.sent), []string{
-		"upstream/lib #4 checks failed: PR upstream/lib", "upstream/lib #4 checks passed: PR upstream/lib",
+		"upstream/lib #4: Checks failed · PR upstream/lib", "upstream/lib #4: Checks passed · PR upstream/lib",
 	}; !slices.Equal(got, want) {
 		t.Errorf("after a failed read then a failing one, notices = %q, want %q", got, want)
 	}
@@ -464,7 +464,7 @@ func TestNotice_OneFailedReadBesideAnAnsweredOne(t *testing.T) {
 	core.errs[readKey(sel, 1)] = &forgeapi.Error{Kind: forgeapi.KindTransient}
 	core.reads[readKey(sel, 2)] = gitlabRead(b, forgeapi.CheckFailing)
 	p.sweep(t.Context())
-	if got, want := sortedBodies(n.sent), []string{"group/app #2 checks failed: PR group/app"}; !slices.Equal(got, want) {
+	if got, want := sortedBodies(n.sent), []string{"group/app #2: Checks failed · PR group/app"}; !slices.Equal(got, want) {
 		t.Errorf("a cycle with one failed and one failing read sent %q, want %q", got, want)
 	}
 	if got := logs.CountExact(msg); got != 1 {
@@ -475,7 +475,7 @@ func TestNotice_OneFailedReadBesideAnAnsweredOne(t *testing.T) {
 	core.reads[readKey(sel, 1)] = gitlabRead(a, forgeapi.CheckPassing)
 	core.asked = nil
 	p.sweep(t.Context())
-	want := []string{"group/app #1 checks passed: PR group/app", "group/app #2 checks failed: PR group/app"}
+	want := []string{"group/app #1: Checks passed · PR group/app", "group/app #2: Checks failed · PR group/app"}
 	if got := sortedBodies(n.sent); !slices.Equal(got, want) {
 		t.Errorf("after the failed read answered passing, notices = %q, want %q: its pending verdict held", got, want)
 	}

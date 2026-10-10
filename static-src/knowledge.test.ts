@@ -443,7 +443,7 @@ describe("indexing poll", () => {
   // A base name is free text, so a "|"-joined stall signature can collapse two progress states and abandon a healthy
   // index.
   it("keeps polling across two states the old '|'-joined progress signature collapsed", async () => {
-    /** The progress expression before the keyenc adoption. */
+    /** A template-literal "|" join, the collision-prone shape. */
     function oldProgressSig(ctxs: readonly { name: string; item_count: number }[]): string {
       return ctxs
         .map((c) => `${c.name}:${String(c.item_count)}:`)
@@ -455,7 +455,7 @@ describe("indexing poll", () => {
       { name: "refs", id: "2", item_count: 2, indexing: true },
     ];
     const one = [{ name: "docs:1:|refs", id: "3", item_count: 2, indexing: true }];
-    // Precondition: the old expression really collapsed these.
+    // Precondition: the "|" join really collapses these.
     expect(oldProgressSig(two)).toBe(oldProgressSig(one));
 
     vi.useFakeTimers();
@@ -471,7 +471,7 @@ describe("indexing poll", () => {
         await vi.advanceTimersByTimeAsync(1500);
         await flush();
       }
-      // Under the old join every tick read as a stall.
+      // Under the "|" join every tick reads as a stall.
       expect(mockGet.mock.calls.length).toBeGreaterThan(60);
     } finally {
       vi.useRealTimers();
@@ -498,7 +498,7 @@ describe("indexing poll", () => {
 // `items_display` and `path` are adjacent free-form fields.
 
 describe("loadKnowledge row signature", () => {
-  /** The signature expression before the keyenc adoption. */
+  /** A template-literal "|" join, the collision-prone shape. */
   function oldSig(c: {
     indexing?: boolean;
     item_count: number;
@@ -521,7 +521,7 @@ describe("loadKnowledge row signature", () => {
     // Free-form and adjacent, so a "|" in items_display could impersonate the boundary.
     const a = { item_count: 3, items_display: "42%|eta", path: "docs" };
     const b = { item_count: 3, items_display: "42%", path: "eta|docs" };
-    // Precondition: the old expression really collapsed these.
+    // Precondition: the "|" join really collapses these.
     expect(oldSig(a)).toBe(oldSig(b));
 
     // Same row key for both loads, so data-sig changes only with the signature.

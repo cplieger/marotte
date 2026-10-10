@@ -47,7 +47,6 @@ var runStatusVerbs = map[marotte.RunStatus][]string{
 // not registered in memory. Resume and Retry make the launching session live first (acquireHost).
 var hostedOnlyVerbs = []string{verbPause}
 
-// runAffordance answers what may be done to one run.
 type runAffordance struct {
 	// Refused maps an unoffered verb to one sentence, only where its absence needs explaining.
 	Refused map[string]string
@@ -60,7 +59,6 @@ type runAffordance struct {
 	Verbs []string
 }
 
-// permits reports whether the run offers this verb.
 func (a *runAffordance) permits(verb string) bool {
 	return slices.Contains(a.Verbs, verb)
 }
@@ -88,7 +86,7 @@ type runFacts struct {
 	pausePending bool
 }
 
-// affordanceOf answers what may be done to one run. Pure, so the table tests over (status × parent × hosted).
+// Pure, so the table tests over (status × parent × hosted).
 func affordanceOf(f *runFacts) runAffordance {
 	byStatus, known := runStatusVerbs[marotte.RunStatus(f.status)]
 	if !known {

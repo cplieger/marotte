@@ -62,8 +62,6 @@ func newScopeCore() *scopeCore {
 	}
 }
 
-// inventoryPoller is a poller over the production source for recs, each served
-// by the core cores names, with the clones origins describe.
 func inventoryPoller(t *testing.T, cores map[string]forgeapi.Core, origins []RepoOrigin, recs ...connectionRecord,
 ) (*PRStatusPoller, *fakeGate, *fakeNotifier, *Manager) {
 	t.Helper()
@@ -73,7 +71,6 @@ func inventoryPoller(t *testing.T, cores map[string]forgeapi.Core, origins []Rep
 	return NewPRStatusPoller(NewManagerPRSource(m, fixedOrigins(origins...)), n, g.Open), g, n, m
 }
 
-// entriesOf is every entry p's inventory holds, ordered by connection id.
 func entriesOf(p *PRStatusPoller) []InventoryEntry {
 	p.inv.mu.Lock()
 	defer p.inv.mu.Unlock()
@@ -293,7 +290,7 @@ func TestInventory_DisconnectDropsTheEntry(t *testing.T) {
 		if err := m.store.Delete(rec.ID); err != nil {
 			t.Fatalf("Setup: delete the credential: %v", err)
 		}
-		m.Invalidate()
+		m.invalidate()
 		p.sweep(t.Context())
 		if got := entriesOf(p); len(got) != 0 {
 			t.Errorf("entries after the connection lost its credential = %+v, want none", got)
@@ -319,7 +316,7 @@ func TestInventory_DisconnectDropsTheEntry(t *testing.T) {
 		entryFor(t, p, rec.ID)
 
 		seedStoreRecord(t, m.configDir, rec.ID, "carol")
-		m.Invalidate()
+		m.invalidate()
 		g.present, g.push = false, true
 		p.sweep(t.Context())
 		if got := entriesOf(p); len(got) != 0 {
@@ -384,7 +381,7 @@ func TestInventory_RemovedOwnerScopeForgetsItsWalk(t *testing.T) {
 		r := githubRecord()
 		r.OwnerScopes = owners
 		saveRecords(t, m.conns, r)
-		m.Invalidate()
+		m.invalidate()
 	}
 
 	p.sweep(t.Context())

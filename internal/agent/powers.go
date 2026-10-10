@@ -63,7 +63,7 @@ type powersSurface struct {
 	wake chan struct{}
 }
 
-// kasPower is one `_kiro/powers/list` item; issues are decoded leniently and only counted.
+// issues are decoded leniently and only counted.
 type kasPower struct {
 	Meta struct {
 		Kiro struct {
@@ -206,7 +206,6 @@ func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoad
 	return res.Powers, loadErrorsFrom(res.Errors), nil
 }
 
-// loadErrorsFrom keeps the first maxPowerLoadErrors entries that name something.
 func loadErrorsFrom(in []powerLoadError) []powerLoadError {
 	var out []powerLoadError
 	for _, e := range in {

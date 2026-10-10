@@ -24,7 +24,7 @@ vi.mock("./scroll.js", async (importOriginal) => ({
 }));
 
 import { buildRunCard } from "./fundamentals/run-card.js";
-import type { RunAsks } from "./run-exec-source.js";
+import type { RunAsks } from "./run-asks.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { RunNode, RunState } from "./run-store.js";
 
@@ -38,8 +38,12 @@ const NARROW_PX = 252;
 const PHONE_PX = 332;
 const WIDE_PX = 1200;
 
-const NO_ASKS: RunAsks = { count: 0, nodes: new Set(), label: "" };
-const ASKING: RunAsks = { count: 1, nodes: new Set(["s6"]), label: "s6" };
+const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
+const ASKING: RunAsks = {
+  count: 1,
+  asked: [{ nodeID: "s6", sessionID: "", answer: false }],
+  label: "s6",
+};
 const STARTED = "2026-09-20T06:00:00.000Z";
 
 let style: HTMLStyleElement;
@@ -72,7 +76,6 @@ function step(nodeId: string, status: RunNode["status"], startedAt?: string): Ru
   return node;
 }
 
-/** Ten steps, on its seventh, started long enough ago that the foot's clock renders. */
 function liveRun(): RunState {
   const children: RunNode[] = [];
   for (let i = 0; i < 10; i++) {

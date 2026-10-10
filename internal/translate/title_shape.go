@@ -25,8 +25,8 @@ const derivedTitleEllipsis = "..."
 // maxTitleRunes caps an adopted title; a guard against a malformed frame (KAS caps at 80).
 const maxTitleRunes = 80
 
-// maxTitleWords bounds an adopted title. An agent's update_session_information title is
-// bound by no prompt and live ones run to 7, so 8 is too tight.
+// An agent's update_session_information title is bound by no prompt and live ones run to 7, so 8 is
+// too tight.
 const maxTitleWords = 12
 
 // Refusal reasons, so a door's log line names WHICH rule fired.
@@ -90,7 +90,6 @@ func hasInternalSentenceBreak(title string) bool {
 	return false
 }
 
-// letterFollowsSpace reports whether rest opens with whitespace and then a letter.
 func letterFollowsSpace(rest []rune) bool {
 	if len(rest) == 0 || !unicode.IsSpace(rest[0]) {
 		return false

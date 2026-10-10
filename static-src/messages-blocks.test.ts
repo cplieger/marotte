@@ -23,6 +23,7 @@ const {
   buildAssistantBody,
   updateAssistantBody,
   buildDetachedBody,
+  updateDetachedBody,
   disposeAssistantBody,
   resetBlockRenders,
   initBlockRenderer,
@@ -45,9 +46,6 @@ setActive(CHAT_ID);
 
 initBlockRenderer({
   // messages.ts owns the effect registry; no case here asserts on it.
-  pushStreamingEffect: (): void => {
-    /* noop */
-  },
   pushEntryEffect: (): void => {
     /* noop */
   },
@@ -136,7 +134,6 @@ function resultEntry(
   });
 }
 
-/** A delegate invocation in the ISSUER's lane, carrying the delegate's uuid. */
 function invocation(turnID: string, seq: number, subtask: string): Entry {
   return callEntry(
     turnID,
@@ -208,7 +205,6 @@ function render(entries: Entry[], opts: { readonly live?: boolean } = {}): Rende
   return { turnID, body, turn };
 }
 
-/** Build one turn's body over `range` alone, the windowed mount. */
 function renderWindow(entries: Entry[], range: { from: number; to: number }): Render {
   const turnID = nextTurnID();
   const turn = turnOf(turnID, retarget(entries, turnID));
@@ -217,11 +213,9 @@ function renderWindow(entries: Entry[], range: { from: number; to: number }): Re
   return { turnID, body, turn };
 }
 
-/** Re-render `r`'s body against `entries`, the update path a later frame takes. */
-function update(r: Render, entries: Entry[], live = false): Turn {
+function update(r: Render, entries: Entry[], live = false): void {
   const turn = turnOf(r.turnID, retarget(entries, r.turnID));
   updateAssistantBody(r.body, turn, CHAT_ID, live);
-  return turn;
 }
 
 /** The body's direct children, as a readable shape. */
@@ -685,14 +679,15 @@ describe("the lane's OPEN entry is what streams, at the tail of its view", () =>
 });
 
 describe("an event kind renders a row at its own seq", () => {
-  it("draws all four event kinds in seq order, between prose", () => {
+  it("draws every event kind in seq order, between prose", () => {
     const r = render([
       text("t", 1, "before"),
       sealed("t", 2, "compaction", { summary: "s", id: "compaction-1" }),
       sealed("t", 3, "compaction_failed", { reason: "too big" }),
       sealed("t", 4, "safety_blocked", { reason: "blocked" }),
       sealed("t", 5, "model_switched", { from: "a", to: "b" }),
-      text("t", 6, "after"),
+      sealed("t", 6, "model_routed", { message: "Switched to it." }),
+      text("t", 7, "after"),
     ]);
     expect(shape(r.body)).toEqual([
       "text(before)",
@@ -700,6 +695,7 @@ describe("an event kind renders a row at its own seq", () => {
       "event(compaction_failed)",
       "event(safety_blocked)",
       "event(model_switched)",
+      "event(model_routed)",
       "text(after)",
     ]);
   });
@@ -1193,6 +1189,23 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe("m · high");
   });
 
+  it("shows the category a saved agent was asked to run on as its card's detail", () => {
+    const r = render([
+      callEntry(
+        "t",
+        1,
+        toolCall("tool-sub-A", {
+          title: "Sub-agent: context-gatherer",
+          agent_subtask_id: "sub-A",
+          input: { name: "context-gatherer", modelCategory: "auto-balanced" },
+        }),
+      ),
+    ]);
+    expect(cardOf(r).querySelector(".subagent-detail")?.textContent).toBe(
+      "Category: auto-balanced",
+    );
+  });
+
   it("re-binds a pipeline box whose driver entry the window dropped", () => {
     // The box outlives the entry that opened it, so without the rebind its header freezes.
     const driverCall = toolCall("orc-1", {
@@ -1339,9 +1352,6 @@ describe("legacy internal tool calls are dropped at the dispatcher", () => {
 
 describe("one entry that fails to render does not take its turn with it", () => {
   const baseCbs = {
-    pushStreamingEffect: (): void => {
-      /* noop */
-    },
     pushEntryEffect: (): void => {
       /* noop */
     },
@@ -1450,5 +1460,20 @@ describe("one entry that fails to render does not take its turn with it", () => 
     expect(consoleError).toHaveBeenCalledTimes(1);
     const next = render([text("t", 1, "fine")]);
     expect(next.body.textContent).toContain("fine");
+  });
+});
+
+describe("a render no chat owns settles its own cards", () => {
+  // A run step's transcript passes "" for the chat, so no store publishes its `tool_result`s.
+  const running = (): Entry => callEntry("t", 1, toolCall("tool-a", { status: "in_progress" }));
+
+  it("settles a mounted card when its tool_result arrives", () => {
+    const turnID = nextTurnID();
+    const host = bodyHost();
+    buildDetachedBody(host, turnOf(turnID, retarget([running()], turnID)), "", "", true);
+    expect(host.querySelector(".tool-call")?.getAttribute("data-outcome")).toBe("running");
+    const settled = retarget([running(), resultEntry("t", 2, 1, { status: "failed" })], turnID);
+    updateDetachedBody(host, turnOf(turnID, settled), "", "", false);
+    expect(host.querySelector(".tool-call")?.getAttribute("data-outcome")).toBe("fail");
   });
 });

@@ -2,6 +2,7 @@
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { join as joinKey } from "@cplieger/keyenc";
+import { asObject, reqStr } from "../validators.js";
 
 /** The file browser's own delete endpoint: one place for the mount-root and protected-directory
  *  refusals. */
@@ -22,4 +23,30 @@ export const deleteDoc = apiAction<{ path: string; name: string }>({
   }),
   success: (args) => `Deleted ${args.name}`,
   error: (args) => `Could not delete ${args.name}`,
+});
+
+export interface NewDocRequest {
+  category: "steering" | "skill" | "prompt" | "agent" | "hook";
+  name: string;
+  inclusion?: "always" | "manual";
+  description?: string;
+  trigger?: string;
+  matcher?: string;
+  action?: "command" | "agent";
+  content?: string;
+  timeout?: number;
+}
+
+const NP = "$.created";
+
+/** `error: false`: the form shows the server's refusal in place. The key makes a retried create
+ *  replay rather than meet its own 409. */
+export const createDoc = apiAction<NewDocRequest, { path: string }>({
+  name: "docs.create",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: (body) => ({ method: "POST", path: "/api/workspace/kiro-docs/new", body }),
+  decode: (data) => ({ path: reqStr(asObject(data, NP), "path", NP) }),
+  error: false,
 });

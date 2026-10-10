@@ -1,0 +1,16 @@
+[
+  { "id": "running_steers", "run": "running", "node": "running", "session": true, "asked": false, "verb": "steer" },
+  { "id": "running_with_an_ask_steers", "run": "running", "node": "running", "session": true, "asked": true, "verb": "steer" },
+  { "id": "asked_answers", "run": "paused", "node": "paused", "session": true, "asked": true, "verb": "answer" },
+  { "id": "asked_beside_a_live_branch_answers", "run": "running", "node": "paused", "session": true, "asked": true, "verb": "answer" },
+  { "id": "paused_prompts", "run": "paused", "node": "paused", "session": true, "asked": false, "verb": "prompt" },
+  { "id": "paused_beside_a_live_branch_is_busy", "run": "running", "node": "paused", "session": true, "asked": false, "refusal": "busy" },
+  { "id": "pending_has_not_started", "run": "running", "node": "pending", "session": false, "asked": false, "refusal": "not_started" },
+  { "id": "pending_on_a_paused_run_asks_for_resume", "run": "paused", "node": "pending", "session": false, "asked": false, "refusal": "run_paused" },
+  { "id": "completed_is_finished", "run": "running", "node": "completed", "session": true, "asked": false, "refusal": "finished" },
+  { "id": "failed_is_finished", "run": "running", "node": "failed", "session": true, "asked": false, "refusal": "finished" },
+  { "id": "aborted_is_finished", "run": "running", "node": "aborted", "session": true, "asked": false, "refusal": "finished" },
+  { "id": "skipped_is_finished", "run": "running", "node": "skipped", "session": true, "asked": false, "refusal": "finished" },
+  { "id": "a_terminal_run_is_finished", "run": "cancelled", "node": "running", "session": true, "asked": false, "refusal": "finished" },
+  { "id": "an_unknown_status_is_busy", "run": "running", "node": "waking", "session": true, "asked": false, "refusal": "busy" }
+]

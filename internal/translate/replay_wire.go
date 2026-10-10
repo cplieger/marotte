@@ -28,7 +28,9 @@ type replayInfoKiro struct {
 	PendingInteraction  *pendingInteractionBlock  `json:"pendingInteraction"`
 	InteractionResolved *interactionResolvedBlock `json:"interactionResolved"`
 	Throughput          *turnThroughput           `json:"throughput"`
+	ContextBreakdown    json.RawMessage           `json:"contextBreakdown"`
 	Kind                string                    `json:"kind"`
+	Message             string                    `json:"message"`
 	PromptTurnSummaries []promptTurnSummary       `json:"promptTurnSummaries"`
 	SteeringDocuments   []json.RawMessage         `json:"steeringDocuments"`
 	RequestIDs          []string                  `json:"requestIds"`
@@ -50,12 +52,11 @@ func replayTS(s string) int64 {
 	return t.UnixMilli()
 }
 
-// replayChunk decodes a replayed user/agent/thought message chunk.
 type replayChunk struct {
 	Content struct {
 		Text string `json:"text"`
 	} `json:"content"`
-	Meta ACPKiroMeta `json:"_meta"`
+	Meta acpKiroMeta `json:"_meta"`
 }
 
 // workflowProgressIDPrefix is the id of a workflow-progress row KAS writes onto the launching
@@ -67,7 +68,7 @@ const workflowProgressKind = "workflow-progress"
 
 // isWorkflowProgress reports whether a replayed user chunk is a workflow-progress row, by BOTH
 // discriminators (the id prefix is the one measured to reach the wire).
-func isWorkflowProgress(m *ACPKiroMeta) bool {
+func isWorkflowProgress(m *acpKiroMeta) bool {
 	return strings.HasPrefix(m.Kiro.MessageID, workflowProgressIDPrefix) ||
 		m.Kiro.Notification.Kind == workflowProgressKind
 }

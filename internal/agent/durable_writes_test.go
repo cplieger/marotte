@@ -21,13 +21,12 @@ var storeWritePackages = []string{"internal/agent", "internal/translate", "inter
 var storeWriteNames = []string{
 	"Mutate", "Append", "AppendBetweenTurns", "OpenTurn", "Revert", "Rewrite",
 	"Reconcile", "SetDraft", "SetAttachments", "WriteCounters",
-	"CloseRun", "SwapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
+	"closeRunTurns", "swapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
 }
 
 // A walk that finds nothing must fail. 44 measured; the slack covers a site moving, not a dropped callee class.
 const storeWriteFloor = 35
 
-// One function whose store writes carry a ruling.
 type durableSite struct {
 	file  string
 	fn    string
@@ -39,14 +38,24 @@ type durableSite struct {
 // Sites carrying a conversational record. finalizeTurn is absent: its closers sit below one seam, tested below.
 var durableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
-	fn:      "PersistModelSwitch",
+	fn:      "persistModelSwitch",
 	calls:   []string{"Mutate"},
 	because: "the model_switched entry and the header's pick, which are on no KAS wire",
 }, {
 	file:    "internal/agent/bridge_coord.go",
-	fn:      "PersistEffortChange",
-	calls:   []string{"AppendBetweenTurns"},
-	because: "the model_switched entry a reader's effort change leaves, which is on no KAS wire",
+	fn:      "commitUnservedModel",
+	calls:   []string{"Mutate"},
+	because: "the running model the unavailable model_switched entry names, which is on no KAS wire",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "holdUnservedModel",
+	calls:   []string{"Mutate"},
+	because: "the unserved model's clear, whose absence lets KAS's repin write a second entry",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "restoreUnservedModel",
+	calls:   []string{"Mutate"},
+	because: "the selection a failed spawn puts back for the next spawn to record",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "closeTurnOnBridgeDeath",
@@ -60,7 +69,7 @@ var durableWriteSites = []durableSite{{
 }, {
 	file:    "internal/agent/load_projection.go",
 	fn:      "swapProjectedTranscript",
-	calls:   []string{"SwapMerged"},
+	calls:   []string{"swapMerged"},
 	because: "the whole reconciled transcript",
 }, {
 	file:    "internal/translate/compact.go",
@@ -90,8 +99,13 @@ var durableWriteSites = []durableSite{{
 	because: "which agent read the steer, taken from its own ack — a replay carries the " +
 		"steer's text but neither its delivery state nor the lane that consumed it",
 }, {
+	file:    "internal/translate/workflow_message.go",
+	fn:      "appendDelivered",
+	calls:   []string{"appendLaneless"},
+	because: "when a workflow message was taken up, which no replay carries",
+}, {
 	file:    "internal/agent/queue_drain.go",
-	fn:      "HoldUnread",
+	fn:      "holdUnread",
 	calls:   []string{"Mutate"},
 	because: "a shutdown's unread steers as the Held row the next process shows",
 }}
@@ -111,7 +125,7 @@ var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
-	because: "the new session's id and facts — no conversational record, and a chat that lost them takes session/new next time",
+	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open spawns again",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "ReviseTurnBinding",
@@ -158,6 +172,11 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "the model catalog, re-derived from the next frame",
 }, {
+	file:    "internal/translate/model_routed.go",
+	fn:      "handleModelRouted",
+	calls:   []string{"appendLaneless"},
+	because: "KAS's Auto routing notice, which KAS persists and replays, so the next load's merge restores it",
+}, {
 	file:    "internal/translate/focus.go",
 	fn:      "applyFocusTitle",
 	calls:   []string{"Mutate"},
@@ -176,6 +195,11 @@ var abandonableWriteSites = []durableSite{{
 
 // Sites that take the caller's context and must not wrap it: the decision is not theirs.
 var inheritedWriteSites = []durableSite{{
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "appendModelSwitched",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the detach of its three callers: a model switch, an effort change and an unserved model",
+}, {
 	file:    "internal/agent/turn_finalize.go",
 	fn:      "closeTurn",
 	calls:   []string{"WriteCounters"},
@@ -212,12 +236,12 @@ var inheritedWriteSites = []durableSite{{
 	because: "applyPendingModel's detach",
 }, {
 	file:    "internal/agent/entry_merge.go",
-	fn:      "SwapMerged",
+	fn:      "swapMerged",
 	calls:   []string{"Rewrite"},
 	because: "swapProjectedTranscript's detach, the only caller",
 }, {
 	file:    "internal/agent/run_log.go",
-	fn:      "Open",
+	fn:      "open",
 	calls:   []string{"OpenTurn"},
 	because: "the run appender's frame context",
 }, {
@@ -227,13 +251,13 @@ var inheritedWriteSites = []durableSite{{
 	because: "the turnlog sink's caller, the run appender's frame context",
 }, {
 	file:    "internal/agent/run_log.go",
-	fn:      "AppendAfterClosed",
+	fn:      "appendAfterClosed",
 	calls:   []string{"Append"},
 	because: "the run appender's frame context",
 }, {
 	file:    "internal/agent/run_appender.go",
 	fn:      "closeRun",
-	calls:   []string{"CloseRun"},
+	calls:   []string{"closeRunTurns"},
 	because: "the run_complete frame's context; the death arm through host closes what a cancelled frame left open",
 }, {
 	file:    "internal/translate/entries.go",
@@ -388,7 +412,7 @@ func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 // The non-finalize half: handlers called from the translate cascade and Forward.
 func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testing.T) {
 	for _, site := range durableWriteSites {
-		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
+		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)
 			if missing := missingWrites(found, site.calls); len(missing) > 0 {
 				t.Fatalf("%s makes none of these writes it is listed for (%v); the list describes "+
@@ -405,7 +429,7 @@ func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testi
 // Each abandonable ruling must still describe real code, or a rename empties the list.
 func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) {
 	for _, site := range abandonableWriteSites {
-		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
+		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)
 			if missing := missingWrites(found, site.calls); len(missing) > 0 {
 				t.Fatalf("%s makes none of these writes it is exempted for (%v); re-judge it rather "+
@@ -423,7 +447,7 @@ func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) 
 // A detach inside a shared persist helper would change shutdown behaviour unreviewed.
 func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
 	for _, site := range inheritedWriteSites {
-		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
+		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)
 			if missing := missingWrites(found, site.calls); len(missing) > 0 {
 				t.Fatalf("%s makes none of these writes it is listed for (%v); the list describes "+
@@ -437,14 +461,12 @@ func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
 	}
 }
 
-// One store write the census found, keyed by the function that performs it.
 type storeWrite struct {
 	site string
 	name string
 	at   string
 }
 
-// Every store write in one package directory's production files.
 func censusStoreWrites(t *testing.T, dir string) []storeWrite {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(moduleRoot(t), dir))
@@ -478,7 +500,6 @@ type writeCall struct {
 	detached bool
 }
 
-// One listed site's writes, and the subset running on an ATTACHED context.
 func siteWrites(t *testing.T, site durableSite) (found, attached []writeCall) {
 	t.Helper()
 	fset, file := parseModuleFile(t, site.file)
@@ -556,7 +577,6 @@ func isDurableReassign(stmt *ast.AssignStmt) bool {
 	return isDurableCall(stmt.Rhs)
 }
 
-// Whether the first expression is a durable.Context call.
 func isDurableCall(args []ast.Expr) bool {
 	if len(args) == 0 {
 		return false
@@ -595,7 +615,6 @@ func funcDeclNamed(t *testing.T, file *ast.File, rel, name string) *ast.FuncDecl
 	return nil
 }
 
-// An expression rendered back to source, for comparing a switch tag.
 func exprText(fset *token.FileSet, expr ast.Expr) string {
 	start := fset.Position(expr.Pos())
 	end := fset.Position(expr.End())

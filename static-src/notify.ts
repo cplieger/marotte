@@ -3,22 +3,16 @@
 
 import { isIOS, isStandalone } from "./platform.js";
 import { openPushTarget } from "./notification-open.js";
-import { pushTargetTag, settleableTag, type PushTarget } from "./push-subject.js";
+import { parsePushTarget, pushTargetTag, settleableTag, type PushTarget } from "./push-subject.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
 import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 import { patchSettings } from "./persist.js";
-import type { EffectiveSettings } from "./wire/types.gen.js";
-
-/** Application name used in browser Notification titles. */
-export const NOTIFY_TITLE = "Marotte";
+import type { EffectiveSettings, NotificationPayload } from "./wire/types.gen.js";
 
 type PushState =
-  | { kind: "idle" }
-  | { kind: "registering" }
-  | { kind: "registered"; registration: ServiceWorkerRegistration }
-  | { kind: "failed"; error: string };
+  { kind: "idle" } | { kind: "registering" } | { kind: "registered" } | { kind: "failed" };
 
 /** The push kinds the user can switch off, keyed by wire value (`marotte.PushKind`)
  *  and paired with each settings key. `permission` has none on purpose: an ask
@@ -66,7 +60,7 @@ export function isAgentFinishedEnabled(): boolean {
 }
 
 // No per-kind getter for the permission ask: the master switch, checked in
-// notifyIfHidden, is its only gate (KEYED_PUSH_KINDS says why).
+// notifyOffScreen, is its only gate (KEYED_PUSH_KINDS says why).
 
 export function setNotificationsEnabled(v: boolean): void {
   enabled = v;
@@ -107,9 +101,8 @@ export function restoreNotifications(s: EffectiveSettings): void {
 
 let ask: NotifyAsk | null = null;
 
-/** The Notification constructor, or undefined. Tested for a FUNCTION, not with
- *  `"Notification" in window`: `in` is true for a non-constructor global, and
- *  reading `.permission` off that would throw out of the arm. */
+/** Tested for a FUNCTION, not with `"Notification" in window`: `in` is true for a non-constructor
+ *  global, and reading `.permission` off that would throw out of the arm. */
 function notificationCtor(): { permission?: unknown; requestPermission?: unknown } | undefined {
   const value: unknown = (globalThis as { Notification?: unknown }).Notification;
   return typeof value === "function"
@@ -167,17 +160,17 @@ function notifyAsk(): NotifyAsk {
 
 /** Drop the ask's per-page flags. Exported for test isolation only — the browser
  *  module registry is URL-keyed, so a suite cannot re-evaluate this module. */
+// deadset:ignore DS1004 -- test seam: resets the per-page permission ask
 export function _resetNotifyAskForTest(): void {
   ask = null;
 }
 
-/** Private: notifyIfHidden is the one funnel every cue passes through, so nothing
+/** Private: notifyOffScreen is the one funnel every cue passes through, so nothing
  *  else may arm the ask. */
 function armNotifyAsk(): void {
   notifyAsk().arm();
 }
 
-/** Raises the prompt if one is armed and still worth raising. */
 function noteNotifyGesture(): void {
   notifyAsk().gesture();
 }
@@ -278,22 +271,35 @@ export function unregisterPush(): void {
   });
 }
 
-/** The page-created notifications still on screen, by tag. `getNotifications` does
- *  not see a page-created Notification, so this map is what lets a retraction reach
- *  one when the ask it announced is answered elsewhere. */
+/** `getNotifications` does not see a page-created Notification, so this map is what lets a
+ *  retraction reach one when the ask it announced is answered elsewhere. */
 const shown = new Map<string, Notification>();
 
-/** Show a foreground notification when the page is hidden. `target` tags it with the
- *  same tag the service worker gives the push for that target, so the retraction on
+/** Whether `target`'s tab is the one the reader is looking at. The root installs the real
+ *  test (the page is visible AND that tab is active); until then a visible page counts. */
+let onScreen: (target: PushTarget) => boolean = () => document.visibilityState === "visible";
+
+export function setOnScreen(fn: (target: PushTarget) => boolean): void {
+  onScreen = fn;
+}
+
+/** The tab a notification's click opens, from its subject. */
+function noticeTarget(n: NotificationPayload): PushTarget {
+  return parsePushTarget({ chatId: n.chat_id ?? "", subject: n.subject ?? "" });
+}
+
+/** Show the server's notification unless its own chat or run is on screen (web-terminal-kiro's
+ *  rule). It is tagged as the service worker tags the push for that target, so the retraction on
  *  the settled ask reaches both. */
-export function notifyIfHidden(title: string, body: string, target: PushTarget): boolean {
+export function notifyOffScreen(notice: NotificationPayload): boolean {
   // The arm leads every gate: each is a way this call wants to notify and cannot.
   // One funnel, so no new notify site has to remember to arm.
   armNotifyAsk();
-  if (!enabled) {
+  if (!enabled || !isKindEnabled(notice.kind)) {
     return false;
   }
-  if (document.visibilityState !== "hidden") {
+  const target = noticeTarget(notice);
+  if (onScreen(target)) {
     return false;
   }
   if (!("Notification" in window) || Notification.permission !== "granted") {
@@ -301,8 +307,8 @@ export function notifyIfHidden(title: string, body: string, target: PushTarget):
   }
   const tag = pushTargetTag(target);
   try {
-    const n = new Notification(title, {
-      body,
+    const n = new Notification(notice.title, {
+      body: notice.body,
       icon: "/favicon.svg",
       tag,
     });
@@ -339,6 +345,7 @@ async function defaultRegistration(): Promise<NotificationRegistration | null> {
 }
 
 /** Point the retraction at another registration; tests only. */
+// deadset:ignore DS1004 -- test seam: replaces the retraction's service worker registration lookup
 export function _setRegistrationForTest(
   fn: (() => Promise<NotificationRegistration | null>) | null,
 ): void {
@@ -409,8 +416,8 @@ async function registerPushViaAction(silent = false): Promise<void> {
   const reg = await registerPush.dispatch(undefined, silent ? { silent: true } : undefined);
   if (reg !== null) {
     swRegistration = reg;
-    pushState = { kind: "registered", registration: reg };
+    pushState = { kind: "registered" };
   } else {
-    pushState = { kind: "failed", error: "action failed" };
+    pushState = { kind: "failed" };
   }
 }

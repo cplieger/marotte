@@ -69,21 +69,31 @@ func StatusErrorReason(code int, reason string, err error) error {
 	return &statusError{code: code, reason: reason, err: err}
 }
 
-// StatusErrorRuns is StatusErrorReason plus the live runs a refused rewind names,
+// statusErrorRuns is StatusErrorReason plus the live runs a refused rewind names,
 // so the client's confirmation can say which work the cut stops.
-func StatusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
+func statusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
 	return &statusError{code: code, reason: reason, runs: runs, err: err}
 }
 
-// StatusErrorCurrentHash is StatusErrorReason plus the hash a refused
+// statusErrorCurrentHash is StatusErrorReason plus the hash a refused
 // compare-and-swap actually found, so the client can tell the document moved
 // from a claim it merely got wrong.
 //
 // It is deliberately NOT a value a client may re-POST unread: the whole point of
 // the swap is that an approval names a version somebody looked at, so the client
 // re-reads the document and the reader approves again.
-func StatusErrorCurrentHash(code int, reason, currentHash string, err error) error {
+func statusErrorCurrentHash(code int, reason, currentHash string, err error) error {
 	return &statusError{code: code, reason: reason, currentHash: currentHash, err: err}
+}
+
+// StatusOf answers the HTTP status and machine reason a StatusError* error names; ok is false for any
+// other error.
+func StatusOf(err error) (status int, reason string, ok bool) {
+	se, ok := errors.AsType[*statusError](err)
+	if !ok {
+		return 0, "", false
+	}
+	return se.code, se.reason, true
 }
 
 // statusOf reports the status a handler outcome is answered with: 200 for
@@ -105,11 +115,13 @@ type Dispatcher struct {
 	// status ends a chat's retained waiting_on_user claim after a command that IS the
 	// user answering. Assigned once at registration, before the dispatcher serves, so
 	// it is read without mu; commandDischarges is the classification.
-	status ChatStatus
+	status chatStatus
 	// prompts is the prompt path's roles, bound at registration like status, for
 	// the close pipeline's resolve and drain.
 	prompts *promptRoles
-	mu      sync.RWMutex
+	// merges is bound at registration, like prompts.
+	merges *tangentMerges
+	mu     sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -144,26 +156,26 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
 }
 
-// errorResponse is the typed wire shape for JSON error responses.
 type errorResponse struct {
 	Error string `json:"error"`
 	// Reason is the machine-readable refusal class, additive; existing
 	// clients ignore it. See StatusErrorReason.
 	Reason string `json:"reason,omitempty"`
 	// CurrentHash is what a refused compare-and-swap found. See
-	// StatusErrorCurrentHash.
+	// statusErrorCurrentHash.
 	CurrentHash string `json:"current_hash,omitempty"`
 	// Runs are the live runs a refused rewind's cut would stop. See
-	// StatusErrorRuns. It sits after the string fields so the struct's
+	// statusErrorRuns. It sits after the string fields so the struct's
 	// pointer-bearing prefix stays at govet fieldalignment's optimum.
 	Runs []LiveRunRef `json:"runs,omitempty"`
 }
 
-// writeErr writes a JSON error response at the status the handler chose.
+// writeError writes a JSON error response at the status the handler chose (a StatusError*
+// error's code and reason, else 500).
 // rpcerr.Text (rather than err.Error()) unwraps a bridge Call's -32603
 // "Internal error" to the real cause in error.data; it is a no-op for an
 // ordinary Go error.
-func writeErr(w http.ResponseWriter, err error) {
+func writeError(w http.ResponseWriter, err error) {
 	resp := errorResponse{Error: rpcerr.Text(err)}
 	if se, ok := errors.AsType[*statusError](err); ok {
 		resp.Reason = se.reason
@@ -173,7 +185,6 @@ func writeErr(w http.ResponseWriter, err error) {
 	webhttp.WriteJSONStatus(w, statusOf(err), resp)
 }
 
-// requireChatID returns the 400 for a command that needs a chat and named none.
 func requireChatID(cmd *marotte.ClientCommand) error {
 	if cmd.ChatID == "" {
 		return StatusError(http.StatusBadRequest, ErrMissingChatID)
@@ -216,7 +227,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	body, err := fn(r.Context(), &cmd)
 	if err != nil {
-		writeErr(w, err)
+		writeError(w, err)
 		return
 	}
 	if body == nil {
@@ -227,11 +238,11 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.noteAnswer(r.Context(), &cmd)
 }
 
-// SessionParams builds the base ACP parameter map with the "sessionId" key
+// sessionParams builds the base ACP parameter map with the "sessionId" key
 // set from the bridge. Extra key-value pairs are merged in (last-wins).
 // Takes the 1-method sessionScoped rather than a whole Bridge: reading an id
 // is not a licence to call, notify or take the turn slot.
-func SessionParams(b sessionScoped, extra ...map[string]any) map[string]any {
+func sessionParams(b sessionScoped, extra ...map[string]any) map[string]any {
 	m := map[string]any{keySessionID: b.SessionID()}
 	for _, e := range extra {
 		maps.Copy(m, e)

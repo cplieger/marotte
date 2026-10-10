@@ -38,7 +38,6 @@ var excludedTags = append(modeltext.HiddenTags(), "[internal]", "[experimental]"
 // experimentalPrefix marks a preview labelled in prose rather than tagged.
 const experimentalPrefix = "experimental preview"
 
-// modelExcluded reports whether the text marks the model unreliable for ambient tasks.
 func modelExcluded(text string) bool {
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), experimentalPrefix) {
 		return true

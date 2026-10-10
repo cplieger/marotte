@@ -40,7 +40,6 @@ type kasHookAction struct {
 
 type kasHookMeta struct {
 	Trigger        string `json:"trigger"`
-	Source         string `json:"source"`
 	Matcher        string `json:"matcher"`
 	FilePath       string `json:"filePath"`
 	DisabledReason string `json:"disabledReason"`
@@ -58,16 +57,15 @@ type kasHooksListResult struct {
 	Hooks []kasHook `json:"hooks"`
 }
 
-// kasHookResult is setEnabled's {success, code?, error?} reply.
 type kasHookResult struct {
 	Code    string `json:"code"`
 	Error   string `json:"error"`
 	Success bool   `json:"success"`
 }
 
-// hookInfo is one hook in GET /api/hooks. ID is a base64url handle of the KAS id. Scope is
-// "workspace" or "global" ($HOME/.kiro/hooks, kiro-cli 2.13+, derived from _meta.filePath).
-// A global FilePath is a ~-prefixed display path only; filebrowse blocks that tree.
+// ID is a base64url handle of the KAS id. Scope is "workspace" or "global" ($HOME/.kiro/hooks,
+// kiro-cli 2.13+, derived from _meta.filePath). A global FilePath is a ~-prefixed display path
+// only; filebrowse blocks that tree.
 type hookInfo struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -78,8 +76,7 @@ type hookInfo struct {
 	Prompt     string `json:"prompt,omitempty"`
 	Matcher    string `json:"matcher,omitempty"`
 	// MatcherWarning is derived by marotte.ClassifyHookMatcher: `missing_tool_matcher` for a tool
-	// trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match. It
-	// covers hand-written files create_hook would refuse.
+	// trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match.
 	MatcherWarning string `json:"matcher_warning,omitempty"`
 	FilePath       string `json:"file_path,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
@@ -127,7 +124,6 @@ func (st *Settings) hookScopeAndPath(abs string) (scope, path string) {
 	return hookScopeGlobal, abs
 }
 
-// hooksListRaw issues _kiro/hooks/list on the utility bridge, passing workspacePaths explicitly.
 func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	u := st.utility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
@@ -150,7 +146,6 @@ func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	return res.Hooks, nil
 }
 
-// toHookInfo flattens a KAS hook into the client-facing shape.
 func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 	scope, path := st.hookScopeAndPath(k.Meta.FilePath)
 	info := hookInfo{
@@ -174,7 +169,6 @@ func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 	return info
 }
 
-// handleHooksList serves GET /api/hooks, read-only.
 func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	hooks, err := st.hooksListRaw(r.Context())
 	if err != nil {
@@ -204,8 +198,7 @@ type hookEnabledReq struct {
 	Enabled bool `json:"enabled"`
 }
 
-// handleHookSetEnabled serves POST /api/hooks/{id}/enabled {enabled}; KAS persists the flag and
-// hooks_changed is broadcast.
+// KAS persists the flag and hooks_changed is broadcast.
 func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	hookID, ok := hookIDFromPath(w, r)
 	if !ok {
@@ -251,7 +244,7 @@ func hookIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return hookID, true
 }
 
-// parseHookResult decodes a {success, code?, error?} reply; an empty body is a failure.
+// An empty body is a failure.
 func parseHookResult(raw json.RawMessage) kasHookResult {
 	if len(raw) == 0 {
 		return kasHookResult{}
@@ -263,7 +256,6 @@ func parseHookResult(raw json.RawMessage) kasHookResult {
 	return res
 }
 
-// writeHookResultErr maps a {success:false, code} reply to an HTTP status.
 func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	if res.Code == "hook_not_found" {
 		httpreply.NotFound(w, "hook not found")
@@ -276,15 +268,13 @@ func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	httpreply.BadRequest(w, msg)
 }
 
-// writeHookErr maps a bridge failure to 502 with a generic message. The utility bridge
-// auto-starts, so there is no "open a chat first" case.
+// The utility bridge auto-starts, so there is no "open a chat first" case.
 func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
-// registerHooksRoutes wires the hooks endpoints. There is deliberately no trigger route: it
-// would restore the executeHook shell path.
+// There is deliberately no trigger route: it would restore the executeHook shell path.
 func (st *Settings) registerHooksRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/hooks", st.handleHooksList)
 	mux.HandleFunc("POST /api/hooks/{id}/enabled", st.handleHookSetEnabled)

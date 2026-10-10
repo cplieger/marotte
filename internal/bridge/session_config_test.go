@@ -277,7 +277,6 @@ func TestNewSession_UnsetModeSendsNoModeKey(t *testing.T) {
 	}
 }
 
-// sessionNewKiroMeta returns the session/new request's _meta.kiro object.
 func sessionNewKiroMeta(t *testing.T, log string) map[string]any {
 	t.Helper()
 	for line := range strings.SplitSeq(strings.TrimSpace(log), "\n") {

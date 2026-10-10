@@ -236,7 +236,6 @@ func TestLoadRetentionHeader_RefusesAFifoInsteadOfBlockingForever(t *testing.T) 
 	}
 }
 
-// writeRawHeader writes hand-built header bytes at path, creating the chat directory first.
 func writeRawHeader(path string, body []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

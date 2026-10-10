@@ -25,7 +25,7 @@ func TestValidMessageID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ValidMessageID(tc.id)
+			got := validMessageID(tc.id)
 			if got != tc.want {
 				t.Errorf("ValidMessageID(%q) = %v, want %v", tc.id, got, tc.want)
 			}
@@ -63,7 +63,7 @@ func FuzzValidMessageID(f *testing.F) {
 	f.Add(strings.Repeat("x", 129))
 	f.Add("has space")
 	f.Fuzz(func(t *testing.T, id string) {
-		_ = ValidMessageID(id)
+		_ = validMessageID(id)
 	})
 }
 

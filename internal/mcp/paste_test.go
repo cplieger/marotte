@@ -29,7 +29,7 @@ func postImport(t *testing.T, mux http.Handler, body string) *httptest.ResponseR
 }
 
 type importResponse struct {
-	Results []ImportResult `json:"results"`
+	Results []importResult `json:"results"`
 	Notes   []string       `json:"notes"`
 }
 
@@ -64,14 +64,14 @@ func TestImport_PublisherBlockRoundTripsIntoTheStore(t *testing.T) {
 
 	got := decodeImport(t, postImport(t, mux, githubReadmeBlock))
 	if len(got.Results) != 1 || got.Results[0].Name != "github" ||
-		got.Results[0].Outcome != ImportCreated {
+		got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want one created github", got.Results)
 	}
 	if len(got.Notes) != 0 {
 		t.Errorf("notes = %#v, want none for a clean block", got.Notes)
 	}
 
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("stored servers = %d, want 1", len(list))
 	}
@@ -89,7 +89,7 @@ func TestImport_PublisherBlockRoundTripsIntoTheStore(t *testing.T) {
 	if len(sv.Env) != 1 || sv.Env[0].Name != "GITHUB_PERSONAL_ACCESS_TOKEN" {
 		t.Fatalf("env = %#v", sv.Env)
 	}
-	if sv.Env[0].Value != SecretMask {
+	if sv.Env[0].Value != secretMask {
 		t.Errorf("env value = %q, want the mask on a public read", sv.Env[0].Value)
 	}
 	if !sv.Enabled {
@@ -100,7 +100,7 @@ func TestImport_PublisherBlockRoundTripsIntoTheStore(t *testing.T) {
 	}
 
 	// The value the publisher printed is what got stored, not the mask.
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Env[0].Value != "<YOUR_TOKEN>" {
 		t.Errorf("raw env = %#v, want the pasted placeholder", raw)
 	}
@@ -125,13 +125,13 @@ func TestImport_MultiServerBlockInstallsEveryEntry(t *testing.T) {
 		t.Fatalf("results = %#v, want 3", got.Results)
 	}
 	for _, r := range got.Results {
-		if r.Outcome != ImportCreated {
+		if r.Outcome != importCreated {
 			t.Errorf("%s outcome = %q, want created", r.Name, r.Outcome)
 		}
 	}
 
 	byName := map[string]*Server{}
-	for _, sv := range s.List(t.Context()) {
+	for _, sv := range s.list(t.Context()) {
 		byName[sv.Name] = sv
 	}
 	if len(byName) != 3 {
@@ -173,7 +173,7 @@ func TestImport_OneBadEntryInstallsNothing(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `bad`) {
 		t.Errorf("error should name the failing entry; got %s", rec.Body.String())
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored servers = %d, want 0 (nothing may land)", got)
 	}
 }
@@ -193,7 +193,7 @@ func TestImport_UnknownKeyIsNamedNotDropped(t *testing.T) {
 			t.Errorf("error %q missing %q", body, want)
 		}
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored = %d, want 0", got)
 	}
 }
@@ -224,7 +224,7 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 	  }
 	}`))
 
-	if len(got.Results) != 1 || got.Results[0].Outcome != ImportCreated {
+	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want the server created anyway", got.Results)
 	}
 	joined := strings.Join(got.Notes, "\n")
@@ -233,7 +233,7 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 			t.Errorf("notes %q should name %q", joined, want)
 		}
 	}
-	if got := len(s.List(t.Context())); got != 1 {
+	if got := len(s.list(t.Context())); got != 1 {
 		t.Errorf("stored = %d, want 1", got)
 	}
 }
@@ -245,13 +245,13 @@ func TestImport_ConsumesWaitForReadyAndTimeout(t *testing.T) {
 	  "mcpServers": {"github": {"command":"npx","waitForReady":true,"timeout":120000}}
 	}`))
 
-	if len(got.Results) != 1 || got.Results[0].Outcome != ImportCreated {
+	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want the server created", got.Results)
 	}
 	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "waitForReady") || strings.Contains(joined, "timeout") {
 		t.Errorf("notes = %q, want no ignored-key note for fields the record now carries", joined)
 	}
-	stored := s.List(t.Context())
+	stored := s.list(t.Context())
 	if len(stored) != 1 || !stored[0].WaitForReady || stored[0].TimeoutMS != 120_000 {
 		t.Errorf("stored = %+v, want wait_for_ready true and timeout_ms 120000", stored)
 	}
@@ -264,7 +264,7 @@ func TestImport_OutOfRangeTimeoutIsRefusedNamingTheField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "timeout_ms") {
 		t.Errorf("import = %d %s, want 400 naming timeout_ms", rec.Code, rec.Body.String())
 	}
-	if n := len(s.List(t.Context())); n != 0 {
+	if n := len(s.list(t.Context())); n != 0 {
 		t.Errorf("stored = %d, want nothing installed", n)
 	}
 }
@@ -277,16 +277,16 @@ func TestImport_IdenticalReinstallPreservesEnvValues(t *testing.T) {
 
 	_ = decodeImport(t, postImport(t, mux, githubReadmeBlock))
 	// The user fills the real token in.
-	stored := s.List(t.Context())
+	stored := s.list(t.Context())
 	if len(stored) != 1 {
 		t.Fatalf("setup: stored = %d", len(stored))
 	}
-	if _, err := s.Update(t.Context(), stored[0].ID, &Server{
+	if _, err := s.update(t.Context(), stored[0].ID, &Server{
 		Transport: TransportStdio,
 		Name:      "github",
 		Command:   "npx",
 		Args:      []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:       []KeyPair{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: "ghp_real"}},
+		Env:       []keyPair{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: "ghp_real"}},
 		Enabled:   true,
 		Prewarm:   true,
 	}); err != nil {
@@ -295,10 +295,10 @@ func TestImport_IdenticalReinstallPreservesEnvValues(t *testing.T) {
 
 	// Same block again: the placeholder must NOT overwrite the real token.
 	again := decodeImport(t, postImport(t, mux, githubReadmeBlock))
-	if len(again.Results) != 1 || again.Results[0].Outcome != ImportUnchanged {
+	if len(again.Results) != 1 || again.Results[0].Outcome != importUnchanged {
 		t.Fatalf("results = %#v, want unchanged", again.Results)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d, want 1 (a reinstall must not duplicate)", len(raw))
 	}
@@ -321,7 +321,7 @@ func TestImport_SameNameDifferentSpecIs409(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body %s", rec.Code, rec.Body.String())
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Transport != TransportStdio {
 		t.Errorf("stored record was replaced: %#v", raw)
 	}
@@ -334,10 +334,10 @@ func TestImport_ReorderedEnvIsStillTheSameSpec(t *testing.T) {
 		`{"mcpServers":{"x":{"command":"srv","env":{"A":"1","B":"2"}}}}`))
 	got := decodeImport(t, postImport(t, mux,
 		`{"mcpServers":{"x":{"command":"srv","env":{"B":"2","A":"1"}}}}`))
-	if len(got.Results) != 1 || got.Results[0].Outcome != ImportUnchanged {
+	if len(got.Results) != 1 || got.Results[0].Outcome != importUnchanged {
 		t.Errorf("results = %#v; reordering env rows is not a new connection", got.Results)
 	}
-	if n := len(s.List(t.Context())); n != 1 {
+	if n := len(s.list(t.Context())); n != 1 {
 		t.Errorf("stored = %d, want 1", n)
 	}
 }
@@ -356,7 +356,7 @@ func TestImport_SingleServerObjectShapeStillWorks(t *testing.T) {
 	if len(got.Results) != 1 || got.Results[0].Name != "local" {
 		t.Fatalf("results = %#v", got.Results)
 	}
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 || list[0].Command != "/usr/local/bin/my-server" {
 		t.Fatalf("stored = %#v", list)
 	}
@@ -382,7 +382,7 @@ func TestImport_DisabledBlockFlagInvertsEnabled(t *testing.T) {
 
 	_ = decodeImport(t, postImport(t, mux,
 		`{"mcpServers":{"off":{"command":"srv","disabled":true}}}`))
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("stored = %d", len(list))
 	}
@@ -398,7 +398,7 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 	  "mcpServers": {"slack": {"url":"https://mcp.slack.com/mcp",
 	    "oauth": {"clientId":"cid-1"}}}
 	}`))
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d", len(raw))
 	}
@@ -428,7 +428,7 @@ func TestImport_ClientSecretIsRefusedByName(t *testing.T) {
 			t.Errorf("error %q carries %q", body, unwanted)
 		}
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored = %d, want 0", got)
 	}
 }
@@ -443,7 +443,7 @@ func TestImport_ClientMetadataURLIsStored(t *testing.T) {
 	    "oauth": {"clientId":"cid-1","clientMetadataUrl":"https://slack.test/oauth-client.json"}}}
 	}`))
 
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d, want the server installed", len(raw))
 	}
@@ -463,7 +463,7 @@ func TestImport_RedirectURIIsStored(t *testing.T) {
 	  "mcpServers": {"s": {"url":"https://mcp.example/mcp",
 	    "oauth": {"clientMetadataUrl":"https://example.com/c.json","redirectUri":"localhost:7778"}}}
 	}`))
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].OAuthRedirectURI != "localhost:7778" {
 		t.Fatalf("stored = %#v, want redirect localhost:7778", raw)
 	}
@@ -504,7 +504,7 @@ func TestImport_UnknownOAuthKeyIsNamedNotDropped(t *testing.T) {
 			t.Errorf("error %q missing %q", body, want)
 		}
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored = %d, want 0; a typoed client id must not install an empty one", got)
 	}
 }
@@ -556,7 +556,7 @@ func TestImport_UnchangedEntryDoesNotRewriteTheAgentsFile(t *testing.T) {
 	}
 
 	got := decodeImport(t, postImport(t, mux, githubReadmeBlock))
-	if got.Results[0].Outcome != ImportUnchanged {
+	if got.Results[0].Outcome != importUnchanged {
 		t.Fatalf("outcome = %q, want unchanged", got.Results[0].Outcome)
 	}
 	after, err := os.Stat(s.kasPath)
@@ -699,7 +699,7 @@ func TestTranslate_NameIsAdjustedAndReported(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	got := req.servers[0].Name
-	if err := ValidateName(got); err != nil {
+	if err := validateName(got); err != nil {
 		t.Fatalf("name %q does not satisfy the store's name rule: %v", got, err)
 	}
 	if got != "acme-my-server" {
@@ -754,7 +754,7 @@ func TestImport_CaseOnlyDuplicateNamesAreRefused(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("stored = %d, want 0", got)
 	}
 }
@@ -850,10 +850,10 @@ func FuzzParseImportBody(f *testing.F) {
 			t.Fatal("a successful parse must yield at least one server")
 		}
 		for i, sv := range req.servers {
-			if err := ValidateName(sv.Name); err != nil {
+			if err := validateName(sv.Name); err != nil {
 				t.Errorf("servers[%d].Name = %q, which the store will reject: %v", i, sv.Name, err)
 			}
-			if !sv.Transport.Valid() {
+			if !sv.Transport.valid() {
 				t.Errorf("servers[%d].Transport = %q", i, sv.Transport)
 			}
 			hasCmd := strings.TrimSpace(sv.Command) != ""

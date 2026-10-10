@@ -11,10 +11,9 @@ import (
 	"testing"
 )
 
-// updateCensus rewrites the census fixture (and the version pin) from the local
-// bundle. Spelled as a flag rather than the repo's UPDATE_GOLDEN env gate
-// because regenerating this fixture is a review action, not a formatting one:
-// every line it adds is a capability somebody has to judge.
+// Spelled as a flag rather than the repo's UPDATE_GOLDEN env gate because regenerating this fixture
+// is a review action, not a formatting one: every line it adds is a capability somebody has to
+// judge.
 var updateCensus = flag.Bool("update", false,
 	"rewrite testdata/unclaimed.txt and testdata/kas-version.txt from the local agent-server bundle")
 
@@ -24,12 +23,9 @@ const (
 	entrypointPath  = "../../entrypoint.sh"
 	censusUpdateCmd = "go test ./internal/kascap/ -run 'TestCapabilityCensus|TestAbsentTrueMatchesTheBundle' -update"
 
-	// bindingScopeReach bounds how far back bindingScope looks for the block
-	// that encloses a binding.
 	bindingScopeReach = 64 << 10
 
-	// jsIdent matches one JavaScript identifier; every anchor is built from it because the bundle's
-	// identifiers are mangled.
+	// Every anchor is built from it because the bundle's identifiers are mangled.
 	jsIdent = `[A-Za-z_$][A-Za-z0-9_$]*`
 )
 
@@ -229,8 +225,6 @@ func TestBundleSource_FallsBackToTheLiveBundle(t *testing.T) {
 	}
 }
 
-// fakeBundle writes content to a stand-in agent-server bundle for version active
-// under a scratch HOME, and returns its path.
 func fakeBundle(t *testing.T, active, content string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -293,7 +287,6 @@ new expectation.`, what, len(names), names)
 	return names[0]
 }
 
-// keysIn returns the sorted, deduplicated first capture group of every match.
 func keysIn(re *regexp.Regexp, src string) []string {
 	seen := make(map[string]bool)
 	for _, m := range re.FindAllStringSubmatch(src, -1) {
@@ -375,9 +368,9 @@ func initScopeKeys(t *testing.T, src string) []string {
 	return slices.Compact(keys)
 }
 
-// bindingScope returns src from pos to the end of the innermost block that
-// encloses pos, which is the lexical scope of a let binding made there. A read
-// of the same name outside that block is a different variable.
+// bindingScope returns src from pos to the end of the innermost block that encloses pos, which is
+// the lexical scope of a let binding made there. A read of the same name outside that block is a
+// different variable.
 func bindingScope(src string, pos int) string {
 	floor := max(0, pos-bindingScopeReach)
 	for open := strings.LastIndexByte(src[:pos], '{'); open >= floor; open = strings.LastIndexByte(src[:open], '{') {
@@ -422,8 +415,7 @@ func computedResolverKeys(t *testing.T, src string) []string {
 	return keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), src)
 }
 
-// declaredKeys returns what the table accounts for, split by container. A withheld row counts as
-// declared: recording a deliberate omission is the table's job.
+// A withheld row counts as declared: recording a deliberate omission is the table's job.
 func declaredKeys() (capabilities, settings map[string]bool) {
 	capabilities = map[string]bool{
 		settingsKey: true,
@@ -527,7 +519,7 @@ func TestAbsentTrueMatchesTheBundle(t *testing.T) {
 	bundleTrue := requireNonEmpty(t, "inverse-default resolvers", keysIn(absentTrueResolverRe, src))
 
 	for _, row := range table {
-		if !row.absentTrue {
+		if !absentTrue[rowID(row)] {
 			continue
 		}
 		if !slices.Contains(bundleTrue, row.key) {
@@ -549,7 +541,7 @@ or upstream changed the default, and both make the row's because misleading.`,
 		if !ok {
 			continue
 		}
-		if !row.absentTrue {
+		if !absentTrue[rowID(*row)] {
 			t.Errorf(`setting.%s is declared without absentTrue, but kiro-cli %s resolves an
 ABSENT %s to TRUE. Withholding the key therefore ENABLES the feature, which
 inverts how send reads on this row.`, key, activeKASVersion(t), key)
@@ -557,17 +549,17 @@ inverts how send reads on this row.`, key, activeKASVersion(t), key)
 	}
 }
 
-// featureEnvRe matches every KIRO_FEATURE_*_ENABLED and KIRO_DISABLE_* literal in
-// the bundle. derivedGateRe matches the experiment-gate helper's settingKey,
-// whose env name the bundle builds at runtime (camelCase to SCREAMING_SNAKE,
-// KIRO_FEATURE_ prefix, _ENABLED suffix), so it never appears as a literal.
+// featureEnvRe matches every KIRO_FEATURE_*_ENABLED, KIRO_FEATURE_*_CONFIG (a JSON
+// config arm) and KIRO_DISABLE_* literal in the bundle. derivedGateRe matches the
+// experiment-gate helper's settingKey, whose env name the bundle builds at runtime
+// (camelCase to SCREAMING_SNAKE, KIRO_FEATURE_ prefix, _ENABLED suffix), so it never
+// appears as a literal.
 var (
-	featureEnvRe  = regexp.MustCompile(`\bKIRO_(?:FEATURE_[A-Z0-9_]+_ENABLED|DISABLE_[A-Z0-9_]+)\b`)
+	featureEnvRe  = regexp.MustCompile(`\bKIRO_(?:FEATURE_[A-Z0-9_]+_(?:ENABLED|CONFIG)|DISABLE_[A-Z0-9_]+)\b`)
 	derivedGateRe = regexp.MustCompile(`settingKey:"([A-Za-z][A-Za-z0-9]*)"`)
 	camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 )
 
-// bundleEnvArms returns every child-environment switch the bundle knows.
 func bundleEnvArms(src string) []string {
 	seen := make(map[string]bool)
 	for _, name := range featureEnvRe.FindAllString(src, -1) {
@@ -581,9 +573,8 @@ func bundleEnvArms(src string) []string {
 }
 
 // TestEnvironmentArmCensus fails on any KIRO_FEATURE_* arm (or KIRO_DISABLE_*
-// switch) the pinned bundle knows that the environment door has no row for, so a
-// new experiment arm becomes a decision at the release review rather than a
-// silent ramp. Every arm needs a row, sent or withheld.
+// switch) the pinned bundle knows that the environment door has no row for. Every
+// arm needs a row, sent or withheld, so none ramps silently.
 func TestEnvironmentArmCensus(t *testing.T) {
 	src := loadBundle(t)
 	arms := bundleEnvArms(src)
@@ -610,8 +601,9 @@ func TestEnvironmentArmCensus(t *testing.T) {
 }
 
 func TestBundleEnvArms_DerivesTheGateHelperName(t *testing.T) {
-	got := bundleEnvArms(`x="KIRO_FEATURE_TOOL_LOAD_ENABLED";lkr({settingKey:"unifiedAgent"});"KIRO_DISABLE_RECAP";` + "`KIRO_FEATURE_${n}`")
-	want := []string{"KIRO_DISABLE_RECAP", "KIRO_FEATURE_TOOL_LOAD_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED"}
+	got := bundleEnvArms(`x="KIRO_FEATURE_TOOL_LOAD_ENABLED";lkr({settingKey:"unifiedAgent"});"KIRO_DISABLE_RECAP";` +
+		`y=process.env.KIRO_FEATURE_X_CONFIG;` + "`KIRO_FEATURE_${n}`")
+	want := []string{"KIRO_DISABLE_RECAP", "KIRO_FEATURE_TOOL_LOAD_ENABLED", "KIRO_FEATURE_UNIFIED_AGENT_ENABLED", "KIRO_FEATURE_X_CONFIG"}
 	if !slices.Equal(got, want) {
 		t.Errorf("bundleEnvArms = %q, want %q", got, want)
 	}

@@ -42,7 +42,7 @@ func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
 
 func TestConfigTemplate_SubjectIsTheCatalogVersionWithTheEpoch(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.catalog.SetModes([]marotte.SessionMode{{ID: "vibe", Name: "Default"}})
+	h.catalog.setModes([]marotte.SessionMode{{ID: "vibe", Name: "Default"}})
 	h.catalog.SetModels([]marotte.SessionModel{{ID: "m1", Name: "One"}})
 
 	rec := httptest.NewRecorder()

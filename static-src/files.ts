@@ -66,7 +66,6 @@ import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { replaceRoute } from "./router.js";
 import { buildPath } from "./route-path.js";
 import { FileBrowserState } from "./files-state.js";
-export { FileBrowserState } from "./files-state.js";
 
 type FbEntry =
   { kind: "parent" } | { kind: "entry"; entry: FileEntry } | { kind: "error"; message: string };
@@ -108,7 +107,7 @@ export function noteDefaultBrowsePath(path: string): void {
 }
 
 /** That folder, FB_ROOT when none was recorded. */
-export function defaultBrowsePath(): string {
+function defaultBrowsePath(): string {
   return defaultDir;
 }
 
@@ -763,6 +762,7 @@ function repaintRows(): void {
 }
 
 /** @internal Test seam: the poll's repaint callback, without the poll. */
+// deadset:ignore DS1004 -- test seam: repaints the rendered file rows from the current git-status projection
 export function _repaintRowsForTest(): void {
   repaintRows();
 }

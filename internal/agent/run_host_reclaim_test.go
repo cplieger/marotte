@@ -57,8 +57,7 @@ func (c *claimedCarrier) sent() []bool {
 	return append([]bool(nil), c.answers...)
 }
 
-// restartSweptRun builds a run killed mid-step, its carrier live here and its stamp naming the utility
-// session; the fake refuses until that session stops.
+// The fake refuses until that session stops.
 func restartSweptRun(t *testing.T, method string) (*Runtime, *fakeBridge, *claimedCarrier) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -81,12 +80,12 @@ func TestRunVerbs_AStampTheUtilitySessionHoldsIsReleased(t *testing.T) {
 	}{
 		{
 			name: "Resume", method: methodKiroWorkflowResume,
-			verb: func(t *testing.T, h *Runtime, _ *fakeBridge) error { return h.runs.Resume(t.Context(), "wf_1") },
+			verb: func(t *testing.T, h *Runtime, _ *fakeBridge) error { return h.runs.resume(t.Context(), "wf_1") },
 		},
 		{
 			name: "SetStepStatus", method: methodKiroWorkflowUpdate,
 			verb: func(t *testing.T, h *Runtime, _ *fakeBridge) error {
-				return h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
+				return h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
 			},
 		},
 		{
@@ -127,7 +126,7 @@ func TestResume_AUtilitySessionAnotherVerbStoppedStillResends(t *testing.T) {
 		return !was
 	}
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume = %v, want nil once the stopped session's stamp clears", err)
 	}
 	if got, want := carrier.sent(), []bool{true, false}; !slices.Equal(got, want) {
@@ -147,7 +146,7 @@ func TestResume_AStampThatOutlivesTheStopBrieflyIsReleased(t *testing.T) {
 		return lingering >= 0
 	}
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume = %v, want nil once the stopped session's stamp clears", err)
 	}
 	if got, want := carrier.sent(), []bool{true, true, true, false}; !slices.Equal(got, want) {
@@ -163,7 +162,7 @@ func TestResume_AStampThatNeverClearsEndsInTheRefusal(t *testing.T) {
 	h, _, carrier := restartSweptRun(t, methodKiroWorkflowResume)
 	carrier.held = func() bool { return true }
 
-	err := h.runs.Resume(t.Context(), "wf_1")
+	err := h.runs.resume(t.Context(), "wf_1")
 
 	if !errors.Is(err, workflow.ErrOwnedElsewhere) {
 		t.Errorf("Resume = %v, want KAS's ownership refusal once the grace ended", err)

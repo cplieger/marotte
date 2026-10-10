@@ -55,7 +55,8 @@ vi.mock("./store-load.js", async (orig) => ({
 
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
-import { mountTurnRail, loadTurnRail, resetTurnRail, type TurnSummary } from "./turn-rail.js";
+import { mountTurnRail, loadTurnRail, resetTurnRail } from "./turn-rail.js";
+import type { TurnSummary } from "./rail-merge.js";
 import { apiGet } from "./api-client.js";
 import { severityOf } from "./turn-severity.js";
 import type { TurnOutcome } from "./turns.js";

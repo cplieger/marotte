@@ -33,7 +33,7 @@ vi.mock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
 vi.mock("./run-view.js", () => ({ openRunView: noop }));
 // The real dock module reaches actions/index.js past the stub above. No run here has an ask.
 vi.mock("./decision-dock.js", () => ({
-  runPendingAsks: () => ({ count: 0, nodes: new Set<string>(), label: "" }),
+  runPendingAsks: () => ({ count: 0, asked: [], label: "" }),
 }));
 // The transcript's find, which a search row hands its hit to: its graph reaches
 // the block dispatcher and the store, neither of which this suite stages.

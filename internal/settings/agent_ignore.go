@@ -12,10 +12,10 @@ import (
 // always enforced; AgentIgnoreList puts it first.
 const AgentIgnoreFloor = ".kiroignore"
 
-// ErrAgentIgnoreEntry is the class of every refusal below. Each refusal wraps it
+// errAgentIgnoreEntry is the class of every refusal below. Each refusal wraps it
 // with the reason a user reads, because the reasons are KAS's own and a caller
 // that only reports the class cannot say which rule fired.
-var ErrAgentIgnoreEntry = errors.New("invalid agent ignore file entry")
+var errAgentIgnoreEntry = errors.New("invalid agent ignore file entry")
 
 // jsTrimmed trims the runes ECMAScript's String.prototype.trim removes, the set KAS's entry
 // validator compares against. NOT strings.TrimSpace: U+FEFF is trimmed by JavaScript and not
@@ -36,17 +36,17 @@ func jsTrimmed(s string) string {
 func ValidAgentIgnoreEntry(entry string) error {
 	switch {
 	case entry == "":
-		return fmt.Errorf("%w: an entry cannot be empty", ErrAgentIgnoreEntry)
+		return fmt.Errorf("%w: an entry cannot be empty", errAgentIgnoreEntry)
 	case entry != jsTrimmed(entry):
-		return fmt.Errorf("%w %q: leading or trailing whitespace", ErrAgentIgnoreEntry, entry)
+		return fmt.Errorf("%w %q: leading or trailing whitespace", errAgentIgnoreEntry, entry)
 	case entry == ".":
-		return fmt.Errorf("%w: %q is not a filename", ErrAgentIgnoreEntry, entry)
+		return fmt.Errorf("%w: %q is not a filename", errAgentIgnoreEntry, entry)
 	case strings.ContainsAny(entry, `/\`):
-		return fmt.Errorf("%w %q: name a file at the workspace root, not a path", ErrAgentIgnoreEntry, entry)
+		return fmt.Errorf("%w %q: name a file at the workspace root, not a path", errAgentIgnoreEntry, entry)
 	case strings.Contains(entry, ".."):
-		return fmt.Errorf("%w %q: name a file at the workspace root, not a path", ErrAgentIgnoreEntry, entry)
+		return fmt.Errorf("%w %q: name a file at the workspace root, not a path", errAgentIgnoreEntry, entry)
 	case strings.ContainsAny(entry, "*?[]{}"):
-		return fmt.Errorf("%w %q: put a glob pattern inside an ignore file, not in this list", ErrAgentIgnoreEntry, entry)
+		return fmt.Errorf("%w %q: put a glob pattern inside an ignore file, not in this list", errAgentIgnoreEntry, entry)
 	}
 	return nil
 }

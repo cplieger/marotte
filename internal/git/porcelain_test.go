@@ -33,7 +33,6 @@ func unmerged(xy, path string) string {
 	return "u " + xy + " N... 100644 100644 100644 100644 " + oid + " " + oid2 + " " + oid + " " + path
 }
 
-// nul joins records the way git's -z output does.
 func nul(records ...string) []byte {
 	return []byte(strings.Join(records, "\x00") + "\x00")
 }

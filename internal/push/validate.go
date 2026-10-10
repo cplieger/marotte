@@ -19,8 +19,7 @@ func init() {
 	}
 }
 
-// pushEndpointRule declares a single vendor's match semantics for push
-// endpoint validation. Exactly one of Host or Suffix is set.
+// Exactly one of Host or Suffix is set.
 type pushEndpointRule struct {
 	Host   string // exact-match (empty if suffix-only)
 	Suffix string // suffix-match; must start with "." (empty if exact-only)
@@ -35,9 +34,9 @@ var pushEndpointRules = []pushEndpointRule{
 	{Suffix: ".push.apple.com"},                 // Safari (web.push.apple.com) + Apple push subdomains
 }
 
-// isAllowedPushEndpoint reports whether endpoint is https on a known browser push service.
-// Explicit ports are rejected so the stored endpoint matches the JWT audience vapidHeader
-// derives from u.Host.
+// isAllowedPushEndpoint reports whether endpoint is https on a known browser push service. Explicit
+// ports are rejected so the stored endpoint matches the JWT audience vapidHeader derives from
+// u.Host.
 func isAllowedPushEndpoint(endpoint string) bool {
 	u, err := url.Parse(endpoint)
 	if err != nil {

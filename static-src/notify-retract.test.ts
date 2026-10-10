@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { NotificationRegistration } from "./notify.js";
 import { chatTarget, runTarget } from "./push-subject.js";
+import { noticeFor } from "./__test-helpers__/notice.js";
 
 vi.mock("./persist.js", () => ({
   patchSettings: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
@@ -63,10 +64,10 @@ afterEach(() => {
   notify.setNotificationsEnabled(false);
 });
 
-describe("notifyIfHidden's tag", () => {
+describe("notifyOffScreen's tag", () => {
   it("is the target's tag, so a chat's banner and the workspace cue take different slots", () => {
-    expect(notify.notifyIfHidden("Marotte", "ask", chatTarget("c1"))).toBe(true);
-    expect(notify.notifyIfHidden("Marotte", "done", chatTarget(""))).toBe(true);
+    expect(notify.notifyOffScreen(noticeFor(chatTarget("c1"), "ask"))).toBe(true);
+    expect(notify.notifyOffScreen(noticeFor(chatTarget(""), "done"))).toBe(true);
     expect(FakeNotification.instances.map((n) => n.tag)).toEqual(["marotte:c1", "marotte"]);
   });
 });
@@ -74,8 +75,8 @@ describe("notifyIfHidden's tag", () => {
 describe("closeNotificationsFor", () => {
   it("closes the page notification carrying the target's tag and no other", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
-    notify.notifyIfHidden("Marotte", "ask on c2", chatTarget("c2"));
+    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "ask on c1"));
+    notify.notifyOffScreen(noticeFor(chatTarget("c2"), "ask on c2"));
 
     await notify.closeNotificationsFor(chatTarget("c1"));
 
@@ -111,7 +112,7 @@ describe("closeNotificationsFor", () => {
 
   it("forgets a page notification the reader closed, so a later retraction does not close it twice", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Marotte", "ask", chatTarget("c1"));
+    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "ask"));
     const first = FakeNotification.instances[0];
     first?.close();
     const closeSpy = vi.spyOn(first as FakeNotification, "close");
@@ -149,9 +150,9 @@ describe("closeNotificationsExcept", () => {
 
   it("closes the page's own chat banner the set does not name and keeps the one it does", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
-    notify.notifyIfHidden("Marotte", "ask on c2", chatTarget("c2"));
-    notify.notifyIfHidden("Marotte", "done", chatTarget(""));
+    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "ask on c1"));
+    notify.notifyOffScreen(noticeFor(chatTarget("c2"), "ask on c2"));
+    notify.notifyOffScreen(noticeFor(chatTarget(""), "done"));
 
     await notify.closeNotificationsExcept(new Set(["marotte:c2"]));
 
@@ -170,7 +171,7 @@ describe("the default registration", () => {
       serviceWorker: { getRegistration, ready: new Promise(() => undefined) },
     });
     notify._setRegistrationForTest(null);
-    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
+    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "ask on c1"));
 
     await expect(notify.closeNotificationsFor(chatTarget("c1"))).resolves.toBeUndefined();
 

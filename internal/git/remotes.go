@@ -41,7 +41,7 @@ func (h *Handler) RepoRemotes(ctx context.Context) []RepoRemote {
 			slog.Debug("git remotes: no origin", "repo", r.Name, "error", err)
 			continue
 		}
-		host, slug := ParseRemoteSlug(raw)
+		host, slug := parseRemoteSlug(raw)
 		if host == "" || slug == "" {
 			slog.Debug("git remotes: origin did not resolve to forge coordinates",
 				"repo", r.Name)
@@ -73,10 +73,10 @@ func remoteWebBase(raw string) string {
 	return scheme + "://" + host
 }
 
-// ParseRemoteSlug splits a git remote URL (scp-like or URL form) into its host and its owner/name
+// parseRemoteSlug splits a git remote URL (scp-like or URL form) into its host and its owner/name
 // path, kept WHOLE so a GitLab subgroup survives. ("", "") means no forge to ask. Host resolution
 // is parseRemoteHost's, so its refusals apply.
-func ParseRemoteSlug(raw string) (host, slug string) {
+func parseRemoteSlug(raw string) (host, slug string) {
 	raw = strings.TrimSpace(raw)
 	host = parseRemoteHost(raw)
 	if host == "" {

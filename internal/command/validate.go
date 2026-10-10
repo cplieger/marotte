@@ -42,6 +42,12 @@ var (
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.
 	errAlreadyAnswered = errors.New("already_answered")
+	// errAnswerNotDelivered is the 502 for an answer the agent never received: the ask is
+	// pending again, so the client re-enables its card. A code, like errAlreadyAnswered.
+	errAnswerNotDelivered = errors.New("answer_not_delivered")
+	// errAskWithdrawn is the 410 for an answer that reached nobody because the ask settled
+	// first; the client leaves the card to that settlement. A code, like errAlreadyAnswered.
+	errAskWithdrawn = errors.New("ask_withdrawn")
 	// errPermissionOptionNotOffered rejects a choice absent from the request, without
 	// echoing either identifier.
 	errPermissionOptionNotOffered = errors.New("option_not_offered")
@@ -57,17 +63,16 @@ var (
 	ErrChatNotFound   = errors.New("chat not found")
 )
 
-// validChatID reports whether id is safe to use as a chat identifier.
 func validChatID(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
-// ValidMessageID reports whether id is safe to echo on SSE and store on disk.
-func ValidMessageID(id string) bool {
+// validMessageID reports whether id is safe to echo on SSE and store on disk.
+func validMessageID(id string) bool {
 	return ids.ValidMessageID(id)
 }
 
-// ValidIdent reports whether s is a safe agent or model identifier.
-func ValidIdent(s string) bool {
+// validIdent reports whether s is a safe agent or model identifier.
+func validIdent(s string) bool {
 	return ids.ValidIdent(s)
 }

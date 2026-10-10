@@ -10,7 +10,6 @@ import type { TurnState } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
 
-/** An invocation tool call. `id` carries the pipeline join when stage-shaped. */
 function invocation(
   id: string,
   subtask: string,
@@ -143,6 +142,27 @@ describe("the single-delegate shape", () => {
     expect(facts.find((f) => f.label === "Model")?.value).toBe("m");
     expect(facts.find((f) => f.label === "Effort")?.value).toBe("high");
     expect(run.label).toBe("x (inline agent)");
+  });
+
+  it("states the category a saved agent was asked to run on", () => {
+    const saved = invocation("tooluse_1", "sub_1", {
+      input: { name: "context-gatherer", modelCategory: " auto-smart " },
+    });
+    const facts = exec([msg([saved])], "sub_1").nodes[0]?.facts ?? [];
+    expect(facts.find((f) => f.label === "Category")?.value).toBe("auto-smart");
+  });
+
+  it.each([
+    ["auto, which KAS ignores", { name: "x", modelCategory: "auto" }],
+    ["blank", { name: "x", modelCategory: "  " }],
+    [
+      "an inline model, which wins",
+      { name: "x", modelCategory: "auto-smart", inlineAgent: { model: "m" } },
+    ],
+  ])("states no category for %s", (_name, input) => {
+    const facts =
+      exec([msg([invocation("tooluse_1", "sub_1", { input })])], "sub_1").nodes[0]?.facts ?? [];
+    expect(facts.map((f) => f.label)).not.toContain("Category");
   });
 
   it("states no model or effort for a saved agent", () => {

@@ -7,7 +7,7 @@
 // HEAD has the file and that the file is empty there. The RIGHT pane carries the
 // same problem in the other direction: a deleted file has no working copy, and an
 // empty pane captioned "working tree" says the file is there and empty. The load
-// reports what it found on each side (`internal/git.KindNotInRepo` vs a real
+// reports what it found on each side (`internal/git.kindNotInRepo` vs a real
 // failure; a 404 from /api/file vs a real read failure), and both captions are
 // taken from the load rather than from what was asked for.
 // ---------------------------------------------------------------------------
@@ -15,17 +15,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 interface DiffResult {
-  oldContent: string;
-  newContent: string;
-  error: string;
+  kind: "diff";
+  read: null;
+  oldText: string;
+  base: "text";
   baseLabel: string;
   workingLabel: string;
 }
 
-let diffResult: DiffResult = {
-  oldContent: "",
-  newContent: "",
-  error: "",
+let diffResult: DiffResult | { kind: "too_large" } = {
+  kind: "diff",
+  read: null,
+  oldText: "",
+  base: "text",
   baseLabel: "HEAD",
   workingLabel: "working tree",
 };
@@ -41,6 +43,7 @@ vi.mock("./tabs.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(null)),
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+  apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
@@ -53,12 +56,17 @@ vi.mock("./editor-conflict.js", () => ({
 }));
 vi.mock("./editor-modes.js", () => ({ restoreUI: vi.fn() }));
 vi.mock("./editor-ui.js", () => ({
-  showReadMode: vi.fn(),
   applyPendingLine: vi.fn(),
   fetchAgentLines: vi.fn(),
-  pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
-  renderEditModeUI: vi.fn(),
+  requestedBy: () => "diff",
+  showSurface: vi.fn(),
+}));
+vi.mock("./viewer-live.js", () => ({
+  liveActivate: vi.fn(),
+  liveDispose: vi.fn(),
+  paintLiveButton: vi.fn(),
+  setLiveReload: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: {
@@ -67,7 +75,10 @@ vi.mock("./actions/editor.js", () => ({
     }),
   },
 }));
-vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
+vi.mock("./actions/index.js", () => ({
+  registerCleanup: vi.fn(),
+  pollAction: vi.fn(() => () => undefined),
+}));
 vi.mock("./dom.js", () => ({
   $: new Proxy(
     {},
@@ -89,23 +100,26 @@ vi.mock("./dom.js", () => ({
   },
 }));
 
-const { fetchGitDiffSources } = await import("./editor-openers.js");
+const { fetchGitDiffSources, TOO_LARGE_TO_DIFF } = await import("./editor-openers.js");
 const { fileStates, freshState } = await import("./editor-types.js");
 
 const PATH = "/workspace/hello.sh";
 
 /** A file parked in diff mode against a ref, the state `open` leaves behind when
- *  it routes a `fromGit` source into the fetch. */
+ *  it routes a git source into the fetch. */
 function stageDiffState(ref: string): ReturnType<typeof freshState> {
   const state = freshState(PATH);
   state.mode.value = {
     kind: "diff",
     diffSource: {
-      oldContent: "",
-      newContent: "",
+      oldText: "",
+      newText: "",
       oldLabel: ref,
       newLabel: "working tree",
-      fromGit: true,
+      kind: "git",
+      ref,
+      base: "text",
+      pending: true,
     },
   };
   fileStates.set(PATH, state);
@@ -130,9 +144,10 @@ describe("the base pane's caption", () => {
   it("says the ref when git holds a revision", async () => {
     expect.assertions(1);
     diffResult = {
-      oldContent: "old",
-      newContent: "new",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "old",
+      base: "text",
       baseLabel: "HEAD",
       workingLabel: "working tree",
     };
@@ -144,9 +159,10 @@ describe("the base pane's caption", () => {
   it("says 'not in git' when no repo owns the file", async () => {
     expect.assertions(2);
     diffResult = {
-      oldContent: "",
-      newContent: "new",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "",
+      base: "text",
       baseLabel: "not in git",
       workingLabel: "working tree",
     };
@@ -165,9 +181,10 @@ describe("the base pane's caption", () => {
     // the file and holds it empty.
     expect.assertions(3);
     diffResult = {
-      oldContent: "",
-      newContent: "brand new\n",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "",
+      base: "text",
       baseLabel: "not in HEAD",
       workingLabel: "working tree",
     };
@@ -182,9 +199,10 @@ describe("the base pane's caption", () => {
   it("carries a non-HEAD ref through unchanged", async () => {
     expect.assertions(1);
     diffResult = {
-      oldContent: "old",
-      newContent: "new",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "old",
+      base: "text",
       baseLabel: "origin/main",
       workingLabel: "working tree",
     };
@@ -198,9 +216,10 @@ describe("the working pane's caption", () => {
   it("says 'working tree' for an ordinary change", async () => {
     expect.assertions(1);
     diffResult = {
-      oldContent: "old",
-      newContent: "new",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "old",
+      base: "text",
       baseLabel: "HEAD",
       workingLabel: "working tree",
     };
@@ -215,9 +234,10 @@ describe("the working pane's caption", () => {
     // still there and empty.
     expect.assertions(3);
     diffResult = {
-      oldContent: "gone\n",
-      newContent: "",
-      error: "",
+      kind: "diff",
+      read: null,
+      oldText: "gone\n",
+      base: "text",
       baseLabel: "HEAD",
       workingLabel: "deleted",
     };
@@ -227,5 +247,16 @@ describe("the working pane's caption", () => {
     expect(labelOf(state)).toBe("HEAD");
     // An all-deletions diff is a correct rendering, not an error state.
     expect(state.error.value).toBe("");
+  });
+});
+
+// A side too large to diff falls back to the file's own view, saying so.
+describe("a diff too large to show", () => {
+  it("leaves the diff for the file view with a note", async () => {
+    diffResult = { kind: "too_large" };
+    const state = stageDiffState("HEAD");
+    await fetchGitDiffSources(state, "", "HEAD");
+    expect(state.mode.value).toEqual({ kind: "text", editing: false });
+    expect(state.note).toBe(TOO_LARGE_TO_DIFF);
   });
 });

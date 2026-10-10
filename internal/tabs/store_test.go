@@ -70,7 +70,7 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 		{desc: "an editor with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindEditor}, want: ErrBadRef},
 		{desc: "a web preview with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindWeb}, want: ErrBadRef},
 		{desc: "a singleton carrying a ref", spec: marotte.OpenTab{Kind: marotte.TabKindSettings, Ref: "general"}, want: ErrBadRef},
-		{desc: "a ref one byte over the bound", spec: marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: strings.Repeat("p", MaxRefBytes+1)}, want: ErrBadRef},
+		{desc: "a ref one byte over the bound", spec: marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: strings.Repeat("p", maxRefBytes+1)}, want: ErrBadRef},
 	}
 	for _, tc := range cases {
 		t.Run(strings.ReplaceAll(tc.desc, " ", "-"), func(t *testing.T) {
@@ -426,7 +426,7 @@ func TestReparent_MovesTheRowBehindTheNewParentsChildren(t *testing.T) {
 
 // TestReparent_IsIdempotentAndRefusesWhatItCannotDo covers the three no-change
 // cases in one store: an unchanged parent bumps nothing, an id that is not
-// open is ErrNotOpen (a reparent is a statement about a tab, unlike a pin), and
+// open is errNotOpen (a reparent is a statement about a tab, unlike a pin), and
 // a parent inside the tab's own closure is ErrCycle.
 func TestReparent_IsIdempotentAndRefusesWhatItCannotDo(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -441,7 +441,7 @@ func TestReparent_IsIdempotentAndRefusesWhatItCannotDo(t *testing.T) {
 	}
 
 	_, err = s.Reparent(t.Context(), "not-open", parent.ID)
-	if !errors.Is(err, ErrNotOpen) {
+	if !errors.Is(err, errNotOpen) {
 		t.Errorf("Reparent(not-open) = %v, want ErrNotOpen", err)
 	}
 

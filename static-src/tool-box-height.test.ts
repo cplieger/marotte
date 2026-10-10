@@ -50,9 +50,8 @@ function mountBoxes(): { group: HTMLElement; card: HTMLElement } {
   };
 }
 
-/** The control-height token in pixels. A custom property reads back as its raw
- *  token (`2.25rem`), so the only honest way to get the length is to let the
- *  engine resolve it on a real box. */
+/** A custom property reads back as its raw token (`2.25rem`), so the only honest way to get the
+ *  length is to let the engine resolve it on a real box. */
 function controlHeight(): number {
   const probe = document.createElement("div");
   probe.style.blockSize = "var(--btn-h)";

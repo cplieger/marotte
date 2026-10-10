@@ -11,27 +11,26 @@ import (
 
 // newTestMembership builds a coordinator over a chat store and NO tab store, bus or teardown seams,
 // for tests of the chat half.
-func newTestMembership(t *testing.T, chats ChatStore) *Membership {
+func newTestMembership(t *testing.T, chats chatStore) *Membership {
 	t.Helper()
-	return NewMembership(&MembershipDeps{Chats: chats})
+	return newMembership(&membershipDeps{Chats: chats})
 }
 
 // newTabbedMembership builds a coordinator over a chat store, a REAL tab store in a temp dir and a
 // recording bus, because the version, order and frames asserted are the real store's.
-func newTabbedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store, *tabBus) {
+func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store, *tabBus) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
+	return newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
 }
 
-// newTornDownMembership is newTabbedMembership plus a recording teardown, for the paths
-// that run one. A separate constructor rather than a wider signature on the helper above,
-// which has 27 call sites that want no teardown.
-func newTornDownMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store, *tabBus, *recordingTeardown) {
+// A separate constructor rather than a wider signature on the helper above, which has 27 call sites
+// that want no teardown.
+func newTornDownMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store, *tabBus, *recordingTeardown) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
@@ -39,7 +38,7 @@ func newTornDownMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.St
 	}
 	bus := &tabBus{}
 	td := &recordingTeardown{}
-	mem := NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus, Teardown: td})
+	mem := newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus, Teardown: td})
 	return mem, st, bus, td
 }
 

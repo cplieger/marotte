@@ -2,6 +2,7 @@ import { signal } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepTranscript } from "./wire/decoders.gen.js";
+import { runStepURL } from "./actions/runs.js";
 import {
   adoptRunOpenEntries,
   appendRunEntry,
@@ -11,18 +12,16 @@ import {
 } from "./run-store.js";
 import type { Entry, OpenEntry, RunStepTranscriptState } from "./types.js";
 
-/** One step's read, as this module holds it. */
 type StepReadState = "loading" | "unaddressable" | RunStepTranscriptState;
 
 /** One cache entry: the verdict, and nothing else. */
-export interface StepRead {
+interface StepRead {
   readonly state: StepReadState;
 }
 
 /** ONE signal for every step read, bumped when a fetch RESOLVES. */
 export const stepTranscriptVersion = signal(0);
 
-/** The cache, keyed by (workflow, node path). */
 const reads = new Map<string, StepRead>();
 
 /** In-flight keys, so a repaint during a fetch cannot start a second one. Separate from the
@@ -30,7 +29,6 @@ const reads = new Map<string, StepRead>();
  *  cache answers "what do we know", this answers "is a request outstanding". */
 const inFlight = new Set<string>();
 
-/** The cache key. */
 function readKey(workflowID: string, nodePath: string): string {
   return join(workflowID, nodePath);
 }
@@ -50,10 +48,6 @@ export function stepRead(workflowID: string, nodePath: string): StepRead | undef
 export function clearStepTranscripts(): void {
   reads.clear();
   inFlight.clear();
-}
-
-function stepURL(workflowID: string, nodePath: string): string {
-  return `/api/runs/${encodeURIComponent(workflowID)}/steps/${encodeURIComponent(nodePath)}`;
 }
 
 /** Whether an answer is settled — never worth asking again. */
@@ -91,12 +85,11 @@ export function rereadStepTranscript(workflowID: string, nodePath: string): void
   requestStepTranscript(workflowID, nodePath);
 }
 
-/** Perform one read, adopt what it carries, and record its verdict. `apiGetTypedOrError` rather
- *  than `apiGetTyped`, because the STATUS is what separates a settled refusal from a transient
- *  one and the collapsing helper hands back one null for both. */
+/** `apiGetTypedOrError` rather than `apiGetTyped`, because the STATUS is what separates a settled
+ *  refusal from a transient one and the collapsing helper hands back one null for both. */
 async function fetchStep(key: string, workflowID: string, nodePath: string): Promise<void> {
   try {
-    const r = await apiGetTypedOrError(stepURL(workflowID, nodePath), decodeRunStepTranscript);
+    const r = await apiGetTypedOrError(runStepURL(workflowID, nodePath), decodeRunStepTranscript);
     if (r.ok && r.data !== null) {
       adopt(workflowID, r.data);
       reads.set(key, { state: r.data.state });
@@ -114,9 +107,8 @@ async function fetchStep(key: string, workflowID: string, nodePath: string): Pro
   }
 }
 
-/** Commit one answer's entries to the run store. `clearRunHole` per turn the answer named,
- *  because the store's hole marker is what makes the pane re-ask and this answer is the repair
- *  it was waiting for. */
+/** `clearRunHole` per turn the answer named, because the store's hole marker is what makes the pane
+ *  re-ask and this answer is the repair it was waiting for. */
 function adopt(workflowID: string, answer: { entries: Entry[]; open_entries: OpenEntry[] }): void {
   const turns = new Set<string>();
   for (const entry of answer.entries) {

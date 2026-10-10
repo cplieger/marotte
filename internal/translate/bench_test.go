@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -16,7 +19,7 @@ import (
 // baseDeps is a composable Deps for tests and benchmarks: no-ops by default, hook fields to
 // override (e.g. onBroadcast).
 type baseDeps struct {
-	store       ChatRecords
+	store       chatRecords
 	turns       *turnLogs
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, marotte.ServerEvent)
@@ -28,11 +31,16 @@ type baseDeps struct {
 	onPolicyChanged func(errs []marotte.PolicyErrorItem, reloaded bool)
 	// withdrawn records each PendingPermsWithdraw call as "<chat>/<toolCallID>".
 	withdrawn []string
+	// notices records each Notify call, in order.
+	notices []marotte.NotificationPayload
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
 	runLabels map[string]string
+	// stepReading are the step steer keys RunStepReading answers true for.
+	stepReading map[marotte.ChatID]bool
+	planUpdates []marotte.RunPlanUpdate
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
 	runNotices map[marotte.ChatID][]stagedRunNotice
@@ -58,7 +66,7 @@ type baseDeps struct {
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
 	parent string
-	// asked records every BridgeRespond call; respondErr, when set, is what it reports.
+	// asked records every answer sent on origin(); respondErr, when set, is what it reports.
 	asked      []askAnswer
 	respondErr error
 	// terminals stands in for the agent-terminal registry; a key with empty text is a registered
@@ -75,9 +83,10 @@ type baseDeps struct {
 	// queuedAnswer, when set, is the frame SteerWaiting answers, standing in for
 	// the record rewriting a user row's frame or refusing a chat that is going.
 	queuedAnswer func(marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
+	// stopped is the turn ids StopRequestedAfter answers true for.
+	stopped map[string]bool
 }
 
-// termRendered is one terminal's rendered output in the stub registry.
 type termRendered struct {
 	text  string
 	spans []marotte.TextSpan
@@ -96,8 +105,6 @@ func newBaseDeps() *baseDeps {
 	}
 }
 
-// SteerWaiting / SteerRead / SteerForgotten / SteerCleared stand in for the
-// runtime's steering buffer tracker, holding what a reconnect would re-offer.
 func (d *baseDeps) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
 	p := *in
 	p.State = marotte.SteerRowQueued
@@ -176,7 +183,6 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
 	}
 }
 
-// Get reads the chat from the double's store.
 func (d *baseDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	return d.store.Get(ctx, id)
 }
@@ -197,11 +203,34 @@ func (d *baseDeps) DepartedName(id marotte.ChatID) (string, bool) {
 	return d.store.DepartedName(id)
 }
 
-// The TurnAccess half: one open turn per chat over the recording sink; every fold records its
+// WaitingWorkflowMessages folds what the double filed for the chat, after-close entries first, as
+// the store's log would.
+func (d *baseDeps) WaitingWorkflowMessages(_ context.Context, chatID marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+	return waitingIn(d.between[chatID], d.chatEntries(chatID))
+}
+
+func waitingIn(logs ...[]marotte.Entry) ([]marotte.WorkflowMessage, error) {
+	var facts []marotte.WorkflowMessageFact
+	for _, entries := range logs {
+		for i := range entries {
+			fact, ok, err := marotte.WorkflowMessageFactOf(&entries[i])
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				facts = append(facts, fact)
+			}
+		}
+	}
+	fold := marotte.FoldWorkflowMessages(facts)
+	return fold.Waiting(), nil
+}
+
+// The turnAccess half: one open turn per chat over the recording sink; every fold records its
 // target (chat vs run).
 func (d *baseDeps) OwnTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	t := d.turns.chats[chatID]
-	return t, t != nil && !t.Closed()
+	return t, t != nil && !d.turns.closed(t)
 }
 
 func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID marotte.ChatID) *turnlog.Turn {
@@ -214,6 +243,10 @@ func (d *baseDeps) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return t, t != nil
 }
 
+func (d *baseDeps) StopRequestedAfter(_ marotte.ChatID, turnID string) bool {
+	return d.stopped[turnID]
+}
+
 func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, e *marotte.Entry) ([]*marotte.Entry, error) {
 	if d.turns.appendErr != nil {
 		return nil, d.turns.appendErr
@@ -222,18 +255,15 @@ func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, 
 	return nil, nil
 }
 
-// chatEntries is every entry the chat's current turn sealed, in seal order; the
-// content still coalescing is on the turn's OpenEntries.
+// The content still coalescing is on the turn's OpenEntries.
 func (d *baseDeps) chatEntries(chatID marotte.ChatID) []marotte.Entry {
 	return d.turns.entriesOf(d.turns.chats[chatID])
 }
 
-// runEntries is every entry the run path's turn sealed, in seal order.
 func (d *baseDeps) runEntries(runID, nodePath string) []marotte.Entry {
 	return d.turns.entriesOf(d.turns.runs[runPathKey(runID, nodePath)])
 }
 
-// toolCallsOf decodes every tool_call entry in entries, in seal order.
 func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall {
 	t.Helper()
 	var out []marotte.EntryToolCall
@@ -250,7 +280,6 @@ func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall 
 	return out
 }
 
-// toolResultsOf decodes every tool_result entry in entries, in seal order.
 func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolResult {
 	t.Helper()
 	var out []marotte.EntryToolResult
@@ -267,7 +296,6 @@ func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolRes
 	return out
 }
 
-// plansOf decodes every plan entry in entries, in seal order.
 func plansOf(t *testing.T, entries []marotte.Entry) []marotte.EntryPlan {
 	t.Helper()
 	var out []marotte.EntryPlan
@@ -284,8 +312,7 @@ func plansOf(t *testing.T, entries []marotte.Entry) []marotte.EntryPlan {
 	return out
 }
 
-// turnCloseOf decodes the one turn_close entry in entries; the test fails when the
-// turn is still open.
+// The test fails when the turn is still open.
 func turnCloseOf(t *testing.T, entries []marotte.Entry) marotte.EntryTurnClose {
 	t.Helper()
 	for i := range entries {
@@ -316,8 +343,6 @@ func hasEntryAppended(events *[]marotte.ServerEvent, kind marotte.EntryKind) boo
 	return false
 }
 
-// lastFold is the target the most recent fold site stated, and whether any fold
-// happened at all.
 func (d *baseDeps) lastFold() (foldRecord, bool) {
 	if len(d.folds) == 0 {
 		return foldRecord{}, false
@@ -326,7 +351,7 @@ func (d *baseDeps) lastFold() (foldRecord, bool) {
 }
 
 // The RunAppender half: one open turn per run path, recorded call by call.
-func (d *baseDeps) RunNodeStart(_ context.Context, step RunStep, chatID marotte.ChatID) {
+func (d *baseDeps) RunNodeStart(_ context.Context, step *RunStep, chatID marotte.ChatID) {
 	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
 	d.turns.runTurn(step.RunID, step.NodePath)
 }
@@ -334,14 +359,14 @@ func (d *baseDeps) RunNodeStart(_ context.Context, step RunStep, chatID marotte.
 func (d *baseDeps) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
 	nodePath := workflow.PathKey(path)
 	d.runCalls = append(d.runCalls, runCall{kind: "node_complete", runID: runID, nodePath: nodePath, status: status, reason: reason})
-	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !t.Closed() {
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !d.turns.closed(t) {
 		_, _ = t.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted, Reason: reason})
 	}
 }
 
-func (d *baseDeps) RunFoldTarget(_ context.Context, step RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool) {
+func (d *baseDeps) RunFoldTarget(_ context.Context, step *RunStep, chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	d.folds = append(d.folds, foldRecord{chat: chatID, runID: step.RunID, nodePath: step.NodePath})
-	if t, ok := d.turns.runs[runPathKey(step.RunID, step.NodePath)]; ok && t.Closed() {
+	if t, ok := d.turns.runs[runPathKey(step.RunID, step.NodePath)]; ok && d.turns.closed(t) {
 		return nil, false
 	}
 	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: step.RunID, nodePath: step.NodePath, nodeID: step.NodeID, sessionID: step.SessionID, chat: chatID})
@@ -358,13 +383,49 @@ func (d *baseDeps) RunAppendAfterClosed(_ context.Context, runID, nodePath strin
 func (d *baseDeps) RunMeter(runID, nodePath string, credits, elapsedMs float64) bool {
 	d.runCalls = append(d.runCalls, runCall{kind: "meter", runID: runID, nodePath: nodePath, credits: credits, elapsedMs: elapsedMs})
 	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
-	return ok && !t.Closed()
+	return ok && !d.turns.closed(t)
 }
 
 func (d *baseDeps) RunStopReason(runID, nodePath string, raw marotte.StopReason) bool {
 	d.runCalls = append(d.runCalls, runCall{kind: "stop_reason", runID: runID, nodePath: nodePath, stop: raw})
 	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
-	return ok && !t.Closed()
+	return ok && !d.turns.closed(t)
+}
+
+func (d *baseDeps) RunNodePaused(_ context.Context, runID string, path []string) {
+	d.runCalls = append(d.runCalls, runCall{kind: "node_paused", runID: runID, nodePath: workflow.PathKey(path)})
+}
+
+// RunSteer files a step steer into the path's open run turn, as the run registry does.
+func (d *baseDeps) RunSteer(ctx context.Context, runID, nodePath, steerID string, steer *marotte.EntrySteer) {
+	d.runCalls = append(d.runCalls, runCall{kind: "steer", runID: runID, nodePath: nodePath, steerID: steerID})
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !d.turns.closed(t) {
+		_, _ = t.Steer(ctx, steerID, steer)
+	}
+}
+
+func (d *baseDeps) RunSteerDelivered(ctx context.Context, runID, nodePath string, sd *marotte.EntrySteerDelivered) {
+	d.runCalls = append(d.runCalls, runCall{kind: "steer_delivered", runID: runID, nodePath: nodePath, steerID: sd.SteerID})
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !d.turns.closed(t) {
+		_, _ = t.SteerDelivered(ctx, sd)
+	}
+}
+
+func (d *baseDeps) RunStepReading(key marotte.ChatID) bool { return d.stepReading[key] }
+
+func (d *baseDeps) RunWaitingWorkflowMessages(_ context.Context, runID string) ([]marotte.WorkflowMessage, error) {
+	var logs [][]marotte.Entry
+	for _, k := range slices.Sorted(maps.Keys(d.turns.runs)) {
+		if strings.HasPrefix(k, runID+"\x00") {
+			logs = append(logs, d.runBetween[k], d.turns.entriesOf(d.turns.runs[k]))
+		}
+	}
+	return waitingIn(logs...)
+}
+
+func (d *baseDeps) RunPlanUpdate(_ context.Context, _ marotte.ChatID, runID string, u marotte.RunPlanUpdate) {
+	d.planUpdates = append(d.planUpdates, u)
+	d.runCalls = append(d.runCalls, runCall{kind: "plan_update", runID: runID})
 }
 
 // foldRecord is one fold site's target: a chat's own turn when runID is empty,
@@ -375,7 +436,6 @@ type foldRecord struct {
 	nodePath string
 }
 
-// runCall is one recorded RunAppender call.
 type runCall struct {
 	kind      string
 	runID     string
@@ -384,6 +444,7 @@ type runCall struct {
 	sessionID string
 	status    string
 	reason    string
+	steerID   string
 	chat      marotte.ChatID
 	stop      marotte.StopReason
 	credits   float64
@@ -405,16 +466,13 @@ func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
 }
 
-// turnBracket is one recorded turn-lifecycle call.
 type turnBracket struct {
 	chat marotte.ChatID
 	kind string
 	stop marotte.StopReason
 }
 
-// turnLogs stands in for the host's two registries (one open turn per chat, one per run path)
-// over a sink keeping sealed entries by turn id. Unlike production, a fold with no turn opens
-// one here directly.
+// Unlike production, a fold with no turn opens one here directly.
 type turnLogs struct {
 	chats  map[marotte.ChatID]*turnlog.Turn
 	runs   map[string]*turnlog.Turn
@@ -436,7 +494,7 @@ func newTurnLogs() *turnLogs {
 // chatTurn is the chat's open turn, opened on first use and reopened once a
 // close has landed, so a second turn on one chat gets its own id.
 func (tl *turnLogs) chatTurn(chatID marotte.ChatID) *turnlog.Turn {
-	if t, ok := tl.chats[chatID]; ok && !t.Closed() {
+	if t, ok := tl.chats[chatID]; ok && !tl.closed(t) {
 		return t
 	}
 	t := tl.open()
@@ -468,6 +526,16 @@ func (tl *turnLogs) entriesOf(t *turnlog.Turn) []marotte.Entry {
 	return tl.sealed[t.ID()]
 }
 
+// closed reports whether the turn's turn_close has been sealed.
+func (tl *turnLogs) closed(t *turnlog.Turn) bool {
+	for _, e := range tl.entriesOf(t) {
+		if e.Kind == marotte.EntryKindTurnClose {
+			return true
+		}
+	}
+	return false
+}
+
 // recordingSink is the store the accumulator seals into: the entries land in
 // the log keyed by turn, in seal order, which is what a test reads back.
 type recordingSink struct {
@@ -494,7 +562,6 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
 
-// stagedRunNotice is one finished run a test hands RunNotice.
 type stagedRunNotice struct {
 	workflowID string
 	producedTs int64
@@ -522,7 +589,6 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, detail string) {
 	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, detail: detail})
 }
 
-// turnInterrupt is one recorded InterruptTurn call.
 type turnInterrupt struct {
 	chatID marotte.ChatID
 	reason string
@@ -562,26 +628,29 @@ func (d *baseDeps) mutateUsage(ctx context.Context, chatID marotte.ChatID, apply
 	})
 }
 
-func (d *baseDeps) WorkDir() string { return "/tmp" }
-func (d *baseDeps) BridgeNotify(context.Context, marotte.ChatID, string, map[string]any) error {
-	return nil
-}
+func (*baseDeps) WorkDir() string { return "/tmp" }
 
-// askAnswer is one recorded BridgeRespond call.
 type askAnswer struct {
-	chatID    marotte.ChatID
-	requestID int64
 	result    any
 	rpcErr    error
+	requestID int64
 }
 
-func (d *baseDeps) BridgeRespond(
-	_ context.Context, chatID marotte.ChatID, requestID int64, result any, rpcErr error,
-) error {
-	d.asked = append(d.asked, askAnswer{chatID, requestID, result, rpcErr})
-	return d.respondErr
+// askedOrigin is the bridge an ask arrived on, recording each answer in d.asked.
+type askedOrigin struct{ d *baseDeps }
+
+func (o askedOrigin) Respond(_ context.Context, requestID int64, result any, rpcErr error) error {
+	o.d.asked = append(o.d.asked, askAnswer{requestID: requestID, result: result, rpcErr: rpcErr})
+	return o.d.respondErr
 }
-func (d *baseDeps) MCPRecorder() MCPRecorder { return nopMCPRecorder{} }
+
+func (d *baseDeps) origin() AskOrigin { return askedOrigin{d: d} }
+
+// nopOrigin is the bridge an ask arrived on, where nothing reads the answers.
+type nopOrigin struct{}
+
+func (nopOrigin) Respond(context.Context, int64, any, error) error { return nil }
+func (*baseDeps) MCPRecorder() mcpRecorder                         { return nopMCPRecorder{} }
 func (d *baseDeps) SetGovernance(_ context.Context, g marotte.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)
@@ -599,14 +668,27 @@ func (d *baseDeps) PolicyChanged(_ context.Context, errs []marotte.PolicyErrorIt
 		d.onPolicyChanged(errs, reloaded)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, marotte.ServerEvent) {}
+
+func (*baseDeps) PendingPermsAdd(_ int64, evt marotte.ServerEvent, _ AskOrigin) marotte.ServerEvent {
+	return evt
+}
+
 func (d *baseDeps) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool {
 	d.withdrawn = append(d.withdrawn, string(chatID)+"/"+toolCallID)
 	return true
 }
-func (d *baseDeps) PendingPermsRemove(int64)                                             {}
-func (d *baseDeps) NotifyPush(context.Context, string, marotte.PushKind, marotte.ChatID) {}
-func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
+
+func (d *baseDeps) NoticeTarget(_ context.Context, chatID marotte.ChatID, runID string) notice.Target {
+	if id := notice.AskRun(chatID, runID); id != "" {
+		return notice.RunTarget(id, d.runLabels[id])
+	}
+	return notice.ChatTarget(chatID, "chat "+string(chatID))
+}
+
+func (d *baseDeps) Notify(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload) {
+	d.notices = append(d.notices, *n)
+}
+func (*baseDeps) IsHookStatusEnabled() bool { return false }
 
 // SetModels stands in for the workspace catalog holder, recording what the
 // translator published so a test can assert on the list without an agent

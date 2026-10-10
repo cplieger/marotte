@@ -41,7 +41,6 @@ const SHELL_FONT_READY = '14px "Monaspace Neon NF"';
 // itself stays lazy.
 const shellScrollback = localScrollbackStorage({ prefix: "marotte.shell-scrollback." });
 
-// The shell terminal recolored to marotte's palette.
 const SHELL_THEME: Readonly<Record<string, string>> = {
   // The glyph font FIRST, ahead of the text face: it carries only the codepoints that have to tile,
   // so the browser takes box drawing, blocks, shades, braille and the mosaic blocks from it and
@@ -142,7 +141,6 @@ function scheduleReattach(reason: "ended" | "restart"): void {
   }, delay);
 }
 
-/** Attach to the PTY the server now serves. */
 function reattachShell(): void {
   reattachedAt = Date.now();
   reattachSeq++;
@@ -172,11 +170,10 @@ async function hostRestart(): Promise<void> {
 let handle: TerminalHandle | null = null;
 let initialized = false;
 
-// The on-screen key grid (Tab/Esc/arrows/Enter/sticky-Ctrl).
 let keys: TerminalFeature<MobileToolbarApi> | null = null;
 
-/** Show or hide the key grid, and write the trigger's pressed state. ONE writer, because a face
- *  left behind is the whole failure mode of a toggle whose panel lives somewhere else. */
+/** ONE writer, because a face left behind is the whole failure mode of a toggle whose panel lives
+ *  somewhere else. */
 function toggleKeys(): void {
   const api = keys?.api;
   if (api === undefined) {
@@ -354,9 +351,8 @@ function ensureTerminal(): void {
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
-    // The shell died and nothing is retrying. On this server that is recoverable (the next connect
-    // gets a fresh PTY), so typing `exit` or wedging a child ends with a new prompt rather than a
-    // dead panel.
+    // On this server that is recoverable (the next connect gets a fresh PTY), so typing `exit` or
+    // wedging a child ends with a new prompt rather than a dead panel.
     onSessionEnded: () => {
       scheduleReattach("ended");
     },
@@ -367,11 +363,10 @@ function ensureTerminal(): void {
 
 let shellOpen = false;
 
-/** Open or close the shell slider. Open: build the terminal on first use (opening its
- *  WebSocket), remove `shell-closed` (CSS slides the panel up, or keeps it where prepaint.js
- *  already painted it open) and release the pre-paint state, mark the toolbar button active,
- *  then focus the terminal via its handle (skipped with focus:false — the boot-time restore must
- *  not steal focus from the prompt input). */
+/** Open: build the terminal on first use (opening its WebSocket), remove `shell-closed` (CSS slides
+ *  the panel up, or keeps it where prepaint.js already painted it open) and release the pre-paint
+ *  state, mark the toolbar button active, then focus the terminal via its handle (skipped with
+ *  focus:false — the boot-time restore must not steal focus from the prompt input). */
 function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
   shellOpen = open;
   if (open) {

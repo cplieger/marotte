@@ -11,8 +11,6 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// rpcErr builds an RPCError with an optional data payload, the way the bridge
-// hands one to the command layer.
 func rpcErr(t *testing.T, code int, msg string, data any) error {
 	t.Helper()
 	e := &marotte.RPCError{Code: code, Message: msg}
@@ -295,10 +293,8 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 	}
 }
 
-// TestPromptFailureReason_NamesAThrottle guards the user-facing half. Before
-// this, a rate-limited turn surfaced as the literal string "Internal error",
-// which describes neither the cause nor the remedy, on the one failure where
-// both are known.
+// TestPromptFailureReason_NamesAThrottle pins the user-facing half: a throttled
+// turn's reason names the cause and the remedy, the one failure where both are known.
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	const kasMsg = "Too many requests, please wait before trying again."
 	err := rpcErr(t, marotte.RPCCodeBridgeExited, kasMsg, rpcerr.Mapped{

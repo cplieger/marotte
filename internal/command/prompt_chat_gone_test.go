@@ -17,7 +17,7 @@ func TestCmdPrompt_ATombstonedChatCarriesTheChatNotFoundReason(t *testing.T) {
 	roles.bridges = spy
 	roles.bus = spy
 
-	_, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
+	_, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing"))
 
 	if got := statusOf(err); got != http.StatusConflict {
 		t.Fatalf("CmdPrompt on a tombstoned chat = %d, want %d (%s)", got, http.StatusConflict, errText(err))

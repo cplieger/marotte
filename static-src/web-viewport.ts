@@ -62,13 +62,10 @@ function widthOf(mode: ViewportMode, hintWidth: number | null): number | null {
   }
 }
 
-export interface FrameGeometry {
+interface FrameGeometry {
   /** The iframe's own layout box, before any scale. */
   readonly frameW: number;
   readonly frameH: number;
-  /** The box the scaled frame occupies in the stage. */
-  readonly boxW: number;
-  readonly boxH: number;
   readonly scale: number;
   /** True when a 100% frame is wider than the stage, which then scrolls. */
   readonly overflows: boolean;
@@ -83,17 +80,15 @@ export function frameGeometry(
 ): FrameGeometry {
   if (width === null || width <= stageW) {
     const w = width ?? stageW;
-    return { frameW: w, frameH: stageH, boxW: w, boxH: stageH, scale: 1, overflows: false };
+    return { frameW: w, frameH: stageH, scale: 1, overflows: false };
   }
   if (!fit) {
-    return { frameW: width, frameH: stageH, boxW: width, boxH: stageH, scale: 1, overflows: true };
+    return { frameW: width, frameH: stageH, scale: 1, overflows: true };
   }
   const scale = Math.max(MIN_SCALE, stageW / width);
   return {
     frameW: width,
     frameH: stageH / scale,
-    boxW: width * scale,
-    boxH: stageH,
     scale,
     overflows: false,
   };

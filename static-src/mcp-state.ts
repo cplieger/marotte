@@ -62,10 +62,6 @@ export const decodeResourceInfo: Decoder<MCPResourceInfo> = (v) => {
   if (d !== undefined) {
     out.description = d;
   }
-  const m = optStr(o, "mime_type", "$.mcp.resource");
-  if (m !== undefined) {
-    out.mime_type = m;
-  }
   return out;
 };
 
@@ -78,10 +74,6 @@ export const decodeResourceTemplateInfo: Decoder<MCPResourceTemplateInfo> = (v) 
   const d = optStr(o, "description", "$.mcp.resource_template");
   if (d !== undefined) {
     out.description = d;
-  }
-  const m = optStr(o, "mime_type", "$.mcp.resource_template");
-  if (m !== undefined) {
-    out.mime_type = m;
   }
   return out;
 };
@@ -282,7 +274,6 @@ export interface MCPResourceInfo {
   name: string;
   uri: string;
   description?: string;
-  mime_type?: string;
 }
 
 /** A parameterised resource a server advertises; `uri_template` is RFC 6570. */
@@ -290,7 +281,6 @@ export interface MCPResourceTemplateInfo {
   name: string;
   uri_template: string;
   description?: string;
-  mime_type?: string;
 }
 
 /**

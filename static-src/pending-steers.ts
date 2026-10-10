@@ -1,7 +1,5 @@
-// The steer stack projects `activeSession.steers`, then the server-held follow-ups in
-// `activeSession.queued`.
-
-import { el, computed, effect, touch } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
@@ -14,80 +12,84 @@ import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { wireSignature } from "./paint-sig.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
 
 /** One dock row: a steer the agent has not read, or a follow-up the server holds. */
 type DockRow = { kind: "steer"; steer: PendingSteer } | { kind: "queued"; row: QueuedPrompt };
 
-let bound = false;
-let prevWaiting = 0;
-let prevId = "";
+export interface SteerStackSource {
+  /** What the dock is about (a chat id, or a run step's key) and its rows. Reactive: the stack's
+   *  render subscribes through it. */
+  read(): { id: string; steers: readonly PendingSteer[]; queued: readonly QueuedPrompt[] };
+  /** Stop the turn and send this row first; absent where no turn is the reader's to stop. */
+  sendNow?: (steerID: string) => Promise<void>;
+  /** Edit: put the row's words in the box, then delete the row. */
+  edit(steer: PendingSteer): Promise<void>;
+  /** Edit beside a workflow's row, where the only removal is the whole buffer. */
+  editByClear(text: string): Promise<void>;
+  remove(steerID: string): Promise<void>;
+  discard(waiting: number): Promise<void>;
+  /** The live-region words, which name what the rows are waiting for. */
+  readonly waitingFor: string;
+}
 
 interface StackState {
   waiting: number;
   /** No workflow result is in the dock, so each row can go on its own: the server refuses a
    *  one-row delete beside an agent row (`agent_rows_waiting`). */
   perRow: boolean;
+  src: SteerStackSource;
 }
 
-/** Wire the reactive render. Idempotent. Called once from app.ts. */
+const mountedStacks = new WeakSet<HTMLUListElement>();
+
+/** Called once from app.ts. */
 export function initPendingSteers(): void {
-  if (bound) {
+  mountSteerStack($.steerStack, chatSource);
+}
+
+export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource): void {
+  if (mountedStacks.has(stack)) {
     return;
   }
-  bound = true;
-  const stack = $.steerStack;
-  // A value-deduped key, so every term `render` branches on has to be IN it. `kas` is deliberately
-  // absent: a resubmit moves only the id KAS holds a row under, and that must repaint nothing.
+  mountedStacks.add(stack);
+  const announced = { waiting: 0, id: "" };
   const sig = computed(() => {
-    const s = activeSession.value;
-    const steers = s?.steers ?? [];
-    const queued = s?.queued ?? [];
-    return (
-      (s?.id ?? "") +
-      "\u0001" +
-      steers
-        .map(
-          (e) =>
-            (e.pending === true ? "1" : "0") +
-            (e.compacted === true ? "1" : "0") +
-            (e.unsent === true ? "1" : "0") +
-            "\u0002" +
-            e.id +
-            "\u0002" +
-            e.origin +
-            "\u0002" +
-            e.text,
-        )
-        .join("\u0000") +
-      "\u0001" +
-      queued
-        .map(
-          (q) =>
-            q.id +
-            "\u0002" +
-            (q.held === true ? "1" : "0") +
-            ((q.resends ?? []).length > 0 ? "1" : "0") +
-            "\u0002" +
-            q.text,
-        )
-        .join("\u0000")
-    );
+    const s = src.read();
+    return join(s.id, join(...s.steers.map(steerSig)), join(...s.queued.map(wireSignature)));
   });
   effect(() => {
     touch(sig);
-    render(stack);
+    render(stack, src, announced);
   });
 }
 
-function render(stack: HTMLUListElement): void {
-  const s = activeSession.peek();
-  const steers = s?.steers ?? [];
-  const queued = s?.queued ?? [];
-  const id = s?.id ?? "";
+/** Total over `PendingSteer`, so a new field fails the type check here. `kas` is the one field held
+ *  empty: a resubmit moves only the id KAS holds a row under, and that must repaint nothing. */
+function steerSig(e: PendingSteer): string {
+  const parts: Record<keyof PendingSteer, string> = {
+    id: e.id,
+    text: e.text,
+    origin: e.origin,
+    pending: e.pending === true ? "1" : "",
+    compacted: e.compacted === true ? "1" : "",
+    unsent: e.unsent === true ? "1" : "",
+    kas: "",
+  };
+  return join(...Object.values(parts));
+}
+
+function render(
+  stack: HTMLUListElement,
+  src: SteerStackSource,
+  announced: { waiting: number; id: string },
+): void {
+  const { id, steers, queued } = untracked(() => src.read());
   const state: StackState = {
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
+    src,
   };
   const waiting = state.waiting;
   const rows: DockRow[] = [
@@ -101,8 +103,8 @@ function render(stack: HTMLUListElement): void {
     stack.classList.add("hidden");
     // Reset the announce baseline so arriving at a chat that already has steers reads them out
     // fresh, while the empty case stays silent.
-    prevWaiting = 0;
-    prevId = id;
+    announced.waiting = 0;
+    announced.id = id;
     return;
   }
   // Un-hidden BEFORE the rows land, because `.hidden` is `display: none` and an element inserted
@@ -115,17 +117,17 @@ function render(stack: HTMLUListElement): void {
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
-  if (id === prevId && waiting !== prevWaiting) {
+  if (id === announced.id && waiting !== announced.waiting) {
     announce(
       waiting === 0
-        ? "Steering message delivered to the agent"
+        ? `Steering message delivered to ${src.waitingFor}`
         : waiting === 1
-          ? "1 steering message waiting for the agent"
-          : `${String(waiting)} steering messages waiting for the agent`,
+          ? `1 steering message waiting for ${src.waitingFor}`
+          : `${String(waiting)} steering messages waiting for ${src.waitingFor}`,
     );
   }
-  prevWaiting = waiting;
-  prevId = id;
+  announced.waiting = waiting;
+  announced.id = id;
 }
 
 /** KEYED BY THE ROW'S ID, which is stable from send to read: `.steer-row`'s `@starting-style`
@@ -209,8 +211,8 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
     "span",
     { className: "steer-state" },
     el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
-    // The word, not only the glyph. "Sent" is the fact the user asked this stack to state: the
-    // message has left, it is not a draft, and it is waiting.
+    // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
+    // it is not a draft, and it is waiting.
     el("span", { className: "steer-state-label" }, stateWord(steer)),
   );
 
@@ -255,12 +257,13 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
     column.replaceChildren();
     return;
   }
-  const { waiting, perRow } = state;
+  const { waiting, perRow, src } = state;
   const user = steer.origin === "user";
   const controls: HTMLElement[] = [];
   // Send now LEADS, and the destructive control stays last. Not on an unsent row: it has no turn to
   // stop, and Edit already sends it.
-  if (user && steer.unsent !== true) {
+  const sendNow = src.sendNow;
+  if (user && steer.unsent !== true && sendNow !== undefined) {
     controls.push(
       actionButton(
         ICON_ARROW_UP,
@@ -270,7 +273,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
           ? "Stops the turn and sends this message as a new one"
           : "Stops the turn and sends this message first, then the others",
         () => {
-          void sendSteerNow(steer.id);
+          void sendNow(steer.id);
         },
       ),
     );
@@ -282,7 +285,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "Edit this message",
         "Take it back and put it in the message box",
         () => {
-          void editSteer(steer);
+          void src.edit(steer);
         },
       ),
       actionButton(
@@ -290,7 +293,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         `Delete "${preview(steer.text)}"`,
         "Delete this message",
         () => {
-          void deleteSteer(steer.id);
+          void src.remove(steer.id);
         },
         "steer-act-danger",
       ),
@@ -307,7 +310,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "Edit this message",
         "Take it back and put it in the message box",
         () => {
-          void editSteerByClear(steer.text);
+          void src.editByClear(steer.text);
         },
       ),
     );
@@ -320,7 +323,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         ? "The agent has not read it yet"
         : "A workflow result is waiting beside them, so they clear together",
       () => {
-        void discardSteers(waiting);
+        void src.discard(waiting);
       },
       "steer-act-danger",
     ),
@@ -373,11 +376,10 @@ async function sendSteerNow(steerID: string): Promise<void> {
 /** The statuses that say the delete did not happen and will not: the row still stands, or the
  *  agent already has the words. Anything else (no reply, a 500) may have deleted it, so the
  *  composer keeps the text. */
-const DEFINITE_REFUSALS: ReadonlySet<number> = new Set([400, 404, 409, 502]);
+export const DEFINITE_REFUSALS: ReadonlySet<number> = new Set([400, 404, 409, 502]);
 
-/** Take a row back into the composer. The box is filled BEFORE the delete is dispatched, so a
- *  lost reply loses no text; a definite refusal puts back the draft it replaced, unless that
- *  chat's composer has moved on since. */
+/** The box is filled BEFORE the delete is dispatched, so a lost reply loses no text; a definite
+ *  refusal puts back the draft it replaced, unless that chat's composer has moved on since. */
 async function editSteer(steer: PendingSteer): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -461,6 +463,19 @@ async function discardSteers(waiting: number): Promise<void> {
   await clearSteers.dispatch({ chatID });
 }
 
+const chatSource: SteerStackSource = {
+  read: () => {
+    const s = activeSession.value;
+    return { id: s?.id ?? "", steers: s?.steers ?? [], queued: s?.queued ?? [] };
+  },
+  sendNow: sendSteerNow,
+  edit: editSteer,
+  editByClear: editSteerByClear,
+  remove: deleteSteer,
+  discard: discardSteers,
+  waitingFor: "the agent",
+};
+
 /** A queued row's state in words, and the ONE spelling of it. A held row outranks a carried one:
  *  after a restart nothing is sent automatically, carried or not. */
 function queuedWord(row: QueuedPrompt): string {
@@ -471,7 +486,11 @@ function queuedWord(row: QueuedPrompt): string {
 }
 
 function queuedName(row: QueuedPrompt): string {
-  return `${queuedWord(row)}: ${oneLine(row.text)}`;
+  return `${queuedWord(row)}: ${queuedShown(row)}`;
+}
+
+function queuedShown(row: QueuedPrompt): string {
+  return oneLine(row.label ?? row.text);
 }
 
 /** What Discard does to this row, which differs by kind: a carried row was already sent once as
@@ -480,12 +499,11 @@ function discardHint(row: QueuedPrompt): string {
   return (row.resends ?? []).length > 0 ? "It will not be sent again" : "It has not been sent";
 }
 
-/** The row each queued element shows. A carried row can absorb a later carry under the same id,
- *  so its text changes in place and the controls read it from here. */
+/** A carried row can absorb a later carry under the same id, so its text changes in place and the
+ *  controls read it from here. */
 const queuedRowOf = new WeakMap<HTMLElement, QueuedPrompt>();
 
-/** A follow-up the server holds, below the steers. Edit and Discard on every row: each is one
- *  `unqueue_prompt` addressing this row alone. */
+/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. */
 function buildQueuedRow(row: QueuedPrompt): HTMLElement {
   const li = el(
     "li",
@@ -540,13 +558,12 @@ function updateQueuedRow(li: HTMLElement, row: QueuedPrompt): void {
   }
   const text = li.querySelector(".steer-text");
   if (text !== null) {
-    text.textContent = oneLine(row.text);
+    text.textContent = queuedShown(row);
   }
 }
 
-/** Take a follow-up back into the composer, attachments included. `editSteer`'s discipline: the
- *  box is filled BEFORE the unqueue is dispatched, so a lost reply loses nothing, and a definite
- *  refusal puts back the draft and drops the files this Edit staged. */
+/** `editSteer`'s discipline: the box is filled BEFORE the unqueue is dispatched, so a lost reply
+ *  loses nothing, and a definite refusal puts back the draft and drops the files this Edit staged. */
 async function editQueued(row: QueuedPrompt): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {

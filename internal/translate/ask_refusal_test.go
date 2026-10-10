@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -13,13 +14,13 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 	// Well-formed JSON whose TYPES mismatch the decode struct: an upstream shape change.
 	cases := map[string]struct {
 		params map[string]any
-		call   func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse)
+		call   func(tr *Translator, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse)
 		want   any
 	}{
 		"permission: options is not an array": {
 			params: map[string]any{"sessionId": "s", "options": 7},
-			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-				tr.HandlePermissionRequest(t.Context(), chatID, msg)
+			call: func(tr *Translator, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
+				tr.HandlePermissionRequest(t.Context(), chatID, origin, msg)
 			},
 			want: marotte.PermissionOutcomeCancelled(),
 		},
@@ -29,22 +30,22 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 				"sessionId": "s",
 				"_meta":     map[string]any{"kiro": map[string]any{"consent": true}},
 			},
-			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-				tr.HandlePermissionRequest(t.Context(), chatID, msg)
+			call: func(tr *Translator, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
+				tr.HandlePermissionRequest(t.Context(), chatID, origin, msg)
 			},
 			want: marotte.PermissionOutcomeCancelled(),
 		},
 		"elicitation: the body is not an object": {
 			params: map[string]any{"sessionId": "s", "elicitation": "not-an-object"},
-			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-				tr.HandleElicitationCreate(t.Context(), chatID, msg)
+			call: func(tr *Translator, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
+				tr.HandleElicitationCreate(t.Context(), chatID, origin, msg)
 			},
 			want: marotte.ElicitationResult{Action: marotte.ElicitationActionCancel},
 		},
 		"user input: options is not an array": {
 			params: map[string]any{"sessionId": "s", "question": "Which?", "options": 7},
-			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
-				tr.HandleUserInput(t.Context(), chatID, msg)
+			call: func(tr *Translator, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
+				tr.HandleUserInput(t.Context(), chatID, origin, msg)
 			},
 			want: marotte.UserInputResult{Action: marotte.UserInputActionDismissed},
 		},
@@ -56,7 +57,7 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 			tr := New(rolesOf(deps))
 			id := int64(4242)
 
-			tc.call(tr, "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, tc.params)})
+			tc.call(tr, "c1", deps.origin(), &marotte.RPCResponse{ID: &id, Params: mustJSON(t, tc.params)})
 
 			if len(deps.asked) != 1 {
 				t.Fatalf("got %d answers, want 1 — an unanswered request wedges the tool batch", len(deps.asked))
@@ -64,9 +65,6 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 			got := deps.asked[0]
 			if got.requestID != id {
 				t.Errorf("answered request_id = %d, want %d", got.requestID, id)
-			}
-			if got.chatID != "c1" {
-				t.Errorf("answered chat_id = %q, want c1 — an empty one misses the bridge lookup", got.chatID)
 			}
 			if got.rpcErr != nil {
 				t.Errorf("answered with rpcErr = %v, want nil — an RPC error on a turn_approval frame auto-approves the turn", got.rpcErr)
@@ -79,6 +77,45 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 	}
 }
 
+// labelledOrigin is a distinct bridge, so a registration can be told apart from any other.
+type labelledOrigin struct{ name string }
+
+func (labelledOrigin) Respond(context.Context, int64, any, error) error { return nil }
+
+// TestAskHandlers_RegisterTheAskWithTheBridgeItArrivedOn pins the binding the answer and the
+// bridge-end retirement both read.
+func TestAskHandlers_RegisterTheAskWithTheBridgeItArrivedOn(t *testing.T) {
+	cases := map[string]func(tr *Translator, origin AskOrigin, id *int64){
+		"permission": func(tr *Translator, origin AskOrigin, id *int64) {
+			tr.HandlePermissionRequest(t.Context(), "c1", origin, &marotte.RPCResponse{ID: id, Params: mustJSON(t, map[string]any{
+				"sessionId": "s", "toolCall": map[string]any{"toolCallId": "tc", "title": "Write"},
+			})})
+		},
+		"elicitation": func(tr *Translator, origin AskOrigin, id *int64) {
+			tr.HandleElicitationCreate(t.Context(), "c1", origin, &marotte.RPCResponse{ID: id, Params: mustJSON(t, map[string]any{
+				"sessionId": "s", "elicitation": map[string]any{"mode": "form", "message": "Token?"},
+			})})
+		},
+		"user input": func(tr *Translator, origin AskOrigin, id *int64) {
+			tr.HandleUserInput(t.Context(), "c1", origin, userInputMsg(t, id, map[string]any{"question": "Which?"}))
+		},
+	}
+	for name, ask := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps := &pendingCaptureDeps{baseDeps: newBaseDeps()}
+			tr := New(rolesOf(deps))
+			id := int64(5)
+			origin := labelledOrigin{name: "arrived-on"}
+
+			ask(tr, origin, &id)
+
+			if len(deps.pendingOrigins) != 1 || deps.pendingOrigins[0] != AskOrigin(origin) {
+				t.Errorf("registered origins = %v, want [%v]: the answer and the end both read it", deps.pendingOrigins, origin)
+			}
+		})
+	}
+}
+
 // TestHandlePermissionRequest_RefusalNamesNoOption pins that cancelled selects nothing (a
 // fabricated optionId would apply an unoffered choice).
 func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
@@ -86,7 +123,7 @@ func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(7)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", deps.origin(), &marotte.RPCResponse{
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{"options": 7}),
 	})
@@ -113,7 +150,7 @@ func TestAskHandlers_DecodedFrameStillReachesTheTracker(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(11)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", deps.origin(), &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",

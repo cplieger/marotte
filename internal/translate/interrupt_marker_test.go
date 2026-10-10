@@ -25,8 +25,6 @@ func chunkDeltas(events []marotte.ServerEvent) []string {
 	return out
 }
 
-// feedChunkAs streams one delta with a chosen reasoning flag and the attribution
-// the dispatcher derived for it, which is how a workflow-step frame is staged.
 func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text string, isReasoning bool, attr FrameAttribution) {
 	t.Helper()
 	frame := map[string]any{"content": map[string]any{"type": "text", "text": text}}

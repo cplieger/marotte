@@ -19,14 +19,12 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// utilityRuntime bundles the session holder and the text agent the runtime constructs together.
 type utilityRuntime struct {
 	session *utilitySession
 	// textgen is the text-generation agent; a field named agent would invite a local shadowing the package.
 	textgen *utilityAgent
 }
 
-// newUtilityRuntime wires a session and its agent.
 func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []marotte.SessionModel, hooks *utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
 	session := newUtilitySession(shutdownCtx, factory, models, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
@@ -44,6 +42,8 @@ type utilitySessionHooks struct {
 	// onGovernanceState captures the _kiro/governance/state sent on session/new, so GET /api/governance is warm with
 	// no chat open.
 	onGovernanceState func(json.RawMessage)
+	// onConfigurationState takes _kiro/configuration/state, which only this session declares.
+	onConfigurationState func(json.RawMessage)
 	// onPolicyNotification routes _kiro/policy/{changed,error} into the chat dispatch's translator: this session's
 	// notifications bypass that dispatcher, so a write with no chat open would be lost.
 	onPolicyNotification func(*marotte.RPCResponse)
@@ -123,8 +123,8 @@ type sessionLease struct {
 	gen    uint64
 }
 
-// acquire ensures the session is started and returns a lease, bumping the idle clock. Use the bridge outside the
-// session mutex and report failures via resetIf(lease.gen).
+// acquire bumps the idle clock. Use the bridge outside the session mutex and report failures via
+// resetIf(lease.gen).
 func (us *utilitySession) acquire(ctx context.Context) (sessionLease, error) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
@@ -144,7 +144,7 @@ func (us *utilitySession) ensureStarted(ctx context.Context) error {
 	return err
 }
 
-// startLocked spawns a fresh subprocess + session. Caller holds us.mu.
+// Caller holds us.mu.
 func (us *utilitySession) startLocked(ctx context.Context) error {
 	bridge := us.bridgeFactory()
 	model := cheapestModel(ctx, us.models())
@@ -160,7 +160,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 
 	// shutdownCtx, not a request ctx: this runs under us.mu, so a session/new that never answers would hold the mutex
 	// for good. Start bounds the handshake itself.
-	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff()}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles, ContentCollection: us.hooks.contentCollection, DisableTelemetry: us.hooks.telemetryOff != nil && us.hooks.telemetryOff(), ConfigurationState: true}); err != nil {
 		return err
 	}
 	us.liveIgnore = startedLive(bridge).ignoreFiles
@@ -240,21 +240,19 @@ func (us *utilitySession) liveID() string {
 	return string(us.bridge.SessionID())
 }
 
-// shuttingDown reports whether the runtime's lifecycle context is cancelled; the drain skips a reset that would
-// race Stop.
+// The drain skips a reset that would race Stop.
 func (us *utilitySession) shuttingDown() bool {
 	return us.shutdownCtx.Err() != nil
 }
 
-// utilitySessionParams builds an ACP parameter map with the session id injected. Not command.SessionParams: this
-// bridge carries no prompt slot.
+// Not command.sessionParams: this bridge carries no prompt slot.
 func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]any {
 	m := map[string]any{marotte.KeySessionID: bridge.SessionID()}
 	maps.Copy(m, extra)
 	return m
 }
 
-// foreignUpdateHook is utilitySessionHooks.onForeignUpdate as forwardChunk takes it; a nil hook is valid wiring.
+// A nil hook is valid wiring.
 type foreignUpdateHook func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool
 
 // updateKind reads the sessionUpdate discriminator off a frame's update object, false when it cannot be decoded: an
@@ -267,21 +265,20 @@ func updateKind(update json.RawMessage) (marotte.ACPUpdateKind, bool) {
 	return base.Kind, true
 }
 
-// utilityUpdateBase decodes the sessionUpdate kind from the update object; read off params it is "" for every frame.
+// Read off params it is "" for every frame.
 type utilityUpdateBase struct {
 	Kind marotte.ACPUpdateKind `json:"sessionUpdate"`
 }
 
-// utilityChunkPayload is the text content of an agent_message_chunk notification.
 type utilityChunkPayload struct {
 	Content struct {
 		Text string `json:"text"`
 	} `json:"content"`
 }
 
-// forward drains NotifCh, forwarding agent chunk text to responseCh. Peer requests go to answerHostRequest (session/
-// new stalls without the shell type); everything else but hooks and policy is dropped so readLoop never blocks.
-// bridge is explicit so a recycle cannot redirect answers.
+// Peer requests go to answerHostRequest (session/ new stalls without the shell type); everything
+// else but hooks and policy is dropped so readLoop never blocks. bridge is explicit so a recycle
+// cannot redirect answers.
 func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan marotte.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
@@ -304,44 +301,52 @@ func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifC
 	us.noteFrameDrained(drainPoint{gen: gen}, true)
 }
 
-// dispatchNotification hands msg to its hook and reports whether it was one; an unwired hook drops it.
+// An unwired hook drops it.
 func (us *utilitySession) dispatchNotification(msg *marotte.RPCResponse) bool {
-	switch msg.Method {
-	case methodKiroHooksDidChange:
-		if us.hooks.onHooksChanged != nil {
-			us.hooks.onHooksChanged()
-		}
-	case methodV3Powers:
-		if us.hooks.onPowersChanged != nil {
-			us.hooks.onPowersChanged(msg.Params)
-		}
-	case methodKiroWorkflowRecipesChanged:
-		if us.hooks.onRecipesChanged != nil {
-			us.hooks.onRecipesChanged()
-		}
-	case methodV3Governance:
-		if us.hooks.onGovernanceState != nil {
-			us.hooks.onGovernanceState(msg.Params)
-		}
-	case methodV3PolicyChanged, methodV3PolicyError:
-		if us.hooks.onPolicyNotification != nil {
-			us.hooks.onPolicyNotification(msg)
-		}
-	case methodV3SteeringDocs:
-		if us.hooks.onSteeringDocs != nil {
-			us.hooks.onSteeringDocs(msg.Params)
-		}
-	case methodV3SystemNotify:
-		if us.hooks.onSystemNotify != nil {
-			us.hooks.onSystemNotify(msg)
-		}
-	default:
-		return false
+	hook, claimed := us.notificationHook(msg.Method)
+	if hook != nil {
+		hook(msg)
 	}
-	return true
+	return claimed
 }
 
-// takeSlashUpdate hands this session's available_commands_update to the slash hook, reporting whether it did.
+func (us *utilitySession) notificationHook(method string) (hook func(*marotte.RPCResponse), claimed bool) {
+	h := &us.hooks
+	switch method {
+	case methodKiroHooksDidChange:
+		return bare(h.onHooksChanged), true
+	case methodV3Powers:
+		return withParams(h.onPowersChanged), true
+	case methodKiroWorkflowRecipesChanged:
+		return bare(h.onRecipesChanged), true
+	case methodV3Governance:
+		return withParams(h.onGovernanceState), true
+	case methodKiroConfigurationState:
+		return withParams(h.onConfigurationState), true
+	case methodV3PolicyChanged, methodV3PolicyError:
+		return h.onPolicyNotification, true
+	case methodV3SteeringDocs:
+		return withParams(h.onSteeringDocs), true
+	case methodV3SystemNotify:
+		return h.onSystemNotify, true
+	}
+	return nil, false
+}
+
+func bare(f func()) func(*marotte.RPCResponse) {
+	if f == nil {
+		return nil
+	}
+	return func(*marotte.RPCResponse) { f() }
+}
+
+func withParams(f func(json.RawMessage)) func(*marotte.RPCResponse) {
+	if f == nil {
+		return nil
+	}
+	return func(msg *marotte.RPCResponse) { f(msg.Params) }
+}
+
 func (us *utilitySession) takeSlashUpdate(msg *marotte.RPCResponse, ownSession string) bool {
 	if msg.Method != marotte.MethodSessionUpdate {
 		return false
@@ -361,14 +366,13 @@ func (us *utilitySession) takeSlashUpdate(msg *marotte.RPCResponse, ownSession s
 	return true
 }
 
-// noteFrameDrained reports the folded position to the runtime, tolerating an unwired hook.
 func (us *utilitySession) noteFrameDrained(at drainPoint, force bool) {
 	if us.hooks.onFrameDrained != nil {
 		us.hooks.onFrameDrained(at, force)
 	}
 }
 
-// sessionPresets resolves the session's policy presets, tolerating an unwired hook. Nil sends no key (Custom).
+// Nil sends no key (Custom).
 func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 	if us.hooks.presets == nil {
 		return nil
@@ -376,8 +380,7 @@ func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 	return us.hooks.presets(ctx)
 }
 
-// sessionIgnoreFiles resolves the session's ignore-file list, tolerating an unwired hook. Nil or empty withholds
-// the notification, which would otherwise clear the list.
+// Nil or empty withholds the notification, which would otherwise clear the list.
 func (us *utilitySession) sessionIgnoreFiles(ctx context.Context) []string {
 	if us.hooks.ignoreFiles == nil {
 		return nil
@@ -385,8 +388,7 @@ func (us *utilitySession) sessionIgnoreFiles(ctx context.Context) []string {
 	return us.hooks.ignoreFiles(ctx)
 }
 
-// forwardChunk forwards an agent_message_chunk's text to responseCh and ignores the rest. Two decodes: the envelope
-// names the session, the inner frame carries kind and content.
+// Two decodes: the envelope names the session, the inner frame carries kind and content.
 func forwardChunk(msg *marotte.RPCResponse, ownSession string, responseCh chan<- utilityChunkPayload, onForeign foreignUpdateHook) {
 	if msg.Method != marotte.MethodSessionUpdate || msg.Params == nil {
 		return

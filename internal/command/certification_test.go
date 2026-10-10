@@ -115,7 +115,7 @@ func TestHandleShellInterception_HandsTheOutputToTheTurnCloserOnce(t *testing.T)
 	pr.turnOutcome = closer
 	bus.events = nil
 
-	if _, err := HandleShellInterception(t.Context(), pr, &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}, &marotte.PromptCommand{
+	if _, err := handleShellInterception(t.Context(), pr, &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}, &marotte.PromptCommand{
 		Text: "!echo shell-output", MessageID: "m-1",
 	}); err != nil {
 		t.Fatalf("HandleShellInterception: %v", err)
@@ -150,7 +150,7 @@ func TestCmdSetDraft_DraftChangedCarriesTheStoresVersion(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	bus.events = nil
 
-	if _, err := CmdSetDraft(t.Context(), deps, bus, draftReq(t, "c1", "half a thought")); err != nil {
+	if _, err := cmdSetDraft(t.Context(), deps, bus, draftReq(t, "c1", "half a thought")); err != nil {
 		t.Fatalf("CmdSetDraft: %v", err)
 	}
 	if len(bus.events) != 1 || bus.events[0].Type != marotte.EventDraftChanged {

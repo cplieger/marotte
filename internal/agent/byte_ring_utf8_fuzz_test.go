@@ -16,7 +16,7 @@ func FuzzByteRing_String_UTF8(f *testing.F) {
 			return
 		}
 		r := newByteRing(cap)
-		r.Write(data)
+		r.write(data)
 		s := r.String()
 		if !utf8.ValidString(s) {
 			t.Fatalf("String() not valid UTF-8 for cap=%d data=%x result=%x", cap, data, s)

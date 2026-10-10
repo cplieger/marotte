@@ -29,8 +29,7 @@ const kasServerKey = "mcpServers"
 // and writeKASConfig preserves it verbatim.
 const kasPowersKey = "powers"
 
-// kasFileMaxBytes bounds the re-read of the existing file. The file is a handful
-// of server declarations; a larger one is not something to merge into.
+// The file is a handful of server declarations; a larger one is not something to merge into.
 const kasFileMaxBytes = 4 << 20
 
 // kasServer is one entry of KAS's `mcpServers` map, matching its
@@ -128,7 +127,7 @@ type kasRenderPolicy struct {
 // pairsRecord flattens ordered KeyPairs into KAS's record shape. Later entries
 // win on a duplicate name, which is the same resolution the inline path's own
 // record build produced.
-func pairsRecord(in []KeyPair) map[string]string {
+func pairsRecord(in []keyPair) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -170,7 +169,7 @@ func (s *Store) writeKASConfigWith(ctx context.Context, servers []*Server, polic
 func renderServersKey(servers []*Server, policy kasRenderPolicy) (json.RawMessage, error) {
 	rendered, err := json.Marshal(renderKASServers(servers, policy))
 	if err != nil {
-		return nil, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		return nil, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 	}
 	return rendered, nil
 }
@@ -180,11 +179,11 @@ func renderServersKey(servers []*Server, policy kasRenderPolicy) (json.RawMessag
 func (s *Store) writeKASDoc(ctx context.Context, doc map[string]json.RawMessage) error {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+		return fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 	}
 	if _, err := atomicfile.WriteFile(ctx, s.kasPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
-		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
+		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	return nil
 }
@@ -222,7 +221,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	} else {
 		rendered, err := json.Marshal(servers)
 		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 		}
 		block[kasServerKey] = rendered
 	}
@@ -231,7 +230,7 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	} else {
 		rendered, err := json.Marshal(block)
 		if err != nil {
-			return false, fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
+			return false, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
 		}
 		doc[kasPowersKey] = rendered
 	}

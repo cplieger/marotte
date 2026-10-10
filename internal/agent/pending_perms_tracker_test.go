@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// listIDs reads the ids off a List snapshot, in replay order.
 func listIDs(t *testing.T, evts []marotte.ServerEvent) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, len(evts))
@@ -23,22 +22,40 @@ func listIDs(t *testing.T, evts []marotte.ServerEvent) []int64 {
 	return ids
 }
 
-// TestPendingPermsTracker_List_OrdersByRequestID pins ascending request id (ask order), added out
-// of order and asserted as the full sequence.
-func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
+// titlesOf reads each replayed permission card's title, the tests' handle on which ask it is.
+func titlesOf(t *testing.T, evts []marotte.ServerEvent) []string {
+	t.Helper()
+	out := make([]string, 0, len(evts))
+	for _, evt := range evts {
+		p, ok := evt.Payload.(marotte.PermissionNeededPayload)
+		if !ok {
+			t.Fatalf("replayed event carries payload %T, want marotte.PermissionNeededPayload", evt.Payload)
+		}
+		out = append(out, p.Title)
+	}
+	return out
+}
+
+// TestPendingPermsTracker_List_OrdersByAskOrder pins replay in the order the asks arrived, whatever
+// their ACP ids, each under an ascending ask id.
+func TestPendingPermsTracker_List_OrdersByAskOrder(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	for _, id := range []int64{7, 2, 9, 1, 5} {
-		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
-			marotte.PermissionNeededPayload{RequestID: id}))
+	for _, acpID := range []int64{7, 2, 9, 1, 5} {
+		tracker.add(acpID, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+			marotte.PermissionNeededPayload{Title: "acp " + strconv.FormatInt(acpID, 10)}), nil)
 	}
 
-	want := []int64{1, 2, 5, 7, 9}
+	want := []string{"acp 7", "acp 2", "acp 9", "acp 1", "acp 5"}
 	// Per-pass subtests, so one unlucky pass reports without hiding the rest.
 	for pass := range 8 {
 		t.Run("pass_"+strconv.Itoa(pass), func(t *testing.T) {
-			if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
-				t.Errorf("List order = %v, want %v", got, want)
+			got := tracker.list("")
+			if titles := titlesOf(t, got); !slices.Equal(titles, want) {
+				t.Errorf("List order = %v, want %v", titles, want)
+			}
+			if ids := listIDs(t, got); !slices.IsSorted(ids) {
+				t.Errorf("List ask ids = %v, want ascending", ids)
 			}
 		})
 	}
@@ -48,28 +65,20 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	kinds := map[int64]marotte.EventType{
-		31: marotte.EventPermissionNeeded,
-		12: marotte.EventElicitationNeeded,
-		20: marotte.EventUserInputNeeded,
-	}
-	for id, kind := range kinds {
-		tracker.Add(id, marotte.NewEvent(kind, "chat-1", marotte.PermissionNeededPayload{RequestID: id}))
+	kinds := []marotte.EventType{marotte.EventElicitationNeeded, marotte.EventUserInputNeeded, marotte.EventPermissionNeeded}
+	for i, kind := range kinds {
+		tracker.add(int64(30-i), marotte.NewEvent(kind, "chat-1", marotte.PermissionNeededPayload{}), nil)
 	}
 
-	got := tracker.List("chat-1")
-	wantIDs := []int64{12, 20, 31}
+	got := tracker.list("chat-1")
 	// Fatal: the subtests below index got.
-	if len(got) != len(wantIDs) {
-		t.Fatalf("List returned %d events, want %d: %v", len(got), len(wantIDs), listIDs(t, got))
+	if len(got) != len(kinds) {
+		t.Fatalf("List returned %d events, want %d", len(got), len(kinds))
 	}
-	if ids := listIDs(t, got); !slices.Equal(ids, wantIDs) {
-		t.Errorf("List order = %v, want %v", ids, wantIDs)
-	}
-	for i, id := range wantIDs {
-		t.Run(string(kinds[id]), func(t *testing.T) {
-			if got[i].Type != kinds[id] {
-				t.Errorf("id %d replayed as %q, want %q", id, got[i].Type, kinds[id])
+	for i, kind := range kinds {
+		t.Run(string(kind), func(t *testing.T) {
+			if got[i].Type != kind {
+				t.Errorf("ask %d replayed as %q, want %q", i, got[i].Type, kind)
 			}
 		})
 	}
@@ -79,18 +88,20 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	owners := map[int64]marotte.ChatID{4: "chat-1", 8: "chat-2", 1: "chat-1", 6: "chat-2", 3: "chat-1"}
-	for id, chatID := range owners {
-		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-			marotte.PermissionNeededPayload{RequestID: id}))
+	for _, a := range []struct {
+		chat  marotte.ChatID
+		title string
+	}{{"chat-1", "a"}, {"chat-2", "b"}, {"chat-1", "c"}, {"chat-2", "d"}, {"chat-1", "e"}} {
+		tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, a.chat,
+			marotte.PermissionNeededPayload{Title: a.title}), nil)
 	}
 
-	for chatID, want := range map[marotte.ChatID][]int64{
-		"chat-1": {1, 3, 4},
-		"chat-2": {6, 8},
+	for chatID, want := range map[marotte.ChatID][]string{
+		"chat-1": {"a", "c", "e"},
+		"chat-2": {"b", "d"},
 	} {
 		t.Run(string(chatID), func(t *testing.T) {
-			if got := listIDs(t, tracker.List(chatID)); !slices.Equal(got, want) {
+			if got := titlesOf(t, tracker.list(chatID)); !slices.Equal(got, want) {
 				t.Errorf("List(%q) order = %v, want %v", chatID, got, want)
 			}
 		})
@@ -101,24 +112,26 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	owners := map[int64]marotte.ChatID{1: "chat-1", 2: "chat-2", 3: "chat-1", 4: "chat-2"}
-	for id, chatID := range owners {
-		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-			marotte.PermissionNeededPayload{RequestID: id}))
+	var chat2 []int64
+	for i, chatID := range []marotte.ChatID{"chat-1", "chat-2", "chat-1", "chat-2"} {
+		evt := tracker.add(int64(i), marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			marotte.PermissionNeededPayload{}), nil)
+		if chatID == "chat-2" {
+			chat2 = append(chat2, requestIDOf(t, evt))
+		}
 	}
 
-	tracker.ClearForChat("chat-1")
+	tracker.clearForChat("chat-1")
 
-	if got := listIDs(t, tracker.List("chat-1")); len(got) != 0 {
+	if got := listIDs(t, tracker.list("chat-1")); len(got) != 0 {
 		t.Errorf("List(\"chat-1\") = %v after ClearForChat(\"chat-1\"), want none", got)
 	}
-	want := []int64{2, 4}
-	if got := listIDs(t, tracker.List("chat-2")); !slices.Equal(got, want) {
-		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, want)
+	if got := listIDs(t, tracker.list("chat-2")); !slices.Equal(got, chat2) {
+		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, chat2)
 	}
 	// The surviving chat's answers are still accepted.
-	if _, ok := tracker.TakeIfPresent("chat-2", 2); !ok {
-		t.Error(`TakeIfPresent("chat-2", 2) = false: another chat's clear took chat-2's entry`)
+	if _, ok := tracker.takeIfPresent("chat-2", chat2[0]); !ok {
+		t.Errorf("TakeIfPresent(\"chat-2\", %d) = false: another chat's clear took chat-2's entry", chat2[0])
 	}
 }
 
@@ -127,64 +140,93 @@ func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T)
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{1, 2} {
-		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
-			marotte.PermissionNeededPayload{RequestID: id}))
+		tracker.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+			marotte.PermissionNeededPayload{}), nil)
 	}
 
-	tracker.ClearForChat("")
+	tracker.clearForChat("")
 
-	want := []int64{1, 2}
-	if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
-		t.Errorf("List(\"\") = %v after ClearForChat(\"\"), want %v", got, want)
+	if got := len(tracker.list("")); got != 2 {
+		t.Errorf("List(\"\") holds %d asks after ClearForChat(\"\"), want 2", got)
 	}
 }
 
-// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID pins that ids are per bridge, so an id-only key
-// would overwrite one chat's card.
-func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
+// TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks pins identity by ask id, never by ACP id:
+// every bridge mints ACP ids from zero, so two chats, or one chat's old bridge and its successor,
+// send the same one. Each stays listed, answerable and retired by its own origin.
+func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
+	t.Parallel()
+	const reused = int64(7)
+	for _, tc := range []struct {
+		name              string
+		oldChat, succChat marotte.ChatID
+		oldKind, succKind marotte.EventType
+	}{
+		{"two chats", "chat-1", "chat-2", marotte.EventPermissionNeeded, marotte.EventUserInputNeeded},
+		{"successor, same kind", "chat-1", "chat-1", marotte.EventPermissionNeeded, marotte.EventPermissionNeeded},
+		{"successor, other kind", "chat-1", "chat-1", marotte.EventPermissionNeeded, marotte.EventElicitationNeeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := newPendingPermsTracker()
+			old, succ := newFakeBridge(), newFakeBridge()
+			oldID := requestIDOf(t, tracker.add(reused, marotte.NewEvent(tc.oldKind, tc.oldChat, marotte.PermissionNeededPayload{}), old))
+			succID := requestIDOf(t, tracker.add(reused, marotte.NewEvent(tc.succKind, tc.succChat, marotte.PermissionNeededPayload{}), succ))
+			if oldID == succID {
+				t.Fatalf("two asks sent as ACP id %d share ask id %d", reused, oldID)
+			}
+			if got := len(tracker.list("")); got != 2 {
+				t.Fatalf("List holds %d asks, want both", got)
+			}
+			ended := tracker.endOrigin(old)
+			if len(ended) != 1 || ended[0].id != oldID || ended[0].evt.Type != tc.oldKind {
+				t.Errorf("EndOrigin(old) = %+v, want only the old bridge's ask %d", ended, oldID)
+			}
+			ask, ok := tracker.takeIfPresent(tc.succChat, succID)
+			if !ok {
+				t.Fatalf("the successor's ask %d is no longer answerable after the old bridge ended", succID)
+			}
+			if ask.origin != acpResponder(succ) || ask.acpID != reused || ask.evt.Type != tc.succKind {
+				t.Errorf("claim = {origin %p, acp %d, %q}, want the successor's {%p, %d, %q}",
+					ask.origin, ask.acpID, ask.evt.Type, succ, reused, tc.succKind)
+			}
+		})
+	}
+}
+
+// The unattended floor claims by bridge and ACP id: a successor's ask under the old bridge's id is
+// not the floor's to answer.
+func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatBridgesAsk(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	const shared = int64(7)
-	tracker.Add(shared, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
-		marotte.PermissionNeededPayload{RequestID: shared, Title: "chat-1 asked"}))
-	tracker.Add(shared, marotte.NewEvent(marotte.EventUserInputNeeded, "chat-2",
-		marotte.UserInputNeededPayload{RequestID: shared, Question: "chat-2 asked"}))
+	old, succ := newFakeBridge(), newFakeBridge()
+	oldID := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
+		marotte.PermissionNeededPayload{}), old))
+	succID := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
+		marotte.PermissionNeededPayload{}), succ))
 
-	// Each chat replays its own card.
-	for _, tc := range []struct {
-		chat marotte.ChatID
-		want marotte.EventType
-	}{
-		{chat: "chat-1", want: marotte.EventPermissionNeeded},
-		{chat: "chat-2", want: marotte.EventUserInputNeeded},
-	} {
-		got := tracker.List(tc.chat)
-		if len(got) != 1 {
-			t.Fatalf("List(%q) returned %d cards, want 1", tc.chat, len(got))
-		}
-		if got[0].Type != tc.want {
-			t.Errorf("List(%q) card type = %q, want %q: the other chat's request "+
-				"overwrote this one", tc.chat, got[0].Type, tc.want)
-		}
+	id, ask, ok := tracker.takeOnOrigin(succ, 7)
+	if !ok || id != succID || ask.origin != acpResponder(succ) {
+		t.Fatalf("TakeOnOrigin(successor, 7) = (%d, origin %p, %t), want the successor's ask %d", id, ask.origin, ok, succID)
 	}
+	if got := listIDs(t, tracker.list("")); !slices.Equal(got, []int64{oldID}) {
+		t.Errorf("asks pending = %v, want the old bridge's [%d] untouched", got, oldID)
+	}
+	if _, _, ok := tracker.takeOnOrigin(succ, 7); ok {
+		t.Error("TakeOnOrigin claimed the successor's ask twice")
+	}
+}
 
-	// chat-2's request survives chat-1 answering.
-	evt, ok := tracker.TakeIfPresent("chat-1", shared)
-	if !ok {
-		t.Fatal(`TakeIfPresent("chat-1", 7) refused a pending request`)
+// A claim naming the wrong chat resolves nothing.
+func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherChatsAsk(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+		marotte.PermissionNeededPayload{}), nil))
+	if _, ok := tracker.takeIfPresent("chat-4", id); ok {
+		t.Errorf("TakeIfPresent(\"chat-4\", %d) succeeded against chat-3's ask", id)
 	}
-	if evt.ChatID != "chat-1" {
-		t.Errorf("chat-1's claim returned chat %q's event", evt.ChatID)
-	}
-	if _, ok := tracker.TakeIfPresent("chat-2", shared); !ok {
-		t.Error(`TakeIfPresent("chat-2", 7) = false after chat-1 answered: chat-2's ` +
-			"turn now waits forever for a response nothing can send")
-	}
-	// A claim naming the wrong chat resolves nothing.
-	tracker.Add(shared, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
-		marotte.PermissionNeededPayload{RequestID: shared}))
-	if _, ok := tracker.TakeIfPresent("chat-4", shared); ok {
-		t.Error(`TakeIfPresent("chat-4", 7) succeeded against chat-3's request`)
+	if _, _, offered := tracker.takePermissionOption("chat-4", id, ""); offered {
+		t.Errorf("TakePermissionOption(\"chat-4\", %d) succeeded against chat-3's ask", id)
 	}
 }
 
@@ -229,19 +271,20 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 		5: marotte.EventPermissionNeeded,
 	}
 	tracker := newPendingPermsTracker()
+	askIDs := map[int64]int64{}
 	for _, e := range entries {
-		tracker.Add(e.id, marotte.NewEvent(kindOf[e.id], launching, e.payload))
+		askIDs[e.id] = requestIDOf(t, tracker.add(e.id, marotte.NewEvent(kindOf[e.id], launching, e.payload), nil))
 	}
 
-	tracker.ClearForRun("wf_1")
+	tracker.clearForRun("wf_1")
 
 	left := map[int64]bool{}
-	for _, evt := range tracker.List("") {
+	for _, evt := range tracker.list("") {
 		left[requestIDOf(t, evt)] = true
 	}
 	for _, e := range entries {
 		t.Run(e.name, func(t *testing.T) {
-			if left[e.id] != e.survives {
+			if left[askIDs[e.id]] != e.survives {
 				verb := "survived the run's end"
 				if e.survives {
 					verb = "was swept by another run's end"
@@ -256,12 +299,12 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	tracker.Add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 1}))
+	tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 1}), nil)
 
-	tracker.ClearForRun("")
+	tracker.clearForRun("")
 
-	if got := len(tracker.List("")); got != 1 {
+	if got := len(tracker.list("")); got != 1 {
 		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
 	}
 }
@@ -270,29 +313,29 @@ func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 func TestOpenNodesForRun_NamesTheRunsOwnUnansweredSteps(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	tracker.Add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 1, RunID: "wf_1", NodeID: "a"}))
-	tracker.Add(2, marotte.NewEvent(marotte.EventElicitationNeeded, runChatID("wf_1"),
-		marotte.ElicitationNeededPayload{RequestID: 2, RunID: "wf_1", NodeID: "b"}))
-	tracker.Add(3, marotte.NewEvent(marotte.EventUserInputNeeded, "c-parent",
-		marotte.UserInputNeededPayload{RequestID: 3, RunID: "wf_1", NodeID: "c"}))
-	tracker.Add(4, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 4, RunID: "wf_1"}))
-	tracker.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
-		marotte.PermissionNeededPayload{RequestID: 5, RunID: "wf_2", NodeID: "d"}))
+	first := requestIDOf(t, tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), nil))
+	tracker.add(2, marotte.NewEvent(marotte.EventElicitationNeeded, runChatID("wf_1"),
+		marotte.ElicitationNeededPayload{RequestID: 2, RunID: "wf_1", NodeID: "b"}), nil)
+	tracker.add(3, marotte.NewEvent(marotte.EventUserInputNeeded, "c-parent",
+		marotte.UserInputNeededPayload{RequestID: 3, RunID: "wf_1", NodeID: "c"}), nil)
+	tracker.add(4, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RequestID: 4, RunID: "wf_1"}), nil)
+	tracker.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c-parent",
+		marotte.PermissionNeededPayload{RequestID: 5, RunID: "wf_2", NodeID: "d"}), nil)
 
-	got := slices.Sorted(maps.Keys(tracker.OpenNodesForRun("wf_1")))
+	got := slices.Sorted(maps.Keys(tracker.openNodesForRun("wf_1")))
 	if want := []string{"a", "b", "c"}; !slices.Equal(got, want) {
 		t.Errorf("OpenNodesForRun(wf_1) = %v, want %v: every kind, any chat, no node-less ask", got, want)
 	}
 
-	if _, ok := tracker.TakeIfPresent("c-parent", 1); !ok {
-		t.Fatal("request 1 was not pending")
+	if _, ok := tracker.takeIfPresent("c-parent", first); !ok {
+		t.Fatal("node a's ask was not pending")
 	}
-	if _, held := tracker.OpenNodesForRun("wf_1")["a"]; held {
+	if _, held := tracker.openNodesForRun("wf_1")["a"]; held {
 		t.Error("an answered decision still names its node")
 	}
-	if got := tracker.OpenNodesForRun(""); got != nil {
+	if got := tracker.openNodesForRun(""); got != nil {
 		t.Errorf("OpenNodesForRun(\"\") = %v, want nil: an empty run would match every chat ask", got)
 	}
 }

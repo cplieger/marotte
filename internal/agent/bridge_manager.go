@@ -6,12 +6,9 @@ import (
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"golang.org/x/sync/singleflight"
 )
 
-// bridgeManager owns the per-chat bridge map and serializes bridge lifecycle operations.
 type bridgeManager struct {
-	spawnSF singleflight.Group
 	bridges map[marotte.ChatID]*sharedBridge
 	factory ACPBridgeFactory
 	// hostsLiveRun reports whether the chat's bridge hosts an open step turn of a chat-parented
@@ -29,7 +26,6 @@ func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
 	}
 }
 
-// get returns the bridge for chatID, or nil.
 func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -44,7 +40,7 @@ func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, exis
 		bm.mu.Unlock()
 		return existing, true
 	}
-	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting}
+	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting, settled: newSessionSettle()}
 	if notify := bm.revertStarting; notify != nil {
 		sb.revertStarting = func(session string) { notify(chatID, session) }
 	}
@@ -54,8 +50,7 @@ func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, exis
 	return sb, false
 }
 
-// insert registers an already-started bridge (a run bridge keyed by its workflow id). It
-// never replaces an entry, which would orphan a live process.
+// It never replaces an entry, which would orphan a live process.
 func (bm *bridgeManager) insert(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -100,7 +95,15 @@ func (bm *bridgeManager) removeIfBridge(chatID marotte.ChatID, bridge ACPBridge)
 	return false
 }
 
-// close removes and stops chatID's bridge. Idempotent.
+// carries reports whether origin is still chatID's registered bridge. Nil-safe.
+func (bm *bridgeManager) carries(chatID marotte.ChatID, origin acpResponder) bool {
+	if bm == nil || origin == nil {
+		return false
+	}
+	sb := bm.get(chatID)
+	return sb != nil && acpResponder(sb.current()) == origin
+}
+
 func (bm *bridgeManager) close(chatID marotte.ChatID) {
 	sb := bm.remove(chatID)
 	if sb != nil {
@@ -108,14 +111,12 @@ func (bm *bridgeManager) close(chatID marotte.ChatID) {
 	}
 }
 
-// count returns the number of active bridges.
 func (bm *bridgeManager) count() int {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	return len(bm.bridges)
 }
 
-// all returns a snapshot of every bridge.
 func (bm *bridgeManager) all() map[marotte.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -124,7 +125,6 @@ func (bm *bridgeManager) all() map[marotte.ChatID]*sharedBridge {
 	return cp
 }
 
-// drain removes and returns every bridge, for teardown.
 func (bm *bridgeManager) drain() map[marotte.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()

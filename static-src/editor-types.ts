@@ -8,137 +8,258 @@ import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/re
 import { lineDiff, type DiffLine } from "./diff.js";
 import { relToWorkspace } from "./workspace.js";
 import type { ConflictFile } from "./conflict.js";
-
-// --- Virtual path routing ---
-
-// --- Diff label constants ---
+import type { DiffBase, FileFacts } from "./viewer-rules.js";
+import type { EolRecord, EolTracker } from "./viewer-eol.js";
+import type { WholeRows } from "./viewer-rows.js";
+import type { HighlightRuns } from "./highlight.js";
+import type { FileRefusal } from "./wire/types.gen.js";
 
 const DIFF_LABEL_WORKING_TREE = "working tree";
 
-// --- Pure predicates ---
-
-// THE `pending:` VIRTUAL PATH FAMILY IS GONE. isPendingPath, makePendingPath,
-// parsePendingPath and pendingDiffSource addressed a staged write held in
-// marotte's memory and served from GET /api/pending-changes/. There are no staged
-// writes and no such endpoint: KAS holds the content and reviews a whole turn at
-// once, so a path scheme with nothing behind it is a route to a 404.
-//
-// routeForPath therefore has one branch, which is why it now reads as a plain
-// URL builder rather than a router.
-//
-// It is also where the editor's two path forms are kept apart. The editor
-// ADDRESSES a file absolutely, because that is the namespace /api/file* serves
-// and the form the file browser hands over; it DISPLAYS the file relative to the
-// workspace, because "/workspace/" on every filename is noise the reader already
-// knows. Deriving the label here means the split lives with the URL builder
-// rather than at each of the header's callers.
+// The editor ADDRESSES a file absolutely, the namespace /api/file* serves and the form the file
+// browser hands over; it DISPLAYS the file relative to the workspace.
 export function routeForPath(path: string): {
   readURL: string;
+  statURL: string;
   writeURL: string;
   displayPath: string;
 } {
-  const url = `/api/file?path=${encodeURIComponent(path)}`;
-  return { readURL: url, writeURL: url, displayPath: relToWorkspace(path) };
-}
-
-/** Whether a path's READ state renders its markdown instead of showing raw
- *  source.
- *
- *  Keyed on the path rather than on a mode variant: the read surface is a
- *  function of what the file IS, so the state and the content it paints cannot
- *  drift apart. Editing is unaffected — the toggle shows source for every file. */
-export function rendersMarkdown(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
+  const q = `?path=${encodeURIComponent(path)}`;
+  return {
+    readURL: `/api/file${q}`,
+    statURL: `/api/file/stat${q}`,
+    writeURL: `/api/file${q}`,
+    displayPath: relToWorkspace(path),
+  };
 }
 
 // --- Types ---
 
-interface DiffSource {
-  oldContent: string;
-  newContent: string;
+interface DiffLabels {
   oldLabel: string;
   newLabel: string;
-  fromGit: boolean;
 }
 
-/** Factory: git diff (ref vs working tree). */
-export function gitDiffSource(ref: string, oldContent: string, newContent: string): DiffSource {
+/** The buffer against the saved text, both read off the record, so a save settling under the
+ *  view moves its old side. */
+type BufferDiff = DiffLabels & { kind: "buffer" };
+
+/** A pair the opener supplied, such as a tool card's before and after. */
+type PairDiff = DiffLabels & { kind: "pair"; oldText: string; newText: string };
+
+/** `ref` is what a refetch asks git for; `oldLabel` and `base` are what the load found there.
+ *  `pending` until a load settles it: the activation that finds it pending starts the load. */
+type GitDiff = DiffLabels & {
+  kind: "git";
+  oldText: string;
+  newText: string;
+  ref: string;
+  base: DiffBase;
+  pending: boolean;
+};
+
+type DiffSource = BufferDiff | PairDiff | GitDiff;
+
+/** Factory: a git diff (ref vs working tree) its load has yet to fill. */
+export function gitDiffSource(ref: string): GitDiff {
   return {
-    oldContent,
-    newContent,
+    kind: "git",
+    oldText: "",
+    newText: "",
     oldLabel: ref,
     newLabel: DIFF_LABEL_WORKING_TREE,
-    fromGit: true,
+    ref,
+    base: "text",
+    pending: true,
   };
 }
 
-/** Factory: unsaved-changes diff (saved vs unsaved). */
-export function unsavedDiffSource(oldContent: string, newContent: string): DiffSource {
-  return { oldContent, newContent, oldLabel: "saved", newLabel: "unsaved", fromGit: false };
+/** Factory: the unsaved changes (saved vs unsaved). */
+export function bufferDiffSource(): BufferDiff {
+  return { kind: "buffer", oldLabel: "saved", newLabel: "unsaved" };
 }
 
-/** Discriminated union for editor file mode — makes invalid state combinations unrepresentable. */
+/** The two texts `src` compares for `state`. */
+export function diffTexts(
+  state: Pick<FileState, "original" | "current">,
+  src: DiffSource,
+): { readonly oldText: string; readonly newText: string } {
+  return src.kind === "buffer"
+    ? { oldText: state.original.value, newText: state.current.value }
+    : src;
+}
+
+/** The view a file is in. A union so `restoreUI`'s exhaustive switch names every site a new
+ *  view has to reach. */
 export type FileMode =
-  | { kind: "edit"; editing: boolean }
+  /** Source: the windowed renderer to read, the textarea when editing. */
+  | { kind: "text"; editing: boolean }
+  /** Rendered markdown, the read state of a small `.md`. */
+  | { kind: "markdown" }
   | { kind: "diff"; diffSource: DiffSource }
   | { kind: "conflict"; conflict: ConflictFile; editing: true }
-  // A variant rather than an early branch in `open()`, because `restoreUI`
-  // switches exhaustively on this discriminant: adding a member makes tsc point
-  // at every site that has to handle it, which an `if` at the entry point does
-  // not. It carries no payload — the path is the whole input, and the bytes come
-  // from the file route rather than from a loaded buffer.
-  | { kind: "image" };
+  | { kind: "image" }
+  /** A notice, the file's size and modified time, and Download. */
+  | { kind: "binary" }
+  /** Over the viewer's cap: one sentence and Download, nothing else. */
+  | { kind: "large" };
 
 /** Where the reader left one file on the SHARED pane. Every editor tab paints into
  *  the same elements, so a position held by the DOM is the last file's, never
  *  this one's. */
 export interface EditorView {
-  top: number;
+  /** The logical line at the top, so read and edit state and a reload all land on one line. */
+  topLine: number;
+  /** How many cut rows into `topLine` the read state's top row sits. */
+  topRowInLine: number;
   left: number;
-  /** The textarea pans a long line inside itself (block axis is the pane's). */
+  /** The textarea pans a long line inside itself. */
   areaLeft: number;
   selection: { start: number; end: number; direction: "forward" | "backward" | "none" } | null;
   /** Keyed by the comparison it was taken in, so a different diff opens at its top. */
   diff: { key: string; top: number; left: number } | null;
 }
 
+/** The edit buffer's line endings: the record the file was read (or last saved) with, and the
+ *  tracker shadowing the textarea since. */
+interface FileEol {
+  readonly saved: EolRecord;
+  readonly tracker: EolTracker;
+}
+
+/** A save's outcome the reader has to see, kept on the record whichever file is on screen until a
+ *  later save or a discard settles it. */
+type SaveAlert =
+  /** The disk text is now `original` and the view diffs the buffer against it. */
+  | { readonly kind: "stale"; readonly sentence: string }
+  /** Save stays disabled until the reader picks a way on. */
+  | { readonly kind: "refused"; readonly reason: FileRefusal | "uncertain" }
+  | { readonly kind: "failed"; readonly sentence: string };
+
+/** The live-refresh machine's state for the file; viewer-live is its one writer. */
+export type LiveStatus = "watching" | "changed" | "live" | "paused" | "gone";
+
+/** The facts a binary or large view shows. */
+interface FileNotice {
+  readonly size: number;
+  readonly modified: string;
+}
+
 export interface FileState {
   path: string;
   /** Null until the file has been shown once; a first open lands at the top. */
   view: EditorView | null;
-  /** Saved-on-disk content. Reactive so `dirty` can derive from it. */
+  /** The saved text, LF-normalized. Reactive so `dirty` can derive from it. */
   original: Signal<string>;
-  /** Live editor-buffer content. Reactive so `dirty` can derive from it. */
+  /** The edit buffer, LF-normalized. */
   current: Signal<string>;
   loaded: boolean;
-  /** Digest of the bytes this buffer LOADED, from the read response. Sent back on
-   *  save so the server can refuse a write over an external change. Empty when
-   *  unknown (a source that did not supply one), which degrades to the old
-   *  write-unconditionally behaviour rather than blocking the save. */
-  loadedHash: string;
-  /** The server marked the file read-only (a KAS tool output): no Edit control
-   *  and no conflict mode. */
-  readOnly: boolean;
-  /** Load/save failure for this file, "" when there is none. Reactive because a
-   *  PREDICATE depends on it: `#editor-git-diff-btn` has exactly one writer, an
-   *  effect in editor-core.ts, and `loadFile` assigns this field long after the
-   *  file is activated — so a plain field left that effect unable to observe the
-   *  one transition it exists to hide the control for. `restoreUI` reads it too,
-   *  imperatively, which a signal serves unchanged. */
+  /** The identity the buffer or the view was read under; "" before the first read. */
+  fileId: string;
+  /** Advanced by every `commitBaseline`; see `baselineHeld`. */
+  baseline: number;
+  /** The `#L<n>` the file was opened at, until `applyPendingLine` takes it. */
+  pendingLine: number | null;
+  /** The server's facts; null only before the first stat answers. */
+  facts: Signal<FileFacts | null>;
+  notice: FileNotice | null;
+  /** A header note the view adds, such as a diff that fell back to the file. */
+  note: string;
+  eol: FileEol | null;
+  /** The read state's rows over `current`, rebuilt when it changes. */
+  rows: WholeRows | null;
+  /** Highlight runs for `rows`, computed after the first plain paint. */
+  runs: HighlightRuns | null;
+  /** Load/save failure for this file, "" when there is none. */
   error: Signal<string>;
+  alert: Signal<SaveAlert | null>;
+  live: LiveStatus;
+  /** Bumped by every transition that leaves the view a read was issued for; see `issuedNow`. */
+  gen: number;
   mode: Signal<FileMode>;
-  /** Dirty flag: true when `current` differs from `original`. Derived
-   *  (computed) from those two signals; recomputes on every edit and on
-   *  save (original := current). */
+  /** True when `current` differs from `original`. */
   dirty: ReadonlySignal<boolean>;
   suggestions: Map<number, HunkSuggestion>;
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
-  /** Line diff of the current diff source. Derived (computed) from
-   *  `mode`; auto-invalidates whenever `mode` is reassigned. */
+  /** Line diff of the current diff source (`diffTexts`), derived from `mode`. */
   cachedDiff: ReadonlySignal<DiffLine[]>;
+}
+
+/** The line endings `text` serializes with: the exact saved record for the saved text, whatever
+ *  the tracker guessed on the way back to it, else the tracker's. */
+export function recordFor(state: FileState, text: string): EolRecord | null {
+  const eol = state.eol;
+  if (eol === null) {
+    return null;
+  }
+  return text === state.original.value ? eol.saved : eol.tracker.snapshot();
+}
+
+/** Drop every read in flight for the file: a pause, leaving its tab, a view change or an edit
+ *  beginning. Closing the tab retires the record instead (`owns`). */
+export function invalidate(state: FileState): void {
+  state.gen++;
+}
+
+/** Whether `state` is still the record its path names. Closing a tab retires its record and a
+ *  reopen makes a new one, so a path never proves that a delayed answer belongs to the record. */
+function owns(state: FileState): boolean {
+  return fileStates.get(state.path) === state;
+}
+
+/** Whether `state` is the record on the pane. */
+export function isShown(state: FileState): boolean {
+  return getActiveFilePath() === state.path && owns(state);
+}
+
+/** For a read issued now: whether its answer may still be adopted when it lands. */
+export function issuedNow(state: FileState): () => boolean {
+  const gen = state.gen;
+  return () => state.gen === gen && owns(state);
+}
+
+/** A baseline write: the identity, and for a buffer the saved text with its line endings. */
+type BaselineWrite =
+  | { readonly fileId: string }
+  | { readonly fileId: string; readonly text: string; readonly eol: FileEol };
+
+/** The one writer of the disk baseline (`fileId`, `original`, `eol`): a read's adoption or a
+ *  save's answer. */
+export function commitBaseline(state: FileState, write: BaselineWrite): void {
+  state.baseline++;
+  state.fileId = write.fileId;
+  if ("text" in write) {
+    state.original.value = write.text;
+    state.eol = write.eol;
+  }
+}
+
+/** For a save dispatched now: whether its answer may still write the baseline. A read adopted
+ *  meanwhile knows a newer disk than the save did. */
+export function baselineHeld(state: FileState): () => boolean {
+  const at = state.baseline;
+  return () => state.baseline === at && owns(state);
+}
+
+/** A view the reader or a save outcome moves the file to; an adoption assigns `mode` itself. */
+export function enterView(state: FileState, mode: FileMode): void {
+  invalidate(state);
+  state.mode.value = mode;
+}
+
+let painter: (state: FileState) => void = () => undefined;
+
+/** Installed by editor-modes, whose `restoreUI` is the pane's one painter, for the modules it
+ *  imports. */
+export function setPainter(fn: (state: FileState) => void): void {
+  painter = fn;
+}
+
+/** Paint `state` onto the pane, when it is the record on screen. */
+export function repaint(state: FileState): void {
+  painter(state);
 }
 
 interface HunkSuggestion {
@@ -160,31 +281,24 @@ class EditorState {
     this.activePath.value = path;
   }
 
-  /** Reactive: whether the active file has unsaved changes. Reads BOTH
-   *  the `activePath` signal AND the active file's `dirty` computed, so
-   *  it recomputes on edits (dirty flips) and on tab switch (activePath
-   *  changes → re-tracks the newly-active file's `dirty`). Drives the
-   *  module-level `activeDirty` computed below while keeping `activePath`
-   *  encapsulated — the raw signal is never exported. */
+  /** Reactive: whether the active file has unsaved changes, re-tracked on a tab switch. */
   isActiveDirty(): boolean {
     const s = this.files.get(this.activePath.value);
     return s ? s.dirty.value : false;
   }
 
   freshState(path: string): FileState {
-    // Reactive inputs: `mode`, `current`, `original`. Everything else is a
-    // computed derived from them, so it auto-invalidates with no manual
-    // cache busting. `cachedDiff` depends ONLY on `mode` (the diff's
-    // `diffSource` is a snapshot captured at mode-entry; the editor is
-    // read-only in diff mode). `dirty` depends only on `current`/`original`,
-    // so it flips on every edit and on save.
-    const mode = signal<FileMode>({ kind: "edit", editing: false });
+    const mode = signal<FileMode>({ kind: "text", editing: false });
     const current = signal("");
     const original = signal("");
     const dirty = computed<boolean>(() => current.value !== original.value);
     const cachedDiff = computed<DiffLine[]>(() => {
       const m = mode.value;
-      return m.kind === "diff" ? lineDiff(m.diffSource.oldContent, m.diffSource.newContent) : [];
+      if (m.kind !== "diff") {
+        return [];
+      }
+      const { oldText, newText } = diffTexts({ original, current }, m.diffSource);
+      return lineDiff(oldText, newText);
     });
     return {
       path,
@@ -192,9 +306,19 @@ class EditorState {
       original,
       current,
       loaded: false,
-      loadedHash: "",
-      readOnly: false,
+      fileId: "",
+      baseline: 0,
+      pendingLine: null,
+      facts: signal<FileFacts | null>(null),
+      notice: null,
+      note: "",
+      eol: null,
+      rows: null,
+      runs: null,
       error: signal(""),
+      alert: signal<SaveAlert | null>(null),
+      live: "watching",
+      gen: 0,
       mode,
       dirty,
       suggestions: new Map(),
@@ -209,16 +333,10 @@ class EditorState {
   }
 }
 
-/** Singleton instance — sub-modules operate on this rather than module-level variables. */
 const editorState = new EditorState();
 
-/** Reactive flag: true when the active editor file has unsaved changes.
- *  The save-button effect in editor-core owns the button's disabled state
- *  by reading this (plus `isPending("editor.save_file")`). Recomputes on
- *  both edits and tab switches via `EditorState.isActiveDirty`. */
+/** Reactive flag: true when the active editor file has unsaved changes. */
 export const activeDirty = computed<boolean>(() => editorState.isActiveDirty());
-
-// --- Exports (delegate to singleton) ---
 
 export const fileStates = editorState.files;
 export function setActiveFilePath(path: string): void {
@@ -233,7 +351,3 @@ export function freshState(path: string): FileState {
 export function getActiveFilePath(): string {
   return editorState.getActivePath();
 }
-
-// There is no late-bound closeFile indirection. It existed so editor-pending.ts
-// could close a `pending:` tab without importing editor-openers.ts, and that
-// module is gone; every remaining caller imports closeEditorFile directly.

@@ -48,7 +48,6 @@ func rewindTargetIn(entries []marotte.Entry, promptID, session string) (marotte.
 	return sc.target, sc.found
 }
 
-// rewindScan is rewindTargetIn's state over one file-order pass.
 type rewindScan struct {
 	opened      map[string]bool
 	mentioned   map[string]bool
@@ -107,6 +106,39 @@ func (sc *rewindScan) visitTool(e *marotte.Entry) {
 	if !sc.preCutTools[toolCallIDOfResult(e.ID)] {
 		sc.target.LaunchedRuns = append(sc.target.LaunchedRuns, payload.WorkflowID)
 	}
+}
+
+// PromptReceipt reads what the log holds of promptID. A bind counts on any session: it proves KAS
+// accepted the message, whichever session the chat holds now.
+func (s *Store) PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error) {
+	var r marotte.PromptReceipt
+	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
+		entries, err := l.All()
+		if err != nil {
+			return err
+		}
+		r = promptReceiptIn(entries, promptID)
+		return nil
+	})
+	return r, err
+}
+
+func promptReceiptIn(entries []marotte.Entry, promptID string) marotte.PromptReceipt {
+	var r marotte.PromptReceipt
+	opened := map[string]bool{}
+	for i := range entries {
+		e := &entries[i]
+		if open, ok := promptOf(e); ok && open.Prompt.ID == promptID {
+			if !r.Opened {
+				r.Text, r.Label, r.Opened = open.Prompt.Text, open.Prompt.Label, true
+			}
+			opened[e.Turn] = true
+		}
+		if e.Kind == marotte.EntryKindTurnBind && opened[e.Turn] {
+			r.Bound = true
+		}
+	}
+	return r
 }
 
 // PromptAttachmentPaths is every attachment path on the log's prompts after the
@@ -188,7 +220,7 @@ func (s *Store) TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, b
 	return uint64(max(c.TurnCount, 0)), true
 }
 
-// promptOf decodes a turn_open that carries a prompt; false for any other entry.
+// False for any other entry.
 func promptOf(e *marotte.Entry) (marotte.EntryTurnOpen, bool) {
 	var open marotte.EntryTurnOpen
 	if e.Kind != marotte.EntryKindTurnOpen || json.Unmarshal(e.Payload, &open) != nil || open.Prompt == nil {

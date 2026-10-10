@@ -1,6 +1,6 @@
 // Tests for the run tab: its control row, its structure, its outputs and its empty-step notes.
 
-import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
@@ -31,7 +31,6 @@ interface OpenedTab {
   opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
 }
 
-/** What `GET /api/runs/{id}/controls` answers. */
 interface ControlsReply {
   verbs: string[];
   refused?: Record<string, string>;
@@ -79,7 +78,6 @@ const m = vi.hoisted(() => ({
   /** Every path a settled-looking turn was RE-READ for. The second arm: a turn with no
    *  `turn_close` is a client that missed the close, and re-reading is the repair. */
   reread: [] as string[],
-  /** How many times the page dropped every read. */
   cleared: { count: 0 },
 }));
 
@@ -99,7 +97,9 @@ vi.mock("./api-client.js", () => ({
 // runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async () => ({
+  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   // The spec is the FACTORY's now, so there is no onShow and no onClose to capture: what a door
   // decides is `owns` (does the × stop the run) and `parent` (which chat it nests under), both
   // subject fields.
@@ -114,7 +114,7 @@ vi.mock("./tabs.js", () => ({
   // to paint.
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
-  // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
+  // Empty keeps the seed inert.
   openRunRefs: vi.fn(() => []),
   // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here; a Browser-Mode
   // mock is linked as real ESM, so a name any module in the graph reaches has to exist on it.
@@ -128,11 +128,11 @@ vi.mock("./tabs.js", () => ({
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   openGitView: vi.fn(),
-  // The launching chat a run tab nests under, read off the persisted subject. The cases below drive
-  // it directly, because the alternative is a whole tab projection for one string.
+  // The cases below drive it directly, because the alternative is a whole tab projection for one
+  // string.
   parentChatRef: vi.fn(() => m.parentChat.current),
-  // The eviction exemption's own reader, and the affordance's door. `hasTab` answers off a set the
-  // cases drive; `openTab` records so the link's dispatch is observable.
+  // `hasTab` answers off a set the cases drive; `openTab` records so the link's dispatch is
+  // observable.
   hasTab: vi.fn((kind: string, ref: string) => m.tabsOpen.has(`${kind}:${ref}`)),
   openTab: vi.fn((args: { kind: string; ref?: string }) => {
     m.tabbed.push({ kind: args.kind, ...(args.ref === undefined ? {} : { ref: args.ref }) });
@@ -167,7 +167,7 @@ vi.mock("./decision-dock.js", () => ({
   hasPendingDecision: vi.fn(() => false),
   // The card's second input beside `inspect`: which step is blocked on a person, which no node
   // status can say. None is, in every case here.
-  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
+  runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
 }));
 
 vi.mock("./actions/runs.js", () => {
@@ -187,6 +187,10 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub("retry"),
     extendRunRepeat: stub("extend"),
     finishRunRepeat: stub("finish_loop"),
+    // Linked by the run composer and the step's pending-message stack.
+    messageRunStep: stub("message"),
+    removeRunStepSteer: stub("steer_remove"),
+    clearRunStepSteers: stub("steer_clear"),
   };
 });
 
@@ -275,8 +279,6 @@ const CONTROLS_FOR: Record<string, ControlsReply> = {
   aborted: { verbs: ["retry"], parent_chat_id: "" },
 };
 
-/** Open a run through one of the two doors and let its first paint settle. Returns the control
- *  labels on screen, in order. */
 async function paint(
   door: (id: string, name: string) => void,
   status: string,
@@ -285,10 +287,10 @@ async function paint(
     /** Answer the affordance fetch with nothing, which is what a failed fetch and the moment
      *  before the first one resolves both look like to the store. */
     noControls?: boolean;
-    /** The run id to paint. Defaults to `wf_1`; a case that needs a run this client holds
-     *  NOTHING for names its own, because the store's caches live for the module's lifetime and
-     *  there is no reset that a subscribed view survives (forgetting a run drops the very signal
-     *  the view's effect is watching). */
+    /** Defaults to `wf_1`; a case that needs a run this client holds NOTHING for names its own,
+     *  because the store's caches live for the module's lifetime and there is no reset that a
+     *  subscribed view survives (forgetting a run drops the very signal the view's effect is
+     *  watching). */
     id?: string;
     /** Whether the run was launched MANUALLY. */
     parentless?: boolean;
@@ -383,9 +385,9 @@ function logStep(
   }
 }
 
-/** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is delivered after
- *  layout and before paint, so ONE frame is the settle; the second is margin for the cold-cache
- *  full-suite run, not a second mechanism (measured: every clamp case here passes at one frame). */
+/** A callback is delivered after layout and before paint, so ONE frame is the settle; the second is
+ *  margin for the cold-cache full-suite run, not a second mechanism (measured: every clamp case here
+ *  passes at one frame). */
 async function settleClamp(): Promise<void> {
   for (let i = 0; i < 2; i++) {
     await new Promise<void>((resolve) => {
@@ -627,7 +629,6 @@ function resultKeys(body: HTMLElement): (string | null)[] {
   return [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
 }
 
-/** Click a tree row, which is how a reader changes the region's subject. */
 function selectRow(body: HTMLElement, path: string): void {
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
@@ -1160,9 +1161,9 @@ describe("run view structure", () => {
     expect(top.map((r) => r.classList.contains("ev-group"))).toEqual([true, false]);
   });
 
-  // A direct child of a group needs no marker — the box says whose it is. A sub-sub-item gets the
-  // `↳` glyph plus one step of indent.
-  it("marks a sub-sub-item with the nesting glyph and not a direct child", async () => {
+  // One indent step per level, so a child's dot sits under its parent's; every child row carries
+  // the guide lines (31-exec-view.css) instead of a nesting glyph.
+  it("indents one step per level and marks every child row for guides", async () => {
     const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
@@ -1185,22 +1186,16 @@ describe("run view structure", () => {
         ],
       },
     });
-    const nestVisible = (id: string): boolean => {
-      const row = body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
-      return row?.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-nest")?.hidden === false;
-    };
-    // depth 0 (the group), depth 1 (its direct child), depth 2 (the sub-sub-item).
-    expect([nestVisible("outer"), nestVisible("inner"), nestVisible("coder")]).toEqual([
-      false,
-      false,
-      true,
+    const row = (id: string): HTMLElement | null =>
+      body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
+    const depthOf = (id: string): string => row(id)?.style.getPropertyValue("--ev-depth") ?? "";
+    expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "1", "2"]);
+    expect(["outer", "inner", "coder"].map((id) => row(id)?.dataset["guides"])).toEqual([
+      undefined,
+      "through-dot",
+      "",
     ]);
-    // Depth 0 and 1 both indent by zero; only depth 2 steps in.
-    const depthOf = (id: string): string =>
-      body
-        .querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)
-        ?.style.getPropertyValue("--ev-depth") ?? "";
-    expect([depthOf("outer"), depthOf("inner"), depthOf("coder")]).toEqual(["0", "0", "1"]);
+    expect(body.querySelector(".ev-nest")).toBeNull();
   });
 
   // STEPS MUST NOT BECOME COLLAPSIBLE. A childless row has no disclosure at all, and the grouping
@@ -2033,22 +2028,8 @@ describe("the page's scroll position", () => {
   }
 
   beforeEach(() => {
-    document.body.replaceChildren();
-    const view = document.createElement("div");
-    view.id = "run-view";
-    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:900px";
-    const content = document.createElement("div");
-    content.className = "page-content";
-    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
-    const body = document.createElement("div");
-    body.id = "run-body";
-    content.appendChild(body);
-    view.appendChild(content);
-    const dock = document.createElement("div");
-    dock.id = "run-dock";
-    document.body.append(view, dock);
     const replies = new Map(
-      ["wf_scroll_a", "wf_scroll_b"].map((id) => [
+      ["wf_scroll_a", "wf_scroll_b", "wf_shrink_a", "wf_shrink_b"].map((id) => [
         `/api/runs/${id}`,
         { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
       ]),
@@ -2063,22 +2044,127 @@ describe("the page's scroll position", () => {
     });
   });
 
-  afterEach(() => {
+  // ONCE for the block: the module binds its follower to the first page it finds, as the app's one
+  // page, so a page rebuilt per case would leave every later case scrolling a detached box.
+  beforeAll(() => {
+    document.body.replaceChildren();
+    const view = document.createElement("div");
+    view.id = "run-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:900px";
+    const content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    const body = document.createElement("div");
+    body.id = "run-body";
+    content.appendChild(body);
+    view.appendChild(content);
+    const resume = document.createElement("button");
+    resume.id = "run-scroll-bottom";
+    resume.className = "hidden";
+    // Out of flow, as the app's stylesheet places it, so its own show and hide resize nothing.
+    resume.style.position = "absolute";
+    resume.appendChild(document.createElement("span"));
+    content.appendChild(resume);
+    const dock = document.createElement("div");
+    dock.id = "run-dock";
+    document.body.append(view, dock);
+  });
+
+  afterAll(() => {
     document.body.replaceChildren();
   });
 
-  it("is per run: A, then B, then A lands each where it was left", async () => {
+  /** The reader's own scroll: the wheel says whose it is, then the position it reaches. */
+  function readerScrollTo(top: number): void {
+    scroller().dispatchEvent(
+      new WheelEvent("wheel", { deltaY: top < scroller().scrollTop ? -1 : 1 }),
+    );
+    scroller().scrollTop = top;
+  }
+
+  function bottom(): number {
+    return scroller().scrollHeight - scroller().clientHeight;
+  }
+
+  // Autoscroll like the chat: a run opens at its live edge, and a reader who scrolled up is put back
+  // where they were.
+  it("opens each run at its live edge and lands a reader where they left it", async () => {
     await activate("wf_scroll_a");
+    await frames();
     expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
-    scroller().scrollTop = 700;
+    expect(scroller().scrollTop).toBe(bottom());
+    readerScrollTo(300);
     await frames();
     await activate("wf_scroll_b");
-    expect(scroller().scrollTop).toBe(0);
-    scroller().scrollTop = 300;
     await frames();
+    expect(scroller().scrollTop).toBe(bottom());
     await activate("wf_scroll_a");
-    expect(scroller().scrollTop).toBe(700);
-    await activate("wf_scroll_b");
+    await frames();
     expect(scroller().scrollTop).toBe(300);
+    expect(document.getElementById("run-scroll-bottom")?.classList.contains("hidden")).toBe(false);
+    await activate("wf_scroll_b");
+    await frames();
+    expect(scroller().scrollTop).toBe(bottom());
+  });
+
+  // A shrink that brings the end to the reader returns them to Following with no scroll event, so
+  // the state a run parks with has to come from the follower, not from the last scroll.
+  it("keeps a run that shrank back to Following across a run switch", async () => {
+    await activate("wf_shrink_a");
+    await frames();
+    const body = document.getElementById("run-body");
+    if (body === null) {
+      throw new Error("no #run-body");
+    }
+    const spacer = document.createElement("div");
+    spacer.style.height = "250px";
+    body.appendChild(spacer);
+    await new Promise((r) => setTimeout(r, 800));
+    await frames();
+    // Inside the live-edge band once the spacer goes, outside it while the spacer stands.
+    const parkedAt = bottom() - 300;
+    readerScrollTo(parkedAt);
+    await frames();
+    const resume = document.getElementById("run-scroll-bottom");
+    expect(resume?.classList.contains("hidden")).toBe(false);
+    // Past the reader's own control window, so the layout may release them.
+    await new Promise((r) => setTimeout(r, 350));
+    let scrolls = 0;
+    const count = (): void => {
+      scrolls++;
+    };
+    scroller().addEventListener("scroll", count);
+    spacer.remove();
+    await frames();
+    await frames();
+    scroller().removeEventListener("scroll", count);
+    // The premise: Following again, reached without moving or scrolling the box.
+    expect([scroller().scrollTop, scrolls, resume?.classList.contains("hidden")]).toEqual([
+      parkedAt,
+      0,
+      true,
+    ]);
+
+    await activate("wf_shrink_b");
+    await frames();
+    // Every state the control passes through, since a stale Reading shows it before a later
+    // mutation can release it again.
+    const shown: boolean[] = [];
+    const watch = new MutationObserver(() => {
+      shown.push(resume?.classList.contains("hidden") === false);
+    });
+    if (resume !== null) {
+      watch.observe(resume, { attributes: true, attributeFilter: ["class"] });
+    }
+    await activate("wf_shrink_a");
+    await frames();
+    watch.disconnect();
+    expect(shown).not.toContain(true);
+    // Following: new output carries the view to the end.
+    const more = document.createElement("div");
+    more.style.height = "400px";
+    body.appendChild(more);
+    await frames();
+    expect(scroller().scrollTop).toBe(bottom());
   });
 });

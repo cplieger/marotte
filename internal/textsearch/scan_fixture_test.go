@@ -17,7 +17,6 @@ type occurrencesFixture struct {
 	Rows    []occurrencesRow `json:"rows"`
 }
 
-// occurrencesRow is one scan and its hits.
 type occurrencesRow struct {
 	Name          string       `json:"name"`
 	Text          string       `json:"text"`
@@ -52,7 +51,6 @@ var occurrencesFixtureComment = []string{
 	"then, from static-src/: npx vitest --run --project node textsearch/occurrences.node.test.ts",
 }
 
-// occurrencesRows is the fixture's input set, hits unfilled.
 func occurrencesRows() []occurrencesRow {
 	return []occurrencesRow{
 		{Name: "ascii_non_overlapping", Text: "aaa", Needle: "aa"},

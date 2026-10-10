@@ -11,7 +11,6 @@ import { initPointerTier, currentTier } from "./pointer-tier.js";
 import { markCoarseSeen, pointerModeChoice, setPointerModeChoice } from "./device-view.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
-/** The real button, lifted out of the page by id. */
 function markupFor(anchor: string): string {
   const at = indexHtml.indexOf(anchor);
   expect(at, `static/index.html has no ${anchor}`).toBeGreaterThan(-1);

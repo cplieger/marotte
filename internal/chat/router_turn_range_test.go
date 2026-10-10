@@ -11,12 +11,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// getTurnRange drives GET /api/chats/{id}/turns/{turn} through the router's own dispatch.
 func getTurnRange(t *testing.T, s *Store, id marotte.ChatID, turn string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns/"+turn, nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	return rec
 }
 

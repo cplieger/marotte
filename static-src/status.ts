@@ -22,8 +22,7 @@ interface ContextBarUpdate {
   turnCount: number;
   lastTurnMs: number;
   model: string;
-  /** The reasoning tier to name beside the model, or "" when there is none to name. Already
-   *  resolved by context-ui.ts: empty means the model advertises no reasoning effort, or no
+  /** Already resolved by context-ui.ts: empty means the model advertises no reasoning effort, or no
    *  level resolved at all. This module renders it and decides nothing about it. */
   effort?: string;
   /** The model pick awaiting its apply, from the header's `pending_model`, or "" when none is

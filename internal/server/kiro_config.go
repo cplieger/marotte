@@ -22,12 +22,8 @@ const (
 	maxSteeringPerDir = 20
 	maxSkillsPerDir   = 20
 	maxAgentsPerDir   = 10
-
-	// steeringReadCap is steering.FrontMatterReadCap under a local name, for the cap tests.
-	steeringReadCap = steering.FrontMatterReadCap
 )
 
-// handleKiroConfig scans .kiro/ for steering docs, skills, and agents.
 type kiroConfigItem struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
@@ -76,12 +72,10 @@ func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {
 	return items
 }
 
-// scanKiroDir scans a .kiro directory on the real filesystem via scanKiroDirFS.
 func scanKiroDir(ctx context.Context, fsPath, prefix string) []kiroConfigItem {
 	return scanKiroDirFS(ctx, os.DirFS(fsPath), prefix)
 }
 
-// scanKiroDirFS classifies a .kiro directory's entries into steering docs, skills and agents.
 func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	var items []kiroConfigItem
 	items = append(items, scanSteering(ctx, root, prefix)...)
@@ -96,7 +90,6 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 	return items
 }
 
-// scanSteering returns kiroConfigItems for markdown files under steering/.
 func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	var items []kiroConfigItem
 	entries, err := fs.ReadDir(root, "steering")
@@ -145,7 +138,6 @@ func readCappedFS(root fs.FS, name string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, steering.FrontMatterReadCap))
 }
 
-// scanSkills returns kiroConfigItems for subdirectories under skills/.
 func scanSkills(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	var items []kiroConfigItem
 	entries, err := fs.ReadDir(root, "skills")

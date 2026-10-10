@@ -1,4 +1,4 @@
-// The boundary rows six entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows seven entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
 import type { KindedEntry, ModelSwitchReason, TurnRevertCause } from "./types.js";
@@ -13,12 +13,13 @@ type EventEntryKind =
   | "compaction_failed"
   | "safety_blocked"
   | "model_switched"
+  | "model_routed"
   | "mode_switched"
   | "turn_revert";
 
 /**
- * The six entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * six: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The seven entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * seven: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
@@ -32,6 +33,15 @@ export function buildEvent(e: EventEntry): HTMLElement {
   switch (e.kind) {
     case "model_switched": {
       return boundary("switched", "\u21bb", switchedLabel(e.payload));
+    }
+    case "model_routed": {
+      // KAS's own notice (the decode door words it in the past tense); the model pill keeps saying Auto.
+      const message = e.payload.message;
+      return boundary(
+        "switched",
+        "\u21bb",
+        message === "" ? "Auto moved to a stronger model" : message,
+      );
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
@@ -78,8 +88,8 @@ export function buildEvent(e: EventEntry): HTMLElement {
 // ---------------------------------------------------------------------------
 
 /**
- * `model_switched` has two triggers: a model switch (`from !== to`) and an effort-only change (`from === to`). An
- * empty `to` is a context reset and takes no tier.
+ * `model_switched` has three triggers: a user's model switch (`from !== to`), an effort-only change (`from === to`)
+ * and a switch KAS made (`reason` set). An empty `to` is a context reset and takes no tier.
  */
 function switchedLabel(p: {
   readonly to: string;
@@ -90,13 +100,15 @@ function switchedLabel(p: {
   if (p.to === "") {
     return "Context reset";
   }
-  const label = switchedBase(p);
-  return p.reason === undefined ? label : `${label} · ${SWITCH_REASONS[p.reason]}`;
+  return p.reason === undefined ? switchedBase(p) : SWITCH_REASONS[p.reason](p);
 }
 
-/** Why KAS moved the chat, TOTAL over the reason by type. */
-const SWITCH_REASONS: Record<ModelSwitchReason, string> = {
-  unavailable: "not available for this account",
+/** The row of a switch KAS made, TOTAL over the reason by type; each formatter reads both endpoints. */
+const SWITCH_REASONS: Record<
+  ModelSwitchReason,
+  (p: { readonly from: string; readonly to: string }) => string
+> = {
+  unavailable: (p) => `Switched from ${p.from} to ${p.to} · not available for this account`,
 };
 
 function switchedBase(p: {
@@ -135,10 +147,8 @@ function boundary(kind: BoundaryKind, icon: string, label: string): HTMLElement 
   return node;
 }
 
-/**
- * Two dashed rules with the marker and its collapsible summary between. The body renders on first open: a summary
- * runs to 16 KB and `::details-content` skips layout and paint but not construction.
- */
+/** The body renders on first open: a summary runs to 16 KB and `::details-content` skips layout and
+ *  paint but not construction. */
 function compactionBreak(icon: string, label: string, summary: string): HTMLElement {
   const root = el("details", { className: "compaction" }) as HTMLDetailsElement;
   // `.message assistant` is the app's markdown-prose skin.

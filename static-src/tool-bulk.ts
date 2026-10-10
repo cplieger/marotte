@@ -120,6 +120,7 @@ export function toolCallBulk(chatID: string, toolCallID: string): Promise<ToolBu
 
 /** Drop every held bulk. Test seam: the cache is module state, so a file's cases
  *  would otherwise inherit each other's retention. */
+// deadset:ignore DS1004 -- test seam: resets the held bulk cache and its retention
 export function _resetToolBulkForTest(): void {
   held.clear();
   retained = 0;

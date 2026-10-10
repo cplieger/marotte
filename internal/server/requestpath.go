@@ -40,8 +40,7 @@ func canonicalAPIPath(next http.Handler) http.Handler {
 }
 
 // onAPISurface reports whether a request either addresses the API subtree or
-// would land on it once canonicalized. See canonicalAPIPath's "Why BOTH the raw
-// and the cleaned path decide the scope" for what each leg catches on its own.
+// would land on it once canonicalized. canonicalAPIPath says what each leg catches.
 func onAPISurface(raw, clean string) bool {
 	return strings.HasPrefix(raw, apiPathPrefix) || strings.HasPrefix(clean, apiPathPrefix)
 }

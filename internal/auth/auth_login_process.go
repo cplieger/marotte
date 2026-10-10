@@ -28,8 +28,6 @@ func classifyLoginStartErr(err error, cliPath string) int {
 	return http.StatusInternalServerError
 }
 
-// reapLoginProcess waits for the login subprocess to exit, then releases the semaphore and closes waitDone,
-// keeping one login at a time for the whole device-flow window.
 func (h *Handler) reapLoginProcess(r loginReap) {
 	// CommandContext SIGKILLs only the parent; a surviving helper holds stdout open and blocks cmd.Wait.
 	killOnDeadline := make(chan struct{})
@@ -113,7 +111,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(sanitize.StripANSI(scanner.Text()))
 		lineCount++
-		ring.Push(line)
+		ring.push(line)
 		// kiro-cli refuses a fresh login when a session exists; that gets its own error key.
 		if strings.Contains(strings.ToLower(line), "already logged in") {
 			urlCh <- httpreply.ErrorJSON("already_logged_in")
@@ -136,7 +134,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 			// Warn: format drift or a user cancel is recoverable and visible.
 			slog.Warn("login: output line cap hit without auth URL",
 				"lines", lineCount,
-				"first_and_last_sample", ring.Sample())
+				"first_and_last_sample", ring.sample())
 			urlCh <- httpreply.ErrorJSON("CLI produced too much output without auth URL")
 			return
 		}

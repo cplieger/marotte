@@ -5,7 +5,7 @@
 export type MentionProvider =
   "file" | "folder" | "attach" | "git" | "terminal" | "spec" | "steering" | "mcp";
 
-export interface ProviderSpec {
+interface ProviderSpec {
   readonly id: MentionProvider;
   readonly label: string;
   readonly desc: string;

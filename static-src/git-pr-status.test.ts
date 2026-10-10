@@ -18,11 +18,7 @@ function action(over: Partial<GitPRAction> = {}): GitPRAction {
   return {
     mergeable: "unknown",
     checks: "unknown",
-    checks_passing: 0,
     checks_failing: 0,
-    checks_pending: 0,
-    checks_neutral: 0,
-    checks_unknown: 0,
     checks_total: 0,
     auto_merge_armed: "no",
     queue_state: "none",
@@ -258,7 +254,7 @@ describe("checkChip", () => {
   });
 
   it("reports checks that finished with a neutral verdict", () => {
-    expect(checkChip(pr({ checks: "neutral", checks_neutral: 2, checks_total: 2 }))).toEqual({
+    expect(checkChip(pr({ checks: "neutral", checks_total: 2 }))).toEqual({
       text: "checks neutral",
       className: "git-pr-check-neutral",
       tooltip: "2 checks finished neutral",

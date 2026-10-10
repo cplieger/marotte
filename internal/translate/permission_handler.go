@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 // approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
@@ -21,7 +22,7 @@ type permOptionWire struct {
 // HandlePermissionRequest processes session/request_permission. The v3 params are FLAT
 // ({sessionId, toolCall, options}) and the correlation id is the envelope's msg.ID: a
 // params-wrapped decode reads all zeros and answers on id 0, wedging the tool call.
-func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte.ChatID, origin AskOrigin, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// No id, no route for the outcome: drop rather than show an unanswerable dialog.
 		slog.Warn("permission request missing id", "chat_id", chatID)
@@ -40,14 +41,14 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
 		// Meta carries the turn-approval discriminator, its file list and the persistability
-		// verdict (see ACPPermissionMeta).
-		Meta ACPPermissionMeta `json:"_meta"`
+		// verdict (see acpPermissionMeta).
+		Meta acpPermissionMeta `json:"_meta"`
 	}
 	reqID := *msg.ID
 	req, err := decodeParams[permReq](msg)
 	if err != nil {
 		// CANCELLED names no option: the only safe answer when options[] could not be read.
-		t.refuseAsk(ctx, chatID, marotte.MethodRequestPermission, reqID, marotte.PermissionOutcomeCancelled(), err)
+		refuseAsk(ctx, chatID, origin, marotte.MethodRequestPermission, reqID, marotte.PermissionOutcomeCancelled(), err)
 		return
 	}
 
@@ -79,16 +80,16 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		}
 	}
 	mcpTool := mcpToolIdentity(&req.Meta.Kiro)
+	title := displayText(req.ToolCall.Title)
 	consent := permissionConsent(&req.Meta.Kiro.Consent)
 
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
 		Consent:    consent,
-		RequestID:  reqID,
 		ToolCallID: req.ToolCall.ToolCallID,
 		// THE TITLE IS A DECISION SURFACE, the one string here that is defused: a Bidi override in it
 		// could render `rm -rf /workspace` as a harmless command (see displayText).
-		Title:              displayText(req.ToolCall.Title),
+		Title:              title,
 		Kind:               toolKindFromWire(req.ToolCall.Kind),
 		SubSessionID:       subSessionID,
 		RunID:              step.WorkflowID,
@@ -104,15 +105,15 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		AcceptsRejectionReason: req.Meta.Kiro.ToolID != "" && req.Meta.Kiro.Type != approvalTypeTurn &&
 			slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }),
 	})
-	t.bus.Broadcast(ctx, evt)
-	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelApproval}))
-	t.push.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, chatID)
+	n := notice.Permission(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
+		step.NodeID, title, len(files))
+	t.push.Notify(ctx, chatID, &n)
 }
 
-// approvalFiles is a turn approval's file list, workspace-relative; nil on any
-// other ask.
-func (t *Translator) approvalFiles(k *ACPPermissionKiroBlock) []marotte.ApprovalFile {
+// nil on any other ask.
+func (t *Translator) approvalFiles(k *acpPermissionKiroBlock) []marotte.ApprovalFile {
 	if k.Type != approvalTypeTurn {
 		return nil
 	}
@@ -129,20 +130,20 @@ func (t *Translator) approvalFiles(k *ACPPermissionKiroBlock) []marotte.Approval
 
 // askStep attributes an ask to its workflow step, falling back to the watch a
 // workflow WATCH raised when the step registry names none.
-func (t *Translator) askStep(sessionID string, k *ACPPermissionKiroBlock) (StepRef, *marotte.PermissionWatch) {
+func (t *Translator) askStep(sessionID string, k *acpPermissionKiroBlock) (stepRef, *marotte.PermissionWatch) {
 	step := t.steps.refFor(sessionID)
 	w := k.WorkflowWatch
 	if w == nil || w.WorkflowID == "" {
 		return step, nil
 	}
 	if step.WorkflowID == "" {
-		step = StepRef{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
+		step = stepRef{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
 	}
 	return step, &marotte.PermissionWatch{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
 }
 
 // mcpToolIdentity is the MCP server and tool an ask names, nil unless both are.
-func mcpToolIdentity(k *ACPPermissionKiroBlock) *marotte.MCPToolIdentity {
+func mcpToolIdentity(k *acpPermissionKiroBlock) *marotte.MCPToolIdentity {
 	serverName := displayText(k.MCPTool.Identity.ServerName)
 	toolName := displayText(k.MCPTool.Identity.ToolName)
 	if serverName == "" || toolName == "" {
@@ -154,11 +155,11 @@ func mcpToolIdentity(k *ACPPermissionKiroBlock) *marotte.MCPToolIdentity {
 // permissionConsent is what an ask is about, nil when KAS named no capability. The subject
 // and folder are decision surfaces like the title, so the shown copies are defused the same
 // way while the raw ones stay the rule keys; the capability is an identifier the answer echoes.
-func permissionConsent(c *ACPConsentMeta) *marotte.PermissionConsent {
+func permissionConsent(c *acpConsentMeta) *marotte.PermissionConsent {
 	if c.Capability == "" {
 		return nil
 	}
-	subject := c.Subject()
+	subject := c.subject()
 	out := &marotte.PermissionConsent{Capability: c.Capability, Subject: displayText(subject), Resource: subject}
 	if i := strings.LastIndex(subject, "/"); strings.HasPrefix(c.Capability, "fs_") && i > 0 {
 		// A folder whose shown copy reads the same as the subject's would be two identical
@@ -170,6 +171,4 @@ func permissionConsent(c *ACPConsentMeta) *marotte.PermissionConsent {
 	return out
 }
 
-// consentScopeAdministration is the consent scope of an ask the administrator's
-// managed-settings rules raise.
 const consentScopeAdministration = "administration"

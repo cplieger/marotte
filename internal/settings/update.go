@@ -75,9 +75,8 @@ func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
 	return nil
 }
 
-// readDocument reads and parses the document at path; an absent file is an empty map, every
-// other fault an error. readRegular refuses a FIFO, which under Update's lock would wedge
-// every later write.
+// An absent file is an empty map, every other fault an error. readRegular refuses a FIFO, which
+// under Update's lock would wedge every later write.
 func readDocument(path string) (map[string]json.RawMessage, error) {
 	data, info, err := readRegular(path)
 	if err != nil {
@@ -86,8 +85,8 @@ func readDocument(path string) (map[string]json.RawMessage, error) {
 		}
 		return nil, err
 	}
-	if info.Size() > MaxBytes {
-		return nil, fmt.Errorf("settings: %s is %d bytes, over the %d-byte cap", path, info.Size(), MaxBytes)
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("settings: %s is %d bytes, over the %d-byte cap", path, info.Size(), maxBytes)
 	}
 	doc := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(data, &doc); err != nil {

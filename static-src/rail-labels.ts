@@ -2,7 +2,7 @@ import { formatElapsed } from "./strings.js";
 import { OUTCOME_LABEL } from "./turn-severity.js";
 import type { TurnOutcome } from "./turns.js";
 
-export interface TurnLabel {
+interface TurnLabel {
   /** `data-tooltip` text, where `\n` breaks the line. */
   preview: string;
   ariaLabel: string;
@@ -16,7 +16,7 @@ export interface MarkerSubject {
   elapsed_ms?: number;
 }
 
-export interface MarkerState {
+interface MarkerState {
   pending: boolean;
   hit: boolean;
 }

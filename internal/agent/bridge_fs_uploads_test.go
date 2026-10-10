@@ -27,7 +27,7 @@ func uploadsHub(t *testing.T) (h *Runtime, br *respondingBridge, uploads, paste 
 func TestRespondFSRead_ReadsAnUploadedAttachment(t *testing.T) {
 	h, br, _, paste := uploadsHub(t)
 	id := int64(1)
-	h.inbound.respondFSRead(t.Context(), "c1", &marotte.RPCResponse{
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), &marotte.RPCResponse{
 		ID: &id, Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": paste, "line": 2, "limit": 1}),
 	})
@@ -42,14 +42,14 @@ func TestRespondFSRead_ReadsAnUploadedAttachment(t *testing.T) {
 
 func TestKiroFSStatAndReadDirectory_SeeTheUploadsFolder(t *testing.T) {
 	h, br, _, paste := uploadsHub(t)
-	h.inbound.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, paste))
+	h.inbound.respondKiroFSStat(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSStat, paste))
 	<-br.done
 	if body, ok := br.response.result.(kiroStatBody); br.response.err != nil || !ok || body.Type != fsTypeFile {
 		t.Fatalf("stat %s = %+v err=%v, want a file", paste, br.response.result, br.response.err)
 	}
 
 	h, br, uploads, _ := uploadsHub(t)
-	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 2, methodKiroFSReadDirectory, uploads))
+	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 2, methodKiroFSReadDirectory, uploads))
 	<-br.done
 	body, ok := br.response.result.(kiroReadDirBody)
 	if br.response.err != nil || !ok || len(body.Entries) != 1 {
@@ -61,7 +61,7 @@ func TestKiroFSStatAndReadDirectory_SeeTheUploadsFolder(t *testing.T) {
 func TestUploadsFolder_RefusesWriteAndDelete(t *testing.T) {
 	h, br, _, paste := uploadsHub(t)
 	id := int64(3)
-	h.inbound.respondFSWrite(t.Context(), "c1", &marotte.RPCResponse{
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), &marotte.RPCResponse{
 		ID: &id, Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": paste, "content": "overwritten"}),
 	})
@@ -71,7 +71,7 @@ func TestUploadsFolder_RefusesWriteAndDelete(t *testing.T) {
 	}
 
 	h, br, _, paste = uploadsHub(t)
-	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 4, methodKiroFSDelete, paste))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 4, methodKiroFSDelete, paste))
 	<-br.done
 	if br.response.err == nil {
 		t.Error("delete in the uploads folder err = nil, want refused")
@@ -105,7 +105,7 @@ func TestUploadsFolder_ConfinesLikeTheWorkspace(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br, uploads, _ := uploadsHub(t)
 			id := int64(5)
-			h.inbound.respondFSRead(t.Context(), "c1", &marotte.RPCResponse{
+			h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), &marotte.RPCResponse{
 				ID: &id, Method: marotte.MethodFSRead,
 				Params: mustJSON(t, map[string]any{"path": path(uploads)}),
 			})

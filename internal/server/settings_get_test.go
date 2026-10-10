@@ -23,7 +23,7 @@ import (
 func getEffective(t *testing.T, dir string) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleSettingsGet(rec, filepath.Join(dir, settings.Filename))
+	handleSettingsGet(rec, filepath.Join(dir, settings.Filename), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/settings = %d, want 200 (the read fails OPEN)", rec.Code)
 	}
@@ -34,7 +34,6 @@ func getEffective(t *testing.T, dir string) marotte.EffectiveSettings {
 	return got
 }
 
-// seedConfig writes raw bytes to config.json in a fresh dir.
 func seedConfig(t *testing.T, raw string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -309,7 +308,7 @@ func TestSettingsGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	go func() {
 		defer close(done)
 		rec := httptest.NewRecorder()
-		handleSettingsGet(rec, path)
+		handleSettingsGet(rec, path, nil)
 	}()
 	select {
 	case <-done:
@@ -443,4 +442,45 @@ func effectiveEqual(a, b marotte.EffectiveSettings) bool {
 		b.AgentIgnoreFiles = nil
 	}
 	return reflect.DeepEqual(a, b)
+}
+
+type fakeKiroDefaults map[string]marotte.KiroDefault
+
+func (f fakeKiroDefaults) KiroDefaults() map[string]marotte.KiroDefault { return f }
+
+func getEffectiveWith(t *testing.T, dir string, defaults kiroDefaultsReader) marotte.EffectiveSettings {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleSettingsGet(rec, filepath.Join(dir, settings.Filename), defaults)
+	var got marotte.EffectiveSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response %s: %v", rec.Body.String(), err)
+	}
+	return got
+}
+
+func TestSettingsGet_KiroDefaultsOnlyForAnUnsetChoice(t *testing.T) {
+	on := marotte.KiroDefault{Value: "on", Layer: "kiro-service", LayerName: "Kiro"}
+	defaults := fakeKiroDefaults{settings.KeyWorkValidation: on, "spec_planning": on}
+
+	got := getEffectiveWith(t, seedConfig(t, `{}`), defaults)
+	if got.KiroDefaults[settings.KeyWorkValidation] != on {
+		t.Errorf("unset work_validation: kiro_defaults = %v, want %+v", got.KiroDefaults, on)
+	}
+	if _, present := got.KiroDefaults["spec_planning"]; present {
+		t.Errorf("kiro_defaults = %v, want no entry for a setting that is not three-state", got.KiroDefaults)
+	}
+
+	got = getEffectiveWith(t, seedConfig(t, `{"work_validation":"off"}`), defaults)
+	if len(got.KiroDefaults) != 0 {
+		t.Errorf("chosen work_validation: kiro_defaults = %v, want none: a choice is never shadowed", got.KiroDefaults)
+	}
+}
+
+func TestSettingsGet_KiroDefaultsIsAnEmptyObjectWithoutAReader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handleSettingsGet(rec, filepath.Join(t.TempDir(), settings.Filename), nil)
+	if !strings.Contains(rec.Body.String(), `"kiro_defaults":{}`) {
+		t.Errorf("GET /api/settings = %s, want kiro_defaults as an empty object", rec.Body.String())
+	}
 }

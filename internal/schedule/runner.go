@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-// TickInterval is how often the runner looks for due schedules. One shared ticker
+// tickInterval is how often the runner looks for due schedules. One shared ticker
 // rather than a timer per schedule: there is no per-entry lifecycle to leak.
-const TickInterval = time.Minute
+const tickInterval = time.Minute
 
-// MissGrace is how late a due slot may be and still fire; a later slot was missed while
-// down and is SKIPPED (a burst of overdue runs is worse). It must exceed TickInterval, or a
+// missGrace is how late a due slot may be and still fire; a later slot was missed while
+// down and is SKIPPED (a burst of overdue runs is worse). It must exceed tickInterval, or a
 // slot landing between ticks would never run.
-const MissGrace = 3 * time.Minute
+const missGrace = 3 * time.Minute
 
 // Launcher starts one workflow run on behalf of a schedule. scheduleID lets the host
 // attribute the run's outcome to the row. slotAt is an input to the run's bound; zero means
@@ -34,7 +34,7 @@ type Runner struct {
 
 // NewRunner wires a runner over the store and launcher.
 func NewRunner(store *Store, launcher Launcher) *Runner {
-	return &Runner{store: store, launcher: launcher, now: time.Now, tick: TickInterval, grace: MissGrace}
+	return &Runner{store: store, launcher: launcher, now: time.Now, tick: tickInterval, grace: missGrace}
 }
 
 // Run polls until ctx is cancelled. It does NOT sweep on entry: a schedule due
@@ -52,7 +52,6 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-// sweep fires every schedule whose slot is due and recent.
 func (r *Runner) sweep(ctx context.Context) {
 	now := r.now()
 	list := r.store.List()
@@ -84,19 +83,19 @@ func (r *Runner) sweep(ctx context.Context) {
 	}
 }
 
-// fire launches one run and records the outcome. The anchor advances either
-// way so a schedule whose launch keeps failing does not retry every tick.
+// The anchor advances either way so a schedule whose launch keeps failing does not retry every
+// tick.
 func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	// Bound the run by the next slot after `due` (not now), so a late fire cannot extend the
 	// budget into it. An uncomputable slot degrades to the idle window, never to unbounded.
-	slotAt, dErr := NextRun(e.Spec, due)
+	slotAt, dErr := nextRun(e.Spec, due)
 	if dErr != nil {
 		slog.Warn("schedule cannot name its next slot, so its run is bounded by its idle window alone",
 			"id", e.ID, "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}
 	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
-	outcome := Outcome{Status: StatusStarted}
+	outcome := Outcome{Status: statusStarted}
 	if err != nil {
 		// An overlap (one live run per recipe) is the expected refusal: this slot is skipped.
 		outcome = Outcome{Status: StatusFailed, Reason: err.Error()}

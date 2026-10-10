@@ -17,9 +17,8 @@ const (
 	maxHintWidth = 4096
 )
 
-// extractHint reads the width a page asks to be previewed at. An explicit
-// <meta name="marotte-preview"> wins over a numeric <meta name="viewport">
-// width; width=device-width, no meta and an unparsable value all mean no hint.
+// An explicit <meta name="marotte-preview"> wins over a numeric <meta name="viewport"> width;
+// width=device-width, no meta and an unparsable value all mean no hint.
 func extractHint(body []byte) *marotte.PreviewHint {
 	if len(body) > hintScanBytes {
 		body = body[:hintScanBytes]

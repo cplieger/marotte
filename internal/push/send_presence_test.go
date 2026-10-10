@@ -46,10 +46,10 @@ func resetDebounce(s *Service) {
 func TestSend_SkipsAPresentProfileAndPushesTheGoneOne(t *testing.T) {
 	h := &recordingHandler{}
 	s, _ := filteredService(t, h)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.presence.Observe(connected(tagOf(presentEP)))
 	capLog := capture.Default(t)
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	got := h.snapshot()
 	if len(got) != 1 || !strings.HasSuffix(goneEP, got[0].path) {
@@ -61,11 +61,11 @@ func TestSend_SkipsAPresentProfileAndPushesTheGoneOne(t *testing.T) {
 	if n := capLog.CountExact("push: delivered"); n != 1 {
 		t.Errorf("Info %q lines = %d, want exactly one", "push: delivered", n)
 	}
-	if tag, _ := capLog.AttrValue("push: delivered", "tag"); tag != TagOf(goneEP) {
-		t.Errorf("delivered line tag = %q, want %q", tag, TagOf(goneEP))
+	if tag, _ := capLog.AttrValue("push: delivered", "tag"); tag != tagOf(goneEP) {
+		t.Errorf("delivered line tag = %q, want %q", tag, tagOf(goneEP))
 	}
-	if tag, _ := capLog.AttrValue("push: suppressed, profile present", "tag"); tag != TagOf(presentEP) {
-		t.Errorf("suppressed line tag = %q, want %q", tag, TagOf(presentEP))
+	if tag, _ := capLog.AttrValue("push: suppressed, profile present", "tag"); tag != tagOf(presentEP) {
+		t.Errorf("suppressed line tag = %q, want %q", tag, tagOf(presentEP))
 	}
 	if kind, _ := capLog.AttrValue("push: suppressed, profile present", "kind"); kind != string(marotte.PushKindPermission) {
 		t.Errorf("suppressed line kind = %q, want %q", kind, marotte.PushKindPermission)
@@ -83,10 +83,10 @@ func TestSend_SkipsAPresentProfileAndPushesTheGoneOne(t *testing.T) {
 func TestSend_EveryProfilePresentSendsNothing(t *testing.T) {
 	h := &recordingHandler{}
 	s, _ := filteredService(t, h)
-	s.presence.Observe(connected(TagOf(presentEP)))
-	s.presence.Observe(connected(TagOf(goneEP)))
+	s.presence.Observe(connected(tagOf(presentEP)))
+	s.presence.Observe(connected(tagOf(goneEP)))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 	if got := h.snapshot(); len(got) != 0 {
 		t.Errorf("deliveries = %+v, want none", got)
@@ -105,16 +105,16 @@ func TestSend_SuppressionIsADropNotADelay(t *testing.T) {
 	deferredOff(t)
 	h := &recordingHandler{}
 	s, clock := filteredService(t, h)
-	s.Unsubscribe(goneEP)
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.unsubscribe(goneEP)
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "first", Body: "body"})
 	if got := h.snapshot(); len(got) != 0 {
 		t.Fatalf("deliveries while present = %+v, want none", got)
 	}
 
 	clock.Advance(liveness.AliveWindow + time.Millisecond)
-	if !s.presence.Gone(TagOf(presentEP)) {
+	if !s.presence.Gone(tagOf(presentEP)) {
 		t.Fatal("the profile did not read gone after the window; the fixture is wrong")
 	}
 	if got := h.snapshot(); len(got) != 0 {
@@ -122,7 +122,7 @@ func TestSend_SuppressionIsADropNotADelay(t *testing.T) {
 	}
 
 	resetDebounce(s)
-	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "second", Body: "body"})
 	if got := h.snapshot(); len(got) != 1 {
 		t.Errorf("deliveries after the flip and a new event = %+v, want exactly one", got)
 	}
@@ -134,9 +134,9 @@ func TestSend_FiltersThePollersKindToo(t *testing.T) {
 	h := &recordingHandler{}
 	s, _ := filteredService(t, h)
 	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindPRStatus: true})
-	s.presence.Observe(connected(TagOf(presentEP)))
+	s.presence.Observe(connected(tagOf(presentEP)))
 
-	s.Send(t.Context(), "checks", "green", marotte.PushKindPRStatus, marotte.PushSubject{Key: "pr:x"}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Key: "pr:x", Kind: marotte.PushKindPRStatus, Title: "checks", Body: "green"})
 
 	got := h.snapshot()
 	if len(got) != 1 || !strings.HasSuffix(goneEP, got[0].path) {
@@ -150,11 +150,11 @@ func TestSend_FiltersThePollersKindToo(t *testing.T) {
 // Without a table every subscription is pushed: the fail-open direction.
 func TestSend_WithoutPresenceSendsToEveryone(t *testing.T) {
 	h := &recordingHandler{}
-	s, _ := newServiceOnTestServer(t, h)
+	s := newServiceOnTestServer(t, h)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, presentEP))
 	s.Subscribe(pushSubscriptionWithValidKeys(t, goneEP))
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"), "")
+	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	if got := h.snapshot(); len(got) != 2 {
 		t.Errorf("deliveries = %+v, want both", got)

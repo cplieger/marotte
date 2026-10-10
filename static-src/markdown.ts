@@ -2,7 +2,6 @@
 // large flushes yield across tasks. renderMarkdownInto (replay): decorate, no animation. renderMarkdown (tests,
 // previews): pure parser output.
 
-import { el } from "@cplieger/reactive";
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";
@@ -38,10 +37,7 @@ function nextTick(fn: () => void): void {
   }
 }
 
-/**
- * Decorate a freshly completed block. Idempotent. Returns the element now in the document: an `svg` fence is replaced
- * by its diagram.
- */
+/** Idempotent. Returns the element now in the document: an `svg` fence is replaced by its diagram. */
 function decorate(block: HTMLElement): HTMLElement {
   if (block.tagName === "PRE") {
     // Before decorateCodeBlocks: a converted diagram is no longer a code block and must not get code chrome.
@@ -84,7 +80,7 @@ export interface MarkdownStream {
   end(): void;
 }
 
-export interface MarkdownStreamOptions {
+interface MarkdownStreamOptions {
   /**
    * Milliseconds to buffer a `writeDelta` before parsing; defaults to FLUSH_INTERVAL_MS, `0` parses on write. A caller
    * pacing its own writes (`reveal.ts`) wants 0, or the buffer re-lumps what it spread.
@@ -201,13 +197,4 @@ export function renderMarkdownInto(host: HTMLElement, md: string): void {
   linkifyTail(host);
   // An unterminated fence in stored content never reaches the per-block callback either.
   decorateCodeBlocks(host);
-}
-
-/** Pure parser output, no decoration or animation, for tests, hover previews and other structural uses. */
-export function renderMarkdown(md: string): string {
-  const tmp = el("div");
-  const p = parser(domRenderer(tmp));
-  parser_write(p, md);
-  parser_end(p);
-  return tmp.innerHTML;
 }
