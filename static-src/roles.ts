@@ -9,6 +9,7 @@ import {
   ICON_TAB_QUICK_SPEC,
   ICON_TAB_BUG,
   ICON_TAB_AUTONOMOUS,
+  ICON_TAB_REVIEW,
   ICON_SUBAGENT_INTROSPECT,
   ICON_SUBAGENT_GATHERER,
   ICON_SUBAGENT_TASK,
@@ -52,9 +53,7 @@ const BUILTIN_MODES: readonly SessionMode[] = [
     description: "Autonomous agent execution",
     source: "bundled",
   },
-  // Kiro ships this one as a bundled AGENT rather than a workflow mode, so it has no entry in
-  // iconForMode and takes the generic hexagon — which is what a workspace custom agent gets too,
-  // and is correct: it is not one of the six workflow arms.
+  // Kiro ships this one as a bundled AGENT rather than a workflow mode.
   {
     id: "semantic_reviewer",
     name: "Semantic Reviewer",
@@ -159,9 +158,8 @@ export function normalizeModeID(id: string): string {
   return id;
 }
 
-/** Icon (SVG string) for a mode/role, keyed by id. Each bundled workflow mode gets a distinct
- *  glyph; every other entry (workspace custom agents, bundled non-workflow agents) shares the
- *  hexagon. */
+/** Icon (SVG string) for a mode/role, keyed by id. Each mode in `BUILTIN_MODES` gets a distinct
+ *  glyph; every other agent shares the hexagon. */
 export function iconForMode(id: string): string {
   switch (id) {
     case "":
@@ -177,6 +175,8 @@ export function iconForMode(id: string): string {
       return ICON_TAB_PLAN;
     case "autonomous":
       return ICON_TAB_AUTONOMOUS;
+    case "semantic_reviewer":
+      return ICON_TAB_REVIEW;
     default:
       return ICON_TAB_AGENT;
   }

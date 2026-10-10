@@ -1,6 +1,6 @@
-// The chat-actions menu, and the test an eighth row has to pass: a pill earns its
-// prompt-row slot by changing per MESSAGE, which none of these seven do. Every row
-// is built here; static/index.html carries an empty card.
+// The chat-actions menu, and the test a new row has to pass: a pill earns its prompt-row
+// slot by changing per MESSAGE, which none of these do. Every row is built here;
+// static/index.html carries an empty card. Actions first, the two switches last.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
@@ -25,7 +25,7 @@ import { openTangentChat } from "./chat.js";
 import { submitPrompt } from "./submit.js";
 import * as toast from "./toast.js";
 import { chatNotice } from "./notice-subject.js";
-import type { InterruptMode } from "./types.js";
+import type { InterruptMode, Session } from "./types.js";
 
 // Row glyphs. Local constants rather than icons.ts entries: each is used once,
 // by this module, and `icons.ts` is the shared vocabulary.
@@ -463,111 +463,67 @@ function renameForm(): HTMLElement {
   return form;
 }
 
-/** What Send means while a turn runs on this chat. A radio group rather than a
- *  checkbox, so both modes are named and the default is visible as a choice. */
-function interruptRow(): HTMLElement {
-  const choices: readonly { mode: InterruptMode; name: string; hint: string }[] = [
-    { mode: "steer", name: "Steer", hint: "The agent reads it during the current turn" },
-    { mode: "queue", name: "Queue", hint: "It waits for the turn to end cleanly, then runs" },
-  ];
-  const radios = new Map<InterruptMode, HTMLInputElement>();
-  const rows = choices.map(({ mode, name, hint }) => {
-    const id = `chat-opt-interrupt-${mode}`;
-    const radio = el("input", {
-      type: "radio",
-      name: "chat-opt-interrupt",
-      id,
-      value: mode,
-    }) as HTMLInputElement;
-    radio.addEventListener("change", () => {
-      const chatID = activeSession.peek()?.id ?? "";
-      if (chatID === "") {
-        // No chat yet: nothing to record the mode on, and a new chat starts on Steer.
-        radio.checked = false;
-        return;
-      }
-      void setInterruptMode.dispatch({ chatID, mode });
-    });
-    radios.set(mode, radio);
-    return el(
-      "label",
-      { className: "chat-opt-row", for: id },
-      radio,
-      el(
-        "span",
-        { className: "chat-opt-text" },
-        el("span", { className: "chat-opt-name" }, name),
-        el("span", { className: "chat-opt-hint" }, hint),
-      ),
-    );
-  });
-
-  const group = el(
-    "div",
-    {
-      className: "chat-opt-entry",
-      role: "radiogroup",
-      "aria-labelledby": "chat-opt-interrupt-label",
-    },
-    el(
-      "span",
-      { className: "chat-opt-hint chat-opt-group-label", id: "chat-opt-interrupt-label" },
-      "While the agent works, Send\u2026",
-    ),
-    ...rows,
-  );
-
-  // Mirrors the ACTIVE chat's recorded mode, like the supervised switch below; a
-  // chat with none recorded is on Steer.
-  effect(() => {
-    const s = activeSession.value;
-    const mode: InterruptMode = s?.interrupt_mode ?? "steer";
-    for (const [m, radio] of radios) {
-      radio.checked = s !== undefined && m === mode;
-    }
-  });
-
-  return group;
-}
-
-/** The supervised switch: the one resident that is a SWITCH rather than an
- *  action, which is why it sorts last and keeps the label/checkbox shape. */
-function supervisedRow(): HTMLElement {
-  const supervised = el("input", {
-    type: "checkbox",
-    id: "chat-opt-supervised",
-  }) as HTMLInputElement;
-  supervised.addEventListener("change", () => {
-    const id = activeSession.peek()?.id ?? "";
-    if (id === "") {
-      // No chat yet: reset the visual. The default for new chats lives in Settings → Permissions.
-      supervised.checked = false;
+/**
+ * A row that SWITCHES a per-chat setting: a label wrapping a checkbox, which mirrors the ACTIVE
+ * chat's recorded value (the menu is a projection, so switching tabs re-reads rather than
+ * remembers). With no chat there is nothing to record on, so the visual resets.
+ */
+function switchRow(opts: {
+  id: string;
+  name: string;
+  hint: string;
+  read: (s: Session) => boolean;
+  write: (chatID: string, on: boolean) => void;
+}): HTMLElement {
+  const box = el("input", { type: "checkbox", id: opts.id }) as HTMLInputElement;
+  box.addEventListener("change", () => {
+    const chatID = activeSession.peek()?.id ?? "";
+    if (chatID === "") {
+      box.checked = false;
       return;
     }
-    void setSupervised.dispatch({ chatID: id, enabled: supervised.checked });
+    opts.write(chatID, box.checked);
   });
-
-  const row = el(
+  effect(() => {
+    const s = activeSession.value;
+    box.checked = s !== undefined && opts.read(s);
+  });
+  return el(
     "label",
-    { className: "chat-opt-row", for: "chat-opt-supervised" },
-    supervised,
+    { className: "chat-opt-row", for: opts.id },
+    box,
     el(
       "span",
       { className: "chat-opt-text" },
-      el("span", { className: "chat-opt-name" }, "Supervised mode"),
-      el(
-        "span",
-        { className: "chat-opt-hint" },
-        "Review this chat's file changes at the end of each turn",
-      ),
+      el("span", { className: "chat-opt-name" }, opts.name),
+      el("span", { className: "chat-opt-hint" }, opts.hint),
     ),
   );
+}
 
-  // The checkbox mirrors the ACTIVE chat's persisted choice; the menu is a
-  // projection, so switching tabs re-reads rather than remembers.
-  effect(() => {
-    supervised.checked = activeSession.value?.supervised_mode === true;
+/** What Send means while a turn runs on this chat: on is queue, off (the default) is steer. */
+function interruptRow(): HTMLElement {
+  return switchRow({
+    id: "chat-opt-queue",
+    name: "Queue messages",
+    hint: "Send waits for the current turn to end. Off, the agent reads it mid-turn",
+    read: (s) => s.interrupt_mode === "queue",
+    write: (chatID, on) => {
+      const mode: InterruptMode = on ? "queue" : "steer";
+      void setInterruptMode.dispatch({ chatID, mode });
+    },
   });
+}
 
-  return row;
+/** Supervised mode. The default for new chats lives in Settings → Permissions. */
+function supervisedRow(): HTMLElement {
+  return switchRow({
+    id: "chat-opt-supervised",
+    name: "Supervised mode",
+    hint: "Review this chat's file changes at the end of each turn",
+    read: (s) => s.supervised_mode === true,
+    write: (chatID, enabled) => {
+      void setSupervised.dispatch({ chatID, enabled });
+    },
+  });
 }

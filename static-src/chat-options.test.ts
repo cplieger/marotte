@@ -203,9 +203,8 @@ beforeEach(() => {
 });
 
 describe("the chat-actions menu", () => {
-  // Seven rows, the switch last: an addition or loss shows here; the interrupt choices are
-  // rows of their own.
-  it("holds exactly seven entries, the switch last", async () => {
+  // Five actions, then the two switches: an addition or loss shows here.
+  it("holds exactly seven entries, the switches last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
@@ -214,21 +213,19 @@ describe("the chat-actions menu", () => {
       "Start a tangent",
       "Compact the context",
       "Rename chat",
-      "Steer",
-      "Queue",
+      "Queue messages",
       "Supervised mode",
     ]);
   });
 
-  // The switch is a label with a checkbox; the rest are buttons.
-  it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
+  // The switches are labels with a checkbox; the rest are buttons.
+  it("renders the switches as labels with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
     expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(5);
-    const row = card.querySelector<HTMLLabelElement>(
-      'label.chat-opt-row[for="chat-opt-supervised"]',
-    );
-    expect(row?.htmlFor).toBe("chat-opt-supervised");
-    expect(row?.querySelector<HTMLInputElement>("input")?.type).toBe("checkbox");
+    for (const id of ["chat-opt-queue", "chat-opt-supervised"]) {
+      const row = card.querySelector<HTMLLabelElement>(`label.chat-opt-row[for="${id}"]`);
+      expect(row?.querySelector<HTMLInputElement>("input")?.type, id).toBe("checkbox");
+    }
   });
 
   // A card of buttons inside its trigger <button> is invalid HTML (as in pill-expand.test.ts).
@@ -697,50 +694,44 @@ describe("supervised mode", () => {
   });
 });
 
-// What Send means while a turn runs: a per-chat radio pair, Steer the default.
+// What Send means while a turn runs: a per-chat switch, on for queue, off (steer) the default.
 describe("the interrupt mode", () => {
-  function radio(card: HTMLElement, mode: "steer" | "queue"): HTMLInputElement {
-    const el = card.querySelector<HTMLInputElement>(`#chat-opt-interrupt-${mode}`);
+  function box(card: HTMLElement): HTMLInputElement {
+    const el = card.querySelector<HTMLInputElement>("#chat-opt-queue");
     if (el === null) {
-      throw new Error(`no ${mode} radio`);
+      throw new Error("no queue switch");
     }
     return el;
   }
 
-  it("selects Steer for a chat that has recorded no mode", async () => {
+  it("is off for a chat that has recorded no mode", async () => {
     const { card } = await mountMenu();
-    expect(radio(card, "steer").checked).toBe(true);
-    expect(radio(card, "queue").checked).toBe(false);
+    expect(box(card).checked).toBe(false);
   });
 
   it("mirrors the active chat's recorded mode", async () => {
     interruptMode = "queue";
     const { card } = await mountMenu();
-    expect(radio(card, "queue").checked).toBe(true);
-    expect(radio(card, "steer").checked).toBe(false);
+    expect(box(card).checked).toBe(true);
   });
 
-  it("dispatches the mode for the active chat when a choice is picked", async () => {
+  it("dispatches queue when switched on and steer when switched off", async () => {
     const { card } = await mountMenu();
-    radio(card, "queue").checked = true;
-    radio(card, "queue").dispatchEvent(new Event("change"));
-    expect(setInterruptDispatch).toHaveBeenCalledWith({ chatID: "c-active", mode: "queue" });
+    box(card).checked = true;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "queue" });
+    box(card).checked = false;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "steer" });
   });
 
-  it("names the group for assistive tech", async () => {
-    const { card } = await mountMenu();
-    const group = card.querySelector('[role="radiogroup"]');
-    const label = document.getElementById(group?.getAttribute("aria-labelledby") ?? "");
-    expect(label?.textContent).toBe("While the agent works, Send\u2026");
-  });
-
-  it("records nothing and selects nothing with no active chat", async () => {
+  it("records nothing and resets the visual with no active chat", async () => {
     activeID = "";
     const { card } = await mountMenu();
-    radio(card, "queue").checked = true;
-    radio(card, "queue").dispatchEvent(new Event("change"));
+    box(card).checked = true;
+    box(card).dispatchEvent(new Event("change"));
     expect(setInterruptDispatch).not.toHaveBeenCalled();
-    expect(radio(card, "queue").checked).toBe(false);
+    expect(box(card).checked).toBe(false);
   });
 });
 
@@ -750,6 +741,6 @@ describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(8);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(7);
   });
 });

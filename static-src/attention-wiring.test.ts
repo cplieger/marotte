@@ -60,6 +60,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_QUICK_SPEC: "",
   ICON_TAB_BUG: "",
   ICON_TAB_AUTONOMOUS: "",
+  ICON_TAB_REVIEW: "",
   ICON_TAB_SUBTAB: "",
   ICON_TAB_SETTINGS: "",
   ICON_TAB_GIT: "",

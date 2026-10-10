@@ -922,9 +922,10 @@
      this card's bottom, measured by `pill-expand.ts` on open and on every viewport
      change (26rem is only the pre-JS fallback): a card may never overflow the
      viewport it is anchored in. `60dvh` is the SHAPE bound: a menu that fills the
-     screen reads as a modal, which an expandable pill exists to avoid. Derivation
+     screen reads as a modal, which an expandable pill exists to avoid; a card
+     whose rows are fixed sets `--pill-shape-block` to opt out of it. Derivation
      at `clampToViewport`. */
-  max-block-size: min(var(--pill-max-block, 26rem), 60dvh);
+  max-block-size: min(var(--pill-max-block, 26rem), var(--pill-shape-block, 60dvh));
   overflow: auto;
   box-shadow:
     var(--shadow-ambient),
@@ -1653,7 +1654,7 @@
   border-color: var(--c-text-tertiary);
 }
 
-/* The chat actions card: attach / goal / tangent, then the supervised switch.
+/* The chat actions card: the strip, the action rows, then the two switches.
  *
  * `white-space: normal` overrides .pill-expand-content's nowrap, which is right
  * for a one-line detail card and wrong here: every row carries a hint sentence,
@@ -1668,14 +1669,19 @@
      what stops that prose running as wide as the longest hint. */
   min-inline-size: 18rem;
   max-inline-size: 22rem;
+
+  /* A fixed list of rows, so the shape bound would only ever cut its last row off
+     on a short screen (an iPad in landscape); the measured room still caps it. */
+  --pill-shape-block: 100dvh;
+
   text-align: start;
   white-space: normal;
   align-items: stretch;
 }
 
-/* The top strip: four equal tracks of square, captioned buttons. Each is at
- * least the hit floor tall, and its radius is the card's derived rung, so the
- * corners nearest the card's own share its centre. */
+/* The top strip: four equal tracks of captioned buttons, each at least the hit
+ * floor tall, and its radius is the card's derived rung, so the corners nearest
+ * the card's own share its centre. */
 .chat-opt-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1687,9 +1693,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-1);
-  min-block-size: max(var(--hit-floor), 3.5rem);
-  aspect-ratio: 1;
+  gap: 0.125rem;
+  min-block-size: var(--hit-floor);
   padding: var(--sp-1);
   font: inherit;
   font-size: var(--fs-xs);
@@ -1803,29 +1808,19 @@
   }
 }
 
-/* THE ROW IS THE TARGET HERE, so the switch drops the hit-target expander every
-   other native box control gets (61-mcp-tools.css). This label is the card's full
+/* THE ROW IS THE TARGET HERE, so a switch drops the hit-target expander every
+   other native box control gets (61-mcp-tools.css). The label is the card's full
    width and takes the floor itself below, while the checkbox sits against the
-   row's TOP edge — so an expander centred on it overhangs upward, measured 4px
-   into the row above on a coarse pointer, which is that row's whole bottom
-   chrome. */
-.chat-opt-row > input[type="checkbox"]::after,
-.chat-opt-row > input[type="radio"]::after {
+   row's TOP edge, so an expander centred on it overhangs upward: measured 4px
+   into the row above on a coarse pointer. */
+.chat-opt-row > input[type="checkbox"]::after {
   content: none;
 }
 
-/* A radio group's caption, inset by the rows' own padding plus their 1px border so
-   it starts on the rows' label x. */
-.chat-opt-group-label {
-  padding-inline: calc(var(--sp-1) + 1px);
-}
-
 /* Declared here because the universal floor cannot reach a <label>: it matches the
-   native controls plus `[role]`/`[tabindex]`, so this row's five BUTTON siblings
-   take it and this one was left content-driven — which made the carve-out above
-   rest on the machine's font stack rather than on a rule. Measured at 42px on a
-   coarse pointer under a narrower stack, 2px under its own claim and 2px short of
-   its neighbours, so the list stopped reading as one list too. */
+   native controls plus `[role]`/`[tabindex]`, so the button rows take it and the
+   switch rows would be content-driven, short of their neighbours on a coarse
+   pointer. */
 .chat-opt-row {
   min-block-size: var(--hit-floor);
 }
@@ -2125,7 +2120,7 @@
        should be the conservative one. The measured room then supersedes it and is
        strictly better here, since `visualViewport` sees a keyboard that no `dvh`
        value can. */
-    max-block-size: min(var(--pill-max-block, 26rem), 55dvh);
+    max-block-size: min(var(--pill-max-block, 26rem), var(--pill-shape-block, 55dvh));
   }
 
   /* NO tier rule beside this one, and no block-size: the rail line reads
