@@ -146,64 +146,38 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* REWIND keeps a resting border where the action buttons beside it have none: it is
-   the destructive control at the far edge. `justify-content: center` is not decoration —
-   the hit floor widens this box, and an icon-only button then renders its glyph off-centre. */
+/* Geometry only: the box, fill, ink and hover are the footer's shared control box
+   (61-mcp-tools.css). `justify-content: center` keeps the glyph centred in the
+   icon-only square below. */
 .turn-rewind {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-1);
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-
-  /* The one footer child with a resting border, so on the hit floor it would weld onto
-     the card's. Leaves the floor (physical `min-height`, to beat the floor's own physical
-     property) and gets its target back below; `min-width` stays floored. */
-  min-height: 0;
-  position: relative;
-
-  /* The `.tool-file-link` expander idiom, block axis only. */
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: calc((var(--hit-floor) - 100%) / -2);
-    inset-inline: 0;
-  }
+  padding-inline: var(--sp-2);
+  font-size: inherit;
 }
 
 /* The word drops at the width the footer's own actions collapse behind their `…`
    overflow (61-mcp-tools.css `.turn-actions-more`). Nothing but their equality couples
-   the two numbers, so `turn-rewind-css.test.ts` asserts they stay equal. */
+   the two numbers, so `turn-rewind-css.test.ts` asserts they stay equal. Icon-only, it
+   is the same square as the action buttons. */
 @media (width <= 40rem) {
   .turn-rewind-label {
     display: none;
   }
-}
 
-.turn-rewind:hover {
-  background: var(--c-bg-tertiary);
-  border-color: var(--c-text-tertiary);
-}
-
-.turn-rewind:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
+  .turn-rewind {
+    width: var(--ctl-h-sm);
+    padding-inline: 0;
+  }
 }
 
 /* KAS refuses a revert on a live session, so the control is unavailable rather than
    offering an error. Kept visible so the row does not reflow when a turn starts. */
 .turn-rewind:disabled:hover {
-  background: none;
-  border-color: var(--c-border);
+  background: transparent;
+  color: inherit;
 }
 
 .turn-req {
@@ -322,9 +296,14 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
 
-  /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` (a dense control row) floored by
-     `--hit-floor`, so 32 on a mouse and 44 on a coarse
-     pointer. A declared height rather than block padding, which cannot follow the tier. */
+  /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` floored by `--hit-floor` (32 on a mouse,
+     44 on a coarse pointer), a declared height because block padding cannot follow the
+     tier. Every control paints at `--ctl-h-sm` centred in it (4px of air above and below
+     on both tiers). `--footer-inset` is the inline air: more than the card's 5px corner
+     radius, so a control's corner sits clear of the arc and its own `--r-sm` needs no
+     concentric radius (web.md). */
+  --footer-inset: var(--sp-2);
+
   min-height: max(var(--hit-floor), var(--ctl-h-dense));
   transition: opacity var(--dur-enter) var(--ease-enter);
 
@@ -335,12 +314,9 @@
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
 
-  /* NO BLOCK PADDING AND NO LEADING PADDING: the height above is the band and the leading
-     gutter is the ledger button's own (below). Only the trailing gutter is the row's,
-     because the child at that edge paints. ONE VALUE ON BOTH INLINE EDGES, `--sp-3`.
-     Applies to the DELEGATE footer unchanged — `buildTurnFooter` mounts this same row
-     inside `.subagent-foot`. */
-  padding-inline-end: var(--sp-3);
+  /* NO BLOCK PADDING: the height above is the band. Applies to the DELEGATE footer
+     unchanged — `buildTurnFooter` mounts this same row inside `.subagent-foot`. */
+  padding-inline: var(--footer-inset);
   font-variant-numeric: tabular-nums;
   background: var(--c-bg-tertiary);
   border-end-start-radius: calc(var(--r) - 1px);
@@ -351,16 +327,14 @@
   container: turn-footer / inline-size;
 }
 
-/* ONE INK GUTTER FOR EVERY CARD THAT MOUNTS THIS FOOTER: `--sp-3` on the BUTTON's
-   inline edges rather than on the band, so the `i`'s ink lands on the card's own
-   gutter while the button's box still reaches the leading edge. The trailing side
-   is the lead fact's inset, which is what makes the press box symmetric over the
-   glyph-plus-label it spans. LOAD-BEARING ON THE DELEGATE CARD, which clips: its
-   ledger takes the INSET focus ring (40-a11y.css) in the first 2px inside the
-   border box, so this padding keeps that ring off the `i`; on the ROW it is 0px. */
+/* ONE INK GUTTER FOR EVERY CARD THAT MOUNTS THIS FOOTER: the band's inline inset plus
+   this padding is `--sp-3`, so the `i` lands on the card's own gutter; the same value on the
+   trailing side keeps the press box symmetric over what it spans. LOAD-BEARING ON THE
+   DELEGATE CARD, which clips: its ledger takes the INSET focus ring (40-a11y.css) in
+   the first 2px inside the border box, and this padding keeps that ring off the `i`. */
 .turn-footer > .turn-ledger-summary {
   grid-column: 1;
-  padding-inline: var(--sp-3);
+  padding-inline: calc(var(--sp-3) - var(--footer-inset));
 }
 
 .turn-footer > .turn-actions-buttons {
@@ -394,13 +368,13 @@
 }
 
 /* WITHHELD WHERE THE SLOT CANNOT HOLD A WHOLE FACT, so the row shows its outcome word
-   rather than an ellipsis standing for a value. 18.93rem is where a COARSE row's slot
+   rather than an ellipsis standing for a value. 17.96rem is where a COARSE row's slot
    reaches the narrowest fact `turnFacts` emits (`0.1s`, 24.2px), the query measuring the
    CONTENT box. A DESCENDANT combinator, because naming both ancestors takes the chain
    past stylelint's `selector-max-specificity` of `0,4,3`. ONE threshold, so it
-   over-reaches the FINE tier by ~34px — accepted: reaching it needs a desktop window
+   over-reaches the FINE tier by ~24px — accepted: reaching it needs a desktop window
    narrowed past any phone, and the `i` holds the value. */
-@container turn-footer (inline-size < 18.93rem) {
+@container turn-footer (inline-size < 17.96rem) {
   .turn-footer:not([data-severity="clean"]):has(> .turn-rewind) .turn-fact {
     display: none;
   }
@@ -609,15 +583,15 @@
   color: var(--c-text-primary);
 }
 
-/* TRAILING INSET ZERO: the footer's own `padding-inline-end` is already inside this grid
- * area (`1 / -1`), so 12px here would land the ink 24px from the card. `padding-block` is
- * ANIMATED with the height, because `box-sizing: border-box` is universal and a constant one
- * makes the closed end 24px tall. `display: none` at rest: a 0-height item charges row-gap. */
+/* The footer's own `--footer-inset` is already outside this grid area (`1 / -1`), so the
+ * inline padding is the rest of `--sp-3`. `padding-block` is ANIMATED with the height,
+ * because `box-sizing: border-box` is universal and a constant one makes the closed end
+ * 24px tall. `display: none` at rest: a 0-height item charges row-gap. */
 .turn-info-panel {
   display: none;
   block-size: 0;
   overflow: clip;
-  padding-inline: var(--sp-3) 0;
+  padding-inline: calc(var(--sp-3) - var(--footer-inset));
   padding-block: 0;
   text-align: left;
   transition:

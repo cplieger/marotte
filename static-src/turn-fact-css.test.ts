@@ -310,8 +310,7 @@ describe("at 360px with a finger", () => {
 
 describe("the slot is WITHHELD where the track cannot hold a whole fact", () => {
   /** Squeeze one card until its footer's CONTENT box is `cq` px, which is what the
-   *  query measures — 12px under the footer's own `clientWidth`, the row carrying a
-   *  trailing gutter and no leading one. */
+   *  query measures: the footer's own `clientWidth` less its inset on both edges. */
   function atContainerWidth(cq: number, opts: { word: string; rewind: boolean }): HTMLElement {
     const m = mountCard(phone, {
       fact: LONG_FACT,
@@ -323,15 +322,16 @@ describe("the slot is WITHHELD where the track cannot hold a whole fact", () => 
     if (card === null) {
       throw new Error("footer has no card");
     }
-    const gutter = parseFloat(cs(m.footer).paddingInlineEnd);
+    const f = cs(m.footer);
+    const gutter = parseFloat(f.paddingInlineStart) + parseFloat(f.paddingInlineEnd);
     card.style.inlineSize = `${String(cq + gutter)}px`;
     return m.slot;
   }
 
-  // 302.9px (18.93rem) is the threshold where a coarse slot reaches the 24.2px floor. ABOVE brackets
+  // 287.3px (17.96rem) is the threshold where a coarse slot reaches the 24.2px floor. ABOVE brackets
   // it within 4px: only the query decides `display`, so a widened threshold fails.
-  const BELOW = 300;
-  const ABOVE = 306;
+  const BELOW = 284;
+  const ABOVE = 290;
 
   it("withholds it on a non-clean turn with Rewind, and not one pixel wider", () => {
     expect(cs(atContainerWidth(BELOW, { word: "Outcome unknown", rewind: true })).display).toBe(

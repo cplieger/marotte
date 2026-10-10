@@ -614,16 +614,21 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("leaf head", head, clipper);
   });
 
-  it("on a delegate's FOOT ledger, flush on the edge the row does not pad", async () => {
-    // Inline-start decides it: the row declares no leading padding.
+  it("on a delegate's FOOT ledger, which sits only the band's inset off the card's edge", async () => {
+    // Inline-start decides it: the row's leading padding is the band's inset, under the ring's reach.
     const { clipper, ledger } = subagentCard({ foot: true });
     if (ledger === null) {
       throw new Error("the fixture built no ledger button");
     }
     await focusByTab(ledger);
-    const flush = inset(ledger, clipper);
-    expect(flush.left, `foot ledger: inline-start is not flush (${flush.left}px)`).toBeLessThan(
-      1.5,
+    const row = ledger.parentElement;
+    if (row === null) {
+      throw new Error("the ledger has no row");
+    }
+    const lead = inset(ledger, clipper).left;
+    expect(lead, `foot ledger: inline-start sits ${lead}px in`).toBeCloseTo(
+      px(getComputedStyle(row).paddingInlineStart),
+      1,
     );
     expectRingInside("foot ledger", ledger, clipper);
   });
@@ -925,13 +930,12 @@ describe("the exclusion that is not a clearance: a row already on the inset toke
     await focusByTab(row);
     expect(getComputedStyle(clipper).overflow, "the info panel clips").toBe("clip");
     const gap = inset(row, clipper);
-    for (const edge of ["top", "bottom", "left"] as const) {
+    for (const edge of EDGES) {
       expect(
         gap[edge],
         `turn file row: ${edge} edge is outside the clip box (${gap[edge]}px)`,
       ).toBeGreaterThan(0);
     }
-    expect(gap.right, "turn file row: flush with the clip box on the trailing edge").toBe(0);
     expect(reachOf(row), "the row's own offset cancels the ring's reach").toBe(0);
     expectRingInside("turn file row", row, clipper);
   });

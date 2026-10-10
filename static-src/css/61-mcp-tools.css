@@ -92,9 +92,13 @@
  * FOOTER's middle grid column (29-turns.css owns the placement). Ink is the
  * footer's own; each button lifts itself on hover. */
 .turn-actions-buttons {
+  /* Wide enough that two neighbours' expanders (below) meet rather than overlap: the
+     floor less the paint, so 2px on a mouse and 8px under a finger. */
+  --turn-action-gap: max(0.125rem, var(--hit-floor) - var(--ctl-h-sm));
+
   display: inline-flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: var(--turn-action-gap);
   flex-shrink: 0;
 }
 
@@ -119,7 +123,7 @@
 .turn-actions-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: var(--turn-action-gap);
 }
 
 .turn-actions-more > .turn-action-more,
@@ -127,15 +131,18 @@
   display: none;
 }
 
-/* THE TURN FOOTER'S CONTROL BOX, shared by the row's action buttons and by its ledger
-   trigger, whose box spans the `i` and the turn's lead fact: ONE definition, so the two
-   cannot drift. `height` is the PAINT and the zero-specificity floor below lifts it to
-   `--hit-floor`, which is what makes the pair one box at every tier; the BAND is the
-   row's own (29-turns.css). `box-shadow` is in the transition because 03-base.css's
-   universal press wash is an inset shadow, and a member declaring its own `transition`
-   without it gets a wash that appears and leaves in one frame. */
+/* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and Rewind:
+   ONE definition, so they cannot drift. The paint leaves the hit floor so each control
+   keeps air on every side in the band (29-turns.css); the expander restores the
+   target on each short axis, `min(0px, …)` never shrinking a wider box. The menu rows
+   below put their own floor back. `box-shadow` is in the transition because 03-base.css's
+   press wash is an inset shadow, which otherwise appears and leaves in one frame. */
 .turn-action-btn,
-.turn-ledger-summary {
+.turn-ledger-summary,
+.turn-rewind {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
   height: var(--ctl-h-sm);
   border: none;
   background: transparent;
@@ -146,6 +153,13 @@
     background var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: min(0px, calc((var(--hit-floor) - 100%) / -2));
+    inset-inline: min(0px, calc((var(--hit-floor) - 100%) / -2));
+  }
 }
 
 /* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
@@ -177,7 +191,8 @@
 }
 
 .turn-action-btn:hover,
-.turn-ledger-summary:hover {
+.turn-ledger-summary:hover,
+.turn-rewind:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
@@ -251,6 +266,7 @@
     gap: var(--sp-2);
     width: 100%;
     height: auto;
+    min-height: var(--hit-floor);
     padding-inline: var(--sp-2);
   }
 
@@ -311,6 +327,7 @@
       gap: var(--sp-2);
       width: 100%;
       height: auto;
+      min-height: var(--hit-floor);
       padding-inline: var(--sp-2);
     }
 
