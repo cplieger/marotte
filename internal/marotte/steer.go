@@ -14,13 +14,11 @@ func SteerIDFor(messageID string) string {
 
 // SteerOrigin says WHOSE words a mid-turn steer carries.
 //
-// KAS's steering buffer carries the user's correction, a workflow message (a
+// KAS's steering buffer mixes the user's correction, a workflow message (a
 // send_message between a chat and its run's step) and a run-completion nudge,
-// and its live frames name no sender (`notificationSeverity` is only a
-// text-prefix sniff). So the server records the steers IT sent, a workflow
-// message from the `_kiro/session/notify` that carried it, and everything else
-// is the agent's; a replayed row names a workflow message's sender in
-// `notification.sender`.
+// and its live frames name no sender. So the server records the steers IT sent
+// and each workflow message from the `_kiro/session/notify` that carried it;
+// the rest is the agent's. A replayed row names the sender in `notification.sender`.
 type SteerOrigin string
 
 // The origins. Each string is the wire value AND the client's SteerOrigin
