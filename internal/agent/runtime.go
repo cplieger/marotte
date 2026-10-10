@@ -66,8 +66,10 @@ type lifetime struct {
 	workRoot      *os.Root
 	kiroTelemetry *cachedBoolField
 	workDir       string
-	configDir     string
-	inflight      sync.WaitGroup
+	// uploadsDir is the second root the READ verbs accept (confineReadable); "" grants nothing.
+	uploadsDir string
+	configDir  string
+	inflight   sync.WaitGroup
 	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
 	loops sync.WaitGroup
 	mu    sync.Mutex
@@ -365,6 +367,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	)
 	lc := &lifetime{
 		workDir:       workDir,
+		uploadsDir:    marotte.DefaultUploadDir,
 		done:          make(chan struct{}),
 		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, false),
 	}

@@ -62,11 +62,12 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg
 		in.respondFSError(ctx, chatID, msg, errors.New("path is required"))
 		return
 	}
-	root, rel, err := in.lifetime.confineInWorkDir(p.Path)
+	root, rel, release, err := in.lifetime.confineReadable(p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
+	defer release()
 	// No ignore filter here: KAS enforces the list. The bound comes from the open descriptor,
 	// a FIFO is refused, and every component resolves inside the root.
 	data, err := atomicfile.ReadBoundedInRoot(ctx, root, rel, fsReadCap)

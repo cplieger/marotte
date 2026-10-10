@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -30,8 +31,9 @@ var (
 // errNoWorkRoot means the workspace could not be opened as a confined root. Not routine.
 var errNoWorkRoot = errors.New("workspace is not open for confined access")
 
-// resolveInsideWorkDir confines p to the workspace LEXICALLY and returns the absolute path.
-// Filesystem operations use confineInWorkDir, which pairs the verdict with a handle.
+// resolveInsideWorkDir confines p to the workspace, following symlinks on the target and its
+// parent, and returns the absolute path. It is a verdict only: filesystem operations use
+// confineInWorkDir, which pairs the verdict with a handle.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
@@ -53,6 +55,28 @@ func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 		return nil, "", fmt.Errorf("workspace-relative path for %q: %w", p, err)
 	}
 	return lt.workRoot, rel, nil
+}
+
+// confineReadable is confineInWorkDir widened, for the READ verbs only, to an absolute path
+// under uploadsDir: a prompt names a composer upload as `Attached file: <path>` and the agent
+// is told to read it with its file tools. That root is opened per call; the caller runs
+// release. A path neither root holds reports the workspace's error.
+func (lt *lifetime) confineReadable(p string) (root *os.Root, rel string, release func(), err error) {
+	root, rel, err = lt.confineInWorkDir(p)
+	if err == nil {
+		return root, rel, func() {}, nil
+	}
+	if lt.uploadsDir == "" || !filepath.IsAbs(p) {
+		return nil, "", nil, err
+	}
+	if _, rel, upErr := workspace.ConfineAnyAbs([]string{lt.uploadsDir}, p); upErr == nil {
+		up, openErr := os.OpenRoot(lt.uploadsDir)
+		if openErr != nil {
+			return nil, "", nil, fmt.Errorf("open uploads folder: %w", openErr)
+		}
+		return up, rel, func() { _ = up.Close() }, nil
+	}
+	return nil, "", nil, err
 }
 
 // respondFSError answers an fs request with a JSON-RPC error and logs it: routine
