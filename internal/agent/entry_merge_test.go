@@ -1292,6 +1292,30 @@ func TestMergeEntries_AWorkflowMessagePairsByItsWords(t *testing.T) {
 	}
 }
 
+func TestMergeEntries_AWorkflowMessageNeverPairsWithTheOppositeDirection(t *testing.T) {
+	out, in := marotte.WorkflowMessageIDPrefix+"out", marotte.WorkflowMessageIDPrefix+"in"
+	record := []recordTurn{recTurn(t, "T1",
+		openRow("T1", 1, nil),
+		textRow("S", "", "working"),
+		steerRow(out, marotte.EntrySteer{Text: "ok", Origin: marotte.SteerOriginParent, Step: "review", ProducedTs: 3}),
+		steerRow(in, marotte.EntrySteer{Text: "ok", Origin: marotte.SteerOriginStep, Step: "review", ProducedTs: 5}),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S", "", "working"),
+		steerRow("notify-kas-1", marotte.EntrySteer{Text: "ok", Origin: marotte.SteerOriginStep, ProducedTs: 4}),
+		steerRow("notify-kas-2", marotte.EntrySteer{Text: "ok", Origin: marotte.SteerOriginStep, ProducedTs: 6}),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+	)}
+
+	merged, _ := mergeEntries(record, projected, "sid-1")
+	want := []string{"T1", "S", out, in, "notify-kas-2", "T1:e1"}
+	if got := idsOf(merged[0]); !equalStrings(got, want) {
+		t.Fatalf("entry ids = %v, want %v:\n%s", got, want, dumpMerged(merged))
+	}
+}
+
 func deliveredRow(steerID, kasID string) entryRow {
 	return entryRow{
 		kind: marotte.EntryKindSteerDelivered, id: marotte.SteerDeliveredID(steerID),

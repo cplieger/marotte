@@ -609,9 +609,9 @@ type recordEntryIndex struct {
 }
 
 // workflowMessageIndex is the record's workflow messages, whose KAS id never reached this process
-// at the send: by their words, and by the id a take-up named.
+// at the send: by their direction and words, and by the id a take-up named.
 type workflowMessageIndex struct {
-	byWords map[string][]int
+	byWords map[workflowMessageKey][]int
 	// deliveredAs maps the id KAS persisted a message under to the record row's id.
 	deliveredAs map[string]string
 }
@@ -621,7 +621,7 @@ func indexRecordEntries(entries []marotte.Entry) recordEntryIndex {
 		byID:         make(map[string]int, len(entries)),
 		bySay:        make(map[string][]int),
 		byInvocation: make(map[string]int),
-		messages:     &workflowMessageIndex{byWords: map[string][]int{}, deliveredAs: map[string]string{}},
+		messages:     &workflowMessageIndex{byWords: map[workflowMessageKey][]int{}, deliveredAs: map[string]string{}},
 		turnOpen:     -1,
 		turnClose:    -1,
 	}
@@ -672,14 +672,23 @@ func (w *workflowMessageIndex) add(e *marotte.Entry, i int) {
 	if !strings.HasPrefix(e.ID, marotte.WorkflowMessageIDPrefix) {
 		return
 	}
-	if text, ok := steerTextOf(e); ok {
-		w.byWords[text] = append(w.byWords[text], i)
+	var steer marotte.EntrySteer
+	if json.Unmarshal(e.Payload, &steer) == nil {
+		key := workflowMessageKey{origin: steer.Origin, text: steer.Text}
+		w.byWords[key] = append(w.byWords[key], i)
 	}
 }
 
+// workflowMessageKey keeps a message's direction in the words match: a step's report and the main
+// agent's message to it may share their text, and must never pair with each other.
+type workflowMessageKey struct {
+	origin marotte.SteerOrigin
+	text   string
+}
+
 // steerTwins answers the record rows a projected steer may pair with, in preference order: its own
-// id, the row a take-up named by KAS's id, else a workflow message's rows with the same words that
-// no take-up named.
+// id, the row a take-up named by KAS's id, else a workflow message's rows with the same origin and
+// words that no take-up named.
 func (idx *recordEntryIndex) steerTwins(e *marotte.Entry) []int {
 	if i := indexOr(idx.byID, e.ID); i >= 0 {
 		return []int{i}
@@ -696,7 +705,7 @@ func (idx *recordEntryIndex) steerTwins(e *marotte.Entry) []int {
 		named[indexOr(idx.byID, row)] = true
 	}
 	var out []int
-	for _, i := range idx.messages.byWords[steer.Text] {
+	for _, i := range idx.messages.byWords[workflowMessageKey{origin: steer.Origin, text: steer.Text}] {
 		if !named[i] {
 			out = append(out, i)
 		}
@@ -816,14 +825,6 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 		}
 	}
 	return c.pairing
-}
-
-func steerTextOf(e *marotte.Entry) (string, bool) {
-	var steer marotte.EntrySteer
-	if json.Unmarshal(e.Payload, &steer) != nil {
-		return "", false
-	}
-	return steer.Text, true
 }
 
 type entryClaims struct {
