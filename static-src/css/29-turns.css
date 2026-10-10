@@ -301,7 +301,7 @@
      tier. Every control paints at `--ctl-h-sm` centred in it (4px of air above and below
      on both tiers). `--footer-inset` is the inline air: more than the card's 5px corner
      radius, so a control's corner sits clear of the arc and its own `--r-sm` needs no
-     concentric radius (web.md). */
+     concentric radius. */
   --footer-inset: var(--sp-2);
 
   min-height: max(var(--hit-floor), var(--ctl-h-dense));
