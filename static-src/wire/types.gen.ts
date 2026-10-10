@@ -461,6 +461,11 @@ export interface ConfiguredForge {
  * from LastProbed.
  */
   retry_after_s?: number;
+  /**
+ * Connected says requests may use the connection. A connected row's
+ * LastError is a temporary failure the next probe retries: any other
+ * failure disconnects the row.
+ */
   connected: boolean;
   /**
  * ReconnectRequired says the stored credential can be neither used nor
@@ -2160,8 +2165,10 @@ export interface PreviewStamp {
 }
 
 /**
- * ProbeResult is a probe's answer: the row as the probe left it, and the
- * refusal's sentence when the identity read failed.
+ * ProbeResult is a probe's answer: the row as the probe left it, whether that
+ * row is connected, and the failure's sentence when the identity read failed.
+ * A temporary failure on a connected row answers its sentence beside connected
+ * true.
  */
 export interface ProbeResult {
   forge?: ConfiguredForge;

@@ -540,14 +540,18 @@ function rowErrorText(a: ConfiguredForge): string {
   if (a.reconnect_required) {
     return "This account needs a new sign-in: the stored credential can no longer be used or renewed. Reconnect to sign in again.";
   }
-  if (a.connected || reason === "") {
+  if (reason === "") {
     return "";
-  }
-  if (a.error_code === "scope_insufficient") {
-    return `The token is missing a permission this needs. Add it to the token on the forge, then check again. ${reason}`;
   }
   if (a.error_kind === "rate_limited") {
     return `The forge is rate limiting this account. ${retryWords(a)}`;
+  }
+  // A connected row's error is a temporary one: ConfiguredForge.connected owns that.
+  if (a.connected) {
+    return `The last check hit a temporary problem and runs again automatically. ${reason}`;
+  }
+  if (a.error_code === "scope_insufficient") {
+    return `The token is missing a permission this needs. Add it to the token on the forge, then check again. ${reason}`;
   }
   return reason;
 }
@@ -731,8 +735,9 @@ async function onProbe(id: string): Promise<void> {
   if (o.value.forge !== undefined) {
     replaceRow(o.value.forge);
   }
-  if (!o.value.connected) {
-    throw new Error(o.value.error ?? "the check failed");
+  const failure = o.value.error ?? "";
+  if (!o.value.connected || failure !== "") {
+    throw new Error(failure === "" ? "the check failed" : failure);
   }
 }
 

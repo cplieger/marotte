@@ -51,8 +51,6 @@ vi.mock("./forge-store.js", async (importOriginal) => {
     refreshForges: forgeRead,
     ensureForges: forgeRead,
     initForgeStore: vi.fn(),
-    onForgeChange: vi.fn(() => () => undefined),
-    currentForges: vi.fn(() => []),
     oauthByKind: vi.fn(() => ({})),
     forgeLoadFailed: vi.fn(() => false),
   };

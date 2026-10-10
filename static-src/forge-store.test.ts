@@ -65,34 +65,18 @@ describe("forge-store read-through", () => {
 
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(forced?.forges[0]?.username).toBe("bob");
-    expect(store.currentForges()[0]?.username).toBe("bob");
+    expect((await store.ensureForges())?.forges[0]?.username).toBe("bob");
   });
 
   it("publishes the payload to its accessors", async () => {
     dispatch.mockResolvedValue(payload("alice"));
     const store = await load();
 
-    expect(store.currentForges()).toEqual([]);
     expect(store.oauthByKind()).toEqual({});
 
     await store.ensureForges();
 
-    expect(store.currentForges()).toHaveLength(1);
     expect(store.oauthByKind()).toEqual({ github: true });
-  });
-
-  it("notifies subscribers when a payload lands", async () => {
-    dispatch.mockResolvedValue(payload("alice"));
-    const store = await load();
-    const seen: number[] = [];
-    // subscribe fires immediately with the current value, so the first entry is the empty state.
-    store.onForgeChange(() => {
-      seen.push(store.currentForges().length);
-    });
-
-    await store.ensureForges();
-
-    expect(seen).toEqual([0, 1]);
   });
 });
 
@@ -107,8 +91,8 @@ describe("forge-store failure handling", () => {
     await store.refreshForges();
 
     expect(store.forgeLoadFailed()).toBe(true);
-    // Blanking would turn one bad round trip into "no forges connected" on the badge and in the PRs tab.
-    expect(store.currentForges()).toHaveLength(1);
+    // Blanking would turn one bad round trip into "no forges connected" in the PRs tab.
+    expect((await store.ensureForges())?.forges).toHaveLength(1);
   });
 
   it("a failed first load leaves the list empty and retries on the next read", async () => {

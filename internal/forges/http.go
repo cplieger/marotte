@@ -364,7 +364,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	defer cancel()
 	err := h.manager.Probe(ctx, id)
 	f := h.manager.Get(id)
-	res := ProbeResult{Forge: f, Connected: err == nil}
+	res := ProbeResult{Forge: f, Connected: f != nil && f.Connected}
 	switch {
 	case err == nil:
 	case f != nil && f.LastError != "":

@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"golang.org/x/sync/singleflight"
 )
@@ -44,12 +45,16 @@ type ConfiguredForge struct {
 	// RetryAfterS is the wait the refusal behind LastError asked for, counted
 	// from LastProbed.
 	RetryAfterS int64 `json:"retry_after_s,omitempty"`
-	Connected   bool  `json:"connected"`
+	// Connected says requests may use the connection. A connected row's
+	// LastError is a temporary failure the next probe retries: any other
+	// failure disconnects the row.
+	Connected bool `json:"connected"`
 	// ReconnectRequired says the stored credential can be neither used nor
 	// renewed: only a new sign-in revives the connection.
 	ReconnectRequired bool `json:"reconnect_required"`
-	// probeFailed says the row's error is a probe's refusal, which no record
-	// or store read restates, so a refresh carries it.
+	// probeFailed says the row's error, and the Connected verdict beside it,
+	// are a probe's, which no record or store read restates, so a refresh
+	// carries them.
 	probeFailed bool
 }
 
@@ -222,10 +227,10 @@ func (m *Manager) fillStanding(row *ConfiguredForge, rec *connectionRecord) {
 	row.ErrorCode, row.ErrorKind = forgeapi.CodeReconnectRequired, forgeapi.KindUnauthorized.String()
 }
 
-// recordFailure records err as the row's error in the error envelope's terms.
-// The message carries upstream text, so it is sanitized and bounded first.
-func (f *ConfiguredForge) recordFailure(err error) {
-	f.Connected = false
+// recordError records err as the row's error in the error envelope's terms,
+// leaving Connected to the caller. The message carries upstream text, so it is
+// sanitized and bounded first.
+func (f *ConfiguredForge) recordError(err error) {
 	if fe, ok := errors.AsType[*forgeapi.Error](err); ok {
 		env := envelopeFor(fe)
 		f.LastError, f.ErrorCode, f.ErrorKind, f.RetryAfterS = env.Error, env.Code, env.Kind, env.RetryAfterS
@@ -249,8 +254,8 @@ func (m *Manager) logRecordsVerdict(err error) {
 }
 
 // mergeForges swaps in the freshly-read forge set and records, carrying across
-// what only Probe populates: Email, LastProbed and a probe's refusal. A row the
-// fresh read itself marks unusable keeps the fresh verdict.
+// what only Probe populates: Email, LastProbed and a probe's failure with its
+// verdict. A row the fresh read itself marks unusable keeps the fresh verdict.
 func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]connectionRecord, reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -267,7 +272,7 @@ func (m *Manager) mergeForges(out map[string]*ConfiguredForge, recs map[string]c
 			f.LastProbed = prev.LastProbed
 		}
 		if prev.probeFailed && f.Connected {
-			f.Connected, f.ReconnectRequired, f.probeFailed = false, prev.ReconnectRequired, true
+			f.Connected, f.ReconnectRequired, f.probeFailed = prev.Connected, prev.ReconnectRequired, true
 			f.LastError, f.ErrorCode, f.ErrorKind, f.RetryAfterS = prev.LastError, prev.ErrorCode, prev.ErrorKind, prev.RetryAfterS
 		}
 	}
@@ -336,9 +341,15 @@ func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) erro
 	}
 	f.LastProbed = now
 	if err != nil {
-		f.recordFailure(err)
-		f.ReconnectRequired = f.ReconnectRequired || isReconnectRequired(err)
+		f.recordError(err)
 		f.probeFailed = true
+		// A temporary failure leaves Connected as it was: a connected row is the
+		// one the pull-request cycle probes again, so disconnecting it here
+		// would leave nothing to heal it.
+		if !isTemporary(err) {
+			f.Connected = false
+			f.ReconnectRequired = f.ReconnectRequired || isReconnectRequired(err)
+		}
 		return err
 	}
 	f.Connected, f.probeFailed = true, false
@@ -351,6 +362,29 @@ func (m *Manager) recordProbe(id string, acct *forgeapi.Account, err error) erro
 		f.Email = acct.Email
 	}
 	return nil
+}
+
+// isTemporary reports whether err is a failure another attempt can outlive: a
+// dead network, a throttle, the instance's own 408 or 5xx, or an instance that
+// did not answer in time. Any other failure says the connection itself is
+// wrong. A deadline here is always the probe's own: probe runs detached from
+// its callers, so a caller leaving never reaches recordProbe.
+func isTemporary(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	fe, ok := errors.AsType[*forgeapi.Error](err)
+	if !ok {
+		return false
+	}
+	switch fe.Kind {
+	case forgeapi.KindTransient, forgeapi.KindRateLimited:
+		return true
+	case forgeapi.KindUpstream:
+		return httpx.IsRetryableStatus(fe.Status)
+	default:
+		return false
+	}
 }
 
 // errConnectionUnusable marks a record-backed connection the server cannot

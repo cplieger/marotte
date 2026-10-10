@@ -1892,13 +1892,10 @@ a.subagent-header {
   flex: 1;
 }
 
-/* Git button dot in the chat toolbar. Colours derived from data-state via
- * git-badge.ts. Priority: error > dirty > hidden. TWO hues a developer reads
- * without a legend, the same as `.git-st-*` above and VS Code's
- * gitDecoration.deletedResourceForeground / .modifiedResourceForeground: red is
- * broken, amber is modified. They are the STATE inks, never the destructive-action
- * palette --c-danger / --c-warning. Behind-origin is not a state here, so there is
- * no third hue. */
+/* Git button dot in the chat toolbar, shown by git-badge.ts when a repo is
+ * dirty or ahead. Amber is modified, as in `.git-st-*` above and VS Code's
+ * gitDecoration.modifiedResourceForeground: the STATE ink, never the
+ * destructive-action palette --c-warning. */
 .git-badge {
   position: absolute;
   /* These insets have to keep it INSIDE the button's box: the toolbar clips its
@@ -1909,14 +1906,8 @@ a.subagent-header {
   width: 0.4375rem;
   height: 0.4375rem;
   border-radius: 50%;
-  /* The `dirty` fill; `error` below is the one override, so a state that somehow
-     reaches the DOM without an arm is still visible rather than invisible. */
   background: var(--c-yellow);
   pointer-events: none;
-}
-
-.git-badge[data-state="error"] {
-  background: var(--c-red);
 }
 
 /* Makes this button the badge's containing block; nothing else positions it. */

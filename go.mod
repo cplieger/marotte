@@ -5,7 +5,6 @@ go 1.27.2
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/httpx/v5 v5.0.3 // indirect
 	github.com/cplieger/scheduler/v4 v4.2.1 // indirect
 	github.com/cplieger/urlform v1.3.5 // indirect
 	github.com/creack/pty v1.1.24 // indirect
@@ -20,6 +19,7 @@ require (
 	github.com/cplieger/envx/v2 v2.0.3
 	github.com/cplieger/envx/yamlenv/v2 v2.0.1
 	github.com/cplieger/forgeapi v1.0.2
+	github.com/cplieger/httpx/v5 v5.0.3
 	github.com/cplieger/jsoncap/v2 v2.0.1
 	github.com/cplieger/keyenc v1.0.9
 	github.com/cplieger/pathinside/v2 v2.0.1
