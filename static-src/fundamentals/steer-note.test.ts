@@ -151,6 +151,33 @@ describe("whose words the note holds", () => {
     expect(glyph(theirs)).toBeDefined();
     expect(glyph(mine)).not.toBe(glyph(theirs));
   });
+
+  // A step transcript sourced from KAS's replay holds the launching chat's send_message, which
+  // reports no result: the note names whose words they are.
+  it("names the main agent's message to a step as the main agent's, never a workflow result", () => {
+    const n = note({ text: "Weigh this design input.", origin: "parent" });
+
+    expect(n.dataset["origin"]).toBe("parent");
+    expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent");
+    expect(n.getAttribute("aria-label")).toBe(
+      "Message from the main agent: Weigh this design input.",
+    );
+  });
+
+  it("says the main agent's message was not delivered, in its own words", () => {
+    const n = note({ text: "weigh this", origin: "parent", dropped: true });
+    expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent not delivered");
+  });
+
+  it("gives the main agent's message a glyph of its own", () => {
+    const glyph = (n: HTMLElement): string | undefined =>
+      n.querySelector(".tool-icon svg path")?.getAttribute("d") ?? undefined;
+    const parent = glyph(note({ origin: "parent" }));
+
+    expect(parent).toBeDefined();
+    expect(parent).not.toBe(glyph(note()));
+    expect(parent).not.toBe(glyph(note({ origin: "agent" })));
+  });
 });
 
 describe("the message keeps its shape", () => {

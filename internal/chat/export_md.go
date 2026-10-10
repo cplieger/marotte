@@ -364,16 +364,21 @@ func writeParagraph(b *strings.Builder, text string) {
 	}
 }
 
-// steerHeading names a mid-turn message's origin and, for a user steer, whether the agent read it, so an unseen
-// correction stays distinct from the prompt.
+// steerHeading names a mid-turn message's origin and, for a user or main-agent message, whether the agent read it,
+// so an unseen correction stays distinct from the prompt.
 func steerHeading(p *marotte.EntrySteer) string {
-	if p.Origin == marotte.SteerOriginAgent {
+	who := "User"
+	switch p.Origin {
+	case marotte.SteerOriginAgent:
 		return "**Agent note**\n\n"
+	case marotte.SteerOriginParent:
+		who = "Main agent"
+	case marotte.SteerOriginUser:
 	}
 	if p.State == marotte.SteerStateDropped {
-		return "**User (mid-turn, not delivered)**\n\n"
+		return "**" + who + " (mid-turn, not delivered)**\n\n"
 	}
-	return "**User (mid-turn)**\n\n"
+	return "**" + who + " (mid-turn)**\n\n"
 }
 
 // writePlanMarkdown renders the plan as a GFM task list: completed [x], in progress [ ] with a suffix.

@@ -6,7 +6,7 @@
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_SEND, ICON_TAB_RUN } from "../icons.js";
+import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN } from "../icons.js";
 import type { SteerOrigin, SteerReason } from "../types.js";
 
 export interface SteerNoteData {
@@ -30,6 +30,10 @@ export interface SteerNoteData {
 const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
   user: { read: "Mid-turn message", dropped: "Not read" },
   agent: { read: "Workflow result", dropped: "Workflow result not delivered" },
+  parent: {
+    read: "Message from the main agent",
+    dropped: "Message from the main agent not delivered",
+  },
 };
 
 /** Drop-reason wording, TOTAL over the registered wire enum. The `Object.hasOwn` guard stays: the
@@ -41,10 +45,12 @@ const REASONS: Record<SteerReason, string> = {
 };
 
 /** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
- *  channel anyway): the composer's send arrow, or the run tab's own glyph. */
+ *  channel anyway): the composer's send arrow, the run tab's glyph, or the chat tab's
+ *  for the launching chat's message to a step. */
 const GLYPHS: Record<SteerOrigin, string> = {
   user: ICON_SEND,
   agent: ICON_TAB_RUN,
+  parent: ICON_TAB_CHAT,
 };
 
 /** Lines the body shows before the opener appears. Four rather than the turn
@@ -57,7 +63,6 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const root = el("div", {
     className: "steer-note",
     "data-state": d.dropped ? "dropped" : "read",
-    // Read by CSS, so no class has to be kept in step with the label.
     "data-origin": d.origin,
     // The full text: an accessible name has no width, and neither the glyph nor
     // the clamp carries the state on its own.

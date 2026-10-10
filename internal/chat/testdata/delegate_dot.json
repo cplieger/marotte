@@ -44,7 +44,7 @@
       "terminal": true,
       "sites": [
         "internal/chat/entrylog.go:948",
-        "internal/translate/projection_entries.go:638",
+        "internal/translate/projection_entries.go:644",
         "internal/translate/wire_enums.go:36",
         "internal/turnlog/turnlog.go:525"
       ]
@@ -131,7 +131,7 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/projection_entries.go:638",
+      "site": "internal/translate/projection_entries.go:644",
       "form": "status_field",
       "status": "aborted"
     },

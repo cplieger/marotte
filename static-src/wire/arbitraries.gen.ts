@@ -39,7 +39,7 @@ export const arbSegmentKind: fc.Arbitrary<SegmentKind> = fc.constantFrom("conten
 export const arbSettledBy: fc.Arbitrary<SettledBy> = fc.constantFrom("user", "unattended", "moot");
 export const arbSlashCommandKind: fc.Arbitrary<SlashCommandKind> = fc.constantFrom("steering", "prompt", "goal");
 export const arbSpecDocRole: fc.Arbitrary<SpecDocRole> = fc.constantFrom("requirements", "design", "tasks", "other");
-export const arbSteerOrigin: fc.Arbitrary<SteerOrigin> = fc.constantFrom("user", "agent");
+export const arbSteerOrigin: fc.Arbitrary<SteerOrigin> = fc.constantFrom("user", "agent", "parent");
 export const arbSteerReason: fc.Arbitrary<SteerReason> = fc.constantFrom("restart", "boundary", "deleted");
 export const arbSteerRowState: fc.Arbitrary<SteerRowState> = fc.constantFrom("queued", "unsent", "removed");
 export const arbSteerState: fc.Arbitrary<SteerState> = fc.constantFrom("read", "dropped");
@@ -705,7 +705,7 @@ const arbModel = fc.letrec<{
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       produced_ts: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
-    { requiredKeys: ["text", "origin", "state"] },
+    { requiredKeys: ["text", "origin"] },
   ),
   EntrySteerAck: fc.record(
     {

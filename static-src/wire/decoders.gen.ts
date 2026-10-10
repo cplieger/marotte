@@ -31,7 +31,7 @@ const SEGMENT_KINDS = ["content", "reasoning", "tool_title", "tool_disclosed", "
 const SETTLED_BYS = ["user", "unattended", "moot"] as const;
 const SLASH_COMMAND_KINDS = ["steering", "prompt", "goal"] as const;
 const SPEC_DOC_ROLES = ["requirements", "design", "tasks", "other"] as const;
-const STEER_ORIGINS = ["user", "agent"] as const;
+const STEER_ORIGINS = ["user", "agent", "parent"] as const;
 const STEER_REASONS = ["restart", "boundary", "deleted"] as const;
 const STEER_ROW_STATES = ["queued", "unsent", "removed"] as const;
 const STEER_STATES = ["read", "dropped"] as const;
@@ -615,8 +615,8 @@ export const decodeEntrySteer: Decoder<EntrySteer> = (v) => {
   const out: EntrySteer = {
     text: reqStr(o, "text", "$.entry_steer"),
     origin: reqOneOf(o, "origin", STEER_ORIGINS, "$.entry_steer"),
-    state: reqOneOf(o, "state", STEER_STATES, "$.entry_steer"),
   };
+  if (o["state"] !== undefined && o["state"] !== null) out.state = reqOneOf(o, "state", STEER_STATES, "$.entry_steer");
   if (o["reason"] !== undefined && o["reason"] !== null) out.reason = reqOneOf(o, "reason", STEER_REASONS, "$.entry_steer");
   const severity = o["severity"] === null ? undefined : optStr(o, "severity", "$.entry_steer");
   if (severity !== undefined) out.severity = severity;

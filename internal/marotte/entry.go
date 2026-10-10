@@ -240,17 +240,17 @@ const (
 )
 
 // EntrySteer is the steer payload. Text is the bare text, the `[notification/<sev>]`
-// prefix stripped. Severity is KAS's vocabulary (`info`, `success`, `warning`,
-// `error`), present on an agent-origin note only. OriginRun and ProducedTs are the
-// provenance of a note a finished run left: the run's id and when it finished, so a
-// note read long after the fact can say so. Absent on a user steer and on a step's
-// mid-run note. ProducedTs labels; it never orders. Resends names the steer rows (dock
-// keys) this one re-sends under its own id, taken from the steer record at the read;
-// the projection never synthesises it, so the merge keeps the record's.
+// prefix stripped. Severity is KAS's vocabulary (`info`, `success`, `warning`, `error`),
+// present on a note (a KAS notification or marotte's run note), never on a user steer.
+// State is absent on a replay-projected steer no merge stamped. OriginRun and ProducedTs
+// name the run that left a note and when it finished, so a late read can say so; absent
+// on a user steer and a step's mid-run note. ProducedTs labels; it never orders. Resends
+// names the steer rows (dock keys) this one re-sends under its own id, taken from the
+// steer record at the read; the projection never synthesises it, so the merge keeps it.
 type EntrySteer struct {
 	Text       string      `json:"text"`
 	Origin     SteerOrigin `json:"origin"`
-	State      SteerState  `json:"state"`
+	State      SteerState  `json:"state,omitempty"`
 	Reason     SteerReason `json:"reason,omitempty"`
 	Severity   string      `json:"severity,omitempty"`
 	OriginRun  string      `json:"origin_run,omitempty"`

@@ -9,21 +9,21 @@
     "`triples` is SCANNED from the producers, never listed: the scan walks every non-test",
     "Go file under internal/, resolves each marotte.EntrySteer construction and mutation",
     "against internal/marotte's own constants, and expands an origin that comes from data",
-    "to both members of the closed enum. `sites` is the scan's own evidence, so a NEW",
+    "to every member of the closed enum. `sites` is the scan's own evidence, so a NEW",
     "producer moves this golden and the fixture has to be read before it is regenerated.",
     "",
     "`label` is the SERVER's statement of the client's words (parts joined with ' · ');",
     "the reason clause is worded only on a dropped row, which is labelFor's own rule.",
-    "steer-label-contract.test.ts renders every `compared` row through buildSteerNote in",
-    "chromium and asserts the label matches.",
+    "steer-label-contract.test.ts renders every row through buildSteerNote in chromium",
+    "and asserts the label matches.",
     "",
-    "ONE DECLARED EDGE, carried as `compared: false` with its reason: the replay",
-    "projection leaves State unset, and no client reader sees that value — the merge",
-    "stamps dropped/restart on a projected steer the record never held before any reader",
-    "is served. Asserting a label for it would assert a render that cannot happen."
+    "An unset state is the replay projection's: a chat's merge stamps it dropped/restart,",
+    "but a step transcript read from KAS's replay serves it as is, and the client renders",
+    "anything but dropped as the read note, so the row carries the read label."
   ],
   "origins": [
     "agent",
+    "parent",
     "user"
   ],
   "states": [
@@ -36,7 +36,6 @@
       "state": "dropped",
       "reason": "boundary",
       "label": "Workflow result not delivered · the turn ended first",
-      "compared": true,
       "sites": [
         "internal/translate/steering.go:101",
         "internal/translate/steering.go:110"
@@ -47,7 +46,6 @@
       "state": "dropped",
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
-      "compared": true,
       "sites": [
         "internal/agent/bridge_coord.go:1193",
         "internal/agent/entry_merge.go:565",
@@ -59,7 +57,6 @@
       "state": "read",
       "reason": "",
       "label": "Workflow result",
-      "compared": true,
       "sites": [
         "internal/agent/run_appender.go:91",
         "internal/agent/run_bounds.go:352",
@@ -71,11 +68,46 @@
       "origin": "agent",
       "state": "",
       "reason": "",
-      "label": "",
-      "compared": false,
-      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "label": "Workflow result",
       "sites": [
-        "internal/translate/projection_entries.go:216"
+        "internal/translate/projection_entries.go:218"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Message from the main agent not delivered · the turn ended first",
+      "sites": [
+        "internal/translate/steering.go:101"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Message from the main agent not delivered · the session restarted",
+      "sites": [
+        "internal/agent/entry_merge.go:565"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "read",
+      "reason": "",
+      "label": "Message from the main agent",
+      "sites": [
+        "internal/translate/steering.go:165",
+        "internal/translate/steering.go:82"
+      ]
+    },
+    {
+      "origin": "parent",
+      "state": "",
+      "reason": "",
+      "label": "Message from the main agent",
+      "sites": [
+        "internal/translate/projection_entries.go:218"
       ]
     },
     {
@@ -83,7 +115,6 @@
       "state": "dropped",
       "reason": "boundary",
       "label": "Not read · the turn ended first",
-      "compared": true,
       "sites": [
         "internal/agent/command_chat_ops.go:61",
         "internal/translate/steering.go:101"
@@ -94,7 +125,6 @@
       "state": "dropped",
       "reason": "deleted",
       "label": "Not read · you deleted it",
-      "compared": true,
       "sites": [
         "internal/agent/steer_buffer.go:298"
       ]
@@ -104,7 +134,6 @@
       "state": "dropped",
       "reason": "restart",
       "label": "Not read · the session restarted",
-      "compared": true,
       "sites": [
         "internal/agent/entry_merge.go:565",
         "internal/agent/runtime.go:693"
@@ -115,7 +144,6 @@
       "state": "read",
       "reason": "",
       "label": "Mid-turn message",
-      "compared": true,
       "sites": [
         "internal/translate/steering.go:165",
         "internal/translate/steering.go:82"
@@ -125,11 +153,9 @@
       "origin": "user",
       "state": "",
       "reason": "",
-      "label": "",
-      "compared": false,
-      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "label": "Mid-turn message",
       "sites": [
-        "internal/translate/projection_entries.go:216"
+        "internal/translate/projection_entries.go:218"
       ]
     }
   ],
@@ -191,7 +217,7 @@
       "reason": "deleted"
     },
     {
-      "site": "internal/translate/projection_entries.go:216",
+      "site": "internal/translate/projection_entries.go:218",
       "form": "literal",
       "origin": "",
       "state": "",

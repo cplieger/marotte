@@ -28,7 +28,11 @@ type kasSessionNotify struct {
 	Sender string `json:"sender"`
 }
 
-const senderStep = "step"
+// KAS's send_message roles, on the notify frame and on the row it persists.
+const (
+	senderStep   = "step"
+	senderParent = "parent"
+)
 
 // severityWarning is the ONE severity that parks a run (KAS maps it to `need_input`); the
 // others leave nobody waiting.

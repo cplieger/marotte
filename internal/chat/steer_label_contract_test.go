@@ -17,7 +17,7 @@ import (
 // steerLabelFixture is testdata/steer_label.json: every (origin, state, reason) triple production can stamp on a steer
 // entry, with the client's words for it. The triples are scanned from producers, not listed: a hand list was already
 // two sites short. Each marotte.EntrySteer construction or mutation under internal/ is resolved against internal/marotte's
-// constants; a data-driven origin expands to both members, and an unresolvable state or reason stops the test. The
+// constants; a data-driven origin expands to every member, and an unresolvable state or reason stops the test. The
 // labels are this side's contract; steer-label-contract.test.ts renders each row through buildSteerNote and compares.
 type steerLabelFixture struct {
 	Comment []string         `json:"_comment"`
@@ -27,15 +27,13 @@ type steerLabelFixture struct {
 	Sites   []steerLabelSite `json:"sites"`
 }
 
-// steerLabelRow is one producible triple. Compared is false for a triple no client reader sees; Edge says why.
+// steerLabelRow is one producible triple and the words the client renders for it.
 type steerLabelRow struct {
-	Origin   string   `json:"origin"`
-	State    string   `json:"state"`
-	Reason   string   `json:"reason"`
-	Label    string   `json:"label"`
-	Compared bool     `json:"compared"`
-	Edge     string   `json:"edge,omitempty"`
-	Sites    []string `json:"sites"`
+	Origin string   `json:"origin"`
+	State  string   `json:"state"`
+	Reason string   `json:"reason"`
+	Label  string   `json:"label"`
+	Sites  []string `json:"sites"`
 }
 
 // steerLabelSite is one producer, at the path a failure should name.
@@ -57,18 +55,17 @@ var steerLabelFixtureComment = []string{
 	"`triples` is SCANNED from the producers, never listed: the scan walks every non-test",
 	"Go file under internal/, resolves each marotte.EntrySteer construction and mutation",
 	"against internal/marotte's own constants, and expands an origin that comes from data",
-	"to both members of the closed enum. `sites` is the scan's own evidence, so a NEW",
+	"to every member of the closed enum. `sites` is the scan's own evidence, so a NEW",
 	"producer moves this golden and the fixture has to be read before it is regenerated.",
 	"",
 	"`label` is the SERVER's statement of the client's words (parts joined with ' · ');",
 	"the reason clause is worded only on a dropped row, which is labelFor's own rule.",
-	"steer-label-contract.test.ts renders every `compared` row through buildSteerNote in",
-	"chromium and asserts the label matches.",
+	"steer-label-contract.test.ts renders every row through buildSteerNote in chromium",
+	"and asserts the label matches.",
 	"",
-	"ONE DECLARED EDGE, carried as `compared: false` with its reason: the replay",
-	"projection leaves State unset, and no client reader sees that value — the merge",
-	"stamps dropped/restart on a projected steer the record never held before any reader",
-	"is served. Asserting a label for it would assert a render that cannot happen.",
+	"An unset state is the replay projection's: a chat's merge stamps it dropped/restart,",
+	"but a step transcript read from KAS's replay serves it as is, and the client renders",
+	"anything but dropped as the read note, so the row carries the read label.",
 }
 
 // steerLabels is the base label per (origin, state), the client's contract, total over both enums: a triple with no
@@ -82,6 +79,10 @@ var steerLabels = map[marotte.SteerOrigin]map[marotte.SteerState]string{
 		marotte.SteerStateRead:    "Workflow result",
 		marotte.SteerStateDropped: "Workflow result not delivered",
 	},
+	marotte.SteerOriginParent: {
+		marotte.SteerStateRead:    "Message from the main agent",
+		marotte.SteerStateDropped: "Message from the main agent not delivered",
+	},
 }
 
 // steerReasonClauses is the wording for each reason a producer writes, which the client's REASONS table must match.
@@ -91,17 +92,13 @@ var steerReasonClauses = map[marotte.SteerReason]string{
 	marotte.SteerReasonDeleted:  "you deleted it",
 }
 
-// steerProjectionEdge is the one triple no client reader can see.
-const steerProjectionEdge = "the replay projection's unset state: the merge stamps " +
-	"dropped/restart before any reader is served, so no render exists to pin"
-
 func TestSteerLabelContract(t *testing.T) {
 	consts := steerPackageConsts(t)
 	origins := steerEnumMembers(t, consts, "SteerOrigin")
 	states := steerEnumMembers(t, consts, "SteerState")
-	if strings.Join(origins, ",") != "agent,user" {
+	if strings.Join(origins, ",") != "agent,parent,user" {
 		t.Fatalf("SteerOrigin membership moved to %v; the fixture and its client reader "+
-			"cover the two it had, so extend both before regenerating", origins)
+			"cover the three it had, so extend both before regenerating", origins)
 	}
 	if strings.Join(states, ",") != "dropped,read" {
 		t.Fatalf("SteerState membership moved to %v; the fixture and its client reader "+
@@ -140,12 +137,6 @@ func TestSteerLabelContract(t *testing.T) {
 		row := rows[key]
 		sort.Strings(row.Sites)
 		row.Sites = steerDedupe(row.Sites)
-		if row.State == "" {
-			row.Compared = false
-			row.Edge = steerProjectionEdge
-			fx.Triples = append(fx.Triples, *row)
-			continue
-		}
 		label, ok := steerLabelFor(row.Origin, row.State, row.Reason)
 		if !ok {
 			t.Errorf("producible triple (%s, %s, reason %q) from %v has no contract "+
@@ -154,7 +145,6 @@ func TestSteerLabelContract(t *testing.T) {
 			continue
 		}
 		row.Label = label
-		row.Compared = true
 		fx.Triples = append(fx.Triples, *row)
 	}
 
@@ -163,11 +153,14 @@ func TestSteerLabelContract(t *testing.T) {
 }
 
 // steerLabelFor is the contract: the base label, plus the reason clause on a dropped row only; false where no words
-// exist.
+// exist. An unset state takes the read label, as labelFor words every row that is not dropped.
 func steerLabelFor(origin, state, reason string) (string, bool) {
 	byState, ok := steerLabels[marotte.SteerOrigin(origin)]
 	if !ok {
 		return "", false
+	}
+	if state == "" {
+		state = string(marotte.SteerStateRead)
 	}
 	base, ok := byState[marotte.SteerState(state)]
 	if !ok {
@@ -183,18 +176,15 @@ func steerLabelFor(origin, state, reason string) (string, bool) {
 	return base + " · " + clause, true
 }
 
-// steerAssertNonTautological refuses a fixture a constant reader could satisfy: both states, both origins, a reason
-// clause and a bare row must occur among compared rows, each with words.
+// steerAssertNonTautological refuses a fixture a constant reader could satisfy: every state, every origin, a reason
+// clause and a bare row must occur, each with words.
 func steerAssertNonTautological(t *testing.T, rows []steerLabelRow, origins, states []string) {
 	t.Helper()
 	pairs := map[string]bool{}
 	reasoned, bare := 0, 0
 	for _, r := range rows {
-		if !r.Compared {
-			continue
-		}
 		if r.Label == "" {
-			t.Errorf("compared triple (%s, %s, reason %q) carries no label", r.Origin, r.State, r.Reason)
+			t.Errorf("triple (%s, %s, reason %q) carries no label", r.Origin, r.State, r.Reason)
 		}
 		pairs[r.Origin+"|"+r.State] = true
 		if r.Reason == "" {
@@ -206,18 +196,18 @@ func steerAssertNonTautological(t *testing.T, rows []steerLabelRow, origins, sta
 	for _, o := range origins {
 		for _, s := range states {
 			if !pairs[o+"|"+s] {
-				t.Errorf("no compared triple for (%s, %s); the label table is total over "+
+				t.Errorf("no triple for (%s, %s); the label table is total over "+
 					"the enums, so a missing pair means the scan lost a producer", o, s)
 			}
 		}
 	}
 	if reasoned == 0 || bare == 0 {
-		t.Errorf("compared rows carry %d reasoned and %d bare; both must occur or the "+
+		t.Errorf("rows carry %d reasoned and %d bare; both must occur or the "+
 			"client reader cannot tell a worded clause from a missing one", reasoned, bare)
 	}
 }
 
-// steerSiteOrigins expands a site's origin: the stated one, or both members where it comes from data, as every
+// steerSiteOrigins expands a site's origin: the stated one, or every member where it comes from data, as every
 // unresolved site reads it off a payload or id.
 func steerSiteOrigins(s steerLabelSite, origins []string) []string {
 	if s.Origin != "" {

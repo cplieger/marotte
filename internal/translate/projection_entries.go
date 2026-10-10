@@ -98,6 +98,7 @@ type EntryProjection struct {
 	userID       string
 	userText     string
 	userSeverity string
+	userSender   string
 	facts        projectedFacts
 	userTs       int64
 	// promptTs is the pending prompt's own timestamp, held beside it because flushUser
@@ -185,6 +186,7 @@ func (p *EntryProjection) ingestUserText(raw json.RawMessage) {
 		p.userTs = replayTS(c.Meta.Kiro.Timestamp)
 		p.userSteer = c.Meta.Kiro.Source == replaySteerSource
 		p.userSeverity = c.Meta.Kiro.Notification.Status
+		p.userSender = c.Meta.Kiro.Notification.Sender
 	}
 	p.userText += c.Content.Text
 	p.userPending = true
@@ -197,8 +199,8 @@ func (p *EntryProjection) flushUser() {
 		return
 	}
 	text, id, ts := p.userText, p.userID, p.userTs
-	steer, severity := p.userSteer, p.userSeverity
-	p.userText, p.userID, p.userTs, p.userSeverity = "", "", 0, ""
+	steer, severity, sender := p.userSteer, p.userSeverity, p.userSender
+	p.userText, p.userID, p.userTs, p.userSeverity, p.userSender = "", "", 0, "", ""
 	p.userSteer, p.userPending = false, false
 	// The empty steering-boundary row, which says nothing and opens nothing.
 	if text == "" {
@@ -215,18 +217,22 @@ func (p *EntryProjection) flushUser() {
 	// state stays empty; a steer with no record twin is stamped `dropped, restart` by the merge.
 	p.appendEntry(marotte.EntryKindSteer, id, "", ts, marotte.EntrySteer{
 		Text:     text,
-		Origin:   projectedSteerOrigin(id),
+		Origin:   projectedSteerOrigin(id, sender),
 		Severity: severity,
 	})
 }
 
-// projectedSteerOrigin is a replayed steer's origin from its id alone (`steer-` is the
-// reader's); the merge takes the record's origin where it has one.
-func projectedSteerOrigin(id string) marotte.SteerOrigin {
-	if strings.HasPrefix(id, marotte.SteerIDPrefix) {
+// projectedSteerOrigin is a replayed steer's origin from its id (`steer-` is the reader's) and
+// KAS's send_message sender; the merge takes the record's origin where it has one.
+func projectedSteerOrigin(id, sender string) marotte.SteerOrigin {
+	switch {
+	case strings.HasPrefix(id, marotte.SteerIDPrefix):
 		return marotte.SteerOriginUser
+	case sender == senderParent:
+		return marotte.SteerOriginParent
+	default:
+		return marotte.SteerOriginAgent
 	}
-	return marotte.SteerOriginAgent
 }
 
 func (p *EntryProjection) ingestAgentText(raw json.RawMessage, kind marotte.EntryKind) {

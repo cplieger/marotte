@@ -13,8 +13,6 @@ interface LabelRow {
   state: string;
   reason: string;
   label: string;
-  compared: boolean;
-  edge?: string;
   sites: string[];
 }
 
@@ -31,7 +29,8 @@ const fixture = JSON.parse(goldenRaw) as LabelFixture;
 const SEPARATOR = " \u00b7 ";
 
 /** The note the server's triple describes, built the way mountSteerNote builds one: `dropped` is
- *  `state === "dropped"` and `reason` is present only when the entry has one. */
+ *  `state === "dropped"` and `reason` is present only when the entry has one. An unset state is
+ *  therefore the read note. */
 function noteFor(row: LabelRow): HTMLElement {
   const data: SteerNoteData = {
     text: "the words of the steer",
@@ -56,17 +55,16 @@ function labelOf(note: HTMLElement): string {
 }
 
 describe("the steer label contract shared with the Go implementation", () => {
-  const compared = fixture.triples.filter((r) => r.compared);
+  const rows = fixture.triples;
 
-  it("reads a fixture with both origins, both states and at least one declared edge", () => {
-    expect(fixture.origins).toEqual(["agent", "user"]);
+  it("reads a fixture with every origin, both states and an unset-state row", () => {
+    expect(fixture.origins).toEqual(["agent", "parent", "user"]);
     expect(fixture.states).toEqual(["dropped", "read"]);
-    expect(compared.length).toBeGreaterThan(0);
-    expect(fixture.triples.length).toBeGreaterThan(compared.length);
+    expect(rows.some((r) => r.state === "")).toBe(true);
   });
 
   it("covers every (origin, state) pair the server's own enums admit", () => {
-    const pairs = new Set(compared.map((r) => `${r.origin}|${r.state}`));
+    const pairs = new Set(rows.map((r) => `${r.origin}|${r.state}`));
     for (const origin of fixture.origins) {
       for (const state of fixture.states) {
         expect(pairs.has(`${origin}|${state}`)).toBe(true);
@@ -77,7 +75,7 @@ describe("the steer label contract shared with the Go implementation", () => {
   // EVERY dropped row carries a reason now, so there is no bare dropped row left to diff a clause
   // against.
   it("exercises the drop-reason clause, so the wording table is pinned rather than unread", () => {
-    const reasoned = compared.filter((r) => r.reason !== "");
+    const reasoned = rows.filter((r) => r.reason !== "");
     expect(reasoned.length).toBeGreaterThan(0);
     const clauses = new Map<string, Set<string>>();
     for (const row of reasoned) {
@@ -98,19 +96,12 @@ describe("the steer label contract shared with the Go implementation", () => {
     }
   });
 
-  for (const row of fixture.triples) {
-    if (!row.compared) {
-      it(`declares (${row.origin}, ${row.state || "unset"}) out of the comparison with a reason`, () => {
-        expect(row.edge).toBeTruthy();
-        expect(row.label).toBe("");
-      });
-      continue;
-    }
-    it(`(${row.origin}, ${row.state}, reason ${row.reason || "none"}) words as ${row.label}`, () => {
+  for (const row of rows) {
+    it(`(${row.origin}, ${row.state || "unset"}, reason ${row.reason || "none"}) words as ${row.label}`, () => {
       const note = noteFor(row);
       expect(labelOf(note)).toBe(row.label);
       expect(note.getAttribute("data-origin")).toBe(row.origin);
-      expect(note.getAttribute("data-state")).toBe(row.state);
+      expect(note.getAttribute("data-state")).toBe(row.state === "dropped" ? "dropped" : "read");
       expect(note.getAttribute("aria-label")).toBe(`${row.label}: the words of the steer`);
     });
   }
