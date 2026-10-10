@@ -1,6 +1,7 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
@@ -17,6 +18,8 @@ let responses: (
       workflowName?: string;
       /** The reply's top-level `step_ends`, moved off the state when the mock answers. */
       stepEnds?: Record<string, { outcome: string; failure_reason?: string }>;
+      /** The reply's top-level `step_starts`, likewise. */
+      stepStarts?: Record<string, { started_at: string; ended: boolean }>;
     }
   | undefined
 )[] = [];
@@ -42,7 +45,7 @@ vi.mock("./api-client.js", () => ({
     if (state === undefined) {
       return { ok: false, status: failStatuses.shift() ?? 502, data: null, error: "" };
     }
-    const { stepEnds, ...kasState } = state;
+    const { stepEnds, stepStarts, ...kasState } = state;
     return {
       ok: true,
       status: 200,
@@ -50,6 +53,7 @@ vi.mock("./api-client.js", () => ({
         workflowId: state.workflowId,
         state: kasState,
         ...(stepEnds === undefined ? {} : { step_ends: stepEnds }),
+        ...(stepStarts === undefined ? {} : { step_starts: stepStarts }),
       },
       error: "",
     };
@@ -188,6 +192,207 @@ describe("the reply's step ends travel beside the state", () => {
     store.invalidateRun("r1");
     await settle();
     expect(store.runStepEnds("r1").size).toBe(0);
+  });
+});
+
+// KAS restamps a node's `startedAt` each time it re-enters it, so after a pause and a resume its own
+// stamp would restart every clock on the run at zero. The run log's attempt start does not move.
+describe("a node's start is its attempt's, from the run log", () => {
+  const BUILD = nodePathKey(["r1", "build"]);
+  const OPENED = "2026-03-04T05:00:00Z";
+  const RESUMED = "2026-03-04T05:30:00Z";
+
+  function runWith(build: RunNode, logStart?: { started_at: string; ended: boolean }) {
+    return {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "r1",
+        type: "sequence",
+        status: "running",
+        startedAt: RESUMED,
+        children: [build],
+      },
+      ...(logStart === undefined ? {} : { stepStarts: { [BUILD]: logStart } }),
+    };
+  }
+
+  async function read(build: RunNode, logStart?: { started_at: string; ended: boolean }) {
+    responses = [runWith(build, logStart)];
+    store.invalidateRun("r1");
+    await settle();
+    return store.peekRunState("r1")?.root;
+  }
+
+  it("keeps a resumed step's start at its attempt's open", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("keeps KAS's stamp on a leaf the log holds no attempt for", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }));
+    expect(root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("keeps a step that finished after a resume at its attempt's open", async () => {
+    const root = await read(
+      step("build", { status: "completed", startedAt: RESUMED, endedAt: "2026-03-04T06:00:00Z" }),
+      { started_at: OPENED, ended: true },
+    );
+    expect(root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("takes KAS's start for a step in flight past an ended attempt, which is a retry", async () => {
+    const root = await read(step("build", { status: "running", startedAt: RESUMED }), {
+      started_at: OPENED,
+      ended: true,
+    });
+    expect(root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("gives a step KAS has not started no start", async () => {
+    const root = await read(step("build"), { started_at: OPENED, ended: true });
+    expect(root?.children?.[0]?.startedAt).toBeUndefined();
+  });
+
+  it("joins a resume's node_start frame like a read", async () => {
+    await read(step("build", { status: "paused", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    const build = store.peekRunState("r1")?.root?.children?.[0];
+    expect(build?.status).toBe("running");
+    expect(build?.startedAt).toBe(OPENED);
+  });
+
+  it("takes a retry's node_start frame start past an ended attempt", async () => {
+    await read(step("build", { status: "failed", startedAt: OPENED, endedAt: OPENED }), {
+      started_at: OPENED,
+      ended: true,
+    });
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("takes a retry's start after a landed node_complete, with no read between them", async () => {
+    await read(step("build", { status: "running", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "failed",
+        ended_at: "2026-03-04T05:10:00Z",
+      }),
+    ).toBe(true);
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+    expect(fetches).toHaveLength(1);
+  });
+
+  it("ends an attempt on a node_complete whose status word this client does not know", async () => {
+    await read(step("build", { status: "running", startedAt: OPENED }), {
+      started_at: OPENED,
+      ended: false,
+    });
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "future-terminal",
+        ended_at: "2026-03-04T05:10:00Z",
+      }),
+    ).toBe(true);
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: ["r1", "build"],
+      status: "running",
+      started_at: RESUMED,
+    });
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(RESUMED);
+  });
+
+  it("keeps a step opened by a frame at that frame's start when a later frame resumes it", async () => {
+    await read(step("build"));
+    const LATER = "2026-03-04T06:00:00Z";
+    for (const at of [OPENED, LATER]) {
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: ["r1", "build"],
+        status: "running",
+        started_at: at,
+      });
+    }
+    expect(store.peekRunState("r1")?.root?.children?.[0]?.startedAt).toBe(OPENED);
+  });
+
+  it("starts a repeat's pass, which the log holds no attempt for, at its earliest child's", async () => {
+    const CODE = nodePathKey(["r1", "loop", "iter-0", "code"]);
+    responses = [
+      {
+        workflowId: "r1",
+        status: "running",
+        root: {
+          nodeId: "r1",
+          type: "sequence",
+          status: "running",
+          startedAt: RESUMED,
+          children: [
+            {
+              nodeId: "loop",
+              type: "repeat",
+              status: "running",
+              startedAt: RESUMED,
+              children: [
+                {
+                  nodeId: "iter-0",
+                  type: "iteration",
+                  status: "running",
+                  iteration: 0,
+                  startedAt: RESUMED,
+                  children: [step("code", { status: "running", startedAt: RESUMED })],
+                },
+              ],
+            },
+          ],
+        },
+        stepStarts: {
+          [nodePathKey(["r1", "loop"])]: { started_at: "2026-03-04T04:59:59.5Z", ended: false },
+          [CODE]: { started_at: "2026-03-04T05:00:00.000000001Z", ended: false },
+        },
+      },
+    ];
+    store.invalidateRun("r1");
+    await settle();
+    const root = store.peekRunState("r1")?.root;
+    const loop = root?.children?.[0];
+    const pass = loop?.children?.[0];
+    expect(pass?.children?.[0]?.startedAt).toBe("2026-03-04T05:00:00.000000001Z");
+    expect(pass?.startedAt).toBe("2026-03-04T05:00:00.000000001Z");
+    // A logged container keeps the log's own start, not its child's.
+    expect(loop?.startedAt).toBe("2026-03-04T04:59:59.5Z");
+    expect(root?.startedAt).toBe("2026-03-04T04:59:59.5Z");
   });
 });
 

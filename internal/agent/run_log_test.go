@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
@@ -363,6 +365,123 @@ func TestRunLog_StepEndsNamesTheStepsWhoseNewestTurnClosedBroken(t *testing.T) {
 		got, err := newRunLog(t.TempDir()).StepEnds(t.Context(), "wf1")
 		if err != nil || got != nil {
 			t.Errorf("StepEnds with no log = %+v, %v, want nil, nil", got, err)
+		}
+	})
+}
+
+// openStepTurn opens the step's turn and answers its turn_open, which must be a new one.
+func openStepTurn(t *testing.T, r *runLog, path string) *marotte.Entry {
+	t.Helper()
+	_, opened, err := r.Open(t.Context(), translate.RunStep{RunID: "wf1", NodePath: path}, "c-1")
+	if err != nil || opened == nil {
+		t.Fatalf("Open(%s) = %v, %v; want a new turn_open", path, opened, err)
+	}
+	return opened
+}
+
+// startOf is the RunStepStart a turn_open names.
+func startOf(e *marotte.Entry, ended bool) marotte.RunStepStart {
+	return marotte.RunStepStart{StartedAt: time.UnixMilli(e.Ts).UTC().Format(time.RFC3339Nano), Ended: ended}
+}
+
+// assertStarts checks the registry's answer against want.
+func assertStarts(t *testing.T, r *runLog, path string, want marotte.RunStepStart) {
+	t.Helper()
+	got, err := r.StepStarts(t.Context(), "wf1")
+	if err != nil {
+		t.Fatalf("StepStarts: %v", err)
+	}
+	if got[path] != want || len(got) != 1 {
+		t.Errorf("StepStarts = %+v, want only %s = %+v", got, path, want)
+	}
+}
+
+// assertScannedStarts checks that a fresh registry's scan of the log agrees with want. Last in a case: opening the
+// log closes the live registry's open turns as unterminated.
+func assertScannedStarts(t *testing.T, r *runLog, path string, want marotte.RunStepStart) {
+	t.Helper()
+	assertStarts(t, newRunLog(filepath.Dir(r.root)), path, want)
+}
+
+// TestRunLog_StepStartsKeepsAnAttemptAcrossAResume pins that a node's attempt starts at its first turn_open: KAS
+// restamps startedAt when it resumes a node, and a reader's clock would restart from that.
+func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	t.Run("a resume's node_start on the open turn keeps its start", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			first := openStepTurn(t, r, step)
+			assertStarts(t, r, step, startOf(first, false))
+			time.Sleep(time.Minute)
+			if _, opened, err := r.Open(t.Context(), translate.RunStep{RunID: "wf1", NodePath: step}, "c-1"); err != nil || opened != nil {
+				t.Fatalf("the resume's Open = %v, %v; want the open turn reused", opened, err)
+			}
+			assertStarts(t, r, step, startOf(first, false))
+			assertScannedStarts(t, r, step, startOf(first, false))
+		})
+	})
+	t.Run("the turn after an interruption continues the attempt", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			first := openStepTurn(t, r, step)
+			assertStarts(t, r, step, startOf(first, false))
+			time.Sleep(time.Minute)
+			if _, err := r.CloseHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+				t.Fatal(err)
+			}
+			assertStarts(t, r, step, startOf(first, false))
+			time.Sleep(time.Minute)
+			openStepTurn(t, r, step)
+			assertStarts(t, r, step, startOf(first, false))
+			assertScannedStarts(t, r, step, startOf(first, false))
+		})
+	})
+	t.Run("a restart's unterminated turn is continued by the resume's turn", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dir := t.TempDir()
+			first := openStepTurn(t, newRunLog(dir), step)
+			time.Sleep(time.Minute)
+			restarted := newRunLog(dir)
+			openStepTurn(t, restarted, step)
+			assertStarts(t, restarted, step, startOf(first, false))
+		})
+	})
+	t.Run("a turn after an ended one starts a new attempt", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			first := openStepTurn(t, r, step)
+			assertStarts(t, r, step, startOf(first, false))
+			if _, _, err := r.CloseNode(t.Context(), "wf1", step, "failed", ""); err != nil {
+				t.Fatal(err)
+			}
+			assertStarts(t, r, step, startOf(first, true))
+			time.Sleep(time.Minute)
+			retry := openStepTurn(t, r, step)
+			assertStarts(t, r, step, startOf(retry, false))
+			if _, _, err := r.CloseNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+				t.Fatal(err)
+			}
+			assertStarts(t, r, step, startOf(retry, true))
+			assertScannedStarts(t, r, step, startOf(retry, true))
+		})
+	})
+	t.Run("a fresh registry's step-ends read scans the starts too", func(t *testing.T) {
+		dir := t.TempDir()
+		w := newRunLog(dir)
+		first := openStepTurn(t, w, step)
+		if _, _, err := w.CloseNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+			t.Fatal(err)
+		}
+		r := newRunLog(dir)
+		if _, err := r.StepEnds(t.Context(), "wf1"); err != nil {
+			t.Fatalf("StepEnds: %v", err)
+		}
+		assertStarts(t, r, step, startOf(first, true))
+	})
+	t.Run("a run with no log answers nothing", func(t *testing.T) {
+		got, err := newRunLog(t.TempDir()).StepStarts(t.Context(), "wf1")
+		if err != nil || got != nil {
+			t.Errorf("StepStarts with no log = %+v, %v, want nil, nil", got, err)
 		}
 	})
 }

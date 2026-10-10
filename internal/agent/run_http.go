@@ -64,17 +64,23 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	// verbatim and the ask travels on `run_input_needed`.
 	rr.runs.reconcileNeedInput(r.Context(), id, raw)
 	var ends map[string]marotte.RunStepEnd
+	var starts map[string]marotte.RunStepStart
 	if rr.runs.log != nil {
 		ends, err = rr.runs.log.StepEnds(r.Context(), id)
 		if err != nil {
 			slog.Warn("workflow inspect: the run log's step ends could not be read",
 				"workflow_id", logsafe.Field(id), "error", err)
 		}
+		starts, err = rr.runs.log.StepStarts(r.Context(), id)
+		if err != nil {
+			slog.Warn("workflow inspect: the run log's step starts could not be read",
+				"workflow_id", logsafe.Field(id), "error", err)
+		}
 	}
 	// After the reconcile, which mints the restart-recovered ask.
-	out, err := withRunLogFacts(raw, rr.runs.asks.SnapshotRun(id), ends)
+	out, err := withRunLogFacts(raw, rr.runs.asks.SnapshotRun(id), ends, starts)
 	if err != nil {
-		slog.Warn("workflow inspect: the reply could not carry the run's open asks and step ends",
+		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends and step starts",
 			"workflow_id", logsafe.Field(id), "error", err)
 		httpreply.WriteRawJSON(w, raw)
 		return
@@ -82,10 +88,12 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, out)
 }
 
-// withRunLogFacts splices the top-level `open_asks` and `step_ends` keys into KAS's reply, decoding to raw values
-// so future keys survive and nested values stay byte-identical. Never null: an agent could not tell "none" from
-// "unsupported".
-func withRunLogFacts(raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[string]marotte.RunStepEnd) (json.RawMessage, error) {
+// withRunLogFacts splices the top-level `open_asks`, `step_ends` and `step_starts` keys into KAS's reply, decoding
+// to raw values so future keys survive and nested values stay byte-identical. Never null: an agent could not tell
+// "none" from "unsupported".
+func withRunLogFacts(
+	raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[string]marotte.RunStepEnd, starts map[string]marotte.RunStepStart,
+) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
@@ -96,6 +104,9 @@ func withRunLogFacts(raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[st
 	if ends == nil {
 		ends = map[string]marotte.RunStepEnd{}
 	}
+	if starts == nil {
+		starts = map[string]marotte.RunStepStart{}
+	}
 	encodedAsks, err := json.Marshal(asks)
 	if err != nil {
 		return nil, err
@@ -104,11 +115,16 @@ func withRunLogFacts(raw json.RawMessage, asks []marotte.RunOpenAsk, ends map[st
 	if err != nil {
 		return nil, err
 	}
+	encodedStarts, err := json.Marshal(starts)
+	if err != nil {
+		return nil, err
+	}
 	if obj == nil {
-		obj = make(map[string]json.RawMessage, 2)
+		obj = make(map[string]json.RawMessage, 3)
 	}
 	obj["open_asks"] = encodedAsks
 	obj["step_ends"] = encodedEnds
+	obj["step_starts"] = encodedStarts
 	return json.Marshal(obj)
 }
 

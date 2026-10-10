@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/ids"
@@ -71,7 +72,9 @@ type runRecord struct {
 	closed map[string]string
 	// ends is each path whose newest turn closed broken, nil until a read scans the log; every close then keeps it current.
 	ends map[string]marotte.RunStepEnd
-	host marotte.ChatID
+	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
+	starts map[string]stepAttempt
+	host   marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -360,6 +363,9 @@ func (r *runLog) Open(ctx context.Context, step translate.RunStep, chatID marott
 	t := &runTurn{path: nodePath, nodeID: step.NodeID, session: step.SessionID}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	rec.open[nodePath] = t
+	if rec.starts != nil {
+		noteAttemptOpen(rec.starts, nodePath, e.Ts)
+	}
 	return t.turn, e, nil
 }
 
@@ -554,6 +560,9 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 	if rec.ends != nil {
 		noteStepEnd(rec.ends, t.path, c.Outcome, c.Reason, c.FailureKind)
 	}
+	if rec.starts != nil {
+		noteAttemptClose(rec.starts, t.path, c.Outcome)
+	}
 	return sealed, err
 }
 
@@ -579,19 +588,31 @@ func (r *runLog) StepEnds(ctx context.Context, workflowID string) (map[string]ma
 	if !ok || rec.removed {
 		return nil, nil
 	}
-	if rec.ends == nil {
-		all, err := l.All()
-		if err != nil {
-			return nil, err
-		}
-		rec.ends = scanStepEnds(all)
+	if err := scanStepFactsLocked(rec, l); err != nil {
+		return nil, err
 	}
 	return maps.Clone(rec.ends), nil
 }
 
-// scanStepEnds folds a log's turn_open paths and turn_close verdicts in file order, so a path's newest turn wins.
-func scanStepEnds(all []marotte.Entry) map[string]marotte.RunStepEnd {
-	ends := make(map[string]marotte.RunStepEnd)
+// scanStepFactsLocked fills the record's step ends and attempt starts from its log once per process, both in one scan;
+// every open and close keeps them current after. Caller holds runLog.mu.
+func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
+	if rec.ends != nil {
+		return nil
+	}
+	all, err := l.All()
+	if err != nil {
+		return err
+	}
+	rec.ends, rec.starts = scanStepFacts(all)
+	return nil
+}
+
+// scanStepFacts folds a log's turn_open paths and turn_close outcomes in file order into each path's broken end, so a
+// path's newest turn wins, and its current attempt.
+func scanStepFacts(all []marotte.Entry) (ends map[string]marotte.RunStepEnd, starts map[string]stepAttempt) {
+	ends = make(map[string]marotte.RunStepEnd)
+	starts = make(map[string]stepAttempt)
 	paths := make(map[string]string)
 	for i := range all {
 		e := &all[i]
@@ -600,15 +621,72 @@ func scanStepEnds(all []marotte.Entry) map[string]marotte.RunStepEnd {
 			var to marotte.EntryTurnOpen
 			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
 				paths[e.Turn] = to.NodePath
+				noteAttemptOpen(starts, to.NodePath, e.Ts)
 			}
 		case marotte.EntryKindTurnClose:
 			var tc marotte.EntryTurnClose
 			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
 				noteStepEnd(ends, path, tc.Outcome, tc.FailureReason, tc.FailureKind)
+				noteAttemptClose(starts, path, tc.Outcome)
 			}
 		}
 	}
-	return ends
+	return ends, starts
+}
+
+// stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, and
+// whether that turn's close was an interruption (a bridge death or a restart), which the path's next turn continues.
+type stepAttempt struct {
+	at          int64
+	open        bool
+	interrupted bool
+}
+
+// noteAttemptOpen records a path's turn_open: a new attempt unless the path's newest turn is still open or was
+// interrupted, because KAS resumes that node rather than starting it again.
+func noteAttemptOpen(starts map[string]stepAttempt, path string, ts int64) {
+	a, ok := starts[path]
+	if !ok || (!a.open && !a.interrupted) {
+		a.at = ts
+	}
+	a.open, a.interrupted = true, false
+	starts[path] = a
+}
+
+// noteAttemptClose records a path's turn_close; a path with no recorded open is left alone.
+func noteAttemptClose(starts map[string]stepAttempt, path string, o marotte.TurnOutcome) {
+	a, ok := starts[path]
+	if !ok {
+		return
+	}
+	a.open, a.interrupted = false, o == marotte.TurnOutcomeInterrupted
+	starts[path] = a
+}
+
+// StepStarts answers each node path's current attempt, scanning the log on the first read of the process; nil with
+// no log.
+func (r *runLog) StepStarts(ctx context.Context, workflowID string) (map[string]marotte.RunStepStart, error) {
+	l, err := r.Log(ctx, workflowID)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, nil
+	}
+	if err := scanStepFactsLocked(rec, l); err != nil {
+		return nil, err
+	}
+	out := make(map[string]marotte.RunStepStart, len(rec.starts))
+	for path, a := range rec.starts {
+		out[path] = marotte.RunStepStart{
+			StartedAt: time.UnixMilli(a.at).UTC().Format(time.RFC3339Nano),
+			Ended:     !a.open && !a.interrupted,
+		}
+	}
+	return out, nil
 }
 
 // runOutcome maps KAS's status to `completed`, `failed`, `cancelled`, or `unknown` with the status as raw stop.

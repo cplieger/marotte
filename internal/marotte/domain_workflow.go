@@ -54,7 +54,7 @@ type RunProgressPayload struct {
 	Status string `json:"status,omitempty"`
 	// StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
 	// KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
-	// both with KAS's own values.
+	// both.
 	StartedAt string `json:"started_at,omitempty"`
 	EndedAt   string `json:"ended_at,omitempty"`
 	// FailureReason is KAS's own explanation for a node that failed. Empty on
@@ -199,6 +199,16 @@ type RunStepEnd struct {
 	Outcome       TurnOutcome `json:"outcome"`
 	FailureReason string      `json:"failure_reason,omitempty"`
 	FailureKind   FailureKind `json:"failure_kind,omitempty"`
+}
+
+// RunStepStart is when a node's current attempt began in the run's own log, under `step_starts` in GET /api/runs/{id}
+// keyed by node path. KAS restamps a node's startedAt each time it re-enters it (a resume, a restart), so its tree
+// cannot say this. Ended is true once the attempt's newest turn closed for any reason but an interruption: a node KAS
+// shows in flight past an ended attempt is on a new one.
+type RunStepStart struct {
+	// StartedAt is RFC 3339.
+	StartedAt string `json:"started_at"`
+	Ended     bool   `json:"ended"`
 }
 
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.

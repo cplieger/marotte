@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -109,6 +110,45 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 
 		if !strings.Contains(body, `"step_ends":{}`) {
 			t.Errorf("the body = %s, want `\"step_ends\":{}`", body)
+		}
+	})
+}
+
+// TestHandleRun_CarriesTheRunsStepStarts pins `step_starts`: KAS restamps a resumed node's startedAt, so only the
+// run log's turn_open can tell the reader when the step began.
+func TestHandleRun_CarriesTheRunsStepStarts(t *testing.T) {
+	t.Run("an open step is named with its turn_open's time", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		h.runs.log = newRunLog(t.TempDir())
+		build := workflow.PathKey([]string{"wf_1", "build"})
+		_, opened, err := h.runs.log.Open(t.Context(), translate.RunStep{RunID: "wf_1", NodePath: build}, "c1")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, body := getRun(t, h, "wf_1")
+
+		var reply struct {
+			StepStarts map[string]marotte.RunStepStart `json:"step_starts"`
+		}
+		if err := json.Unmarshal([]byte(body), &reply); err != nil {
+			t.Fatalf("decoding the run reply: %s", err)
+		}
+		want := marotte.RunStepStart{StartedAt: time.UnixMilli(opened.Ts).UTC().Format(time.RFC3339Nano)}
+		if got := reply.StepStarts[build]; got != want || len(reply.StepStarts) != 1 {
+			t.Errorf("step_starts = %+v, want only %s = %+v: %s", reply.StepStarts, build, want, body)
+		}
+	})
+
+	t.Run("a run with no log carries an empty object rather than null", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+
+		_, body := getRun(t, h, "wf_1")
+
+		if !strings.Contains(body, `"step_starts":{}`) {
+			t.Errorf("the body = %s, want `\"step_starts\":{}`", body)
 		}
 	})
 }

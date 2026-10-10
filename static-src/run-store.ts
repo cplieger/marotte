@@ -1,8 +1,9 @@
-// The one owner of a workflow run's state: refetched on invalidation, cached verbatim, never
-// accumulated from an SSE payload.
+// The one owner of a workflow run's state: refetched on invalidation, cached as read but for each
+// node's start (`attemptStart`), never accumulated from an SSE payload.
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
+import { nodePathKey } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
@@ -11,6 +12,7 @@ import type {
   LiveRun,
   RunControlsResponse,
   RunStepEnd,
+  RunStepStart,
 } from "./wire/types.gen.js";
 import {
   classifyRunNodeStatus,
@@ -31,6 +33,9 @@ export interface RunNode {
   modelId?: string;
   effortLevel?: string;
   sessionId?: string;
+  /** When the node's current attempt began: the run log's where it holds the current one
+   *  (`attemptStart`), the earliest of its own and its children's for a container it holds none
+   *  for, else KAS's own stamp, which a resume moves. */
   startedAt?: string;
   endedAt?: string;
   iteration?: number;
@@ -111,6 +116,8 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   state?: RawRunState;
   /** marotte's own key beside KAS's reply: the steps whose newest turn in the run's log closed broken. */
   step_ends?: Record<string, RunStepEnd>;
+  /** marotte's own key beside KAS's reply: when each node's current attempt began in the run's log. */
+  step_starts?: Record<string, RunStepStart>;
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
@@ -122,7 +129,7 @@ function classifyRunNode(node: RawRunNode): RunNode {
   return out;
 }
 
-function classifyRunState(state: RawRunState): RunState {
+function classifyRunState(state: RawRunState, starts: StepStarts): RunState {
   const { status, root, ...rest } = state;
   const out: RunState = { ...rest };
   const classified = classifyRunStatus(status);
@@ -130,9 +137,76 @@ function classifyRunState(state: RawRunState): RunState {
     out.status = classified;
   }
   if (root !== undefined) {
-    out.root = classifyRunNode(root);
+    out.root = withAttemptStarts(classifyRunNode(root), undefined, [], starts);
   }
   return out;
+}
+
+/** The run log's attempt starts by node path, the server's `workflow.PathKey`. */
+type StepStarts = ReadonlyMap<string, RunStepStart>;
+
+/** `node`'s subtree with each start its attempt's (`RunNode.startedAt`). */
+function withAttemptStarts(
+  node: RunNode,
+  parent: RunNode | undefined,
+  trail: readonly string[],
+  starts: StepStarts,
+): RunNode {
+  const path = [...trail, nodePathSegment(node, parent)];
+  const out: RunNode = { ...node };
+  const log = starts.get(nodePathKey(path));
+  let startedAt = attemptStart(node.startedAt, node.status, log);
+  if (node.children !== undefined) {
+    const kids = node.children.map((k) => withAttemptStarts(k, node, path, starts));
+    out.children = kids;
+    // A repeat's pass opens no turn, yet KAS restamps it on a resume; a container cannot start after its
+    // first child, whose start the log keeps.
+    if (log === undefined && startedAt !== undefined) {
+      for (const k of kids) {
+        startedAt = earlier(startedAt, k.startedAt);
+      }
+    }
+  }
+  if (startedAt !== undefined) {
+    out.startedAt = startedAt;
+  }
+  return out;
+}
+
+/** The earlier stamp, compared as instants: KAS's and the log's RFC 3339 spellings differ in their fraction. */
+function earlier(a: string, b: string | undefined): string {
+  return b !== undefined && Date.parse(b) < Date.parse(a) ? b : a;
+}
+
+/** When a node's current attempt began. KAS restamps `startedAt` each time it re-enters a node, a resume
+ *  included, so its stamp alone restarts every clock at zero; the run log's turn_open does not move. KAS's
+ *  stamp stands only where the log holds no attempt, or an ENDED one under a node KAS shows in flight, which
+ *  is a new attempt (a retry) the log has not opened yet. Paused time counts, as in the run's own window
+ *  (`exec-view/model.ts` `window`): KAS records no pause spans. */
+function attemptStart(
+  kas: string | undefined,
+  status: ClassifiedRunNodeStatus,
+  log: RunStepStart | undefined,
+): string | undefined {
+  if (kas === undefined || log === undefined) {
+    return kas;
+  }
+  return log.ended && nodeInFlight(status) ? kas : log.started_at;
+}
+
+function nodeInFlight(status: ClassifiedRunNodeStatus): boolean {
+  switch (status) {
+    case "pending":
+    case "running":
+    case "paused":
+    case "unknown":
+      return true;
+    case "completed":
+    case "failed":
+    case "aborted":
+    case "skipped":
+      return false;
+  }
 }
 
 /** Per-run signals, created on demand. A signal per run rather than one version counter so a
@@ -177,6 +251,9 @@ const plans = new Map<string, unknown>();
 /** Per-run step ends by node path, beside the signal for the plan's reason. */
 const stepEnds = new Map<string, ReadonlyMap<string, RunStepEnd>>();
 
+/** Per-run attempt starts by node path, replaced by each read and moved by each landed frame (`frameAttempt`). */
+const stepStarts = new Map<string, StepStarts>();
+
 function cell(workflowID: string): Signal<RunState | undefined> {
   let c = cells.get(workflowID);
   if (c === undefined) {
@@ -213,9 +290,16 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
   if (c === undefined || root === undefined) {
     return false;
   }
-  const next = patchNode(root, undefined, p.node_path, p);
+  const key = nodePathKey(p.node_path);
+  const starts = stepStarts.get(p.workflow_id);
+  const log = starts?.get(key);
+  const attempt = frameAttempt(log, nonEmpty(p.started_at), nonEmpty(p.ended_at));
+  const next = patchNode(root, undefined, p.node_path, p, attempt);
   if (next === undefined) {
     return false;
+  }
+  if (attempt !== log && attempt !== undefined) {
+    stepStarts.set(p.workflow_id, new Map(starts).set(key, attempt));
   }
   if (next === root) {
     // The frame addressed a node this tree holds and moved nothing about it: a watch poll
@@ -249,20 +333,21 @@ function patchNode(
   parent: RunNode | undefined,
   trail: readonly string[],
   p: RunProgressFrame,
+  attempt: RunStepStart | undefined,
 ): RunNode | undefined {
   const [head, ...rest] = trail;
   if (head === undefined || nodePathSegment(node, parent) !== head) {
     return undefined;
   }
   if (rest.length === 0) {
-    return patchedLeaf(node, p);
+    return patchedLeaf(node, p, attempt);
   }
   const kids = node.children;
   if (kids === undefined) {
     return undefined;
   }
   for (const [i, k] of kids.entries()) {
-    const patched = patchNode(k, node, rest, p);
+    const patched = patchNode(k, node, rest, p, attempt);
     if (patched === k) {
       // Found, and unchanged. Rebuilding the spine over an identical child would hand
       // `applyRunProgress` a new root for a tree that did not move.
@@ -275,13 +360,36 @@ function patchNode(
   return undefined;
 }
 
+/** The path's attempt once a frame lands, as the server's run log folds its turns: a start opens a new attempt
+ *  unless the current one has not ended (a resume, or a duplicate frame), and an end stamp ends it whatever
+ *  status word KAS sent beside it. Kept current per frame because a landed frame triggers no refetch, and a
+ *  retry read against a stale open attempt would carry the previous attempt's start. */
+function frameAttempt(
+  log: RunStepStart | undefined,
+  framedStart: string | undefined,
+  framedEnd: string | undefined,
+): RunStepStart | undefined {
+  if (framedStart !== undefined && (log === undefined || log.ended)) {
+    return { started_at: framedStart, ended: false };
+  }
+  if (log !== undefined && !log.ended && framedEnd !== undefined) {
+    return { ...log, ended: true };
+  }
+  return log;
+}
+
 /** The addressed node with the frame's fields written over it, or the SAME node when the frame
  *  moves none of them. Every field is set only when the frame carries it, because a frame states
  *  what changed: `node_complete` carries no `started_at` and must not lose the one node_start
- *  left. */
-function patchedLeaf(node: RunNode, p: RunProgressFrame): RunNode {
+ *  left. A frame's start is the server's arrival stamp, so it yields to the attempt's. */
+function patchedLeaf(
+  node: RunNode,
+  p: RunProgressFrame,
+  attempt: RunStepStart | undefined,
+): RunNode {
   const status = nodeStatus(p.status);
-  const startedAt = nonEmpty(p.started_at);
+  const framed = nonEmpty(p.started_at);
+  const startedAt = framed === undefined ? undefined : (attempt?.started_at ?? framed);
   const endedAt = nonEmpty(p.ended_at);
   const failureReason = nonEmpty(p.failure_reason);
   const moved =
@@ -377,7 +485,9 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
         plans.set(workflowID, d.nodePlan);
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
-      cell(workflowID).value = classifyRunState(d.state);
+      const starts = new Map(Object.entries(d.step_starts ?? {}));
+      stepStarts.set(workflowID, starts);
+      cell(workflowID).value = classifyRunState(d.state, starts);
       answered = true;
     } else {
       failed = r.status;
@@ -487,6 +597,7 @@ export function forgetRun(workflowID: string): void {
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
   stepEnds.delete(workflowID);
+  stepStarts.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
   controlsStale.delete(workflowID);
