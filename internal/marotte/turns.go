@@ -1,8 +1,8 @@
 package marotte
 
 // TurnOutcome is a turn's result, carried on the turn_close entry and the header's
-// last_turn_outcome, rendered as scannable colour on the timeline rail and as the
-// turn footer's tint. Only the server concludes one; the client reads it.
+// last_turn_outcome, rendered as the severity mark on the turn map and as the turn
+// footer's tint. Only the server concludes one; the client reads it.
 type TurnOutcome string
 
 // TurnOutcomeRunning and the following constants are the valid TurnOutcome values.
@@ -182,16 +182,16 @@ func (c TurnConclusion) WithContent(emitted bool) TurnConclusion {
 }
 
 // TurnSummary is one row of a chat's session-wide turn index: enough to draw a
-// rail marker and label it, and nothing else. Deliberately NOT the turn's content
-// — the rail spans the whole session while the transcript store holds a paginated
-// window, so a rail built from resident turns would grow markers as the reader
-// scrolled up.
+// turn on the turn map and label it, and nothing else. Deliberately NOT the turn's
+// content — the map spans the whole session while the transcript store holds a
+// paginated window, so a map built from resident turns would grow rows as the
+// reader scrolled up.
 type TurnSummary struct {
 	// ID is the turn's opening message id. The client joins on it, so the server
 	// stays the single source of truth for what "turn 14" means.
 	ID string `json:"id"`
-	// FirstLine is the request's first line, whitespace-collapsed, for the
-	// marker's hover label. Empty for a turn the user did not trigger.
+	// FirstLine is the request's first line, whitespace-collapsed and capped, for
+	// the turn-map preview. Empty for a turn the user did not trigger.
 	FirstLine string      `json:"first_line,omitempty"`
 	Outcome   TurnOutcome `json:"outcome"`
 	// N is the 1-based, session-absolute turn ordinal.
@@ -199,7 +199,9 @@ type TurnSummary struct {
 	// Ts is the turn's start: its trigger's timestamp, else its first body
 	// message's.
 	Ts int64 `json:"ts"`
-	// AgentInitiated marks a turn with no user trigger, so the rail does not imply
+	// AgentInitiated marks a turn with no user trigger, so the map does not imply
 	// the user asked for it.
 	AgentInitiated bool `json:"agent_initiated,omitempty"`
+	// ElapsedMs is the turn_close's own duration; absent while the turn runs.
+	ElapsedMs float64 `json:"elapsed_ms,omitempty"`
 }

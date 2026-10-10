@@ -80,6 +80,9 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
           New chat
         </button>
+        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History">
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </button>
       </div>
       <!-- The strip's pending state, authored so it paints before any script has
            run. boot.ts removes it when the tab set has been adopted (or provably
@@ -228,9 +231,6 @@
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/></svg>
         </button>
-        <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        </button>
         <!-- LAST of the persistent buttons, and deliberately not last child: the
              hamburger below is `display: none` above 48rem, so Settings IS the
              visually last item on a desktop, while on a phone the rightmost slot
@@ -258,7 +258,7 @@
              transcript starts below it. -->
         <div id="banner-stack" class="banner-stack"></div>
         <div id="messages-wrap-outer">
-          <div id="messages-wrap">
+          <div id="messages-wrap" tabindex="-1">
             <div id="messages"></div>
             <div id="model-picker" class="hidden">
               <!-- The model glyph is icons.ts's ICON_MODEL_20, written in by

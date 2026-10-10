@@ -1,5 +1,3 @@
-// The rail does not redraw a rail that has not changed.
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnSummary } from "./turn-rail.js";
@@ -32,14 +30,11 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Browser Mode serves no CSS, so the scene declares the two boxes the stylesheet would: the track's
-// height (a rail with no box holds one marker) and a real beat on a pending marker, which is what
-// the first case measures.
+// Browser Mode serves no CSS, so the scene declares the heights the stylesheet would give the
+// track binning measures and the stack inside it.
 const style = document.createElement("style");
-style.textContent = `
-  .turn-rail{position:absolute;inset-block-start:0;block-size:400px}
-  @keyframes rail-beat { 50% { opacity: 0.4 } }
-  .rail-marker{ animation: rail-beat 2400ms linear infinite }`;
+style.textContent =
+  ".turn-map-track{display:block;block-size:400px}.turn-map-stack{display:block;position:relative;block-size:400px}";
 document.head.appendChild(style);
 
 const rail = await import("./turn-rail.js");
@@ -62,21 +57,28 @@ function card(n: number): HTMLElement {
   return e;
 }
 
-const markers = (): HTMLButtonElement[] => [
-  ...document.querySelectorAll<HTMLButtonElement>(".turn-rail > .rail-marker"),
+const links = (): HTMLAnchorElement[] => [
+  ...document.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link"),
 ];
 
-function markerFor(n: number): HTMLButtonElement {
-  const hit = markers().find((b) => b.firstChild?.textContent === String(n));
+function linkFor(n: number): HTMLAnchorElement {
+  const hit = links().find((a) => a.getAttribute("href")?.endsWith(`#turn-${String(n)}`));
   if (hit === undefined) {
-    throw new Error(`no rail marker for turn ${String(n)}`);
+    throw new Error(`no turn-map row for turn ${String(n)}`);
   }
   return hit;
 }
 
-/** Wait until the rail has stopped redrawing on its own. */
+function rowFor(n: number): HTMLElement {
+  const li = linkFor(n).parentElement;
+  if (li === null) {
+    throw new Error("a link outside its row");
+  }
+  return li;
+}
+
 async function settle(): Promise<void> {
-  const root = outer.querySelector(".turn-rail");
+  const root = outer.querySelector(".turn-map");
   let last = "";
   let stable = 0;
   for (let i = 0; i < 120 && stable < 3; i++) {
@@ -88,11 +90,11 @@ async function settle(): Promise<void> {
 }
 
 /** The chat every paint in a test uses. ONE id per test, and that is what makes the staleness
- *  half of this file able to fail: a NEW chat resets the rail, so re-fetching under a fresh id
+ *  half of this file able to fail: a NEW chat resets the map, so re-fetching under a fresh id
  *  re-renders whatever the signature says and the guard is never consulted. */
 const CHAT = "c-rail-rebuild";
 
-/** Re-fetch the SAME chat's index and let the rail settle. `force`, because the record for an
+/** Re-fetch the SAME chat's index and let the map settle. `force`, because the record for an
  *  unchanged chat is otherwise served from cache without a render. */
 async function paint(turns: TurnSummary[]): Promise<void> {
   vi.mocked(apiGet).mockResolvedValue({ turns } as never);
@@ -105,8 +107,8 @@ async function paint(turns: TurnSummary[]): Promise<void> {
   await settle();
 }
 
-/** Re-run the rail's render with the SAME inputs, which is what a transcript paint of an
- *  unchanged rail is. */
+/** Re-run the map's render with the SAME inputs, which is what a transcript paint of an
+ *  unchanged map is. */
 function repaint(): void {
   rail.setResidentTurns([...messagesEl.children] as HTMLElement[]);
 }
@@ -119,71 +121,86 @@ beforeEach(() => {
   vi.mocked(apiGet).mockReset();
 });
 
-describe("an unchanged rail", () => {
-  it("keeps focus on a marker across a repaint", async () => {
+describe("an unchanged map", () => {
+  it("keeps focus on a row across a repaint", async () => {
     await paint(THREE);
-    const marker = markerFor(2);
-    marker.focus();
-    expect(document.activeElement).toBe(marker);
+    const link = linkFor(2);
+    link.focus();
+    expect(document.activeElement).toBe(link);
 
     repaint();
     repaint();
 
-    expect(document.activeElement, "a repaint must not take focus off a marker").toBe(marker);
-    expect(markerFor(2), "and must not replace the element").toBe(marker);
+    expect(document.activeElement, "a repaint must not take focus off a row").toBe(link);
+    expect(linkFor(2), "and must not replace the element").toBe(link);
   });
 
-  it("does not restart a marker's animation across a repaint", async () => {
-    // Production's is `vk-dot-beat` on `.rail-marker[data-pending]`; the scene declares one on
-    // every marker instead, because the property under test is that a rebuild does not knock an
-    // animation on a marker back to zero, whichever state carries it.
+  it("performs no DOM write on a repaint", async () => {
     await paint(THREE);
-    const marker = markerFor(2);
-    expect(marker.isConnected, "the probe must hold a live marker").toBe(true);
-    const anim = marker.getAnimations()[0];
-    expect(anim, "the marker needs an animation to probe").toBeDefined();
-    anim!.pause();
-    anim!.currentTime = 250;
-    expect(Number(marker.getAnimations()[0]?.currentTime)).toBe(250);
+    const root = outer.querySelector(".turn-map");
+    if (root === null) {
+      throw new Error("no turn map");
+    }
+    const seen = new MutationObserver(() => undefined);
+    seen.observe(root, { attributes: true, childList: true, subtree: true, characterData: true });
 
     repaint();
-    await new Promise((r) => requestAnimationFrame(r));
+    repaint();
 
-    expect(markerFor(2)).toBe(marker);
-    const after = marker.getAnimations()[0];
-    expect(after, "the marker must still carry its animation").toBeDefined();
-    expect(Number(after?.currentTime), "a repaint must not restart it").toBe(250);
-    expect(after?.playState, "nor replace it with a fresh running one").toBe("paused");
+    expect(seen.takeRecords()).toEqual([]);
+    seen.disconnect();
   });
 });
 
-describe("a changed rail still redraws", () => {
+describe("a map whose only change is the band of turns on screen", () => {
+  it("moves the band in place and keeps a keyboard reader's focus", async () => {
+    await paint(THREE);
+    // The paint pins the live edge, so the last two cards are on screen.
+    expect(rowFor(1).dataset["inView"]).toBeUndefined();
+    expect(rowFor(3).dataset["inView"]).toBe("");
+    const link = linkFor(2);
+    link.focus();
+
+    wrap.scrollTop = 0;
+    wrap.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    expect(rowFor(1).dataset["inView"], "the band reached turn 1").toBe("");
+    expect(rowFor(3).dataset["inView"], "and left turn 3").toBeUndefined();
+    expect(document.activeElement, "a band move must not take focus off a row").toBe(link);
+    expect(linkFor(2)).toBe(link);
+  });
+});
+
+describe("a changed map still redraws", () => {
   it("when a turn is added", async () => {
     await paint(THREE);
-    expect(markers()).toHaveLength(3);
+    expect(links()).toHaveLength(3);
     await paint([...THREE, summary(4)]);
-    expect(markers()).toHaveLength(4);
+    expect(links()).toHaveLength(4);
   });
 
   it("when an outcome changes", async () => {
     await paint(THREE);
-    expect(markerFor(2).dataset["outcome"]).toBe("completed");
+    expect(rowFor(2).dataset["severity"]).toBe("clean");
     await paint([summary(1), summary(2, { outcome: "failed" }), summary(3)]);
-    expect(markerFor(2).dataset["outcome"]).toBe("failed");
+    expect(rowFor(2).dataset["severity"]).toBe("broken");
   });
 
-  it("when the reader picks a marker", async () => {
+  it("when the reader picks a row", async () => {
     await paint(THREE);
-    const marker = markerFor(3);
-    expect(marker.dataset["selected"]).toBeUndefined();
-    marker.click();
-    expect(markerFor(3).dataset["selected"]).toBe("");
+    // The live edge marks turn 3, so the pick is turn 1.
+    expect(rowFor(1).dataset["current"]).toBeUndefined();
+    linkFor(1).click();
+    expect(rowFor(1).dataset["current"]).toBe("");
+    expect(linkFor(1).getAttribute("aria-current")).toBe("location");
+    expect(rowFor(3).dataset["current"]).toBeUndefined();
   });
 
   it("when the agent-initiated trigger changes", async () => {
     await paint(THREE);
-    expect(markerFor(2).dataset["trigger"]).toBeUndefined();
+    expect(rowFor(2).dataset["trigger"]).toBeUndefined();
     await paint([summary(1), summary(2, { agent_initiated: true }), summary(3)]);
-    expect(markerFor(2).dataset["trigger"]).toBe("system");
+    expect(rowFor(2).dataset["trigger"]).toBe("system");
   });
 });

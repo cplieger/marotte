@@ -2,7 +2,7 @@
 // keyed on an unwritten attribute fails silently, so the two files are one guard. The writers are
 // `updateTurnFooter`, `updateTurnHeader` and `turn-rail.ts`'s marker + cluster, driven for real:
 // a second copy of `severityOf`'s table would pass with every writer deleted.
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 
 // The spread mocks below need the ORIGINAL module's type, and `import()` type
 // annotations are forbidden by the shared eslint config — so the two modules are
@@ -108,34 +108,67 @@ describe("the header stamps its severity", () => {
   });
 });
 
-describe("the rail stamps its severity", () => {
+describe("the turn map stamps its severity", () => {
   const host = document.createElement("div");
 
-  beforeAll(() => {
+  // Browser Mode serves no CSS, and the map lays no rows until its track has measured a height.
+  const trackCSS = document.createElement("style");
+  trackCSS.textContent = ".turn-map-track{display:block;block-size:2000px}";
+
+  beforeAll(async () => {
+    document.head.appendChild(trackCSS);
     document.body.appendChild(host);
     mountTurnRail(host);
-    // No app stylesheet is mounted here and `.turn-rail` takes its height from
-    // `position: absolute; inset-block`, so the track needs an explicit box: how
-    // many markers fit is a function of it.
-    rail().style.height = "600px";
-    rail().style.display = "block";
+    await frames(2);
   });
 
-  beforeEach(() => {
+  afterAll(() => {
+    trackCSS.remove();
+  });
+
+  beforeEach(async () => {
     resetTurnRail();
+    track().style.removeProperty("height");
+    await frames(2);
   });
 
-  function rail(): HTMLElement {
-    const el = host.querySelector<HTMLElement>(".turn-rail");
+  function track(): HTMLElement {
+    const el = host.querySelector<HTMLElement>(".turn-map .turn-map-track");
     if (el === null) {
-      throw new Error("rail not mounted");
+      throw new Error("turn map not mounted");
     }
     return el;
   }
 
-  it("writes data-severity on every marker, for every outcome", async () => {
+  function stack(): HTMLElement {
+    const el = host.querySelector<HTMLElement>(".turn-map .turn-map-stack");
+    if (el === null) {
+      throw new Error("turn map not mounted");
+    }
+    return el;
+  }
+
+  function pills(): HTMLElement[] {
+    return [...stack().querySelectorAll<HTMLElement>(".turn-pill")];
+  }
+
+  function frames(n: number): Promise<void> {
+    return new Promise((resolve) => {
+      const step = (left: number): void => {
+        if (left === 0) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(() => {
+          step(left - 1);
+        });
+      };
+      step(n);
+    });
+  }
+
+  it("writes data-severity on every row, for every outcome", async () => {
     // One turn per outcome, so the assertion is a partition rather than a sample.
-    // A minute apart, which is well inside the gap threshold.
     const index: TurnSummary[] = OUTCOMES.map((outcome, i) => ({
       id: `m${String(i + 1)}`,
       n: i + 1,
@@ -144,20 +177,20 @@ describe("the rail stamps its severity", () => {
     }));
     vi.mocked(apiGet).mockResolvedValue({ turns: index });
     await loadTurnRail("c-attr");
+    await frames(2);
 
-    const markers = [...rail().querySelectorAll<HTMLElement>(".rail-marker")];
-    expect(markers, "one marker per turn, no clustering at eight").toHaveLength(OUTCOMES.length);
-    for (const [i, marker] of markers.entries()) {
-      const outcome = OUTCOMES[i];
-      expect(marker.dataset["outcome"], `marker ${String(i)}`).toBe(outcome);
-      expect(marker.dataset["severity"], `marker ${String(i)}`).toBe(severityOf(outcome));
+    const rows = pills();
+    expect(rows, "one row per turn").toHaveLength(OUTCOMES.length);
+    for (const [i, row] of rows.entries()) {
+      const outcome = OUTCOMES[i] ?? "completed";
+      expect(row.dataset["severity"], `row ${String(i)}`).toBe(severityOf(outcome));
+      expect(row.querySelector("a")?.getAttribute("aria-label"), `row ${String(i)}`).toMatch(
+        new RegExp(`^Turn ${String(i + 1)}\\b`, "u"),
+      );
     }
   });
 
-  it("keeps the stamp on a rail too long to give every turn a marker", async () => {
-    // On a session past the track's capacity most turns carry no marker at all, so
-    // the assertion that matters is that the non-clean one is never among the
-    // dropped: a stamp nothing renders reports nothing.
+  it("reaches every turn of a session too long for one row each, and grades the bin worst", async () => {
     const index: TurnSummary[] = Array.from({ length: 200 }, (_, i) => ({
       id: `m${String(i + 1)}`,
       n: i + 1,
@@ -165,16 +198,17 @@ describe("the rail stamps its severity", () => {
       ts: (i + 1) * 60_000,
     }));
     vi.mocked(apiGet).mockResolvedValue({ turns: index });
+    // A 100px track holds 50 rows at the 2px floor, so 200 turns bin four to a row.
+    track().style.height = "100px";
     await loadTurnRail("c-long");
+    await frames(3);
 
-    const markers = [...rail().querySelectorAll<HTMLElement>(".rail-marker")];
-    expect(markers.length, "200 turns downsample").toBeLessThan(200);
-    for (const marker of markers) {
-      const outcome = marker.dataset["outcome"];
-      expect(outcome, "every rendered marker names its turn's outcome").toBeDefined();
-      expect(marker.dataset["severity"]).toBe(severityOf(outcome as TurnOutcome));
-    }
-    const broken = markers.filter((m) => m.dataset["severity"] === "broken");
-    expect(broken.map((m) => m.firstChild?.textContent)).toEqual(["43"]);
+    const rows = pills();
+    expect(rows).toHaveLength(50);
+    const broken = rows.filter((r) => r.dataset["severity"] === "broken");
+    expect(broken.map((r) => r.querySelector("a")?.getAttribute("aria-label"))).toEqual([
+      "Turns 41 to 44, worst failed",
+    ]);
+    expect(broken[0]?.querySelector("a")?.getAttribute("href")).toMatch(/#turn-43$/u);
   });
 });

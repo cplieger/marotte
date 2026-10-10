@@ -460,9 +460,9 @@ describe("the draft of a chat with no turns", () => {
   });
 });
 
-// The rail is a module singleton, so activation must hand it the chat even with no turns.
+// The turn map is a module singleton, so activation must hand it the chat even with no turns.
 
-describe("the timeline rail of a chat with no turns", () => {
+describe("the turn map of a chat with no turns", () => {
   function emptyChat(): never {
     return {
       id: "c-empty",

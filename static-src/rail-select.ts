@@ -1,150 +1,90 @@
-// Where a marker sits on the rail, and which turns get one. Position is a function of the marker's
-// SLOT in the shown set: `k` markers sit at one pitch, so a dropped turn leaves no gap behind it.
-// The set itself is a function of rank alone.
-
+import { join } from "@cplieger/keyenc";
 import type { TurnSummary } from "./rail-merge.js";
 import { severityOf } from "./turn-severity.js";
+import type { TurnSeverity } from "./turn-severity.js";
 
-/** The clear between two adjacent hit targets. */
-const MARKER_CLEAR_PX = 4;
+/** The thinnest row the map draws, in CSS px: 29-turns.css's `clamp(2px, …)` relies on no layout
+ *  asking for thinner. */
+const MIN_PITCH_PX = 2;
 
-/** The marker box for a pre-layout track: the FINE tier's own floor rather than a third number,
- *  so the next render re-reads it. */
-export const MARKER_FALLBACK_PX = 24;
-
-/** The two pixel numbers the layout needs, both off the tier's own hit floor. */
-export interface RailMetrics {
-  /** One marker's hit TARGET: 24px on a fine pointer, 44px on a coarse one. */
-  markerPx: number;
-  /** The minimum separation between two markers' tops. */
-  pitchPx: number;
+export interface TurnBin {
+  /** Stable while the bin's `n` range holds, so a repaint updates the row in place. */
+  readonly key: string;
+  readonly first: TurnSummary;
+  readonly last: TurnSummary;
+  readonly members: readonly TurnSummary[];
+  readonly at: number;
+  readonly severity: TurnSeverity;
+  /** The turn a click on the row lands: the first member carrying the row's worst severity. */
+  readonly target: TurnSummary;
 }
 
-/** Read the tier's marker box off the track's computed style. `--hit-floor` rather than a
- *  constant because a marker's TARGET is sized from that same token, so a hard-coded pitch would
- *  place 44px targets 28px apart on a coarse pointer. The target and not the painted box, which
- *  is `--rail-mark` and 20px smaller under a finger. */
-export function railMetrics(track: HTMLElement): RailMetrics {
-  const markerPx = floorPx(track) ?? MARKER_FALLBACK_PX;
-  return { markerPx, pitchPx: markerPx + MARKER_CLEAR_PX };
+export interface TurnMapLayout {
+  /** The session's last turn number, which sets the row pitch `clamp(2px, track/total, 8px)`. */
+  readonly total: number;
+  readonly slots: number;
+  readonly bins: readonly TurnBin[];
 }
 
-/** `--hit-floor` in PX, or null for a track the token does not reach. */
-function floorPx(track: HTMLElement): number | null {
-  const host = track.parentElement ?? track.ownerDocument.body;
-  const probe = track.ownerDocument.createElement("div");
-  probe.style.cssText = "position:absolute;visibility:hidden;block-size:var(--hit-floor)";
-  host.appendChild(probe);
-  const px = parseFloat(getComputedStyle(probe).blockSize);
-  probe.remove();
-  return Number.isFinite(px) && px > 0 ? px : null;
+export function turnFraction(slot: number, slots: number): number {
+  return slots <= 1 ? 0 : slot / (slots - 1);
 }
 
-/** THE PITCH A YOUNG RAIL SPACES ITS MARKERS AT: one marker box of clear, against
- *  `MARKER_CLEAR_PX`'s 4px floor a full track compresses to. */
-export function relaxedPitch(markerPx: number): number {
-  return markerPx * 2;
-}
+const SEVERITY_RANK: Record<TurnSeverity, number> = {
+  clean: 0,
+  running: 1,
+  stopped: 2,
+  broken: 3,
+};
 
-/** How much of the track's travel the shown set occupies, 0..1: the relaxed pitch while every
- *  marker fits at it, all of it once they do not. */
-export function railSpan(slots: number, trackPx: number, markerPx: number): number {
-  const travel = Math.max(0, trackPx - markerPx);
-  if (travel === 0) {
-    return 1;
+const EMPTY: TurnMapLayout = { total: 0, slots: 0, bins: [] };
+
+/** Lay the turns out on a track `trackPx` tall. Every turn `n` falls in slot `floor((n-1)/k)`, so
+ *  with `k = 1` a turn sits at `(n-1)/(total-1)`; `k` grows only when one slot per turn would draw
+ *  rows thinner than `MIN_PITCH_PX`. An unmeasured track (`trackPx <= 0`) lays no rows.
+ *  `turns` must be sorted by `n`, as `mergeTurnSets` returns it. */
+export function binTurns(turns: readonly TurnSummary[], trackPx: number): TurnMapLayout {
+  const total = turns.reduce((max, t) => Math.max(max, t.n), 0);
+  if (total === 0 || trackPx <= 0) {
+    return EMPTY;
   }
-  return Math.min(1, (Math.max(0, slots - 1) * relaxedPitch(markerPx)) / travel);
-}
+  const cap = Math.max(1, Math.floor(trackPx / MIN_PITCH_PX));
+  const k = Math.ceil(total / cap);
+  const slots = Math.ceil(total / k);
 
-/** A marker's position on the axis: 0 for the first slot, `span` for the last, as a fraction of
- *  the track's travel. Published as `--rail-at`, so the arithmetic below and the rendered `top`
- *  cannot disagree. `span` is REQUIRED rather than defaulted to 1, because 1 is the stretched
- *  layout this argument exists to stop: a caller that forgot it would put the last marker at the
- *  foot of the track and nothing would say so. */
-export function railAt(slot: number, slots: number, span: number): number {
-  return (slot / Math.max(1, slots - 1)) * span;
-}
-
-/** A marker's own top. The travel span is the track minus one marker box, so both ends sit fully
- *  inside it. */
-export function slotPosition(
-  slot: number,
-  slots: number,
-  trackPx: number,
-  markerPx: number,
-): number {
-  const travel = Math.max(0, trackPx - markerPx);
-  return railAt(slot, slots, railSpan(slots, trackPx, markerPx)) * travel;
-}
-
-/** How many markers a track of this height holds at the tier's separation. */
-export function maxMarkers(trackPx: number, pitchPx: number): number {
-  return Math.max(1, Math.floor(trackPx / pitchPx));
-}
-
-/** Which turns get a marker. IT TAKES NO SCROLL STATE, and that is the invariant rather than an
- *  omission: a set that moves with the reader is presence churn they see. `hits` is the
- *  search-hit rank passed IN, read once per render, so a module-level read of the search state
- *  cannot put presence back on their keystrokes. */
-export function selectMarkers(
-  turns: readonly TurnSummary[],
-  trackPx: number,
-  pitchPx: number,
-  hits: ReadonlySet<number>,
-): TurnSummary[] {
-  const last = turns.length - 1;
-  if (last < 0) {
-    return [];
+  const groups = new Map<number, TurnSummary[]>();
+  for (const t of turns) {
+    const slot = Math.floor((t.n - 1) / k);
+    const group = groups.get(slot);
+    if (group === undefined) {
+      groups.set(slot, [t]);
+    } else {
+      group.push(t);
+    }
   }
-  const cap = maxMarkers(trackPx, pitchPx);
-  const picked = new Set<number>([0, last]);
-  const tiers: ((t: TurnSummary) => boolean)[] = [
-    (t) => severityOf(t.outcome) !== "clean",
-    (t) => hits.has(t.n),
-    () => true,
-  ];
-  for (const wanted of tiers) {
-    const candidates: number[] = [];
-    for (let i = 0; i <= last; i++) {
-      const t = turns[i];
-      if (t !== undefined && !picked.has(i) && wanted(t)) {
-        candidates.push(i);
+
+  const bins: TurnBin[] = [];
+  for (const [slot, members] of [...groups].sort((a, b) => a[0] - b[0])) {
+    const first = members[0];
+    const last = members[members.length - 1];
+    if (first === undefined || last === undefined) {
+      continue;
+    }
+    let target = first;
+    for (const m of members) {
+      if (SEVERITY_RANK[severityOf(m.outcome)] > SEVERITY_RANK[severityOf(target.outcome)]) {
+        target = m;
       }
     }
-    for (const i of spread(candidates, cap - picked.size)) {
-      picked.add(i);
-    }
+    bins.push({
+      key: join(String(slot * k + 1), String((slot + 1) * k)),
+      first,
+      last,
+      members,
+      at: turnFraction(slot, slots),
+      severity: severityOf(target.outcome),
+      target,
+    });
   }
-
-  const out: TurnSummary[] = [];
-  for (const i of [...picked].sort((a, b) => a - b)) {
-    const t = turns[i];
-    if (t !== undefined) {
-      out.push(t);
-    }
-  }
-  return out;
-}
-
-/** A uniform spread of `candidates` over `slots` places: all of them when they fit, the middle
- *  one for a single place, `Math.round`-spaced picks otherwise. */
-function spread(candidates: readonly number[], slots: number): number[] {
-  if (slots <= 0 || candidates.length === 0) {
-    return [];
-  }
-  if (slots >= candidates.length) {
-    return [...candidates];
-  }
-  if (slots === 1) {
-    return [candidates[Math.floor((candidates.length - 1) / 2)] ?? 0];
-  }
-  const out = new Set<number>();
-  for (let k = 0; k < slots; k++) {
-    const at = Math.round((k * (candidates.length - 1)) / (slots - 1));
-    const i = candidates[at];
-    if (i !== undefined) {
-      out.add(i);
-    }
-  }
-  return [...out];
+  return { total, slots, bins };
 }

@@ -1,17 +1,20 @@
-// The rail's DOM and its click flow. The three arithmetics it consumes are pure and
-// tested where they live (`rail-select`, `rail-merge`, `rail-activation`); what this
-// file covers is what the renderer publishes, which chat the module belongs to,
-// whether the rail is worth showing, and the whole jump pipeline.
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
+
+import indexHtml from "../static/index.html?raw";
 
 // scroll.ts initialises a #messages singleton at import, so it is stubbed. The fake records the
 // epoch and absolute landings and fires `scrollend` for programmatic scrolls as Chromium does.
 // `top: scrollTop` on its rect keeps a card's measured top INVARIANT under scroll, as a real one is.
 const { scrollable } = vi.hoisted(() => {
   const handlers = new Map<string, Set<() => void>>();
+  const geometry = { reads: 0 };
   const el = {
     scrollTop: 0,
-    clientHeight: 600,
+    get clientHeight() {
+      geometry.reads++;
+      return 600;
+    },
     clientTop: 0,
     getBoundingClientRect: () => ({ top: el.scrollTop, bottom: el.scrollTop + 600, height: 600 }),
     addEventListener(type: string, fn: () => void) {
@@ -27,6 +30,8 @@ const { scrollable } = vi.hoisted(() => {
     scrollable: {
       /** The transcript's scroll room, which is the rail's own visibility gate. */
       by: 500,
+      /** Scroller geometry reads (`scrollableBy()`, `clientHeight`), each a forced layout. */
+      geometry,
       /** Where the reading line sits inside the scrollport. */
       line: 0,
       /** The scroller's published edge verdict. */
@@ -57,7 +62,10 @@ const { scrollable } = vi.hoisted(() => {
   };
 });
 vi.mock("./scroll.js", () => ({
-  scrollableBy: () => scrollable.by,
+  scrollableBy: () => {
+    scrollable.geometry.reads++;
+    return scrollable.by;
+  },
   readingLineOffset: () => scrollable.line,
   atLiveEdgeNow: () => scrollable.atLiveEdge,
   getScrollEl: () => scrollable.el,
@@ -120,7 +128,6 @@ import {
   initTurnRailCallbacks,
   type TurnSummary,
 } from "./turn-rail.js";
-import { railMetrics } from "./rail-select.js";
 import { apiGet } from "./api-client.js";
 import { loadMessages } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
@@ -129,6 +136,23 @@ import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;
+
+// Browser Mode serves no CSS, and the map lays no rows until its track has measured a height. The
+// track gets the height the stylesheet would give it, and one boot mount takes its first
+// ResizeObserver delivery, so every case renders on its first paint as a measured map does.
+const trackCSS = document.createElement("style");
+trackCSS.textContent = ".turn-map-track{display:block;block-size:2000px}";
+document.head.appendChild(trackCSS);
+mountRail(document.createElement("div"));
+await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+// The gate is measured in the map's frame-coalesced pick, so a case that shut it reopens it here
+// rather than leaving the next case's first paint behind a stale verdict.
+afterEach(async () => {
+  scrollable.by = 500;
+  scrollable.fire("scroll");
+  await frames();
+});
 
 function turn(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
   return {
@@ -210,24 +234,63 @@ function prependTurns(s: Session, ids: string[]): void {
   s.turn_order = [...ids, ...s.turn_order];
 }
 
-/** Mount the rail and give it the box the stylesheet would: Browser Mode serves no CSS, and
- *  without one the track holds a single marker. A module SINGLETON, hence the document-wide resolve. */
+/** Mount the map. A case that needs binning gives the track a smaller height. A module SINGLETON,
+ *  hence the document-wide resolve. */
 function mountRail(host: HTMLElement): HTMLElement {
   document.body.appendChild(host);
   mountTurnRail(host);
-  const el = document.querySelector<HTMLElement>(".turn-rail");
+  const el = document.querySelector<HTMLElement>(".turn-map");
   if (el === null) {
-    throw new Error("rail not mounted");
+    throw new Error("turn map not mounted");
   }
-  el.style.height = "600px";
-  el.style.display = "block";
   return el;
 }
 
-/** A rail tall enough for `n` markers at `pitchPx`. The pitch is a PARAMETER,
- *  obtained the way `railMetrics` does, so a case can drive either pointer tier. */
-function railFor(n: number, pitchPx: number): number {
-  return n * pitchPx;
+/** The turn number a row's link lands, off its `#turn-<n>` href. */
+function turnOf(link: Element | null | undefined): string {
+  return /#turn-(\d+)$/u.exec(link?.getAttribute("href") ?? "")?.[1] ?? "";
+}
+
+/** The links of the map's rows, in order. */
+function rowLinks(root: ParentNode): HTMLAnchorElement[] {
+  return [...root.querySelectorAll<HTMLAnchorElement>(".turn-map-stack .turn-pill-link")];
+}
+
+/** The row a link sits in, which carries the position and severity attributes. */
+function rowOf(link: HTMLElement): HTMLElement {
+  const li = link.parentElement;
+  if (li === null) {
+    throw new Error("a link outside its row");
+  }
+  return li;
+}
+
+/** Whether a row's jump is paging history in, which its preview says. */
+function isPending(link: HTMLElement): boolean {
+  return link.getAttribute("data-tooltip")?.includes("Loading\u2026") ?? false;
+}
+
+/** The map's stack, the box a click's pointer Y is read against. */
+function stackOf(root: ParentNode): HTMLElement {
+  const el = root.querySelector<HTMLElement>(".turn-map-stack");
+  if (el === null) {
+    throw new Error("no stack");
+  }
+  return el;
+}
+
+/** The map's track, the box binning is measured against. */
+function trackOf(root: ParentNode): HTMLElement {
+  const el = root.querySelector<HTMLElement>(".turn-map-track");
+  if (el === null) {
+    throw new Error("no track");
+  }
+  return el;
+}
+
+/** The turn the map marks current, or "" when none is. */
+function currentOf(root: ParentNode): string {
+  return turnOf(root.querySelector(".turn-pill[data-current] > .turn-pill-link"));
 }
 
 function fakeRect(top: number, height: number): DOMRect {
@@ -262,7 +325,7 @@ function frames(): Promise<void> {
 // first-turn refresh.
 // ---------------------------------------------------------------------------
 
-describe("which chat the rail belongs to", () => {
+describe("which chat the map belongs to", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
@@ -275,19 +338,19 @@ describe("which chat the rail belongs to", () => {
   });
 
   function rail(): HTMLElement {
-    const el = document.querySelector<HTMLElement>(".turn-rail");
+    const el = document.querySelector<HTMLElement>(".turn-map");
     if (el === null) {
-      throw new Error("rail not mounted");
+      throw new Error("turn map not mounted");
     }
     return el;
   }
 
   /** The marker labels currently painted, in order. */
   function markers(): string[] {
-    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
+    return rowLinks(rail()).map(turnOf);
   }
 
-  it("paints one marker per turn once the index arrives", async () => {
+  it("paints one row per turn once the index arrives", async () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-a");
     expect(markers()).toEqual(["1", "2"]);
@@ -300,9 +363,8 @@ describe("which chat the rail belongs to", () => {
     pointTurnRail("c-b");
 
     expect(markers()).toEqual([]);
-    // No child NODES, not merely no markers: `.turn-rail:empty` is what hides
-    // the axis, and a text node would satisfy the selector's negation.
-    expect(rail().childNodes).toHaveLength(0);
+    // `data-shown` is what the stylesheet keys the map's display on.
+    expect(rail().hasAttribute("data-shown")).toBe(false);
   });
 
   it("asks the server nothing when it is only pointed", () => {
@@ -363,7 +425,7 @@ describe("which chat the rail belongs to", () => {
 
 // A NAVIGATOR has nothing to offer a transcript seen whole. Both directions, including the one
 // activation cannot cover.
-describe("the rail only appears once the transcript can be scrolled", () => {
+describe("the map only appears once the transcript can be scrolled", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
@@ -376,15 +438,15 @@ describe("the rail only appears once the transcript can be scrolled", () => {
   });
 
   function rail(): HTMLElement {
-    const el = document.querySelector<HTMLElement>(".turn-rail");
+    const el = document.querySelector<HTMLElement>(".turn-map");
     if (el === null) {
-      throw new Error("rail not mounted");
+      throw new Error("turn map not mounted");
     }
     return el;
   }
 
   function markers(): string[] {
-    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
+    return rowLinks(rail()).map(turnOf);
   }
 
   it("stays empty for a transcript that fits, however many turns it holds", async () => {
@@ -392,17 +454,18 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
 
     await loadTurnRail("c-short");
+    await frames();
 
-    // Empty rather than hidden by a class: `.turn-rail:empty` is what removes the
-    // element, and that takes the axis line with it.
+    // No rows, and no `data-shown` for the stylesheet to draw the map on.
     expect(markers()).toEqual([]);
-    expect(rail().children.length).toBe(0);
+    expect(rail().hasAttribute("data-shown")).toBe(false);
   });
 
   it("appears once a paint takes the transcript past the threshold", async () => {
     scrollable.by = 0;
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-grows");
+    await frames();
     expect(markers()).toEqual([]);
 
     // The transcript grew — a streaming turn, or a page of history landing. This is
@@ -410,8 +473,10 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     // changed, so only the paint's own re-render reaches it.
     scrollable.by = 500;
     setResidentTurns([]);
+    await frames();
 
     expect(markers()).toEqual(["1", "2"]);
+    expect(rail().hasAttribute("data-shown")).toBe(true);
   });
 
   it("goes away again when the transcript stops being scrollable", async () => {
@@ -422,6 +487,7 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     // A window the reader just made taller, or turns folding away.
     scrollable.by = 0;
     setResidentTurns([]);
+    await frames();
 
     expect(markers()).toEqual([]);
   });
@@ -434,10 +500,12 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     // settles.
     scrollable.by = 1;
     await loadTurnRail("c-hair");
+    await frames();
     expect(markers()).toEqual([]);
 
     scrollable.by = 101;
     setResidentTurns([]);
+    await frames();
     expect(markers()).toEqual(["1"]);
   });
 });
@@ -484,8 +552,7 @@ describe("which turn the reading line is in", () => {
 
   /** The label of the marker the rail marks current, or "" when none is. */
   function current(): string {
-    const el = rail.querySelector<HTMLElement>(".rail-marker[data-current]");
-    return el?.firstChild?.textContent ?? "";
+    return currentOf(rail);
   }
 
   async function seat(id: string, ns: number[]): Promise<Map<number, HTMLElement>> {
@@ -633,7 +700,7 @@ describe("which turn the reading line is in", () => {
 // the record is missing, pre-gap, pre-count, or overruled by `force`.
 // ---------------------------------------------------------------------------
 
-describe("the rail record gates the activation fetch", () => {
+describe("the map's record gates the activation fetch", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
@@ -641,10 +708,8 @@ describe("the rail record gates the activation fetch", () => {
   });
 
   function markers(): string[] {
-    const rail = document.querySelector<HTMLElement>(".turn-rail");
-    return [...(rail?.querySelectorAll(".rail-marker") ?? [])].map(
-      (b) => b.firstChild?.textContent ?? "",
-    );
+    const rail = document.querySelector<HTMLElement>(".turn-map");
+    return rail === null ? [] : rowLinks(rail).map(turnOf);
   }
 
   function session(id: string, turnCount: number): Session {
@@ -794,7 +859,7 @@ describe("the newest turn needs no fetch", () => {
   });
 
   function markers(): string[] {
-    return [...rail.querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
+    return rowLinks(rail).map(turnOf);
   }
 
   it("paints a resident turn the index has never seen", async () => {
@@ -837,7 +902,7 @@ describe("the newest turn needs no fetch", () => {
 // window-local, so addressing by the marker's number missed by the paged-out count.
 // ---------------------------------------------------------------------------
 
-describe("which card a marker jumps to", () => {
+describe("which card a row jumps to", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
   /** The transcript the rail scopes its lookup to. */
@@ -880,10 +945,8 @@ describe("which card a marker jumps to", () => {
     return e;
   }
 
-  function marker(n: number): HTMLButtonElement {
-    const btn = [...rail.querySelectorAll<HTMLButtonElement>(".rail-marker")].find(
-      (b) => b.firstChild?.textContent === String(n),
-    );
+  function marker(n: number): HTMLAnchorElement {
+    const btn = rowLinks(rail).find((b) => turnOf(b) === String(n));
     if (btn === undefined) {
       throw new Error(`no marker for turn ${String(n)}`);
     }
@@ -993,7 +1056,7 @@ describe("which card a marker jumps to", () => {
 
     let pendingWhileWaiting = false;
     vi.mocked(loadMessages).mockImplementation(async () => {
-      pendingWhileWaiting = marker(6).dataset["pending"] !== undefined;
+      pendingWhileWaiting = isPending(marker(6));
       const s = get("c-page-in");
       if (s !== undefined) {
         prependTurns(s, ["m6", "m7"]);
@@ -1017,7 +1080,7 @@ describe("which card a marker jumps to", () => {
     expect(mountedBodies).toEqual(["m6"]);
     expect(scrollable.landings.length).toBeGreaterThan(0);
     // The pending state is a fetch in flight, so it has to be gone afterwards.
-    expect(marker(6).dataset["pending"]).toBeUndefined();
+    expect(isPending(marker(6))).toBe(false);
   });
 
   it("scrolls nowhere when the turn is neither resident nor reachable", async () => {
@@ -1033,14 +1096,14 @@ describe("which card a marker jumps to", () => {
     // The click's own render, so the wait below has something real to wait FOR — a
     // `waitFor` on a state that was never entered passes on its first poll and
     // asserts nothing.
-    expect(marker(1).dataset["pending"]).toBe("");
+    expect(isPending(marker(1))).toBe(true);
     await settleJump();
 
     expect(scrollable.landings).toEqual([]);
     expect(vi.mocked(loadMessages)).not.toHaveBeenCalled();
     // The pending state means a fetch is in flight, so a dead end has to clear it —
     // a marker left pulsing forever is the same silence the state exists to break.
-    expect(marker(1).dataset["pending"]).toBeUndefined();
+    expect(isPending(marker(1))).toBe(false);
   });
 
   it("does not let a superseded jump close the epoch the second one opened", async () => {
@@ -1103,10 +1166,10 @@ describe("which card a marker jumps to", () => {
     // One bracket for the two clicks, and the landing the second click asked for.
     expect(scrollable.epochs).toEqual(["begin", "end"]);
     expect(target.dataset["railTarget"]).toBe("");
-    expect(marker(2).dataset["selected"]).toBe("");
+    expect(currentOf(rail)).toBe("2");
   });
 
-  it("lets a second click on a paging marker be the jump already in flight", async () => {
+  it("lets a second click on a paging row be the jump already in flight", async () => {
     // A second click on a still-fetching marker must not CLAIM the generation, or the awaited jump is
     // superseded and never scrolls.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
@@ -1134,7 +1197,7 @@ describe("which card a marker jumps to", () => {
     expect(
       view.querySelector<HTMLElement>('[data-reconcile-key="m1"]')?.dataset["railTarget"],
     ).toBe("");
-    expect(marker(1).dataset["pending"]).toBeUndefined();
+    expect(isPending(marker(1))).toBe(false);
   });
 
   it("stops a superseded jump's corrections from writing the scroller", async () => {
@@ -1246,10 +1309,8 @@ describe("a click always produces a reaction", () => {
     return e;
   }
 
-  function marker(n: number): HTMLButtonElement {
-    const btn = [...rail.querySelectorAll<HTMLButtonElement>(".rail-marker")].find(
-      (b) => b.firstChild?.textContent === String(n),
-    );
+  function marker(n: number): HTMLAnchorElement {
+    const btn = rowLinks(rail).find((b) => turnOf(b) === String(n));
     if (btn === undefined) {
       throw new Error(`no marker for turn ${String(n)}`);
     }
@@ -1274,60 +1335,48 @@ describe("a click always produces a reaction", () => {
     return { two, three };
   }
 
-  it("marks the clicked marker even when the scroll cannot move", async () => {
+  it("marks the clicked row even when the scroll cannot move", async () => {
     await bothVisible();
-    expect(rail.querySelector(".rail-marker[data-current]")?.firstChild?.textContent).toBe("2");
+    expect(currentOf(rail)).toBe("2");
 
     marker(3).click();
     await settleJump();
 
-    const three = marker(3);
-    const two = marker(2);
-    expect(three.dataset["selected"]).toBe("");
-    expect(three.getAttribute("aria-current")).toBe("true");
-    expect(two.dataset["selected"]).toBeUndefined();
-    expect(two.getAttribute("aria-current")).toBeNull();
-    // And the scroll-derived mark is WITHHELD while the pick stands, because the two
-    // share one filled treatment and the rail may claim only one position. They stay
-    // separate attributes so a rule and a test can tell them apart.
-    expect(two.dataset["current"]).toBeUndefined();
+    expect(rowOf(marker(3)).dataset["current"]).toBe("");
+    expect(marker(3).getAttribute("aria-current")).toBe("location");
+    expect(rowOf(marker(2)).dataset["current"]).toBeUndefined();
+    expect(marker(2).getAttribute("aria-current")).toBeNull();
   });
 
-  it("claims exactly one position, on exactly one marker", async () => {
-    // The property behind the case above, stated so a future edit cannot write both
-    // marks and paint two filled markers.
+  it("claims exactly one position, on exactly one row", async () => {
     await bothVisible();
-    expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
+    expect(rail.querySelectorAll("[data-current]")).toHaveLength(1);
 
     marker(3).click();
     await settleJump();
-    expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
-    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
+    expect(rail.querySelectorAll("[data-current]")).toHaveLength(1);
+    expect(currentOf(rail)).toBe("3");
 
     scrollable.readerGesture?.();
-    expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
+    expect(rail.querySelectorAll("[data-current]")).toHaveLength(1);
   });
 
-  it("keeps exactly one marker claiming to be current", async () => {
+  it("keeps exactly one link claiming to be the current location", async () => {
     await bothVisible();
     marker(3).click();
     await settleJump();
 
-    expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
+    expect(rail.querySelectorAll("[aria-current]")).toHaveLength(1);
+    expect(rail.querySelector('[aria-current="location"]')).toBe(marker(3));
   });
 
   it("marks the pick even when it IS the turn activation already names", async () => {
-    // The coincident case, and the reason the two marks are exclusive rather than
-    // additive: clicking the marker the reading line already named has to read as a
-    // pick, or the rail stops tracking and shows nothing to say why.
     await bothVisible();
     marker(2).click();
     await settleJump();
 
-    expect(marker(2).dataset["selected"]).toBe("");
-    expect(marker(2).dataset["current"]).toBeUndefined();
-    expect(marker(2).getAttribute("aria-current")).toBe("true");
-    expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
+    expect(currentOf(rail)).toBe("2");
+    expect(rail.querySelectorAll("[data-current]")).toHaveLength(1);
   });
 
   it("flashes the landing card, then takes the ring away", async () => {
@@ -1365,34 +1414,35 @@ describe("a click always produces a reaction", () => {
     await bothVisible();
     marker(3).click();
     await settleJump();
-    expect(marker(3).dataset["selected"]).toBe("");
+    expect(currentOf(rail)).toBe("3");
 
     // Through the real seam: scroll.ts's reader-gesture callback. Which writes publish it is pinned in
     // `scroll.test.ts`.
     scrollable.readerGesture?.();
+    scrollable.el.scrollTop = 0;
+    scrollable.fire("scroll");
+    await frames();
 
-    expect(marker(3).dataset["selected"]).toBeUndefined();
-    expect(rail.querySelector(".rail-marker[data-current]")).not.toBeNull();
+    // The pick would have held turn 3 here; with it revoked the scroll offset decides.
+    expect(currentOf(rail), "the scroll-derived turn takes the mark back").toBe("2");
   });
 
   it("drops a pick the arriving index no longer names", async () => {
     // THE REWIND: a pick held by an opening-message id the reverted index no longer carries must drop,
-    // or `markerNode` marks no row at all.
+    // or the map marks no row at all.
     const { two } = await bothVisible();
     marker(3).click();
     await settleJump();
-    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
+    expect(currentOf(rail)).toBe("3");
 
-    // A rewind truncates the session, so the turn's card leaves the transcript and
-    // the next index no longer names it.
     setResidentTurns([two]);
     await frames();
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await refreshTurnRail("c-both");
 
-    expect(rail.querySelector("[data-selected]")).toBeNull();
-    expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
-    expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
+    expect(currentOf(rail)).toBe("2");
+    expect(rail.querySelectorAll("[data-current]")).toHaveLength(1);
+    expect(rail.querySelectorAll("[aria-current]")).toHaveLength(1);
   });
 
   it("keeps a pick the arriving index still names", async () => {
@@ -1401,22 +1451,18 @@ describe("a click always produces a reaction", () => {
     marker(3).click();
     await settleJump();
 
-    // A fourth turn arrives — a later index that still carries `m3`.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3), turn(4)] });
     await refreshTurnRail("c-both");
 
-    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
-    expect(rail.querySelector("[data-current]")).toBeNull();
+    expect(currentOf(rail), "activation alone would say 2").toBe("3");
   });
 
   it("follows the picked turn through a renumbering rather than the number it wore", async () => {
-    // The pick is an id, so an index that renumbers the same turns — an older turn
-    // dropping off a session the server recounted — moves the mark WITH the turn.
-    // Held by number, `data-selected` would have stayed on whatever now wears 3.
+    // The pick is an id, so an index that renumbers the same turns moves the mark WITH the turn.
     await bothVisible();
     marker(3).click();
     await settleJump();
-    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
+    expect(currentOf(rail)).toBe("3");
 
     setSessions([]);
     vi.mocked(apiGet).mockResolvedValue({
@@ -1424,26 +1470,23 @@ describe("a click always produces a reaction", () => {
     });
     await refreshTurnRail("c-both");
 
-    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("2");
-    expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
-    expect(rail.querySelector("[aria-current='true']")?.firstChild?.textContent).toBe("2");
+    expect(currentOf(rail)).toBe("2");
+    expect(rail.querySelectorAll("[aria-current]")).toHaveLength(1);
   });
 
   it("survives a table rebuild that moves activation to a different turn", async () => {
     // Deliberately NOT cleared by activation moving: a streaming turn's own growth
-    // moves the reading line's answer with no reader gesture behind it, and dropping
-    // the pick there would revoke the reader's choice while they sit perfectly still.
+    // moves the reading line's answer with no reader gesture behind it.
     const { two, three } = await bothVisible();
     marker(2).click();
     await settleJump();
-    expect(marker(2).dataset["selected"]).toBe("");
+    expect(currentOf(rail)).toBe("2");
 
     scrollable.el.scrollTop = 500;
     setResidentTurns([two, three]);
     await frames();
 
-    expect(marker(2).dataset["selected"]).toBe("");
-    expect(rail.querySelector("[data-current]")).toBeNull();
+    expect(currentOf(rail), "the scroll offset alone would say 3").toBe("2");
   });
 
   it("drops the selection on a chat switch", async () => {
@@ -1455,16 +1498,17 @@ describe("a click always produces a reaction", () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
     await refreshTurnRail("c-other");
 
-    expect(rail.querySelector(".rail-marker[data-selected]")).toBeNull();
+    // The other chat carries the same ids, so a kept pick would still mark turn 3.
+    expect(rail.querySelector("[data-current]")).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// What a rail row SAYS (composed in `rail-labels.test.ts`): published on both channels, with no
-// native `title`, which skipped the styled tooltip and `aria-describedby`.
+// What a row SAYS (composed in `rail-labels.test.ts`): published as the accessible name and the styled
+// preview, with no native `title`, which skipped the styled tooltip and `aria-describedby`.
 // ---------------------------------------------------------------------------
 
-describe("what a rail row says", () => {
+describe("what a turn-map row says", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
 
@@ -1475,237 +1519,68 @@ describe("what a rail row says", () => {
   beforeEach(() => {
     scrollable.reset();
     resetTurnRail();
-    // The track is the module's own element, so a case that shortens it to force a
-    // downsample hands the next one a four-row rail if it fails before restoring it.
-    rail.style.height = "600px";
   });
 
-  function rows(sel: string): HTMLElement[] {
-    return [...rail.querySelectorAll<HTMLElement>(sel)];
-  }
+  it("names the map Turns", () => {
+    expect(rail.tagName).toBe("NAV");
+    expect(rail.getAttribute("aria-label")).toBe("Turns");
+  });
 
-  it("carries data-tooltip and no native title on every marker", async () => {
+  it("carries data-tooltip and no native title on every row", async () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: turns(12) });
     await loadTurnRail("c-say");
 
-    const all = rows(".rail-marker");
-    expect(all.length).toBeGreaterThan(1);
+    const all = rowLinks(rail);
+    expect(all).toHaveLength(12);
     for (const row of all) {
-      expect(row.getAttribute("title"), row.className).toBeNull();
-      expect(row.getAttribute("data-tooltip"), row.className).not.toBe("");
-      expect(row.getAttribute("aria-label"), row.className).not.toBe("");
+      expect(row.getAttribute("title")).toBeNull();
+      expect(row.getAttribute("data-tooltip")).not.toBe("");
+      expect(row.getAttribute("aria-label")).not.toBe("");
     }
   });
 
-  it("names an agent-initiated turn in the accessible NAME, not only in a border style", async () => {
-    // The server leaves `first_line` empty for a non-user turn, so a dashed italic border
-    // alone would leave the hover saying only `Turn 4`.
+  it("names an agent-initiated turn and says what it is in the preview", async () => {
     vi.mocked(apiGet).mockResolvedValue({
       turns: [turn(1, { first_line: "do it" }), turn(2, { agent_initiated: true })],
     });
     await loadTurnRail("c-agent");
-    const [user, agent] = rows(".rail-marker");
+    const [user, agent] = rowLinks(rail);
 
-    expect(agent?.dataset["trigger"]).toBe("system");
-    expect(agent?.getAttribute("aria-label")).toBe("Go to turn 2, agent-initiated");
-    expect(agent?.getAttribute("data-tooltip")).toBe("Agent-initiated turn");
-    expect(user?.getAttribute("aria-label")).toBe("Go to turn 1");
-    expect(user?.getAttribute("data-tooltip")).toBe("do it");
+    expect(agent === undefined ? undefined : rowOf(agent).dataset["trigger"]).toBe("system");
+    expect(agent?.getAttribute("aria-label")).toBe("Turn 2, agent-initiated");
+    expect(agent?.getAttribute("data-tooltip")).toBe("#2 \u00b7 Completed\nAgent-initiated turn");
+    expect(user?.getAttribute("aria-label")).toBe("Turn 1: do it");
+    expect(user?.getAttribute("data-tooltip")).toBe("#1 \u00b7 Completed\ndo it");
   });
 
-  it("names a non-clean outcome and stays quiet about a clean one", async () => {
+  it("shows a duration the index carries, for a turn the store does not hold", async () => {
     vi.mocked(apiGet).mockResolvedValue({
-      turns: [turn(1), turn(2, { outcome: "failed" }), turn(3, { outcome: "unknown" })],
+      turns: [turn(1, { first_line: "do it", outcome: "failed", elapsed_ms: 92_000 })],
     });
-    await loadTurnRail("c-outcomes");
-    const [clean, failed, unknown] = rows(".rail-marker");
-
-    expect(clean?.getAttribute("aria-label")).toBe("Go to turn 1");
-    expect(failed?.getAttribute("aria-label")).toBe("Go to turn 2, failed");
-    expect(failed?.getAttribute("data-tooltip")).toContain("This turn failed");
-    expect(unknown?.getAttribute("aria-label")).toBe("Go to turn 3, unknown");
-    expect(unknown?.getAttribute("data-tooltip")).toContain("could not be read");
-  });
-
-  it("states the set it shows once the rail is downsampled", async () => {
-    const pitchPx = railMetrics(rail).pitchPx;
-    rail.style.height = `${String(railFor(4, pitchPx))}px`;
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
-    await loadTurnRail("c-many");
-
-    const shown = rows(".rail-marker").length;
-    expect(shown).toBeLessThan(60);
-    expect(rail.getAttribute("aria-label")).toBe(
-      `Turn timeline, showing ${String(shown)} of 60 turns`,
-    );
-    rail.style.height = "600px";
-  });
-
-  it("says nothing about a set it shows whole", async () => {
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(3) });
-    await loadTurnRail("c-few");
-
-    expect(rail.getAttribute("aria-label")).toBe("Turn timeline");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// THE TURN'S DURATION on the rail. The rail's feed carries none, so it derives from the transcript
-// STORE (`turn_elapsed_ms` summed), and a turn outside that window gets no slot rather than a guess.
-// The reveal is `rail-mark-css.test.ts`'s.
-// ---------------------------------------------------------------------------
-
-describe("the duration a rail marker can show", () => {
-  const host = document.createElement("div");
-  let rail: HTMLElement;
-
-  beforeAll(() => {
-    rail = mountRail(host);
-  });
-
-  beforeEach(() => {
-    scrollable.reset();
-    resetTurnRail();
-  });
-
-  /** A turn as the STORE holds it: the `turn_open` the index joins on plus the stamped `turn_close`.
-   *  The prompt is a parameter: the merge takes the RESIDENT label. */
-  function storedTurn(n: number, opts: ResidentOpts = {}): Resident {
-    return residentTurns([`m${String(n)}`], opts);
-  }
-
-  function seed(chatID: string, resident: Resident): void {
-    setSessions([
-      {
-        id: chatID,
-        name: chatID,
-        model: "",
-        acp_session_id: "",
-        current_mode_id: "",
-        usage: {
-          context_pct: 0,
-          context_size: 0,
-          credits: 0,
-          last_turn_ms: 0,
-          has_real_data: false,
-        },
-        ...resident,
-        turn_count: resident.turn_order.length,
-        has_more: true,
-        thinking: false,
-        working_label: "Thinking",
-      },
-    ]);
-    setActive(chatID);
-  }
-
-  function marker(n: number): HTMLElement {
-    const found = [...rail.querySelectorAll<HTMLElement>(".rail-marker")].find(
-      (b) => b.firstChild?.textContent === String(n),
-    );
-    if (found === undefined) {
-      throw new Error(`no marker for turn ${String(n)}`);
-    }
-    return found;
-  }
-
-  function slot(n: number): HTMLElement | null {
-    return marker(n).querySelector<HTMLElement>(".rail-marker-time");
-  }
-
-  it("renders the turn's own duration, in both spellings", async () => {
-    seed("c-dur", storedTurn(1, { elapsedMs: 92_000 }));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-dur");
 
-    const time = slot(1);
-    expect(time).not.toBeNull();
-    // Hardcoded rather than computed through the formatters the renderer uses, or the
-    // case would assert the code against itself. 92s is `1m 32s` / `PT1M32S`.
-    expect(time?.textContent).toBe("1m 32s");
-    expect(time?.getAttribute("datetime")).toBe("PT1M32S");
-    // A `<time>`, because the two spellings are the machine and human forms of one
-    // value, and this is the app's only machine-readable DURATION.
-    expect(time?.tagName).toBe("TIME");
+    const [row] = rowLinks(rail);
+    expect(row?.getAttribute("data-tooltip")).toBe("#1 \u00b7 Failed \u00b7 1m 32s\ndo it");
+    expect(row?.getAttribute("aria-label")).toBe("Turn 1, failed: do it");
   });
 
-  it("shows nothing for a turn the store does not hold", async () => {
-    // THE HONEST GAP. The rail spans the session; the store holds a window. Turn 1 is
-    // resident, turn 2 is not, and the rail cannot know turn 2's duration without a
-    // wire field it has not got — so that marker carries no slot at all.
-    seed("c-window", storedTurn(1, { elapsedMs: 92_000 }));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
-    await loadTurnRail("c-window");
+  it("links every row to its turn, so copy-link and a new tab work", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(3) });
+    await loadTurnRail("c-links");
 
-    expect(slot(1)).not.toBeNull();
-    expect(slot(2)).toBeNull();
-  });
-
-  it("shows nothing for a resident turn nobody stamped", async () => {
-    // A duration nobody stamped is not a duration of zero — the rule the turn footer's
-    // own slot follows — so an unstamped turn gets no element rather than `0.0s`.
-    seed("c-unstamped", storedTurn(1));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
-    await loadTurnRail("c-unstamped");
-
-    expect(marker(1).firstChild?.textContent).toBe("1");
-    expect(slot(1)).toBeNull();
-  });
-
-  it("reads the store at RENDER time, so a turn that pages in gains its slot", async () => {
-    // The map is rebuilt per render rather than captured with the fetch: `ingestMessage`
-    // upserts in place, so an array identity is not a version and a cached answer would
-    // go stale exactly when history arrives.
-    seed("c-late", residentTurns([]));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
-    await loadTurnRail("c-late");
-    expect(slot(1)).toBeNull();
-
-    const session = get("c-late");
-    if (session === undefined) {
-      throw new Error("session gone");
-    }
-    const late = storedTurn(1, { elapsedMs: 92_000 });
-    session.turns = late.turns;
-    session.turn_order = late.turn_order;
-    await refreshTurnRail("c-late");
-
-    expect(slot(1)?.textContent).toBe("1m 32s");
-  });
-
-  it("puts the duration in the DESCRIPTION channel and keeps the name short", async () => {
-    // `aria-label` beats the button's text, so the slot's words reach a screen reader only through
-    // `aria-describedby`, as the footer's slot does; the NAME stays unchanged.
-    seed(
-      "c-channels",
-      storedTurn(1, { elapsedMs: 92_000, prompt: "do the thing", outcome: "failed" }),
-    );
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
-    await loadTurnRail("c-channels");
-
-    const btn = marker(1);
-    expect(btn.getAttribute("data-tooltip")).toBe(
-      "do the thing \u00b7 This turn failed \u00b7 1m 32s",
-    );
-    expect(btn.getAttribute("aria-label")).toBe("Go to turn 1, failed");
-    expect(btn.getAttribute("data-tooltip")).not.toBe(btn.getAttribute("aria-label"));
-  });
-
-  it("says nothing about a duration it does not have", async () => {
-    seed("c-quiet", storedTurn(1, { prompt: "do the thing" }));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
-    await loadTurnRail("c-quiet");
-
-    expect(marker(1).getAttribute("data-tooltip")).toBe("do the thing");
+    expect(rowLinks(rail).map((a) => a.getAttribute("href"))).toEqual([
+      "/chat/c-links#turn-1",
+      "/chat/c-links#turn-2",
+      "/chat/c-links#turn-3",
+    ]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Markers sit at ONE pitch: `k` markers are `k - 1` equal gaps apart. This pins that the renderer
-// publishes the slot's fraction (`rail-select.node.test.ts`, `rail-position-css.test.ts`).
+// Past density the map BINS consecutive turns into one row, and no turn is dropped.
 // ---------------------------------------------------------------------------
 
-describe("markers sit at one pitch", () => {
+describe("a long session bins rather than drops", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
 
@@ -1718,33 +1593,54 @@ describe("markers sit at one pitch", () => {
     resetTurnRail();
   });
 
-  function fractions(): number[] {
-    return [...rail.querySelectorAll<HTMLElement>(".rail-marker")].map((b) =>
-      Number(b.style.getPropertyValue("--rail-at")),
+  afterEach(async () => {
+    stackOf(rail).style.removeProperty("height");
+    trackOf(rail).style.removeProperty("height");
+    trackOf(rail).style.removeProperty("display");
+    await frames();
+  });
+
+  it("builds no rows while CSS stops drawing a map it drew before", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(40) });
+    await loadTurnRail("c-hidden");
+    await frames();
+    expect(rowLinks(rail)).toHaveLength(40);
+
+    // What a narrowing chat or a coarse pointer does to the track: no box, so its entry reads 0.
+    trackOf(rail).style.display = "none";
+    await frames();
+    await frames();
+    expect(rowLinks(rail)).toHaveLength(0);
+    expect(rail.hasAttribute("data-shown")).toBe(true);
+
+    trackOf(rail).style.removeProperty("display");
+    await frames();
+    await frames();
+    expect(rowLinks(rail)).toHaveLength(40);
+  });
+
+  it("lays rows of four on a stack that holds a quarter of the turns, at their fractions", async () => {
+    // 200 turns on a 100px stack: 50 rows at the 2px floor, four turns a row.
+    trackOf(rail).style.height = "100px";
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(200) });
+    await loadTurnRail("c-bins");
+    await frames();
+    await frames();
+
+    const rows = rowLinks(rail);
+    expect(rows).toHaveLength(50);
+    expect(rows[0]?.getAttribute("aria-label")).toBe("Turns 1 to 4");
+    expect(rows[49]?.getAttribute("aria-label")).toBe("Turns 197 to 200");
+    expect(rows.map((a) => Number(rowOf(a).style.getPropertyValue("--rail-at")))).toEqual(
+      Array.from({ length: 50 }, (_, i) => i / 49),
     );
-  }
-
-  it("spends every slot the track holds and spaces them equally", async () => {
-    // 60 turns on a 600px track at the fallback pitch: 21 slots, spread over the
-    // whole travel because 20 relaxed gaps overrun it.
-    const { pitchPx } = railMetrics(rail);
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
-    await loadTurnRail("c-pitch");
-
-    const at = fractions();
-    expect(at).toHaveLength(Math.floor(600 / pitchPx));
-    expect(at[0]).toBe(0);
-    expect(at[at.length - 1]).toBe(1);
-    const first = (at[1] ?? 0) - (at[0] ?? 0);
-    for (let i = 1; i < at.length; i++) {
-      expect((at[i] ?? 0) - (at[i - 1] ?? 0)).toBeCloseTo(first, 9);
-    }
+    expect(stackOf(rail).style.getPropertyValue("--turn-map-slots")).toBe("50");
   });
 });
 
 // ---------------------------------------------------------------------------
-// The mark is STICKY: it belongs to the nearest shown marker at or below the reading line, and once
-// a turn is placed exactly one marker is marked; nothing may clear it.
+// The mark is STICKY: it belongs to the row at or below the reading line, and once a turn is placed
+// exactly one row is marked; nothing may clear it.
 // ---------------------------------------------------------------------------
 
 describe("the mark is sticky", () => {
@@ -1758,6 +1654,11 @@ describe("the mark is sticky", () => {
   beforeEach(() => {
     scrollable.reset();
     resetTurnRail();
+  });
+
+  afterEach(() => {
+    stackOf(rail).style.removeProperty("height");
+    trackOf(rail).style.removeProperty("height");
   });
 
   function card(key: string, top: number): HTMLElement {
@@ -1776,13 +1677,7 @@ describe("the mark is sticky", () => {
   }
 
   function marked(): HTMLElement[] {
-    return [...rail.querySelectorAll<HTMLElement>(".rail-marker[data-current]")];
-  }
-
-  function labels(): number[] {
-    return [...rail.querySelectorAll<HTMLElement>(".rail-marker")].map((b) =>
-      Number(b.firstChild?.textContent ?? "0"),
-    );
+    return [...rail.querySelectorAll<HTMLElement>(".turn-pill[data-current]")];
   }
 
   async function scrollTo(px: number): Promise<void> {
@@ -1792,29 +1687,27 @@ describe("the mark is sticky", () => {
   }
 
   async function seatSixty(): Promise<void> {
+    // A 30px track holds 15 rows, so the sixty turns bin four to a row.
+    trackOf(rail).style.height = "30px";
     vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
     await loadTurnRail("c-sticky");
     setResidentTurns(Array.from({ length: 60 }, (_, i) => card(`m${String(i + 1)}`, i * 400)));
     await frames();
+    await frames();
   }
 
-  it("marks the nearest shown marker while the reading line is in an unsampled turn", async () => {
+  it("marks the bin holding the reading line's turn", async () => {
     await seatSixty();
-    const shown = labels();
-    expect(shown.length).toBeLessThan(60);
+    expect(rowLinks(rail)).toHaveLength(15);
 
-    for (let k = 0; k < 60; k++) {
+    for (const k of [0, 3, 4, 17, 59]) {
       await scrollTo(k * 400);
-      const active = k + 1;
       const m = marked();
-      expect(m, `turn ${String(active)}`).toHaveLength(1);
-      expect(m[0]?.getAttribute("aria-current")).toBe("true");
-      const label = Number(m[0]?.firstChild?.textContent ?? "0");
-      expect(label).toBeLessThanOrEqual(active);
-      expect(
-        shown.some((n) => n > label && n <= active),
-        `turn ${String(active)}`,
-      ).toBe(false);
+      expect(m, `turn ${String(k + 1)}`).toHaveLength(1);
+      const first = Math.floor(k / 4) * 4 + 1;
+      expect(m[0]?.querySelector("a")?.getAttribute("aria-label"), `turn ${String(k + 1)}`).toBe(
+        `Turns ${String(first)} to ${String(first + 3)}`,
+      );
     }
   });
 
@@ -1822,7 +1715,7 @@ describe("the mark is sticky", () => {
     await seatSixty();
     await scrollTo(5 * 400);
     expect(marked()).toHaveLength(1);
-    const before = marked()[0]?.firstChild?.textContent;
+    const before = marked()[0]?.querySelector("a")?.getAttribute("aria-label");
 
     setResidentTurns([]);
     await frames();
@@ -1831,7 +1724,7 @@ describe("the mark is sticky", () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
     await refreshTurnRail("c-sticky");
     expect(marked()).toHaveLength(1);
-    expect(marked()[0]?.firstChild?.textContent).toBe(before);
+    expect(marked()[0]?.querySelector("a")?.getAttribute("aria-label")).toBe(before);
   });
 
   it("marks the window's first turn when its opening message was paged out", async () => {
@@ -1871,6 +1764,287 @@ describe("the mark is sticky", () => {
     await scrollTo(0);
 
     expect(marked()).toHaveLength(1);
-    expect(marked()[0]?.firstChild?.textContent).toBe("5");
+    expect(currentOf(rail)).toBe("5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The keyboard, the step buttons and the pointer: one tab stop, and every way in lands through the
+// same jump.
+// ---------------------------------------------------------------------------
+
+describe("moving through the map", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+  let view: HTMLElement;
+
+  beforeAll(() => {
+    rail = mountRail(host);
+  });
+
+  beforeEach(() => {
+    scrollable.reset();
+    resetTurnRail();
+    view = document.createElement("div");
+    view.className = "transcript-view";
+    document.body.appendChild(view);
+    initTurnRailCallbacks({ mountTurnBody: () => Promise.resolve(), activeView: () => view });
+  });
+
+  afterEach(() => {
+    view.remove();
+    stackOf(rail).style.removeProperty("height");
+    trackOf(rail).style.removeProperty("height");
+  });
+
+  function link(n: number): HTMLAnchorElement {
+    const hit = rowLinks(rail).find((a) => turnOf(a) === String(n));
+    if (hit === undefined) {
+      throw new Error(`no row for turn ${String(n)}`);
+    }
+    return hit;
+  }
+
+  function tabStops(): string[] {
+    return rowLinks(rail)
+      .filter((a) => a.tabIndex === 0)
+      .map(turnOf);
+  }
+
+  function residentCard(n: number, top: number): HTMLElement {
+    const e = document.createElement("div");
+    e.className = "turn";
+    e.setAttribute(KEY_ATTR, `m${String(n)}`);
+    Object.defineProperty(e, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(top, 400),
+    });
+    Object.defineProperty(e, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(top, 400)],
+    });
+    view.appendChild(e);
+    return e;
+  }
+
+  /** Thirty turns, the first three resident and the reading line in turn 1. */
+  async function seat(): Promise<void> {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(30) });
+    await loadTurnRail("c-keys");
+    setResidentTurns([residentCard(1, 0), residentCard(2, 400), residentCard(3, 800)]);
+    await frames();
+  }
+
+  function key(target: HTMLElement, k: string): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  }
+
+  it("holds one tab stop, on the current row", async () => {
+    await seat();
+    expect(tabStops()).toEqual(["1"]);
+  });
+
+  it("moves the tab stop and focus by one, ten, and to either end", async () => {
+    await seat();
+    link(1).focus();
+    for (const [k, want] of [
+      ["ArrowDown", "2"],
+      ["PageDown", "12"],
+      ["End", "30"],
+      ["ArrowDown", "30"],
+      ["PageUp", "20"],
+      ["ArrowUp", "19"],
+      ["Home", "1"],
+      ["ArrowUp", "1"],
+    ] as const) {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) {
+        throw new Error("focus left the map");
+      }
+      const e = key(active, k);
+      expect(e.defaultPrevented, k).toBe(true);
+      expect(turnOf(document.activeElement), k).toBe(want);
+      expect(tabStops(), k).toEqual([want]);
+    }
+  });
+
+  it("leaves other keys to the browser", async () => {
+    await seat();
+    link(1).focus();
+    expect(key(link(1), "a").defaultPrevented).toBe(false);
+    expect(key(link(1), "Tab").defaultPrevented).toBe(false);
+    expect(key(link(1), "Enter").defaultPrevented).toBe(false);
+  });
+
+  it("returns the tab stop to the current row once focus leaves", async () => {
+    await seat();
+    link(1).focus();
+    key(link(1), "PageDown");
+    expect(tabStops()).toEqual(["11"]);
+    document.body.focus();
+    link(11).blur();
+    expect(tabStops()).toEqual(["1"]);
+  });
+
+  it("lands the focused row on a pressed Enter", async () => {
+    await seat();
+    link(1).focus();
+    key(link(1), "ArrowDown");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => {
+      expect(scrollable.epochs).toContain("end");
+    });
+    expect(currentOf(rail)).toBe("2");
+  });
+
+  it("hands focus back to the transcript on Escape", async () => {
+    // The page's own scroller markup, so the focus target is only as focusable as index.html makes it.
+    const page = new DOMParser().parseFromString(indexHtml, "text/html");
+    const markup = page.getElementById("messages-wrap");
+    if (markup === null) {
+      throw new Error("index.html has no #messages-wrap");
+    }
+    const scroller = document.createElement("div");
+    for (const a of markup.attributes) {
+      scroller.setAttribute(a.name, a.value);
+    }
+    scroller.id = "messages-wrap-escape-target";
+    document.body.appendChild(scroller);
+    Object.assign(scrollable.el, {
+      focus: (o?: FocusOptions) => {
+        scroller.focus(o);
+      },
+    });
+    try {
+      await seat();
+      link(1).focus();
+      const e = key(link(1), "Escape");
+      expect(e.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(scroller);
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it("steps to the next and previous row, disabled at the ends", async () => {
+    await seat();
+    const prev = rail.querySelector<HTMLButtonElement>('.turn-map-step[data-dir="prev"]');
+    const next = rail.querySelector<HTMLButtonElement>('.turn-map-step[data-dir="next"]');
+    expect(prev?.disabled).toBe(true);
+    expect(next?.disabled).toBe(false);
+
+    next?.click();
+    await vi.waitFor(() => {
+      expect(scrollable.epochs).toContain("end");
+    });
+    expect(currentOf(rail)).toBe("2");
+    expect(prev?.disabled).toBe(false);
+
+    prev?.click();
+    expect(currentOf(rail)).toBe("1");
+  });
+
+  it("lands the nearest row for a click in a gap between rows", async () => {
+    // Turns 1 and 30 only, on a 300px stack: 30 slots of 10px, so a click 289px down sits in turn
+    // 30's slot and one 12px down in turn 1's.
+    trackOf(rail).style.height = "300px";
+    stackOf(rail).style.height = "300px";
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(30)] });
+    await loadTurnRail("c-gap");
+    await frames();
+    await frames();
+    const stack = stackOf(rail);
+    const box = stack.getBoundingClientRect();
+
+    stack.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, clientY: box.top + 289 }),
+    );
+    expect(currentOf(rail)).toBe("30");
+
+    stack.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, clientY: box.top + 12 }),
+    );
+    expect(currentOf(rail)).toBe("1");
+  });
+
+  it("leaves a modified click to the link, so it can open in a new tab", async () => {
+    await seat();
+    const e = new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true });
+    // Kept from navigating the test page, after the map has had its say.
+    window.addEventListener("click", (ev) => ev.preventDefault(), { once: true });
+    const decided = vi.fn((ev: Event) => ev.defaultPrevented);
+    rail.addEventListener("click", decided, { once: true });
+    link(3).dispatchEvent(e);
+    expect(decided).toHaveReturnedWith(false);
+    expect(currentOf(rail)).toBe("1");
+  });
+
+  it("says the map is busy while a jump pages history in", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(3) });
+    await loadTurnRail("c-busy");
+    setSessions([
+      {
+        id: "c-busy",
+        name: "c-busy",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        ...residentTurns(["m3"]),
+        turn_count: 3,
+        has_more: true,
+        thinking: false,
+        working_label: "Thinking",
+      },
+    ]);
+    setActive("c-busy");
+    // Every call's reading: a jump an earlier case left paging can call in after this one settles.
+    const busyWhileWaiting: (string | null)[] = [];
+    vi.mocked(loadMessages).mockImplementation(async () => {
+      busyWhileWaiting.push(rail.getAttribute("aria-busy"));
+      await Promise.resolve();
+      return false;
+    });
+
+    link(1).click();
+    await vi.waitFor(() => {
+      expect(scrollable.epochs.length + vi.mocked(loadMessages).mock.calls.length).toBeGreaterThan(
+        0,
+      );
+    });
+    await vi.waitFor(() => {
+      expect(rail.getAttribute("aria-busy")).toBeNull();
+    });
+    expect(busyWhileWaiting).toContain("true");
+  });
+
+  it("reads no layout while it renders", async () => {
+    await seat();
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    const computed = vi.spyOn(window, "getComputedStyle");
+    try {
+      vi.mocked(apiGet).mockResolvedValue({ turns: turns(31) });
+      scrollable.geometry.reads = 0;
+      await refreshTurnRail("c-keys");
+      expect(rowLinks(rail)).toHaveLength(31);
+      expect(scrollable.geometry.reads, "scroller geometry reads").toBe(0);
+      expect(computed).not.toHaveBeenCalled();
+      // The refresh re-answers activation from a rebuilt table, which measures the resident CARDS
+      // (faked); the map's own nodes are never measured.
+      for (const call of rect.mock.contexts) {
+        expect(rail.contains(call as Node)).toBe(false);
+      }
+    } finally {
+      rect.mockRestore();
+      computed.mockRestore();
+    }
   });
 });

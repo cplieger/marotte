@@ -15,7 +15,7 @@ const DELETED = [
 ] as const;
 
 /** The state attributes a real card carries and a placeholder must not. `id` leads because it is
- *  the one that matters: the real card answers to `turnAnchorID(n)`, which the timeline rail's
+ *  the one that matters: the real card answers to `turnAnchorID(n)`, which the turn map's
  *  landing and find-in-chat's reveal both resolve. */
 const FORBIDDEN_ATTRS = [
   "id",

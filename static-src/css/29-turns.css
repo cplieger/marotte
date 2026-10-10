@@ -87,8 +87,8 @@
   background: var(--c-text-tertiary);
 }
 
-/* HUE COMES OFF THE SEVERITY, NOT THE OUTCOME, on all four mark surfaces in this file
- * (this dot, the footer wash, the footer glyph, the rail marker). Per-outcome tables in
+/* HUE COMES OFF THE SEVERITY, NOT THE OUTCOME, on every mark surface in this file
+ * (this dot, the footer wash, the footer glyph, the turn map's marks). Per-outcome tables in
  * four places had `interrupted` painting YELLOW here while `.turn-notice` painted RED.
  * `data-severity` is written from `severityOf` (turn-severity.ts); `data-outcome` STAYS
  * for the words (OUTCOME_LABEL / OUTCOME_TOOLTIP / OUTCOME_LEAD) and the exception below. */
@@ -803,181 +803,267 @@
   color: var(--c-red);
 }
 
-/* The timeline rail: numbered markers at the right edge, mounted in #messages-wrap-outer
-   (the positioned wrapper) rather than the scroller, so it stays put. It must NOT gain an
-   `overflow-y` — that would give it a second scrollbar competing with the transcript's. */
-
-.turn-rail {
+/* Mounted in #messages-wrap-outer, already below the in-flow toolbar, never in the scroller. It must
+ * NOT gain an `overflow-y`: a second scrollbar would compete with the transcript's. */
+.turn-map {
   position: absolute;
 
-  /* THE FOOT IS OUT OF THE TRACK, not padding inside it: `clientHeight` is the span every
-   * marker's `top` is a fraction of, so a foot spelled as padding would place the last
-   * marker inside the reservation. `--rail-foot` (13-messages.css) already carries the
-   * leading `--sp-3`, which is why only the START inset spells it separately. */
+  /* The foot is out of the box: `--rail-foot` (13-messages.css) reserves the docked resume
+   * control's target and already carries the leading `--sp-3`. */
   inset-block: var(--sp-3) var(--rail-foot);
 
-  /* STUCK TO THE TURN CARDS' EDGE, not the window's. `--rail-inset-end` (13-messages.css)
-   * is `50% - --content-max-w / 2 - --rail-w - --sp-2`, whose first term is the distance
-   * from that wrapper's inline-end to the column's right edge; the scrollbar terms cancel,
-   * because the scroller reserves a `--scrollbar-w` gutter and gives it back out of its own
-   * padding. UNCLAMPED — the container query below is what guarantees the gutter. */
+  /* Stuck to the cards' edge, not the window's (`--rail-inset-end`, 13-messages.css). Unclamped:
+   * the container query below is what guarantees the gutter. */
   inset-inline-end: var(--rail-inset-end);
   z-index: 4;
-  width: var(--rail-w);
+  inline-size: var(--rail-w);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* Drawn only where the chat area holds the map BESIDE the column: at 57.5rem the column has
+ * stopped growing and the gutter is 3.75rem, clearing the map's 2.75rem plus its 0.5rem gap.
+ * Narrower, or under a finger, there is no turn navigation. */
+@container chat-area (width >= 57.5rem) {
+  :root:not([data-pointer="coarse"]) .turn-map {
+    display: flex;
+  }
+}
+
+/* Laid out but unseen until the renderer shows it, so the track's observed height is live
+ * wherever this gate is open and 0 only where it is shut (`trackPx`, turn-rail.ts). */
+.turn-map:not([data-shown]) {
+  visibility: hidden;
+}
+
+/* The box turn-rail.ts measures to bin against. Its height must not depend on `--turn-map-slots`:
+ * a box sized by its rows feeds the bin count back into itself and re-bins frame after frame. A
+ * size container, so the stack's pitch reads that height as `cqh`. */
+.turn-map-track {
+  container-type: size;
+  flex: 1 1 0;
+  min-block-size: 0;
+  inline-size: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Pitch `clamp(2px, track/total, 8px)`, in whole pixels: with the rows' rounded tops every bar
+ * snaps the same way, so the 1px gap between bars survives at the 2px floor. `binTurns` keeps
+ * `slots × 2px` inside the track; the max bounds the frame between a track shrink and its
+ * ResizeObserver delivery. */
+.turn-map-stack {
+  position: relative;
+  flex: none;
+  block-size: calc(
+    var(--turn-map-slots) * round(down, clamp(2px, 100cqh / var(--turn-map-total), 8px), 1px)
+  );
+  max-block-size: 100%;
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One row short of the stack's full travel, so both ends sit inside it. */
+.turn-pill {
+  --pill-ink: var(--c-text-tertiary);
+
+  /* Fractions of the bar's full 24px: 10px at rest. */
+  --pill-rest: calc(10 / 24);
+  --pill-hover: 0;
+  --pill-focus: 0;
+  --pill-current: 0;
+
+  position: absolute;
+  inset-inline: 0;
+  top: round(var(--rail-at) * (100% - 100% / var(--turn-map-slots)), 1px);
+  block-size: calc(100% / var(--turn-map-slots));
+}
+
+/* The link IS the row's box, so the rows tile the stack and native hit-testing maps pointer Y to
+ * a turn. Under the hit floor on purpose: WCAG 2.5.8's equivalent exception, since the step
+ * buttons reach every row at the floor. */
+.turn-pill-link {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center end;
+
+  /* 2px clear of the hit lane (`.turn-pill-hit`); the full 24px then ends 3px clear of the
+   * severity lane in `--rail-w`. */
+  padding-inline-end: 8px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  border-radius: var(--r-sm);
+}
+
+/* Width moves by `transform` alone, so reduced motion is 40-a11y.css's sweep. The scale is the
+ * LARGEST of rest, fisheye and current, never their product, under which a current
+ * agent-initiated turn draws at rest width. It grows from the scrollbar side toward the transcript.
+ * One pixel short of the row at a dense pitch, so neighbouring bars never touch into one column. */
+.turn-pill-link::before {
+  content: "";
+  inline-size: 1.5rem;
+  block-size: clamp(1px, 100% - 1px, 3px);
+  border-radius: var(--r-pill);
+  background: var(--pill-ink);
+  transform-origin: right;
+  transform: scaleX(
+    max(var(--pill-rest), var(--pill-hover), var(--pill-focus), var(--pill-current))
+  );
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
+
+.turn-pill-link:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-inset);
+}
+
+.turn-pill[data-in-view] {
+  --pill-ink: var(--c-text-secondary);
+}
+
+.turn-pill[data-current] {
+  --pill-ink: var(--c-text-primary);
+  --pill-current: 1;
+}
+
+.turn-pill[data-trigger="system"] {
+  --pill-rest: calc(5 / 24);
+}
+
+/* An outline with its middle third cut, so it stays hollow at every pitch: at the 2px floor the
+ * outline alone is a filled bar, and a run of running rows would be a solid column told from clean
+ * by hue alone (WCAG 1.4.1). The current row keeps its primary bar and says running in the lane. */
+.turn-pill[data-severity="running"]:not([data-current]) > .turn-pill-link::before {
+  block-size: clamp(1px, 100% - 1px, 4px);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--c-dot-working);
+  mask-image: linear-gradient(to right, #000 35%, transparent 35% 65%, #000 65%);
+}
+
+/* The fisheye: the pointed row 24px, its neighbours 16px and 12px, in pure CSS so a swipe writes
+ * nothing. Pointer and keyboard are separate properties, so where both ladders reach a row the bar
+ * takes the larger. `:where()` keeps the keyboard selectors inside the specificity ceiling. */
+@media (any-hover: hover) {
+  .turn-pill:hover {
+    --pill-hover: 1;
+  }
+
+  .turn-pill:hover + .turn-pill,
+  .turn-pill:has(+ .turn-pill:hover) {
+    --pill-hover: calc(16 / 24);
+  }
+
+  .turn-pill:hover + .turn-pill + .turn-pill,
+  .turn-pill:has(+ .turn-pill + .turn-pill:hover) {
+    --pill-hover: calc(12 / 24);
+  }
+}
+
+/* `:focus-visible`, so a click's focus leaves no ladder behind once the pointer moves on. */
+.turn-pill:has(> .turn-pill-link:focus-visible) {
+  --pill-focus: 1;
+}
+
+.turn-pill:where(:has(> .turn-pill-link:focus-visible)) + .turn-pill,
+.turn-pill:where(:has(+ .turn-pill > .turn-pill-link:focus-visible)) {
+  --pill-focus: calc(16 / 24);
+}
+
+.turn-pill:where(:has(> .turn-pill-link:focus-visible)) + .turn-pill + .turn-pill,
+.turn-pill:where(:has(+ .turn-pill + .turn-pill > .turn-pill-link:focus-visible)) {
+  --pill-focus: calc(12 / 24);
+}
+
+/* SEVERITY IS A SHAPE, never colour alone (WCAG 1.4.1): broken a filled disc, stopped a ring, clean
+ * nothing, in a lane left of the bar. The tab dot's silhouette (`--dot-size`, 12-tabs.css). At bin
+ * density neighbouring discs overlap into a column, which is why the lane takes no pointer. */
+.turn-pill-mark {
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
+  border-radius: 50%;
+  position: absolute;
+  inset-inline-start: 1px;
+  top: 50%;
+  transform: translateY(-50%);
   pointer-events: none;
 }
 
-.turn-rail:empty {
-  display: none;
+.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark {
+  background: var(--c-red);
 }
 
-/* THE AXIS: one line, with the turns on it. It spans the whole band rather than just the
- * markers, because the common session here is one or two turns and a line drawn across the
- * markers alone would be hidden behind them. SO THE TAIL BELOW THE LAST MARKER IS
- * DELIBERATE: the line is the reserved TRACK, not the session's own extent. Ending it at
- * the last marker was built and measured — it reads better from two turns up and leaves a
- * one-turn rail as a bare digit with no axis at all, so it stays a PROPOSAL rather than a
- * fix. `z-index: -1` puts it behind the markers, whose opaque backgrounds make it nodes. */
-.turn-rail::before {
-  content: "";
+.turn-pill[data-severity="stopped"] > .turn-pill-link > .turn-pill-mark {
+  box-shadow: inset 0 0 0 1.5px var(--c-yellow);
+}
+
+/* The map's running bar, as a capsule at the dot's width: never the stopped ring's circle. */
+.turn-pill[data-current][data-severity="running"] .turn-pill-mark {
+  block-size: calc(var(--dot-size) / 2);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 1px var(--c-dot-working);
+}
+
+/* The find highlight's solid ink (`mark.find-hit-current`, 24-find.css). */
+.turn-pill-hit {
   position: absolute;
-  z-index: -1;
-  inset-block: 0;
-  inset-inline-start: calc(50% - 0.5px);
-  width: 1px;
-  background: var(--c-border);
+  inset-inline-end: 2px;
+  top: 50%;
+  inline-size: 4px;
+  block-size: 4px;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
-.turn-rail > * {
-  pointer-events: auto;
+.turn-pill[data-hit] > .turn-pill-link > .turn-pill-hit {
+  background: var(--c-accent);
 }
 
-/* One node per turn: its number, in its outcome's colour, sitting ON the axis. The OPAQUE
- * background is what interrupts the axis at each node; it matches the page. */
-.rail-marker {
-  /* POSITION IS THE MARKER'S SLOT over the SHOWN SET, published per marker as the
-   * `--rail-at` fraction (`rail-select.ts` `railAt`) and turned into a `top` by this one
-   * rule: spread from the top at the relaxed pitch while the set fits, over the whole
-   * travel once it does not (`railSpan`). The travel is the TARGET's box, matching
-   * `slotPosition`, because it is the target that has to stay inside the track; the
-   * trailing term centres the smaller paint. `translate`, so the press scale still applies. */
-  position: absolute;
-  inset-inline-start: 50%;
-  translate: -50%;
-  top: calc(var(--rail-at) * (100% - var(--hit-floor)) + (var(--hit-floor) - var(--rail-mark)) / 2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 2px;
-  border: 1px solid transparent;
+.turn-map-step {
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: var(--rail-w);
+  block-size: var(--ctl-h-sm);
+  padding: 0;
+  border: 0;
   border-radius: var(--r-sm);
-  background: var(--c-bg-primary);
+  background: transparent;
   color: var(--c-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-
-  /* A marker is ONE line, so a five-digit turn number overflows the column by a
-     hair rather than stacking onto two lines in a 24px box. */
-  white-space: nowrap;
   cursor: pointer;
   transition:
+    transform var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
+    color var(--dur-micro) var(--ease-standard);
 }
 
-/* The PAINTED box shrink-wraps its digits above `--rail-mark`, so one digit is a square. */
-.rail-marker {
-  min-width: var(--rail-mark);
-  min-height: var(--rail-mark);
-}
-
-/* THE HIT TARGET: WCAG 2.5.8 asks 24px on a fine pointer, Apple's HIG 44x44pt under a
- * finger, and `--rail-w` is 2.75rem so the column holds either; turn-rail.ts reads the same
- * token for its pitch. `::before` because `::after` is the search-hit dot below. Sized
- * rather than spelled as negative insets, and it must paint nothing in every state. */
-.rail-marker::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: 50%;
-  top: calc((100% - var(--hit-floor)) / 2);
-  translate: -50%;
-  inline-size: var(--hit-floor);
-  block-size: var(--hit-floor);
-}
-
-.rail-marker:hover {
-  background: var(--c-bg-tertiary);
+.turn-map-step:enabled:hover {
+  background: var(--c-hover);
   color: var(--c-text-primary);
 }
 
-.rail-marker:focus-visible {
+.turn-map-step:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
 
-/* Same ink as the header dot's running arm: one fact, one violet. `--c-dot-working` is the
- * tab strip's in-flight colour (01-tokens.css) and `--c-accent`, which this used to take,
- * is a near-neighbour of it. Measured here: 9.258:1 dark / 5.428:1 light. */
-.rail-marker[data-severity="running"] {
-  color: var(--c-dot-working);
-}
+/* The step buttons rest invisible where a pointer can hover, with their boxes reserved so the
+ * stack never moves; a keyboard reader's focus reveals them too. The GLYPH fades, so the button's
+ * own opacity stays the shared disabled face (40-a11y.css). */
+@media (any-hover: hover) {
+  .turn-map-step > svg {
+    opacity: 0;
+    transition: opacity var(--dur-micro) var(--ease-standard);
+  }
 
-.rail-marker[data-severity="stopped"] {
-  color: var(--c-yellow);
-}
-
-/* RED, `interrupted` included — see the header dot's broken arm. */
-.rail-marker[data-severity="broken"] {
-  color: var(--c-red);
-}
-
-/* The `unknown` exception, stated rather than inherited: `completed` also falls through to
- * the resting tertiary ink, and the separation is carried by the marker's WORDS
- * (rail-labels.ts). BEFORE the `[data-current]` / `[data-selected]` fill below: those are
- * also (0,2,0), so a later override would beat it and the rail would mark no position. */
-.rail-marker[data-outcome="unknown"] {
-  color: var(--c-text-tertiary);
-}
-
-/* The turn the rail claims the reader is at: filled and outlined. ONE RULE FOR BOTH
- * ATTRIBUTES, because they carry one treatment — `data-current` is the scroll-derived
- * position, `data-selected` the reader's own pick — kept as separate attributes so a rule
- * and a test can tell them apart. Only ONE is written per render (`turn-rail.ts`), which
- * keeps this selector at (0,2,0): demoting the loser in CSS needed (0,5,0), over this
- * sheet's stylelint ceilings. NOT an outline ring — `--focus-ring` is the accent. */
-.rail-marker[data-current],
-.rail-marker[data-selected] {
-  background: var(--c-accent);
-  border-color: var(--c-accent);
-  color: var(--c-on-accent);
-  font-weight: var(--fw-semibold);
-}
-
-/* A turn the user did not trigger reads as a non-user marker. */
-.rail-marker[data-trigger="system"] {
-  font-style: italic;
-  border-style: dashed;
-  border-color: var(--c-border);
-}
-
-/* Waiting on a fetch: the jump pages history in first, and saying so beats seeming inert. */
-.rail-marker[data-pending] {
-  --beat-peak: 0.4;
-
-  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
-}
-
-/* Shown only where the chat area can hold the rail BESIDE the content column, never inside
- * it. The transcript and the composer share one measure (`--sp-4` of side inset plus the
- * `--content-max-w` cap), so the rail gets the leftover: at 57.5rem of chat area the column
- * has stopped growing and the gutter is 3.75rem, clearing the rail's 2.75rem plus its
- * 0.5rem gap by 0.5rem. Keyed on `chat-area` (12-chat.css): the sidebar decides the width. */
-@container chat-area (width < 57.5rem) {
-  .turn-rail {
-    display: none;
+  .turn-map:hover .turn-map-step > svg,
+  .turn-map:focus-within .turn-map-step > svg {
+    opacity: 1;
   }
 }
 
@@ -1037,7 +1123,7 @@
   border-radius: var(--r-sm);
 }
 
-/* THE LANDING FLASH: which card a rail click just took you to (a click on a turn already
+/* THE LANDING FLASH: which card a turn-map click just took you to (a click on a turn already
  * on screen scrolls nowhere, so nothing else answers it). `outline`, never `border` or
  * `padding`: this fires mid-transcript and must shift no layout. Reduced motion is
  * 40-a11y.css's sweep, and the degradation is not the obvious one — a zeroed transition
@@ -1065,64 +1151,6 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
-}
-
-/* A rail marker holding a search hit: where in the session the answer is. */
-.rail-marker[data-hit]::after {
-  content: "";
-  position: absolute;
-  inset-inline-end: -1px;
-  inset-block-start: -1px;
-  width: 0.3125rem;
-  height: 0.3125rem;
-  border-radius: 50%;
-  background: var(--c-yellow);
-}
-
-/* THE TURN'S OWN DURATION, revealed to the RIGHT of the marker on hover. ABSOLUTELY
- * POSITIONED, which makes "expand right" and "reserve the box" the same thing here: out of
- * flow, the slot carries its whole geometry at rest, so revealing it moves nothing. The
- * 70rem floor is where `--rail-inset-end` leaves the ~60px this pill wants clear of the
- * window, reused from the resume label rather than adding a second number. */
-.rail-marker-time {
-  display: none;
-}
-
-@container chat-area (width >= 70rem) {
-  @media (any-hover: hover) {
-    .rail-marker > .rail-marker-time {
-      position: absolute;
-      inset-inline-start: 100%;
-      inset-block: 0;
-      display: flex;
-      align-items: center;
-      margin-inline-start: var(--sp-1);
-      padding: 0 var(--sp-1);
-      border-radius: var(--r-sm);
-
-      /* The marker's own HOVER pair, so digit and duration read as one expanded box. */
-      background: var(--c-bg-tertiary);
-      color: var(--c-text-primary);
-      font-family: var(--font-mono);
-      font-size: var(--fs-xs);
-      font-variant-numeric: tabular-nums;
-      line-height: 1;
-      white-space: nowrap;
-
-      /* The pointer never enters it, so it cannot steal the marker's own hover. */
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity var(--dur-micro) var(--ease-standard);
-    }
-
-    /* `:focus-visible` beside `:hover`, or a keyboard user tabbing the rail never reaches
-     * the value. Reduced motion is 40-a11y.css's sweep; a zeroed transition still RUNS,
-     * so the reveal is instant rather than suppressed. */
-    .rail-marker:hover > .rail-marker-time,
-    .rail-marker:focus-visible > .rail-marker-time {
-      opacity: 1;
-    }
-  }
 }
 
 /* `Review changes`: one per turn under the file rows, rendered only when the turn touched

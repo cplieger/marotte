@@ -92,7 +92,7 @@ class Elements {
   get messagesWrap(): HTMLDivElement {
     return byId("messages-wrap");
   }
-  // The positioned wrapper around the scroller, so the timeline rail stays put while the transcript scrolls.
+  // The positioned wrapper around the scroller, so the turn map stays put while the transcript scrolls.
   get messagesWrapOuter(): HTMLDivElement {
     return byId("messages-wrap-outer");
   }

@@ -1,5 +1,3 @@
-// THE RAIL'S POSITION MARKS, measured rather than asserted about.
-
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -12,15 +10,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
 
 /** Read with `node:fs`, not the shared helper's `?raw` glob: in vitest's NODE project a
- *  `*.css?raw` import resolves to the EMPTY STRING (Vite's CSS pipeline claims the module for
- *  the server environment), which would make every sweep here pass over nothing. Same reason
- *  `send-btn-contrast.node.test.ts` reads its own. */
+ *  `*.css?raw` import resolves to the EMPTY STRING, which would make every sweep here pass over
+ *  nothing. Same reason `send-btn-contrast.node.test.ts` reads its own. */
 const turns = readFileSync(join(here, "css", "29-turns.css"), "utf8");
 
 interface Measurement {
   theme: string;
-  fg: string;
-  bg: string;
   ratio: number;
 }
 
@@ -31,7 +26,7 @@ function pair(fg: string, bg: string): Measurement[] {
     .split("\n")
     .map((line) => {
       const cols = line.split("\t");
-      return { theme: cols[0] ?? "", fg: cols[1] ?? "", bg: cols[2] ?? "", ratio: Number(cols[3]) };
+      return { theme: cols[0] ?? "", ratio: Number(cols[3]) };
     });
   expect(
     rows.map((r) => r.theme),
@@ -49,36 +44,68 @@ function decl(body: string, prop: string): string {
   return (m?.[1] ?? "").trim();
 }
 
-/** The marker's mark. One rule serves both `data-current` and `data-selected`, so measuring it
- *  once measures both — which is the same fact `rail-mark-css.test.ts` pins from the other side. */
-function markerMark(): { fill: string; ink: string } {
-  const body = ruleContaining(turns, ".rail-marker[data-current]").body;
-  return { fill: decl(body, "background"), ink: decl(body, "color") };
-}
-
-/** The surface the rail hangs over. It is the PAGE rather than a raised surface, which the rows'
- *  own shared rule states: the rail sits in the gutter beside the cards, over nothing else. */
+/** The surface the map hangs over: the page, in the gutter beside the cards. */
 const PAGE = "var(--c-bg-primary)";
 
-// The script lives outside static-src, and Stryker's sandbox copies static-src
-// alone — so its absence is a skip, the same rule the sibling floors use.
-describe.skipIf(!existsSync(script))("the rail's position marks, measured", () => {
-  it("holds the marker's digit to 4.5:1 on its fill, in both themes", () => {
-    // The label is an 11px mono digit, so WCAG 1.4.3's 4.5:1 is the floor that applies — 3:1 is for
-    // text at 18.66px bold or 24px regular, which this is not.
-    const { fill, ink } = markerMark();
-    for (const m of pair(ink, fill)) {
-      expect(m.ratio, `${m.theme}: ${ink} on ${fill}`).toBeGreaterThanOrEqual(4.5);
-    }
-  });
+/** Each mark's ink, read off the rule that paints it, so a retune is measured as shipped. */
+const MARKS: [string, () => string][] = [
+  ["resting bar", () => decl(ruleContaining(turns, ".turn-pill").body, "--pill-ink")],
+  ["in-view bar", () => decl(ruleContaining(turns, ".turn-pill[data-in-view]").body, "--pill-ink")],
+  ["current bar", () => decl(ruleContaining(turns, ".turn-pill[data-current]").body, "--pill-ink")],
+  [
+    "running outline",
+    () =>
+      decl(
+        ruleContaining(
+          turns,
+          '.turn-pill[data-severity="running"]:not([data-current]) > .turn-pill-link::before',
+        ).body,
+        "box-shadow",
+      ).replace(/^inset 0 0 0 1px /u, ""),
+  ],
+  [
+    "broken disc",
+    () =>
+      decl(
+        ruleContaining(
+          turns,
+          '.turn-pill[data-severity="broken"] > .turn-pill-link > .turn-pill-mark',
+        ).body,
+        "background",
+      ),
+  ],
+  [
+    "stopped ring",
+    () =>
+      decl(
+        ruleContaining(
+          turns,
+          '.turn-pill[data-severity="stopped"] > .turn-pill-link > .turn-pill-mark',
+        ).body,
+        "box-shadow",
+      ).replace(/^inset 0 0 0 1\.5px /u, ""),
+  ],
+  [
+    "search-hit square",
+    () =>
+      decl(
+        ruleContaining(turns, ".turn-pill[data-hit] > .turn-pill-link > .turn-pill-hit").body,
+        "background",
+      ),
+  ],
+];
 
-  it("holds the marker's fill to 3:1 against the page it hangs over", () => {
-    // WCAG 1.4.11: the filled marker is a graphical object a reader has to be able to pick out of
-    // the column, and the page is what it sits on — the rail hangs in the gutter beside the cards,
-    // over nothing else.
-    const { fill } = markerMark();
-    for (const m of pair(fill, PAGE)) {
-      expect(m.ratio, `${m.theme}: fill ${fill} vs page`).toBeGreaterThanOrEqual(3.0);
-    }
-  });
+// The script lives outside static-src, and Stryker's sandbox copies static-src alone, so its
+// absence is a skip, the same rule the sibling floors use.
+describe.skipIf(!existsSync(script))("the turn map's marks, measured against the page", () => {
+  // WCAG 1.4.11: each mark is a graphical object a reader has to pick out of the column.
+  for (const [name, ink] of MARKS) {
+    it(`holds the ${name} to 3:1 in both themes`, () => {
+      const fg = ink();
+      expect(fg).toMatch(/^var\(--c-[a-z-]+\)$/u);
+      for (const m of pair(fg, PAGE)) {
+        expect(m.ratio, `${m.theme}: ${fg} vs page`).toBeGreaterThanOrEqual(3.0);
+      }
+    });
+  }
 });

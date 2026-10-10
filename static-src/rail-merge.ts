@@ -1,8 +1,9 @@
-// The rail's SET of turns: the session-wide index, extended forwards by the resident window.
+// The turn map's SET of turns: the session-wide index, extended forwards by the resident window.
 // Neither side alone answers "which turns exist" — the index cannot see the turn running now, the
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
+import { turnLedger } from "./turns.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
 /** One row of the session-wide turn index. Mirrors marotte.TurnSummary. */
@@ -13,14 +14,8 @@ export interface TurnSummary {
   n: number;
   ts: number;
   agent_initiated?: boolean;
-}
-
-/** The merged set plus the session's turn count. `total` is the highest `n` seen, so the index's
- *  count once one has landed and the highest RESIDENT `n` before that: positions are correct for
- *  the window and re-scale when the index arrives. */
-export interface MergedTurns {
-  turns: TurnSummary[];
-  total: number;
+  /** Absent for a running turn or a close that stamped none; never 0. */
+  elapsed_ms?: number;
 }
 
 /** Rows the index answered with, and how many it carried that could not be read. */
@@ -29,12 +24,12 @@ export interface ValidatedIndex {
   dropped: number;
 }
 
-/** The hover label's cap, matching `internal/chat/turns.go`'s `turnFirstLineMax`. */
+/** The preview line's cap, matching `internal/chat/entrylog.go`'s `firstLineMax`. */
 const FIRST_LINE_MAX = 120;
 
 /** Validate the index, which arrives through an unchecked cast rather than a generated decoder.
  *  A non-finite `n` reaches `calc(NaN * …)`, an invalid declaration the browser drops, so a bad
- *  row would pin a marker to the top of the track rather than misplace it. Identity and position
+ *  row would pin a pill to the top of the map rather than misplace it. Identity and position
  *  are DROPPED, description is COERCED. One `console.warn` per call, which is one per fetch. */
 export function validateTurnIndex(raw: unknown): ValidatedIndex {
   if (!Array.isArray(raw)) {
@@ -82,11 +77,15 @@ export function validateTurnIndex(raw: unknown): ValidatedIndex {
     if (typeof firstLine === "string" && firstLine !== "") {
       out.first_line = firstLine;
     }
+    const elapsed = r["elapsed_ms"];
+    if (typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed > 0) {
+      out.elapsed_ms = elapsed;
+    }
     rows.push(out);
   }
   fillBadTimestamps(rows, badTs);
   if (dropped > 0) {
-    console.warn("turn rail: dropped unreadable index rows", dropped);
+    console.warn("turn map: dropped unreadable index rows", dropped);
   }
   return { turns: rows, dropped };
 }
@@ -122,7 +121,7 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
   }
 }
 
-/** Merge the resident window into the fetched index, BY `n`: that is the POSITION the rail
+/** Merge the resident window into the fetched index, BY `n`: that is the POSITION the turn map
  *  renders, and the appender assigns it at open and stores it (section 8.10), so both sides name
  *  a turn by the same number and no turn can take two slots. Resident wins per field with no
  *  exemption, because it sees the turn running now and a window never holds part of a turn
@@ -130,7 +129,7 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],
-): MergedTurns {
+): TurnSummary[] {
   const byN = new Map<number, TurnSummary>();
   for (const row of indexed) {
     byN.set(row.n, row);
@@ -138,12 +137,7 @@ export function mergeTurnSets(
   for (const t of resident) {
     byN.set(t.n, residentRow(t));
   }
-  const turns = [...byN.values()].sort((a, b) => a.n - b.n);
-  let total = 0;
-  for (const row of turns) {
-    total = Math.max(total, row.n);
-  }
-  return { turns, total };
+  return [...byN.values()].sort((a, b) => a.n - b.n);
 }
 
 function residentRow(t: Turn): TurnSummary {
@@ -158,15 +152,24 @@ function residentRow(t: Turn): TurnSummary {
   if (line !== "") {
     out.first_line = line;
   }
+  const { elapsedMs } = turnLedger(t);
+  if (elapsedMs > 0) {
+    out.elapsed_ms = elapsedMs;
+  }
   return out;
 }
 
-/** A request as ONE readable line, rune-safe. A TWIN of `internal/chat/turns.go` `firstLine`,
- *  because the index cannot answer for the turn that is running and the two spellings must agree
- *  for every turn it can. No shared fixture yet. */
+/** A request's first line, whitespace-collapsed and rune-safe. A TWIN of `internal/chat/entrylog.go`
+ *  `firstLineOf`, because the index cannot answer for the turn that is running and the two spellings
+ *  must agree for every turn it can; `internal/chat/testdata/first_line.json` pins both. */
 function firstLine(s: string): string {
-  const collapsed = s.replace(/\s+/gu, " ").trim();
-  // Code points, not graphemes: Go's `for range` yields runes and the cap must match.
+  // `strings.Fields` splits on Unicode White_Space. Not `\s` or `trim()`: both take U+FEFF and
+  // leave U+0085.
+  const collapsed = (s.split("\n", 1)[0] ?? "")
+    .split(/\p{White_Space}+/u)
+    .filter((w) => w !== "")
+    .join(" ");
+  // Code points, not graphemes: the Go twin counts runes and the cap must match.
   const runes = Array.from(collapsed);
   return runes.length > FIRST_LINE_MAX
     ? runes.slice(0, FIRST_LINE_MAX).join("") + "\u2026"

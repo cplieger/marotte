@@ -1,4 +1,3 @@
-// The resume control, docked at the foot of the timeline rail's own column.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
@@ -21,8 +20,8 @@ interface Fixture {
   /** The last transcript control, so a case can reach the resume button by TAB from inside the
    *  transcript the way a reader would. */
   lastCardButton: HTMLElement;
-  rail: HTMLElement;
-  marker: HTMLElement;
+  map: HTMLElement;
+  step: HTMLElement;
   resume: HTMLButtonElement;
   label: HTMLElement;
 }
@@ -79,14 +78,19 @@ function build(chatWidth: number): Fixture {
   resume.appendChild(label);
   outer.appendChild(resume);
 
-  const rail = document.createElement("nav");
-  rail.className = "turn-rail";
-  const marker = document.createElement("button");
-  marker.className = "rail-marker";
-  marker.type = "button";
-  marker.textContent = "7";
-  rail.appendChild(marker);
-  outer.appendChild(rail);
+  const map = document.createElement("nav");
+  map.className = "turn-map";
+  map.toggleAttribute("data-shown", true);
+  const step = document.createElement("button");
+  step.className = "turn-map-step";
+  step.type = "button";
+  const stack = document.createElement("ol");
+  stack.className = "turn-map-stack";
+  const pill = document.createElement("li");
+  pill.className = "turn-pill";
+  stack.appendChild(pill);
+  map.append(step, stack);
+  outer.appendChild(map);
 
   view.appendChild(outer);
   area.appendChild(view);
@@ -99,8 +103,8 @@ function build(chatWidth: number): Fixture {
     scroller,
     card: first,
     lastCardButton: lastButton,
-    rail,
-    marker,
+    map,
+    step,
     resume,
     label,
   };
@@ -120,23 +124,9 @@ afterAll(() => {
   style.remove();
 });
 
-/** The properties the control was brought into line with. Each one was a measured gap against
- *  `.rail-marker`; `color` is deliberately NOT among them — the marker rests at
- *  `--c-text-tertiary` because it is a passive mark, and this is a control the reader is meant
- *  to click. */
-const ALIGNED = [
-  "background-color",
-  "border-top-color",
-  "border-right-color",
-  "border-bottom-color",
-  "border-left-color",
-  "border-radius",
-  "min-height",
-  "font-family",
-  "font-size",
-  "font-variant-numeric",
-  "line-height",
-] as const;
+/** The step-button vocabulary the docked control shares with `.turn-map-step`: no surface at rest,
+ *  the same resting ink and corner. */
+const ALIGNED = ["background-color", "color", "border-radius"] as const;
 
 function styles(el: Element): Record<string, string> {
   const cs = getComputedStyle(el);
@@ -183,70 +173,60 @@ describe("the reveal gate is live in this browser", () => {
   });
 });
 
-describe("the docked control reads as a rail row", () => {
-  // Both POINTER TIERS, because the marker's skin is tier-independent and a rule that reached for
-  // `--hit-floor` in any of these properties would diverge on the coarse one.
-  for (const tier of ["fine", "coarse"] as const) {
-    it(`resolves the rail marker's own values for every property that was aligned, on a ${tier} pointer`, async () => {
-      document.documentElement.dataset["pointer"] = tier;
-      const { marker, resume } = build(LABEL_PX);
-      await settled(resume, marker);
-      expect(styles(resume)).toEqual(styles(marker));
-    });
-  }
+describe("the docked control reads as one of the map's step buttons", () => {
+  it("resolves the step button's own resting values", async () => {
+    const { step, resume } = build(LABEL_PX);
+    await settled(resume, step);
+    expect(styles(resume)).toEqual(styles(step));
+  });
 
-  it("and those values are the marker's rather than two elements agreeing on nothing", () => {
-    // The control. Equality above is satisfied by two unstyled boxes, which is exactly what a
-    // deleted rule looks like — so pin the marker against the page it is NOT: an unclassed button
-    // in the same tree.
-    const { marker, resume } = build(LABEL_PX);
+  it("and those values are the step button's rather than two elements agreeing on nothing", () => {
+    // The control: equality above is satisfied by two unstyled boxes, which is what a deleted rule
+    // looks like, so pin both against an unclassed button in the same tree.
+    const { step, resume } = build(LABEL_PX);
     const plain = document.createElement("button");
     plain.type = "button";
     plain.textContent = "7";
     area?.appendChild(plain);
-    expect(styles(marker)).not.toEqual(styles(plain));
+    expect(styles(step)).not.toEqual(styles(plain));
     expect(styles(resume)).not.toEqual(styles(plain));
   });
 
-  it("paints the rail's row box and answers the tier's floor, on a coarse pointer", () => {
-    // Read against the TOKENS rather than against the marker, which the parity case above already
-    // covers: this is what makes that parity a statement about the column's own two numbers instead
-    // of two rules agreeing with each other.
+  it("is the step button's height on a fine pointer", () => {
+    const { step, resume } = build(LABEL_PX);
+    near(resume.getBoundingClientRect().height, step.getBoundingClientRect().height, "height");
+  });
+
+  it("takes the hover pair the step button takes", async () => {
+    const { step, resume } = build(LABEL_PX);
+    await userEvent.hover(step);
+    await settled(step);
+    const stepHover = styles(step);
+    await userEvent.hover(resume);
+    await settled(resume);
+    expect(styles(resume)).toEqual(stepHover);
+    expect(getComputedStyle(resume).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
+  it("is the hit floor tall on a coarse pointer", () => {
     document.documentElement.dataset["pointer"] = "coarse";
-    const { resume, marker } = build(LABEL_PX);
-    // Probed inside `#messages-wrap-outer`, which is where the gutter column's tokens are declared:
-    // a probe outside it inherits neither and reads 0.
+    const { resume } = build(LABEL_PX);
     const host = resume.parentElement;
     if (host === null) {
       throw new Error("no wrap-outer");
     }
-    const mark = tokenPx(host, "--rail-mark");
-    const floor = tokenPx(host, "--hit-floor");
-    expect(floor - mark).toBe(20);
-
-    for (const [el, what] of [
-      [resume, "control"],
-      [marker, "marker"],
-    ] as const) {
-      const box = el.getBoundingClientRect();
-      near(box.height, mark, `${what} paints the row box`);
-      // The target, by hit test, because an expander contributes nothing to the rect.
-      const cx = box.left + box.width / 2;
-      const cy = box.top + box.height / 2;
-      expect(document.elementFromPoint(cx, cy - floor / 2 + 1), `${what} target top`).toBe(el);
-      expect(document.elementFromPoint(cx, cy + floor / 2 - 1), `${what} target bottom`).toBe(el);
-    }
+    near(resume.getBoundingClientRect().height, tokenPx(host, "--hit-floor"), "height");
   });
 });
 
 describe("icon-only at rest, the label on hover", () => {
-  it("is the rail's own column wide at rest, with no label in the box", () => {
-    // Compared against the RAIL, which is `--rail-w` wide by declaration, rather than against a
+  it("is the map's own column wide at rest, with no label in the box", () => {
+    // Compared against the MAP, which is `--rail-w` wide by declaration, rather than against a
     // probe reading that token: it is declared on `#messages-wrap-outer`, so a probe mounted
     // anywhere else resolves nothing and stretches (measured).
-    const { resume, label, rail } = build(LABEL_PX);
+    const { resume, label, map } = build(LABEL_PX);
     expect(getComputedStyle(label).display).toBe("none");
-    expect(resume.getBoundingClientRect().width).toBe(rail.getBoundingClientRect().width);
+    expect(resume.getBoundingClientRect().width).toBe(map.getBoundingClientRect().width);
   });
 
   it("shows the label on a real hover, and grows only to the RIGHT", async () => {
@@ -317,12 +297,15 @@ describe("revealing the label moves nothing else", () => {
   });
 });
 
+/** The docked control's selector: the map's own fine-pointer gate, at zero specificity. */
+const DOCKED = ':where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]';
+
 describe("the reveal, read as source", () => {
   it("is gated on any-hover, never on hover", () => {
     // Those queries report only the PRIMARY input, and iPadOS answers `hover: none` with a trackpad
     // attached, so a `hover: hover` gate drops the rule on every touch-primary device. Only source
     // can answer which query a rule sits in.
-    const rest = ruleContaining(messagesCSS, '[id="scroll-bottom"] > span', REVEAL_QUERY);
+    const rest = ruleContaining(messagesCSS, `${DOCKED} > span`, REVEAL_QUERY);
     expect(rest.body).toMatch(/display:\s*none/u);
     expect(messagesCSS).not.toContain("@media (hover: hover)");
   });
@@ -334,13 +317,13 @@ describe("the reveal, read as source", () => {
     const container = ruleBody(messagesCSS, "@container chat-area (width >= 70rem)");
     const beforeHoverGate = container.split("@media")[0] ?? "";
     expect(beforeHoverGate).not.toBe("");
-    const shown = ruleContaining(beforeHoverGate, '[id="scroll-bottom"] > span', "top");
+    const shown = ruleContaining(beforeHoverGate, `${DOCKED} > span`, "top");
     expect(shown.body).toMatch(/display:\s*block/u);
   });
 
   it("reveals on focus-visible as well as hover", () => {
-    const shown = ruleContaining(messagesCSS, '[id="scroll-bottom"]:hover > span', REVEAL_QUERY);
-    expect(shown.selector).toContain('[id="scroll-bottom"]:focus-visible > span');
+    const shown = ruleContaining(messagesCSS, `${DOCKED}:hover > span`, REVEAL_QUERY);
+    expect(shown.selector).toContain(`${DOCKED}:focus-visible > span`);
     expect(shown.body).toMatch(/display:\s*block/u);
   });
 });

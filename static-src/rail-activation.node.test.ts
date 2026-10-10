@@ -9,6 +9,7 @@ import {
   buildOffsets,
   markerSlotFor,
   turnTop,
+  turnsInView,
   type RailGeom,
   type TurnOffsets,
 } from "./rail-activation.js";
@@ -200,21 +201,40 @@ describe("properties", () => {
   });
 });
 
-describe("the marker that carries the mark for an unsampled turn", () => {
+describe("the row that carries the mark for a turn with no row of its own", () => {
   const shown = [1, 4, 8, 11, 15].map((n) => ({ n }));
 
-  it("answers the marker at or below the turn", () => {
-    // A downsampled rail has a marker for one turn in two or three, so the reading line spends most
-    // of its time in a turn with no marker of its own; the mark then goes to the last marker the
-    // reader has passed.
+  it("answers the row at or below the turn", () => {
+    // A binned map has one row for k turns, keyed by its first member, so the mark goes to the last
+    // row the reader has passed.
     expect(markerSlotFor(shown, 4)).toBe(1);
     expect(markerSlotFor(shown, 6)).toBe(1);
     expect(markerSlotFor(shown, 12)).toBe(3);
     expect(markerSlotFor(shown, 40)).toBe(4);
   });
 
-  it("answers the first marker for a turn above every marker, and none for an empty set", () => {
+  it("answers the first row for a turn above every row, and none for an empty set", () => {
     expect(markerSlotFor(shown, 0)).toBe(0);
     expect(markerSlotFor([], 7)).toBe(-1);
+  });
+});
+
+describe("the turns on screen", () => {
+  it("answers exactly the cards a viewport over cards 2 and 3 shows", () => {
+    expect([...turnsInView(500, table(), 1000)]).toEqual(["t2", "t3"]);
+  });
+
+  it("counts a card whose top is above the viewport but whose span reaches into it", () => {
+    expect([...turnsInView(700, table(), 200)]).toEqual(["t2"]);
+    expect([...turnsInView(900, table(), 200)]).toEqual(["t2", "t3"]);
+  });
+
+  it("counts the last card for as long as the viewport is below its top", () => {
+    expect([...turnsInView(4000, table(), 600)]).toEqual(["t4"]);
+  });
+
+  it("answers nothing for an empty table or a viewport with no height", () => {
+    expect(turnsInView(0, buildOffsets([]), 600).size).toBe(0);
+    expect(turnsInView(0, table(), 0).size).toBe(0);
   });
 });

@@ -39,7 +39,7 @@ export function initSearchRevealBuilder(
   endWalkReveal = endWalk;
 }
 
-/** The turn numbers holding hits for the current query, for the timeline rail
+/** The turn numbers holding hits for the current query, for the turn map
  *  and the folded rows' match counts. */
 let hitTurns = new Set<number>();
 /** Hits per turn number, so a folded row can advertise what is inside it rather

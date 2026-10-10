@@ -12,6 +12,7 @@ import historySrc from "./history.ts?raw";
 import settingsSrc from "./settings.ts?raw";
 import filesSrc from "./files.ts?raw";
 import appSrc from "./app.ts?raw";
+import sidebarHistorySrc from "./sidebar-history.ts?raw";
 
 // Pinned literally: the trailing `\(` makes the guard read calls, not mentions in prose.
 const TOGGLE_CALL = /\btoggle[A-Za-z]*View\s*\(/;
@@ -64,10 +65,15 @@ const POPULATION: readonly { readonly name: string; readonly src: string; readon
       src: historySrc,
       why: "the same, and the other place the trap lived: a show* wrapper that toggled",
     },
+    {
+      name: "sidebar-history.ts",
+      src: sidebarHistorySrc,
+      why: "the sidebar's History: a drawer door, so a toggle would close the tab asked for",
+    },
   ];
 
 describe("the source guard", () => {
-  // app.ts is excluded: its two sidebar buttons are the affordance the rule protects.
+  // app.ts is excluded: its toolbar toggles are the affordance the rule protects.
   it.each(POPULATION)("$name reaches no toggle*View call ($why)", ({ src }) => {
     expect.assertions(1);
     expect(src).not.toMatch(TOGGLE_CALL);

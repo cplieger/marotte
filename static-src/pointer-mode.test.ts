@@ -285,15 +285,52 @@ describe("the toolbar row at phone width", () => {
   }
 
   it("keeps every toolbar button on one row at 390px with coarse controls", () => {
-    // Settings moved into this bar, so the row carries one more 44px touch target than it did, and
-    // `.chat-toolbar` wraps rather than overflowing — this is the measurement that says whether it
-    // has to.
+    // `.chat-toolbar` wraps rather than overflowing, so this is the measurement that says whether
+    // it has to.
     const buttons = mountBarAt("390px");
-    expect(buttons.length, "the persistent toolbar buttons").toBe(7);
+    expect(buttons.length, "the persistent toolbar buttons").toBe(6);
     const tops = [...new Set(buttons.map((b) => b.offsetTop))];
     const widths = buttons.map((b) => `${b.id}:${String(b.offsetWidth)}`).join(" ");
     expect(tops, `one row expected; button widths were ${widths}`).toHaveLength(1);
   });
+
+  /** The bar with the heading clipped, the phone state `page-title.ts` leaves, at a phone-shaped
+   *  viewport so the menu toggle is in the row. */
+  async function phoneBar(chatPx: number): Promise<{ rows: number; ids: string[] }> {
+    await page.viewport(chatPx, 844);
+    mountBarAt(`${String(chatPx)}px`);
+    app?.querySelector(".titlebar-heading")?.classList.add("sr-only");
+    for (const a of document.getAnimations()) {
+      a.finish();
+    }
+    const shown = [...(app?.querySelectorAll<HTMLElement>(".chat-toolbar > button") ?? [])].filter(
+      (b) => b.offsetParent !== null,
+    );
+    return { rows: new Set(shown.map((b) => b.offsetTop)).size, ids: shown.map((b) => b.id) };
+  }
+
+  it.each([390, 375, 360, 344])(
+    "holds the phone's seven buttons on one row at %ipx",
+    async (px) => {
+      try {
+        const bar = await phoneBar(px);
+        expect(bar.ids.toSorted()).toEqual(
+          [
+            "menu-toggle",
+            "find-btn",
+            "files-btn",
+            "git-btn",
+            "shell-btn",
+            "docs-btn",
+            "settings-btn",
+          ].toSorted(),
+        );
+        expect(bar.rows).toBe(1);
+      } finally {
+        await page.viewport(1280, 720);
+      }
+    },
+  );
 
   it("ends the actions on the bar's own gutter, with the heading on their row", () => {
     // The two halves of what the heading's own row cost, in one case because they are one layout.
@@ -331,20 +368,34 @@ describe("the toolbar row at phone width", () => {
     expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
   });
 
-  it("wraps rather than pushing an action off the start edge at 320px", () => {
-    // What the bar's `flex-wrap: wrap` is for, and the reason right-alignment cannot be the whole
-    // rule: the actions need 326px of a 320px phone (7x44 + 6x2 + 24 of padding here, 8 buttons on
-    // a real one), they cannot shrink into it because `min-width: var(--btn-h)` is the touch floor,
-    // and overflow past `flex-end` leaves a control left of the bar with no scroll to reach it.
-    const buttons = mountBarAt("320px");
-    const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
-    const startEdge =
-      bar!.getBoundingClientRect().left + parseFloat(getComputedStyle(bar!).paddingInlineStart);
-    const offEdge = buttons.filter((b) => b.getBoundingClientRect().left < startEdge - 0.5);
-    expect(
-      offEdge.map((b) => b.id),
-      "actions left of the bar's own gutter",
-    ).toEqual([]);
+  it("wraps at 343px", async () => {
+    // Seven 44px targets and six 2px gaps are 320px, plus the bar's two `--sp-3`: 344px.
+    try {
+      expect((await phoneBar(343)).rows).toBe(2);
+    } finally {
+      await page.viewport(1280, 720);
+    }
+  });
+
+  it("wraps rather than pushing an action off the start edge at 320px", async () => {
+    // A 320px phone leaves 296px for 320px of actions; they cannot shrink into it because
+    // `min-width: var(--btn-h)` is the touch floor, and overflow past `flex-end` leaves a control
+    // left of the bar with no scroll to reach it.
+    try {
+      expect((await phoneBar(320)).rows).toBe(2);
+      const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
+      const startEdge =
+        bar!.getBoundingClientRect().left + parseFloat(getComputedStyle(bar!).paddingInlineStart);
+      const offEdge = [...(bar?.querySelectorAll<HTMLElement>(":scope > button") ?? [])].filter(
+        (b) => b.offsetParent !== null && b.getBoundingClientRect().left < startEdge - 0.5,
+      );
+      expect(
+        offEdge.map((b) => b.id),
+        "actions left of the bar's own gutter",
+      ).toEqual([]);
+    } finally {
+      await page.viewport(1280, 720);
+    }
   });
 });
 

@@ -141,7 +141,8 @@
 .ev-row.ev-selected > .ev-row-main,
 .ev-tl-lane.ev-selected,
 .pr-merge-method:has(input:checked),
-.editor-find-case[aria-pressed="true"] {
+.editor-find-case[aria-pressed="true"],
+.sidebar-history-btn.active {
   background: var(--c-selected-bg);
   color: var(--c-selected-fg);
 }
@@ -179,6 +180,7 @@
   .ev-row.ev-selected > .ev-row-main:hover,
   .ev-tl-lane.ev-selected:hover,
   .editor-find-case[aria-pressed="true"]:hover,
+  .sidebar-history-btn.active:hover,
 
   /* Keyboard focus, not decoration: `.pill-role-item`'s focus indicator IS a
      background change (this app has no global :focus-visible ring — 02-reset.css
@@ -224,6 +226,7 @@
 .ev-row.ev-selected > .ev-row-main:active,
 .ev-tl-lane.ev-selected:active,
 .editor-find-case[aria-pressed="true"]:active,
+.sidebar-history-btn.active:active,
 .tab.active:active {
   background: var(--c-selected-bg-press);
 

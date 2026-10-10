@@ -156,17 +156,10 @@ body.sidebar-resizing {
 
 /* settings-btn svg rules moved to end of file (specificity ordering) */
 
-/* A PURE LAYOUT ROW: the CHROME lives on the button, so the bordered box a reader
- * sees IS the button and its border box is a tab's border box exactly.
+/* A PURE LAYOUT ROW: the CHROME lives on the buttons, so the row's outer edges are a
+ * tab's border-box edges; a border or inset here would widen the row past a tab.
  *
- * It used to carry a border plus a 2px inset of its own, with the button inside it
- * borderless — so the visible box was 6px wider than a tab (3px overhanging each
- * edge) and `#tab-list` carried a compensating `1px + 0.125rem` on top of this
- * row's margin to line the BUTTON up instead. Reported as the New chat button being
- * wider than the tabs under it. The wrapper's border and inset existed for a second
- * button that was removed, along with the ::before divider between the two.
- *
- * The inset is now ONE value, `--sp-2`, read here and by `#tab-list` below: a
+ * The inset is ONE value, `--sp-2`, read here and by `#tab-list` below: a
  * sidebar row sits that far in from the sidebar's edges, and the two cannot disagree
  * without the arithmetic being visible in one place. */
 .sidebar-actions {
@@ -225,9 +218,12 @@ body.sidebar-resizing {
   }
 }
 
-/* No divider rule here: there is one `.sidebar-action-btn`, so the
-   `+ .sidebar-action-btn::before` line between two of them had no second child to
-   match and was deleted with the wrapper's chrome above. */
+.sidebar-history-btn {
+  flex: none;
+  inline-size: var(--btn-h);
+  min-block-size: var(--btn-h);
+  padding: 0;
+}
 
 [id="tab-list"] {
   flex: 1;

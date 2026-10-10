@@ -8,35 +8,21 @@
   min-height: 0;
 
   /* THE GUTTER COLUMN, declared once on the box both its occupants position
-   * against: the timeline rail (29-turns.css, which owns the reasoning) and the
+   * against: the turn map (29-turns.css, which owns the reasoning) and the
    * resume control docked at its foot. `--rail-inset-end` is the distance from
    * this box's inline-END to the column; `--rail-inset-start` is the same column
    * from the other side, so a control pinned there grows RIGHT into the gutter
-   * instead of back over the cards. The width also sets the axis, and 2.75rem is
-   * kept because narrowing it moves both insets, the resume control's dock and
-   * both measured container thresholds. */
+   * instead of back over the cards. 2.75rem is kept because narrowing it moves
+   * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
-  /* THE PAINTED BOX of a row in that column, and deliberately not `--hit-floor`:
-   * Apple's HIG and WCAG 2.5.8 size a tappable AREA, not the ink in it, so both
-   * occupants paint this and buy the tier's floor back with an expander. One value at
-   * both tiers, the fine floor, so only the coarse tier moves. Declared here rather
-   * than on the rail because the docked control is the rail's SIBLING and would not
-   * inherit it. */
-  --rail-mark: 1.5rem;
-
-  /* The track's reserved FOOT, read by the rail and by the control that docks in
-   * it. Without it the last marker lands under the control; reserved UNCONDITIONALLY,
-   * because the control appears only once the reader has scrolled up and a marker may
-   * not move then.
-   *
-   * It clears the control's TARGET rather than its painted box, which is what the
-   * half-sum spells: the control sits at `--sp-3`, paints `--rail-mark` and its target
-   * overhangs that by `(--hit-floor - --rail-mark) / 2` on each side. The two are equal
-   * on a fine pointer, so this is the old `--sp-3 + --hit-floor + --sp-2` there. */
-  --rail-foot: calc(var(--sp-3) + (var(--hit-floor) + var(--rail-mark)) / 2 + var(--sp-2));
+  /* The map's reserved FOOT, which the docked resume control sits in. Reserved
+   * UNCONDITIONALLY, because the control appears only once the reader has scrolled up
+   * and the map may not move then. It clears the control's target: `--ctl-h-sm`
+   * painted, lifted to the hit floor where the floor is taller. */
+  --rail-foot: calc(var(--sp-3) + max(var(--ctl-h-sm), var(--hit-floor)) + var(--sp-2));
 }
 
 /* NATIVE SCROLL ANCHORING HOLDS THE READER (`overflow-anchor` left at `auto`,
@@ -1089,8 +1075,8 @@
   position: absolute;
 
   /* Two declarations, and the second is the exact one. `--below-chat-toolbar`
-   * describes a ONE-ROW bar, and the toolbar reaches two below about 375px of chat
-   * area, where eight 44px targets no longer fit a row and the actions wrap
+   * describes a ONE-ROW bar, and the toolbar reaches two below 344px of chat
+   * area, where seven 44px targets no longer fit a row and the actions wrap
    * (12-chat.css) — the token would leave this band over the second row of buttons.
    * `anchor()` reads the real bottom edge. Its own fallback is the one-row edge, so
    * an engine with no anchor positioning drops the second declaration and keeps the
@@ -1433,68 +1419,50 @@
   background: var(--c-bg-tertiary);
 }
 
-/* DOCKED AT THE FOOT OF THE TIMELINE RAIL, wherever the rail is shown: a floating
- * form sits over the last lines of the content the reader is behind on, while the
- * rail's column is empty space whose axis already ends at this y. The threshold
- * is the rail's own (29-turns.css), the width at which the gutter is proven wide
- * enough. Pinned by its inline-START edge, so the label grows RIGHT into the
+/* DOCKED AT THE FOOT OF THE TURN MAP, wherever the map draws: a floating form sits
+ * over the last lines of the content the reader is behind on, while the map's column
+ * is empty space below the stack. The width and pointer gates are the map's own
+ * (29-turns.css). Pinned by its inline-START edge, so the label grows RIGHT into the
  * gutter rather than back over the cards, and `--sp-3` short of the wrapper's end
  * because #chat-area clips. Both thresholds track `--rail-w`. */
 @container chat-area (width >= 57.5rem) {
-  [id="scroll-bottom"] {
+  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
     left: var(--rail-inset-start);
     transform: none;
     min-inline-size: var(--rail-w);
     max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
 
-    /* IT READS AS A RAIL ROW, because that is what it is: the foot of the rail's own
-     * column, and it was the one thing in that column drawn as a floating pill —
-     * raised surface, visible border, 36px tall, sans at `--fs-sm`, no tabular figures
-     * under a label that is mostly a COUNT. Each declaration is one of those measured
-     * gaps against `.rail-marker` (29-turns.css), which owns the vocabulary.
-     *
-     * The height is `--rail-mark`, the same painted box a marker takes, with the tier's
-     * floor bought back by the expander below — so the column is one row height and one
-     * target size throughout. The GLYPH column stays bound to `--rail-w` below, which is
-     * what puts it on the axis. */
-    min-block-size: var(--rail-mark);
-    background: var(--c-bg-primary);
+    /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
+     * the foot of the map's own column: `--ctl-h-sm` tall, no surface at rest, the
+     * hover pair on demand. Spelled with the floor, which this rule would otherwise
+     * override at class specificity. */
+    min-block-size: max(var(--ctl-h-sm), var(--hit-floor));
+    background: transparent;
     border-color: transparent;
-    font-family: var(--font-mono);
+    color: var(--c-text-tertiary);
     font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
     justify-content: flex-start;
     gap: 0;
     padding: 0;
     border-radius: var(--r-sm);
   }
 
-  /* THE HIT TARGET, matching `.rail-marker::before`: BLOCK axis only, because the box is
-   * already `--rail-w` wide at rest and grows from there when the label arrives, so an
-   * inline reach would only push the target past the gutter it lives in.
-   *
-   * This is why the button carries no `overflow: hidden` — an expander is clipped away by
-   * one, silently, and the label's ellipsis lives on the span rather than here. */
-  [id="scroll-bottom"]::before {
-    content: "";
-    position: absolute;
-    inset-inline: 0;
-    top: calc((100% - var(--hit-floor)) / 2);
-    block-size: var(--hit-floor);
+  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover {
+    background: var(--c-hover);
+    color: var(--c-text-primary);
   }
 
-  /* The glyph takes the rail's own column, so it sits on the axis whether or not
+  /* The glyph takes the map's own column, so it sits under the stack whether or not
    * the label is showing. `- 2px` is this button's two borders, which the column
    * width does not include. */
-  [id="scroll-bottom"] > svg {
+  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
     flex: 0 0 calc(var(--rail-w) - 2px);
   }
 
   /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
    * also writes the label to the tooltip, which is published as this button's
    * accessible description, so the count is never the only copy. */
-  [id="scroll-bottom"] > span {
+  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
     display: none;
   }
 }
@@ -1514,7 +1482,7 @@
  * gutter, no other element's box moves, and `#messages`' scrollHeight is out of
  * reach. */
 @container chat-area (width >= 70rem) {
-  [id="scroll-bottom"] > span {
+  :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
     display: block;
     min-width: 0;
     padding-inline-end: var(--sp-2);
@@ -1534,12 +1502,12 @@
    * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
    * not the one reader who can never see it. */
   @media (any-hover: hover) {
-    [id="scroll-bottom"] > span {
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > span {
       display: none;
     }
 
-    [id="scroll-bottom"]:hover > span,
-    [id="scroll-bottom"]:focus-visible > span {
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:hover > span,
+    :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"]:focus-visible > span {
       display: block;
     }
   }

@@ -493,6 +493,66 @@ func TestEntryLog_RailRowsHoldOnlyDrawnTurns(t *testing.T) {
 	}
 }
 
+func TestEntryLog_RailRowsCarryTheCloseDuration(t *testing.T) {
+	f := newLogFixture(t)
+	closed := f.prompt("first")
+	f.append(closed, "", closed+":close", marotte.EntryKindTurnClose,
+		marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, ElapsedMs: 1234})
+	f.prompt("second")
+
+	rows := f.log.RailRows()
+	if len(rows) != 2 {
+		t.Fatalf("rail rows are %+v, want two", rows)
+	}
+	if rows[0].ElapsedMs != 1234 {
+		t.Errorf("closed turn's elapsed_ms is %v, want 1234 from its turn_close", rows[0].ElapsedMs)
+	}
+	if rows[1].ElapsedMs != 0 {
+		t.Errorf("running turn's elapsed_ms is %v, want 0", rows[1].ElapsedMs)
+	}
+	raw, err := json.Marshal(rows[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "elapsed_ms") {
+		t.Errorf("running row is %s, want no elapsed_ms key", raw)
+	}
+}
+
+// first_line must equal the client's own line for a resident turn (static-src/rail-merge.ts), or a
+// turn's preview changes as it pages in and out of the store's window.
+// TestEntryLog_RailRowFirstLineContract holds the index's first_line to testdata/first_line.json,
+// which rail-merge.node.test.ts holds the client's twin to.
+func TestEntryLog_RailRowFirstLineContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/first_line.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx struct {
+		Cases []struct {
+			Name      string `json:"name"`
+			Prompt    string `json:"prompt"`
+			FirstLine string `json:"first_line"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	for _, c := range fx.Cases {
+		t.Run(strings.ReplaceAll(c.Name, " ", "_"), func(t *testing.T) {
+			f := newLogFixture(t)
+			f.prompt(c.Prompt)
+			rows := f.log.RailRows()
+			if len(rows) != 1 {
+				t.Fatalf("rail rows for prompt %q are %+v, want one", c.Prompt, rows)
+			}
+			if rows[0].FirstLine != c.FirstLine {
+				t.Errorf("first_line of %q = %q, want %q", c.Prompt, rows[0].FirstLine, c.FirstLine)
+			}
+		})
+	}
+}
+
 // A steer_ack renders at its own position, so an ack-only turn draws a card and needs its rail row.
 func TestEntryLog_AnAckOnlyTurnIsDrawn(t *testing.T) {
 	f := newLogFixture(t)
