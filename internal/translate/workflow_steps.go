@@ -111,8 +111,8 @@ func nodeKey(path []string, nodeID string) string {
 	return workflow.PathKey(nodePathOf(path, nodeID))
 }
 
-// nodePathOf is a frame's node path, falling back to the bare id the way the client's
-// unplaced row does: a misplaced row beats vanished content.
+// nodePathOf is a frame's node path, falling back to the bare id: a misplaced row beats
+// vanished content.
 func nodePathOf(path []string, nodeID string) []string {
 	if len(path) == 0 && nodeID != "" {
 		return []string{nodeID}

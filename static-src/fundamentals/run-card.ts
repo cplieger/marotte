@@ -1,56 +1,53 @@
-// The WORKFLOW RUN card: a run's home in the transcript (the run TAB, `exec-view/`, shares only
-// the status vocabulary). HEAD / ALERT (ask, pause, stop or failure) / BODY (one row per step,
-// each a DOOR into the run tab) / FOOT (outcome + link). It renders NO step content, because
-// hosting it built every step's cards (`content-visibility` skips paint, not construction).
+// The WORKFLOW RUN card: HEAD / ALERT (ask, pause, stop or failure) / BODY (a GROUP per container,
+// a repeat's latest pass folded into the repeat's group; a ROW per work node, a DOOR into the run
+// tab) / FOOT (outcome + link). The body is the run tab's own model (`runToExec`), so the two
+// cannot disagree on what is work or where it sits. No step content: hosting it built every card.
 // Expanded while it is the newest top-level element, folded once superseded, unless one of FOUR
 // REFUSALS holds: a failure, a still-live run (incl. paused or unknown), an unanswered ask, or a
 // reader decision. An aborted or cancelled run folds. A later failure re-opens it. A pure view of
 // `inspect` (`run-store.ts` fetches).
 
+import { join as joinKey } from "@cplieger/keyenc";
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
-import { STATE_WORD, paintStateMark, stateOf, withAsk } from "../exec-view/status.js";
+import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
+import {
+  counters,
+  currentMembers,
+  elapsed,
+  failureOwner,
+  isWork,
+  latestPass,
+  window as execWindow,
+  type ExecKind,
+  type ExecNode,
+} from "../exec-view/model.js";
+import { reconcile } from "../reconcile.js";
+import { kindGlyph } from "../exec-view/tree.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { buildPath } from "../route-path.js";
-import { nodePathKey } from "../run-node-key.js";
+import { runToExec, type RunAsks, type StepEnds } from "../run-exec-source.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
   isNeedInputPark,
-  leafNodes,
-  nodeAddressOf,
   pauseDetailPhrase,
   pausePendingSentence,
-  runCounters,
-  runElapsedMs,
   runIsLive,
-  elapsedMs,
-  type NodeAddress,
-  type RunNode,
   type RunState,
   userStopSentence,
 } from "../run-store.js";
 
-/** The state vocabulary is `exec-view/status.ts`, shared with the `/run/{id}`
- *  page's tree, timeline and detail pane — one module rather than a private
- *  copy per surface. */
-
-/** What a run is waiting on a PERSON for. KAS leaves an asking run `running`, so `inspect` cannot
- *  show it; injected from `decision-dock.ts` (a feature module) and declared here, by the consumer. */
-export interface RunAsks {
-  /** How many of this run's asks are unanswered. */
-  count: number;
-  /** The node ids those asks name. Separate from `count` because the wire cannot
-   *  always attribute one (the step-session registry has to have seen the
-   *  sub-session), and a run with an unattributable ask is still blocked. */
-  nodes: ReadonlySet<string>;
-  /** The head ask as one line, for the alert. "" when there is none to name. */
-  label: string;
-}
-
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
+
+/** The parts of a run's read the store keeps beside its state (`runPlan`, `runStepEnds`): the plan
+ *  is what a container KAS has not expanded yet will hold. */
+interface RunDetail {
+  readonly plan?: unknown;
+  readonly ends?: StepEnds;
+}
 
 /** The pause as a sentence a reader can act on. KAS's two `need_input` literals name a tool and a
  *  mechanism, so they are replaced (the arm above renders the question when the dock has it). Takes
@@ -92,9 +89,9 @@ function runWord(status: RunState["status"]): string {
 /** A mounted run card plus its imperative handle. */
 export interface RunCardView {
   readonly root: HTMLDivElement;
-  /** Re-render every region from a fresh state; idempotent, rows reconciled in place. `asks`
-   *  defaults to the last one given. */
-  render(state: RunState | undefined, asks?: RunAsks): void;
+  /** Re-render every region from a fresh state; idempotent, rows reconciled in place. `asks` and
+   *  `detail` default to the last ones given. */
+  render(state: RunState | undefined, asks?: RunAsks, detail?: RunDetail): void;
   /** Advance the clocks only, on a 1s tick while the run is live. */
   tick(): void;
   /** Fold in the LAUNCH tool call's status and output: a failed launch created no run, so the tool
@@ -114,8 +111,36 @@ interface StepRow {
   meta: HTMLElement;
   dur: HTMLElement;
   /** Live while the step runs, so the clock ticks; cleared once it settles. */
-  startedAt?: string;
-  endedAt?: string;
+  start?: string;
+  end?: string;
+}
+
+/** A container: a label over its members, with no state mark and no clock of its own. */
+interface GroupRow {
+  root: HTMLElement;
+  glyph: HTMLElement;
+  name: HTMLElement;
+  meta: HTMLElement;
+  body: HTMLElement;
+  kind?: ExecKind;
+}
+
+/** What a container shows, its `currentMembers`. A repeat's pass gets no group of its own: its
+ *  members hang off the repeat, whose group carries the pass number. The run tab keeps every pass. */
+function membersOf(n: ExecNode): readonly ExecNode[] {
+  const members = currentMembers(n);
+  return n.kind === "repeat" ? members.flatMap((p) => (isWork(p) ? [p] : p.children)) : members;
+}
+
+/** A container's one-line fact: a repeat's pass against its bound, else the adapter's summary. */
+function groupMeta(n: ExecNode): string {
+  const pass = n.kind === "repeat" ? latestPass(n)?.pass : undefined;
+  if (pass === undefined) {
+    return n.subtitle ?? "";
+  }
+  return n.maxPasses === undefined
+    ? `pass ${String(pass)}`
+    : `pass ${String(pass)} of ${String(n.maxPasses)}`;
 }
 
 /** The card's disclosure bookkeeping, delegated because the registry's keys are not known here.
@@ -224,42 +249,35 @@ export function buildRunCard(
     },
   });
 
-  const rows = new Map<string, StepRow>();
+  /** Each mounted row's and group's parts, by its root; a removed one is collected with it. */
+  const stepParts = new WeakMap<HTMLElement, StepRow>();
+  const groupParts = new WeakMap<HTMLElement, GroupRow>();
   let liveClock = false;
   /** Whether the store holds another element after this card. */
   let superseded = false;
   /** Set when the LAUNCH itself failed, so the alert stays on the tool call's
    *  reason instead of being overwritten by a state that will never arrive. */
   let launchError = "";
-  /** The last state and the last asks rendered, so `setLaunch` can re-render
+  /** The last state, asks and detail rendered, so `setLaunch` can re-render
    *  without re-fetching and without restating what it does not know. */
   let lastState: RunState | undefined;
   let lastAsks: RunAsks = NO_ASKS;
+  let lastDetail: RunDetail = {};
+  /** The run tab's model of `lastState`, which every region below reads. */
+  let lastNodes: readonly ExecNode[] = [];
 
   /** One step's row: a real anchor into the run tab with that node selected, yielding to a modified
    *  click. Spans only, no `role` or `tabindex` (an anchor in a `role="button"` host is axe's
    *  `nested-interactive`). `href` carries the node as a `#node=` fragment; the plain click goes
-   *  through `onOpen` to activate in place. An UNPLACED address carries no node on either channel,
-   *  or the page holds a pending focus forever. */
-  function stepRow(addr: NodeAddress): StepRow {
-    const nodePath = nodePathKey(addr.path);
-    let row = rows.get(nodePath);
-    if (row !== undefined) {
-      return row;
-    }
+   *  through `onOpen` to activate in place. */
+  function stepRow(path: string): StepRow {
     const glyph = el("span", { className: "run-step-glyph", "aria-hidden": "true" });
-    // The last path segment is the step; the segments above it are the loop or
-    // branch containing it, and they are what tell two iterations apart.
-    const label = addr.path[addr.path.length - 1] ?? nodePath;
-    const nameEl2 = el("span", { className: "run-step-name" }, label);
+    const nameEl2 = el("span", { className: "run-step-name" });
     const meta = el("span", { className: "run-step-meta" });
     const dur = el("span", { className: "run-step-dur" });
     const rowHead = el(
       "a",
-      {
-        className: "run-step-head",
-        href: addr.placed ? buildPath({ kind: "run", id: workflowID, node: nodePath }) : runHref,
-      },
+      { className: "run-step-head", href: buildPath({ kind: "run", id: workflowID, node: path }) },
       glyph,
       nameEl2,
       meta,
@@ -271,72 +289,80 @@ export function buildRunCard(
         return;
       }
       e.preventDefault();
-      onOpen(workflowID, nameEl.textContent, addr.placed ? nodePath : undefined);
+      onOpen(workflowID, nameEl.textContent, path);
     });
-    const rowRoot = el("div", { className: "run-step", "data-node": nodePath }, rowHead);
-    row = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur };
-    rows.set(nodePath, row);
-    steps.appendChild(rowRoot);
+    const rowRoot = el("div", { className: "run-step", "data-node": path }, rowHead);
+    const row: StepRow = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur };
+    stepParts.set(rowRoot, row);
     return row;
   }
 
-  /** Paint one row from its node. Split out so the reconcile below reads as an
-   *  ordering pass rather than an ordering pass with a renderer inside it. */
-  function paintRow(row: StepRow, node: RunNode, asks: RunAsks): void {
-    const state = stateOf(node.status);
-    // An ask reclassifies a step only while it is IN FLIGHT: `node_id` is a
-    // node ID not a path, so a repeat's iterations share it.
-    const shown = withAsk(state, asks.nodes.has(node.nodeId));
-    row.root.dataset["status"] = shown;
-    row.root.dataset["nodeType"] = node.type;
-    paintStateMark(row.glyph, shown);
+  /** One container's group: a plain label over its members, not a control, so it adds no tab stop. */
+  function groupRow(path: string): GroupRow {
+    const glyph = el("span", { className: "run-group-glyph", "aria-hidden": "true" });
+    const name = el("span", { className: "run-group-name" });
+    const meta = el("span", { className: "run-group-meta" });
+    const groupBody = el("div", { className: "run-group-body" });
+    const groupRoot = el(
+      "div",
+      { className: "run-group", role: "group", "data-node": path },
+      el("div", { className: "run-group-head" }, glyph, name, meta),
+      groupBody,
+    );
+    const g: GroupRow = { root: groupRoot, glyph, name, meta, body: groupBody };
+    groupParts.set(groupRoot, g);
+    return g;
+  }
+
+  function paintGroup(g: GroupRow, node: ExecNode): void {
+    if (g.kind !== node.kind) {
+      g.glyph.replaceChildren(kindGlyph(node.kind));
+      g.kind = node.kind;
+    }
+    g.root.dataset["kind"] = node.kind;
+    g.name.textContent = node.label;
+    const meta = groupMeta(node);
+    g.meta.textContent = meta;
+    g.root.setAttribute("aria-label", meta === "" ? node.label : `${node.label}, ${meta}`);
+  }
+
+  /** Paint one row from its node. */
+  function paintRow(row: StepRow, node: ExecNode): void {
+    row.root.dataset["status"] = node.state;
+    row.root.dataset["nodeType"] = node.kind;
+    paintStateMark(row.glyph, node.state);
+    row.name.textContent = node.label;
     // Via a local, not directly: `undefined` is not a valid value for an
     // optional property under exactOptionalPropertyTypes.
-    if (node.startedAt === undefined) {
-      delete row.startedAt;
+    if (node.start === undefined) {
+      delete row.start;
     } else {
-      row.startedAt = node.startedAt;
+      row.start = node.start;
     }
-    if (node.endedAt === undefined) {
-      delete row.endedAt;
+    if (node.end === undefined) {
+      delete row.end;
     } else {
-      row.endedAt = node.endedAt;
+      row.end = node.end;
     }
 
-    // Who ran it, on what, what went wrong, in that order. A watch names its
-    // own kind since nothing runs a watch — it polls.
+    // Who ran it and on what (the adapter's subtitle), then what went wrong.
     const bits: string[] = [];
-    if (node.type === "watch") {
-      bits.push("watch");
-    } else if (node.agentName !== undefined && node.agentName !== "") {
-      bits.push(node.agentName);
+    if (node.subtitle !== undefined) {
+      bits.push(node.subtitle);
     }
-    if (node.modelId !== undefined && node.modelId !== "" && node.modelId !== "auto") {
-      bits.push(node.modelId);
-    }
-    if (node.iteration !== undefined) {
-      // 1-based for a reader; KAS counts from zero.
-      bits.push(`pass ${String(node.iteration + 1)}`);
-    }
-    if (node.branchId !== undefined && node.branchId !== "") {
-      bits.push(node.branchId);
-    }
-    if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
-      bits.push(`${String(node.continuationAttempts)} retries`);
-    }
-    if (node.failureReason !== undefined && node.failureReason !== "") {
-      bits.push(truncate(node.failureReason, 80));
+    if (node.failure !== undefined) {
+      bits.push(truncate(node.failure, 80));
     }
     row.meta.textContent = bits.join(" \u00b7 ");
 
-    const ms = elapsedMs(node.startedAt, node.endedAt);
+    const ms = elapsed(node.start, node.end);
     row.dur.textContent = ms > 0 ? formatElapsed(ms) : "";
-    row.head.setAttribute("aria-label", `${row.name.textContent}, ${STATE_WORD[shown]}`);
+    row.head.setAttribute("aria-label", `${node.label}, ${STATE_WORD[node.state]}`);
 
     // Visible on the collapsed row, since a capture is a RESULT. Guarded on the text changing, since
     // render() runs on every invalidation.
     const cap = row.root.querySelector<HTMLElement>(":scope > .run-step-capture");
-    const text = node.capturedOutput ?? "";
+    const text = node.output ?? "";
     if (text === "") {
       cap?.remove();
     } else if (cap?.dataset["text"] !== text) {
@@ -349,33 +375,37 @@ export function buildRunCard(
     }
   }
 
-  function renderSteps(state: RunState | undefined, asks: RunAsks): void {
-    const painted: StepRow[] = [];
-    for (const node of leafNodes(state?.root)) {
-      const row = stepRow(nodeAddressOf(state?.root, node));
-      paintRow(row, node, asks);
-      painted.push(row);
+  /** Paint a mounted row or group from its node; a group reconciles its members in turn. */
+  function paintNode(nodeRoot: HTMLElement, node: ExecNode): void {
+    const row = stepParts.get(nodeRoot);
+    if (row !== undefined) {
+      paintRow(row, node);
+      return;
     }
-    // Order to match the plan: a pure ordering pass over what this render just
-    // painted. `stepRow` always inserts, so every leaf has a row here and the
-    // second walk needs no lookup and no absent case.
-    let anchor: Element | null = null;
-    for (const row of painted) {
-      const want: Element | null =
-        anchor === null ? steps.firstElementChild : anchor.nextElementSibling;
-      if (row.root !== want) {
-        if (anchor === null) {
-          steps.prepend(row.root);
-        } else {
-          anchor.after(row.root);
-        }
-      }
-      anchor = row.root;
+    const g = groupParts.get(nodeRoot);
+    if (g !== undefined) {
+      paintGroup(g, node);
+      seat(g.body, membersOf(node));
     }
   }
 
+  /** One sibling list, reconciled in document order. The key carries the kind, so a replanned run
+   *  that puts a step where a container was remounts rather than painting one shape as the other. */
+  function seat(into: HTMLElement, nodes: readonly ExecNode[]): void {
+    reconcile(into, nodes, {
+      key: (n) => joinKey(isWork(n) ? "step" : "group", n.path),
+      mount: (n) => {
+        const nodeRoot = isWork(n) ? stepRow(n.path).root : groupRow(n.path).root;
+        paintNode(nodeRoot, n);
+        return nodeRoot;
+      },
+      update: paintNode,
+    });
+  }
+
   /** The alert: five things that can put a run in front of a person, ordered
-   *  by what the reader can do about it. Only one shows. */
+   *  by what the reader can do about it. Only one shows. It truncates tighter
+   *  than the run tab's alert, which carries the detail this glance leaves out. */
   function renderAlert(state: RunState | undefined, asks: RunAsks): void {
     const parts: string[] = [];
     let kind = "";
@@ -411,13 +441,11 @@ export function buildRunCard(
       }
     } else if (state?.status === "failed") {
       kind = "failed";
-      const failed = leafNodes(state.root).find(
-        (n) => n.status === "failed" && n.failureReason !== undefined && n.failureReason !== "",
-      );
+      const failed = failureOwner(lastNodes);
       parts.push(
         failed === undefined
           ? "The run failed"
-          : `${failed.nodeId} failed: ${truncate(failed.failureReason ?? "", 160)}`,
+          : `${failed.label} failed: ${truncate(failed.failure ?? "", 160)}`,
       );
     }
     if (parts.length === 0) {
@@ -470,7 +498,7 @@ export function buildRunCard(
   }
 
   function renderFoot(state: RunState | undefined): void {
-    const c = runCounters(state);
+    const c = counters(lastNodes);
     const bits: string[] = [];
     if (c.total > 0) {
       bits.push(`${String(c.total)} ${c.total === 1 ? "step" : "steps"}`);
@@ -479,15 +507,16 @@ export function buildRunCard(
       bits.push(`${String(c.failed)} failed`);
     }
     bits.push(runWord(state?.status));
-    const ms = runElapsedMs(state);
+    const ms = execWindow(lastNodes, runIsLive(state))?.span ?? 0;
     if (ms > 0) {
       bits.push(formatElapsed(ms));
     }
     ledger.textContent = bits.join(" \u00b7 ");
   }
 
-  /** Whether this run holds a FAILURE a reader has to see: a failed launch, a failed
-   *  run, or any failed step. The one carve-out that works in both directions. */
+  /** Whether this run holds a FAILURE a reader has to see: a failed launch, a failed run, or a
+   *  failed work node the card shows (the latest pass's, as the foot counts them). The one
+   *  carve-out that works in both directions. */
   function holdsFailure(): boolean {
     if (launchError !== "") {
       return true;
@@ -495,7 +524,7 @@ export function buildRunCard(
     if (lastState === undefined) {
       return false;
     }
-    return stateOf(lastState.status) === "fail" || runCounters(lastState).failed > 0;
+    return stateOf(lastState.status) === "fail" || counters(lastNodes).failed > 0;
   }
 
   /** The newest-element fold, and the only place the four refusals are spelled. A failure RE-OPENS a
@@ -528,9 +557,18 @@ export function buildRunCard(
     ctl.close();
   }
 
-  function render(state: RunState | undefined, asks: RunAsks = lastAsks): void {
+  function render(
+    state: RunState | undefined,
+    asks: RunAsks = lastAsks,
+    detail: RunDetail = lastDetail,
+  ): void {
     lastState = state;
     lastAsks = asks;
+    lastDetail = detail;
+    lastNodes =
+      state === undefined
+        ? []
+        : runToExec(workflowID, state, detail.plan, asks, "", detail.ends).nodes;
     const label = state?.runLabel ?? state?.workflowName ?? "";
     if (label !== "") {
       nameEl.textContent = label;
@@ -547,7 +585,7 @@ export function buildRunCard(
     // ask blocks it, so `data-status` keeps the status and this says what is wanted.
     const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
-    const c = runCounters(state);
+    const c = counters(lastNodes);
     countEl.textContent =
       c.total === 0
         ? ""
@@ -558,7 +596,7 @@ export function buildRunCard(
     liveClock = runIsLive(state);
 
     renderAlert(state, asks);
-    renderSteps(state, asks);
+    seat(steps, lastNodes);
     renderOutputs(state);
     renderFoot(state);
     // The head's one statement of the run's state, since the row itself shows the
@@ -575,14 +613,18 @@ export function buildRunCard(
     }
     // Re-derive from the rows' own timestamps rather than re-fetch — the one
     // thing the client can advance honestly on its own.
-    for (const row of rows.values()) {
-      const rowMs = elapsedMs(row.startedAt, row.endedAt);
+    for (const rowRoot of steps.querySelectorAll<HTMLElement>(".run-step")) {
+      const row = stepParts.get(rowRoot);
+      if (row === undefined) {
+        continue;
+      }
+      const rowMs = elapsed(row.start, row.end);
       if (rowMs > 0) {
         row.dur.textContent = formatElapsed(rowMs);
       }
     }
-    // The run's own elapsed is the FOOT's, and `runElapsedMs` reads `Date.now()`
-    // while a leaf is running, so re-rendering the ledger IS the tick.
+    // The run's own elapsed is the FOOT's, and `window` reads `Date.now()` while
+    // the run is live, so re-rendering the ledger IS the tick.
     renderFoot(lastState);
   }
 

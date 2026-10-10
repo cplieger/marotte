@@ -1,18 +1,16 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
 import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan } from "./run-exec-source.js";
+import { runToExec, indexPlan, type RunAsks } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
-import { flatten, leaves, counters } from "./exec-view/model.js";
+import { flatten, workNodes, counters } from "./exec-view/model.js";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
-import type { RunAsks } from "./fundamentals/run-card.js";
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
 
-// `root` stays `unknown`: one case hands over a container whose `type` is not in `RunNode`'s union,
-// which is the foreign-shape axis the adapter's structural walk exists for, so a typed parameter
-// would refuse the case rather than the shape.
+// `root` stays `unknown`: the builders spell a node's status as the raw string KAS sends, which
+// `RunNode`'s classified status would refuse.
 function stateWith(root: unknown, extra: Record<string, unknown> = {}): RunState {
   return { ...makeRunState({ status: "running" }), root: root as RunNode, ...extra };
 }
@@ -61,7 +59,7 @@ describe("runToExec structure", () => {
       undefined,
       NO_ASKS,
     );
-    expect(leaves(run.nodes).map((n) => n.path)).toEqual(["wf_1:a/b:c", "wf_1:a:b/c"]);
+    expect(workNodes(run.nodes).map((n) => n.path)).toEqual(["wf_1:a/b:c", "wf_1:a:b/c"]);
   });
 
   // Flattening the tree to its leaves would make a loop, a parallel and a watch invisible.
@@ -95,23 +93,23 @@ describe("runToExec structure", () => {
     );
     expect(flatten(run.nodes).map((n) => `${n.kind}:${n.label}`)).toEqual([
       "repeat:loop",
-      "sequence:loop#0",
+      "sequence:pass 1",
       "step:work",
       "watch:watch",
     ]);
-    // The iteration container keeps its own id as its LABEL and contributes KAS's frame spelling to
-    // the PATH: the detail pane addresses a step's live transcript by path, so a tree keyed on the
-    // state tree's `loop#0` selects a row nothing ever streams into.
+    // The iteration container is labelled as the PASS it is (`loop#0` is KAS's id for it, not a
+    // name) and contributes KAS's frame spelling to the PATH: the detail pane addresses a step's
+    // live transcript by path, so a tree keyed on `loop#0` selects a row nothing streams into.
     expect(flatten(run.nodes).map((n) => n.path)).toEqual([
       "wf_1:loop",
       "wf_1:loop:iter-0",
       "wf_1:loop:iter-0:work",
       "wf_1:watch",
     ]);
-    // Only the leaves count as steps: a container's span is its children's, so counting it would
+    // Only steps and watches count: a container's span is its children's, so counting it would
     // inflate the total and double-count the time.
     expect(counters(run.nodes).total).toBe(2);
-    expect(leaves(run.nodes).map((n) => n.label)).toEqual(["work", "watch"]);
+    expect(workNodes(run.nodes).map((n) => n.label)).toEqual(["work", "watch"]);
   });
 
   // A node type this build has never seen must land on a kind the CSS has a rule for, or the row
@@ -124,6 +122,175 @@ describe("runToExec structure", () => {
       NO_ASKS,
     );
     expect(run.nodes[0]?.kind).toBe("group");
+  });
+});
+
+// A node's role is its TYPE: KAS writes a parallel as `children: []` until its branches start and a
+// repeat with no children until its first pass opens, and neither is work in the meantime.
+describe("runToExec decides work by kind and fills an unexpanded container from its plan", () => {
+  const PLAN = [
+    {
+      nodeId: "loop",
+      type: "repeat",
+      maxIterations: 3,
+      steps: [
+        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "claude-opus-5.5" },
+        {
+          nodeId: "reviews",
+          type: "parallel",
+          branches: [
+            { nodeId: "review-a", type: "step", agentName: "reviewer-a" },
+            { nodeId: "review-b", type: "step", agentName: "reviewer-b" },
+          ],
+        },
+      ],
+    },
+  ];
+
+  function shape(root: unknown, plan: unknown): string[] {
+    return flatten(runToExec("wf_1", stateWith(root), plan, NO_ASKS).nodes).map(
+      (n) => `${n.kind}:${n.label}:${n.path}:${n.transcript === true ? "t" : "-"}`,
+    );
+  }
+
+  it("lists a pending parallel's branches from the plan, at the paths KAS gives them", () => {
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "reviews", type: "parallel", status: "pending", children: [] }],
+    };
+    expect(shape(root, PLAN)).toEqual([
+      "parallel:reviews:wf_1:reviews:-",
+      "step:review-a:wf_1:reviews:review-a:t",
+      "step:review-b:wf_1:reviews:review-b:t",
+    ]);
+  });
+
+  it("opens a not-yet-started repeat on its first pass, spelled as KAS will spell it", () => {
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "loop", type: "repeat", status: "running" }],
+    };
+    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    expect(shape(root, PLAN)).toEqual([
+      "repeat:loop:wf_1:loop:-",
+      "sequence:pass 1:wf_1:loop:iter-0:-",
+      "step:code:wf_1:loop:iter-0:code:t",
+      "parallel:reviews:wf_1:loop:iter-0:reviews:-",
+      "step:review-a:wf_1:loop:iter-0:reviews:review-a:t",
+      "step:review-b:wf_1:loop:iter-0:reviews:review-b:t",
+    ]);
+    expect(run.nodes[0]?.maxPasses).toBe(3);
+    expect(run.nodes[0]?.children[0]?.pass).toBe(1);
+    // Planned work has not started, and the step counter counts it.
+    expect(workNodes(run.nodes).map((n) => n.state)).toEqual(["pending", "pending", "pending"]);
+    expect(counters(run.nodes)).toEqual({ total: 3, done: 0, failed: 0, current: 0 });
+  });
+
+  it("never counts a childless container as a step, plan or no plan", () => {
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        step("a", "running"),
+        { nodeId: "fan", type: "parallel", status: "pending", children: [] },
+      ],
+    };
+    const run = runToExec("wf_1", stateWith(root), undefined, NO_ASKS);
+    expect(workNodes(run.nodes).map((n) => n.label)).toEqual(["a"]);
+    expect(run.nodes[1]?.transcript).toBeUndefined();
+  });
+
+  // Node types are an open upstream vocabulary, and the state path already maps a type this build
+  // has never seen onto `group`; the plan path has to agree, or a parallel loses that branch.
+  it("keeps a planned branch of an unknown type, as a group in plan order", () => {
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "reviews", type: "parallel", status: "pending", children: [] }],
+    };
+    const plan = [
+      {
+        nodeId: "reviews",
+        type: "parallel",
+        branches: [
+          { nodeId: "review-a", type: "step" },
+          { nodeId: "future-review", type: "delegate" },
+        ],
+      },
+    ];
+    expect(shape(root, plan)).toEqual([
+      "parallel:reviews:wf_1:reviews:-",
+      "step:review-a:wf_1:reviews:review-a:t",
+      "group:future-review:wf_1:reviews:future-review:-",
+    ]);
+  });
+
+  it("fills a root KAS has not expanded from the plan's top level", () => {
+    const root = { nodeId: "wf_1", type: "sequence", status: "running" };
+    expect(shape(root, PLAN).slice(0, 3)).toEqual([
+      "repeat:loop:wf_1:loop:-",
+      "sequence:pass 1:wf_1:loop:iter-0:-",
+      "step:code:wf_1:loop:iter-0:code:t",
+    ]);
+    expect(runToExec("wf_1", stateWith(root), undefined, NO_ASKS).nodes).toEqual([]);
+  });
+
+  it("keeps the state's children over the plan's once KAS has expanded a container", () => {
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        {
+          nodeId: "reviews",
+          type: "parallel",
+          status: "running",
+          children: [step("review-a", "running", { branchId: "review-a" })],
+        },
+      ],
+    };
+    expect(shape(root, PLAN)).toEqual([
+      "parallel:reviews:wf_1:reviews:-",
+      "step:review-a:wf_1:reviews:review-a:t",
+    ]);
+  });
+
+  it("counts the latest pass, so the pass number stays the loop's", () => {
+    const pass = (n: number, status: string) => ({
+      nodeId: `loop#${String(n)}`,
+      type: "sequence",
+      status,
+      iteration: n,
+      children: [step("code", status), step("review", status === "completed" ? status : "pending")],
+    });
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        {
+          nodeId: "loop",
+          type: "repeat",
+          status: "running",
+          children: [pass(0, "completed"), pass(1, "running")],
+        },
+      ],
+    };
+    const run = runToExec("wf_1", stateWith(root), PLAN, NO_ASKS);
+    expect(counters(run.nodes)).toEqual({ total: 2, done: 0, failed: 0, current: 1 });
+    // The run tab still holds every pass.
+    expect(run.nodes[0]?.children.map((p) => `${p.label}:${String(p.pass)}`)).toEqual([
+      "pass 1:1",
+      "pass 2:2",
+    ]);
+    // A step inside a pass does not restate it.
+    expect(run.nodes[0]?.children[1]?.children[0]?.subtitle).toBeUndefined();
   });
 });
 
@@ -182,6 +349,43 @@ describe("runToExec container state", () => {
       NO_ASKS,
     );
     expect(run.nodes[0]?.state).toBe("ok");
+  });
+
+  /** A loop whose pass 1 `a` failed and whose pass 2 `a` carries `last`. */
+  function loopAfterFailure(last: string): RunState {
+    const pass = (i: number, status: string): Record<string, unknown> => ({
+      nodeId: `loop#${String(i)}`,
+      type: "sequence",
+      status,
+      iteration: i,
+      children: [step("a", status, { failureReason: i === 0 ? "the first try broke" : undefined })],
+    });
+    return stateWith({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [
+        {
+          nodeId: "loop",
+          type: "repeat",
+          status: "running",
+          children: [pass(0, "failed"), pass(1, last)],
+        },
+      ],
+    });
+  }
+
+  // A loop is where its latest pass is: a failure an earlier pass moved past is that pass's.
+  it("rolls a repeat up from its latest pass alone", () => {
+    for (const [last, want] of [
+      ["running", "running"],
+      ["completed", "ok"],
+      ["failed", "fail"],
+    ] as const) {
+      const run = runToExec("wf_1", loopAfterFailure(last), undefined, NO_ASKS);
+      expect(run.nodes[0]?.state, last).toBe(want);
+      expect(run.nodes[0]?.children[0]?.state, "pass 1 keeps its own failure").toBe("fail");
+    }
   });
 });
 
@@ -268,6 +472,18 @@ describe("runToExec reads what nothing read before", () => {
     );
     expect((run.nodes[0]?.facts ?? []).map((f) => f.label)).not.toContain("Model");
     expect(run.nodes[0]?.subtitle).toBe("wf-coder");
+  });
+
+  it("counts a step's retries in the subtitle, one retry singular", () => {
+    const subtitle = (n: number) =>
+      runToExec(
+        "wf_1",
+        stateWith(step("a", "running", { agentName: "wf-coder", continuationAttempts: n })),
+        undefined,
+        NO_ASKS,
+      ).nodes[0]?.subtitle;
+    expect(subtitle(1)).toBe("wf-coder \u00b7 1 retry");
+    expect(subtitle(2)).toBe("wf-coder \u00b7 2 retries");
   });
 });
 
@@ -522,6 +738,39 @@ describe("runToExec reads the run log's step ends", () => {
     );
     expect(run.nodes[0]?.state).toBe("fail");
     expect(run.nodes[0]?.failure).toBe("The model declined to continue.");
+  });
+
+  it.each(["", "  \n"])("falls back to the outcome's sentence for a blank reason %j", (reason) => {
+    const run = runToExec(
+      "wf_1",
+      tree(step("build", "completed")),
+      undefined,
+      NO_ASKS,
+      "",
+      new Map([[nodePathKey(["wf_1", "build"]), { outcome: "refused", failure_reason: reason }]]),
+    );
+    expect(run.nodes[0]?.failure).toBe("The model declined to continue.");
+  });
+
+  it("does not name a blank account of KAS's own failure", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(
+        {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "failed",
+          children: [step("build", "failed", { failureReason: "  \n" })],
+        },
+        { status: "failed" },
+      ),
+      undefined,
+      NO_ASKS,
+      "",
+    );
+    expect(run.nodes[0]?.state).toBe("fail");
+    expect(run.nodes[0]?.failure).toBeUndefined();
+    expect(run.alert?.text).toBe("The run failed");
   });
 
   it("keeps KAS's own account for a step it did not grade completed", () => {

@@ -1,8 +1,9 @@
 // The exec view's tree pane: the execution's structure (a loop ran twice, three ran at once).
-// A container is a ROW with its kind glyph, rolled-up state and one `nodePlan` fact. Hierarchy is
-// a BOX: a top-level container is a bordered `.ev-group`; only depth >= 2 indents (with `↳`).
-// SELECTION, not disclosure, so live rows never move; a step never collapses. ONE FOLD PER BOX:
-// only a top-level container discloses, and `applyCollapse` is the one writer that honours it.
+// A container is a ROW with its kind glyph, rolled-up state (no in-flight ring: only a step or
+// watch is work, `31-exec-view.css`) and one `nodePlan` fact. Hierarchy is a BOX: a top-level
+// container is a bordered `.ev-group`; only depth >= 2 indents (with `↳`).
+// SELECTION, not disclosure, so live rows never move; a work node never collapses. ONE FOLD PER
+// BOX: only a top-level container discloses, and `applyCollapse` is the one writer that honours it.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -17,14 +18,14 @@ import {
   ICON_TAB_SUBTAB,
 } from "../icons.js";
 import { formatElapsed } from "../strings.js";
+import { reconcile } from "../reconcile.js";
 import { elapsed, type ExecKind, type ExecNode } from "./model.js";
-import { place } from "./place.js";
 import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
  *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
  *  Exhaustive with no default, so a new `ExecKind` fails the type check. */
-function kindGlyph(kind: ExecKind): Element {
+export function kindGlyph(kind: ExecKind): Element {
   switch (kind) {
     case "step":
       return iconEl(ICON_TAB_AGENT);
@@ -76,7 +77,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     role: "tree",
     "aria-label": "Execution steps",
   });
-  const rows = new Map<string, Row>();
+  /** Each mounted row's parts, by its root; a removed row is collected with it. */
+  const rowParts = new WeakMap<HTMLElement, Row>();
 
   function buildRow(node: ExecNode, depth: number): Row {
     const glyph = el("span", { className: "ev-state", "aria-hidden": "true" });
@@ -167,20 +169,32 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     }
   }
 
-  function paint(
-    node: ExecNode,
+  /** One sibling list, keyed by path rather than kind: `paint` repaints a kind change in place,
+   *  so the row element, with its fold and focus, survives it. */
+  function seatRows(
+    into: HTMLElement,
+    nodes: readonly ExecNode[],
     depth: number,
     selected: string,
-    into: HTMLElement,
-    index: number,
   ): void {
-    let row = rows.get(node.path);
-    if (row === undefined) {
-      row = buildRow(node, depth);
-      rows.set(node.path, row);
-    }
-    place(into, row.root, index);
+    reconcile(into, nodes, {
+      key: (n) => n.path,
+      mount: (n) => {
+        const row = buildRow(n, depth);
+        rowParts.set(row.root, row);
+        paint(row, n, depth, selected);
+        return row.root;
+      },
+      update: (rowRoot, n) => {
+        const row = rowParts.get(rowRoot);
+        if (row !== undefined) {
+          paint(row, n, depth, selected);
+        }
+      },
+    });
+  }
 
+  function paint(row: Row, node: ExecNode, depth: number, selected: string): void {
     row.label.textContent = node.label;
     row.sub.textContent = node.subtitle ?? "";
     row.sub.hidden = (node.subtitle ?? "") === "";
@@ -227,42 +241,24 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     }
     row.chevron.hidden = !row.collapsible;
     row.kids ??= el("div", { className: "ev-kids", role: "group" });
-    // Index 1: `.ev-row-main` is this row's first child and never moves.
-    place(row.root, row.kids, 1);
-    // An ordering pass over the existing reconciled rows rather than a rebuild, so a
-    // selected or collapsed descendant survives. `place` is what keeps a row that is
-    // ALREADY in position untouched — see its own note for what a re-append costs.
-    const kids = row.kids;
-    node.children.forEach((child, i) => {
-      paint(child, depth + 1, selected, kids, i);
-    });
+    // Only when detached: `.ev-row-main` is the row's one other child, so the append seats it
+    // second; re-appending an attached box restarts every animation in it and drops focus.
+    if (row.kids.parentNode !== row.root) {
+      row.root.appendChild(row.kids);
+    }
+    seatRows(row.kids, node.children, depth + 1, selected);
     applyCollapse(row);
   }
 
   return {
     root,
     render(nodes, selected) {
-      // Rows the tree no longer describes are dropped, or a run whose plan was
-      // appended to would keep growing a map of dead paths.
-      const live = new Set<string>();
-      const mark = (n: ExecNode): void => {
-        live.add(n.path);
-        n.children.forEach(mark);
-      };
-      nodes.forEach(mark);
-      for (const path of [...rows.keys()]) {
-        if (!live.has(path)) {
-          rows.get(path)?.root.remove();
-          rows.delete(path);
-        }
-      }
-      nodes.forEach((n, i) => {
-        paint(n, 0, selected, root, i);
-      });
+      seatRows(root, nodes, 0, selected);
     },
     tick() {
-      for (const row of rows.values()) {
-        if (row.end !== undefined || row.start === undefined) {
+      for (const rowRoot of root.querySelectorAll<HTMLElement>(".ev-row")) {
+        const row = rowParts.get(rowRoot);
+        if (row === undefined || row.end !== undefined || row.start === undefined) {
           continue;
         }
         const ms = elapsed(row.start, undefined);
@@ -275,8 +271,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
 }
 
 /** Find a node by path. Kept here rather than in the model because it is a
- *  VIEW concern: a selection that no longer resolves falls back to the first
- *  leaf. */
+ *  VIEW concern: a selection that no longer resolves falls back to the page's
+ *  `autoSelect` pick. */
 export function nodeAt(nodes: readonly ExecNode[], path: string): ExecNode | undefined {
   for (const n of nodes) {
     if (n.path === path) {

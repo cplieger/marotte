@@ -76,19 +76,13 @@ vi.mock("./run-store.js", async (importOriginal) => ({
       m.launchedBy.set(id, chatID);
     }
   }),
-  // The rest are the run CARD's, which the tab renders now instead of hand-rolling a node tree.
-  elapsedMs: vi.fn(() => 0),
   // The node PLAN, which the exec view is the first reader of: a repeat's bound and stop condition
   // come from there rather than from the state tree.
   runPlan: vi.fn(() => undefined),
-  leafNodes: vi.fn(() => []),
-  nodePathOf: vi.fn(() => []),
   // The exec-view adapter's own path key: KAS names a repeat's iteration container one way in the
   // state tree and another in a step frame's path, so the tree is translated. Inert here for the
   // same reason as the rest — no state is painted.
   nodePathSegment: vi.fn((node: { nodeId: string }) => node.nodeId),
-  runCounters: vi.fn(() => ({ total: 0, done: 0, failed: 0, current: 0 })),
-  runElapsedMs: vi.fn(() => 0),
   runIsLive: vi.fn(() => false),
   isNeedInputPark: vi.fn(() => false),
   pauseDetailPhrase: vi.fn(() => undefined),

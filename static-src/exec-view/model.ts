@@ -2,7 +2,7 @@
 // pipelines each fold into `ExecRun` through an adapter (`run-exec-source.ts`); derived on read,
 // held by nobody, and the wire shape of nothing.
 
-import type { ExecState } from "./status.js";
+import { inFlight, type ExecState } from "./status.js";
 
 /** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
 export type ExecKind = "step" | "sequence" | "repeat" | "parallel" | "watch" | "group";
@@ -32,7 +32,7 @@ export interface ExecNode {
   subtitle?: string;
   /** The identity facts, for the detail pane. */
   facts?: ExecFact[];
-  /** Why this node ended badly, verbatim. */
+  /** Why this node ended badly, never blank: the source's reason trimmed, or its outcome's default sentence. */
   failure?: string;
   /** What the node produced, as markdown. */
   output?: string;
@@ -41,6 +41,21 @@ export interface ExecNode {
   /** Whether this node can host a live transcript, so the pane can say "none here" rather than
    *  "none yet". */
   transcript?: boolean;
+  /** On a `repeat`'s child: which pass it is, 1-based. */
+  pass?: number;
+  /** On a `repeat`: the most passes its plan allows, when the plan bounds it. */
+  maxPasses?: number;
+}
+
+/** Whether a node does WORK. Decided by kind, never by shape: a container KAS has not expanded
+ *  yet has no children and is still a container, not work. */
+export function isWork(n: { readonly kind: ExecKind }): boolean {
+  return n.kind === "step" || n.kind === "watch";
+}
+
+/** A `repeat`'s current pass: its last child, which is where the loop is. */
+export function latestPass(repeat: Pick<ExecNode, "children">): ExecNode | undefined {
+  return repeat.children[repeat.children.length - 1];
 }
 
 /** The whole execution, plus the facts a header states. */
@@ -80,23 +95,64 @@ export function flatten(nodes: readonly ExecNode[]): ExecNode[] {
   return out;
 }
 
-/** The nodes that DO work: a container's duration is its children's span, so
- *  counting it would double-count time and inflate the step total. */
-export function leaves(nodes: readonly ExecNode[]): ExecNode[] {
-  return flatten(nodes).filter((n) => n.children.length === 0);
+/** The nodes that DO work, every pass included: a container's duration is its children's span,
+ *  so counting it would double-count time and inflate the step total. */
+export function workNodes(nodes: readonly ExecNode[]): ExecNode[] {
+  return flatten(nodes).filter(isWork);
+}
+
+/** A container's members as the plan stands NOW: a repeat's latest pass, anything else its
+ *  children. */
+export function currentMembers(n: Pick<ExecNode, "kind" | "children">): readonly ExecNode[] {
+  if (n.kind !== "repeat") {
+    return n.children;
+  }
+  const pass = latestPass(n);
+  return pass === undefined ? [] : [pass];
+}
+
+/** Every node of the plan as it stands NOW, depth-first: a repeat through its latest pass only. */
+function currentNodes(nodes: readonly ExecNode[]): ExecNode[] {
+  const out: ExecNode[] = [];
+  const walk = (n: ExecNode): void => {
+    out.push(n);
+    if (!isWork(n)) {
+      currentMembers(n).forEach(walk);
+    }
+  };
+  for (const n of nodes) {
+    walk(n);
+  }
+  return out;
+}
+
+/** The work of the plan as it stands NOW: every work node once, a repeat through its latest pass
+ *  only, so "step N of M" counts one pass and the pass number stays the loop's. */
+export function currentWork(nodes: readonly ExecNode[]): ExecNode[] {
+  return currentNodes(nodes).filter(isWork);
+}
+
+/** The node a failed run's alert names: the first failed work node of the plan as it stands now,
+ *  else the first failed container in it. A failure an earlier pass moved past is that pass's, not
+ *  the run's, so it is never named. */
+export function failureOwner(nodes: readonly ExecNode[]): ExecNode | undefined {
+  const named = (n: ExecNode): boolean => n.state === "fail" && n.failure !== undefined;
+  const now = currentNodes(nodes);
+  return now.find((n) => isWork(n) && named(n)) ?? now.find(named);
 }
 
 export interface ExecCounters {
   total: number;
   done: number;
   failed: number;
-  /** The 1-based position of the RUNNING leaf, or 0 (a skipped leaf or a parallel node breaks
-   *  `done + 1`). */
+  /** The 1-based position of the first IN-FLIGHT work node, or 0 (a skipped one or a parallel node
+   *  breaks `done + 1`). */
   current: number;
 }
 
+/** The step counter over the current pass (`currentWork`). */
 export function counters(nodes: readonly ExecNode[]): ExecCounters {
-  const ls = leaves(nodes);
+  const ls = currentWork(nodes);
   let done = 0;
   let failed = 0;
   let current = 0;
@@ -107,7 +163,8 @@ export function counters(nodes: readonly ExecNode[]): ExecCounters {
     if (n.state === "fail") {
       failed++;
     }
-    if (current === 0 && (n.state === "running" || n.state === "input")) {
+    // A paused or unknown step is where the run is, as much as a running one.
+    if (current === 0 && inFlight(n.state)) {
       current = i + 1;
     }
   });
@@ -130,8 +187,8 @@ export function elapsed(start: string | undefined, end: string | undefined): num
   return Math.max(0, to - from);
 }
 
-/** The execution's window, earliest start to latest end (or now). From the LEAVES: a source may
- *  not stamp its containers. */
+/** The execution's window, earliest start to latest end (or now). From the WORK nodes: a source
+ *  may not stamp its containers. */
 export interface ExecWindow {
   from: number;
   to: number;
@@ -141,7 +198,7 @@ export interface ExecWindow {
 export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | undefined {
   let from = Number.POSITIVE_INFINITY;
   let to = 0;
-  for (const n of leaves(nodes)) {
+  for (const n of workNodes(nodes)) {
     if (n.start === undefined) {
       continue;
     }

@@ -8,7 +8,13 @@ import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
-import { counters, leaves, window as execWindow, type ExecNode, type ExecRun } from "./model.js";
+import {
+  counters,
+  currentWork,
+  window as execWindow,
+  type ExecNode,
+  type ExecRun,
+} from "./model.js";
 import { STATE_WORD, settled } from "./status.js";
 import { buildExecTree, nodeAt, attentionRank, type ExecTreeView } from "./tree.js";
 import { buildExecTimeline, type ExecTimelineView } from "./timeline.js";
@@ -146,10 +152,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     repaint();
   }
 
-  /** The node the page opens on: the one that wants attention, else the first
-   *  leaf. Re-derived on every render while the reader has not chosen. */
+  /** The node the page opens on: the work node of the current pass (`currentWork`) that wants
+   *  attention, else its first. Re-derived on every render while the reader has not chosen. */
   function autoSelect(run: ExecRun): string {
-    const ls = leaves(run.nodes);
+    const ls = currentWork(run.nodes);
     if (ls.length === 0) {
       return "";
     }

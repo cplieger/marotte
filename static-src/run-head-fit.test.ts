@@ -23,7 +23,8 @@ vi.mock("./scroll.js", async (importOriginal) => ({
   ...(await import("./__test-helpers__/scroll-mock.js")).scrollMock,
 }));
 
-import { buildRunCard, type RunAsks } from "./fundamentals/run-card.js";
+import { buildRunCard } from "./fundamentals/run-card.js";
+import type { RunAsks } from "./run-exec-source.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { RunNode, RunState } from "./run-store.js";
 

@@ -23,7 +23,9 @@ import {
 /** One node of KAS's execution tree, from `state.root`. */
 export interface RunNode {
   nodeId: string;
-  type: "step" | "sequence" | "repeat" | "parallel" | "watch";
+  /** Open: KAS adds node types between releases (`run-exec-source.ts` `kindOf` maps one it does not
+   *  know onto a container). */
+  type: string;
   status: ClassifiedRunNodeStatus;
   agentName?: string;
   modelId?: string;
@@ -557,9 +559,9 @@ async function fetchRunControls(workflowID: string): Promise<void> {
   }
 }
 
-/** A run's node plan, read WITHOUT subscribing. Untracked deliberately: its only reader is the
- *  exec-view adapter, which runs inside a pass the state signal already woke, so a tracked read
- *  would add a dependency that can never fire independently. */
+/** A run's node plan, read WITHOUT subscribing. Untracked deliberately: every reader hands it to
+ *  `runToExec` inside a pass the state signal already woke, so a tracked read would add a
+ *  dependency that can never fire independently. */
 export function runPlan(workflowID: string): unknown {
   return plans.get(workflowID);
 }
@@ -1008,29 +1010,6 @@ export function sealRunEntry(
 // Derived reads: functions over the cached value, never stored beside it — a second copy of "how
 // many steps finished" is a second thing that can be wrong.
 
-/** The run's LEAF nodes in plan order — the steps and watches a reader thinks of as "the work".
- *  A `sequence`, `repeat` or `parallel` node is scaffolding: it has no agent, no duration of its
- *  own and nothing to read, so the card renders the leaves and lets the containers contribute
- *  only their iteration and branch labels through the leaves beneath them. */
-export function leafNodes(root: RunNode | undefined): RunNode[] {
-  if (root === undefined) {
-    return [];
-  }
-  const out: RunNode[] = [];
-  const walk = (n: RunNode): void => {
-    const kids = n.children ?? [];
-    if (kids.length === 0) {
-      out.push(n);
-      return;
-    }
-    for (const k of kids) {
-      walk(k);
-    }
-  };
-  walk(root);
-  return out;
-}
-
 /** A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the wrong place
  *  beats content that vanishes, the same call the server's own `runNodePath` makes when a frame
  *  carries no path. */
@@ -1039,146 +1018,6 @@ export function nodePathSegment(node: RunNode, parent: RunNode | undefined): str
     return `iter-${String(node.iteration)}`;
   }
   return node.nodeId;
-}
-
-export interface NodeAddress {
-  /** The joined segments, in the spelling the server joins into a step's subtask id
-   *  (`wf:<workflowId>:<a/b/c>`). */
-  readonly path: string[];
-  /** Whether the walk PLACED the target in this tree. False means `path` is the bare `nodeId`
-   *  fallback below rather than an address. */
-  readonly placed: boolean;
-}
-
-/** A leaf's stable address within its run, plus whether the walk placed it. */
-export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeAddress {
-  const found: string[] = [];
-  const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
-    const here = [...trail, nodePathSegment(n, parent)];
-    if (n === target) {
-      found.push(...here);
-      return true;
-    }
-    for (const k of n.children ?? []) {
-      if (walk(k, n, here)) {
-        return true;
-      }
-    }
-    return false;
-  };
-  if (root !== undefined) {
-    walk(root, undefined, []);
-  }
-  if (found.length > 0) {
-    return { path: found, placed: true };
-  }
-  // An UNPLACED node keeps the bare id, which `placed: false` stops a consumer spending as an
-  // address: it is not the node's path. A row still needs a key, so the value stays.
-  return { path: [target.nodeId], placed: false };
-}
-
-/** The address's path alone, for a consumer that only needs a render key. Kept as the thin
- *  wrapper because that is the whole of what a row KEY wants; anything that puts the value on
- *  the wire reads `nodeAddressOf` instead. */
-export function nodePathOf(root: RunNode | undefined, target: RunNode): string[] {
-  return nodeAddressOf(root, target).path;
-}
-
-export interface RunCounters {
-  total: number;
-  done: number;
-  failed: number;
-  /** The 1-based position of the RUNNING leaf, or 0 when none is — the header's "step N of M",
-   *  and not `done + 1`. */
-  current: number;
-}
-
-export function runCounters(state: RunState | undefined): RunCounters {
-  const leaves = leafNodes(state?.root);
-  let done = 0;
-  let failed = 0;
-  let current = 0;
-  for (const [i, n] of leaves.entries()) {
-    switch (n.status) {
-      case "completed":
-      case "skipped":
-        done++;
-        break;
-      case "failed":
-      case "aborted":
-        failed++;
-        break;
-      case "running":
-      case "paused":
-      case "unknown":
-        if (current === 0) {
-          current = i + 1;
-        }
-        break;
-      case "pending":
-        break;
-    }
-  }
-  return { total: leaves.length, done, failed, current };
-}
-
-/** Wall-clock milliseconds a node or run has been going, or ran for. `endedAt` when it finished,
- *  `now` while it runs, and 0 when it never started — a pending step must read as nothing rather
- *  than as "started at the epoch", which is what `Date.parse(undefined)` would give. */
-export function elapsedMs(startedAt: string | undefined, endedAt: string | undefined): number {
-  if (startedAt === undefined || startedAt === "") {
-    return 0;
-  }
-  const from = Date.parse(startedAt);
-  if (Number.isNaN(from)) {
-    return 0;
-  }
-  const to = endedAt === undefined || endedAt === "" ? Date.now() : Date.parse(endedAt);
-  if (Number.isNaN(to)) {
-    return 0;
-  }
-  return Math.max(0, to - from);
-}
-
-/** The run's own span, from its first leaf's start to its last leaf's end. Derived rather than
- *  read, because `WorkflowState` carries no run-level timestamps: only the nodes do. */
-export function runElapsedMs(state: RunState | undefined): number {
-  const leaves = leafNodes(state?.root);
-  let first = Number.POSITIVE_INFINITY;
-  let last = 0;
-  let running = false;
-  for (const n of leaves) {
-    if (n.startedAt !== undefined && n.startedAt !== "") {
-      const t = Date.parse(n.startedAt);
-      if (!Number.isNaN(t)) {
-        first = Math.min(first, t);
-      }
-    }
-    if (n.endedAt !== undefined && n.endedAt !== "") {
-      const t = Date.parse(n.endedAt);
-      if (!Number.isNaN(t)) {
-        last = Math.max(last, t);
-      }
-    } else {
-      switch (n.status) {
-        case "running":
-        case "paused":
-        case "unknown":
-          running = true;
-          break;
-        case "pending":
-        case "completed":
-        case "failed":
-        case "aborted":
-        case "skipped":
-          break;
-      }
-    }
-  }
-  if (!Number.isFinite(first)) {
-    return 0;
-  }
-  return Math.max(0, (running || last === 0 ? Date.now() : last) - first);
 }
 
 /** Whether a run is still this process's to finish. Drives the elapsed clock and the card's

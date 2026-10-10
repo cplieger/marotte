@@ -1,11 +1,11 @@
 // The exec view's timeline: where the time went and what ran concurrently (a column shows only
-// order). LEAVES ONLY, since a container's span is its children's. A readout: no axes, ticks or
-// zoom; selectable with the tree's `onSelect` and selected path.
+// order). WORK NODES ONLY (steps and watches), since a container's span is its children's. A
+// readout: no axes, ticks or zoom; selectable with the tree's `onSelect` and selected path.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
-import { elapsed, leaves, window as execWindow, type ExecNode } from "./model.js";
-import { place } from "./place.js";
+import { reconcile } from "../reconcile.js";
+import { elapsed, workNodes, window as execWindow, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
 
 export interface ExecTimelineView {
@@ -39,7 +39,8 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     readonly bar: HTMLElement;
     readonly dur: HTMLElement;
   }
-  const lanesByPath = new Map<string, Lane>();
+  /** Each mounted lane's parts, by its root; a removed lane is collected with it. */
+  const laneParts = new WeakMap<HTMLElement, Lane>();
 
   function buildLane(path: string): Lane {
     const bar = el("span", { className: "ev-tl-bar" });
@@ -73,38 +74,19 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
    *  the 1s tick drops focus and `:hover`. The geometry is recomputed every pass and written onto
    *  the REUSED element. */
   function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
-    const ls = leaves(nodes).filter((n) => n.start !== undefined);
+    const ls = workNodes(nodes).filter((n) => n.start !== undefined);
     const win = execWindow(nodes, live);
-    // TWO leaves minimum: a single bar spanning its own window is always full
+    // TWO steps minimum: a single bar spanning its own window is always full
     // width and reports nothing the header's elapsed does not already say.
     if (win === undefined || ls.length < 2) {
       root.hidden = true;
       lanes.replaceChildren();
-      lanesByPath.clear();
       return;
     }
     root.hidden = false;
     scale.textContent = formatElapsed(win.span);
 
-    // Lanes the timeline no longer describes go first, or the map would keep growing
-    // dead paths for a plan that was appended to.
-    const live_ = new Set(ls.map((n) => n.path));
-    for (const [path, lane] of [...lanesByPath]) {
-      if (!live_.has(path)) {
-        lane.root.remove();
-        lanesByPath.delete(path);
-      }
-    }
-
-    ls.forEach((n, i) => {
-      let lane = lanesByPath.get(n.path);
-      if (lane === undefined) {
-        lane = buildLane(n.path);
-        lanesByPath.set(n.path, lane);
-      }
-      // Ascending index order, so `place` leaves an already-seated lane alone.
-      place(lanes, lane.root, i);
-
+    const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");
       const to = n.end === undefined ? win.to : Date.parse(n.end);
       const left = ((from - win.from) / win.span) * 100;
@@ -126,6 +108,22 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       );
       lane.name.textContent = n.label;
       lane.dur.textContent = durText;
+    };
+
+    reconcile(lanes, ls, {
+      key: (n) => n.path,
+      mount: (n) => {
+        const lane = buildLane(n.path);
+        laneParts.set(lane.root, lane);
+        paintLane(lane, n);
+        return lane.root;
+      },
+      update: (laneRoot, n) => {
+        const lane = laneParts.get(laneRoot);
+        if (lane !== undefined) {
+          paintLane(lane, n);
+        }
+      },
     });
   }
 
