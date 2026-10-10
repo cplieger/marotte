@@ -11,7 +11,7 @@ import (
 func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 	t.Run("_meta.kiro.source lands on the field", func(t *testing.T) {
 		var u struct {
-			Meta ACPKiroMeta `json:"_meta"`
+			Meta acpKiroMeta `json:"_meta"`
 		}
 		raw := []byte(`{"sessionUpdate":"user_message_chunk",
 			"content":{"type":"text","text":"use tabs"},
@@ -26,7 +26,7 @@ func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 
 	t.Run("source on the UPDATE object does not", func(t *testing.T) {
 		var u struct {
-			Meta ACPKiroMeta `json:"_meta"`
+			Meta acpKiroMeta `json:"_meta"`
 		}
 		raw := []byte(`{"sessionUpdate":"user_message_chunk","source":"steer",
 			"content":{"type":"text","text":"use tabs"},
@@ -45,7 +45,7 @@ func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 func TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro(t *testing.T) {
 	t.Run("_meta.kiro.userMessageTag lands on the field", func(t *testing.T) {
 		var u struct {
-			Meta ACPKiroMeta `json:"_meta"`
+			Meta acpKiroMeta `json:"_meta"`
 		}
 		raw := []byte(`{"sessionUpdate":"user_message_chunk",
 			"content":{"type":"text","text":"failed:"},
@@ -60,7 +60,7 @@ func TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro(t *testing.T) {
 
 	t.Run("userMessageTag on the UPDATE object does not", func(t *testing.T) {
 		var u struct {
-			Meta ACPKiroMeta `json:"_meta"`
+			Meta acpKiroMeta `json:"_meta"`
 		}
 		raw := []byte(`{"sessionUpdate":"user_message_chunk","userMessageTag":"prompt_746336f7",
 			"content":{"type":"text","text":"failed:"},

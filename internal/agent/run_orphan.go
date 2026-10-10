@@ -23,7 +23,6 @@ const orphanSweepBudget = 2 * time.Minute
 
 const leaseAbsenceBudget = 6 * time.Hour
 
-// reasonLeaseAbsent is the schedule row's reason for a run that went absent with no terminal signal.
 const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent for 6 hours"
 
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
@@ -118,12 +117,11 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 	}
 }
 
-// inspectConfirmsGone asks KAS about one absent run, matching its unknown-workflow refusal by text (an
-// untyped throw); any other failure leaves the lease.
+// inspectConfirmsGone asks KAS about one absent run; any failure but workflowNotFound leaves the lease.
 func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return strings.Contains(strings.ToLower(rpcerr.Details(err)), "workflow not found")
+		return workflowNotFound(err)
 	}
 	var res inspectRunState
 	if json.Unmarshal(raw, &res) != nil {
@@ -132,8 +130,12 @@ func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool
 	return res.WorkflowID == workflowID && res.State.Status.Terminal()
 }
 
-// observeAbsentLease runs the absence clock; only leaseAbsenceBudget of unbroken absence releases, and the
-// row says the outcome is unknown.
+// workflowNotFound matches KAS's unknown-workflow refusal by text: it is an untyped throw.
+func workflowNotFound(err error) bool {
+	return strings.Contains(strings.ToLower(rpcerr.Details(err)), "workflow not found")
+}
+
+// Only leaseAbsenceBudget of unbroken absence releases, and the row says the outcome is unknown.
 func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now time.Time) {
 	if l.FirstAbsentAt.IsZero() {
 		rs.setFirstAbsentAt(ctx, l.WorkflowID, now)
@@ -276,7 +278,9 @@ func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState
 	return res, true
 }
 
-// rawInspect issues `_kiro/workflow/inspect` and types its failure, so callers use errors.Is.
+// rawInspect issues `_kiro/workflow/inspect` and types its failure, so callers use errors.Is. Every
+// successful read seeds the step-session registry before any caller acts on it: after a restart it is
+// the only attribution a step's unmarked frames get, and a caller may send to a step from this read.
 func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
@@ -286,5 +290,6 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	if err != nil {
 		return nil, workflow.Classify(err)
 	}
+	rs.translate.RecordRunSteps(raw)
 	return raw, nil
 }

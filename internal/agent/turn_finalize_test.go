@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// closesOf decodes every turn_close in entries; two would be two footers for one turn.
+// Two would be two footers for one turn.
 func closesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnClose {
 	t.Helper()
 	var out []marotte.EntryTurnClose
@@ -32,7 +32,6 @@ func closesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnClose {
 	return out
 }
 
-// textsOf returns the text of every sealed text entry in entries, in file order.
 func textsOf(t *testing.T, entries []marotte.Entry) []string {
 	t.Helper()
 	var out []string
@@ -49,7 +48,6 @@ func textsOf(t *testing.T, entries []marotte.Entry) []string {
 	return out
 }
 
-// logOf reads the chat's whole log.
 func logOf(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.Entry {
 	t.Helper()
 	entries, err := cs.All(t.Context(), chatID)
@@ -59,8 +57,6 @@ func logOf(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.Ent
 	return entries
 }
 
-// closedBroadcasts decodes the turn_close entry of every turn_closed frame
-// broadcast so far, in order.
 func closedBroadcasts(t *testing.T, h *Runtime) []marotte.EntryTurnClose {
 	t.Helper()
 	var entries []marotte.Entry
@@ -70,7 +66,6 @@ func closedBroadcasts(t *testing.T, h *Runtime) []marotte.EntryTurnClose {
 	return closesOf(t, entries)
 }
 
-// deadContext is an already-cancelled context, what both finalizeTurn doors get at shutdown.
 func deadContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -78,7 +73,6 @@ func deadContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// streamingPromptTurn stages a prompt turn with text already sealed, as mid-reply.
 func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
 	id, log := h.stagePromptTurn(t, chatID)
@@ -88,7 +82,6 @@ func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text s
 	return id, log
 }
 
-// shellTurn opens a `!cmd` turn and starts it, answering its id.
 func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	t.Helper()
 	id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{

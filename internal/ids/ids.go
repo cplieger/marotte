@@ -18,8 +18,8 @@ import (
 type Encoding int
 
 const (
-	// HexUpper uses RFC 4648 base32hex (0-9 A-V), uppercase, no padding.
-	HexUpper Encoding = iota
+	// hexUpper uses RFC 4648 base32hex (0-9 A-V), uppercase, no padding.
+	hexUpper Encoding = iota
 	// StdLower uses RFC 4648 base32 standard (a-z 2-7), lowercase, no padding.
 	StdLower
 )
@@ -31,7 +31,7 @@ func New(byteLen int, enc Encoding) string {
 	b := make([]byte, byteLen)
 	rand.Read(b)
 	switch enc {
-	case HexUpper:
+	case hexUpper:
 		return base32.HexEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
 	case StdLower:
 		s := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)

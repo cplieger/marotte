@@ -24,7 +24,7 @@ func draftReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.ClientC
 	}
 }
 
-func seedEmptyChat(t *testing.T, store ChatStore, id marotte.ChatID) {
+func seedEmptyChat(t *testing.T, store chatStore, id marotte.ChatID) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "a chat"
@@ -54,7 +54,7 @@ func TestCmdSetDraft(t *testing.T) {
 			b := &recordingBridge{sessionID: "sess-1"}
 			host := newBridgeHost(store, b)
 
-			_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "c1", tc.text))
+			_, err := cmdSetDraft(t.Context(), host, host, draftReq(t, "c1", tc.text))
 
 			if statusOf(err) != tc.wantStatus {
 				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.wantStatus, errText(err))
@@ -76,13 +76,12 @@ func TestCmdSetDraft(t *testing.T) {
 // Why the handler carries no UTF-8 check: encoding/json coerces every invalid
 // byte sequence in a string literal to U+FFFD as it decodes, so a draft arriving
 // through the envelope is valid by construction and the check could not fail.
-// Pinned so a future reader does not add one back as a missing guard.
 func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
+	_, err := cmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
 		Type:    marotte.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
@@ -101,7 +100,7 @@ func TestCmdSetDraft_RefusesAMissingChatID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "", "text"))
+	_, err := cmdSetDraft(t.Context(), host, host, draftReq(t, "", "text"))
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
@@ -113,7 +112,7 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
+	_, err := cmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
 		Type:    marotte.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: json.RawMessage(`{"text":42}`),
@@ -131,7 +130,7 @@ func TestCmdSetDraft_DoesNotCreateAChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "c-never-prompted", "typed but nothing sent"))
+	_, err := cmdSetDraft(t.Context(), host, host, draftReq(t, "c-never-prompted", "typed but nothing sent"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Errorf("status = %d, want 200: a draft on an unsaved chat is a no-op, not an error", statusOf(err))
@@ -164,7 +163,7 @@ func TestSettleComposerOnPrompt_ClearsTheDraft(t *testing.T) {
 	}
 }
 
-// TestSettleComposerOnPrompt_AnnouncesTheClearedDraft: CmdSetDraft is not the only writer of the
+// TestSettleComposerOnPrompt_AnnouncesTheClearedDraft: cmdSetDraft is not the only writer of the
 // field, so the prompt's clear must broadcast too, or other clients (and this one after reload)
 // keep the sent text.
 func TestSettleComposerOnPrompt_AnnouncesTheClearedComposer(t *testing.T) {

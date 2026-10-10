@@ -67,9 +67,8 @@ func confineRel(absRoot, p string) (root, rel string, err error) {
 	return absRoot, rel, nil
 }
 
-// confine is the containment rule, applied to an already-absolute p. The boundary is one
-// pathinside.Root built before any comparison, so no predicate pair can be transposed.
-// Both callers share this body so a symlink-escape fix cannot miss a copy.
+// The boundary is one pathinside.Root built before any comparison, so no predicate pair can be
+// transposed. Both callers share this body so a symlink-escape fix cannot miss a copy.
 func confine(absRoot, p string) (string, error) {
 	root := pathinside.Root(absRoot)
 	clean := filepath.Clean(p)

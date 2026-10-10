@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// newCompactionReapFixture stages a prompt turn whose bridge holds a cancellable prompt call.
 func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, context.Context) {
 	t.Helper()
 	h, cs, _ := newTestHub()
@@ -28,7 +27,7 @@ func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, co
 	return h, turnID, log, pctx
 }
 
-// startTool records an unsettled tool call; inside a synctest bubble its stamp is the fake clock's.
+// inside a synctest bubble its stamp is the fake clock's.
 func startTool(t *testing.T, log *turnlog.Turn, id string) {
 	t.Helper()
 	_, err := log.ToolCall(t.Context(), "", &marotte.EntryToolCall{

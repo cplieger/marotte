@@ -14,10 +14,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// handleFSRequest dispatches fs/* requests asynchronously, reporting whether msg was one.
 // Each dispatch recovers a panic into a logged JSON-RPC error.
-func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
-	var handler func(context.Context, marotte.ChatID, *marotte.RPCResponse)
+func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) bool {
+	var handler func(context.Context, marotte.ChatID, acpResponder, *marotte.RPCResponse)
 	switch msg.Method {
 	case marotte.MethodFSRead:
 		handler = in.respondFSRead
@@ -35,10 +34,10 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg
 			if r := recover(); r != nil {
 				slog.Error("fs handler panic",
 					"chat_id", chatID, "method", msg.Method, "panic", r)
-				in.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
+				in.respondBridge(ctx, chatID, origin, msg, nil, errors.New("internal error"))
 			}
 		}()
-		handler(ctx, chatID, msg)
+		handler(ctx, chatID, origin, msg)
 	})
 	return true
 }
@@ -48,23 +47,23 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg
 //	{ sessionId, path, line?: int, limit?: int }
 //
 // answering { content }. line/limit are 1-indexed and inclusive per ACP.
-func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
 		Line  *int   `json:"line,omitempty"`
 		Limit *int   `json:"limit,omitempty"`
 		Path  string `json:"path"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
-		in.respondFSError(ctx, chatID, msg, fmt.Errorf("parse params: %w", err))
+		in.respondFSError(ctx, chatID, origin, msg, fmt.Errorf("parse params: %w", err))
 		return
 	}
 	if p.Path == "" {
-		in.respondFSError(ctx, chatID, msg, errors.New("path is required"))
+		in.respondFSError(ctx, chatID, origin, msg, errors.New("path is required"))
 		return
 	}
 	root, rel, release, err := in.lifetime.confineReadable(p.Path)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	defer release()
@@ -75,15 +74,15 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg
 		if errors.Is(err, atomicfile.ErrFileTooLarge) {
 			err = fmt.Errorf("%w: %d", errCapExceeded, fsReadCap)
 		}
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	content := sliceByLines(string(data), p.Line, p.Limit)
-	in.respondBridge(ctx, chatID, msg, map[string]any{"content": content}, nil)
+	in.respondBridge(ctx, chatID, origin, msg, map[string]any{"content": content}, nil)
 }
 
-// sliceByLines returns lines [line, line+limit) 1-indexed; nil means from the start or to
-// the end. *limit is only compared against a count, never added to an offset, so it cannot overflow.
+// nil means from the start or to the end. *limit is only compared against a count, never added to
+// an offset, so it cannot overflow.
 func sliceByLines(content string, line, limit *int) string {
 	if line == nil && limit == nil {
 		return content

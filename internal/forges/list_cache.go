@@ -18,10 +18,9 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// repoListTTL bounds how stale an account's repository listing may get. The set
-// changes when someone clones, creates or archives a repository, which is rare
-// against the rate this endpoint is read, and a forge connection change clears
-// the cache outright (Manager.Invalidate) rather than waiting for the TTL.
+// The set changes when someone clones, creates or archives a repository, which is rare against the
+// rate this endpoint is read, and a forge connection change clears the cache outright
+// (Manager.invalidate) rather than waiting for the TTL.
 const repoListTTL = 5 * time.Minute
 
 // prListTTL is deliberately much shorter than repoListTTL, and CI is the reason
@@ -52,7 +51,6 @@ type generation struct {
 	epoch, repo uint64
 }
 
-// listEntry is one cached listing and the generation it was filled under.
 type listEntry[T any] struct {
 	// at is the zero time until the first successful fill, which is what
 	// separates "nothing to serve" from "something stale to serve".
@@ -129,9 +127,8 @@ func (c *listCache[T]) serve(ctx context.Context, key cacheKey,
 	return e.val, true
 }
 
-// fillNow fetches key and caches the result. Concurrent callers for one key
-// share a single fetch, as two browser tabs opening one list together do. The
-// generation is part of the shared fetch's key, so a read after a mutation never
+// Concurrent callers for one key share a single fetch, as two browser tabs opening one list
+// together do. The generation is part of the shared fetch's key, so a read after a mutation never
 // joins a fetch begun before it.
 func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	fill func(context.Context) (T, error),
@@ -218,7 +215,6 @@ func (c *listCache[T]) clearBusy(key cacheKey) {
 	}
 }
 
-// clear drops every entry and invalidates the fills already in flight.
 func (c *listCache[T]) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -236,9 +232,8 @@ func (c *listCache[T]) evict(scope string) {
 	maps.DeleteFunc(c.entries, func(k cacheKey, _ *listEntry[T]) bool { return k.scope == scope })
 }
 
-// listCaches is the Manager's listing caches. They share one fill semaphore
-// because the thing being bounded is concurrent forge reads, which every
-// listing makes.
+// They share one fill semaphore because the thing being bounded is concurrent forge reads, which
+// every listing makes.
 type listCaches struct {
 	repos       *listCache[RepoList]
 	prs         *listCache[PRList]
@@ -281,8 +276,6 @@ func (m *Manager) evictRepo(forgeID, repoID string) {
 	m.lists.affordances.evict(scope)
 }
 
-// listRequest is one list call's options and the settings the library resolved
-// them to.
 type listRequest struct {
 	opts []forgeapi.ListOption
 	set  forgeapi.ListSettings
@@ -295,10 +288,9 @@ func resolveList(opts ...forgeapi.ListOption) (listRequest, error) {
 	return listRequest{opts: opts, set: set}, err
 }
 
-// repoPage answers one page of fc's repositories. Only a first page with no
-// filter reads through the cache: a continuation is keyed by a caller's cursor,
-// so caching it would grow without bound and could answer for the first page,
-// and a named state must reach the library that refuses it.
+// Only a first page with no filter reads through the cache: a continuation is keyed by a caller's
+// cursor, so caching it would grow without bound and could answer for the first page, and a named
+// state must reach the library that refuses it.
 func (m *Manager) repoPage(ctx context.Context, fc forgeClient, req *listRequest, force bool) (RepoList, error) {
 	fill := func(ctx context.Context) (RepoList, error) {
 		page, err := fc.core.ListRepos(ctx, req.opts...)
@@ -313,8 +305,6 @@ func (m *Manager) repoPage(ctx context.Context, fc forgeClient, req *listRequest
 	return m.lists.repos.get(ctx, listKey(fc.id, "", "repos", ""), force, fill)
 }
 
-// prPage answers one page of ref's pull requests, a first page through the
-// cache under ref's canonical id and a continuation from the forge.
 func (m *Manager) prPage(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
 	fill := func(ctx context.Context) (PRList, error) {
 		page, err := fc.core.ListPRs(ctx, ref, req.opts...)
@@ -329,8 +319,6 @@ func (m *Manager) prPage(ctx context.Context, fc forgeClient, ref forgeapi.RepoR
 	return m.lists.prs.get(ctx, listKey(fc.id, ref.ID, "prs", req.set.State.String()), force, fill)
 }
 
-// repoAffordances answers what ref allows, through the cache under ref's
-// canonical id.
 func (m *Manager) repoAffordances(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, force bool) (RepoAffordances, error) {
 	key := cacheKey{scope: repoScope(fc.id, ref.ID), page: "affordances"}
 	return m.lists.affordances.get(ctx, key, force, func(ctx context.Context) (RepoAffordances, error) {

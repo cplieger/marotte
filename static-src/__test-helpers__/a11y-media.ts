@@ -19,16 +19,14 @@ export interface A11yMediaFeatures {
   forcedColors?: "active" | "none";
 }
 
-/** Turn one or both preferences on for this page. Page-level, so the tester
- *  iframe inherits it. Reverse it in `afterAll` with `resetA11yMedia`, or the
- *  next file to run in this browser inherits the emulation. */
+/** Page-level, so the tester iframe inherits it. Reverse it in `afterAll` with `resetA11yMedia`, or
+ *  the next file to run in this browser inherits the emulation. */
 export async function emulateA11yMedia(features: A11yMediaFeatures): Promise<void> {
   await server.commands.emulateA11yMedia(features);
 }
 
-/** Both features back to what a reader with no preference gets. Each is named
- *  EXPLICITLY rather than omitted: `emulateMedia` reads an absent key as "leave
- *  this one as it is", so omitting a feature does not clear an earlier call. */
+/** Each is named EXPLICITLY rather than omitted: `emulateMedia` reads an absent key as "leave this
+ *  one as it is", so omitting a feature does not clear an earlier call. */
 export async function resetA11yMedia(): Promise<void> {
   await server.commands.emulateA11yMedia({
     reducedMotion: "no-preference",

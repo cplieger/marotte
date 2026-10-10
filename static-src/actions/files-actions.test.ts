@@ -20,7 +20,7 @@ vi.mock("../upload.js", () => ({
   uploadFiles: vi.fn(),
 }));
 
-import { getActionLog as recentLog } from "./index.js";
+import { getActionLog as recentLog } from "@cplieger/actions";
 import * as toast from "../toast.js";
 import { uploadFiles } from "../upload.js";
 

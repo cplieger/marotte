@@ -10,7 +10,7 @@ interface SegmentedTab<T extends string> {
   readonly label: string;
 }
 
-export interface SegmentedBarOpts<T extends string> {
+interface SegmentedBarOpts<T extends string> {
   /** The data attribute naming a segment's tab, e.g. `data-settings-tab`. */
   readonly attr: string;
   /** Prefix for the ids this writes: `<prefix>-tab-<id>` on a segment and `<prefix>-panel-<id>`

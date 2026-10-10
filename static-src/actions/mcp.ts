@@ -13,7 +13,7 @@ import type { RegistrySearchFailure, RegistrySearchResult } from "../wire/types.
 /** Base path for MCP API endpoints. */
 export const MCP_API = "/api/mcp";
 
-/** One validation failure attributed to its wire field (`internal/mcp.FieldError`). The server
+/** One validation failure attributed to its wire field (`internal/mcp.fieldError`). The server
  *  accumulates across checks, so one response carries every bad field. */
 export interface ValidationField {
   field: string;
@@ -164,10 +164,8 @@ export const saveServer = apiAction<SaveArgs, Server>({
 // The server owns the translation from the publisher's shape (internal/mcp/paste.go); this posts
 // the parsed JSON unchanged.
 
-/** What one entry of a pasted block did. No "updated": an entry naming a
- *  configured server either matches its spec or fails the paste. */
+/** No "updated": an entry naming a configured server either matches its spec or fails the paste. */
 interface ImportResult {
-  name: string;
   outcome: "created" | "unchanged";
 }
 
@@ -299,7 +297,6 @@ export interface MCPContentBlock {
 
 /** Raw MCP GetPromptResult: an ordered list of role-tagged messages. */
 export interface MCPPromptResult {
-  description?: string;
   messages?: { role?: string; content?: MCPContentBlock | MCPContentBlock[] }[];
 }
 
@@ -342,15 +339,7 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
 // the CONTAINER's localhost, so a remote browser is sent to its own. The user pastes the dead
 // address and the server replays it inward (`internal/hub/mcp_oauth_relay.go`).
 
-/** Result of POST /api/mcp/oauth-relay: the loopback listener's HTTP status. */
-export interface OAuthRelayResult {
-  status: number;
-}
-
-export const relayOAuthCallback = apiAction<
-  { server: string; redirect_url: string },
-  OAuthRelayResult
->({
+export const relayOAuthCallback = apiAction<{ server: string; redirect_url: string }>({
   name: "mcp.relay_oauth_callback",
   // NO retry: an authorization code is single-use, and a replay would spend it twice.
   scope: (args) => "mcp-oauth-relay:" + args.server,

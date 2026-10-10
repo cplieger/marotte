@@ -214,7 +214,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	gitHandler := git.NewHandler(cfg.WorkDir)
+	gitHandler := git.NewHandler(cfg.WorkDir, git.WithShowMax(filebrowse.WholeFileMax))
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
@@ -245,7 +245,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	go forgeCache.refresh()
 	forgesHTTP.SetOnChange(func() { go forgeCache.refresh() })
 
-	prPoller := newPRStatusPoller(forgesManager, gitHandler, pushSvc, prPollGate(presence, pushSvc),
+	prPoller := newPRStatusPoller(forgesManager, gitHandler, h, prPollGate(presence, pushSvc),
 		forges.WithInventoryPush(versions, h), forges.WithViewers(presence))
 	forgesHTTP.SetPoller(prPoller)
 	stopPRPoller := runBackground(ctx, "pr status poller", prPoller.Run)
@@ -308,6 +308,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
 		server.WithGovernanceLocks(h.Config()),
+		server.WithKiroDefaults(h.Config()),
 		// The recycle a security-profile change needs, or the policy view describes the
 		// profile that was in force before it.
 		server.WithPolicyReload(h),
@@ -318,6 +319,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAuthUnavailable(authReadiness.Unavailable),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithSensitive(sensitive),
+		server.WithKASNode(cfg.KASNodePath),
 		server.WithTabs(tabStore),
 		server.WithSpecApprovals(approvalStore),
 		server.WithWorkDir(cfg.WorkDir),
@@ -402,7 +404,7 @@ func (a *App) shutdownHub() {
 	}
 }
 
-// callIfSet runs fn when it is set; App's function members have no nil-safe receiver.
+// App's function members have no nil-safe receiver.
 func callIfSet(fn func()) {
 	if fn != nil {
 		fn()
@@ -610,10 +612,8 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	return tools, nil
 }
 
-// buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and enqueues
-// the boot jobs, reconcile first; a failed enqueue only logs, since installed tools persist on the
-// volume. A toolbelt.New failure is returned as is, for the slot to classify. githubToken is the
-// engine's only GitHub credential.
+// A failed enqueue only logs, since installed tools persist on the volume. A toolbelt.New failure
+// is returned as is, for the slot to classify. githubToken is the engine's only GitHub credential.
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
 	githubToken func(context.Context) (string, error),
 ) (*toolbelt.Engine, error) {
@@ -843,8 +843,7 @@ func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
 	})
 }
 
-// startScheduleRunner starts the schedule sweep when scheduling is available; the runner
-// reuses Runtime.Launch, so a scheduled run needs no host chat. ctx must be the APP
+// The runner reuses Runtime.Launch, so a scheduled run needs no host chat. ctx must be the APP
 // lifetime: Runner.Run's only exit is its ctx.Done arm, and Build's context never ends.
 func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) {
 	if st == nil {

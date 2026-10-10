@@ -1,15 +1,12 @@
 package marotte
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// TestNormalizeHookTrigger pins the event-type -> PascalCase trigger map:
+// TestCanonicalHookTrigger pins the event-type -> PascalCase trigger map:
 // canonical names pass through, v2/IDE camelCase aliases are rewritten
 // (case-insensitively), and each resolves to the same trigger its canonical
 // spelling does.
-func TestNormalizeHookTrigger(t *testing.T) {
+func TestCanonicalHookTrigger(t *testing.T) {
 	cases := []struct{ in, want string }{
 		// Canonical PascalCase passes through.
 		{"SessionStart", "SessionStart"},
@@ -34,42 +31,24 @@ func TestNormalizeHookTrigger(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, ok := NormalizeHookTrigger(tc.in)
+			got, ok := canonicalHookTrigger(tc.in)
 			if !ok {
-				t.Fatalf("NormalizeHookTrigger(%q) reported unknown, want %q", tc.in, tc.want)
+				t.Fatalf("canonicalHookTrigger(%q) reported unknown, want %q", tc.in, tc.want)
 			}
-			if got.Name != tc.want {
-				t.Errorf("NormalizeHookTrigger(%q).Name = %q, want %q", tc.in, got.Name, tc.want)
+			if got != tc.want {
+				t.Errorf("canonicalHookTrigger(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestNormalizeHookTrigger_RejectsUnknown — KAS's parseHookDocument DROPS a hook
-// whose trigger it does not recognise, so passing an unknown one through would let
-// create_hook answer 200 for a hook that loads nowhere and never fires.
-func TestNormalizeHookTrigger_RejectsUnknown(t *testing.T) {
+// TestHookTriggerSubject_RejectsUnknown — KAS's parseHookDocument DROPS a hook
+// whose trigger it does not recognise.
+func TestHookTriggerSubject_RejectsUnknown(t *testing.T) {
 	for _, in := range []string{"someFutureTrigger", "  x  ", "", "PostFileSaved!"} {
-		if got, ok := NormalizeHookTrigger(in); ok {
-			t.Errorf("NormalizeHookTrigger(%q) = (%q, true), want it reported unknown so the "+
-				"caller can refuse instead of writing a hook KAS will discard", in, got.Name)
+		if got, ok := HookTriggerSubject(in); ok {
+			t.Errorf("HookTriggerSubject(%q) = (%q, true), want it reported unknown", in, got)
 		}
-	}
-}
-
-// TestKnownHookTriggers_NamesTheAcceptedSet guards the error message rather than
-// the refusal, because a rejection that does not say what IS accepted just moves
-// the guessing from the server to the user.
-func TestKnownHookTriggers_NamesTheAcceptedSet(t *testing.T) {
-	got := KnownHookTriggers()
-	for _, want := range []string{"SessionStart", "SessionEnd", "Stop", "PreToolUse", "PostToolUse", "Manual"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("KnownHookTriggers() = %q, missing %q", got, want)
-		}
-	}
-	// Deduped: every trigger has several aliases mapping onto it.
-	if strings.Count(got, "PostFileSave") != 1 {
-		t.Errorf("KnownHookTriggers() = %q, want PostFileSave listed once", got)
 	}
 }
 
@@ -85,9 +64,9 @@ func TestEveryCanonicalTriggerHasASubject(t *testing.T) {
 	want := map[string]HookMatcherSubject{
 		"PreToolUse":       HookMatcherSubjectToolName,
 		"PostToolUse":      HookMatcherSubjectToolName,
-		"PostFileCreate":   HookMatcherSubjectFilePath,
-		"PostFileSave":     HookMatcherSubjectFilePath,
-		"PostFileDelete":   HookMatcherSubjectFilePath,
+		"PostFileCreate":   hookMatcherSubjectFilePath,
+		"PostFileSave":     hookMatcherSubjectFilePath,
+		"PostFileDelete":   hookMatcherSubjectFilePath,
 		"SessionStart":     HookMatcherSubjectNone,
 		"SessionEnd":       HookMatcherSubjectNone,
 		"Stop":             HookMatcherSubjectNone,
@@ -97,33 +76,29 @@ func TestEveryCanonicalTriggerHasASubject(t *testing.T) {
 		"Manual":           HookMatcherSubjectNone,
 	}
 
-	// Every alias agrees with its canonical name, which is what makes an alias a
-	// spelling rather than a second trigger.
-	seen := make(map[string]bool, len(want))
-	for alias, meta := range hookTriggers {
-		w, ok := want[meta.Name]
-		if !ok {
-			t.Errorf("alias %q maps to trigger %q, which this test does not account for; "+
-				"add it with its subject or ClassifyHookMatcher will silently ignore it", alias, meta.Name)
-			continue
+	for name, subject := range triggerSubjects {
+		if w, ok := want[name]; !ok || subject != w {
+			t.Errorf("trigger %s has the subject %q, want %q (absent from this test: %v)", name, subject, w, !ok)
 		}
-		if meta.Subject != w {
-			t.Errorf("alias %q gives %s the subject %q, want %q; an alias disagreeing with its "+
-				"canonical name means one spelling gets a diagnostic and another does not",
-				alias, meta.Name, meta.Subject, w)
-		}
-		seen[meta.Name] = true
 	}
 	for name := range want {
-		if !seen[name] {
+		if _, ok := triggerSubjects[name]; !ok {
 			t.Errorf("trigger %s is expected in the table and absent from it", name)
+		}
+	}
+	// Every spelling names a canonical trigger, which is what makes an alias a spelling rather
+	// than a second trigger with no subject.
+	for alias, name := range hookTriggerNames {
+		if _, ok := triggerSubjects[name]; !ok {
+			t.Errorf("alias %q maps to trigger %q, which has no subject; "+
+				"add it with its subject or ClassifyHookMatcher will silently ignore it", alias, name)
 		}
 	}
 }
 
 // TestClassifyHookMatcher covers the pairing rule in both directions plus the
-// three cases that must report NOTHING, because a false positive here is a 400 on
-// a hook the user was right to create.
+// cases that must report NOTHING, because a false positive badges a hook the user
+// wrote correctly.
 func TestClassifyHookMatcher(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -131,46 +106,37 @@ func TestClassifyHookMatcher(t *testing.T) {
 		matcher string
 		want    HookMatcherDefect
 	}{
-		// none-subject + a matcher: ignored upstream, so refused at creation.
-		{"session start with a matcher", "SessionStart", `\.go$`, HookMatcherIneffective},
-		{"stop with a matcher", "Stop", "anything", HookMatcherIneffective},
-		{"manual with a matcher", "Manual", "x", HookMatcherIneffective},
-		{"session end with a matcher", "SessionEnd", "x", HookMatcherIneffective},
+		// none-subject + a matcher: ignored upstream.
+		{"session start with a matcher", "SessionStart", `\.go$`, hookMatcherIneffective},
+		{"stop with a matcher", "Stop", "anything", hookMatcherIneffective},
+		{"manual with a matcher", "Manual", "x", hookMatcherIneffective},
+		{"session end with a matcher", "SessionEnd", "x", hookMatcherIneffective},
 		// The alias spelling has to reach the same verdict, or the check is
 		// bypassable by writing the trigger differently.
-		{"an alias reaches the same verdict", "userTriggered", "x", HookMatcherIneffective},
-		// Whitespace is not a matcher. buildHookDoc TrimSpaces the value into the
-		// file, so treating "   " as present would refuse a hook whose stored
-		// matcher is empty anyway.
-		{"whitespace is not a matcher", "SessionStart", "   ", HookMatcherOK},
-		{"session start with no matcher", "SessionStart", "", HookMatcherOK},
-		// toolName-subject with no matcher: legitimate, so a badge and not a
-		// refusal.
-		{"pre tool use with no matcher", "PreToolUse", "", HookMatcherMissingToolName},
-		{"post tool use with no matcher", "PostToolUse", "  ", HookMatcherMissingToolName},
-		{"pre tool use with a matcher", "PreToolUse", "fsWrite", HookMatcherOK},
+		{"an alias reaches the same verdict", "userTriggered", "x", hookMatcherIneffective},
+		// Whitespace is not a matcher.
+		{"whitespace is not a matcher", "SessionStart", "   ", hookMatcherOK},
+		{"session start with no matcher", "SessionStart", "", hookMatcherOK},
+		// toolName-subject with no matcher: runs on every tool call.
+		{"pre tool use with no matcher", "PreToolUse", "", hookMatcherMissingToolName},
+		{"post tool use with no matcher", "PostToolUse", "  ", hookMatcherMissingToolName},
+		{"pre tool use with a matcher", "PreToolUse", "fsWrite", hookMatcherOK},
+		// KAS owns the tool-matcher grammar: a tag, an alias or a glob that is not a
+		// valid regex still matches tools, so none of them may read as a defect.
+		{"a tag is a tool matcher", "PreToolUse", "shell", hookMatcherOK},
+		{"a glob that is not a regex", "PostToolUse", "*", hookMatcherOK},
+		{"an mcp tag", "PreToolUse", "@mcp", hookMatcherOK},
+		{"a tag on a none-subject trigger", "Stop", "shell", hookMatcherIneffective},
 		// filePath-subject: effective either way, so neither direction reports.
-		{"file save with a matcher", "PostFileSave", `\.go$`, HookMatcherOK},
-		{"file save with no matcher", "PostFileSave", "", HookMatcherOK},
-		// An unknown trigger is a different and larger defect, already refused by
-		// NormalizeHookTrigger's second return. Reporting a matcher complaint
-		// about it would name the wrong problem.
-		{"unknown trigger reports nothing", "someFutureTrigger", "x", HookMatcherOK},
+		{"file save with a matcher", "PostFileSave", `\.go$`, hookMatcherOK},
+		{"file save with no matcher", "PostFileSave", "", hookMatcherOK},
+		// An unknown trigger is a different and larger defect: KAS drops the hook.
+		{"unknown trigger reports nothing", "someFutureTrigger", "x", hookMatcherOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ClassifyHookMatcher(tc.trigger, tc.matcher); got != tc.want {
 				t.Errorf("ClassifyHookMatcher(%q, %q) = %q, want %q", tc.trigger, tc.matcher, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestOnlySessionEndIsCommandOnly pins the flag to exactly one trigger, so a later
-// row cannot inherit or lose it silently.
-func TestOnlySessionEndIsCommandOnly(t *testing.T) {
-	for alias, meta := range hookTriggers {
-		if want := meta.Name == triggerSessionEnd; meta.CommandOnly != want {
-			t.Errorf("hookTriggers[%q].CommandOnly = %v, want %v", alias, meta.CommandOnly, want)
-		}
 	}
 }

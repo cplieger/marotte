@@ -2,7 +2,7 @@ import { el } from "@cplieger/reactive";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 
-export interface ChipOptions {
+interface ChipOptions {
   label: string;
   /** Render label inside <code> (monospace). */
   code?: boolean;

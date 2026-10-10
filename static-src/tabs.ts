@@ -119,8 +119,8 @@ export interface TabRunTally {
   readonly input: number;
 }
 
-/** No live run. A named constant rather than an inline literal because it is the
- *  value a REBUILT row paints from before its producer next churns. */
+/** A named constant rather than an inline literal because it is the value a REBUILT row paints from
+ *  before its producer next churns. */
 const NO_RUNS: TabRunTally = { total: 0, working: 0, waiting: 0, input: 0 };
 
 /** What `openTab` needs. `kind` plus `ref` names the subject; everything else is
@@ -148,8 +148,7 @@ export interface OpenTabArgs {
 interface Callbacks {
   onActivate: ((id: string) => void) | null;
   onEmpty: (() => void) | null;
-  /** Notified with the id of every tab that leaves the projection. A
-   *  NOTIFICATION slot, like onEmpty: it must not mutate the store. */
+  /** A NOTIFICATION slot, like onEmpty: it must not mutate the store. */
   onClosed: ((id: string) => void) | null;
 }
 
@@ -160,9 +159,8 @@ interface Internal {
    *  must not respawn a chat the rollback may be about to bring back. */
   emptyDeferred: boolean;
   renderQueued: boolean;
-  /** Whether a tab has ever entered the projection. The DOM subscriber keys its
-   *  no-op on this rather than on an empty store, because the two differ on
-   *  exactly one transition: the one INTO empty. See the render effect. */
+  /** The DOM subscriber keys its no-op on this rather than on an empty store, because the two differ
+   *  on exactly one transition: the one INTO empty. See the render effect. */
   everOpened: boolean;
 }
 
@@ -215,38 +213,33 @@ function restoreActivation(id: string, anchor: string): void {
   activationHistory.splice(at < 0 ? activationHistory.length : at + 1, 0, id);
 }
 
-/** The most recently activated tab still open, or "" when the history holds
- *  none. `hasRow` is the second line of defence behind the prune: a stale entry
- *  can never be picked even if a future removal path forgets to forget. */
+/** `hasRow` is the second line of defence behind the prune: a stale entry can never be picked even
+ *  if a future removal path forgets to forget. */
 function mostRecentOpenTab(): string {
   return activationHistory.find((id) => hasRow(id)) ?? "";
 }
 
-/** Reactive version counter. Effects subscribed via `tabsEffect()` re-run on
- *  every emit(). State is mutated in place; this counter is the signal those
- *  mutations trip. */
+/** Effects subscribed via `tabsEffect()` re-run on every emit(). State is mutated in place; this
+ *  counter is the signal those mutations trip. */
 const stateVersion = signal(0);
 
 /** Reactive counter for DOT writes, which do not `emit()`; only `subscribeTabCues` reads it. */
 const dotVersion = signal(0);
 
-/** All registered module-level effects. Tracked so _resetForTest can dispose
- *  them and start fresh; production never disposes. */
+/** Tracked so _resetForTest can dispose them and start fresh; production never disposes. */
 const moduleEffects: (() => void)[] = [];
 
 function emit(): void {
   stateVersion.value = stateVersion.peek() + 1;
 }
 
-/** Register an effect that re-runs on every state mutation. */
-function tabsEffect(fn: (s: State) => void): () => void {
+function tabsEffect(fn: (s: State) => void): void {
   const cleanup = effect(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     stateVersion.value; // subscribe
     fn(state);
   });
   moduleEffects.push(cleanup);
-  return cleanup;
 }
 
 /** Reactive read of the tab-set version: an effect calling this re-runs on every committed tab
@@ -299,9 +292,8 @@ function buildRow(subject: TabSubject): TabRow {
   return row;
 }
 
-/** Drop everything keyed off a departed tab, and tell the one listener. Called
- *  from both removal paths (an applied `removed_ids`, and a snapshot that no
- *  longer holds the tab) so neither can leak. */
+/** Called from both removal paths (an applied `removed_ids`, and a snapshot that no longer holds the
+ *  tab) so neither can leak. */
 function forgetRow(row: TabRow): void {
   nameOverrides.delete(subjectKey(row.subject.kind, row.subject.ref));
   // The one function every removal door already calls, which is what makes the MRU
@@ -312,8 +304,8 @@ function forgetRow(row: TabRow): void {
 
 // --- Ordering ---
 
-/** A row's sub-rows, in projection order. Reads the SUBJECT's parent, so the
- *  tab module needs nothing from the chat store to lay itself out. */
+/** Reads the SUBJECT's parent, so the tab module needs nothing from the chat store to lay itself
+ *  out. */
 function childrenOf(id: string): TabRow[] {
   return state.tabs.filter((t) => t.subject.parent === id);
 }
@@ -533,9 +525,8 @@ function upsertSubject(subject: TabSubject): void {
   applyPinOrder();
 }
 
-/** Run a departed row's local teardown, if it has one and owns what it shows. `owns: false` tears
- *  down nothing: dismissing a view must not kill the work it watched. The teardown is client-local
- *  and identical whoever closed the tab. */
+/** `owns: false` tears down nothing: dismissing a view must not kill the work it watched. The
+ *  teardown is client-local and identical whoever closed the tab. */
 function tearDown(row: TabRow): void {
   if (!row.spec.owns) {
     return;
@@ -543,7 +534,6 @@ function tearDown(row: TabRow): void {
   row.spec.onClose?.();
 }
 
-/** Whether the projection holds a tab with this id. */
 function hasRow(id: string): boolean {
   return state.tabs.some((t) => t.subject.id === id);
 }
@@ -560,8 +550,7 @@ function revealActiveView(): void {
   $.sidebar.classList.remove("open");
 }
 
-/** Ask the freshness question for one row and spend the answer. THE one caller of
- *  `viewStale`, so all ten kinds are gated in one place and none can answer it by
+/** THE one caller of `viewStale`, so all ten kinds are gated in one place and none can answer it by
  *  accident from its own `onShow`. */
 function refreshRow(row: TabRow): void {
   if (viewStale(row.subject.kind, row.subject.ref)) {
@@ -706,12 +695,10 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
  *  changes. The rows are the LIVE TabRow objects — spec, name and dot ride
  *  along — and the projection retains nothing else about a departed tab. */
 interface CapturedClose {
-  /** The closed subtree in projection order, parent first. */
   rows: TabRow[];
   /** The parent's index in the projection at capture, so a rollback restores
    *  the subtree in place rather than at the end. */
   at: number;
-  /** The name overrides the gesture's forgetRow dropped, keyed by subject. */
   overrides: Map<string, string>;
   /** The MRU entries the gesture's forgetRow dropped, each ANCHORED on the id ahead of it
    *  (`""` = the head) and ordered by original slot, so a removed anchor is back before its
@@ -845,7 +832,7 @@ function syncStoreActive(c: CapturedClose): void {
   }
   c.storeActive = active;
   // The next chat that still HAS a tab, in store order — the tab set is the
-  // truth of "still around" now that closed rows linger until confirmation.
+  // truth of "still around", since closed rows linger until confirmation.
   const next =
     getSessions().find((s) => !closedRefs.has(s.id) && tabIdFor("chat", s.id) !== "")?.id ?? "";
   setActive(next);
@@ -1001,10 +988,9 @@ export async function setTabParent(id: string, parent: string): Promise<boolean>
 
 const idOfRow = (t: TabRow): string => t.subject.id;
 
-/** Publish a top-level order a drop or the menu committed. Expanded and pin-partitioned BEFORE
- *  shown or sent, so the server gets what every device will render. A 409 rolls back and re-lists,
- *  never re-sends: the set moved under the gesture. Answers the applied order, or null when the
- *  partition undid the move. */
+/** Expanded and pin-partitioned BEFORE shown or sent, so the server gets what every device will
+ *  render. A 409 rolls back and re-lists, never re-sends: the set moved under the gesture. Answers
+ *  the applied order, or null when the partition undid the move. */
 function publishReorder(order: readonly string[]): readonly string[] | null {
   const prior = state.tabs.map(idOfRow);
   const next = pinPartition(permute(state.tabs, idOfRow, expandOrder(order))).map(idOfRow);
@@ -1143,8 +1129,8 @@ function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string 
   return NEUTRAL_PHRASE[status];
 }
 
-/** How long ago a finished thing finished. It does NOT tick: a 1s interval over a sidebar of
- *  finished chats is a wakeup cost, and both surfaces this feeds are read on demand. */
+/** It does NOT tick: a 1s interval over a sidebar of finished chats is a wakeup cost, and both
+ *  surfaces this feeds are read on demand. */
 function withAge(phrase: string, since?: number): string {
   return since === undefined ? phrase : `${phrase} · ${relativeTime(since)}`;
 }
@@ -1285,9 +1271,8 @@ export function setTabDirty(id: string, dirty: boolean): void {
   setTabStatus(id, dirty ? "dirty" : "");
 }
 
-/** Park a dot state on its row. "" means no state, which is an ABSENT field
- *  rather than an empty string, so `createTabEl` can tell "nothing was ever
- *  painted" from "painted, then cleared" with one `?? default`. */
+/** "" means no state, which is an ABSENT field rather than an empty string, so `createTabEl` can
+ *  tell "nothing was ever painted" from "painted, then cleared" with one `?? default`. */
 function recordDotStatus(row: TabRow, status: TabDotStatus | "", since?: number): void {
   const before = row.dotStatus;
   if (status === "") {
@@ -1938,9 +1923,8 @@ function createTabEl(row: TabRow): HTMLElement {
 
 // --- In-place rename ---
 
-/** Swap a chat row's name for a field. The name span stays in the row, hidden,
- *  so a `chat_updated` landing mid-edit still repaints it; the field is removed
- *  on Enter, blur or Escape. Pointer and key events stop at the field, or the
+/** The name span stays in the row, hidden, so a `chat_updated` landing mid-edit still repaints it;
+ *  the field is removed on Enter, blur or Escape. Pointer and key events stop at the field, or the
  *  row's own handlers would activate, drag or close the tab under the caret. */
 function beginTabRename(node: HTMLElement, id: string): void {
   const row = rowOfID(id);
@@ -2018,8 +2002,8 @@ function gestureDragged(): boolean {
   return gestureIsDrag;
 }
 
-/** Track the strip's tap-vs-drag gesture on one row. Every row gets this, unlike
- *  `attachDrag`: a sub-tab cannot be reordered and can still be scrolled past. */
+/** Every row gets this, unlike `attachDrag`: a sub-tab cannot be reordered and can still be scrolled
+ *  past. */
 function attachTapGuard(node: HTMLElement): void {
   node.addEventListener("pointerdown", (e) => {
     if (!e.isPrimary) {
@@ -2277,7 +2261,6 @@ export function filesTabIdFor(ref: string): string {
   return filesRowForRef(ref)?.subject.id ?? "";
 }
 
-/** The files row whose ref names this folder, in the normalised space. */
 function filesRowForRef(ref: string): TabRow | undefined {
   const dir = normalizeDirPath(ref);
   return state.tabs.find(
@@ -2285,8 +2268,7 @@ function filesRowForRef(ref: string): TabRow | undefined {
   );
 }
 
-/** The active files row, else the most recently activated, else the first, else "". Also
- *  `filesTabForRoute`'s rungs 2 and 3, so a route, the sidebar button and Ctrl-F agree. */
+/** Also `filesTabForRoute`'s rungs 2 and 3, so a route, the sidebar button and Ctrl-F agree. */
 function activeOrRecentFilesTab(): TabRow | undefined {
   const active = rowOfID(state.active);
   if (active?.subject.kind === "files") {
@@ -2364,6 +2346,7 @@ export async function openEditorView(
 // --- Test helpers (no-op in production; used by tabs.test.ts) ---
 
 /** Reset all projection state. Exported for test isolation only. */
+// deadset:ignore DS1004 -- test seam: resets the tab projection state, callbacks and timers
 export function _resetForTest(): void {
   tabNotice = bareTabNotice;
   state.tabs = [];

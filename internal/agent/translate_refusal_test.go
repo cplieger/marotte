@@ -34,7 +34,7 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			id := int64(4242)
 
-			h.translateACPEvent("c1", &marotte.RPCResponse{
+			h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 				Method: method,
 				ID:     &id,
 			})
@@ -84,7 +84,7 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 
-			h.translateACPEvent("c1", &marotte.RPCResponse{
+			h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 				Method: method,
 				ID:     nil,
 			})
@@ -126,7 +126,7 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 		br.respMu.Unlock()
 		id := int64(4242)
 
-		h.translateACPEvent("c1", &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+		h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
 
 		select {
 		case <-br.done:
@@ -144,7 +144,7 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 		h, br := hubForFSTest(t, t.TempDir())
 		id := int64(4242)
 
-		h.translateACPEvent("c1", &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+		h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
 
 		select {
 		case <-br.done:
@@ -169,9 +169,9 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 	t.Run("a notification still reaches its handler", func(t *testing.T) {
 		h, _ := hubForFSTest(t, t.TempDir())
 
-		h.translateACPEvent("c1", &marotte.RPCResponse{Method: method, Params: params})
+		h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{Method: method, Params: params})
 
-		if snap := h.mcpRegistry.Snapshot(); len(snap) != 1 {
+		if snap := h.mcpRegistry.snapshot(); len(snap) != 1 {
 			t.Fatalf("registry snapshot = %+v, want the one server the notification carried: "+
 				"gating the lookup must not stop notification handling", snap)
 		}
@@ -181,7 +181,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 		h, br := hubForFSTest(t, t.TempDir())
 		id := int64(31337)
 
-		h.translateACPEvent("c1", &marotte.RPCResponse{Method: method, ID: &id, Params: params})
+		h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{Method: method, ID: &id, Params: params})
 
 		select {
 		case <-br.done:
@@ -201,7 +201,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 			t.Errorf("refusal code = %d, want %d", rpcErr.Code, marotte.RPCCodeMethodNotFound)
 		}
 		// The handler must not have run: handled and refused would be two answers to one id.
-		if snap := h.mcpRegistry.Snapshot(); len(snap) != 0 {
+		if snap := h.mcpRegistry.snapshot(); len(snap) != 0 {
 			t.Errorf("the notification handler also ran (snapshot %+v); the frame was handled "+
 				"and refused, which is two answers on one id", snap)
 		}
@@ -215,7 +215,7 @@ func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
 	before := h.bus.fanout.Position().Head
 	id := int64(31338)
 
-	h.translateACPEvent("c1", &marotte.RPCResponse{
+	h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 		Method: marotte.MethodRequestPermission,
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{

@@ -244,7 +244,6 @@ function buildToolPermissionCard(
   return card;
 }
 
-/** The optional deny note above the answer buttons. */
 function buildRejectionNote(): HTMLTextAreaElement {
   const note = el("textarea", {
     className: "approval-reason",
@@ -449,9 +448,8 @@ function formatInputPreview(input: unknown): string {
   return text;
 }
 
-/** Copy for each reason the offer to persist a rule is withdrawn. A Record over the union rather
- *  than a switch, so adding a server-side code without deciding what to tell the reader is a
- *  type error here. */
+/** A Record over the union rather than a switch, so adding a server-side code without deciding what
+ *  to tell the reader is a type error here. */
 const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
   unparseable:
     "Always allow is unavailable. kiro-cli cannot parse this command, so a saved rule would never match it.",

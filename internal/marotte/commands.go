@@ -30,7 +30,6 @@ const (
 	CmdSetDraft            CommandType = "set_draft"
 	CmdSetAttachments      CommandType = "set_attachments"
 	CmdSetMode             CommandType = "set_mode"
-	CmdCreateHook          CommandType = "create_hook"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
@@ -53,12 +52,15 @@ const (
 	// through this envelope; its chat_id is EMPTY, because a spec is
 	// workspace-global rather than a chat's.
 	CmdApproveSpecPhase CommandType = "approve_spec_phase"
+	// CmdMergeTangent summarizes a tangent (chat_id) and hands the summary to the chat it was
+	// forked from. Payload: MergeTangentCommand.
+	CmdMergeTangent CommandType = "merge_tangent"
 )
 
 // ClientCommand is the envelope for every command the browser posts. Type
 // determines how Payload unmarshals; idempotency is the Idempotency-Key header
 // (internal/server/idempotency.go), never a body field. A payload's own
-// request_id means something else: the ACP request id being answered.
+// request_id means something else: the id of the ask being answered.
 type ClientCommand struct {
 	Type    CommandType     `json:"type"`
 	ChatID  ChatID          `json:"chat_id,omitempty"`
@@ -68,10 +70,15 @@ type ClientCommand struct {
 // PromptCommand is the payload for type="prompt". Text or at least one attachment is required; Text
 // is capped at 512 KiB (413), Attachments at MaxAttachments (413) of MaxAttachmentPathBytes each
 // (400), each confined before it is read.
+//
+// DisplayText labels a message marotte wrote on the user's behalf (a spec Run, a deferral, a
+// tangent merge): the transcript shows it with the text one click away, and KAS records it as the
+// message's label. A typed message never carries one.
 type PromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"`
 	Model       string       `json:"model,omitempty"`
+	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
@@ -93,6 +100,14 @@ type CreateChatCommand struct {
 	// to the chat the first attempt made. Optional; unlike Idempotency-Key it
 	// covers the fall-through past that cache's TTL (command/create_ledger.go).
 	OpID string `json:"op_id,omitempty"`
+}
+
+// MergeTangentCommand is the payload for type="merge_tangent". OpID is required (an identifier,
+// else 400), client-minted and echoed on the merge's terminal frame (tangent_merged, or its
+// tangent_merge_failed error), so a device follows only the attempt it asked for. The reply and
+// GET /api/chats/{id}/merges/{op_id} both answer the op's state (command/tangent_merge_record.go).
+type MergeTangentCommand struct {
+	OpID string `json:"op_id"`
 }
 
 // ResumeSessionCommand is the payload for type="resume_session": adopt a KAS
@@ -263,8 +278,7 @@ type EffortLevel string
 const (
 	EffortLow    EffortLevel = "low"
 	EffortMedium EffortLevel = "medium"
-	EffortHigh   EffortLevel = "high"
-	EffortXHigh  EffortLevel = "xhigh"
+	effortXHigh  EffortLevel = "xhigh"
 	EffortMax    EffortLevel = "max"
 )
 
@@ -316,10 +330,12 @@ type CancelCommand struct {
 
 // QueuePromptCommand is the payload for type="queue_prompt": a message held for
 // the end of the running turn. Text and MessageID follow PromptCommand's rules;
-// Attachments are capped at MaxAttachments and read when the row is sent.
+// Attachments are capped at MaxAttachments and read when the row is sent; DisplayText is
+// PromptCommand's.
 type QueuePromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"`
+	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 

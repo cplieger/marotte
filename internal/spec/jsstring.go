@@ -6,9 +6,8 @@ import (
 	"unicode/utf8"
 )
 
-// isJSSpace is JavaScript's \s and String.prototype.trim set, which the
-// content de-indent and the blank-line test use where the oracle does. Go's
-// regexp \s stays ASCII in the line regex itself, the one stated divergence.
+// isJSSpace is JavaScript's \s and String.prototype.trim set. Go's regexp \s stays ASCII in the
+// line regex itself, the one stated divergence.
 func isJSSpace(r rune) bool {
 	switch r {
 	case '\t', '\n', '\v', '\f', '\r', ' ', 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF:
@@ -21,7 +20,6 @@ func isBlank(line string) bool {
 	return strings.TrimFunc(line, isJSSpace) == ""
 }
 
-// leadingSpace counts the leading whitespace runes of line.
 func leadingSpace(line string) int {
 	n := 0
 	for _, r := range line {
@@ -33,7 +31,6 @@ func leadingSpace(line string) int {
 	return n
 }
 
-// dropLeading is line.substring(n) for an n within the leading whitespace.
 func dropLeading(line string, n int) string {
 	off := 0
 	for range n {

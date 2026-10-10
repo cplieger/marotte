@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
-import type { TurnSummary } from "./turn-rail.js";
+import type { TurnSummary } from "./rail-merge.js";
 
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
-// The DOM the scroll controller resolves at import, nested the way the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative";
@@ -48,13 +47,12 @@ function summary(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
   return { id: `u${String(n)}`, n, outcome: "completed", ts: n * MINUTE, ...over };
 }
 
-function card(n: number): HTMLElement {
+function card(n: number): void {
   const e = document.createElement("div");
   e.className = "turn";
   e.setAttribute(KEY_ATTR, `u${String(n)}`);
   e.style.blockSize = "200px";
   messagesEl.appendChild(e);
-  return e;
 }
 
 const links = (): HTMLAnchorElement[] => [

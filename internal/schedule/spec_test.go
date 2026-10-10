@@ -7,7 +7,7 @@ import (
 	_ "time/tzdata"
 )
 
-// at builds a local time, the same location NextRun works in.
+// at builds a local time, the same location nextRun works in.
 func at(y int, mo time.Month, d, h, mi int) time.Time {
 	return time.Date(y, mo, d, h, mi, 0, 0, time.Local)
 }
@@ -33,7 +33,7 @@ func TestNextRun(t *testing.T) {
 		},
 		{
 			name:  "hourly steps from local midnight",
-			spec:  Spec{Freq: FreqHourly, Interval: 6, Minute: 15},
+			spec:  Spec{Freq: freqHourly, Interval: 6, Minute: 15},
 			after: at(2026, time.August, 4, 7, 0),
 			want:  at(2026, time.August, 4, 12, 15),
 		},
@@ -87,86 +87,86 @@ func TestNextRun(t *testing.T) {
 		},
 		{
 			name:  "hourly wraps to midnight after the last step",
-			spec:  Spec{Freq: FreqHourly, Interval: 6, Minute: 15},
+			spec:  Spec{Freq: freqHourly, Interval: 6, Minute: 15},
 			after: at(2026, time.August, 4, 18, 30),
 			want:  at(2026, time.August, 5, 0, 15),
 		},
 		{
 			name:  "hourly step that does not divide 24 has a short final gap",
-			spec:  Spec{Freq: FreqHourly, Interval: 5, Minute: 0},
+			spec:  Spec{Freq: freqHourly, Interval: 5, Minute: 0},
 			after: at(2026, time.August, 4, 20, 30),
 			want:  at(2026, time.August, 5, 0, 0),
 		},
 		{
 			name:  "weekly picks the next listed weekday",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9},
+			spec:  Spec{Freq: freqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9},
 			after: at(2026, time.August, 4, 10, 0), // a Tuesday
 			want:  at(2026, time.August, 10, 9, 0), // the following Monday
 		},
 		{
 			name:  "weekly with several days takes the soonest",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday), int(time.Wednesday)}, Hour: 9},
+			spec:  Spec{Freq: freqWeekly, Weekdays: []int{int(time.Monday), int(time.Wednesday)}, Hour: 9},
 			after: at(2026, time.August, 4, 10, 0), // Tuesday
 			want:  at(2026, time.August, 5, 9, 0),  // Wednesday
 		},
 		{
 			name:  "weekly same day but earlier hour still fires today",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Tuesday)}, Hour: 23},
+			spec:  Spec{Freq: freqWeekly, Weekdays: []int{int(time.Tuesday)}, Hour: 23},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.August, 4, 23, 0),
 		},
 		{
 			name:  "monthly this month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 15, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 15, Hour: 3},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.August, 15, 3, 0),
 		},
 		{
 			name:  "monthly rolls to next month once passed",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 1, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 1, Hour: 3},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.September, 1, 3, 0),
 		},
 		{
 			name:  "day 31 clamps to the end of a 30-day month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 31, Hour: 3},
 			after: at(2026, time.September, 1, 0, 0),
 			want:  at(2026, time.September, 30, 3, 0),
 		},
 		{
 			name:  "day 31 clamps to the end of February",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 31, Hour: 3},
 			after: at(2026, time.February, 1, 0, 0),
 			want:  at(2026, time.February, 28, 3, 0),
 		},
 		{
 			name:  "day 30 clamps to a leap February's 29th",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 30, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 30, Hour: 3},
 			after: at(2028, time.February, 1, 0, 0),
 			want:  at(2028, time.February, 29, 3, 0),
 		},
 		{
 			name:  "last day of a 31-day month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: LastDay, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: lastDay, Hour: 3},
 			after: at(2026, time.August, 1, 0, 0),
 			want:  at(2026, time.August, 31, 3, 0),
 		},
 		{
 			name:  "last day of a leap February",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: LastDay, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: lastDay, Hour: 3},
 			after: at(2028, time.February, 10, 0, 0),
 			want:  at(2028, time.February, 29, 3, 0),
 		},
 		{
 			name:  "monthly crosses a year boundary",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 5, Hour: 3},
+			spec:  Spec{Freq: freqMonthly, MonthDay: 5, Hour: 3},
 			after: at(2026, time.December, 20, 0, 0),
 			want:  at(2027, time.January, 5, 3, 0),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NextRun(tt.spec, tt.after)
+			got, err := nextRun(tt.spec, tt.after)
 			if err != nil {
 				t.Fatalf("NextRun: %v", err)
 			}
@@ -182,7 +182,7 @@ func TestNextRun(t *testing.T) {
 func TestNextRun_IsStrictlyAfter(t *testing.T) {
 	spec := Spec{Freq: FreqDaily, Hour: 2, Minute: 30}
 	exact := at(2026, time.August, 4, 2, 30)
-	got, err := NextRun(spec, exact)
+	got, err := nextRun(spec, exact)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -194,11 +194,11 @@ func TestNextRun_IsStrictlyAfter(t *testing.T) {
 // TestNextRun_Idempotent guards against drift: feeding a result back in must
 // yield the following slot, never the same one.
 func TestNextRun_Idempotent(t *testing.T) {
-	spec := Spec{Freq: FreqHourly, Interval: 8, Minute: 0}
+	spec := Spec{Freq: freqHourly, Interval: 8, Minute: 0}
 	cur := at(2026, time.August, 4, 3, 0)
 	seen := map[time.Time]bool{}
 	for range 10 {
-		next, err := NextRun(spec, cur)
+		next, err := nextRun(spec, cur)
 		if err != nil {
 			t.Fatalf("NextRun: %v", err)
 		}
@@ -216,7 +216,7 @@ func TestNextRun_Idempotent(t *testing.T) {
 // TestNextRun_MinutelyAcrossADSTBoundary walks a DST-transition day slot by slot and
 // asserts the walk never repeats an instant, goes backwards or skips the day. The
 // spring-forward slot list is unsorted (time.Date normalizes the missing hour backward);
-// NextRun stays correct only because that block is already past.
+// nextRun stays correct only because that block is already past.
 func TestNextRun_MinutelyAcrossADSTBoundary(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -245,7 +245,7 @@ func TestNextRun_MinutelyAcrossADSTBoundary(t *testing.T) {
 			var slots []time.Time
 			var maxGap time.Duration
 			for cur.Before(end) {
-				next, err := NextRun(spec, cur)
+				next, err := nextRun(spec, cur)
 				if err != nil {
 					t.Fatalf("NextRun after %v: %v", cur, err)
 				}
@@ -297,7 +297,7 @@ func TestNextRun_MinutelySkipsTheMissingHour(t *testing.T) {
 	cur := time.Date(2026, time.March, 8, 1, 0, 0, 0, loc)
 	end := time.Date(2026, time.March, 8, 4, 0, 0, 0, loc)
 	for cur.Before(end) {
-		next, err := NextRun(spec, cur)
+		next, err := nextRun(spec, cur)
 		if err != nil {
 			t.Fatalf("NextRun: %v", err)
 		}
@@ -307,7 +307,7 @@ func TestNextRun_MinutelySkipsTheMissingHour(t *testing.T) {
 		cur = next
 	}
 	// The transition is crossed in one step of the walk, not stalled on.
-	got, err := NextRun(spec, time.Date(2026, time.March, 8, 1, 50, 0, 0, loc))
+	got, err := nextRun(spec, time.Date(2026, time.March, 8, 1, 50, 0, 0, loc))
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -323,10 +323,10 @@ func TestSpecValidate(t *testing.T) {
 		ok   bool
 	}{
 		{"valid daily", Spec{Freq: FreqDaily, Hour: 2, Minute: 30}, true},
-		{"valid hourly", Spec{Freq: FreqHourly, Interval: 6}, true},
+		{"valid hourly", Spec{Freq: freqHourly, Interval: 6}, true},
 		{"valid minutely", Spec{Freq: FreqMinutely, Interval: 15, Minute: 7}, true},
-		{"valid weekly", Spec{Freq: FreqWeekly, Weekdays: []int{0}, Hour: 9}, true},
-		{"valid monthly last day", Spec{Freq: FreqMonthly, MonthDay: LastDay, Hour: 9}, true},
+		{"valid weekly", Spec{Freq: freqWeekly, Weekdays: []int{0}, Hour: 9}, true},
+		{"valid monthly last day", Spec{Freq: freqMonthly, MonthDay: lastDay, Hour: 9}, true},
 		{"unknown freq", Spec{Freq: "yearly", Hour: 1}, false},
 		{"empty freq", Spec{Hour: 1}, false},
 		{"hour too high", Spec{Freq: FreqDaily, Hour: 24}, false},
@@ -335,10 +335,10 @@ func TestSpecValidate(t *testing.T) {
 		// Every range in the error messages is inclusive at both ends.
 		{"midnight, the bottom of the hour range", Spec{Freq: FreqDaily, Hour: 0, Minute: 30}, true},
 		{"the last minute of the hour", Spec{Freq: FreqDaily, Hour: 2, Minute: 59}, true},
-		{"hourly interval zero", Spec{Freq: FreqHourly, Interval: 0}, false},
-		{"hourly interval too high", Spec{Freq: FreqHourly, Interval: 25}, false},
-		{"hourly at the floor, every hour", Spec{Freq: FreqHourly, Interval: 1}, true},
-		{"hourly at the ceiling, once a day", Spec{Freq: FreqHourly, Interval: 24}, true},
+		{"hourly interval zero", Spec{Freq: freqHourly, Interval: 0}, false},
+		{"hourly interval too high", Spec{Freq: freqHourly, Interval: 25}, false},
+		{"hourly at the floor, every hour", Spec{Freq: freqHourly, Interval: 1}, true},
+		{"hourly at the ceiling, once a day", Spec{Freq: freqHourly, Interval: 24}, true},
 		// The floor (see minMinuteInterval).
 		{"minutely every minute is refused", Spec{Freq: FreqMinutely, Interval: 1}, false},
 		{"minutely just under the floor", Spec{Freq: FreqMinutely, Interval: minMinuteInterval - 1}, false},
@@ -348,15 +348,15 @@ func TestSpecValidate(t *testing.T) {
 		// An hour or more is the hourly frequency's.
 		{"minutely an hour is refused", Spec{Freq: FreqMinutely, Interval: 60}, false},
 		{"minutely offset out of range", Spec{Freq: FreqMinutely, Interval: 15, Minute: 60}, false},
-		{"weekly with no days", Spec{Freq: FreqWeekly, Hour: 9}, false},
-		{"weekday out of range", Spec{Freq: FreqWeekly, Weekdays: []int{7}, Hour: 9}, false},
-		{"Saturday, the top of the weekday range", Spec{Freq: FreqWeekly, Weekdays: []int{6}, Hour: 9}, true},
-		{"month day zero", Spec{Freq: FreqMonthly, MonthDay: 0, Hour: 9}, false},
-		{"month day too high", Spec{Freq: FreqMonthly, MonthDay: 32, Hour: 9}, false},
+		{"weekly with no days", Spec{Freq: freqWeekly, Hour: 9}, false},
+		{"weekday out of range", Spec{Freq: freqWeekly, Weekdays: []int{7}, Hour: 9}, false},
+		{"Saturday, the top of the weekday range", Spec{Freq: freqWeekly, Weekdays: []int{6}, Hour: 9}, true},
+		{"month day zero", Spec{Freq: freqMonthly, MonthDay: 0, Hour: 9}, false},
+		{"month day too high", Spec{Freq: freqMonthly, MonthDay: 32, Hour: 9}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.Validate()
+			err := tt.spec.validate()
 			if tt.ok && err != nil {
 				t.Errorf("expected valid, got %v", err)
 			}
@@ -370,7 +370,7 @@ func TestSpecValidate(t *testing.T) {
 // TestNextRun_RejectsAnInvalidSpec keeps a bad stored spec from silently
 // producing a fire time.
 func TestNextRun_RejectsAnInvalidSpec(t *testing.T) {
-	if _, err := NextRun(Spec{Freq: "nope"}, time.Now()); err == nil {
+	if _, err := nextRun(Spec{Freq: "nope"}, time.Now()); err == nil {
 		t.Errorf("an invalid spec must not yield a next run")
 	}
 }
@@ -384,7 +384,7 @@ func FuzzNextRun(f *testing.F) {
 	f.Add(4, 15, 0, 7, 1, 0)
 	f.Add(4, 50, 0, 59, 1, 0)
 	f.Fuzz(func(t *testing.T, freqSel, interval, hour, minute, monthDay, weekdayBits int) {
-		freqs := []Freq{FreqHourly, FreqDaily, FreqWeekly, FreqMonthly, FreqMinutely}
+		freqs := []freq{freqHourly, FreqDaily, freqWeekly, freqMonthly, FreqMinutely}
 		if freqSel < 0 {
 			freqSel = -freqSel
 		}
@@ -405,18 +405,18 @@ func FuzzNextRun(f *testing.F) {
 			MonthDay: monthDay,
 			Weekdays: wd,
 		}
-		if s.Validate() != nil {
+		if s.validate() != nil {
 			t.Skip("spec does not validate")
 		}
 		base := at(2026, time.August, 4, 12, 0)
-		first, err := NextRun(s, base)
+		first, err := nextRun(s, base)
 		if err != nil {
 			t.Fatalf("a validated spec must have a next run: %v", err)
 		}
 		if !first.After(base) {
 			t.Errorf("next run %v is not after %v", first, base)
 		}
-		second, err := NextRun(s, first)
+		second, err := nextRun(s, first)
 		if err != nil {
 			t.Fatalf("second NextRun: %v", err)
 		}

@@ -23,7 +23,6 @@ func summarizationInfo(t *testing.T, status, summary string) json.RawMessage {
 	})
 }
 
-// entriesOfKind is the subset of entries of one kind, in seal order.
 func entriesOfKind(entries []marotte.Entry, kind marotte.EntryKind) []marotte.Entry {
 	var got []marotte.Entry
 	for _, e := range entries {
@@ -34,7 +33,6 @@ func entriesOfKind(entries []marotte.Entry, kind marotte.EntryKind) []marotte.En
 	return got
 }
 
-// compactionsOf decodes every compaction entry in entries, in seal order.
 func compactionsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryCompaction {
 	t.Helper()
 	var out []marotte.EntryCompaction
@@ -48,7 +46,6 @@ func compactionsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryCompact
 	return out
 }
 
-// compactionFailuresOf decodes every compaction_failed entry in entries.
 func compactionFailuresOf(t *testing.T, entries []marotte.Entry) []marotte.EntryCompactionFailed {
 	t.Helper()
 	var out []marotte.EntryCompactionFailed
@@ -72,7 +69,6 @@ func entryKinds(entries []marotte.Entry) []marotte.EntryKind {
 	return kinds
 }
 
-// errorPayloads collects every EventError payload broadcast.
 func errorPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.ErrorPayload {
 	t.Helper()
 	var got []marotte.ErrorPayload
@@ -89,7 +85,6 @@ func errorPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.ErrorP
 	return got
 }
 
-// countCompactionStarted counts compaction_started broadcasts.
 func countCompactionStarted(events *[]marotte.ServerEvent) int {
 	n := 0
 	for _, e := range *events {
@@ -191,7 +186,7 @@ func TestHandleV3Summarization_SealsTheLanesBeforeTheEntry(t *testing.T) {
 	if err := json.Unmarshal(sealed[0].Payload, &text); err != nil || text.Text != "before the compaction" {
 		t.Errorf("sealed text = %q (%v), want the pre-compaction prose", text.Text, err)
 	}
-	if turn.Closed() {
+	if deps.turns.closed(turn) {
 		t.Error("the turn closed on a compaction; only the turn end closes it")
 	}
 	if open := turn.OpenEntries(); len(open) != 0 {
@@ -259,7 +254,7 @@ func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing
 	if got := entryKinds(sealed); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("sealed entries = %v, want %v", got, want)
 	}
-	if turn.Closed() {
+	if deps.turns.closed(turn) {
 		t.Error("the turn closed on a failed compaction; only the turn end closes it")
 	}
 	if c, _ := store.Get(t.Context(), "c1"); c.CompactionWatermark != "" {

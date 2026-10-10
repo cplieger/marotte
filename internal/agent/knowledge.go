@@ -19,7 +19,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// keySubcommand is the _kiro/knowledge dispatch field naming the operation.
 const keySubcommand = "subcommand"
 
 // knowledgeCallTimeout bounds one _kiro/knowledge round-trip; only the first call starts the utility bridge.
@@ -44,7 +43,7 @@ type kasKnowledgeEntry struct {
 	Indexing     bool   `json:"indexing"`
 }
 
-// knowledgeContext is one GET /api/knowledge entry; the client keys rows by ID and draws progress from Indexing and ItemsDisplay.
+// The client keys rows by ID and draws progress from Indexing and ItemsDisplay.
 type knowledgeContext struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
@@ -55,7 +54,6 @@ type knowledgeContext struct {
 	Indexing     bool   `json:"indexing,omitempty"`
 }
 
-// knowledgeListResponse is the GET /api/knowledge body.
 type knowledgeListResponse struct {
 	Contexts []knowledgeContext `json:"contexts"`
 }
@@ -73,7 +71,6 @@ func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (j
 	return u.session.knowledgeRaw(cctx, params)
 }
 
-// parseKnowledgeResult decodes the raw _kiro/knowledge JSON-RPC result.
 func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("knowledge: empty result")
@@ -85,7 +82,6 @@ func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {
 	return &r, nil
 }
 
-// knowledgeShow lists the store's contexts and in-flight operations.
 func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
 	raw, err := st.knowledgeCall(ctx, map[string]any{keySubcommand: "show"})
 	if err != nil {
@@ -106,7 +102,6 @@ func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, erro
 	return out, nil
 }
 
-// resolveKnowledgePath resolves a relative path against the workspace dir and cleans an absolute one.
 func (st *Settings) resolveKnowledgePath(p string) string {
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
@@ -137,8 +132,8 @@ func cleanKnowledgeMsg(s string) string {
 	return s
 }
 
-// handleKnowledge dispatches GET list, POST add, DELETE clear; anything else answers 405 with
-// Allow, which a per-method pattern cannot (the /api/ fallback would 404).
+// Anything else answers 405 with Allow, which a per-method pattern cannot (the /api/ fallback would
+// 404).
 func (st *Settings) handleKnowledge(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -222,7 +217,7 @@ func (st *Settings) handleKnowledgeOne(w http.ResponseWriter, r *http.Request) {
 	st.handleKnowledgeRemove(w, r)
 }
 
-// handleKnowledgeList serves GET /api/knowledge; the client polls it while anything indexes.
+// The client polls it while anything indexes.
 func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	ctxs, err := st.knowledgeShow(r.Context())
 	if err != nil {
@@ -275,7 +270,7 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
-// handleKnowledgeRemove serves DELETE /api/knowledge/{name}; KAS matches path, then name. Missing is 404.
+// KAS matches path, then name. Missing is 404.
 func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
@@ -297,8 +292,7 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 	webhttp.Ok(w)
 }
 
-// handleKnowledgeReindex serves POST /api/knowledge/{name}/reindex, async like add. The name is
-// resolved here because KAS's `update` matches `path` against sourcePath exactly.
+// The name is resolved here because KAS's `update` matches `path` against sourcePath exactly.
 func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -348,7 +342,6 @@ func (st *Settings) knowledgeSourcePath(ctx context.Context, name string) (strin
 	return "", nil
 }
 
-// knowledgeMutate issues a mutating subcommand and parses its {success, message} reply.
 func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) (*kasKnowledgeResult, error) {
 	raw, err := st.knowledgeCall(ctx, params)
 	if err != nil {
@@ -357,14 +350,12 @@ func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) 
 	return parseKnowledgeResult(raw)
 }
 
-// writeKnowledgeErr maps a bridge failure to 502 with a generic message.
 func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
-// registerKnowledgeRoutes wires the knowledge endpoints. Patterns carry no method, so each
-// handler answers a refused method with 405 + Allow.
+// Patterns carry no method, so each handler answers a refused method with 405 + Allow.
 func (st *Settings) registerKnowledgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/knowledge", st.handleKnowledge)
 	mux.HandleFunc("/api/knowledge/{name}", st.handleKnowledgeOne)

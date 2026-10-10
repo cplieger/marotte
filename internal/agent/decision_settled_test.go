@@ -1,16 +1,17 @@
 package agent
 
-// The winning claim announces decision_settled with kind and attribution; a losing claim announces nothing.
+// A claim's delivered answer announces decision_settled with kind and attribution; a losing claim announces nothing.
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/sse"
 )
 
-// settledEvents decodes the decision_settled payloads emitted after sinceID.
 func settledEvents(t *testing.T, events []sse.ReplayEvent) []marotte.DecisionSettledPayload {
 	t.Helper()
 	var out []marotte.DecisionSettledPayload
@@ -34,7 +35,7 @@ func settledEvents(t *testing.T, events []sse.ReplayEvent) []marotte.DecisionSet
 	return out
 }
 
-func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
+func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
 	cases := []struct {
 		name      string
 		event     marotte.EventType
@@ -66,17 +67,24 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			head := h.bus.fanout.Position().Head
-			h.bus.pendingPerms.Add(9, marotte.NewEvent(tc.event, "c1", marotte.PermissionNeededPayload{RequestID: 9}))
+			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(tc.event, "c1", marotte.PermissionNeededPayload{}), newFakeBridge()))
 
-			if !h.bus.TakePendingPerm("c1", 9, tc.settledBy) {
+			reply, ok := h.bus.TakePendingPerm("c1", askID, tc.settledBy)
+			if !ok {
 				t.Fatal("TakePendingPerm refused a pending request")
+			}
+			if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {
+				t.Fatalf("a claim announced %+v before its answer was written", got)
+			}
+			if outcome, err := reply.Respond(t.Context(), nil); outcome != command.AnswerDelivered || err != nil {
+				t.Fatalf("Respond = (%v, %v), want (AnswerDelivered, nil)", outcome, err)
 			}
 
 			got := settledEvents(t, bufferedSince(h, head))
 			if len(got) != 1 {
 				t.Fatalf("emitted %d decision_settled events, want 1", len(got))
 			}
-			want := marotte.DecisionSettledPayload{RequestID: 9, Kind: tc.wantKind, SettledBy: tc.settledBy}
+			want := marotte.DecisionSettledPayload{RequestID: askID, Kind: tc.wantKind, SettledBy: tc.settledBy}
 			if got[0] != want {
 				t.Errorf("payload = %+v, want %+v", got[0], want)
 			}
@@ -87,14 +95,18 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 // TestTakePendingPerm_LosingClaimAnnouncesNothing pins that an unanswered request must stay on screen.
 func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.bus.pendingPerms.Add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 9}))
-	if !h.bus.TakePendingPerm("c1", 9, marotte.SettledByUser) {
+	askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{}), newFakeBridge()))
+	reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser)
+	if !ok {
 		t.Fatal("first claim refused")
+	}
+	if outcome, err := reply.Respond(t.Context(), nil); outcome != command.AnswerDelivered || err != nil {
+		t.Fatalf("Respond = (%v, %v), want (AnswerDelivered, nil)", outcome, err)
 	}
 
 	head := h.bus.fanout.Position().Head
-	if h.bus.TakePendingPerm("c1", 9, marotte.SettledByUser) {
+	if _, ok := h.bus.TakePendingPerm("c1", askID, marotte.SettledByUser); ok {
 		t.Error("second claim on one request id succeeded, want refused")
 	}
 	if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {
@@ -106,29 +118,65 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 func TestPendingPermsWithdraw_RetiresTheChatsAskAsMoot(t *testing.T) {
 	h, _, _ := newTestHub()
 	head := h.bus.fanout.Position().Head
-	h.bus.pendingPerms.Add(3, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 3, ToolCallID: "tc"}))
-	h.bus.pendingPerms.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{RequestID: 5, ToolCallID: "tc"}))
-	h.bus.pendingPerms.Add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
-		marotte.PermissionNeededPayload{RequestID: 5, ToolCallID: "tc"}))
+	h.bus.pendingPerms.add(3, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil)
+	newest := requestIDOf(t, h.bus.pendingPerms.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil))
+	h.bus.pendingPerms.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
+		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil)
 
 	if !h.bus.PendingPermsWithdraw("c1", "tc") {
 		t.Fatal("PendingPermsWithdraw(c1, tc) = false, want true")
 	}
 	got := settledEvents(t, bufferedSince(h, head))
-	if len(got) != 1 || got[0].RequestID != 5 || got[0].SettledBy != marotte.SettledByMoot ||
+	if len(got) != 1 || got[0].RequestID != newest || got[0].SettledBy != marotte.SettledByMoot ||
 		got[0].Kind != marotte.DecisionKindPermission {
-		t.Fatalf("decision_settled = %+v, want one {permission, request 5, moot}", got)
+		t.Fatalf("decision_settled = %+v, want one {permission, ask %d, moot}", got, newest)
 	}
 	var left []int64
-	for _, e := range h.bus.pendingPerms.List("") {
+	for _, e := range h.bus.pendingPerms.list("") {
 		left = append(left, e.Payload.(marotte.PermissionNeededPayload).RequestID)
 	}
 	if len(left) != 2 {
-		t.Errorf("pending after withdraw = %v, want c1's round 3 and c2's 5", left)
+		t.Errorf("pending after withdraw = %v, want c1's older round and c2's ask", left)
 	}
 	if h.bus.PendingPermsWithdraw("c1", "other") {
 		t.Error("PendingPermsWithdraw(c1, other) = true for a tool call nothing asked about")
+	}
+}
+
+// A settled ask retracts its held push under the subject it was pushed under: a step's ask is
+// the run's, whichever chat's bridge carried it.
+func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		chatID  marotte.ChatID
+		payload any
+		want    marotte.PushSubject
+	}{
+		{"a chat's ask", "c1", marotte.PermissionNeededPayload{}, marotte.ChatSubject("c1")},
+		{"a step's ask on its parent chat", "c1", marotte.UserInputNeededPayload{RunID: "wf1"}, marotte.RunSubject("wf1")},
+		{"an ask on a parentless run's bridge", "run:wf2", marotte.ElicitationNeededPayload{}, marotte.RunSubject("wf2")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newTestChatStore()
+			fp := &recordingPush{sends: make(chan string, 4)}
+			h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+			cs.wire(h)
+			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.ServerEvent{Type: marotte.EventPermissionNeeded, ChatID: tc.chatID, Payload: tc.payload}, newFakeBridge()))
+			reply, ok := h.bus.TakePendingPerm(tc.chatID, askID, marotte.SettledByUser)
+			if !ok {
+				t.Fatal("TakePendingPerm refused a pending request")
+			}
+			if outcome, err := reply.Respond(t.Context(), nil); outcome != command.AnswerDelivered || err != nil {
+				t.Fatalf("Respond = (%v, %v), want (AnswerDelivered, nil)", outcome, err)
+			}
+			fp.mu.Lock()
+			got := slices.Clone(fp.retracted)
+			fp.mu.Unlock()
+			if len(got) != 1 || got[0] != tc.want {
+				t.Errorf("retracted %+v, want [%+v]", got, tc.want)
+			}
+		})
 	}
 }

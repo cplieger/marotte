@@ -29,18 +29,7 @@ const (
 // container whose memory.max is "max".
 type chatFileCap int64
 
-// unlimited reports whether no cap applies.
 func (c chatFileCap) unlimited() bool { return c <= 0 }
-
-// readBound is the maxBytes for atomicfile.ReadBoundedFile on a file measured at size. ReadBoundedFile has no
-// unlimited mode (maxBytes <= 0 refuses all), so an unlimited cap bounds by the measured size, keeping the
-// grow-during-read guard.
-func (c chatFileCap) readBound(size int64) int64 {
-	if c.unlimited() {
-		return size
-	}
-	return int64(c)
-}
 
 // resolveChatFileCap derives the cap from the container's memory limit and logs it with its signal. Host RAM is not
 // read: it is shared. No limit means no cap, since a refused write loses a turn (writeChat).
@@ -81,11 +70,6 @@ func parseMemLimit(raw string) int64 {
 		return 0
 	}
 	return n
-}
-
-// WithChatFileCap overrides the derived per-chat-file cap; n <= 0 is unlimited. Tests use a small cap.
-func WithChatFileCap(n int64) StoreOption {
-	return func(s *Store) { s.fileCap = chatFileCap(n) }
 }
 
 // errFileTooLarge reports a read refused on size. The streaming header paths wrap atomicfile.ErrFileTooLarge, so one

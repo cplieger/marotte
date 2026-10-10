@@ -1,11 +1,7 @@
 package marotte
 
-// Server events: the wire shapes broadcast over SSE (/api/events) +
-// per-type payloads. Event dispatch lives in agent/sse.go and the
-// per-method translation lives in agent/translate*.go.
-//
-// Payload structs live in events_payloads.go; this file contains the
-// envelope types, event-type constants, and working-label logic.
+// SSE (/api/events) envelope, event-type constants and working labels; payload structs live in
+// events_payloads.go, dispatch in agent/sse.go.
 
 // EventType identifies the kind of SSE event broadcast to clients.
 // Using a typed string instead of bare literals makes typos a compile
@@ -88,12 +84,9 @@ const (
 	// model-call limit while the model was asking for another tool. KAS never sends
 	// max_turn_requests for that stop, and a turn that finishes never ends on tool_use.
 	StopReasonToolUse StopReason = "tool_use"
-	// StopReasonUnterminated is marotte's OWN value, never KAS's: the entry log's
-	// store-open closer stamps it on a turn no process could have closed, and the
-	// merge's synthesized closer stamps it on a turn neither side closed. It is a
-	// member of this enum rather than a literal at the closer, because the value
-	// reaches the generated client decoder, which rejects a stop reason outside
-	// this union.
+	// StopReasonUnterminated is marotte's OWN value, never KAS's: the store-open closer and the
+	// merge's synthesized closer stamp it on a turn nobody closed. An enum member, not a literal,
+	// because the generated client decoder rejects a stop reason outside this union.
 	StopReasonUnterminated StopReason = "unterminated"
 )
 
@@ -107,18 +100,13 @@ const (
 	EventCodeReferences    EventType = "code_references"
 	EventCompactionStarted EventType = "compaction_started"
 	EventConnected         EventType = "connected"
-	// EventDecisionSettled retires an ask on every surface that did NOT answer
-	// it. The three *_needed events below are offered to every tab and to a
-	// watching run tab at once, while only the first answer is accepted, so
-	// something has to close the others — and it carries attribution, because a
-	// card that collapses for no stated reason reads as a lost click.
+	// EventDecisionSettled retires an ask on every surface that did NOT answer it: the *_needed
+	// events reach every tab and a watching run tab, only the first answer is accepted, and it
+	// carries attribution so a collapsing card does not read as a lost click.
 	EventDecisionSettled EventType = "decision_settled"
-	// EventDraftChanged carries a chat's parked composer state after a
-	// set_draft or set_attachments write, so a device that is NOT typing in that
-	// chat converges on it instead of holding whatever it saw last. Chat-scoped
-	// and deliberately its own event rather than a header field: it fires on a
-	// 600ms debounce while someone types, and chat_updated is re-rendered by
-	// every client.
+	// EventDraftChanged carries a chat's parked composer state after set_draft or set_attachments,
+	// so a device not typing in that chat converges. Its own event, not a header field: it fires
+	// on a 600ms debounce, and chat_updated is re-rendered by every client.
 	EventDraftChanged      EventType = "draft_changed"
 	EventError             EventType = "error"
 	EventElicitationNeeded EventType = "elicitation_needed"
@@ -139,6 +127,9 @@ const (
 	// staged writes are KAS's.
 	EventPermissionNeeded   EventType = "permission_needed"
 	EventPermissionsChanged EventType = "permissions_changed"
+	// EventNotification is the in-page twin of a Web Push: the page shows it while
+	// that chat or run is not on screen.
+	EventNotification EventType = "notification"
 	// EventPendingSnapshot is the whole pending set (permissions, run asks,
 	// steers, across every chat) as ONE frame on a v3 connect, stamped with the
 	// `pending` version. Possibly empty: an empty set is what clears a row that
@@ -197,20 +188,18 @@ const (
 	// EventSpecChanged says a spec directory's files changed on disk. One frame
 	// per coalescing window, workspace-global, payload names the directory.
 	EventSpecChanged EventType = "spec_changed"
-	// EventSpecApproved says a human approved one phase of a spec. Pure
-	// invalidation, workspace-global, payload names the directory: the client
-	// refetches that spec, exactly as forges_changed and subject_changed do.
-	//
-	// Deliberately NOT a reuse of EventSpecChanged. That one means the FILES
-	// moved and is coalesced workspace-globally by the watcher, and conflating
-	// the two would make an approval look like a document edit — which is the
-	// one thing the badge exists to tell apart.
+	// EventSpecApproved says a human approved one phase of a spec: pure invalidation,
+	// workspace-global, payload names the directory. Not EventSpecChanged, which means the FILES
+	// moved and is coalesced by the watcher; reusing it would make an approval look like an edit.
 	EventSpecApproved EventType = "spec_approved"
 	// EventSteerQueued says a steer reached KAS's buffer, and it is the only
 	// steering EVENT: whether the model then read it or it was dropped is the
 	// `steer` entry's own `state`, which arrives as entry_appended and is
 	// durable, where an event is not. A row the next prompt carries gets no entry.
 	EventSteerQueued EventType = "steer_queued"
+	// EventTangentMerged says a tangent's summary reached the chat it was forked from (as a
+	// prompt, or a queued follow-up when that chat was busy), on the TANGENT's chat id.
+	EventTangentMerged EventType = "tangent_merged"
 	// EventAgentNotice is a notice the AGENT produced (a workflow step or subagent reporting into
 	// the launching session), arriving on KAS's steering channel. Its own event rather than a
 	// steer_queued, because the composer's chip row speaks only of the user's outbound messages;
@@ -238,15 +227,11 @@ const (
 	EventTurnClosed    EventType = "turn_closed"
 )
 
-// labelRunning is the working label shared by the running-process kinds
-// (shell/execute commands, plain commands, and MCP tool calls).
 const labelRunning = "Running"
 
-// workingLabelByKind maps each tool kind with a fixed working label to that
-// label. Kinds whose label depends on runtime data (ToolKindExecute and
-// ToolKindShell incorporate the title) are handled in WorkingLabelForKind
-// directly; ToolKindOther and any unrecognized kind fall back to
-// WorkingLabelThinking. Keep this in sync with the ToolKind constants.
+// Kinds whose label depends on runtime data (ToolKindExecute and ToolKindShell incorporate the
+// title) are handled in WorkingLabelForKind directly; ToolKindOther and any unrecognized kind fall
+// back to WorkingLabelThinking. Keep this in sync with the ToolKind constants.
 var workingLabelByKind = map[ToolKind]string{
 	ToolKindRead:       "Reading",
 	ToolKindSearch:     "Searching",

@@ -195,9 +195,3 @@ function dismissButton(submit: SubmitFn): HTMLButtonElement {
   });
   return btn;
 }
-
-/** Reset module state for test isolation. Production never calls this. A NO-OP: this module holds
- *  no state; kept for `user-input.test.ts`'s import. */
-export function _resetForTest(): void {
-  // Nothing to reset.
-}

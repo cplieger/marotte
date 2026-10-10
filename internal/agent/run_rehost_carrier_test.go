@@ -22,9 +22,9 @@ func waitForRunCarrier(t *testing.T, h *Runtime, workflowID string) {
 	}
 }
 
-func unhostedRunInBubble(t *testing.T) (h *Runtime, utility, carrier *fakeBridge, gate chan struct{}) {
+func unhostedRunInBubble(t *testing.T) (h *Runtime, carrier *fakeBridge, gate chan struct{}) {
 	t.Helper()
-	h, _, utility = newTestHub()
+	h, _, utility := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	utility.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    parentlessRunList("wf_1"),
@@ -38,16 +38,16 @@ func unhostedRunInBubble(t *testing.T) (h *Runtime, utility, carrier *fakeBridge
 	gate = make(chan struct{})
 	carrier.startGate = gate
 	h.bridge.mgr.factory = func() ACPBridge { return carrier }
-	return h, utility, carrier, gate
+	return h, carrier, gate
 }
 
 func TestRehost_ConcurrentVerbsOnAnUnhostedRunLoadItOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, _, carrier, gate := unhostedRunInBubble(t)
+		h, carrier, gate := unhostedRunInBubble(t)
 
 		errs := make(chan error, 2)
-		go func() { errs <- h.runs.Pause(t.Context(), "wf_1") }()
-		go func() { errs <- h.runs.Pause(t.Context(), "wf_1") }()
+		go func() { errs <- h.runs.pause(t.Context(), "wf_1") }()
+		go func() { errs <- h.runs.pause(t.Context(), "wf_1") }()
 		// Both verbs are parked: one in the load, one on the host lock.
 		synctest.Wait()
 		if got := carrier.startCount(); got != 0 {
@@ -71,14 +71,14 @@ func TestRehost_ConcurrentVerbsOnAnUnhostedRunLoadItOnce(t *testing.T) {
 
 func TestRehost_AVerbThatGivesUpWaitingForTheHostDoesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, _, carrier, gate := unhostedRunInBubble(t)
+		h, carrier, gate := unhostedRunInBubble(t)
 
 		first := make(chan error, 1)
-		go func() { first <- h.runs.Pause(t.Context(), "wf_1") }()
+		go func() { first <- h.runs.pause(t.Context(), "wf_1") }()
 		synctest.Wait()
 		waiterCtx, giveUp := context.WithCancel(t.Context())
 		waiter := make(chan error, 1)
-		go func() { waiter <- h.runs.Pause(waiterCtx, "wf_1") }()
+		go func() { waiter <- h.runs.pause(waiterCtx, "wf_1") }()
 		synctest.Wait()
 		giveUp()
 		if err := <-waiter; !errors.Is(err, context.Canceled) {
@@ -109,11 +109,11 @@ func TestRehost_AVerbThatGivesUpWaitingForTheHostDoesNothing(t *testing.T) {
 
 func TestRehost_AnAbandonedLoadClosesItsCarrier(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, _, carrier, gate := unhostedRunInBubble(t)
+		h, carrier, gate := unhostedRunInBubble(t)
 
 		ctx, giveUp := context.WithCancel(t.Context())
 		abandoned := make(chan error, 1)
-		go func() { abandoned <- h.runs.Pause(ctx, "wf_1") }()
+		go func() { abandoned <- h.runs.pause(ctx, "wf_1") }()
 		synctest.Wait()
 		giveUp()
 		if err := <-abandoned; !errors.Is(err, context.Canceled) {
@@ -131,7 +131,7 @@ func TestRehost_AnAbandonedLoadClosesItsCarrier(t *testing.T) {
 
 		second := newFakeBridge()
 		h.bridge.mgr.factory = func() ACPBridge { return second }
-		if _, err := h.runs.Retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted")); err != nil {
+		if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted")); err != nil {
 			t.Fatalf("Retry after the abandoned carrier closed = %v, want nil", err)
 		}
 		if second.startCount() != 1 {
@@ -140,7 +140,7 @@ func TestRehost_AnAbandonedLoadClosesItsCarrier(t *testing.T) {
 		if countCalls(second, methodKiroWorkflowRetry) != 1 {
 			t.Errorf("calls on the fresh carrier = %v, want the retry", second.callLog())
 		}
-		h.coord.CloseBridge(t.Context(), runChatID("wf_1"), marotte.TurnOutcomeInterrupted)
+		h.coord.closeBridge(t.Context(), runChatID("wf_1"), marotte.TurnOutcomeInterrupted)
 	})
 }
 
@@ -165,10 +165,10 @@ func TestRehost_AChatOpenAVerbAbandonedStillSerializesTheNextVerb(t *testing.T) 
 
 		ctx, giveUp := context.WithCancel(t.Context())
 		abandoned := make(chan error, 1)
-		go func() { abandoned <- h.runs.Pause(ctx, "wf_1") }()
+		go func() { abandoned <- h.runs.pause(ctx, "wf_1") }()
 		synctest.Wait()
 		next := make(chan error, 1)
-		go func() { next <- h.runs.Pause(t.Context(), "wf_1") }()
+		go func() { next <- h.runs.pause(t.Context(), "wf_1") }()
 		synctest.Wait()
 		giveUp()
 		if err := <-abandoned; !errors.Is(err, context.Canceled) {
@@ -219,7 +219,7 @@ func TestCloseKeptCarrier_AVerbWaitsOutTheBoundsDecision(t *testing.T) {
 		go func() { verdict <- h.runs.closeKeptCarrier(runChatID("wf_1"), "wf_1", kept) }()
 		synctest.Wait()
 		resumed := make(chan error, 1)
-		go func() { resumed <- h.runs.Resume(t.Context(), "wf_1") }()
+		go func() { resumed <- h.runs.resume(t.Context(), "wf_1") }()
 		synctest.Wait()
 		close(inspecting)
 
@@ -247,7 +247,7 @@ func TestCloseStoppedBridge_SparesACarrierAVerbEnteredAfterTheFrame(t *testing.T
 		t.Fatalf("Setup: taking the run's host lock: %s", err)
 	}
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
+	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", "completed"))
 	h.runs.carriers.enter(kept)
 	unlock()
 	t.Cleanup(func() { h.runs.carriers.leave(kept) })
@@ -311,7 +311,7 @@ func TestRehost_AFailedLoadStopsItsCarrier(t *testing.T) {
 	carrier.loadErr = errors.New("kiro-cli is not available yet")
 	h.bridge.mgr.factory = func() ACPBridge { return carrier }
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
+	if err := h.runs.resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
 		t.Fatalf("Resume = %v, want errRunHostStart", err)
 	}
 	if !carrier.isStopped() {
@@ -319,14 +319,25 @@ func TestRehost_AFailedLoadStopsItsCarrier(t *testing.T) {
 	}
 }
 
+// slowStopBridge takes a moment to tear down, as kiro-cli does, so a Stop left running past the
+// failure's publication is still unfinished when the caller reads it.
+type slowStopBridge struct{ *fakeBridge }
+
+func (b *slowStopBridge) Stop() {
+	time.Sleep(50 * time.Millisecond)
+	b.fakeBridge.Stop()
+}
+
+// The failed generation is stopped before its failure publishes, so no caller sees an error while
+// its process lives on.
 func TestOpenBridge_AFailedSpawnStopsItsBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", nil)
 	failing := newFakeBridge()
 	failing.startErr = errors.New("kiro-cli is not available yet")
-	h.bridge.mgr.factory = func() ACPBridge { return failing }
+	h.bridge.mgr.factory = func() ACPBridge { return &slowStopBridge{fakeBridge: failing} }
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err == nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err == nil {
 		t.Fatal("OpenBridge = nil, want the spawn's failure")
 	}
 	if !failing.isStopped() {
@@ -347,10 +358,10 @@ func TestRehost_AFailedStarterLeavesTheCarrierToAVerbStillUsingIt(t *testing.T) 
 	h.bridge.mgr.factory = func() ACPBridge { return carrier }
 
 	paused := make(chan error, 1)
-	go func() { paused <- h.runs.Pause(t.Context(), "wf_1") }()
+	go func() { paused <- h.runs.pause(t.Context(), "wf_1") }()
 	waitForRunCarrier(t, h, "wf_1")
 	resumed := make(chan error, 1)
-	go func() { resumed <- h.runs.Resume(t.Context(), "wf_1") }()
+	go func() { resumed <- h.runs.resume(t.Context(), "wf_1") }()
 	close(gate)
 	waitForCall(t, carrier.fakeBridge, methodKiroWorkflowResume)
 

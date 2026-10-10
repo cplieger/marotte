@@ -83,11 +83,11 @@ func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridg
 
 func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, string) bool { return !d.startRefused }
 
-func (d *surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+func (*surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
 }
 
-func (d *surfaceDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
+func (*surfaceDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
 
 // onlyError fails when the run produced other than one error frame: a second frame
 // would mean two surfaces claiming one failure, which is what this file is about.
@@ -101,7 +101,6 @@ func (d *surfaceDeps) onlyError(t *testing.T) marotte.ErrorPayload {
 	return d.errors[0]
 }
 
-// surfaceBridge answers a prompt the way the deps dictate.
 type surfaceBridge struct{ deps *surfaceDeps }
 
 func (b *surfaceBridge) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
@@ -287,7 +286,7 @@ func TestRetryEmptyTurnPrompt_RespawnFailureNamesTheCause(t *testing.T) {
 	}
 }
 
-// TestPromptExits_CloseTheTurnThroughTheTurnEndRule: every prompt exit closes the turn CmdPrompt
+// TestPromptExits_CloseTheTurnThroughTheTurnEndRule: every prompt exit closes the turn cmdPrompt
 // opened through AbandonInFlightTurn, graded from the stop that ended it.
 func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 	cases := []struct {

@@ -20,8 +20,8 @@ const maxUtilityPrompts = 20
 // more per turn than a recycle.
 const maxUtilityPromptBytes = 64 * 1024
 
-// utilityAgent runs text-generation turns on the shared utility session. Its prompt counters and applied effort are
-// keyed to the session generation, so a restart underneath it (recycle, reset, idle cull) starts them fresh.
+// Its prompt counters and applied effort are keyed to the session generation, so a restart
+// underneath it (recycle, reset, idle cull) starts them fresh.
 type utilityAgent struct {
 	session *utilitySession
 	// currentEffort is the reasoning-effort level last applied to the live session (empty = model default).
@@ -40,7 +40,6 @@ type utilityAgent struct {
 	effortUnsupported bool
 }
 
-// newUtilityAgent binds an agent to its session.
 func newUtilityAgent(session *utilitySession) *utilityAgent {
 	return &utilityAgent{session: session}
 }

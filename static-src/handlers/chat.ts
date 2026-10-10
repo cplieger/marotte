@@ -7,6 +7,8 @@ import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
 import { parseRoute } from "../route-path.js";
 import { replaceRoute } from "../router.js";
+import { noteTangentMerged, noteTangentMergeFailed, reconcileMerges } from "../tangent-merge.js";
+import { forgetDeletedChat } from "../submit.js";
 
 // Defensive `=== undefined` guards: the wire decoder marks payloads
 // non-nullable but the test suite (and a malformed frame at runtime)
@@ -63,6 +65,7 @@ onSSE("chat_deleted", (_chatID, p) => {
   dropDecisions(p.id);
   forgetDeferredCue(p.id);
   dropComposerState(p.id);
+  forgetDeletedChat(p.id);
   removeChat(p.id);
   // Drop the chat's in-memory banner entries; persisted dismissals are not
   // pruned here since only the BannerEntry DOM objects need dropping.
@@ -74,4 +77,20 @@ onSSE("chat_deleted", (_chatID, p) => {
       console.warn("[handlers/chat] clearBannersForChat import failed", e);
     },
   );
+});
+
+onSSE("tangent_merged", (_chatID, p) => {
+  if (p !== undefined) {
+    noteTangentMerged(p.op_id, p.parent_chat_id);
+  }
+});
+
+onSSE("error", (_chatID, p) => {
+  if (p?.code === "tangent_merge_failed") {
+    noteTangentMergeFailed(p.op_id, p.message);
+  }
+});
+
+onSSE("connected", () => {
+  reconcileMerges();
 });

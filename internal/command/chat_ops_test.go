@@ -1,7 +1,7 @@
 package command
 
 // A teardown must not depend on the bridge being present: a never-prompted chat, or one whose
-// process is gone, still has permissions to clear and state to close.
+// process is gone, still has state to close.
 
 import (
 	"context"
@@ -11,20 +11,13 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// closeDeps records the teardown steps and hands out the bridge the test
-// scripts, including none at all.
 type closeDeps struct {
 	*benchDeps
-	bridge  Bridge
-	cleared []marotte.ChatID
-	closed  []marotte.ChatID
+	bridge Bridge
+	closed []marotte.ChatID
 }
 
 func (d *closeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
-
-func (d *closeDeps) ClearPendingPermsForChat(id marotte.ChatID) {
-	d.cleared = append(d.cleared, id)
-}
 
 func (d *closeDeps) CloseChatState(_ context.Context, id marotte.ChatID) {
 	d.closed = append(d.closed, id)
@@ -48,11 +41,8 @@ func (b *cancelBridge) Notify(_ context.Context, method string, _ any) error {
 func TestCloseChatTeardown_TearsDownAChatWithNoBridge(t *testing.T) {
 	deps := &closeDeps{benchDeps: newBenchDeps()}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
 
-	if len(deps.cleared) != 1 || deps.cleared[0] != "c1" {
-		t.Errorf("cleared permissions for %v, want exactly [c1]", deps.cleared)
-	}
 	if len(deps.closed) != 1 || deps.closed[0] != "c1" {
 		t.Errorf("closed state for %v, want exactly [c1]", deps.closed)
 	}
@@ -65,7 +55,7 @@ func TestCloseChatTeardown_CancelsTheTurnAndLogsNoFailure(t *testing.T) {
 	bridge := &cancelBridge{}
 	deps := &closeDeps{benchDeps: newBenchDeps(), bridge: bridge}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
 
 	if len(bridge.notified) != 1 || bridge.notified[0] != marotte.MethodCancel {
 		t.Errorf("bridge saw notifications %v, want exactly [%s]", bridge.notified, marotte.MethodCancel)
@@ -102,7 +92,7 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 		bridge := &stopOrderBridge{deps: deps}
 		deps.bridge = bridge
 
-		if _, err := CmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
+		if _, err := cmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
 			t.Fatalf("CmdCancel: %v", err)
 		}
 		if len(bridge.notified) != 1 || bridge.unrecorded != 0 {
@@ -115,7 +105,7 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 	t.Run("with no bridge, the respawn window", func(t *testing.T) {
 		deps := &closeDeps{benchDeps: newBenchDeps()}
 
-		if _, err := CmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
+		if _, err := cmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
 			t.Fatalf("CmdCancel: %v", err)
 		}
 		if len(deps.stops) != 1 || deps.stops[0] != "c1" {
@@ -131,7 +121,7 @@ func TestCloseChatTeardown_RecordsTheStopBeforeSignalling(t *testing.T) {
 	bridge := &stopOrderBridge{deps: deps}
 	deps.bridge = bridge
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
 
 	if len(bridge.notified) != 1 || bridge.unrecorded != 0 {
 		t.Errorf("notifications = %v with %d before the stop was recorded, want one after it", bridge.notified, bridge.unrecorded)

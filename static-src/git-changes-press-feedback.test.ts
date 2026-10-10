@@ -107,7 +107,6 @@ describe("the Changes tab", () => {
       repo: `web${String(seq)}`,
       is_repo: true,
       branch: "main",
-      remote: "https://example.invalid/web.git",
       ahead: 1,
       behind: 2,
       has_dirty: true,

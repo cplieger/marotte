@@ -12,8 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// fakeQueue is QueueAccess over one in-memory record, live while live is set; a
-// row whose id is in sending is one whose turn this process opened.
+// A row whose id is in sending is one whose turn this process opened.
 type fakeQueue struct {
 	chat    *marotte.Chat
 	sending map[string]bool
@@ -71,10 +70,10 @@ func TestQueuePrompt_AppendsWhileLive(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
 	att := marotte.Attachment{Path: "notes.md", Name: "notes.md"}
 
-	if _, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "then run the tests", "m-1", att)); err != nil {
+	if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "then run the tests", "m-1", att)); err != nil {
 		t.Fatalf("CmdQueuePrompt: %v", err)
 	}
-	if _, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "then run the tests", "m-1", att)); err != nil {
+	if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "then run the tests", "m-1", att)); err != nil {
 		t.Fatalf("CmdQueuePrompt repeat: %v", err)
 	}
 
@@ -92,10 +91,10 @@ func TestQueuePrompt_AppendsWhileLive(t *testing.T) {
 
 func TestQueuePrompt_AcceptsAnAttachmentOnlyRow(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
-	if _, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "", "m-1", marotte.Attachment{Path: "shot.png"})); err != nil {
+	if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "", "m-1", marotte.Attachment{Path: "shot.png"})); err != nil {
 		t.Fatalf("CmdQueuePrompt(attachment only): %v", err)
 	}
-	if _, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "  ", "m-2")); statusOf(err) != http.StatusBadRequest {
+	if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "  ", "m-2")); statusOf(err) != http.StatusBadRequest {
 		t.Errorf("CmdQueuePrompt(blank, no attachment) status = %d, want 400", statusOf(err))
 	}
 }
@@ -103,7 +102,7 @@ func TestQueuePrompt_AcceptsAnAttachmentOnlyRow(t *testing.T) {
 func TestQueuePrompt_IdleIsNoTurn(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}}
 
-	_, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "later", "m-1"))
+	_, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "later", "m-1"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonNoTurn {
 		t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonNoTurn)
@@ -123,10 +122,10 @@ func TestQueuePrompt_RefusesOverCap(t *testing.T) {
 		for i := range userCap - 1 {
 			q.chat.QueuedPrompts = append(q.chat.QueuedPrompts, marotte.QueuedPrompt{ID: "m-x" + string(rune('a'+i))})
 		}
-		if _, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "the last one", "m-last")); err != nil {
+		if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "the last one", "m-last")); err != nil {
 			t.Fatalf("CmdQueuePrompt below the cap: %v", err)
 		}
-		_, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "one more", "m-over"))
+		_, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "one more", "m-over"))
 		if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonFull {
 			t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonFull)
 		}
@@ -136,7 +135,7 @@ func TestQueuePrompt_RefusesOverCap(t *testing.T) {
 	})
 	t.Run("text", func(t *testing.T) {
 		q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
-		_, err := CmdQueuePrompt(t.Context(), q, queueReq(t, strings.Repeat("x", marotte.MaxDraftBytes+1), "m-1"))
+		_, err := cmdQueuePrompt(t.Context(), q, queueReq(t, strings.Repeat("x", marotte.MaxDraftBytes+1), "m-1"))
 		if statusOf(err) != http.StatusRequestEntityTooLarge {
 			t.Errorf("status = %d, want 413", statusOf(err))
 		}
@@ -147,7 +146,7 @@ func TestQueuePrompt_RefusesOverCap(t *testing.T) {
 		for i := range atts {
 			atts[i] = marotte.Attachment{Path: "a.txt", Name: "a.txt"}
 		}
-		_, err := CmdQueuePrompt(t.Context(), q, queueReq(t, "with files", "m-1", atts...))
+		_, err := cmdQueuePrompt(t.Context(), q, queueReq(t, "with files", "m-1", atts...))
 		if statusOf(err) != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", statusOf(err))
 		}
@@ -161,10 +160,10 @@ func unqueueReq(id string) *marotte.ClientCommand {
 func TestUnqueuePrompt_RemovesTheRowAndAnAbsentIDIsSuccess(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: []marotte.QueuedPrompt{{ID: "m-1", Text: "a"}, {ID: "m-2", Text: "b"}}}}
 
-	if _, err := CmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1")); err != nil {
+	if _, err := cmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1")); err != nil {
 		t.Fatalf("unqueue m-1: %v", err)
 	}
-	if _, err := CmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1")); err != nil {
+	if _, err := cmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1")); err != nil {
 		t.Errorf("unqueue of an absent row = %v, want success", err)
 	}
 
@@ -176,7 +175,7 @@ func TestUnqueuePrompt_RemovesTheRowAndAnAbsentIDIsSuccess(t *testing.T) {
 func TestUnqueuePrompt_ARowBeingSentIsConflict(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: []marotte.QueuedPrompt{{ID: "m-1", Text: "a"}}}, sending: map[string]bool{"m-1": true}}
 
-	_, err := CmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1"))
+	_, err := cmdUnqueuePrompt(t.Context(), unqueueRoles(q), unqueueReq("m-1"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonSending {
 		t.Errorf("unqueue of a sending row: status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonSending)
@@ -189,7 +188,7 @@ func TestSetInterruptMode_PersistsAndRejectsUnknown(t *testing.T) {
 		return &marotte.ClientCommand{ChatID: "c1", Payload: json.RawMessage(`{"mode":"` + mode + `"}`)}
 	}
 
-	if _, err := CmdSetInterruptMode(t.Context(), store, req("queue")); err != nil {
+	if _, err := cmdSetInterruptMode(t.Context(), store, req("queue")); err != nil {
 		t.Fatalf("set queue: %v", err)
 	}
 	c, ok := store.Get(t.Context(), "c1")
@@ -197,17 +196,41 @@ func TestSetInterruptMode_PersistsAndRejectsUnknown(t *testing.T) {
 		t.Fatalf("record = %+v, want an auto-created chat in queue mode", c)
 	}
 
-	if _, err := CmdSetInterruptMode(t.Context(), store, req("auto")); statusOf(err) != http.StatusBadRequest {
+	if _, err := cmdSetInterruptMode(t.Context(), store, req("auto")); statusOf(err) != http.StatusBadRequest {
 		t.Errorf("unknown mode status = %d, want 400", statusOf(err))
 	}
 	if c, _ := store.Get(t.Context(), "c1"); c.InterruptMode != marotte.InterruptQueue {
 		t.Errorf("an unknown mode changed the record to %q", c.InterruptMode)
 	}
 
-	if _, err := CmdSetInterruptMode(t.Context(), store, req("steer")); err != nil {
+	if _, err := cmdSetInterruptMode(t.Context(), store, req("steer")); err != nil {
 		t.Fatalf("set steer: %v", err)
 	}
 	if c, _ := store.Get(t.Context(), "c1"); c.InterruptMode != "" {
 		t.Errorf("steer stored as %q, want the empty default", c.InterruptMode)
+	}
+}
+
+func TestQueuePrompt_ALabelledRowIsSentWithItsLabel(t *testing.T) {
+	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
+	payload, err := json.Marshal(marotte.QueuePromptCommand{Text: "the findings", MessageID: "m-1", DisplayText: "Merging findings"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdQueuePrompt(t.Context(), q, &marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload}); err != nil {
+		t.Fatalf("CmdQueuePrompt: %v", err)
+	}
+	if got := q.chat.QueuedPrompts[0].Label; got != "Merging findings" {
+		t.Fatalf("queued row label = %q, want the label kept", got)
+	}
+
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+	roles := drainRoles(h, newStubSteerQueue())
+	roles.followups = q
+	drainAfterClose(t.Context(), roles, "c1", cleanClose, EndFacts{})
+	h.waitInflight(t)
+
+	if len(h.opened) != 1 || h.opened[0].Text != "the findings" || h.opened[0].Label != "Merging findings" {
+		t.Errorf("drained prompts = %+v, want the row sent with its text and label", h.opened)
 	}
 }

@@ -47,10 +47,8 @@ func newTestCache(ttl time.Duration) *listCache[[]string] {
 	return newListCache[[]string](ttl, semaphore.NewWeighted(maxListFills))
 }
 
-// testForge is the connection the cache-key cases address.
 const testForge = "github:github.com"
 
-// testKey is page of one repository, the scope every single-scope case shares.
 func testKey(page string) cacheKey {
 	return listKey(testForge, "v1.6f2f72", page, "")
 }
@@ -421,7 +419,6 @@ func (f *heldFill) fill(ctx context.Context) ([]string, error) {
 	return v, err
 }
 
-// getAsync starts a read of key and answers the channel its answer arrives on.
 func getAsync(t *testing.T, c *listCache[[]string], key cacheKey, fill func(context.Context) ([]string, error)) <-chan []string {
 	t.Helper()
 	out := make(chan []string, 1)
@@ -696,7 +693,7 @@ func TestManager_InvalidateDropsCachedListings(t *testing.T) {
 	// A sign-in or a disconnect decides which repositories are visible at all,
 	// and what the credential may do in each, so the previous account's
 	// listings and affordances must not survive it.
-	m.Invalidate()
+	m.invalidate()
 	read()
 
 	if asked, _, _ := core.calls(); len(asked) != 2*len(paths) {

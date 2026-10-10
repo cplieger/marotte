@@ -21,7 +21,6 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-pointer");
 });
 
-/** One hunk row as editor-conflict.ts builds it, inside the overlay wrapper whose padding the tier is sized against. */
 function mountRow(pointer: "fine" | "coarse"): {
   buttons: HTMLButtonElement[];
   suggest: HTMLButtonElement;

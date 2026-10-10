@@ -56,7 +56,7 @@ vi.mock("./store-load.js", () => ({
   confirmChatExists: vi.fn(),
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
-vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
+vi.mock("./submit.js", () => ({ submitPrompt: vi.fn(), submitLabelled: vi.fn() }));
 vi.mock("./skeleton.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Skeleton>()),
   chatSkeleton: vi.fn(() => document.createElement("div")),
@@ -88,7 +88,6 @@ vi.mock("./composer-state.js", () => ({
   dropComposerState: vi.fn(),
 }));
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
-vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
   // `paintPlaceholder` marks its host busy through this module; an absent export fails

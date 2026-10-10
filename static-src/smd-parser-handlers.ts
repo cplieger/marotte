@@ -77,10 +77,9 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
-/** Everything a delimiter row may contain. One character outside this set rules the line out,
- *  which is what bounds the held candidate to two lines. Must stay a superset of what
- *  `is_delimiter_row` accepts, or a row the test would take never reaches it and the whole table
- *  is lost. */
+/** One character outside this set rules the line out, which is what bounds the held candidate to two
+ *  lines. Must stay a superset of what `is_delimiter_row` accepts, or a row the test would take
+ *  never reaches it and the whole table is lost. */
 const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
 
 function is_hex_digit(cc: number): boolean {
@@ -609,7 +608,7 @@ function is_blank(s: string): boolean {
 
 /** The row and cell pushes here are unchecked because the `|` arm in `handleRootContext`
  *  reserves room for all three table tokens before it opens the table. */
-export function handleTableRow(p: Parser, char: string, _pending_with_char: string): boolean {
+export function handleTableRow(p: Parser, char: string): boolean {
   switch (p.pending) {
     case "":
       return false;
@@ -643,7 +642,7 @@ export function handleTableRow(p: Parser, char: string, _pending_with_char: stri
   }
 }
 
-export function handleTableCell(p: Parser, char: string, _pending_with_char: string): boolean {
+export function handleTableCell(p: Parser, char: string): boolean {
   if (p.pending === "|") {
     add_text(p);
     end_token(p);
@@ -1510,7 +1509,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         if (cell_idx !== -1) {
           add_text(p);
           end_tokens_to_len(p, cell_idx);
-          return handleTableCell(p, char, pending_with_char);
+          return handleTableCell(p, char);
         }
       }
       break;

@@ -2,52 +2,46 @@
 // which call, why, and how KAS resolves each one. A map literal could state only the keys sent,
 // not:
 //
-//   - which CALL carries a key (initialize, or session/new and session/load); a key on the wrong
-//
-// door silently resolves to its absent default;
+//   - which CALL carries a key (initialize, session/new and session/load, or session/prompt); a
+//     key on the wrong door silently resolves to its absent default;
 //   - how KAS RESOLVES it (a capability compared against true versus a setting read through
-//
-// isSettingEnabled);
+//     isSettingEnabled);
 //   - whether an ABSENT key resolves TRUE (semanticReview);
 //   - that a key is deliberately WITHHELD.
 //
-// table.go is the record; Capabilities and SessionMeta are its projections and the whole exported
-// surface.
+// table.go is the record; Capabilities, SessionMeta, ChildEnv and PromptMeta are its projections
+// and the whole exported surface.
 package kascap
 
-// door names the ACP call that carries a capability key. KAS decides it: the connection door is
-// read once per subprocess, the session door once per session.
+// KAS decides it: the connection door is read once per subprocess, the session door once per
+// session, the prompt door once per prompt. The zero value is deliberately not a door: a row
+// that forgets to declare one fails TestDeclIsWellFormed rather than default onto a door.
 type door string
 
 const (
-	// doorUnset is the zero value, and it is deliberately not a valid door: a
-	// row that forgets to declare one must fail a well-formedness test rather
-	// than default silently onto the connection door.
-	doorUnset door = ""
 	// doorConnection is the initialize handshake, sent once per kiro-cli
 	// subprocess before any session exists.
 	doorConnection door = "connection"
-	// doorSession is the per-session door, sent on BOTH session/new and
-	// session/load. Both, or a resumed chat quietly gets a different agent
-	// from a fresh one: KAS resolves a session key from the call's own _meta
-	// first and falls back to the value persisted at creation, so a session
-	// created before a key existed never gains it on load unless the client
-	// sends it there too.
+	// doorSession is the per-session door, sent on BOTH session/new and session/load. Both, or a
+	// resumed chat quietly gets a different agent from a fresh one: KAS resolves a session key from
+	// the call's own _meta first and falls back to the value persisted at creation, so a session
+	// created before a key existed never gains it on load unless the client sends it there too.
 	doorSession door = "session"
 	// doorEnvironment is the kiro-cli child process environment, fixed at
 	// spawn. It carries the KIRO_FEATURE_* overrides KAS's env provider reads
 	// ahead of the experiment service, and the KIRO_DISABLE_* switches. A row on
-	// it uses resolverEnv and its key is the variable's whole name.
+	// it uses resolverEnv (or resolverEnvJSON) and its key is the variable's whole name.
 	doorEnvironment door = "environment"
+	// doorPrompt is session/prompt's _meta.kiro, sent per prompt. Its rows read a Prompt through
+	// promptGate, never a Spawn.
+	doorPrompt door = "prompt"
 )
 
 // resolver is how KAS reads a key, which decides where the key sits in the payload and what its
-// value must look like.
+// value must look like. The zero value is not a resolver.
 type resolver string
 
 const (
-	// resolverUnset is the zero value and is not a valid resolver.
-	resolverUnset resolver = ""
 	// resolverCapability is a key at the TOP level of _meta.kiro that KAS
 	// tests for truth directly (resolveCapabilities does `=== true`; a few
 	// sites read it for truthiness). It is not a settings entry and does not
@@ -68,13 +62,22 @@ const (
 	// field by field rather than through isSettingEnabled, so its value is not
 	// the {"enabled": …} object. memory ({mode, reflection}) is the instance.
 	resolverSettingObject resolver = "setting-object"
-	// resolverEnv is a child-environment variable. KAS's env provider accepts
-	// only the strings "true" and "false" (anything else warns and is ignored),
-	// so a sent row's value is one of those.
+	// resolverEnum is a key at the top level of _meta.kiro whose value is a string KAS maps onto
+	// its own id set (outputStyle, shellType), so a bool there resolves to the default.
+	resolverEnum resolver = "enum"
+	// resolverText is a top-level key whose value is free text KAS stores verbatim (displayText).
+	resolverText resolver = "text"
+	// resolverEnumList is a top-level key whose value is an array of such ids. policyPreset is the
+	// instance: KAS throws on a non-array and validatePresetIds on an unknown id.
+	resolverEnumList resolver = "enum-list"
+	// KAS's env provider accepts only the strings "true" and "false" (anything else warns and is
+	// ignored), so a sent row's value is one of those.
 	resolverEnv resolver = "env"
+	// resolverEnvJSON is a KIRO_FEATURE_*_CONFIG arm, which KAS JSON-parses ahead of its experiment's
+	// config (not through the env provider), so a sent value is a JSON object string.
+	resolverEnvJSON resolver = "env-json"
 )
 
-// inSettings reports whether a resolver's key lands under _meta.kiro.settings.
 func inSettings(r resolver) bool { return r == resolverSetting || r == resolverSettingObject }
 
 // Spawn carries the per-bridge facts the gated rows read. Every field is a
@@ -89,10 +92,13 @@ type Spawn struct {
 	// spec's clarifying questions first. Value-gated, always sent: on load KAS
 	// falls back to the persisted value when the key is absent.
 	SpecPlan string
-	// WorkValidation and InfraSafetyMonitor are "", "on" or "off". Empty
-	// withholds the key so kiro-cli's own experiment decides.
+	// WorkValidation, InfraSafetyMonitor, AutoRouting and AutoDelegation are
+	// "", "on" or "off". Empty withholds the key so kiro-cli's own experiment
+	// decides.
 	WorkValidation     string
 	InfraSafetyMonitor string
+	AutoRouting        string
+	AutoDelegation     string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile).
 	// EMPTY means the Custom profile, so the key is withheld. KAS re-reads the ids on session/new
 	// and session/load and persists neither, so both doors must resolve from this one field.
@@ -104,6 +110,8 @@ type Spawn struct {
 	// behind the secretStorage capability. See that row's Because: declaring
 	// the capability without a store is worse than declining it.
 	SecretStorage bool
+	// ConfigurationState declares configurationState; set by the utility bridge only.
+	ConfigurationState bool
 	// Hooks is whether this bridge opts into KAS's v2 hook engine.
 	Hooks bool
 	// Knowledge gates TWO rows, the `knowledge` capability and the `knowledge`
@@ -136,18 +144,22 @@ type Spawn struct {
 	DisableTelemetry bool
 }
 
-// decl is one capability key marotte can put on the wire, with everything a
-// reader needs to judge it in one place.
+// Prompt carries the per-prompt facts the prompt door's rows read.
+type Prompt struct {
+	// OutputStyle is the chosen output style id; empty is KAS's default and withholds the key.
+	OutputStyle string
+	// StepMessage is the user's words when the prompt is a message to a paused run step rather than
+	// a chat prompt; empty for a chat prompt.
+	StepMessage string
+	// Label is a chat prompt's display label (PromptCommand.DisplayText); empty for a typed one.
+	Label string
+}
+
 type decl struct {
 	// key is the wire key, unqualified. A resolverSetting row's key is its
 	// name inside _meta.kiro.settings, not a dotted path, because the
 	// resolver already says which container it lands in.
 	key string
-
-	// because is why marotte sends or withholds this key: what it buys, what breaks without it,
-	// where the handler lives. Mandatory (TestEveryDeclHasABecause); one that restates the key
-	// counts as missing.
-	because string
 
 	// value is the wire value for an ungated row. Set explicitly on every such
 	// row rather than derived from the resolver, so the table never sends a
@@ -160,24 +172,21 @@ type decl struct {
 	// when enabled.
 	gate func(*Spawn) (value any, present bool)
 
+	// promptGate is gate for a doorPrompt row, the only door decided per prompt rather than per
+	// spawn.
+	promptGate func(*Prompt) (value any, present bool)
+
 	// door is the call that carries this key.
 	door door
 
 	// resolver is how KAS reads it, which also decides where it sits.
 	resolver resolver
 
-	// absentTrue records that KAS resolves an ABSENT key to TRUE.
-	//
-	// It inverts the reading of send: on such a row, NOT sending the
-	// key is what enables the feature, and sending {"enabled": false} is what
-	// turns it off. semanticReview is the instance.
-	absentTrue bool
-
 	// send is whether marotte puts this key on the wire at all.
 	//
 	// A send:false row is a DECLARATION that marotte deliberately withholds a
 	// key, which is exactly what a map literal cannot express: a literal has no
-	// row for a key it omits. Such a row must say why in because, which
-	// TestNoSendWithoutReason enforces.
+	// row for a key it omits. Such a row must say why in table_because_test.go,
+	// which TestNoSendWithoutReason enforces.
 	send bool
 }

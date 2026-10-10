@@ -161,13 +161,11 @@ export function wireSearchKeys(
   });
 }
 
-/** What a consumer's `query` receives. */
 interface SearchQueryContext {
   caseSensitive: boolean;
   signal: AbortSignal;
 }
 
-/** The parts the shell built, handed to `compose` for arrangement. */
 interface SearchShellParts {
   input: HTMLInputElement;
   /** Present only when `matchCase` was asked for. */
@@ -224,8 +222,6 @@ export interface SearchShellSpec<R> {
 export interface SearchShell {
   readonly region: HTMLElement;
   readonly input: HTMLInputElement;
-  readonly note: HTMLElement | null;
-  readonly caseButton: HTMLButtonElement | null;
   readonly caseSensitive: boolean;
   /** The query text, trimmed of nothing — a trailing space is a real query. */
   readonly value: string;
@@ -366,8 +362,6 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
   return {
     region,
     input,
-    note,
-    caseButton,
     get caseSensitive(): boolean {
       return caseSensitive;
     },

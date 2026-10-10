@@ -13,7 +13,6 @@ import (
 // Model lives on the Chat, so a footer reading the current model would relabel every past turn on a switch. The
 // value is latched at turn start and stamped on turn_close.
 
-// turnClosedModel returns the last turn_closed frame's model and whether the field was present.
 func turnClosedModel(t *testing.T, h *Runtime) (model string, present bool) {
 	t.Helper()
 	for _, e := range bufferedSince(h, 0) {
@@ -42,7 +41,6 @@ func turnClosedModel(t *testing.T, h *Runtime) (model string, present bool) {
 	return "", false
 }
 
-// closeModel returns the model on the chat's one turn_close.
 func closeModel(t *testing.T, cs *testChatStore, chatID marotte.ChatID) string {
 	t.Helper()
 	closes := closesOf(t, logOf(t, cs, chatID))
@@ -63,7 +61,7 @@ func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 	}
 
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", newChunkMsg("hello"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("hello"))
 	endTurn(t, h, "c1", id)
 
 	// Persisted: turn_closed is not replayed, so a live-only value would vanish on reload.
@@ -86,7 +84,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 	}
 
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", newChunkMsg("hello"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("hello"))
 	endTurn(t, h, "c1", id)
 
 	if got := closeModel(t, cs, "c1"); got != "" {
@@ -111,14 +109,14 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	}
 
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", newChunkMsg("half an answer"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("half an answer"))
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model = "opus-4"
 		return true
 	}); err != nil {
 		t.Fatalf("switch model: %v", err)
 	}
-	h.translateACPEvent("c1", newChunkMsg(" continued"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg(" continued"))
 	endTurn(t, h, "c1", id)
 
 	if got := closeModel(t, cs, "c1"); got != "sonnet-4" {
@@ -164,7 +162,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 			c.Model, c.PendingModel)
 	}
 
-	h.translateACPEvent("c1", newChunkMsg("the previous model's answer"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("the previous model's answer"))
 	close(unblock)
 	<-done
 
@@ -214,7 +212,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	}
 
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.translateACPEvent("c1", newChunkMsg("the model got this far"))
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("the model got this far"))
 	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
 
 	if got := closeModel(t, cs, "c1"); got != "sonnet-4" {

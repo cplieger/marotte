@@ -2,9 +2,9 @@ package command
 
 import "unicode/utf8"
 
-// TruncateRunes truncates s to at most n runes, returning a valid
+// truncateRunes truncates s to at most n runes, returning a valid
 // byte-prefix of s (preserving original bytes, not re-encoding).
-func TruncateRunes(s string, n int) string {
+func truncateRunes(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}

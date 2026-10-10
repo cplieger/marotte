@@ -57,9 +57,8 @@ afterEach(() => {
 const LONG_PATH = "internal/agent/streaming_tools_translation_handlers.go";
 const SHORT_PATH = "internal/agent/main.go";
 
-/** Wait for Chromium to decide the mounted card is near the viewport. Three
- *  lifecycle passes, copied from tool-group-height.test.ts — a count of passes
- *  rather than a wall-clock wait, so load does not move it. */
+/** Three lifecycle passes, copied from tool-group-height.test.ts — a count of passes rather than a
+ *  wall-clock wait, so load does not move it. */
 async function rendered(): Promise<void> {
   for (let i = 0; i < 3; i++) {
     await new Promise<void>((resolve) => {
@@ -70,8 +69,6 @@ async function rendered(): Promise<void> {
   }
 }
 
-/** A settled read card carrying `path`, mounted and RENDERED, with its chip and
- *  the span holding the name. */
 async function mount(path: string): Promise<{ chip: HTMLElement; name: HTMLElement }> {
   document.documentElement.dataset["pointer"] = "fine";
   const card = buildToolCard({

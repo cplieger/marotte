@@ -87,7 +87,6 @@ function runsSeen(tab: Tab): number {
   return tab.received.filter((m) => m.type === "revalidate_run").length;
 }
 
-/** The contexts the host's runs handed a tab, in order. */
 function runContexts(tab: Tab) {
   return tab.received.flatMap((m) => (m.type === "revalidate_run" ? [m.ctx] : []));
 }

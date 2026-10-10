@@ -9,8 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// seedConfig writes a config.json into a fresh dir and returns it. An empty body
-// leaves the volume with no file at all, which is the fresh-install state.
+// An empty body leaves the volume with no file at all, which is the fresh-install state.
 func seedConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -22,7 +21,6 @@ func seedConfig(t *testing.T, body string) string {
 	return dir
 }
 
-// prefsOf snapshots the service's live preference map.
 func prefsOf(s *Service) map[marotte.PushKind]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

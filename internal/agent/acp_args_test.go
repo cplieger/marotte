@@ -17,7 +17,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	cs.wire(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	opts := br.lastStartOpts()
@@ -60,7 +60,7 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	cs.wire(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if opts := br.lastStartOpts(); opts != nil && len(opts.ExtraArgs) != 0 {

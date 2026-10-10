@@ -67,7 +67,6 @@ function session(id: string, over: Partial<Session> = {}): Session {
   return { ...makeSession({ id, name: id }), ...over };
 }
 
-/** A sealed entry of any kind at `seq`. `lane` absent is `""`, the transcript's own lane. */
 function sealed(
   turnID: string,
   at: number,
@@ -140,13 +139,11 @@ function settled(
   return s;
 }
 
-/** One prompt-and-reply turn, settled. */
 function oneTurn(id: string, reply: string, n = 1): Session {
   const t = `${id}-t1`;
   return settled(id, [[turnOpen(t, n), textEntry(t, 1, reply), turnClose(t, 2)]]);
 }
 
-/** Mount a set of chats and activate the first. Each test owns its chats. */
 function seed(...sessions: Session[]): void {
   store.setSessions(sessions);
   const first = sessions[0];

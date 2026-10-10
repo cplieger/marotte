@@ -8,7 +8,6 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
-/** A settled tool card, as the group's DOM sees it. */
 function memberCard(i: number): HTMLElement {
   const call = document.createElement("div");
   call.className = "tool-call";

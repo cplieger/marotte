@@ -2,8 +2,7 @@
 
 import { join } from "@cplieger/keyenc";
 
-/** Where the last painted signature is recorded. Distinct from `reconcile`'s
- *  `data-reconcile-key`, so a reconciled row can carry both. */
+/** Distinct from `reconcile`'s `data-reconcile-key`, so a reconciled row can carry both. */
 const SIG_ATTR = "data-sig";
 
 /** Replace `host`'s children with `build()`'s output when `parts` differ from the last call's.

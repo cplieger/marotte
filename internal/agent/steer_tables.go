@@ -79,7 +79,6 @@ const (
 	cFlush
 )
 
-// rowRule is a row cell, applied to a row the event concerns.
 type rowRule uint8
 
 const (
@@ -91,7 +90,7 @@ const (
 	rDeleted
 	rDiscarded
 	rCollect
-	// rResubmit deletes the target (or consumes a read one, 409); a kept row is read if the barrier shows it, else joins the new probe.
+	// A kept row is read if the barrier shows it, else joins the new probe.
 	rResubmit
 	rJoinProbe
 	rRoute

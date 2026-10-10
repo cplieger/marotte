@@ -6,8 +6,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// statusFailures drives one _kiro/mcp/status frame carrying a single failed
-// server and answers the RecordInitFailure calls it produced.
 func statusFailures(t *testing.T, server map[string]any) []mcpFailure {
 	t.Helper()
 	deps, _ := newEventCaptureDeps()

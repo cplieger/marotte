@@ -59,8 +59,8 @@ func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 		{
 			name: "fs_write_marks_the_spec_dir_and_not_a_source_file",
 			run: func(t *testing.T, h *Runtime, _ string) {
-				h.inbound.respondFSWrite(t.Context(), "c1", fsWriteMsg(t, 1, "src/a.go"))
-				h.inbound.respondFSWrite(t.Context(), "c1", fsWriteMsg(t, 2, ".kiro/specs/x/tasks.md"))
+				h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), fsWriteMsg(t, 1, "src/a.go"))
+				h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), fsWriteMsg(t, 2, ".kiro/specs/x/tasks.md"))
 			},
 			want: ".kiro/specs/x",
 		},
@@ -76,25 +76,25 @@ func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 						t.Fatalf("Setup: write %s: %v", p, err)
 					}
 				}
-				h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "src/b.go"))
-				h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 2, methodKiroFSDelete, ".kiro/specs/x/tasks.meta.json"))
+				h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSDelete, "src/b.go"))
+				h.inbound.respondKiroFSDelete(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 2, methodKiroFSDelete, ".kiro/specs/x/tasks.meta.json"))
 			},
 			want: ".kiro/specs/x",
 		},
 		{
 			name: "phase_checkpoint_absolute_path",
 			run: func(t *testing.T, h *Runtime, work string) {
-				h.translateACPEvent("c1", checkpointMsg(t, filepath.Join(t.TempDir(), ".kiro/specs/elsewhere/design.md")))
-				h.translateACPEvent("c1", checkpointMsg(t, filepath.Join(work, "myrepo/.kiro/specs/y/design.md")))
+				h.translateACPEvent("c1", h.originOf("c1"), checkpointMsg(t, filepath.Join(t.TempDir(), ".kiro/specs/elsewhere/design.md")))
+				h.translateACPEvent("c1", h.originOf("c1"), checkpointMsg(t, filepath.Join(work, "myrepo/.kiro/specs/y/design.md")))
 			},
 			want: "myrepo/.kiro/specs/y",
 		},
 		{
 			name: "phase_checkpoint_cwd_relative_path",
 			run: func(t *testing.T, h *Runtime, _ string) {
-				h.translateACPEvent("c1", checkpointMsg(t, "../outside/.kiro/specs/z/tasks.md"))
-				h.translateACPEvent("c1", checkpointMsg(t, "src/main.go"))
-				h.translateACPEvent("c1", checkpointMsg(t, ".kiro/specs/z/tasks.md"))
+				h.translateACPEvent("c1", h.originOf("c1"), checkpointMsg(t, "../outside/.kiro/specs/z/tasks.md"))
+				h.translateACPEvent("c1", h.originOf("c1"), checkpointMsg(t, "src/main.go"))
+				h.translateACPEvent("c1", h.originOf("c1"), checkpointMsg(t, ".kiro/specs/z/tasks.md"))
 			},
 			want: ".kiro/specs/z",
 		},
@@ -122,8 +122,8 @@ func TestSpecProducers_ARefusedWriteMarksNothing(t *testing.T) {
 	work := t.TempDir()
 	h, _ := hubForFSTest(t, work)
 	dirs := specRecorder(h)
-	h.inbound.respondFSWrite(t.Context(), "c1", fsWriteMsg(t, 1, "../.kiro/specs/x/tasks.md"))
-	h.inbound.respondFSWrite(t.Context(), "c1", fsWriteMsg(t, 2, ".kiro/specs/ok/tasks.md"))
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), fsWriteMsg(t, 1, "../.kiro/specs/x/tasks.md"))
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), fsWriteMsg(t, 2, ".kiro/specs/ok/tasks.md"))
 	if got := awaitSpecMark(t, dirs); got != ".kiro/specs/ok" {
 		t.Errorf("spec mark = %q, want .kiro/specs/ok", got)
 	}

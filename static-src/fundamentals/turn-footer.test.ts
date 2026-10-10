@@ -897,6 +897,17 @@ describe("every reason a footer is earned paints something", () => {
     recoveries: { d: { recoveries: ["empty"] }, earns: false },
     steering: { d: { steering: ["file:///workspace/.kiro/steering/a.md"] }, earns: false },
     engineErrorClass: { d: { engineErrorClass: "ModelOverloaded" }, earns: false },
+    // Panel-only: a breakdown alone does not earn a footer.
+    contextBreakdown: {
+      d: {
+        contextBreakdown: {
+          total_chars: 900,
+          model_calls: 1,
+          categories: [{ key: "history", chars: 900, percent: 100 }],
+        },
+      },
+      earns: false,
+    },
   };
 
   it("holds for a footer BUILT from that reason", () => {
@@ -1078,6 +1089,13 @@ const FIELD_PROBES = {
   recoveries: { recoveries: ["streamError"] },
   steering: { steering: ["file:///workspace/.kiro/steering/b.md"] },
   engineErrorClass: { engineErrorClass: "ModelOverloaded" },
+  contextBreakdown: {
+    contextBreakdown: {
+      total_chars: 900,
+      model_calls: 1,
+      categories: [{ key: "history", chars: 900, percent: 100 }],
+    },
+  },
 } satisfies Record<keyof TurnSummaryData, Partial<TurnSummaryData>>;
 
 /** The fields a single-field probe can observe in the panel: `commands` and `reads` render in the
@@ -1101,7 +1119,77 @@ const RENDERED_FIELDS = [
   "recoveries",
   "steering",
   "engineErrorClass",
+  "contextBreakdown",
 ] as const satisfies readonly (keyof typeof FIELD_PROBES)[];
+
+describe("the panel's context breakdown", () => {
+  const breakdown = {
+    total_chars: 9000,
+    model_calls: 2,
+    compacted: true,
+    media: { images: 1, image_bytes: 10, documents: 0, document_bytes: 0 },
+    categories: [
+      {
+        key: "history",
+        chars: 5000,
+        percent: 55.6,
+        parts: [
+          { key: "assistant", chars: 3500 },
+          { key: "user", chars: 1000 },
+        ],
+      },
+      {
+        key: "steering",
+        chars: 3000,
+        percent: 33.3,
+        items: [{ name: "<b>go.md</b>", chars: 2000, percent: 22, inclusion: "fileMatch" }],
+        omitted_count: 4,
+        omitted_chars: 120,
+      },
+      { key: "futureCategory", chars: 1000, percent: 11.1 },
+    ],
+  };
+
+  it("states the request's size and each category's share under Context, beside the steering added", () => {
+    const el = buildTurnFooter({
+      steering: ["file:///elsewhere/a.md"],
+      contextBreakdown: breakdown,
+    });
+    // A disclosed category's value is its summary line; the items sit behind it.
+    const rowsShown = [...panel(el).querySelectorAll(".turn-info-row")].map((r) => [
+      r.querySelector(".turn-info-label")?.textContent ?? "",
+      (r.querySelector(".turn-info-value summary") ?? r.querySelector(".turn-info-value"))
+        ?.textContent ?? "",
+    ]);
+    expect(rowsShown).toEqual([
+      ["Steering added", "a.md"],
+      ["Last request", "9,000 characters over 2 model calls \u00b7 compacted \u00b7 1 image"],
+      ["Conversation", "56% \u00b7 5,000 characters"],
+      ["Steering", "33% \u00b7 3,000 characters"],
+      ["futureCategory", "11% \u00b7 1,000 characters"],
+    ]);
+  });
+
+  it("discloses a category's parts, top items and the rest it left out", () => {
+    const el = buildTurnFooter({ contextBreakdown: breakdown });
+    const details = [
+      ...panel(el).querySelectorAll<HTMLDetailsElement>("details.ctx-breakdown-category"),
+    ];
+    expect(details).toHaveLength(2);
+    expect(details[0]?.open).toBe(false);
+    const lines = (d: HTMLDetailsElement | undefined): string[] =>
+      [...(d?.querySelectorAll(".ctx-breakdown-items > li") ?? [])].map(
+        (li) => li.textContent ?? "",
+      );
+    expect(lines(details[0])).toEqual(["replies 3,500 \u00b7 your messages 1,000"]);
+    expect(lines(details[1])).toEqual(["<b>go.md</b>fileMatch22%", "4 more, 120 characters"]);
+    expect(details[1]?.querySelector("b")).toBeNull();
+  });
+
+  it("withholds the rows on a turn KAS measured nothing for", () => {
+    expect(sections(buildTurnFooter({ elapsedMs: 1000 }))).not.toContain("Context");
+  });
+});
 
 describe("the panel states the turn's KAS facts", () => {
   it("tallies the turn's asks in a fixed order, and withholds the section without one", () => {

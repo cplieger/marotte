@@ -27,11 +27,11 @@ func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil, n
 
 func TestRingBuffer(t *testing.T) {
 	r := newByteRing(10)
-	r.Write([]byte("hello"))
+	r.write([]byte("hello"))
 	if r.String() != "hello" {
 		t.Errorf("got %q, want %q", r.String(), "hello")
 	}
-	r.Write([]byte(" world!"))
+	r.write([]byte(" world!"))
 	got := r.String()
 	if len(got) > 10 {
 		t.Errorf("buffer exceeded limit: len=%d", len(got))
@@ -44,7 +44,7 @@ func TestRingBuffer(t *testing.T) {
 
 func TestRingBufferUTF8(t *testing.T) {
 	r := newByteRing(8)
-	r.Write([]byte("aaaaaé"))
+	r.write([]byte("aaaaaé"))
 	got := r.String()
 	if len(got) > 8 {
 		t.Errorf("buffer exceeded limit: len=%d, content=%q", len(got), got)
@@ -68,11 +68,11 @@ func TestRingBuffer_StoresBoundedByteCount(t *testing.T) {
 	if got := len(r.Bytes()); got != 0 {
 		t.Errorf("empty byteRing stored bytes = %d, want 0", got)
 	}
-	r.Write([]byte("hello"))
+	r.write([]byte("hello"))
 	if got := len(r.Bytes()); got != 5 {
 		t.Errorf("byteRing stored bytes after 'hello' = %d, want 5", got)
 	}
-	r.Write([]byte(" world, this is long"))
+	r.write([]byte(" world, this is long"))
 	if got := len(r.Bytes()); got > 20 {
 		t.Errorf("byteRing stored bytes = %d, exceeds limit 20", got)
 	}
@@ -130,7 +130,7 @@ func BenchmarkByteRing_Write(b *testing.B) {
 				b.SetBytes(int64(ws))
 				b.ResetTimer()
 				for b.Loop() {
-					r.Write(data)
+					r.write(data)
 				}
 			})
 		}
@@ -144,7 +144,7 @@ func FuzzByteRing_WriteRead(f *testing.F) {
 	f.Fuzz(func(t *testing.T, capRaw uint16, data []byte) {
 		cap := int(capRaw)%512 + 1
 		r := newByteRing(cap)
-		r.Write(data)
+		r.write(data)
 		out := r.Bytes()
 		if len(out) > cap {
 			t.Fatalf("Bytes() len %d exceeds capacity %d", len(out), cap)
@@ -183,7 +183,7 @@ func TestAgentTerminals_Release(t *testing.T) {
 	at.terms["t2"] = newAgentTerminal(nil, "c1", 64)
 	at.byChatID["c1"] = []string{"t1", "t2"}
 
-	term, ok := at.release("t1")
+	term, ok := at.release("c1", "t1")
 	if !ok || term == nil || term.chatID != "c1" {
 		t.Fatalf("release(t1) = %v, %v; want the t1 terminal, true", term, ok)
 	}
@@ -194,7 +194,7 @@ func TestAgentTerminals_Release(t *testing.T) {
 		t.Errorf("byChatID[c1] = %v, want [t2] (only t1 should be dropped)", got)
 	}
 
-	if gotTerm, gotOK := at.release("nope"); gotOK || gotTerm != nil {
+	if gotTerm, gotOK := at.release("c1", "nope"); gotOK || gotTerm != nil {
 		t.Errorf("release(unknown) = %v, %v; want nil, false", gotTerm, gotOK)
 	}
 	if len(at.terms) != 1 {
@@ -202,7 +202,6 @@ func TestAgentTerminals_Release(t *testing.T) {
 	}
 }
 
-// ringEvent is a decoded terminal_* SSE event from the replay ring.
 type ringEvent struct {
 	typ     string
 	termID  string
@@ -249,7 +248,6 @@ func hasType(evs []ringEvent, typ marotte.EventType) bool {
 	return false
 }
 
-// firstEventID returns the lowest event id of the given type (evs is sorted).
 func firstEventID(evs []ringEvent, typ marotte.EventType) (uint64, bool) {
 	for _, e := range evs {
 		if e.typ == string(typ) {
@@ -268,7 +266,7 @@ func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
 	// The brief sleep lets the pump read the output before cmd.Wait closes the pipe.
 	msg := termCreateMsg(t, 1, "sh", []string{"-c", "printf hello; sleep 0.3"}, nil)
 
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", h.originOf("c1"), msg)
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 
@@ -388,7 +386,6 @@ func TestIncompleteTailLen(t *testing.T) {
 	}
 }
 
-// sizeChunkReader hands out fixed-size slices, one per Read.
 type sizeChunkReader struct {
 	data []byte
 	size int
@@ -405,8 +402,6 @@ func (r *sizeChunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// pumpBroadcast runs the pump over data in size-byte reads and returns the ring plus the
-// concatenated broadcast payloads.
 func pumpBroadcast(t *testing.T, h *Runtime, data []byte, size int) (ring, broadcast []byte) {
 	t.Helper()
 	preSeq := h.bus.fanout.Position().Head
@@ -527,11 +522,10 @@ func TestKillTerminalGroup_AfterReapSignalsNothing(t *testing.T) {
 	}
 }
 
-// startBaitTerminal drives `script` through terminal/create and returns the runtime, terminal id and the pid written to pidFile.
 func startBaitTerminal(t *testing.T, script, pidFile string) (h *Runtime, termID string, childPID int) {
 	t.Helper()
 	h = hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	h.translateACPEvent("c1", termCreateMsg(t, 1, "sh", []string{"-c", script}, nil))
+	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsg(t, 1, "sh", []string{"-c", script}, nil))
 	h.agentTerms.mu.Lock()
 	for id := range h.agentTerms.terms {
 		termID = id
@@ -557,7 +551,7 @@ func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
 		t.Fatalf("Setup: grandchild %d not alive before the kill; the test proves nothing", childPID)
 	}
 
-	h.translateACPEvent("c1", termIDMsg(t, 2, methodTermKill, termID))
+	h.translateACPEvent("c1", h.originOf("c1"), termIDMsg(t, 2, methodTermKill, termID))
 
 	deadline := time.Now().Add(3 * time.Second)
 	for processAlive(childPID) {
@@ -580,14 +574,13 @@ func TestTerminalRelease_LeavesAFinishedCommandsBackgroundedChild(t *testing.T) 
 	h.agentTerms.mu.Unlock()
 	waitClosed(t, term.done, "terminal")
 
-	h.translateACPEvent("c1", termIDMsg(t, 2, methodTermRelease, termID))
+	h.translateACPEvent("c1", h.originOf("c1"), termIDMsg(t, 2, methodTermRelease, termID))
 
 	if !processAlive(childPID) {
 		t.Errorf("terminal/release killed %d, the backgrounded child of a command that had already finished", childPID)
 	}
 }
 
-// waitForPIDFile polls for the bait script's pid file and returns the pid.
 func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -605,9 +598,9 @@ func waitForPIDFile(t *testing.T, path string) int {
 	}
 }
 
-// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat.
-// Not kill(pid, 0): that answers alive for a zombie, so it would measure the ambient
-// reaper rather than killGroup. The state follows the last ')' because comm may hold parens.
+// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat. Not
+// kill(pid, 0): that answers alive for a zombie, so it would measure the ambient reaper rather than
+// killGroup. The state follows the last ')' because comm may hold parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {

@@ -172,15 +172,10 @@ export interface SubagentGroup {
 const PIPELINE_TITLE = "Orchestrate Sub-agent";
 
 /** Resolve a delegate's pipeline and siblings from the turn's tool calls (a stage's entries carry
- *  only a bare uuid). Scanning the whole window makes the driver/stage arrival orders equivalent. */
-export function groupOf(src: TurnSource, subtaskID: string): SubagentGroup {
-  return resolveGroup(src, subtaskID).group;
-}
-
-/** `groupOf` plus the located call it resolved the pipeline from: that call names its
- *  TURN as well as its driver, so the projection takes the answer rather than asking
- *  the same question again. */
-function resolveGroup(
+ *  only a bare uuid), with the located call the pipeline came from: that call names its TURN as
+ *  well as its driver, so the projection takes the answer rather than asking again. Scanning the
+ *  whole window makes the driver/stage arrival orders equivalent. */
+export function resolveGroup(
   src: TurnSource,
   subtaskID: string,
 ): { group: SubagentGroup; own: LocatedCall | undefined } {
@@ -226,8 +221,6 @@ export interface SubagentProjection {
   readonly slices: Map<string, SubagentSlice>;
 }
 
-/** Every entry of `lane` in the turn `state` holds, in `seq` order, plus whether that
- *  lane has an open entry. */
 function laneOf(state: TurnState, lane: string): { entries: Entry[]; open: boolean } {
   const out: Entry[] = [];
   for (const e of state.entries) {

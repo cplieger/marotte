@@ -13,7 +13,6 @@ const maxDiffCells = 25_000_000
 // diff.ts's SPACE_THRESHOLD.
 const maxHunkCells = 4_000_000
 
-// lineHunk is one contiguous run of new-text lines a diff touched, 1-based and inclusive.
 type lineHunk struct {
 	StartLine int
 	EndLine   int
@@ -37,8 +36,8 @@ func splitDiffLines(s string) []string {
 	return lines
 }
 
-// lcsLen returns the length of the longest common subsequence of a and b in two rolling rows. Every LCS-optimal
-// implementation yields the same length, so Go and TypeScript agree by construction.
+// Every LCS-optimal implementation yields the same length, so Go and TypeScript agree by
+// construction.
 func lcsLen(a, b []string) int {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
@@ -93,8 +92,7 @@ func LineDelta(oldText, newText string) (added, removed int) {
 	return len(midNew) - k, len(midOld) - k
 }
 
-// lineHunks reports the new-text line ranges a diff touched, in file order, for the editor gutter. A pure deletion is
-// the single new-text line it landed at. Nothing when the texts are equal.
+// A pure deletion is the single new-text line it landed at. Nothing when the texts are equal.
 func lineHunks(oldText, newText string) []lineHunk {
 	if oldText == newText {
 		return nil
@@ -157,7 +155,7 @@ func traceHunks(midOld, midNew []string, offset, newLen int) []lineHunk {
 	return hunks
 }
 
-// denseLCS fills the LCS length table bottom-up; its O(len(a)*len(b)) space is why maxHunkCells bounds it.
+// Its O(len(a)*len(b)) space is why maxHunkCells bounds it.
 func denseLCS(a, b []string) [][]int {
 	t := make([][]int, len(a)+1)
 	for i := range t {
@@ -186,7 +184,6 @@ func diffStep(a, b []string, t [][]int, i, j int) (takeOld, takeNew bool) {
 	return false, true
 }
 
-// runAcc accumulates one open run of touched new-text lines as half-open indices.
 type runAcc struct {
 	lo int
 	hi int
@@ -201,7 +198,6 @@ func (r *runAcc) anchor(j int) {
 	}
 }
 
-// extend opens or grows a run over the new line at j (an addition).
 func (r *runAcc) extend(j int) {
 	if r.lo < 0 {
 		r.lo = j
@@ -219,8 +215,7 @@ func (r *runAcc) flush() (lo, hi int, ok bool) {
 	return lo, hi, true
 }
 
-// newRunHunk turns a half-open new-text range into a 1-based inclusive span clamped to the new text. An empty range
-// is a deletion, marked where the removed lines were.
+// An empty range is a deletion, marked where the removed lines were.
 func newRunHunk(lo, hi, newLen int) lineHunk {
 	if newLen <= 0 {
 		// The file was emptied, so line 1 is all a gutter can mark.

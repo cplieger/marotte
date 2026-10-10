@@ -35,7 +35,7 @@ type LoadState =
   | { readonly kind: "failed" };
 
 /** How many memories exist and how many the filter shows, for the page's note. */
-export interface MemoryCounts {
+interface MemoryCounts {
   total: number;
   shown: number;
 }
@@ -608,6 +608,7 @@ async function deleteMany(ids: string[], all = false): Promise<void> {
 }
 
 /** Test seam: forget module state between cases. */
+// deadset:ignore DS1004 -- test seam: resets the memory list, filter, selection and editor state
 export function _resetMemoriesForTest(): void {
   memories = [];
   cap = 1000;

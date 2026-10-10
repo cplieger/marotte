@@ -13,8 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// resetCensus empties and un-latches the ledger for one test; a leftover ledger would let
-// a test pass vacuously.
+// A leftover ledger would let a test pass vacuously.
 func resetCensus(t *testing.T) {
 	t.Helper()
 	census.mu.Lock()
@@ -193,7 +192,7 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 		"empty kiro object": `{"content":{"type":"text","text":"hi"},"_meta":{"kiro":{}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			var chunk ACPChunkWire
+			var chunk acpChunkWire
 			err := json.Unmarshal([]byte(frame), &chunk)
 			// A wrongly-typed block is the caller's decode error; the probe must never ADD one.
 			if err != nil && !strings.Contains(name, "string") && !strings.Contains(name, "array") {
@@ -273,7 +272,6 @@ func TestKnownKeysOf_CoversTheWholeWireBlock(t *testing.T) {
 	}
 }
 
-// sortedKeys renders a set for a failure message.
 func sortedKeys(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

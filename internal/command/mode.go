@@ -14,12 +14,12 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// CmdSetMode switches the chat's session mode: live via session/set_mode when a bridge runs, then
+// cmdSetMode switches the chat's session mode: live via session/set_mode when a bridge runs, then
 // persisted and broadcast so every client's pill flips. For a chat with no bridge yet the mode is
 // persisted and applied at session/new (StartOpts.Mode).
-func CmdSetMode(
-	ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster,
-	recorder ModeRecorder, cmd *marotte.ClientCommand,
+func cmdSetMode(
+	ctx context.Context, bridges bridgeAccess, chats chatStore, bus broadcaster,
+	recorder modeRecorder, cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -75,7 +75,6 @@ func CmdSetMode(
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil
 }
 
-// configOptionParams is session/set_config_option's params for one option.
 func configOptionParams(id, value string) map[string]any {
 	return map[string]any{"configId": id, "value": value}
 }
@@ -90,7 +89,7 @@ func configOptionParams(id, value string) map[string]any {
 // SESSION stays a 502 and is never persisted.
 func applySessionConfig(
 	ctx context.Context,
-	bridges BridgeAccess,
+	bridges bridgeAccess,
 	chatID marotte.ChatID,
 	verb, method string,
 	params map[string]any,
@@ -99,7 +98,7 @@ func applySessionConfig(
 	if bridge == nil {
 		return nil
 	}
-	_, err := bridge.Call(ctx, method, SessionParams(bridge, params))
+	_, err := bridge.Call(ctx, method, sessionParams(bridge, params))
 	switch {
 	case err == nil:
 		return nil

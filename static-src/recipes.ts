@@ -21,11 +21,10 @@ import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
 
-/** The folded filter query the configuration browser's box is applying. MODULE state, not a
- *  render parameter, and that distinction is load-bearing: this panel repaints itself on its own
- *  schedule (the run poll, the schedules fetch, the settings SSE), and a parameter threaded only
- *  through the render call would be dropped by the next one — so the filter would silently lift
- *  seconds after it was typed. */
+/** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
+ *  itself on its own schedule (the run poll, the schedules fetch, the settings SSE), and a parameter
+ *  threaded only through the render call would be dropped by the next one — so the filter would
+ *  silently lift seconds after it was typed. */
 let filterText = "";
 
 /** Live (non-terminal) run per RECIPE; the single-run rule makes the recipe a sufficient key.
@@ -39,7 +38,7 @@ let wired = false;
 
 /** How many recipes exist and how many the filter is showing, so the page's one note reads the
  *  same on this tab as on the five document tabs. */
-export interface RecipeCounts {
+interface RecipeCounts {
   total: number;
   shown: number;
 }
@@ -126,23 +125,20 @@ async function refreshRecipes(): Promise<void> {
   }
 }
 
-/** What the current filter is showing, for the page's note. */
 function counts(): RecipeCounts {
   return { total: recipes.length, shown: visibleRecipes().length };
 }
 
-/** Where a repaint's counts go. Set once by docs.ts, because the recipe fetch lands long after
- *  `renderRecipesPanel` returned its first answer — without this, the tab's note would read "0
- *  of 0 shown." until the next keystroke. */
+/** Set once by docs.ts, because the recipe fetch lands long after `renderRecipesPanel` returned its
+ *  first answer — without this, the tab's note would read "0 of 0 shown." until the next keystroke. */
 let onCounts: ((c: RecipeCounts) => void) | null = null;
 
 export function setRecipeCountsListener(fn: (c: RecipeCounts) => void): void {
   onCounts = fn;
 }
 
-/** The auto-approve setting's current value, for the schedule form's unattended note. Off is the
- *  safe default and the server's own: absent or unreadable settings mean off there too, so a
- *  failed read cannot make the note claim more permission than the run will get. */
+/** Off is the safe default and the server's own: absent or unreadable settings mean off there too,
+ *  so a failed read cannot make the note claim more permission than the run will get. */
 let autoApprove = false;
 
 async function refreshAutoApprove(): Promise<void> {
@@ -158,7 +154,6 @@ async function refreshAutoApprove(): Promise<void> {
 /** Schedules by recipe source. One per recipe, matching the single-run rule. */
 let schedules = new Map<string, ScheduleView>();
 
-/** Refetch the schedule set and repaint the summary lines. */
 async function refreshSchedules(): Promise<void> {
   const d = await loadSchedules.dispatch(undefined);
   if (d === null) {
@@ -187,7 +182,6 @@ function syncSchedule(row: HTMLElement, r: Recipe): void {
   }
 }
 
-/** Open the recurrence picker anchored to a row's Schedule button. */
 function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
   let popup: ReturnType<typeof createPopup> | null = null;
   let open = false;
@@ -390,7 +384,6 @@ function scheduleLineOf(row: HTMLElement): HTMLElement | null {
   return row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)");
 }
 
-/** Reflect the recipe's live-run state onto its button. */
 function syncButton(row: HTMLElement, r: Recipe): void {
   const btn = row.querySelector<HTMLButtonElement>(".recipe-run-btn");
   if (btn === null) {

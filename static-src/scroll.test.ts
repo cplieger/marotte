@@ -31,6 +31,7 @@ vi.mock("./dom.js", () => ({
 vi.mock("./skeleton.js", () => ({ loadMoreSkeleton: () => document.createElement("div") }));
 
 const scroll = await import("./scroll.js");
+const { setPinSettleMs } = await import("./scroll-controller.js");
 
 /** The scroller is faked with writable properties. That is the right level here: the helper's
  *  contract is arithmetic over three numbers, not real layout. */
@@ -364,9 +365,8 @@ function touchEvent(
   return ev;
 }
 
-/** Drain the MutationObserver callback and the queued animation frame. Every pin writes
- *  synchronously now, so this covers the observer-driven state revalidation and the bottom pin's
- *  re-assert frames, not a deferred scroll write. */
+/** Every pin writes synchronously now, so this covers the observer-driven state revalidation and the
+ *  bottom pin's re-assert frames, not a deferred scroll write. */
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 25));
 }
@@ -969,7 +969,6 @@ describe("fillViewport", () => {
 // mechanical rather than stylistic: the fake shadows `scrollTo` with a plain assignment to its own
 // `scrollTop` number, which fires no `scroll` event.
 
-/** Undo the fake and give the singleton's element real overflow. */
 function realScroller(): HTMLElement {
   const wrap = scroll.getScrollEl();
   // `Reflect.deleteProperty` rather than `delete`: the keys are computed, and the point is to drop
@@ -989,7 +988,6 @@ function realScroller(): HTMLElement {
   return wrap;
 }
 
-/** A block with real height, appended to the transcript. */
 function block(px: number, className = ""): HTMLElement {
   const d = document.createElement("div");
   if (className !== "") {
@@ -1042,9 +1040,8 @@ function recordWrites(wrap: HTMLElement): number[] {
   return writes;
 }
 
-/** How many of those writes were the top of the transcript. Zero is the assertion in every case
- *  below: none of these scenes has a legitimate follow target of 0, so a single one is the
- *  defect. */
+/** Zero is the assertion in every case below: none of these scenes has a legitimate follow target of
+ *  0, so a single one is the defect. */
 function zeroWrites(writes: readonly number[]): number {
   return writes.filter((top) => top === 0).length;
 }
@@ -1883,11 +1880,11 @@ describe("the streaming follow write's licence", () => {
     const wrap = realScroller();
     block(3000);
     await land();
-    const real = scroll.setPinSettleMs(20);
+    const real = setPinSettleMs(20);
     try {
       scroll.scrollToBottom();
     } finally {
-      scroll.setPinSettleMs(real);
+      setPinSettleMs(real);
     }
     await land(100);
     return wrap;
@@ -1938,11 +1935,11 @@ describe("a smooth jump's own flight", () => {
     block(20_000);
     const tail = block(10);
     await land();
-    const real = scroll.setPinSettleMs(20);
+    const real = setPinSettleMs(20);
     try {
       scroll.scrollToBottom();
     } finally {
-      scroll.setPinSettleMs(real);
+      setPinSettleMs(real);
     }
     await land(100);
     expect(scroll.readingState()).toBe("following");
@@ -2153,10 +2150,9 @@ describe("onReaderGesture", () => {
 // wheel and no touch, so the PRESS is the input and its position is the only thing separating it
 // from a click in the transcript.
 
-/** Does this platform reserve a strip for the scrollbar? `scrollbar-gutter: stable` is the
- *  shipped declaration (css/13-messages.css) and it reserves nothing where the bar is an
- *  overlay, so the answer is measured on a throwaway box carrying that declaration rather than
- *  assumed from the engine. */
+/** `scrollbar-gutter: stable` is the shipped declaration (css/13-messages.css) and it reserves
+ *  nothing where the bar is an overlay, so the answer is measured on a throwaway box carrying that
+ *  declaration rather than assumed from the engine. */
 function reservesScrollbarGutter(): boolean {
   const probe = document.createElement("div");
   probe.style.cssText =

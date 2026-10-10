@@ -27,8 +27,8 @@ type delegateDotFixture struct {
 	Readers  []delegateDotReads `json:"readers"`
 }
 
-// delegateDotStale is an invocation still in flight in a chat with no live turn. The server settles it at the turn's
-// close as aborted, so the client folds it onto that status; FoldsTo makes that checkable from either side.
+// The server settles it at the turn's close as aborted, so the client folds it onto that status;
+// FoldsTo makes that checkable from either side.
 type delegateDotStale struct {
 	Status    string `json:"status"`
 	TurnLive  bool   `json:"turn_live"`
@@ -39,7 +39,6 @@ type delegateDotStale struct {
 	PageWord  string `json:"page_word"`
 }
 
-// delegateDotRow is one producible status with the words each surface says for it.
 type delegateDotRow struct {
 	Status    string   `json:"status"`
 	Dot       string   `json:"dot"`
@@ -50,7 +49,6 @@ type delegateDotRow struct {
 	Sites     []string `json:"sites"`
 }
 
-// delegateDotSite is one reference to a ToolStatus constant, at the path a failure should name, with its position.
 type delegateDotSite struct {
 	Site   string `json:"site"`
 	Form   string `json:"form"`
@@ -327,7 +325,6 @@ func delegateDotAssertDivergence(t *testing.T, rows []delegateDotRow) {
 	}
 }
 
-// delegateDotSites scans every non-test Go file under internal/ for ToolStatus references and classifies each.
 func delegateDotSites(t *testing.T, consts map[string]steerConst) []delegateDotSite {
 	t.Helper()
 	var out []delegateDotSite

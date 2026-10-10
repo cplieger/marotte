@@ -11,8 +11,8 @@ import type { Session } from "./types.js";
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async () => null),
   apiGetTyped: vi.fn(async () => null),
-  // The run store's own read. Status 0 is a read that never left, which is what a null
-  // answered before the store started spending a failed read's status.
+  // Status 0 is a read that never left, which is what a null answered before the store started
+  // spending a failed read's status.
   apiGetOrError: vi.fn(async () => ({ ok: false, status: 0, data: null, error: "" })),
 }));
 

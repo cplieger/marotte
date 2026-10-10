@@ -313,7 +313,6 @@ func TestSetAttachments_ReturnedStateIsACopy(t *testing.T) {
 	}
 }
 
-// manyPaths builds n distinct workspace paths for the cap cases.
 func manyPaths(n int) []string {
 	out := make([]string, n)
 	for i := range out {

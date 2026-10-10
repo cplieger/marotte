@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// toolOutputFixture builds a handler granting a sessions dir and writes one KAS
-// tool output under it, returning the handler, the sessions dir and the output path.
 func toolOutputFixture(t *testing.T) (h *Handler, sessions, path string) {
 	t.Helper()
 	h, _, _ = testDir(t)
@@ -126,8 +124,12 @@ func TestToolOutput_SymlinkIsRefused(t *testing.T) {
 // A symlink swapped in after the open must not change what is served.
 func TestToolOutput_ServesTheFileItOpened(t *testing.T) {
 	serve := map[string]func(*testing.T, *httptest.ResponseRecorder, toolOutput, string){
-		"read": func(t *testing.T, rec *httptest.ResponseRecorder, out toolOutput, path string) {
-			readToolOutput(t.Context(), rec, out, path)
+		"read": func(t *testing.T, rec *httptest.ResponseRecorder, out toolOutput, _ string) {
+			data, _, err := readStable(t.Context(), out.f)
+			if err != nil {
+				t.Fatalf("readStable: %v", err)
+			}
+			_, _ = rec.Write(data)
 		},
 		"download": func(_ *testing.T, rec *httptest.ResponseRecorder, out toolOutput, path string) {
 			serveDownload(rec, httptest.NewRequest(http.MethodGet, "/api/file/download", nil), out.f, out.info, path)

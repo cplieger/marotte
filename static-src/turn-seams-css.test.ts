@@ -67,9 +67,8 @@ function el(card: HTMLElement, sel: string): HTMLElement {
   return found;
 }
 
-/** The fill a region actually paints, resolved. `.turn-body` declares none and shows
- *  the CARD's, so an unresolved read would compare a transparent body against a
- *  painted band and pass for the wrong reason. */
+/** `.turn-body` declares none and shows the CARD's, so an unresolved read would compare a
+ *  transparent body against a painted band and pass for the wrong reason. */
 function paintedFill(node: HTMLElement): string {
   for (let at: HTMLElement | null = node; at !== null; at = at.parentElement) {
     const fill = getComputedStyle(at).backgroundColor;

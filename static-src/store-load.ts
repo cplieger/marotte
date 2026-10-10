@@ -25,6 +25,7 @@ import {
 } from "./store.js";
 import { clearTurnState } from "./turn-teardown.js";
 import { observeStamp } from "./subject-versions.js";
+import { settleWorkflowMessages } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
 
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: SubjectStamp }> = (
@@ -75,8 +76,8 @@ function decodeTolerant<T>(v: unknown, one: Decoder<T>, path: string): T[] {
   return out;
 }
 
-/** The stamps a page certifies, or none. Optional-tolerant for the reason the `chats` stamp is:
- *  a server from before the list still answers a usable page. */
+/** Optional-tolerant for the reason the `chats` stamp is: a server from before the list still
+ *  answers a usable page. */
 function decodeStamps(v: unknown, path: string): SubjectStamp[] {
   if (v === undefined || v === null) {
     return [];
@@ -196,10 +197,9 @@ function seatOpenEntries(
   }
 }
 
-/** Merge one turn the page describes with the copy the store already holds. The page is a
- *  point-in-time read, so an entry that landed during the flight is NEWER than the answer and
- *  goes back on past its end, contiguously; a held open tail travels the same way unless the
- *  page carries that entry SEALED, which is the answer that the tail is history. */
+/** The page is a point-in-time read, so an entry that landed during the flight is NEWER than the
+ *  answer and goes back on past its end, contiguously; a held open tail travels the same way unless
+ *  the page carries that entry SEALED, which is the answer that the tail is history. */
 function mergeTurn(page: TurnState, held: TurnState): TurnState {
   for (let i = page.entries.length; i < held.entries.length; i++) {
     const e = held.entries[i];
@@ -245,6 +245,7 @@ function applyPage(
       }
     }
     session.turn_order = [...fresh, ...session.turn_order];
+    settleWorkflowMessages(session.turns.values());
     return true;
   }
   const held = session.turns;
@@ -282,6 +283,7 @@ function applyPage(
   }
   session.turns = turns;
   session.turn_order = [...kept, ...page.order, ...arrived].filter((id) => turns.has(id));
+  settleWorkflowMessages(turns.values());
   return kept.length === 0;
 }
 
@@ -358,8 +360,8 @@ function cancelListRetry(): void {
   listRetryAttempts = 0;
 }
 
-/** Arm the next rung, or report the ladder exhausted. Private because it is the CONTINUATION: it
- *  keeps the attempt count that `scheduleListRetry` resets. */
+/** Private because it is the CONTINUATION: it keeps the attempt count that `scheduleListRetry`
+ *  resets. */
 function armListRetry(): void {
   if (listRetryAttempts >= LIST_RETRY_LIMIT) {
     console.warn(
@@ -520,6 +522,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       supervised_mode: h.supervised_mode ?? false,
       interrupt_mode: h.interrupt_mode ?? "steer",
       queued: h.queued_prompts ?? [],
+      tangent: h.tangent ?? false,
       effort: h.effort ?? "",
       // Keep the client's live effort catalog when the header carries none: this list endpoint
       // rebuilds a Session from a header, and blanking the tiers would empty the effort control for
@@ -837,6 +840,7 @@ function applyTurnRange(
   if (held === undefined) {
     insertTurnByOrdinal(session, turnID, state);
   }
+  settleWorkflowMessages(session.turns.values());
   if (applied < entries.length) {
     // A second gap, re-asked only when this seat made PROGRESS: an answer that fitted nothing is
     // asked the same question forever, which a permanently undecodable entry serves, so that case
@@ -854,8 +858,8 @@ function applyTurnRange(
   bumpMessages(chatID, "load");
 }
 
-/** Whether this chat still has a repair out. Read after one lands, so `residency` goes back to
- *  `loaded` only when nothing is missing rather than after whichever answer arrives last. */
+/** Read after one lands, so `residency` goes back to `loaded` only when nothing is missing rather
+ *  than after whichever answer arrives last. */
 function repairsPending(chatID: string): boolean {
   for (const r of turnRepairs.values()) {
     if (r.chatID === chatID) {

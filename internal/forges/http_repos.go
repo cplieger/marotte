@@ -19,9 +19,8 @@ const (
 	fieldHeadSHA = "head_sha"
 )
 
-// handleRepos dispatches /api/forges/{id}/repos/* paths; the {repo_id} segment is decoded once on
-// the connection's family. `?refresh=1` is the reader asking for the truth, as
-// `/api/git/status-all?fetch=1` is on the local side.
+// The {repo_id} segment is decoded once on the connection's family. `?refresh=1` is the reader
+// asking for the truth, as `/api/git/status-all?fetch=1` is on the local side.
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
 	fc, ok := h.connectionClient(w, id)
 	if !ok {
@@ -137,7 +136,6 @@ func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, fc 
 	webhttp.WriteJSON(w, page)
 }
 
-// createPRBody is a pull request as the client asks for one.
 type createPRBody struct {
 	Title        string   `json:"title"`
 	Body         string   `json:"body,omitempty"`
@@ -185,10 +183,8 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// handlePRDetail answers one pull request with its description and its head
-// commit's checks. It is read on every open rather than cached, because it is
-// the read a person makes to see the current state. A non-positive number is
-// the library's to refuse.
+// It is read on every open rather than cached, because it is the read a person makes to see the
+// current state. A non-positive number is the library's to refuse.
 func handlePRDetail(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef, numStr string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -227,7 +223,6 @@ const (
 	codeStrategyRequired = "strategy_required"
 )
 
-// mergeBody is one merge as the client sends it.
 type mergeBody struct {
 	Intent       string `json:"intent"`
 	Strategy     string `json:"strategy"`
@@ -368,7 +363,6 @@ func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, fc fo
 	h.handleIssueAction(w, r, fc, ref, tail)
 }
 
-// createIssueBody is an issue as the client asks for one.
 type createIssueBody struct {
 	Title  string   `json:"title"`
 	Body   string   `json:"body,omitempty"`
@@ -453,9 +447,7 @@ func handleChecks(w http.ResponseWriter, r *http.Request, core forgeapi.Checks, 
 	webhttp.WriteJSON(w, commitChecksWire(&checks))
 }
 
-// handleReleases serves the release list (GET) and the cut (POST), which
-// answers the new release. Releases is an optional role, so a client without it
-// answers ErrNotSupported.
+// Releases is an optional role, so a client without it answers errNotSupported.
 func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -463,7 +455,7 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, fc 
 	}
 	rel, ok := fc.core.(forgeapi.Releases)
 	if !ok {
-		writeOpsError(w, r, ErrNotSupported)
+		writeOpsError(w, r, errNotSupported)
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -483,7 +475,6 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, fc 
 	webhttp.WriteJSON(w, releaseListWire(&page))
 }
 
-// createReleaseBody is a release as the client asks for one.
 type createReleaseBody struct {
 	TagName    string `json:"tag_name"`
 	Name       string `json:"name,omitempty"`
@@ -512,8 +503,7 @@ func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, fc f
 	webhttp.WriteJSON(w, releaseWire(&created))
 }
 
-// handleAffordances answers what the repository allows. A mutation of the
-// repository evicts the cached answer with its lists.
+// A mutation of the repository evicts the cached answer with its lists.
 func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, force bool) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -527,8 +517,7 @@ func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, 
 	webhttp.WriteJSON(w, aff)
 }
 
-// handleLabels serves the label list. Labels is an optional role, so a client
-// without it answers ErrNotSupported.
+// Labels is an optional role, so a client without it answers errNotSupported.
 func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -536,7 +525,7 @@ func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, re
 	}
 	lab, ok := core.(forgeapi.Labels)
 	if !ok {
-		writeOpsError(w, r, ErrNotSupported)
+		writeOpsError(w, r, errNotSupported)
 		return
 	}
 	req, err := listRequestOf(r.URL.Query())

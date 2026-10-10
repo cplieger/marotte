@@ -62,7 +62,7 @@ function entryAt(
   return { id, turn: turnID, kind, seq, ts: seq + 1, payload };
 }
 
-/** Group the recorded rows into turns. FOUR rules, and each is the entry model's own: */
+/** FOUR rules, and each is the entry model's own: */
 function groupTurns(chat: FixtureChat): FoldedTurn[] {
   const out: FoldedTurn[] = [];
   for (const m of chat.messages) {
@@ -95,9 +95,9 @@ function groupTurns(chat: FixtureChat): FoldedTurn[] {
   return out;
 }
 
-/** Build one turn's entries. `block_count` and `tool_call_count` become that many body entries,
- *  because the fold and face rules read the SHAPE of a turn's body — the deleted `rehydrate`'s
- *  own reason, and it survives the model change. */
+/** `block_count` and `tool_call_count` become that many body entries, because the fold and face
+ *  rules read the SHAPE of a turn's body — the deleted `rehydrate`'s own reason, and it survives the
+ *  model change. */
 function entriesFor(turnID: string, t: FoldedTurn): { entries: Entry[]; closeAt?: number } {
   const entries: Entry[] = [
     entryAt(
@@ -411,8 +411,8 @@ describe("a DISCARDED turn is a stop, not a failure and not a silence", () => {
 
 describe("the push gate has words for every turn it speaks for", () => {
   it("never has to push an empty sentence", () => {
-    // Here rather than in the handler's own suite: both push gates build their body from
-    // `defaultFailureReason`, so a `broken` outcome with no sentence would notify with nothing.
+    // Here rather than in the handler's own suite: the turn card and the server's notification
+    // both fall back to this sentence, so a `broken` outcome with none would say nothing.
     for (const name of Object.keys(fixture)) {
       for (const [i, t] of turnsOf(name).entries()) {
         if (severityOf(t.outcome) !== "broken") {
@@ -427,7 +427,7 @@ describe("the push gate has words for every turn it speaks for", () => {
   });
 
   it("says nothing for a turn that ended cleanly", () => {
-    // The other direction: "" is how both gates spell "notify nothing", so a clean turn gaining a
+    // The other direction: "" is how a clean turn spells "no failure", so a clean turn gaining a
     // sentence would make the empty string stop meaning that.
     const clean = turnsOf("reported-failed-no-reason")[2];
     expect(clean?.outcome).toBe("completed");

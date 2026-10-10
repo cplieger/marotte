@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// graph wraps a JSON body in the section shape a real tasks.md carries.
 func graph(body string) string {
 	return "# Tasks\n\n- [ ] 1. one\n- [ ] 2. two\n\n## Task Dependency Graph\n\n```json\n" + body + "\n```\n"
 }
@@ -79,7 +78,7 @@ func TestParseWaves_TakesTheFirstSectionAndAnyHeadingLevel(t *testing.T) {
 func TestParse_AssignsWavesByDottedNumber(t *testing.T) {
 	src := "# Tasks\n\n- [ ] 1. parent\n  - [ ] 1.1 child\n- [ ] unnumbered\n\n## Task Dependency Graph\n\n```json\n" +
 		`{"waves":[{"id":0,"tasks":["1"]},{"id":4,"tasks":["1.1","9.9"]}]}` + "\n```\n"
-	p := Parse([]byte(src))
+	p := parse([]byte(src))
 	if len(p.Tasks) != 2 {
 		t.Fatalf("Parse(a numbered parent plus an unnumbered task) returned %d roots, want 2", len(p.Tasks))
 	}
@@ -101,7 +100,7 @@ func TestParse_AssignsWavesByDottedNumber(t *testing.T) {
 func TestParse_LeavesEveryWaveNilWhenTheGraphIsBroken(t *testing.T) {
 	src := "# Tasks\n\n- [ ] 1. one\n- [ ] 2. two\n\n## Task Dependency Graph\n\n```json\n" +
 		`{"waves":[{"id":0,"tasks":["1","2"]},{"id":1,"tasks":["2"]}]}` + "\n```\n"
-	p := Parse([]byte(src))
+	p := parse([]byte(src))
 	for _, n := range p.Tasks {
 		if n.Wave != nil {
 			t.Errorf("Parse(a graph claiming task 2 twice).Tasks %q wave = %d, want nil on EVERY row: a contradictory graph cannot say which wave any task is in", n.Text, *n.Wave)

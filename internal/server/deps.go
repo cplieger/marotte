@@ -16,8 +16,6 @@ type routeHandler interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
-// chatEngine is the bridge/SSE hub as this package uses it (/api/events, /api/command, the
-// settings broadcast, the shutdown drain). *agent.Runtime satisfies it.
 type chatEngine interface {
 	routeHandler
 
@@ -40,10 +38,15 @@ type governanceLocks interface {
 	GovernanceLocks() map[string]marotte.GovernanceLock
 }
 
+// kiroDefaultsReader answers what kiro-cli resolves each unset three-state setting to, keyed by
+// the marotte setting key. *agent.Settings satisfies it.
+type kiroDefaultsReader interface {
+	KiroDefaults() map[string]marotte.KiroDefault
+}
+
 // SteeringGenerator generates steering files for kiro-cli. *steering.Generator satisfies it.
 // Exported because the composition root names it in server.WithSteering.
 type SteeringGenerator interface {
-	Generate(ctx context.Context)
 	CustomPath() string
 }
 
@@ -61,15 +64,12 @@ type policyProvider interface {
 	PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error)
 }
 
-// policyReloader applies a profile change the server persisted: it recycles the sessions whose
-// presets the change invalidated and tells every client. Separate from the read-only
-// policyProvider because it mutates process state.
+// Separate from the read-only policyProvider because it mutates process state: it recycles the
+// sessions whose presets a persisted change invalidated and tells every client.
 type policyReloader interface {
 	SecurityProfileChanged(ctx context.Context)
 }
 
-// utilityPrompter is AI-backed text generation for explain-an-error and explain-a-diff.
-// *agent.Runtime satisfies it over the utility bridge.
 type utilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error)
 }

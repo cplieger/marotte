@@ -52,7 +52,6 @@ func (b *respondingBridge) Respond(_ context.Context, id int64, result any, err 
 	return writeErr
 }
 
-// hubForFSTest returns a runtime wired with a respondingBridge.
 func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	t.Helper()
 	cs := newTestChatStore()
@@ -61,9 +60,9 @@ func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	h := New(t.Context(), workDir, factory, cs)
 	cs.wire(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
-		t.Fatalf("getOrCreateBridge: %v", err)
+		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
 	sb.bridge = br // ensure the map entry uses our respondingBridge
 	h.bridge.mgr.mu.Lock()
@@ -190,7 +189,7 @@ func TestRespondFSRead_Success(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hello.txt"}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -207,7 +206,7 @@ func TestRespondFSRead_MissingPath(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -227,7 +226,7 @@ func TestRespondFSRead_LineLimitWindow(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "file.txt", "line": 2, "limit": 2}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -249,7 +248,7 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "big.txt"}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	// The sentinel: respondFSError classifies it as routine, so this also pins the log level.
@@ -268,7 +267,7 @@ func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "at-cap.txt", "content": strings.Repeat("x", fsWriteCap)}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	select {
 	case <-br.done:
 	case <-time.After(10 * time.Second):
@@ -299,7 +298,7 @@ func TestRespondFSWrite_Success(t *testing.T) {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": "written"}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -323,7 +322,7 @@ func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "nested/deeply/out.txt", "content": "ok"}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -355,7 +354,7 @@ func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "escape.txt", "content": "HIJACKED"}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -381,7 +380,7 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": huge}),
 	}
-	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 
 	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
@@ -393,7 +392,7 @@ func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
 	msg := &marotte.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
-	if h.inbound.handleFSRequest(t.Context(), "c1", msg) {
+	if h.inbound.handleFSRequest(t.Context(), "c1", h.originOf("c1"), msg) {
 		t.Error("handleFSRequest claimed non-fs method")
 	}
 }
@@ -410,7 +409,7 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hi.txt"}),
 	}
-	if !h.inbound.handleFSRequest(t.Context(), "c1", msg) {
+	if !h.inbound.handleFSRequest(t.Context(), "c1", h.originOf("c1"), msg) {
 		t.Fatal("handleFSRequest returned false for fs/read_text_file")
 	}
 	<-br.done
@@ -428,7 +427,7 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "ghost.txt"}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 	if br.response.err == nil {
 		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
@@ -449,7 +448,7 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "exact.txt"}),
 	}
-	h.inbound.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("respondFSRead(exact cap) err = %v, want nil (boundary is strict >)", br.response.err)
@@ -478,7 +477,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: marotte.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "dir-target", "content": "x"}),
 		}
-		h.inbound.respondFSWrite(t.Context(), "c1", msg)
+		h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -501,7 +500,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: marotte.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "ok.txt", "content": "hello"}),
 		}
-		h.inbound.respondFSWrite(t.Context(), "c1", msg)
+		h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -531,7 +530,7 @@ func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	msg := &marotte.RPCResponse{ID: &id, Method: marotte.MethodFSRead, Params: mustJSON(t, map[string]any{})}
 
 	logs := captureLogs(t)
-	h.inbound.respondBridge(t.Context(), "c1", msg, map[string]any{"ok": true}, nil)
+	h.inbound.respondBridge(t.Context(), "c1", h.originOf("c1"), msg, map[string]any{"ok": true}, nil)
 	if got := logs.String(); strings.Contains(got, "fs response write failed") {
 		t.Errorf("unexpected respond-failure error log on success: %s", got)
 	}
@@ -542,49 +541,56 @@ type droppingBridge struct {
 	*fakeBridge
 }
 
-func (b *droppingBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
+func (*droppingBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
 	return errors.New("bridge stdin closed")
 }
 
-// TestRespondHelpersReportADroppedWrite pins the log line for a refused response, the only
-// visible trace. No t.Parallel: captureLogs swaps the slog default.
-func TestRespondHelpersReportADroppedWrite(t *testing.T) {
+// TestRespondOn_ReportsOnlyAFailureOnALiveBridge pins which refused write is a failure: one on
+// the chat's live bridge returns its error, one on a bridge that has ended or exited drops at Debug. No
+// t.Parallel: captureLogs swaps the slog default.
+func TestRespondOn_ReportsOnlyAFailureOnALiveBridge(t *testing.T) {
 	id := int64(904)
 	msg := &marotte.RPCResponse{ID: &id, Method: methodTermOutput}
+	const droppedLine = "answer dropped: the bridge it arrived on has ended"
 
-	t.Run("respondOK_write_refused", func(t *testing.T) {
+	t.Run("live_bridge_refused", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
 		logs := captureLogs(t)
-		respondOK(t.Context(), h.bridge.mgr, "c1", msg, map[string]any{"ok": true})
-		if got := logs.String(); !strings.Contains(got, "respondOK: bridge respond failed") {
-			t.Errorf("respondOK(refused write) logged %q, want a respond-failed line", got)
+		if err := respondOn(t.Context(), h.bridge.mgr, "c1", h.originOf("c1"), msg, map[string]any{"ok": true}, nil); err == nil {
+			t.Error("respondOn(live bridge refuses the write) = nil, want its error")
+		}
+		if got := logs.String(); strings.Contains(got, droppedLine) {
+			t.Errorf("respondOn(live bridge refuses the write) logged %q, want no ended-bridge line", got)
 		}
 	})
 
-	t.Run("respondOK_write_accepted", func(t *testing.T) {
+	t.Run("ended_bridge_refused", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newFakeBridge())
+		ended := &droppingBridge{fakeBridge: newFakeBridge()}
 		logs := captureLogs(t)
-		respondOK(t.Context(), h.bridge.mgr, "c1", msg, map[string]any{"ok": true})
-		if got := logs.String(); strings.Contains(got, "respondOK: bridge respond failed") {
-			t.Errorf("respondOK(accepted write) logged %q, want no respond-failed line", got)
+		if err := respondOn(t.Context(), h.bridge.mgr, "c1", ended, msg, map[string]any{"ok": true}, nil); err != nil {
+			t.Errorf("respondOn(ended bridge refuses the write) = %v, want nil", err)
+		}
+		if got := logs.String(); !strings.Contains(got, droppedLine) {
+			t.Errorf("respondOn(ended bridge refuses the write) logged %q, want the ended-bridge line", got)
 		}
 	})
 
-	t.Run("respondErr_write_refused", func(t *testing.T) {
-		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
+	t.Run("exited_bridge_refused", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), &exitedBridge{fakeBridge: newFakeBridge()})
 		logs := captureLogs(t)
-		respondErr(t.Context(), h.bridge.mgr, "c1", msg, "terminal not found")
-		if got := logs.String(); !strings.Contains(got, "respondErr: bridge respond failed") {
-			t.Errorf("respondErr(refused write) logged %q, want a respond-failed line", got)
+		if err := respondOn(t.Context(), h.bridge.mgr, "c1", h.originOf("c1"), msg, map[string]any{"ok": true}, nil); err != nil {
+			t.Errorf("respondOn(still-registered bridge refuses because it exited) = %v, want nil", err)
+		}
+		if got := logs.String(); !strings.Contains(got, droppedLine) {
+			t.Errorf("respondOn(still-registered bridge refuses because it exited) logged %q, want the ended-bridge line", got)
 		}
 	})
 
-	t.Run("respondErr_write_accepted", func(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newFakeBridge())
-		logs := captureLogs(t)
-		respondErr(t.Context(), h.bridge.mgr, "c1", msg, "terminal not found")
-		if got := logs.String(); strings.Contains(got, "respondErr: bridge respond failed") {
-			t.Errorf("respondErr(accepted write) logged %q, want no respond-failed line", got)
+		if err := respondOn(t.Context(), h.bridge.mgr, "c1", h.originOf("c1"), msg, map[string]any{"ok": true}, nil); err != nil {
+			t.Errorf("respondOn(accepted write) = %v, want nil", err)
 		}
 	})
 }
@@ -596,7 +602,7 @@ func TestRespondFSError_BoundsAndNormalizesTheLogAttribute(t *testing.T) {
 	raw := "path\n\t\u202e" + strings.Repeat("x", 400)
 
 	logs := captureLogs(t)
-	h.inbound.respondFSError(t.Context(), "c1", msg, errors.New(raw))
+	h.inbound.respondFSError(t.Context(), "c1", h.originOf("c1"), msg, errors.New(raw))
 	<-br.done
 
 	var record map[string]any

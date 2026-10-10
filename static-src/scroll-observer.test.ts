@@ -27,7 +27,6 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-/** What one construction site's observer did. */
 interface Tally {
   calls: number;
   entries: number;
@@ -140,7 +139,6 @@ const MAX_CALLS_PER_SITE = 8;
 
 let seq = 0;
 
-/** One sealed entry of `turnID`, at `seq`. */
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
     id: `${turnID}-e${String(at)}`,
@@ -206,8 +204,8 @@ function paint(): void {
  *  is delivered on the one after, and the rest are margin. */
 const SETTLE_FRAMES = 6;
 
-/** One animation-frame phase. Resolved from inside the callback, so the awaiting code runs in
- *  that same phase, ahead of any callback registered after this one. */
+/** Resolved from inside the callback, so the awaiting code runs in that same phase, ahead of any
+ *  callback registered after this one. */
 async function frame(): Promise<void> {
   await new Promise<void>((r) => {
     requestAnimationFrame(() => {
@@ -294,9 +292,12 @@ describe(
 
         expect(loopErrors, report()).toEqual([]);
         const observed = since();
-        // TWO observers from `scroll.ts` — the content one and the gutter one — and between them at
-        // least one delivered entry, or the bound below is a loop over nothing.
-        const fromScroll = [...observed].filter(([site]) => site.startsWith("scroll.ts"));
+        // TWO observers from the chat's `ScrollController` (scroll-controller.ts) — the content one and
+        // the gutter one — and between them at least one delivered entry, or the bound below is a loop
+        // over nothing.
+        const fromScroll = [...observed].filter(([site]) =>
+          site.startsWith("scroll-controller.ts"),
+        );
         expect(
           [fromScroll.length, fromScroll.reduce((n, [, t]) => n + t.entries, 0) > 0],
           report(),

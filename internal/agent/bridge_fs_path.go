@@ -31,8 +31,7 @@ var (
 // errNoWorkRoot means the workspace could not be opened as a confined root. Not routine.
 var errNoWorkRoot = errors.New("workspace is not open for confined access")
 
-// resolveInsideWorkDir confines p to the workspace, following symlinks on the target and its
-// parent, and returns the absolute path. It is a verdict only: filesystem operations use
+// Follows symlinks on the target and its parent, and is a verdict only: filesystem operations use
 // confineInWorkDir, which pairs the verdict with a handle.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
@@ -81,17 +80,16 @@ func (lt *lifetime) confineReadable(p string) (root *os.Root, rel string, releas
 
 // respondFSError answers an fs request with a JSON-RPC error and logs it: routine
 // rejections at Debug, real failures at Warn.
-func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, err error) {
+func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, err error) {
 	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
 		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", safe)
 	} else {
 		slog.Warn("fs request failed", "chat_id", chatID, "method", msg.Method, "error", safe)
 	}
-	in.respondBridge(ctx, chatID, msg, nil, err)
+	in.respondBridge(ctx, chatID, origin, msg, nil, err)
 }
 
-// fsErrorIsRoutine reports whether err is an expected policy denial or validation failure.
 func fsErrorIsRoutine(err error) bool {
 	if err == nil {
 		return false
@@ -100,18 +98,12 @@ func fsErrorIsRoutine(err error) bool {
 		errors.Is(err, errRejectedByUser)
 }
 
-// respondBridge sends a response to the bridge that issued the request; a gone bridge drops it silently.
-func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, result any, err error) {
+func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse, result any, err error) {
 	if msg.ID == nil {
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
 	}
-	sb := in.coord.Bridge(chatID)
-	if sb == nil {
-		slog.Warn("fs response dropped: no bridge", "chat_id", chatID, "method", msg.Method)
-		return
-	}
-	if wErr := sb.bridge.Respond(ctx, *msg.ID, result, err); wErr != nil {
+	if wErr := respondOn(ctx, in.coord.bridge.mgr, chatID, origin, msg, result, err); wErr != nil {
 		slog.Error("fs response write failed", "chat_id", chatID, "method", msg.Method, "error", wErr)
 	}
 }
@@ -123,28 +115,22 @@ func parseRequest(msg *marotte.RPCResponse, v any) error {
 	return json.Unmarshal(msg.Params, v)
 }
 
-func respondOK(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, msg *marotte.RPCResponse, result any) {
-	if msg.ID == nil {
-		return
+// respondOn answers msg on origin, the bridge it arrived on, never on whatever bridge chatID maps to
+// at answer time: KAS settles a response by its per-connection request id, so an answer redirected to
+// a successor resolves an unrelated request pending there. A write that fails because origin exited
+// or is no longer chatID's bridge is the expected loss at its end and drops at Debug; other failures
+// return.
+func respondOn(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, origin acpResponder,
+	msg *marotte.RPCResponse, result any, err error,
+) error {
+	if msg.ID == nil || origin == nil {
+		return nil
 	}
-	sb := bridges.get(chatID)
-	if sb == nil {
-		return
+	wErr := origin.Respond(ctx, *msg.ID, result, err)
+	if wErr != nil && (errors.Is(wErr, marotte.ErrBridgeExited) || !bridges.carries(chatID, origin)) {
+		slog.Debug("answer dropped: the bridge it arrived on has ended",
+			"chat_id", chatID, "method", msg.Method, "error", wErr)
+		return nil
 	}
-	if err := sb.bridge.Respond(ctx, *msg.ID, result, nil); err != nil {
-		slog.Warn("respondOK: bridge respond failed", "error", err)
-	}
-}
-
-func respondErr(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, msg *marotte.RPCResponse, errMsg string) {
-	if msg.ID == nil {
-		return
-	}
-	sb := bridges.get(chatID)
-	if sb == nil {
-		return
-	}
-	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{Code: -1, Message: errMsg}); err != nil {
-		slog.Warn("respondErr: bridge respond failed", "error", err)
-	}
+	return wErr
 }

@@ -31,7 +31,6 @@ func storeWith(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolR
 	return s
 }
 
-// windowedCall serves the newest page and returns its one tool call's previewed halves.
 func windowedCall(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolResult) (marotte.EntryToolCall, marotte.EntryToolResult) {
 	t.Helper()
 	page := getPage(t, storeWith(t, call, res), "c1", "")
@@ -66,7 +65,6 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// settled is a completed tool_result carrying output.
 func settled(output string) *marotte.EntryToolResult {
 	return &marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: output}
 }
@@ -331,7 +329,7 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -376,7 +374,7 @@ func TestToolBulk_Rejections(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, c.path, nil)
 			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
+			newRouter(s).handleOne(rec, req)
 			if rec.Code != c.want {
 				t.Errorf("GET %s = %d, want %d (body %s)", c.path, rec.Code, c.want, rec.Body.String())
 			}
@@ -389,14 +387,14 @@ func TestToolBulk_RejectsNonGet(t *testing.T) {
 	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))
 	req := httptest.NewRequest(http.MethodPost, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }
 
-// escapedValue is a JSON string value of n copies of c, unescaped. Built by hand: json.Marshal and the store both
-// escape, which hid an accounting that measured raw bytes.
+// Built by hand: json.Marshal and the store both escape, which hid an accounting that measured raw
+// bytes.
 func escapedValue(c byte, n int) json.RawMessage {
 	return json.RawMessage(`"` + strings.Repeat(string(c), n) + `"`)
 }
@@ -530,7 +528,6 @@ func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T)
 	}
 }
 
-// unescapeUnicode turns json.Marshal's `\u00xx` escapes back into raw bytes for fixtures.
 func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
 	t.Helper()
 	s := string(raw)

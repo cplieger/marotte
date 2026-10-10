@@ -28,7 +28,7 @@ func TestValidate_OAuthClientMetadataURL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(remoteWith(tc.value, ""))
+			err := validate(remoteWith(tc.value, ""))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Validate(clientMetadataUrl=%q) err = %v, wantErr %v", tc.value, err, tc.wantErr)
 			}
@@ -61,7 +61,7 @@ func TestValidate_OAuthRedirectURI(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(remoteWith("", tc.value))
+			err := validate(remoteWith("", tc.value))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Validate(redirectUri=%q) err = %v, wantErr %v", tc.value, err, tc.wantErr)
 			}
@@ -73,7 +73,7 @@ func TestValidate_OAuthRedirectURI(t *testing.T) {
 }
 
 func TestValidate_StdioRejectsOAuthMetadataFields(t *testing.T) {
-	err := Validate(&Server{
+	err := validate(&Server{
 		Transport: TransportStdio, Name: "s", Command: "npx",
 		OAuthClientMetadataURL: "https://x.test/c.json", OAuthRedirectURI: ":7778",
 	})
@@ -93,10 +93,10 @@ func TestUpdate_ReplacesOAuthMetadataFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.Update(t.Context(), orig.ID, remoteWith("https://x.test/c.json", ":7778")); err != nil {
+	if _, err := s.update(t.Context(), orig.ID, remoteWith("https://x.test/c.json", ":7778")); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil || got.OAuthClientMetadataURL != "https://x.test/c.json" || got.OAuthRedirectURI != ":7778" {
 		t.Errorf("after Update, record = %+v, want both oauth metadata fields set", got)
 	}
@@ -118,18 +118,18 @@ func TestSameSpec_OAuthMetadataFieldsDistinguish(t *testing.T) {
 func TestPersist_OAuthMetadataFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	kas := filepath.Join(dir, "kas-mcp.json")
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if _, err := s.Create(t.Context(), remoteWith("https://x.test/c.json", "localhost:7778")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	reloaded, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
+	reloaded, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("reload New: %v", err)
 	}
-	list := reloaded.List(t.Context())
+	list := reloaded.list(t.Context())
 	if len(list) != 1 || list[0].OAuthClientMetadataURL != "https://x.test/c.json" || list[0].OAuthRedirectURI != "localhost:7778" {
 		t.Errorf("reloaded = %+v, want both oauth metadata fields", list)
 	}

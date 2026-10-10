@@ -18,7 +18,7 @@ You can also search inside a chat, export a chat, search across chats, and brows
 - Switch modes: Default, Spec, Quick Spec, Bug Fix, Plan and Autonomous, or the bundled Semantic Reviewer agent, plus your own agents from `.kiro/agents/` in the workspace.
 - Switch models during a conversation, and set reasoning effort from low to max.
 - Answer permission requests, the agent's questions and the forms an MCP server asks you to fill in.
-- Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched.
+- Fork a tangent, a new chat that starts with this chat's context and leaves the original untouched. **Merge into parent chat** in the composer's `+` menu, or `/tangent merge`, sends a summary of the tangent's findings back to the chat it came from.
 
 Work handed to a subagent shows as a card you can open on its own page. The agent's own terminals show their output on the tool card that started them.
 
@@ -63,7 +63,7 @@ Turning on a language server also turns on kiro-cli [code intelligence](https://
 
 ## Workspace configuration
 
-The `/docs` page lists every steering doc, skill, agent, spec and hook under `.kiro`, with its header fields. It is also where you turn hooks on and off, and start, pause, resume, cancel or schedule workflow runs.
+The `/docs` page lists every steering doc, skill, agent, spec and hook under `.kiro`, with its header fields. It is also where you turn hooks on and off, and start, pause, resume, cancel or schedule workflow runs. A run's tab has its own composer: send the selected step a message while it runs, or answer its question, and each message shows when it was sent and when the step read it. The **+** at the top right creates a new steering doc, skill, prompt, agent or hook in the workspace's `.kiro`. Steering docs, prompts, agents and hooks start from the template the matching Kiro client writes. A skill has no Kiro template, so it starts from the name and description Kiro's skill format requires. The new file opens in the editor. On **Specs** it starts a spec chat that drafts the requirements, as `/spec new` does in kiro-cli.
 
 Instructions for every chat and knowledge bases are under **Custom instructions** in **Settings**, and **Settings** also has a diagnostics report you can copy. The sidebar shows your account's usage and switches between light, dark and system themes. The prompt bar shows the current chat's context use and credits. Open tabs follow you to every device, while each device keeps its own active tab, shell panel height and sidebar width.
 
@@ -93,4 +93,4 @@ marotte can be installed as an app from the browser. It then sends notifications
 
 The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. Pull request notifications work on GitHub, GitLab, Gitea, Forgejo and Codeberg, once the pull request's CI reports a result. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
 
-A device still receiving the live stream gets no notification. A request raised within about 30 seconds of locking a phone is held and sent once the stream goes quiet. It is dropped if someone answers it elsewhere or its time runs out first.
+A device still receiving the live stream gets no push. Its open page shows the notification itself, unless the chat or run it is about is the tab on screen. A request raised within about 30 seconds of locking a phone is held and sent once the stream goes quiet. It is dropped if someone answers it elsewhere or its time runs out first.

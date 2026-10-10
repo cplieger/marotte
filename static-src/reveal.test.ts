@@ -11,7 +11,7 @@ interface Harness {
   setText(full: string): void;
   finishNow(): void;
   readonly idle: boolean;
-  /** Run one frame. Returns false when none was pending. */
+  /** Returns false when none was pending. */
   frame(ms?: number): boolean;
   /** Run up to `n` frames, stopping early once the loop stops. */
   frames(n: number, ms?: number): void;

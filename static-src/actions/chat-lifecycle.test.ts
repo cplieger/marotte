@@ -285,63 +285,6 @@ describe("chat.create", () => {
   });
 });
 
-// The server mints the new chat's id.
-describe("chat.resume_session", () => {
-  const header = {
-    id: "c-minted",
-    name: "Earlier work",
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    created_at: 0,
-    updated_at: 0,
-    turn_count: 0,
-  };
-
-  it("sends the session id, the title and an op id, and NO chat id", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
-    const { resumeSession } = await import("./chat.js");
-    await resumeSession.dispatch({
-      opID: "op-1",
-      sessionID: "sess_abc-123",
-      name: "Earlier work",
-    });
-    const sent = mockSend.mock.calls.at(-1)?.[0] as { chat_id?: string; payload: unknown };
-    expect(sent).toMatchObject({
-      type: "resume_session",
-      payload: { session_id: "sess_abc-123", name: "Earlier work", op_id: "op-1" },
-    });
-    expect(sent.chat_id).toBeUndefined();
-  });
-
-  it("returns the chat the server created, so the caller can open it", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
-    const { resumeSession } = await import("./chat.js");
-    const got = await resumeSession.dispatch({
-      opID: "op-2",
-      sessionID: "sess_abc-123",
-      name: "Earlier work",
-    });
-    expect(got?.chat.id).toBe("c-minted");
-  });
-
-  // A 200 with no readable chat is a FAILURE: the session was adopted into an unaddressable chat.
-  it("fails when the reply names no chat", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
-    const { resumeSession } = await import("./chat.js");
-    const got = await resumeSession.dispatch({
-      opID: "op-3",
-      sessionID: "sess_abc-123",
-      name: "Earlier work",
-    });
-    expect(got).toBeNull();
-  });
-});
-
 // No chat.resolve_pending_change test: a turn's writes are approved through
 // chat.respond_permission, the reply KAS uses for every permission.
 describe("chat.exports", () => {
@@ -395,5 +338,82 @@ describe("chat.respond_permission", () => {
     expect(mockSend.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ payload: { request_id: 44, option_id: "reject_once" } }),
     );
+  });
+});
+
+describe("chat.merge_tangent", () => {
+  it("resends a merge whose reply was lost under the same op id, keyed by it alone", async () => {
+    mockSend
+      .mockResolvedValueOnce({ ok: false, status: 0, error: "Failed to fetch", code: "network" })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: { ok: true, state: "running", parent_chat_id: "c-parent" },
+      });
+    const { mergeTangent } = await import("./chat.js");
+    const { IDEMPOTENCY_COMMAND_FIELD } = await import("./index.js");
+
+    const outcome = await mergeTangent.dispatch({ chatID: "c-tangent", opID: "op-a" }).outcome;
+
+    expect(outcome).toEqual({ status: "success", value: { state: "running" }, attempts: 2 });
+    const [first, second] = mockSend.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(second?.["payload"]).toEqual({ op_id: "op-a" });
+    expect(first?.[IDEMPOTENCY_COMMAND_FIELD]).toBeUndefined();
+    expect(second?.[IDEMPOTENCY_COMMAND_FIELD]).toBeUndefined();
+  });
+
+  it("resends a merge whose first attempt was still being admitted", async () => {
+    mockSend
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: "this merge is still starting",
+        reason: "in_progress",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: { ok: true, state: "succeeded", parent_chat_id: "c-parent" },
+      });
+    const { mergeTangent } = await import("./chat.js");
+
+    const outcome = await mergeTangent.dispatch({ chatID: "c-tangent", opID: "op-b" }).outcome;
+
+    expect(outcome.status === "success" && outcome.value).toEqual({
+      state: "succeeded",
+      parentChatID: "c-parent",
+    });
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not resend a merge the server refused", async () => {
+    mockSend.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: "this tangent is still working",
+      reason: "busy",
+    });
+    const { mergeTangent, mergeRefused } = await import("./chat.js");
+
+    const outcome = await mergeTangent.dispatch({ chatID: "c-tangent", opID: "op-c" }).outcome;
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(outcome.status === "error" && mergeRefused(outcome.error)).toBe(true);
+  });
+
+  it.each([
+    ["no readable state", { ok: true }],
+    ["a success naming no parent", { ok: true, state: "succeeded" }],
+    ["a success naming an empty parent", { ok: true, state: "succeeded", parent_chat_id: "" }],
+    ["a failure giving no reason", { ok: true, state: "failed" }],
+    ["a failure with a non-text reason", { ok: true, state: "failed", message: 7 }],
+  ])("treats a reply with %s as unconfirmed, not as a refusal or an outcome", async (_, body) => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body });
+    const { mergeTangent, mergeRefused } = await import("./chat.js");
+
+    const outcome = await mergeTangent.dispatch({ chatID: "c-tangent", opID: "op-d" }).outcome;
+
+    expect(outcome.status).toBe("error");
+    expect(outcome.status === "error" && mergeRefused(outcome.error)).toBe(false);
   });
 });

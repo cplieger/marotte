@@ -27,19 +27,19 @@ func FuzzACPWireDecode(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var chunk ACPChunkWire
+		var chunk acpChunkWire
 		decodeAndCheck(t, data, &chunk)
 
-		var tc ACPToolCallWire
+		var tc acpToolCallWire
 		decodeAndCheck(t, data, &tc)
 
-		var tu ACPToolCallUpdateWire
+		var tu acpToolCallUpdateWire
 		decodeAndCheck(t, data, &tu)
 
-		var plan ACPPlanWire
+		var plan acpPlanWire
 		decodeAndCheck(t, data, &plan)
 
-		var mode ACPModeUpdateWire
+		var mode acpModeUpdateWire
 		decodeAndCheck(t, data, &mode)
 
 		var env ACPSessionUpdateEnvelope

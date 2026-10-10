@@ -9,18 +9,16 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// deferSuppressedSends is the one switch over what the presence filter does with a
-// push it suppresses. On, the default: the delivery is HELD and lands when the
-// profile flips to gone inside the kind's TTL, so an ask raised while a locked
-// phone still reads present reaches it once the alive window closes on the lock.
-// Off is the plain drop: not pushed to that profile, then or later, and the person
-// learns of it from the pending snapshot at unlock. A var only so its tests can
-// turn it off; production never reassigns it.
+// deferSuppressedSends is the one switch over what the presence filter does with a push it
+// suppresses. On, the default: the delivery is HELD and lands when the profile flips to gone inside
+// the kind's TTL, so an ask raised while a locked phone still reads present reaches it once the
+// alive window closes on the lock. Off is the plain drop: not pushed to that profile, then or
+// later, and the person learns of it from the pending snapshot at unlock. A var only so its tests
+// can turn it off; production never reassigns it.
 var deferSuppressedSends = true
 
-// deferPoll is how often the held set is re-judged against the presence table.
-// One beat: presence itself moves at that granularity. A var so a test can shrink
-// the wait rather than the window.
+// One beat: presence itself moves at that granularity. A var so a test can shrink the wait rather
+// than the window.
 var deferPoll = liveness.Keepalive
 
 // heldKey bounds the queue at one entry per profile, kind and subject: a second
@@ -32,30 +30,27 @@ type heldKey struct {
 	kind    marotte.PushKind
 }
 
-// heldPush is one suppressed delivery waiting for its profile to read gone.
 type heldPush struct {
 	expiresAt time.Time
 	sub       marotte.PushSubscription
 	payload   []byte
 }
 
-// deferred is the per-service held set. Its clock is the presence table's, so the
-// verdict and the TTL move together.
+// Its clock is the presence table's, so the verdict and the TTL move together.
 type deferred struct {
 	held  map[heldKey]heldPush
 	timer *time.Timer
 	mu    sync.Mutex
 }
 
-// holdForLater records a suppressed delivery when the variant is on, and arms the
-// re-judge if none is armed. With the switch off it is a no-op, which is the drop.
+// With the switch off it is a no-op, which is the drop.
 func (s *Service) holdForLater(
 	sub marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, payload []byte,
 ) {
 	if !deferSuppressedSends || s.presence == nil {
 		return
 	}
-	key := heldKey{tag: TagOf(sub.Endpoint), kind: kind, subject: debounceKey(kind, subject).subject}
+	key := heldKey{tag: tagOf(sub.Endpoint), kind: kind, subject: debounceKey(kind, subject).subject}
 	s.deferred.mu.Lock()
 	defer s.deferred.mu.Unlock()
 	if s.deferred.held == nil {
@@ -129,8 +124,7 @@ func (s *Service) releaseHeld() {
 	}
 }
 
-// stop disarms the re-judge timer at Close; a poll already running sees the
-// cancelled lifetime and sends nothing.
+// A poll already running sees the cancelled lifetime and sends nothing.
 func (d *deferred) stop() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -138,11 +132,4 @@ func (d *deferred) stop() {
 		d.timer.Stop()
 		d.timer = nil
 	}
-}
-
-// heldCount is the number of deliveries waiting; the tests read it.
-func (s *Service) heldCount() int {
-	s.deferred.mu.Lock()
-	defer s.deferred.mu.Unlock()
-	return len(s.deferred.held)
 }

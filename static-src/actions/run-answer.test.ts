@@ -41,7 +41,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Dispatch one answer against a canned response and return the toast text. */
 async function answerAgainst(res: () => Response | Promise<Response>): Promise<string> {
   mockFetch.mockImplementation(res);
   await answerRunInput.dispatch({ workflowID: "wf_1", ask_id: "a1", text: "the main branch" });

@@ -10,7 +10,7 @@ import (
 // its own Server.Transport value. "sse" is preserved as TransportSSE
 // (not folded into "http") — KAS accepts a distinct {type:"sse"}
 // mcpServers entry on the v3 wire, and UnmarshalJSON assigns
-// ParseTransport's return value so the parsed record passes Validate()
+// parseTransport's return value so the parsed record passes Validate()
 // on first read.
 func TestUnmarshalJSON_PreservesTransport(t *testing.T) {
 	t.Parallel()
@@ -47,9 +47,9 @@ func TestUnmarshalJSON_PreservesTransport(t *testing.T) {
 			if s.Transport != tc.want {
 				t.Errorf("Transport = %q; want %q", s.Transport, tc.want)
 			}
-			// And the parsed record must pass Validate so it can be
+			// And the parsed record must pass validate so it can be
 			// served from a Read or written back to disk.
-			if err := Validate(&s); err != nil {
+			if err := validate(&s); err != nil {
 				t.Errorf("Validate after unmarshal: %v", err)
 			}
 		})
@@ -58,7 +58,7 @@ func TestUnmarshalJSON_PreservesTransport(t *testing.T) {
 
 // TestUnmarshalJSON_RejectsUnknownTransport pins the parse-boundary
 // behaviour: anything outside {stdio, http, sse} is rejected at
-// unmarshal time, not at Validate.
+// unmarshal time, not at validate.
 func TestUnmarshalJSON_RejectsUnknownTransport(t *testing.T) {
 	t.Parallel()
 	var s Server

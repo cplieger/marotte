@@ -15,8 +15,8 @@ import (
 
 var errBoom = errors.New("persist boom")
 
-// captureSlog redirects the default slog logger to buf, restoring it (and the log package's
-// writer and flags, which slog.SetDefault redirects) on cleanup. Not parallel-safe.
+// captureSlog redirects the default slog logger to buf, restoring it (and the log package's writer
+// and flags, which slog.SetDefault redirects) on cleanup. Not parallel-safe.
 func captureSlog(buf *bytes.Buffer) func() {
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -104,7 +104,6 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// refusalChunk is one text chunk, tagged with meta when non-nil.
 func refusalChunk(meta map[string]any) map[string]any {
 	c := map[string]any{
 		"content": map[string]any{"type": marotte.ContentTypeText, "text": "I can't continue."},

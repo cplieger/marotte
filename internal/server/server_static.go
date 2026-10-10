@@ -11,7 +11,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// shellContentType is what the SPA shell is served as.
 const shellContentType = "text/html; charset=utf-8"
 
 // Each policy is a claim about the NAME: immutableAsset on a name whose content can change
@@ -22,12 +21,10 @@ const (
 	noStoreHTML     = "no-store"
 )
 
-// fontAssetPrefix is where the Dockerfile writes the web faces; the trailing slash keeps a
-// sibling directory sharing the prefix out.
+// The trailing slash keeps a sibling directory sharing the prefix out.
 const fontAssetPrefix = "vendor/fonts/"
 
-// stampedFont matches the `<stem>.<8 lowercase hex><ext>` name cmd/bundle stamps; without the
-// stamp a face revalidates rather than going stale.
+// Without the stamp a face revalidates rather than going stale.
 var stampedFont = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
 
 // contentHashedAsset matches cmd/bundle's `chunks/[name]-[hash]` (8 uppercase base32),
@@ -63,8 +60,7 @@ func reportMissingServiceWorker(staticFS fs.FS) {
 		"path", serviceWorkerPath, "remedy", "go run ./cmd/bundle, then rebuild")
 }
 
-// terminalFontGlob names one face css/00-fonts.css declares; a glob because cmd/bundle stamps
-// a content hash before the extension.
+// A glob because cmd/bundle stamps a content hash before the extension.
 const terminalFontGlob = fontAssetPrefix + "WebTerminalGlyphs*.woff2"
 
 // reportMissingTerminalFonts logs at boot that the terminal faces are absent: `//go:embed`
@@ -77,10 +73,8 @@ func reportMissingTerminalFonts(staticFS fs.FS) {
 		"path", terminalFontGlob, "remedy", "bash scripts/dev-fonts.sh, then rebuild")
 }
 
-// spaHandler serves the embedded FS, falling back to index.html for any non-file path
-// (History-API routing); HTML is no-store. The fallback WRITES the shell rather than
-// calling http.ServeFileFS, whose serveFile 301s every path ending "/index.html" to "./"
-// (net/http fs.go:686-689, go1.27.0).
+// HTML is no-store. The fallback WRITES the shell rather than calling http.ServeFileFS, whose
+// serveFile 301s every path ending "/index.html" to "./" (net/http fs.go:686-689, go1.27.0).
 func spaHandler(staticFS fs.FS) http.Handler {
 	static, err := webhttp.StaticHandler(staticFS, webhttp.WithStaticCacheControl(assetCachePolicy))
 	if err != nil {

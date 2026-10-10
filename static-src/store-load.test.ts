@@ -31,16 +31,15 @@ const {
   // its fixture is the whole `ApiResult` envelope.
   mockApiGetTypedOrError: vi.fn(),
   mockSetSessions: vi.fn(),
-  // The single adoption door for a chat header. A spy so the confirm cases can assert that a chat
-  // the server DOES know lands in the store.
+  // A spy so the confirm cases can assert that a chat the server DOES know lands in the store.
   mockUpsertHeader: vi.fn(),
   mockBumpMessages: vi.fn(),
   // The channel a MOUNTED tool card refreshes through. A spy, because what this file owns is that a
   // fetched window is put on it at all and with which turns; what the channel then does to a card's
   // signal is store.test.ts's, against the real one.
   mockRepublishToolCalls: vi.fn(),
-  // The store's own gap mark. A spy: this file owns that a hole MARKS the window, and what the mark
-  // does to `residency` and to `transcriptStale` is store.test.ts's.
+  // A spy: this file owns that a hole MARKS the window, and what the mark does to `residency` and
+  // to `transcriptStale` is store.test.ts's.
   mockMarkWindowStale: vi.fn(),
   mockSetTurnOpen: vi.fn(),
   // The shared turn teardown, mocked at the boundary rather than run for real: the real one reaches
@@ -116,7 +115,6 @@ function header(id: string, over: Partial<ChatHeader> = {}): ChatHeader {
   return Object.assign(base, over);
 }
 
-/** The `turn_open` that opens `turnID` at session-absolute ordinal `n`. */
 function turnOpen(turnID: string, n: number): Entry {
   return {
     id: `${turnID}-open`,
@@ -188,7 +186,6 @@ function seedSession(id: string, over: Partial<Session> = {}): Session {
   return s;
 }
 
-/** Seat a resident turn on a session, entries in `seq` order. */
 function seedTurn(session: Session, turnID: string, entries: Entry[], open: OpenEntry[] = []) {
   const state: TurnState = {
     entries,
@@ -1440,7 +1437,7 @@ describe("the range read repairs one turn", () => {
   it("leaves the window PARTIAL while another repair is still out", async () => {
     // The restore is read after one lands, so `residency` may go back to `loaded` only when nothing
     // is missing rather than after whichever answer arrives last. The restore ITSELF is not
-    // observable today; see this box's report for the hand-off.
+    // observable.
     const s = seedSession("c1", { residency: "partial" });
     seedTurn(s, "t1", [turnOpen("t1", 1)]);
     seedTurn(s, "t2", [turnOpen("t2", 1)]);

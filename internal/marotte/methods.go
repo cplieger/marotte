@@ -1,8 +1,6 @@
 package marotte
 
-// ACP protocol method name constants. The complete vocabulary lives here
-// so a protocol rename is a single-line change with compile-time
-// verification of all consumers across packages.
+// ACP method-name constants: the whole vocabulary, so a protocol rename is one edit the compiler checks.
 
 // Bridge lifecycle methods — used by the bridge package to drive the
 // kiro-cli subprocess through initialize → session/new|load. On v3 (KAS)
@@ -23,20 +21,18 @@ const (
 	MethodSessionDelete = "session/delete"
 	MethodSetMode       = "session/set_mode"
 	MethodCancel        = "session/cancel"
-	// MethodCheckpointRevertMultiple reverts a session to a USER message, dropping it and
-	// everything after and rolling the files back from KAS's snapshots. KAS appends a durable
-	// `checkpoint_revert` tombstone that a later session/load replays (applyCheckpointReverts). KAS
-	// itself refuses a mid-turn session and a concurrent revert.
+	// MethodCheckpointRevertMultiple reverts a session to a USER message, dropping it and everything
+	// after and rolling files back from KAS's snapshots, with a durable `checkpoint_revert` tombstone
+	// a later session/load replays (applyCheckpointReverts). KAS refuses it mid-turn or concurrently.
 	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
 	// MethodSessionFork branches a session (`session/*`, not `_kiro/*`; 2.18.0 sidecar): KAS
 	// creates one carrying the forked context and returns `{sessionId}`. Params `{sessionId, cwd,
 	// _meta:{kiro:{…}}}`, the `_meta.kiro` block caller-supplied: `createdReason` (reported back on
 	// session/load) and `title`. No `messageId` for a tangent: KAS's own /tangent sends none.
 	MethodSessionFork = "session/fork"
-	// MethodSessionCompact summarizes the conversation and replaces it with the summary, emitting
-	// `summarization_completed`; typed `/compact` does nothing (no parser in KAS claims it).
-	// `{success: false}` covers a turn in flight and a compaction already running with no
-	// discriminator.
+	// MethodSessionCompact replaces the conversation with its summary, emitting
+	// `summarization_completed`; typed `/compact` does nothing in KAS. `{success: false}` covers
+	// both a turn in flight and a compaction already running, with no discriminator.
 	MethodSessionCompact = "_kiro/session/compact"
 	// MethodSessionRename sets a session's title as the USER's, latching
 	// titleSetByUser so KAS stops emitting agent titles for it. Served for a
@@ -48,21 +44,14 @@ const (
 	// disk, so any process answers it; the caller deletes the file.
 	MethodSessionExport = "_kiro/session/export"
 
-	// MethodSessionSteer delivers a mid-turn steer (`_session/*`, KAS's spelling). Params
-	// `{sessionId, message, messageId?}`; replies `{queued: true, messageId}` or `{queued: false,
-	// messageId, dropped}`; a missing or unknown session and an empty message THROW. KAS buffers it
-	// and the graph consumes it at the next node boundary as a human turn.
-	// `message` is a plain STRING (no attachments), and KAS classifies text matching
-	// `^\s*\[notification/(info|success|warning|error)\]` as a system notification;
-	// command/steer.go handles both.
+	// MethodSessionSteer delivers a mid-turn steer (`_session/*`, KAS's spelling), read at the next
+	// node boundary as a human turn: `{sessionId, message, messageId?}` → `{queued, messageId,
+	// dropped?}`; an unknown session or empty message THROWS. `message` is a plain STRING, and text
+	// matching `^\s*\[notification/(info|success|warning|error)\]` is a system notification.
 	MethodSessionSteer = "_session/steer"
-	// MethodSessionSteerClear drops every steer still queued in the session's
-	// buffer before the model reads it. Params `{sessionId}`, reply
-	// `{messageIds: [...]}` naming what it dropped; clearing an empty buffer is a
-	// no-op returning an empty list.
-	//
-	// Unlike `session/cancel` this does NOT abort the turn — the in-flight
-	// execution keeps running, only the unread steers go away.
+	// MethodSessionSteerClear drops every steer still queued before the model reads it:
+	// `{sessionId}` → `{messageIds: [...]}`, empty for an empty buffer. Unlike `session/cancel`,
+	// the turn keeps running.
 	MethodSessionSteerClear = "_session/steer/clear"
 )
 
@@ -163,13 +152,9 @@ const AgentEngineV3 = "v3"
 const (
 	ConfigOptionModel  = "model"
 	ConfigOptionEffort = "effortLevel"
-	// ConfigOptionAutopilot is supervised mode on v3. `autopilot: false` makes KAS
-	// request a TURN APPROVAL before applying a file-touching turn's writes;
-	// `true` (its default at session creation) applies them as they happen.
-	//
-	// It persists into KAS's own session metadata, so it survives session/load and
-	// never needs re-asserting — which is what lets marotte pass it once at
-	// session/new instead of policing every write.
+	// ConfigOptionAutopilot is supervised mode on v3: `false` makes KAS request a TURN APPROVAL
+	// before applying a file-touching turn's writes; `true` (the default) applies them as they
+	// happen. KAS persists it across session/load, so marotte sets it once at session/new.
 	ConfigOptionAutopilot = "autopilot"
 	// ConfigOptionMemoryReflection is background memory learning. Its value is the
 	// STRING "on" or "off" (a JSON boolean is a silent no-op), and it is the one
@@ -179,10 +164,9 @@ const (
 	// choice carries `_meta.kiro.thinkingToggleable`. Its value is the STRING
 	// ThinkingOn or ThinkingOff; turning it off caps a high effort tier.
 	ConfigOptionThinking = "thinking"
-	// ConfigOptionContentCollection drives the opt-out header on every model request
-	// of the PROCESS, not the session, and KAS persists none of it. The value is the
-	// STRING ConfigValueContentCollectionEnabled or ...Disabled; a JSON boolean is
-	// ignored.
+	// ConfigOptionContentCollection drives the opt-out header on every model request of the
+	// PROCESS, not the session, and KAS persists none of it. The value is the STRING
+	// ConfigValueContentCollectionEnabled or ...Disabled; a JSON boolean is ignored.
 	ConfigOptionContentCollection = "contentCollection"
 )
 
@@ -212,7 +196,7 @@ const (
 // translate packages.
 const (
 	ContentKeyType = "type"
-	ContentKeyText = "text"
+	contentKeyText = "text"
 )
 
 // TextBlock returns a canonical ACP text content block:
@@ -221,7 +205,7 @@ const (
 //
 // Eliminates ad-hoc map construction across agent, command, and translate.
 func TextBlock(content string) map[string]any {
-	return map[string]any{ContentKeyType: ContentTypeText, ContentKeyText: content}
+	return map[string]any{ContentKeyType: ContentTypeText, contentKeyText: content}
 }
 
 // KeySessionID is the ACP wire key for the session identifier in

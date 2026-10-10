@@ -116,8 +116,8 @@ func TestGrant_Answers(t *testing.T) {
 	if !strings.HasPrefix(g.URL, g.Base) || !strings.HasSuffix(g.URL, "/index.html") || !strings.HasPrefix(g.Base, PathPrefix) {
 		t.Errorf("grant URL = %q base = %q, want base + index.html under %s", g.URL, g.Base, PathPrefix)
 	}
-	if g.Epoch != f.h.signer.Epoch() || !g.ExpiresAt.Equal(f.now.Add(grantTTL)) {
-		t.Errorf("grant epoch/expiry = %q %v, want %q %v", g.Epoch, g.ExpiresAt, f.h.signer.Epoch(), f.now.Add(grantTTL))
+	if g.Epoch != f.h.signer.currentEpoch() || !g.ExpiresAt.Equal(f.now.Add(grantTTL)) {
+		t.Errorf("grant epoch/expiry = %q %v, want %q %v", g.Epoch, g.ExpiresAt, f.h.signer.currentEpoch(), f.now.Add(grantTTL))
 	}
 	if g.Hint == nil || g.Hint.Preset != marotte.PreviewPresetPhone {
 		t.Errorf("grant hint = %+v, want phone", g.Hint)

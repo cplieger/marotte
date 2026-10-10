@@ -1,7 +1,7 @@
 package agent
 
-// SwapMerged is the one production caller of EntryLog.Rewrite: a second would lay down an order
-// MergeEntries never produced, past a revert gate it never read. A census, because the next
+// swapMerged is the one production caller of EntryLog.Rewrite: a second would lay down an order
+// mergeEntries never produced, past a revert gate it never read. A census, because the next
 // caller is one nobody has written yet.
 
 import (
@@ -28,7 +28,6 @@ var callerSkipDirs = map[string]bool{
 // A walk that stops finding files must fail. 406 measured; the floor catches a wrongly rooted walker.
 const callerFileFloor = 300
 
-// rewriteSite is one production call of a method named Rewrite.
 type rewriteSite struct {
 	file string
 	line int
@@ -98,7 +97,7 @@ func TestSwapMerged_RewriteHasOneProductionCaller(t *testing.T) {
 			files, root, callerFileFloor)
 	}
 
-	const wantFile, wantFn = "internal/agent/entry_merge.go", "SwapMerged"
+	const wantFile, wantFn = "internal/agent/entry_merge.go", "swapMerged"
 	if len(sites) != 1 {
 		t.Fatalf("Rewrite is called from %d production sites %v, want exactly 1 (%s in %s): a "+
 			"second caller lays down a turn order MergeEntries did not produce, and under R2's "+

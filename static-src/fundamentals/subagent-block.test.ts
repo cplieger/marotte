@@ -47,7 +47,6 @@ async function populate(box: { body: HTMLElement }): Promise<void> {
 const tailLines = (root: HTMLElement): (string | null)[] =>
   [...root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
 
-/** The href every opener below hands the head. */
 const HREF = "/chat/c/subagent/u-1";
 
 const opener = (open: () => void = () => undefined): { href: string; open: () => void } => ({

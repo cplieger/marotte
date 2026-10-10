@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// slashFrame builds an available_commands_update update object.
 func slashFrame(t *testing.T, cmds ...map[string]any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"sessionUpdate": "available_commands_update", "availableCommands": cmds})
@@ -94,10 +93,9 @@ func TestReadSlashCatalog_EmptyFrameIsNotACatalog(t *testing.T) {
 	}
 }
 
-type slashCatalogDouble struct{ chat, utility int }
+type slashCatalogDouble struct{ chat int }
 
-func (s *slashCatalogDouble) SetFromChat([]marotte.SlashCommand) bool    { s.chat++; return true }
-func (s *slashCatalogDouble) SetFromUtility([]marotte.SlashCommand) bool { s.utility++; return true }
+func (s *slashCatalogDouble) SetFromChat([]marotte.SlashCommand) bool { s.chat++; return true }
 
 type countingBus struct{ events []marotte.EventType }
 
@@ -124,10 +122,10 @@ func TestAvailableCommandsUpdate_StepAndSubagentFramesAreIgnored(t *testing.T) {
 }
 
 func TestReadSteeringIssues_FailedFrameIsNotAnUpdate(t *testing.T) {
-	if _, ok := ReadSteeringIssues(json.RawMessage(`{"status":"failed","error":"x"}`)); ok {
+	if _, ok := readSteeringIssues(json.RawMessage(`{"status":"failed","error":"x"}`)); ok {
 		t.Error("ReadSteeringIssues(failed) ok = true, want false so the map is kept")
 	}
-	issues, ok := ReadSteeringIssues(json.RawMessage(`{"status":"success","documents":[
+	issues, ok := readSteeringIssues(json.RawMessage(`{"status":"success","documents":[
 		{"uri":"file:///workspace/.kiro/steering/a%20b.md","_meta":{"kiro":{"configIssues":[{"code":"fileMatchPatternLiteralComma","patterns":["a,b"],"remediation":"Split it."}]}}},
 		{"uri":"file:///workspace/.kiro/steering/a%20c.md","_meta":{"kiro":{}}}]}`))
 	if !ok || len(issues) != 1 || len(issues["workspace/.kiro/steering/a b.md"]) != 1 {

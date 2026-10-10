@@ -11,7 +11,6 @@ let style: HTMLStyleElement;
 let frame: HTMLIFrameElement;
 let phone: Document;
 
-/** The card this helper last mounted, per document. */
 const mounted = new WeakMap<Document, HTMLElement>();
 
 /** A fact that no phone-width track can hold, so the ellipsis has to fire. */
@@ -25,8 +24,6 @@ interface Mounted {
   rewind: HTMLElement | null;
 }
 
-/** A turn card with the footer parts that decide the row's layout, as
- *  `buildTurnFooter`, `mountTurnActions` and `mountRewind` assemble one. */
 function mountCard(
   doc: Document,
   opts: { fact: string; word?: string; actions?: boolean; rewind?: boolean },
@@ -104,7 +101,6 @@ function mountCard(
   return { footer, ledger, slot, actions, rewind };
 }
 
-/** The delegate card's copy of the row, nested in `.subagent-foot`. */
 function mountDelegate(doc: Document, fact: string): Mounted {
   const delegate = doc.createElement("div");
   delegate.className = "subagent-block";

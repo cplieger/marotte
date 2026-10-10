@@ -69,7 +69,6 @@ type lane struct {
 	seg      int
 }
 
-// aggregate is the footer the turn_close carries, accumulated as the turn runs.
 type aggregate struct {
 	changed map[string]*marotte.FileChange
 	refusal *marotte.RefusalInfo
@@ -87,6 +86,8 @@ type aggregate struct {
 type Turn struct {
 	sink  Sink
 	lanes map[string]*lane
+	// bound closes at the first turn_bind that reaches the sink.
+	bound chan struct{}
 	// calls holds every unsettled tool call by id with its lane fixed at the create, and
 	// callOrder keeps arrival order for a close's aborted results.
 	calls     map[string]*OpenCall
@@ -116,19 +117,16 @@ func Open(id string, sink Sink) *Turn {
 		sink:  sink,
 		lanes: make(map[string]*lane),
 		calls: make(map[string]*OpenCall),
+		bound: make(chan struct{}),
 		id:    id,
 	}
 }
 
+// Bound closes once a turn_bind is on disk: KAS accepted the prompt that opened the turn.
+func (t *Turn) Bound() <-chan struct{} { return t.bound }
+
 // ID is the turn id every entry of this turn carries.
 func (t *Turn) ID() string { return t.id }
-
-// Closed reports whether the turn_close is on disk.
-func (t *Turn) Closed() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.closed
-}
 
 // Emitted reports whether the turn produced content: a text or thinking entry, or a laned
 // entry. Lane-less entries are not content; read it after Close.
@@ -419,12 +417,27 @@ func (t *Turn) SteerAck(ctx context.Context, key, steerID, text string) ([]Seale
 	return t.laned(ctx, key, marotte.EntryKindSteerAck, marotte.SteerAckID(steerID), payload, nil)
 }
 
+// SteerDelivered appends a workflow message's take-up, lane-less like the steer it replaces.
+func (t *Turn) SteerDelivered(ctx context.Context, d *marotte.EntrySteerDelivered) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.laneless(ctx, marotte.EntryKindSteerDelivered, marotte.SteerDeliveredID(d.SteerID), *d)
+}
+
 // TurnBind appends the id KAS holds the prompt under. Lane-less with no
 // exception, so it seals every lane; on the ordinary path nothing is open.
 func (t *Turn) TurnBind(ctx context.Context, bind marotte.EntryTurnBind) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.laneless(ctx, marotte.EntryKindTurnBind, t.mintID(), bind)
+	sealed, err := t.laneless(ctx, marotte.EntryKindTurnBind, t.mintID(), bind)
+	if err == nil {
+		select {
+		case <-t.bound:
+		default:
+			close(t.bound)
+		}
+	}
+	return sealed, err
 }
 
 // Steer appends a steer, read or dropped. Lane-less because it is the model's
@@ -496,6 +509,13 @@ func (t *Turn) ModelSwitched(ctx context.Context, p marotte.EntryModelSwitched) 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.laneless(ctx, marotte.EntryKindModelSwitched, t.mintID(), p)
+}
+
+// ModelRouted appends KAS's in-turn Auto routing notice at its position in the turn.
+func (t *Turn) ModelRouted(ctx context.Context, p marotte.EntryModelRouted) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.laneless(ctx, marotte.EntryKindModelRouted, t.mintID(), p)
 }
 
 // ModeSwitched appends an applied mode switch, with ModelSwitched's position rule. Takes the
@@ -595,7 +615,6 @@ func (t *Turn) laneless(ctx context.Context, kind marotte.EntryKind, id string, 
 	return append(sealed, s), nil
 }
 
-// sealAll seals every lane in first-seen order.
 func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {
 	var sealed []Sealed
 	for _, key := range slices.Clone(t.order) {
@@ -608,9 +627,8 @@ func (t *Turn) sealAll(ctx context.Context) ([]Sealed, error) {
 	return sealed, nil
 }
 
-// sealLane settles lane key's steer carry, freezes its open entry and hands it to
-// the sink. A carry released with nothing open opens a text entry and seals it in
-// the same step; a carry that is an unclosed marker is dropped.
+// A carry released with nothing open opens a text entry and seals it in the same step; a carry that
+// is an unclosed marker is dropped.
 func (t *Turn) sealLane(ctx context.Context, key string) ([]Sealed, error) {
 	l := t.lanes[key]
 	if l == nil {
@@ -658,9 +676,8 @@ func (l *lane) settleCarry() (released, say string) {
 	return carry, carrySay
 }
 
-// openEntry starts a lane's open entry. A say id this lane already opened an
-// entry for is one a seal split, so its later segments take `<say>#k`; an absent
-// id takes a server-minted one, as the projection's own fallback does.
+// A say id this lane already opened an entry for is one a seal split, so its later segments take
+// `<say>#k`; an absent id takes a server-minted one, as the projection's own fallback does.
 func (t *Turn) openEntry(l *lane, key string, kind marotte.EntryKind, sayID, delta string) {
 	id := sayID
 	switch sayID {
@@ -715,8 +732,7 @@ func (t *Turn) settleCall(id string) {
 	t.callOrder = slices.DeleteFunc(t.callOrder, func(s string) bool { return s == id })
 }
 
-// mintID is the id for an entry no side of the merge pairs by id. Derived from the turn id
-// and a counter, so it is unique per log and stable for a fixture.
+// Derived from the turn id and a counter, so it is unique per log and stable for a fixture.
 func (t *Turn) mintID() string {
 	t.minted++
 	return t.id + ":e" + strconv.Itoa(t.minted)

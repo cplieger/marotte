@@ -3,7 +3,7 @@
 // typeable before the read lands; the read is what unlocks it.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { ActionInstance } from "./actions/index.js";
+import type { ActionInstance } from "@cplieger/actions";
 
 const H = vi.hoisted(() => ({
   get: vi.fn(),
@@ -13,7 +13,6 @@ const H = vi.hoisted(() => ({
   showError: vi.fn(),
   showSaved: vi.fn(),
   toast: vi.fn(),
-  /** The lifecycle listener `initSteeringEditor` registered. */
   onSave: null as ((inst: ActionInstance) => void) | null,
 }));
 
@@ -43,7 +42,6 @@ vi.mock("./actions/index.js", () => ({
 const { initSteeringEditor, loadSteeringDoc, _resetSteeringForTest } =
   await import("./settings-steering.js");
 
-/** The textarea `$` resolves, mounted at the id index.html declares. */
 function mount(): HTMLTextAreaElement {
   const ta = document.createElement("textarea");
   ta.id = "steering-input";
@@ -56,9 +54,8 @@ function answers(content: string, tag = 'W/"12-34"'): void {
   H.get.mockResolvedValue({ data: { content }, headers: new Headers({ ETag: tag }) });
 }
 
-/** A read left open, with its resolver. */
 function openRead(): (d: { content: string } | null) => void {
-  let land = (_: { content: string } | null): void => undefined;
+  let land: (d: { content: string } | null) => void = () => undefined;
   H.get.mockReturnValue(
     new Promise<{ data: { content: string } | null; headers: Headers }>((resolve) => {
       land = (d) => {
@@ -69,9 +66,8 @@ function openRead(): (d: { content: string } | null) => void {
   return land;
 }
 
-/** Report the outcome of one dispatch. `args` defaults to the last one the module made; a case
- *  that needs an EARLIER dispatch's outcome states it. `result` is what the action decoded off
- *  the 200 — the validator the write produced. */
+/** `args` defaults to the last one the module made; a case that needs an EARLIER dispatch's outcome
+ *  states it. `result` is what the action decoded off the 200 — the validator the write produced. */
 function settleSave(
   status: "success" | "error",
   opts: { httpStatus?: number; args?: unknown; result?: unknown } = {},

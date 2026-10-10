@@ -23,7 +23,6 @@ var (
 
 const specDir = ".kiro/specs/demo"
 
-// newStoreIn opens a store in a fresh directory and fails on the diagnostic error.
 func newStoreIn(t *testing.T, dir string) *Store {
 	t.Helper()
 	s, err := NewStore(dir)
@@ -33,11 +32,9 @@ func newStoreIn(t *testing.T, dir string) *Store {
 	return s
 }
 
-// writeDoc plants a document at the store's own path, as a hand-edited or
-// foreign writer would leave it.
 func writeDoc(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), fileMode); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(body), fileMode); err != nil {
 		t.Fatalf("plant document: %v", err)
 	}
 }
@@ -51,7 +48,7 @@ func TestApprove_IsReadBackByTheNextStoreFromA0600File(t *testing.T) {
 		t.Fatalf("Approve(design) = %v, want nil", err)
 	}
 
-	info, err := os.Stat(filepath.Join(dir, FileName))
+	info, err := os.Stat(filepath.Join(dir, fileName))
 	if err != nil {
 		t.Fatalf("stat the record: %v", err)
 	}
@@ -117,14 +114,14 @@ func TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing(t *testing.T) {
 		dir, phase, hash, user string
 		want                   error
 	}{
-		"empty dir":       {"", "design", hashA, "", ErrBadDir},
-		"dir over bound":  {strings.Repeat("d", MaxDirBytes+1), "design", hashA, "", ErrBadDir},
-		"unknown phase":   {specDir, "other", hashA, "", ErrBadPhase},
-		"empty phase":     {specDir, "", hashA, "", ErrBadPhase},
-		"uppercase hash":  {specDir, "design", strings.ToUpper(hashA), "", ErrBadHash},
-		"short hash":      {specDir, "design", hashA[:63], "", ErrBadHash},
-		"empty hash":      {specDir, "design", "", "", ErrBadHash},
-		"user over bound": {specDir, "design", hashA, strings.Repeat("u", MaxUserBytes+1), ErrBadDir},
+		"empty dir":       {"", "design", hashA, "", errBadDir},
+		"dir over bound":  {strings.Repeat("d", maxDirBytes+1), "design", hashA, "", errBadDir},
+		"unknown phase":   {specDir, "other", hashA, "", errBadPhase},
+		"empty phase":     {specDir, "", hashA, "", errBadPhase},
+		"uppercase hash":  {specDir, "design", strings.ToUpper(hashA), "", errBadHash},
+		"short hash":      {specDir, "design", hashA[:63], "", errBadHash},
+		"empty hash":      {specDir, "design", "", "", errBadHash},
+		"user over bound": {specDir, "design", hashA, strings.Repeat("u", maxUserBytes+1), errBadDir},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -136,7 +133,7 @@ func TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Approve(%q, %q, %q) = %v, want %v", tc.dir, tc.phase, tc.hash, err, tc.want)
 			}
-			if _, statErr := os.Stat(filepath.Join(dir, FileName)); !errors.Is(statErr, os.ErrNotExist) {
+			if _, statErr := os.Stat(filepath.Join(dir, fileName)); !errors.Is(statErr, os.ErrNotExist) {
 				t.Error("a refused approval wrote the document")
 			}
 			if got := s.For(tc.dir); got != nil {
@@ -146,12 +143,12 @@ func TestApprove_RefusesWhatItWouldNotStoreAndWritesNothing(t *testing.T) {
 	}
 }
 
-// TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne pins that MaxSpecs bounds NEW
+// TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne pins that maxSpecs bounds NEW
 // specs only.
 func TestApprove_RefusesANewSpecAtTheBoundAndStillTakesAKnownOne(t *testing.T) {
 	dir := t.TempDir()
-	full := make(map[string]map[string]record, MaxSpecs)
-	for i := range MaxSpecs {
+	full := make(map[string]map[string]record, maxSpecs)
+	for i := range maxSpecs {
 		full[".kiro/specs/s"+strconv.Itoa(i)] = map[string]record{"design": {Hash: hashA, At: time.Now().UTC()}}
 	}
 	data, err := json.Marshal(file{Specs: full})
@@ -207,7 +204,7 @@ func TestNewStore_WarnsAndStartsEmptyOnADocumentItCannotRead(t *testing.T) {
 // so the hostile file is never fully allocated.
 func TestNewStore_RefusesADocumentOverTheDecodeBound(t *testing.T) {
 	dir := t.TempDir()
-	writeDoc(t, dir, `{"specs":{},"pad":"`+strings.Repeat("p", MaxBytes)+`"}`)
+	writeDoc(t, dir, `{"specs":{},"pad":"`+strings.Repeat("p", maxBytes)+`"}`)
 
 	s, err := NewStore(dir)
 
@@ -233,7 +230,7 @@ func TestNewStore_RefusesASymlinkAtTheNameRatherThanParsingItsTarget(t *testing.
 	if err := os.WriteFile(target, data, fileMode); err != nil {
 		t.Fatalf("write the target document: %v", err)
 	}
-	if err := os.Symlink(target, filepath.Join(dir, FileName)); err != nil {
+	if err := os.Symlink(target, filepath.Join(dir, fileName)); err != nil {
 		t.Fatalf("plant the symlink: %v", err)
 	}
 
@@ -250,13 +247,13 @@ func TestNewStore_RefusesASymlinkAtTheNameRatherThanParsingItsTarget(t *testing.
 // TestNewStore_DropsAnEntryThisStoreCouldNotHaveWritten pins per-entry sanitize.
 func TestNewStore_DropsAnEntryThisStoreCouldNotHaveWritten(t *testing.T) {
 	dir := t.TempDir()
-	long := strings.Repeat("d", MaxDirBytes+1)
+	long := strings.Repeat("d", maxDirBytes+1)
 	writeDoc(t, dir, `{"specs":{
 		"`+specDir+`": {
 			"design": {"hash":"`+hashA+`"},
 			"other": {"hash":"`+hashB+`"},
 			"tasks": {"hash":"nope"},
-			"requirements": {"hash":"`+hashB+`","user":"`+strings.Repeat("u", MaxUserBytes+1)+`"}
+			"requirements": {"hash":"`+hashB+`","user":"`+strings.Repeat("u", maxUserBytes+1)+`"}
 		},
 		"": {"design": {"hash":"`+hashA+`"}},
 		"`+long+`": {"design": {"hash":"`+hashA+`"}},

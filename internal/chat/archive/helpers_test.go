@@ -13,8 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fakeStore is a minimal StoreAccess for purge tests; only Dir and Lock carry behavior, the rest
-// record calls.
 type fakeStore struct {
 	dir   string
 	mu    sync.Mutex
@@ -33,8 +31,6 @@ func newFakeStore(dir string) *fakeStore {
 
 func (f *fakeStore) Dir() string { return f.dir }
 
-// Lock returns a stable per-chat mutex so the purge code's
-// lock/unlock pairing behaves like the real store.
 func (f *fakeStore) Lock(chatID marotte.ChatID) *sync.Mutex {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -67,8 +63,7 @@ func (f *fakeStore) Remove(chatID marotte.ChatID) (string, error) {
 	return strconv.Itoa(f.removals), nil
 }
 
-// purgeRecorder collects chat IDs passed to an onPurge callback; safe for concurrent use because
-// Purge calls it from worker goroutines.
+// Safe for concurrent use because Purge calls it from worker goroutines.
 type purgeRecorder struct {
 	mu     sync.Mutex
 	ids    []marotte.ChatID
@@ -87,7 +82,6 @@ func (r *purgeRecorder) recordPurge(id marotte.ChatID, sessionChain []string) {
 	r.mu.Unlock()
 }
 
-// chainFor returns the session chain recorded for a purged chat.
 func (r *purgeRecorder) chainFor(id marotte.ChatID) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -109,8 +103,6 @@ func idsToSortedStrings(ids []marotte.ChatID) []string {
 	return out
 }
 
-// newPurgeTestService builds a Service backed by a fakeStore with a
-// fresh temp store dir.
 func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -118,9 +110,8 @@ func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, st
 	return New(store, opts...), store, dir
 }
 
-// writeAgedChat writes a chat directory whose header MTIME is `age` in the past and returns the
-// header's path. With no projection set on the fake, purgeReferenceTime falls through to that
-// mtime.
+// With no projection set on the fake, purgeReferenceTime falls through to the header MTIME this
+// sets.
 func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, id), 0o700); err != nil {
@@ -139,7 +130,6 @@ func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	return p
 }
 
-// exists reports whether a path is present on disk.
 func exists(t *testing.T, path string) bool {
 	t.Helper()
 	_, err := os.Stat(path)

@@ -5,11 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
-/**
- * A seam and its side of the split. `owner` draws (or would draw) the rule, spelled as the
- * source spells it so a reworded selector fails loudly. `fillOwner` is the region below:
- * `step: true` declares its own fill, `step: false` shows its card's.
- */
+/** `owner` draws (or would draw) the rule, spelled as the source spells it so a reworded selector
+ *  fails loudly. `fillOwner` is the region below: `step: true` declares its own fill, `step: false`
+ *  shows its card's. */
 interface Seam {
   readonly name: string;
   readonly sheet: string;
@@ -136,8 +134,8 @@ function draws(body: string, prop: string): boolean {
   return false;
 }
 
-/** Whether a rule declares a fill that paints. `background: none` is the tool
- *  group's way of saying "show the box behind me", so it counts as no fill. */
+/** `background: none` is the tool group's way of saying "show the box behind me", so it counts as no
+ *  fill. */
 function declaresFill(body: string): boolean {
   const m = /(^|[;{\s])background\s*:\s*([^;]+)/.exec(body);
   if (m === null) {

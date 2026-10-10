@@ -58,8 +58,8 @@ const (
 	maxRegionLen   = 32
 )
 
-// childWaitDelay bounds Wait past the context deadline. A backstop: boundChild kills the process group, so only an
-// escaped or uninterruptible descendant reaches it.
+// A backstop: boundChild kills the process group, so only an escaped or uninterruptible descendant
+// reaches it.
 const childWaitDelay = time.Second
 
 // awsRegionRe matches AWS region ids in every partition (us-east-1, cn-north-1, us-gov-west-1, us-isob-east-1).
@@ -138,9 +138,9 @@ func stderrAttr(stderr *procout.Buffer) []any {
 	return []any{"stderr", s}
 }
 
-// boundChild makes a subprocess honour its context's deadline. CommandContext SIGKILLs only the parent, and kiro-cli
-// forks helpers holding the pipes, so Wait blocks on the last descendant. Group kill and WaitDelay are both needed:
-// against `sleep 10` under a 50ms context, either alone took 10.0s or 1.05s, the pair 50ms.
+// CommandContext SIGKILLs only the parent, and kiro-cli forks helpers holding the pipes, so Wait
+// blocks on the last descendant. Group kill and WaitDelay are both needed: against `sleep 10` under
+// a 50ms context, either alone took 10.0s or 1.05s, the pair 50ms.
 func boundChild(cmd *exec.Cmd) {
 	setProcGroup(cmd)
 	cmd.Cancel = func() error {
@@ -183,8 +183,8 @@ func newLineRing(halfCap, perLineCap int) *lineRing {
 	}
 }
 
-// Push appends line, truncated at perLineCap so a hostile CLI cannot blow up one log attribute.
-func (r *lineRing) Push(line string) {
+// push appends line, truncated at perLineCap so a hostile CLI cannot blow up one log attribute.
+func (r *lineRing) push(line string) {
 	if len(line) > r.perLineCap {
 		line = line[:r.perLineCap]
 	}
@@ -198,7 +198,7 @@ func (r *lineRing) Push(line string) {
 	}
 }
 
-// Sample returns the first-N and last-N lines joined, for one slog attribute.
-func (r *lineRing) Sample() []string {
+// sample returns the first-N and last-N lines joined, for one slog attribute.
+func (r *lineRing) sample() []string {
 	return slices.Concat(r.first, r.last)
 }

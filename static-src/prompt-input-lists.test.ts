@@ -74,7 +74,6 @@ function box(): HTMLTextAreaElement {
   return document.getElementById("prompt-input") as HTMLTextAreaElement;
 }
 
-/** A focused box holding `text` with the caret at its end. */
 function start(text: string): HTMLTextAreaElement {
   const el = box();
   el.focus();
@@ -228,6 +227,16 @@ describe("Return under a finger", () => {
     el.setSelectionRange(6, 9);
     await userEvent.keyboard("{Enter}");
     expect(el.value).toBe("- one \n");
+  });
+
+  it("does not continue a list from a line break inside an IME composition", () => {
+    touch();
+    const el = start("- one\n");
+    // The beforeinput resets the replaced-selection latch an earlier case may have left set.
+    const init = { inputType: "insertLineBreak", isComposing: true, bubbles: true };
+    el.dispatchEvent(new InputEvent("beforeinput", init));
+    el.dispatchEvent(new InputEvent("input", init));
+    expect(el.value).toBe("- one\n");
   });
 
   it("does not continue a list while the / menu is open", async () => {

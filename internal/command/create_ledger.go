@@ -11,18 +11,16 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// createOpTTL is how long an op_id resolves to the chat it created. Longer
-// than the Idempotency-Key cache's 5 minutes on purpose, since covering that
-// cache's fall-through is this ledger's whole job.
+// Longer than the Idempotency-Key cache's 5 minutes on purpose: covering that cache's fall-through
+// is this ledger's whole job.
 const createOpTTL = 10 * time.Minute
 
 // maxCreateOps bounds the map: a create is a deliberate human gesture, so
 // the live population inside one TTL is single digits.
 const maxCreateOps = 512
 
-// createLedger records which chat each create op_id produced. Safe for
-// concurrent use. The zero value is usable, but construct with
-// newCreateLedger, which says so.
+// Safe for concurrent use. The zero value is usable, but construct with newCreateLedger, which says
+// so.
 type createLedger struct {
 	ops  map[string]createOp
 	now  func() time.Time

@@ -6,8 +6,8 @@ import { describe, it, expect } from "vitest";
 import { foldToolCallDelta } from "./store.js";
 import type { ToolCall, ToolProgressPayload } from "./types.js";
 
-/** The fixture's `delta` is the wire frame MINUS `turn`: the Go fixture still spells the retired
- *  `tool_call_update` shape (`message_id`, no `turn`). When it is updated, this `Omit` goes. */
+/** The fixture's `delta` is the wire frame MINUS `turn`: the Go fixture spells the
+ *  `tool_call_update` shape with `message_id` and no `turn`. */
 interface DeltaCase {
   name: string;
   before: ToolCall;

@@ -47,9 +47,24 @@
   font-size: var(--fs-sm);
 }
 
-/* The pane's ONE scroller, both axes. A surface inside it declares no overflow of
-   its own: a cell of this grid is as tall as the file, so its bars would sit off
-   screen at every scroll position but the last. */
+/* The live toggle is a text button among icon buttons, so on a phone the actions
+   wrap onto a second row rather than push Edit past the screen edge (WCAG 1.4.10). */
+.editor-toolbar .editor-actions {
+  flex-shrink: 1;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.editor-readonly-label {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
+}
+
+/* The pane's ONE scroller in read state, both axes. In edit state the textarea is the
+   scroller and this box only frames it (`.is-editing`). */
 .editor-body {
   flex: 1;
   display: grid;
@@ -57,53 +72,170 @@
   overflow: auto;
   min-height: 0;
   position: relative;
+
+  &.is-editing {
+    overflow: hidden;
+    grid-template-rows: minmax(0, 1fr);
+  }
 }
 
-.editor-gutter {
-  grid-column: 1;
-  grid-row: 1;
+/* The windowed source view: a spacer as tall as every row, and the seated rows placed on it by
+   viewer-render.ts. Row height is one line box (`1lh`), the unit the renderer's arithmetic
+   reads back. */
+.viewer {
+  --ln-w: calc(var(--ln-digits, 1) * 1ch + var(--sp-2) + var(--sp-3));
 
-  /* Held while `.editor-body` pans a long line sideways; the z-index puts this
-     background over the code sliding under it. */
-  position: sticky;
-  inset-inline-start: 0;
-  z-index: 1;
-  padding: var(--sp-4) var(--sp-2) var(--sp-4) var(--sp-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  tab-size: 4;
-  color: var(--c-text-secondary);
-  text-align: end;
-  -webkit-user-select: none;
-  user-select: none;
-  border-inline-end: 1px solid var(--c-border);
-  background: var(--c-bg-secondary);
-  margin: 0;
-  white-space: pre;
-}
-
-.editor-highlight {
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 1;
-  padding: var(--sp-4);
+  position: relative;
+  padding-block: var(--sp-4);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: 1.6;
   tab-size: 4;
   color: var(--c-text-primary);
   background: var(--c-bg-primary);
-  margin: 0;
-  white-space: pre;
-
-  /* No overflow: `.editor-body` scrolls, and this `1fr` track grows to the longest
-     line so it can pan. Declaring one axis is not available — CSS Overflow 3
-     computes a `visible` companion to `auto`, scrolling this box on both. */
+  outline: none;
 }
 
-/* Rendered-markdown read surface. Occupies the same grid cell as the highlight
-   pane and the textarea, so exactly one of the four is ever visible; the gutter
-   column collapses with it because `.hidden` is display:none.
+.viewer-spacer {
+  inline-size: calc(var(--ln-w) + var(--viewer-cols, 0) * 1ch + 2 * var(--sp-4));
+}
+
+.viewer-rows {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  min-inline-size: 100%;
+}
+
+.viewer-row {
+  position: absolute;
+  inset-inline-start: 0;
+  display: flex;
+  block-size: 1lh;
+  min-inline-size: 100%;
+  white-space: pre;
+}
+
+/* Held while the pane pans a long line sideways, over the text sliding under it. */
+.viewer-ln {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  inline-size: var(--ln-w);
+  padding-inline: var(--sp-3) var(--sp-2);
+  text-align: end;
+  color: var(--c-text-secondary);
+  background: var(--c-bg-secondary);
+  border-inline-end: 1px solid var(--c-border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.viewer-text {
+  padding-inline: var(--sp-4);
+}
+
+/* The viewer's own select-all: every row reads selected while copy writes the whole file. */
+.viewer.is-all-selected .viewer-text {
+  background: color-mix(in srgb, var(--c-accent) 25%, transparent);
+}
+
+/* The edit state's gutter: the visible line numbers only, translated with the textarea. */
+.viewer-edit-gutter {
+  --ln-w: calc(var(--ln-digits, 1) * 1ch + var(--sp-2) + var(--sp-3));
+
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  overflow: clip;
+  inline-size: var(--ln-w);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  background: var(--c-bg-secondary);
+  border-inline-end: 1px solid var(--c-border);
+
+  /* Positioned for the agent mark's dot, as the read state's sticky cell already is. */
+  & .viewer-ln {
+    position: relative;
+    display: block;
+    block-size: 1lh;
+    border-inline-end: 0;
+  }
+}
+
+.viewer-edit-lines {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+}
+
+/* The binary and too-large views, and the loading placeholder. */
+.editor-notice {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding: var(--sp-4);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+}
+
+.editor-notice-text {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--font-sans, inherit);
+}
+
+.editor-notice-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+
+  & dt {
+    color: var(--c-text-secondary);
+  }
+
+  & dd {
+    margin: 0;
+  }
+}
+
+.editor-error-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-inline-start: var(--sp-3);
+}
+
+/* Go to line: docked in flow like the find bar, for the same reason. */
+.editor-goto {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding-block: var(--sp-1);
+  padding-inline: var(--sp-3) var(--sp-1);
+  background: var(--c-bg-secondary);
+  border-block-end: 1px solid var(--c-border);
+
+  &.hidden {
+    display: none;
+  }
+}
+
+/* Equal rank with the field it submits (01-tokens.css "The FORM type scale"). */
+.editor-goto .editor-goto-submit {
+  font-size: var(--fs-form-peer);
+}
+
+/* Rendered-markdown read surface. It takes column 2 of `.editor-body`, whose
+   `auto` column 1 only the edit gutter sizes, so with the gutter hidden column 1
+   is zero-wide and the document starts at the pane's edge.
 
    The PROSE MEASURE is declared here, and it belongs here. The prose container
    inside carries `.message.assistant` — the app's one rendered-markdown skin,
@@ -222,28 +354,28 @@
   border: none;
   border-inline-start: 0.125rem solid var(--c-accent);
   padding: var(--sp-4);
+
+  /* --edit-tail (viewer-render.ts EditSurface) lets the last line scroll to the top. */
+  padding-block-end: max(var(--sp-4), var(--edit-tail, 0px));
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: 1.6;
   tab-size: 4;
   outline: none;
 
-  /* Block axis `hidden`: the grid row is already this many lines tall, so its own
-     bar clips only trailing padding. The inline axis stays a scroller because a
-     textarea's intrinsic width is `cols`, so the `1fr` track cannot pan for it. */
-  overflow: auto hidden;
+  /* The edit state's scroller on both axes; its gutter follows its scrollTop. */
+  block-size: 100%;
+  overflow: auto;
   margin: 0;
   white-space: pre;
 }
 
 /* Line-jump flash: a brief full-width highlight at the target line after
-   openFile(path, line). Anchored absolute inside .editor-body so it lands
-   at the correct pixel offset regardless of gutter/highlight grid layout.
-   Placed via inline `top` + `height`. vk-line-flash fades the highlight IN
+   openFile(path, line). Anchored absolute inside the viewer (read state) or
+   .editor-body (edit state), placed via inline `top` + `height`. vk-line-flash fades the highlight IN
    then back OUT (a genuine flash) across the 1.2s the element lives before
    editor-scroll.ts removes it. No fill-mode: a reduced-motion user (animation
-   collapsed to ~0ms) keeps a static highlight for that window instead of the
-   old fade-in-then-vanish that read as no flash at all. */
+   collapsed to ~0ms) keeps a static highlight for that window. */
 .editor-line-flash {
   position: absolute;
   inset-inline: 0;
@@ -266,12 +398,11 @@
   }
 }
 
-/* The in-file find's current hit over SOURCE, the flash's sibling: one box,
-   placed by editor-scroll.ts from the same line arithmetic plus a measured
-   inline extent, moved to each step. The read surface cannot hold a <mark>
-   (renderHighlight owns #editor-code's innerHTML and would wipe it), and the
-   textarea cannot hold one at all — and Chromium paints no selection in a
-   textarea that does not have focus, which the find box keeps.
+/* The in-file find's current hit over SOURCE, the flash's sibling: a box per row
+   the hit spans, placed from the row arithmetic plus a measured inline extent.
+   A seated row is never rebuilt for a mark, and the textarea cannot hold one at
+   all — and Chromium paints no selection in a textarea that does not have focus,
+   which the find box keeps.
 
    The transcript's current mark (24-find.css) is OPAQUE accent under its own
    text; this box sits OVER the glyphs, so it takes the resting mark's
@@ -284,9 +415,9 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
 }
 
-/* The measuring twin: a hidden `.editor-highlight` the find appends for one
-   layout read and removes, so the span it measures is set in the surface's own
-   font, padding and tab stops. Out of flow so it never moves the grid. */
+/* The measuring twin: a hidden copy of the textarea's box the edit-state find
+   appends for one layout read and removes, so the span it measures is set in the
+   textarea's own font, padding and tab stops. Out of flow so it never moves the grid. */
 .editor-find-probe {
   position: absolute;
   inset-block-start: 0;

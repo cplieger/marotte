@@ -266,7 +266,7 @@ func indexOf(hay []string, needle string) int {
 	return -1
 }
 
-// splitEnvVar splits "KEY=VALUE" into [KEY, VALUE]. Handles empty values.
+// Handles empty values.
 func splitEnvVar(s string) [2]string {
 	i := 0
 	for i < len(s) && s[i] != '=' {

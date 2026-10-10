@@ -60,6 +60,7 @@
     .steering-textarea,
     .auth-input,
     [id="prompt-input"],
+    [id="run-composer-input"],
     .modal-input,
     .page-textarea,
     .tool-form-input,

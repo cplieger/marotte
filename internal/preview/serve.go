@@ -46,7 +46,7 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, hostOK bool, tok
 		httpreply.BadRequest(w, "malformed preview path")
 		return "", false
 	}
-	capb, err := h.signer.Verify(tok)
+	capb, err := h.signer.verify(tok)
 	if err != nil {
 		httpreply.Forbidden(w, "This preview link has expired or is invalid. Reload the preview.")
 		return "", false

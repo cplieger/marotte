@@ -55,6 +55,7 @@ export function swapViews(update: ViewSwap): void {
 }
 
 /** Reset boot + handle state. Exported for test isolation only. */
+// deadset:ignore DS1004 -- test seam: resets the boot flag and the pending swap
 export function _resetForTest(): void {
   entry?.cancel();
   entry = null;

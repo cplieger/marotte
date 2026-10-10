@@ -9,7 +9,6 @@ type runRoutes struct {
 	epoch func() string
 }
 
-// register mounts every run and schedule endpoint.
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
 	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
@@ -28,6 +27,7 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/extend", rr.handleExtend)
 	mux.HandleFunc("POST /api/runs/{id}/finish-loop", rr.handleFinishLoop)
 	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)
+	mux.HandleFunc("POST /api/runs/{id}/steps/{path}/{verb}", rr.handleStepPost)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
 	rr.registerSchedule(mux)
 }

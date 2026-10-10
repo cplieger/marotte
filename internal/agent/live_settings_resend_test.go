@@ -19,20 +19,20 @@ func TestOpenBridge_ALivePushABridgeMissedIsResentAtTheNextOpen(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, configDir := reopenFixture(t)
-			first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+			first, err := h.coord.openBridge(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 			br := fakeOf(first)
 			br.setNotifyErr(tc.method, errors.New("broken pipe"))
 			rewriteConfigByHand(t, configDir, tc.body)
-			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge after the hand edit: %v", err)
 			}
 			br.setNotifyErr(tc.method, nil)
 
 			for i := range 2 {
-				if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+				if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 					t.Fatalf("OpenBridge %d after the bridge healed: %v", i+1, err)
 				}
 				if got := len(br.notified(tc.method)); got != 1 {
@@ -86,14 +86,14 @@ func TestOpenBridge_ALiveSettingItsSpawnFailedToSendIsSentAtTheNextOpen(t *testi
 
 func TestOpenBridge_AFailedContentCollectionAssertIsResentAtTheNextOpen(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	br := fakeOf(first)
 	br.setCallErr(marotte.MethodSetConfigOption, errors.New("broken pipe"))
 	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":true}`)
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
 	br.mu.Lock()
@@ -101,7 +101,7 @@ func TestOpenBridge_AFailedContentCollectionAssertIsResentAtTheNextOpen(t *testi
 	br.mu.Unlock()
 
 	for i := range 2 {
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge %d after the bridge healed: %v", i+1, err)
 		}
 		if got := contentCollectionWrites(br); len(got) != 2 {
@@ -113,20 +113,20 @@ func TestOpenBridge_AFailedContentCollectionAssertIsResentAtTheNextOpen(t *testi
 
 func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItParses(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	first, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	br := fakeOf(first)
 	br.setNotifyErr(marotte.MethodTerminalSettingsChanged, errors.New("broken pipe"))
 	rewriteConfigByHand(t, configDir, `{"terminal_command_timeout_ms":300000}`)
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
 	br.setNotifyErr(marotte.MethodTerminalSettingsChanged, nil)
 
 	rewriteConfigByHand(t, configDir, "{half typed")
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge over the half-typed document: %v", err)
 	}
 	if frames := br.notified(marotte.MethodTerminalSettingsChanged); len(frames) != 0 {
@@ -134,7 +134,7 @@ func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItPars
 	}
 
 	rewriteConfigByHand(t, configDir, `{"terminal_command_timeout_ms":300000}`)
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge once the document parses: %v", err)
 	}
 	want := []string{jsonOf(t, marotte.TerminalSettingsParams(300000))}

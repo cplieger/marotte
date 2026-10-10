@@ -26,33 +26,31 @@ type secretStoreParams struct {
 	Value string `json:"value"`
 }
 
-// secretGetBody is the reply to a get. A pointer, so a miss marshals as `null`: KAS reads that as no credential yet.
+// A pointer, so a miss marshals as `null`: KAS reads that as no credential yet.
 type secretGetBody struct {
 	Value *string `json:"value"`
 }
 
-// handleKiroSecretRequest answers the three `_kiro/secret/*` requests, reporting whether msg
-// was one. Synchronous: KAS can store and immediately get on the connect path.
-func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
+// Synchronous: KAS can store and immediately get on the connect path.
+func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:
-		in.respondBridge(ctx, chatID, msg, secretGetResult(in.secrets, msg.Params), nil)
+		in.respondBridge(ctx, chatID, origin, msg, secretGetResult(in.secrets, msg.Params), nil)
 		return true
 	case methodKiroSecretStore:
 		result, err := secretStoreResult(ctx, in.secrets, msg.Params)
-		in.respondBridge(ctx, chatID, msg, result, err)
+		in.respondBridge(ctx, chatID, origin, msg, result, err)
 		return true
 	case methodKiroSecretDelete:
 		result, err := secretDeleteResult(ctx, in.secrets, msg.Params)
-		in.respondBridge(ctx, chatID, msg, result, err)
+		in.respondBridge(ctx, chatID, origin, msg, result, err)
 		return true
 	default:
 		return false
 	}
 }
 
-// secretGetResult answers `_kiro/secret/get` with `{value}`; a miss and a nil store both
-// answer null, never an error.
+// A miss and a nil store both answer null, never an error.
 func secretGetResult(store *secretstore.Store, params json.RawMessage) secretGetBody {
 	p := decodeSecretKey(params)
 	if store == nil || p.Key == "" {
@@ -109,7 +107,6 @@ func secretDeleteResult(ctx context.Context, store *secretstore.Store, params js
 	return map[string]any{}, nil
 }
 
-// decodeSecretKey pulls `{key}` from params, yielding "" on absent or undecodable params.
 func decodeSecretKey(params json.RawMessage) secretKeyParams {
 	var p secretKeyParams
 	if params != nil {

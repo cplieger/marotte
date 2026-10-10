@@ -64,7 +64,6 @@ function session(id: string, over: SessionOverrides = {}): Session {
   return makeSession({ id, name: id, ...over });
 }
 
-/** A sealed entry of any kind at `seq`. An absent lane is `""`, the transcript's own. */
 function sealed(
   turnID: string,
   at: number,

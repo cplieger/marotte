@@ -119,10 +119,12 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "tool_call":
     case "steer":
     case "steer_ack":
+    case "steer_delivered":
     case "plan":
     case "compaction_failed":
     case "safety_blocked":
     case "model_switched":
+    case "model_routed":
     case "mode_switched":
     case "turn_revert":
     case "reconciled":
@@ -153,9 +155,9 @@ function markTurnLive(chatID: string): void {
   }
 }
 
-/** The workspace-relative paths a completed call says it touched. Two sources because neither
- *  is complete alone: `locations` is what a read or a command reports, `diffs[].path` what a
- *  write carries. EMPTY means `markGitDirty` rescans everything, which is the honest answer. */
+/** Two sources because neither is complete alone: `locations` is what a read or a command reports,
+ *  `diffs[].path` what a write carries. EMPTY means `markGitDirty` rescans everything, which is the
+ *  honest answer. */
 function mutatedPaths(call: {
   locations?: readonly { path: string }[];
   diffs?: readonly { path: string }[];

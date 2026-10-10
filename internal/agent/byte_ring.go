@@ -5,7 +5,6 @@ package agent
 
 import "strings"
 
-// byteRing is a byte-limited circular buffer keeping the most recent bytes written.
 type byteRing struct {
 	buf       []byte
 	pos       int
@@ -13,14 +12,13 @@ type byteRing struct {
 	truncated bool
 }
 
-// newByteRing creates a ring buffer with the given capacity.
 func newByteRing(capacity int) *byteRing {
 	return &byteRing{buf: make([]byte, capacity)}
 }
 
-// Write appends p, overwriting the oldest bytes. Infallible: storage is preallocated, so it
+// write appends p, overwriting the oldest bytes. Infallible: storage is preallocated, so it
 // deliberately does not implement io.Writer.
-func (r *byteRing) Write(p []byte) {
+func (r *byteRing) write(p []byte) {
 	n := len(p)
 	if n == 0 {
 		return
@@ -77,5 +75,5 @@ func (r *byteRing) String() string {
 	return strings.ToValidUTF8(string(r.Bytes()), "")
 }
 
-// Truncated reports whether any data was evicted.
-func (r *byteRing) Truncated() bool { return r.truncated }
+// wasTruncated reports whether any data was evicted.
+func (r *byteRing) wasTruncated() bool { return r.truncated }

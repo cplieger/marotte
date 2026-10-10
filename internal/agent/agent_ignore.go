@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// ignorePushTimeout is a wedged-pipe ceiling for one live push; bridge.Notify carries no deadline.
+// bridge.Notify carries no deadline.
 const ignorePushTimeout = 10 * time.Second
 
 // readAgentIgnoreFiles resolves the list sent to KAS and reports whether the settings

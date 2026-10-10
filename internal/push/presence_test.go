@@ -45,7 +45,7 @@ func TestPresence_UnseenTagIsGone(t *testing.T) {
 	if !p.Gone("never-seen") {
 		t.Error("Gone(unseen) = false, want true")
 	}
-	if rows := p.Rows(); len(rows) != 0 {
+	if rows := p.snapshotRows(); len(rows) != 0 {
 		t.Errorf("Rows() after a Gone read = %v, want none (a read creates no row)", rows)
 	}
 }
@@ -60,7 +60,7 @@ func TestPresence_ConnectedSeedsTheAcknowledgement(t *testing.T) {
 	if p.Gone("t1") {
 		t.Error("Gone(t1) right after connected = true, want false")
 	}
-	rows := p.Rows()
+	rows := p.snapshotRows()
 	if len(rows) != 1 || rows[0].Connected != 1 || !rows[0].LastAliveAt.Equal(clock.at) {
 		t.Fatalf("Rows() = %+v, want one row connected 1 with lastAliveAt seeded at connect", rows)
 	}
@@ -81,7 +81,7 @@ func TestPresence_EveryCauseIsOneDeparture(t *testing.T) {
 			p.Observe(connected("t1"))
 			p.Observe(connected("t1"))
 			p.Observe(disconnected("t1", cause))
-			if got := p.Rows()[0].Connected; got != 1 {
+			if got := p.snapshotRows()[0].Connected; got != 1 {
 				t.Errorf("connected after one %s departure = %d, want 1", cause, got)
 			}
 			p.Observe(disconnected("t1", cause))
@@ -109,7 +109,7 @@ func TestPresence_ReconnectInsideTheRetryIntervalIsNotAnAbsence(t *testing.T) {
 	if p.Gone("t1") {
 		t.Error("Gone(t1) after the reconnect = true, want false")
 	}
-	if alive, expired := p.Transitions(); alive != 1 || expired != 0 {
+	if alive, expired := p.transitions(); alive != 1 || expired != 0 {
 		t.Errorf("Transitions() = (alive %d, expired %d), want (1, 0): the reconnect records nothing", alive, expired)
 	}
 }
@@ -123,7 +123,7 @@ func TestPresence_DepartureCountsAfterTheRetryInterval(t *testing.T) {
 	if !p.Gone("t1") {
 		t.Error("Gone(t1) one retry interval after the deliberate close = false, want true")
 	}
-	if alive, expired := p.Transitions(); alive != 1 || expired != 0 {
+	if alive, expired := p.transitions(); alive != 1 || expired != 0 {
 		t.Errorf("Transitions() = (alive %d, expired %d), want (1, 0): a departure is not an expiry", alive, expired)
 	}
 }
@@ -144,14 +144,14 @@ func TestPresence_ConnectedButSilentExpiresAtTheWindow(t *testing.T) {
 	if !p.Gone("t1") {
 		t.Fatal("Gone(t1) past the window with the socket still connected = false, want true")
 	}
-	if rows := p.Rows(); rows[0].Connected != 1 || !rows[0].Gone {
+	if rows := p.snapshotRows(); rows[0].Connected != 1 || !rows[0].Gone {
 		t.Errorf("Rows() = %+v, want connected 1 and gone", rows)
 	}
 	p.Alive("t1")
 	if p.Gone("t1") {
 		t.Error("Gone(t1) after the next acknowledgement = true, want false")
 	}
-	if alive, expired := p.Transitions(); alive != 2 || expired != 1 {
+	if alive, expired := p.transitions(); alive != 2 || expired != 1 {
 		t.Errorf("Transitions() = (alive %d, expired %d), want (2, 1)", alive, expired)
 	}
 }
@@ -167,12 +167,12 @@ func TestPresence_ZeroCountRowIsSweptOneWindowAfterItsLastAcknowledgement(t *tes
 	p.Observe(connected("other"))
 	clock.Advance(liveness.AliveWindow)
 	p.Alive("other")
-	if len(p.Rows()) != 2 {
-		t.Fatalf("Rows() exactly one window after t1's last acknowledgement = %+v, want t1 still held", p.Rows())
+	if len(p.snapshotRows()) != 2 {
+		t.Fatalf("Rows() exactly one window after t1's last acknowledgement = %+v, want t1 still held", p.snapshotRows())
 	}
 	clock.Advance(time.Millisecond)
 	p.Alive("other")
-	rows := p.Rows()
+	rows := p.snapshotRows()
 	if len(rows) != 1 || rows[0].Tag != "other" {
 		t.Errorf("Rows() past the window = %+v, want only the connected tag", rows)
 	}
@@ -194,7 +194,7 @@ func TestPresence_AcknowledgementAloneDoesNotMakeATagPresent(t *testing.T) {
 	if p.Gone("t1") {
 		t.Error("Gone(t1) once the connection is counted = true, want false")
 	}
-	if rows := p.Rows(); len(rows) != 1 || !rows[0].LastAliveAt.Equal(clock.at) {
+	if rows := p.snapshotRows(); len(rows) != 1 || !rows[0].LastAliveAt.Equal(clock.at) {
 		t.Errorf("Rows() = %+v, want the acknowledgement's row adopted by the connect", rows)
 	}
 }
@@ -259,7 +259,7 @@ func TestPresence_UntaggedEventsAreDropped(t *testing.T) {
 	p := newPresenceAt(&presenceClock{at: time.Unix(1_700_000_000, 0)})
 	p.Observe(connected(""))
 	p.Observe(disconnected("", sse.PresenceClosed))
-	if rows := p.Rows(); len(rows) != 0 {
+	if rows := p.snapshotRows(); len(rows) != 0 {
 		t.Errorf("Rows() after untagged events = %+v, want none", rows)
 	}
 }

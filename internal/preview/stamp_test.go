@@ -41,7 +41,7 @@ func TestStamp_TracksTheFolder(t *testing.T) {
 	f := newFixture(t)
 	page := filepath.Join(f.demo, "index.html")
 	base := f.stamp(t, page)
-	if base.Epoch != f.h.signer.Epoch() || base.Stamp == "" || base.Truncated {
+	if base.Epoch != f.h.signer.currentEpoch() || base.Stamp == "" || base.Truncated {
 		t.Fatalf("stamp = %+v, want the signer's epoch, a digest, not truncated", base)
 	}
 	if _, err := os.ReadFile(filepath.Join(f.demo, "data.json")); err != nil {

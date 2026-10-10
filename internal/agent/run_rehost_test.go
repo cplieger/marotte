@@ -32,13 +32,13 @@ func runCompleteFrame(t *testing.T, workflowID, status string) *marotte.RPCRespo
 }
 
 // A run whose bridge is registered and whose lease is granted and bounded: EXECUTING.
-func hostedRun(t *testing.T, workflowID string) (*Runtime, *fakeBridge) {
+func hostedRun(t *testing.T, workflowID string) *Runtime {
 	t.Helper()
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID(workflowID), &sharedBridge{bridge: br, state: bridgeIdle})
 	h.runs.grantLease(t.Context(), workflowID, "nightly", manualLaunch())
 	h.runs.armDeadline(t.Context(), workflowID)
-	return h, br
+	return h
 }
 
 // closeStoppedBridge closes on a goroutine, so poll with a deadline.
@@ -77,8 +77,8 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h, _ := hostedRun(t, "wf_1")
-			h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", tc.status))
+			h := hostedRun(t, "wf_1")
+			h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", tc.status))
 
 			if !waitForBridge(t, h, "wf_1", tc.wantBridge) {
 				t.Errorf("bridge present = %v for status %q, want %v",
@@ -99,7 +99,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch("sched_1", time.Now().Add(time.Hour)))
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
+	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Fatal("the parked run kept its process")
 	}
@@ -145,14 +145,14 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		issue  func(*Runtime) error
 	}{
 		"resume": {methodKiroWorkflowResume, func(h *Runtime) error {
-			return h.runs.Resume(context.Background(), "wf_1")
+			return h.runs.resume(context.Background(), "wf_1")
 		}},
 		// KAS refuses a pause for a run it forgot, and the refusal must be KAS's.
 		"pause": {methodKiroWorkflowPause, func(h *Runtime) error {
-			return h.runs.Pause(context.Background(), "wf_1")
+			return h.runs.pause(context.Background(), "wf_1")
 		}},
 		"set_step_status": {methodKiroWorkflowUpdate, func(h *Runtime) error {
-			return h.runs.SetStepStatus(context.Background(), "wf_1", "review", runStepCompleted)
+			return h.runs.setStepStatus(context.Background(), "wf_1", "review", runStepCompleted)
 		}},
 	}
 
@@ -178,13 +178,13 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 
 	t.Run("answer_input re-hosts and reaches KAS", func(t *testing.T) {
 		h, br := seed(t)
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("AnswerInput on an unhosted run = %v, want nil", err)
 		}
 		if !slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -201,7 +201,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		br.callRPCErrs = map[string]*marotte.RPCError{
 			methodKiroWorkflowResume: {Code: -32603, Message: "Internal error"},
 		}
-		if err := h.runs.Resume(t.Context(), "wf_1"); err == nil {
+		if err := h.runs.resume(t.Context(), "wf_1"); err == nil {
 			t.Fatal("a refused resume reported success")
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -217,7 +217,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 				`"message":"No current step to update: the workflow has no running or paused step."}`,
 		)
 
-		err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
+		err := h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
 		if !errors.Is(err, errStepStatusRefused) {
 			t.Fatalf("a declined update = %v, want errStepStatusRefused", err)
 		}
@@ -234,7 +234,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		br.callRPCErrs = map[string]*marotte.RPCError{
 			methodKiroWorkflowPause: {Code: -32603, Message: "Internal error"},
 		}
-		if err := h.runs.Pause(t.Context(), "wf_1"); err == nil {
+		if err := h.runs.pause(t.Context(), "wf_1"); err == nil {
 			t.Fatal("a refused pause reported success")
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -288,7 +288,7 @@ func TestRehost_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
 	carrier := &hostRequestingBridge{fakeBridge: newFakeBridge(), answered: make(chan struct{})}
 	h.bridge.mgr.factory = func() ACPBridge { return carrier }
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume on an unhosted parentless run = %v, want nil", err)
 	}
 	if !slices.Contains(carrier.callLog(), methodKiroWorkflowResume) {
@@ -331,7 +331,7 @@ func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err == nil {
 		t.Fatal("a cancelled resume reported success")
 	}
 	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -366,7 +366,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 			}
 
 			aff := h.runs.affordance(t.Context(), "wf_1", "aborted")
-			if _, err := h.runs.Retry(t.Context(), "wf_1", aff); err == nil {
+			if _, err := h.runs.retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
 			if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
@@ -506,33 +506,33 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 		// A second resume on the kept carrier still waiting when the grace elapses.
 		"a resume in flight": {
 			methodKiroWorkflowResume,
-			func(t *testing.T, h *Runtime) error { return h.runs.Resume(t.Context(), "wf_1") },
+			func(t *testing.T, h *Runtime) error { return h.runs.resume(t.Context(), "wf_1") },
 		},
 		// The address read is a round trip, so the count starts at resolve.
 		"an answer still resolving its address": {
 			methodKiroWorkflowInspect,
 			func(t *testing.T, h *Runtime) error {
-				h.runs.asks.Add(&runAsk{
+				h.runs.asks.add(&runAsk{
 					chatID: runChatID("wf_1"),
 					payload: marotte.RunInputNeededPayload{
 						WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
 						StepSessionID: "sess_step",
 					},
 				})
-				return h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the release branch")
+				return h.runs.answerInput(t.Context(), "wf_1", "a1", "the release branch")
 			},
 		},
 		// The other two verbs; Retry is counted too, since an earlier bound may target this carrier.
 		"a step-status write in flight": {
 			methodKiroWorkflowUpdate,
 			func(t *testing.T, h *Runtime) error {
-				return h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
+				return h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted)
 			},
 		},
 		"a retry in flight": {
 			methodKiroWorkflowRetry,
 			func(t *testing.T, h *Runtime) error {
-				_, err := h.runs.Retry(t.Context(), "wf_1", &runAffordance{})
+				_, err := h.runs.retry(t.Context(), "wf_1", &runAffordance{})
 				return err
 			},
 		},
@@ -604,7 +604,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err == nil {
 		t.Fatal("a cancelled resume reported success")
 	}
 	// The poll passes only once the bridge is gone, which only the bound does.
@@ -631,7 +631,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 				methodKiroWorkflowList:    parentlessRunList("wf_1"),
 				methodKiroWorkflowInspect: reply,
 			}
-			h.runs.asks.Add(&runAsk{
+			h.runs.asks.add(&runAsk{
 				chatID: runChatID("wf_1"),
 				payload: marotte.RunInputNeededPayload{
 					// A node the reply does not report as parked.
@@ -640,7 +640,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 				},
 			})
 
-			err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
 			if !errors.Is(err, errAskAlreadySettled) {
 				t.Fatalf("AnswerInput for a moved-on step = %v, want errAskAlreadySettled", err)
 			}
@@ -648,7 +648,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 				t.Error("the answer was sent anyway; KAS runs it as an ordinary turn on a " +
 					"step nobody asked to steer, and no run frame closes the carrier")
 			}
-			if h.runs.asks.HasRun("wf_1") {
+			if h.runs.asks.hasRun("wf_1") {
 				t.Error("the ask was re-offered, so a reader is asked to answer a question " +
 					"the run has stopped waiting on")
 			}
@@ -670,14 +670,14 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 		// The resume landed, the re-park has not.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
-	h.runs.asks.Add(&runAsk{
+	h.runs.asks.add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 		},
 	})
 
-	err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
+	err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
 	if !errors.Is(err, errRunNotParked) {
 		t.Fatalf("AnswerInput between steps = %v, want errRunNotParked", err)
 	}
@@ -685,7 +685,7 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 		t.Error("the answer was sent into a run with no parked step, which KAS runs as an " +
 			"ordinary turn on that session")
 	}
-	if !h.runs.asks.HasRun("wf_1") {
+	if !h.runs.asks.hasRun("wf_1") {
 		t.Error("the ask was consumed, so the reader's words are gone and the card is off " +
 			"every surface with the question still open")
 	}
@@ -709,10 +709,10 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 		"state": map[string]any{
 			"status": string(marotte.RunStatusPaused),
 			"root": map[string]any{
-				"nodeId": "fanout", "status": "paused",
+				"nodeId": "fanout", "type": "parallel", "status": "paused",
 				"children": []any{
-					map[string]any{"nodeId": "branch_a", "status": "paused", "sessionId": "sess_a"},
-					map[string]any{"nodeId": "branch_b", "status": "paused", "sessionId": "sess_b"},
+					map[string]any{"nodeId": "branch_a", "type": stepNodeType, "status": "paused", "sessionId": "sess_a"},
+					map[string]any{"nodeId": "branch_b", "type": stepNodeType, "status": "paused", "sessionId": "sess_b"},
 				},
 			},
 		},
@@ -726,7 +726,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 		methodKiroWorkflowList:    parentlessRunList("wf_1"),
 		methodKiroWorkflowInspect: tree,
 	}
-	h.runs.asks.Add(&runAsk{
+	h.runs.asks.add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
 			// The second parked branch.
@@ -734,7 +734,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 		},
 	})
 
-	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput for the second parked branch = %v, want nil", err)
 	}
 	params := br.paramsFor(marotte.MethodPrompt)
@@ -756,7 +756,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 			t, marotte.RunStatusPaused, needInputPauseReason, "sess_current",
 		),
 	}
-	h.runs.asks.Add(&runAsk{
+	h.runs.asks.add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
 			// The step has not moved; only the ask's recorded session is stale.
@@ -765,7 +765,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 		},
 	})
 
-	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput = %v, want nil", err)
 	}
 	params := br.paramsFor(marotte.MethodPrompt)
@@ -785,14 +785,14 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 		methodKiroWorkflowList: parentlessRunList("wf_1"),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("bridge died")}
-	h.runs.asks.Add(&runAsk{
+	h.runs.asks.add(&runAsk{
 		chatID: runChatID("wf_1"),
 		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 		},
 	})
 
-	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput with an unreadable run = %v, want nil", err)
 	}
 	params := br.paramsFor(marotte.MethodPrompt)
@@ -816,7 +816,7 @@ func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	}
 
 	before := br.startCount()
-	err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
+	err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
 	if !errors.Is(err, errAskAlreadySettled) {
 		t.Fatalf("AnswerInput for an ask nobody holds = %v, want errAskAlreadySettled", err)
 	}
@@ -844,7 +844,7 @@ func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	h.runs.grantLease(t.Context(), "wf_1", "nightly", manualLaunch())
 
 	before := br.startCount()
-	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.cancel(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Cancel on an unhosted run = %v, want nil", err)
 	}
 	if got := br.startCount() - before; got != 0 {
@@ -983,7 +983,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_1"), kept)
 
 	done := make(chan error, 1)
-	go func() { done <- h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted) }()
+	go func() { done <- h.runs.setStepStatus(t.Context(), "wf_1", "review", runStepCompleted) }()
 
 	// The fake's own log, never carriers.busy.
 	stop := time.Now().Add(5 * time.Second)
@@ -995,7 +995,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
+	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", "completed"))
 
 	// A bounded negative: the suppressed close is a goroutine.
 	windowEnd := time.Now().Add(200 * time.Millisecond)
@@ -1026,7 +1026,7 @@ func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
 	// A verb holding it defers the frame's close.
 	h.runs.carriers.enter(kept)
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
+	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", "completed"))
 
 	// The window: the first carrier goes and a re-host registers a second.
 	h.bridge.mgr.close(runChatID("wf_1"))
@@ -1058,7 +1058,7 @@ func TestRehost_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume on an unhosted parentless run = %v, want nil", err)
 	}
 	opts := br.lastStartOpts()
@@ -1095,7 +1095,7 @@ func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
 	}
 
 	// The refused verb is the first to hold the chat's bridge.
-	if err := h.runs.Pause(t.Context(), "wf_1"); err == nil {
+	if err := h.runs.pause(t.Context(), "wf_1"); err == nil {
 		t.Fatal("Setup: the scripted pause refusal did not happen")
 	}
 	if opts := br.lastStartOpts(); opts == nil || opts.SessionID != "sess_owned" {
@@ -1104,7 +1104,7 @@ func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
 	if h.bridge.mgr.get("c1") == nil {
 		t.Fatal("a refused verb closed the chat's bridge, which belongs to the conversation")
 	}
-	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+	if err := h.runs.resume(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Resume on a chat-parented run = %v, want nil", err)
 	}
 	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -1163,12 +1163,12 @@ func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
 					return f
 				}
 			}
-			h.runs.asks.Add(&runAsk{
+			h.runs.asks.add(&runAsk{
 				chatID:  "run:wf_1",
 				payload: marotte.RunInputNeededPayload{WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step"},
 			})
 
-			err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
 			if !errors.Is(err, errLaunchSessionUnavailable) {
 				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
 			}
@@ -1188,14 +1188,13 @@ func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
 			if len(tc.chain) > 0 && h.bridge.mgr.get("c1") == nil {
 				t.Error("the refused verb closed the chat's bridge, which belongs to the conversation")
 			}
-			if !h.runs.asks.HasRun("wf_1") {
+			if !h.runs.asks.hasRun("wf_1") {
 				t.Error("the ask was taken off every surface for a verb that never reached KAS")
 			}
 		})
 	}
 }
 
-// chatRunList is `_kiro/workflow/list` naming one paused run launched from parent.
 func chatRunList(parent string) func(*testing.T) json.RawMessage {
 	return func(t *testing.T) json.RawMessage {
 		return kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "paused", "parentSessionId": parent})
@@ -1218,7 +1217,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	_, err := h.runs.Retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -1250,7 +1249,7 @@ func TestRehost_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 			}
 			starts := br.startCount()
 
-			err := h.runs.Resume(t.Context(), "wf_1")
+			err := h.runs.resume(t.Context(), "wf_1")
 			if !errors.Is(err, errRunHostStart) {
 				t.Fatalf("Resume = %v, want errRunHostStart", err)
 			}
@@ -1328,12 +1327,12 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
-	open, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	open, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil || open.SessionID() != "sess_now" {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}
 
-	_, err = h.runs.Retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -1358,7 +1357,7 @@ func TestRehost_AnIncompleteChatScanRefusesToLoadOnARunBridge(t *testing.T) {
 	}
 	starts := br.startCount()
 
-	if err := h.runs.Resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
+	if err := h.runs.resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
 		t.Fatalf("Resume = %v, want errRunHostStart", err)
 	}
 	if got := br.startCount() - starts; got != 0 {

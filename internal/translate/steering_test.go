@@ -112,7 +112,6 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 	}
 }
 
-// appendedSteers decodes every entry_appended{steer} frame, in order.
 func appendedSteers(t *testing.T, events []marotte.ServerEvent) []steerRow {
 	t.Helper()
 	var out []steerRow
@@ -374,7 +373,6 @@ func TestSteeringQueued_ASeverityStillPreemptsTheSteerEntirely(t *testing.T) {
 
 // The waiting SET, what a reconnect re-offers: nothing client-callable reads KAS's buffer back.
 
-// waitingOf returns the buffer's entries for one chat, keyed by steer id.
 func waitingOf(t *testing.T, d *baseDeps, chatID marotte.ChatID) map[string]marotte.SteerQueuedPayload {
 	t.Helper()
 	out := map[string]marotte.SteerQueuedPayload{}
@@ -479,5 +477,55 @@ func TestSteeringCleared_RemovesEachNamedSteerFromTheWaitingSet(t *testing.T) {
 	}
 	if _, ok := got["steer-2"]; !ok {
 		t.Errorf("waiting = %+v, want steer-2 kept", got)
+	}
+}
+
+// stepAttr is the attribution a step session's frame carries once its node_start registered it.
+var stepAttr = FrameAttribution{Step: true, SessionID: "sess_s", RunID: "wf_1", NodePath: "wf_1/review"}
+
+// A step session's buffer is the step's: its row folds under the step's key and its frame names the
+// run and step, never the launching chat.
+func TestSteeringQueued_AStepSessionsRowIsTheSteps(t *testing.T) {
+	for _, door := range []struct {
+		name   string
+		handle func(*Translator, []byte)
+	}{
+		{"the launching chat's bridge", func(tr *Translator, raw []byte) {
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, stepAttr)
+		}},
+		{"the run's own bridge", func(tr *Translator, raw []byte) {
+			tr.HandleStepInfoUpdate(t.Context(), "run:wf_1", raw, stepAttr)
+		}},
+	} {
+		t.Run(door.name, func(t *testing.T) {
+			deps, events, _ := depsWithStore(t, "c1")
+			door.handle(New(rolesOf(deps)), steerFrame(t, "steering_queued", map[string]any{
+				"messageId": "steer-1", "content": "use tabs",
+			}))
+
+			if len(*events) != 1 {
+				t.Fatalf("broadcast %d events, want 1", len(*events))
+			}
+			e := (*events)[0]
+			p, _ := e.Payload.(marotte.SteerQueuedPayload)
+			if e.ChatID != "" || p.WorkflowID != "wf_1" || p.NodePath != "wf_1/review" {
+				t.Errorf("event = chat %q payload %+v, want no chat and the step's run and path", e.ChatID, p)
+			}
+			if len(deps.waiting["c1"]) != 0 || len(deps.waiting[marotte.StepSteerKey("sess_s")]) != 1 {
+				t.Errorf("rows = %v, want the step's key holding the row and the chat holding none", deps.waiting)
+			}
+		})
+	}
+}
+
+// A step's read steer is the run's entry, filed in the step's turn rather than the chat's.
+func TestSteeringInjected_AStepSessionsReadIsTheRunsEntry(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	New(rolesOf(deps)).HandleStepInfoUpdate(t.Context(), "run:wf_1",
+		steerFrame(t, "steering_injected", map[string]any{"messageId": "steer-1", "content": "use tabs"}), stepAttr)
+
+	want := runCall{kind: "steer", runID: "wf_1", nodePath: "wf_1/review", steerID: "steer-1"}
+	if !slices.Contains(deps.runCalls, want) {
+		t.Errorf("run calls = %+v, want %+v", deps.runCalls, want)
 	}
 }

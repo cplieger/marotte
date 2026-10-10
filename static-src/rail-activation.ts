@@ -26,7 +26,7 @@ export interface RailGeom {
   atLiveEdge: boolean;
 }
 
-/** No answer. Not a turn id, so a caller reads it as "keep the mark you have". */
+/** Not a turn id, so a caller reads it as "keep the mark you have". */
 const KEEP = "";
 
 /** Build the table from measured cards, ascending. A card with no box is SKIPPED: its marker
@@ -41,14 +41,6 @@ export function buildOffsets(cards: Iterable<CardTop>): TurnOffsets {
   }
   rows.sort((a, b) => (a.top ?? 0) - (b.top ?? 0));
   return { ids: rows.map((r) => r.id), tops: rows.map((r) => r.top ?? 0) };
-}
-
-/** A turn's own top, or `null` for a turn the table does not carry. A jump's landing is this
- *  minus the reading line, which is what puts the turn's top ON that line. Takes the table,
- *  because the cache and its invalidation are the scroller's. */
-export function turnTop(offsets: TurnOffsets, id: string): number | null {
-  const i = offsets.ids.indexOf(id);
-  return i < 0 ? null : (offsets.tops[i] ?? null);
 }
 
 /** The index of the row that carries the mark for turn `n` when `n` has no row of its own: the

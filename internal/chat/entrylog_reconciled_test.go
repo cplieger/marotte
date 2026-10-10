@@ -7,7 +7,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// reconciledOf decodes the reconciled payloads of one turn, in seq order.
 func reconciledOf(t *testing.T, entries []marotte.Entry) []marotte.EntryReconciled {
 	t.Helper()
 	var out []marotte.EntryReconciled
@@ -27,7 +26,7 @@ func reconciledOf(t *testing.T, entries []marotte.Entry) []marotte.EntryReconcil
 // The turn form clears only the named turn's signal.
 func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")
@@ -77,7 +76,7 @@ func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) 
 // On an empty log the session form mints a carrier and closes it at once: an open carrier would raise condition (ii).
 func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	if turns, session := f.log.ReconcileTargets(); len(turns) != 0 || session != "sess-1" {
@@ -114,7 +113,7 @@ func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 	if f.log.NeedsReconcile() {
 		t.Error("the reopened log needs reconciling, so the carrier reached the store-open closer open")
 	}
-	if count, _ := f.log.Counters(); count != 1 {
+	if count, _ := counters(f.log); count != 1 {
 		t.Errorf("turn_count = %d, want 1: the carrier is the log's only turn", count)
 	}
 }
@@ -122,7 +121,7 @@ func TestAppendReconciled_SessionFormMintsAndClosesItsOwnCarrier(t *testing.T) {
 // With a surviving turn the session form joins it and mints nothing.
 func TestAppendReconciled_SessionFormJoinsTheNewestSurvivingTurn(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	turn := f.prompt("one")
@@ -151,7 +150,7 @@ func TestAppendReconciled_SessionFormJoinsTheNewestSurvivingTurn(t *testing.T) {
 // ever merge.
 func TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	turn := f.prompt("first")
@@ -182,7 +181,7 @@ func TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile(t *testing.
 // An ordinary chat's own bind names its session, so it answers false.
 func TestNeedsReconcile_AChatWhoseOwnBindNamesItsSessionIsQuiet(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.Write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", ACPSessionID: "sess-1"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	for _, text := range []string{"one", "two"} {

@@ -1,7 +1,7 @@
 // Workflow-schedule wire types. Hand-declared beside the feature (the forge-types.ts precedent)
 // rather than generated: the schedule surface is three endpoints and one record.
 
-/** Recurrence frequency; mirrors internal/schedule.Freq. */
+/** Recurrence frequency; mirrors internal/schedule.freq. */
 export type ScheduleFreq = "minutely" | "hourly" | "daily" | "weekly" | "monthly";
 
 /** MonthDay sentinel meaning "the last day of the month". */
@@ -39,13 +39,12 @@ export interface ScheduleSpec {
 export interface ScheduleView {
   id: string;
   source: string;
-  name?: string;
   spec: ScheduleSpec;
   enabled: boolean;
   /** RFC3339; the server computes this so the client never does. */
   next_run_at?: string;
   last_run_at?: string;
-  /** How the last slot ended; mirrors internal/schedule.Status. */
+  /** How the last slot ended; mirrors internal/schedule.status. */
   last_status?: "started" | "failed" | "unknown";
   /** Why, as plain text for a person to read. */
   last_reason?: string;

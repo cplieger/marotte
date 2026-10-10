@@ -2,7 +2,6 @@ package agent
 
 import "sync"
 
-// pumpBufPool reuses the 4 KB terminal output pump buffers.
 var pumpBufPool = sync.Pool{
 	New: func() any { return make([]byte, 4096) },
 }

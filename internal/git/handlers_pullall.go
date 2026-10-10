@@ -36,14 +36,12 @@ const (
 // Reasons a repository was left alone. The blocked set is ordered by severity:
 // the first hazard that holds is the one reported, so no repo carries two.
 const (
-	// blocked
 	reasonInProgress   = "in_progress"   // a merge, rebase, cherry-pick or revert is underway
 	reasonConflict     = "conflict"      // the index holds unmerged entries
 	reasonUnreadable   = "unreadable"    // the working tree could not be read
 	reasonDiverged     = "diverged"      // local commits are not on the upstream
 	reasonLocalChanges = "local_changes" // a locally-changed path the incoming commits rewrite
 
-	// skipped
 	reasonNotARepo     = "not_a_repo"
 	reasonDetachedHead = "detached_head"
 	reasonNoUpstream   = "no_upstream"
@@ -51,7 +49,6 @@ const (
 	reasonOutOfTime    = "out_of_time"
 )
 
-// pullResult is one repository's row in the response.
 type pullResult struct {
 	Repo    string      `json:"repo"`
 	Verdict pullVerdict `json:"verdict"`
@@ -101,8 +98,7 @@ func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
 }
 
-// pullOne answers for one repository. Every exit carries a verdict, so the zero
-// value is out_of_time rather than empty.
+// Every exit carries a verdict, so the zero value is out_of_time rather than empty.
 func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) pullResult {
 	res := pullResult{Repo: e.Name, Verdict: verdictSkipped, Reason: reasonOutOfTime}
 	if ctx.Err() != nil {
@@ -184,15 +180,14 @@ func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 	return nil
 }
 
-// blocked builds a blocking verdict; the caller fills in Repo.
+// The caller fills in Repo.
 func blocked(reason, detail string) *pullResult {
 	return &pullResult{Verdict: verdictBlocked, Reason: reason, Detail: detail}
 }
 
-// upstreamDivergence reports how far HEAD is from its upstream; ok is false when
-// the branch tracks nothing. Asks rev-list rather than the shared status call
-// because porcelain v2 omits the ahead/behind header for an untracked branch, so
-// a status read answers (0, 0) for both that and being in sync.
+// Ok is false when the branch tracks nothing. Asks rev-list rather than the shared status call
+// because porcelain v2 omits the ahead/behind header for an untracked branch, so a status read
+// answers (0, 0) for both that and being in sync.
 func upstreamDivergence(ctx context.Context, dir string) (ahead, behind int, ok bool) {
 	out, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	if err != nil {
@@ -210,8 +205,6 @@ func upstreamDivergence(ctx context.Context, dir string) (ahead, behind int, ok 
 	return a, b, true
 }
 
-// inProgressMarkers are git's own control entries for an operation that stopped
-// part-way.
 var inProgressMarkers = []string{
 	"MERGE_HEAD",
 	"CHERRY_PICK_HEAD",
@@ -255,9 +248,8 @@ func worktreeState(ctx context.Context, dir string) (dirty map[string]struct{}, 
 	return dirty, st.Conflicted, true
 }
 
-// incomingFiles lists the paths a fast-forward to the upstream would write; only
-// meaningful when HEAD is strictly behind. --no-textconv stops a repo-supplied
-// textconv PROGRAM being run, which --name-only alone does not.
+// Only meaningful when HEAD is strictly behind. --no-textconv stops a repo-supplied textconv
+// PROGRAM being run, which --name-only alone does not.
 func incomingFiles(ctx context.Context, dir string) (map[string]struct{}, bool) {
 	out, err := gitCmd(ctx, dir, "diff", "--no-textconv", "--name-only", "-z", "HEAD..@{upstream}")
 	if err != nil {
@@ -289,7 +281,6 @@ func overlap(dirty, incoming map[string]struct{}) []string {
 // recognise what is in the way, short of a banner nobody reads.
 const maxNamedPaths = 3
 
-// nameSome renders a path list, naming at most maxNamedPaths of them.
 func nameSome(paths []string) string {
 	if len(paths) <= maxNamedPaths {
 		return strings.Join(paths, ", ")
@@ -298,7 +289,6 @@ func nameSome(paths []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(paths[:maxNamedPaths], ", "), rest)
 }
 
-// plural renders a count with the noun that agrees with it.
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one

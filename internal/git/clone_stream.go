@@ -31,13 +31,10 @@ var errCloneCeiling = errors.New("the transfer exceeded the 60-minute ceiling")
 // it.
 var cloneStallTimeout = 90 * time.Second
 
-// errCloneStalled is the stall watchdog's context cause.
 var errCloneStalled = errors.New("transfer stalled")
 
-// runTransfer runs one git command that moves data over the network, feeding its stderr to the
-// stall watchdog and onProgress. On an ordinary failure the output carries git's own message; on a
-// stall or ceiling kill it is EMPTY and the error names the reason, since the tail would be a
-// progress line.
+// On an ordinary failure the output carries git's own message; on a stall or ceiling kill it is
+// EMPTY and the error names the reason, since the tail would be a progress line.
 func runTransfer(ctx context.Context, dir string, onProgress func(string), args ...string) (string, error) {
 	if sub, ok := allowedSubcommand(args); !ok {
 		return "", fmt.Errorf("git: subcommand not allowed: %s", sub)
@@ -266,9 +263,9 @@ func (pr *progressReader) dropOversizePrefix() error {
 	return nil
 }
 
-// fill reads one window into pending. An end of stream is RECORDED rather than
-// returned: the bytes already in hand are a token the caller still owes its reader,
-// and readToken's own eof arm is what reports it once they are handed over.
+// An end of stream is RECORDED rather than returned: the bytes already in hand are a token the
+// caller still owes its reader, and readToken's own eof arm is what reports it once they are handed
+// over.
 func (pr *progressReader) fill() error {
 	n, err := pr.r.Read(pr.window[:])
 	pr.pending = append(pr.pending, pr.window[:n]...)

@@ -247,8 +247,8 @@
   gap: 0.125rem;
 }
 
-/* The editor's document placeholder, mounted inside `#editor-code` and therefore
-   measuring in the code pane's OWN inherited mono metrics: measured on the live
+/* The editor's document placeholder, mounted inside `#editor-notice` and therefore
+   measuring in the pane's OWN inherited mono metrics: measured on the live
    app, 12px at line-height 1.6, so one line box is 1.6em. A bar of 0.75em plus
    symmetric 0.425em margins is exactly that box (margins do not collapse in a
    flex column), which is what puts N bars on the first N real lines and keeps the

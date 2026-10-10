@@ -15,7 +15,7 @@ import (
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: one tool call's whole persisted input, output and
 // diffs, from its tool_call and the settling tool_result.
-func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, toolCallID string) {
+func (rt *router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, toolCallID string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -64,7 +64,6 @@ func findToolCall(entries []marotte.Entry, id string) (marotte.ToolCallBulk, boo
 	return bulk, found
 }
 
-// adoptToolResult copies the settle's output, diffs and spans into the bulk, reporting whether it decoded.
 func adoptToolResult(bulk *marotte.ToolCallBulk, e *marotte.Entry) bool {
 	var res marotte.EntryToolResult
 	if json.Unmarshal(e.Payload, &res) != nil {

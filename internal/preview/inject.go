@@ -9,9 +9,8 @@ import (
 
 const shimMarker = "data-marotte-shim"
 
-// storageShim gives an opaque-origin document working in-memory Web Storage.
-// Reading localStorage in a sandboxed frame without allow-same-origin throws a
-// SecurityError, which breaks most demo pages on their first line.
+// Reading localStorage in a sandboxed frame without allow-same-origin throws a SecurityError, which
+// breaks most demo pages on their first line.
 const storageShim = `<script ` + shimMarker + `>(()=>{for(const n of["localStorage","sessionStorage"]){try{void window[n]}catch{const m=new Map,s={get length(){return m.size},key(i){return[...m.keys()][i]??null},getItem(k){k=String(k);return m.has(k)?m.get(k):null},setItem(k,v){m.set(String(k),String(v))},removeItem(k){m.delete(String(k))},clear(){m.clear()}};Object.defineProperty(window,n,{value:s,configurable:true})}}})();</script>`
 
 func injectShim(body []byte) []byte {

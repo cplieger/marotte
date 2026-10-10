@@ -15,19 +15,19 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// FrameOwner is who a frame on a chat's connection belongs to.
-type FrameOwner uint8
+// frameOwner is who a frame on a chat's connection belongs to.
+type frameOwner uint8
 
 // The three owners: the chat's own unless the session id differs, then a run step when the
 // registry or frame metadata says so, else a subagent.
 const (
-	// OwnerChat is the launching chat itself: no session id, or the chat's own.
-	OwnerChat FrameOwner = iota
-	// OwnerSubagent is a session id that differs and is not a known run step (v3 attributes
+	// ownerChat is the launching chat itself: no session id, or the chat's own.
+	ownerChat frameOwner = iota
+	// ownerSubagent is a session id that differs and is not a known run step (v3 attributes
 	// subagents by `agentSubtaskId` on the parent session).
-	OwnerSubagent
-	// OwnerStep is a workflow step session.
-	OwnerStep
+	ownerSubagent
+	// ownerStep is a workflow step session.
+	ownerStep
 )
 
 // FrameAttribution is who a `session/update` frame belongs to, in the form a per-kind
@@ -58,17 +58,17 @@ func (a FrameAttribution) ChatOwned() bool {
 // frame's own workflow meta, which classifies a CONTENT frame even with a cold registry;
 // without it the run and path come from the registry.
 func (t *Translator) Attribute(chatID marotte.ChatID, sessionID string, wf *ACPWorkflowMeta) FrameAttribution {
-	switch t.ClassifyFrame(chatID, sessionID, wf != nil) {
-	case OwnerSubagent:
+	switch t.classifyFrame(chatID, sessionID, wf != nil) {
+	case ownerSubagent:
 		return FrameAttribution{Subagent: true, SessionID: sessionID}
-	case OwnerStep:
+	case ownerStep:
 		attr := FrameAttribution{Step: true, SessionID: sessionID, RunID: t.steps.refFor(sessionID).WorkflowID}
 		if wf != nil && wf.WorkflowID != "" {
 			attr.RunID = wf.WorkflowID
 		}
 		t.placeStep(&attr, wf)
 		return attr
-	case OwnerChat:
+	case ownerChat:
 		return FrameAttribution{SessionID: sessionID}
 	}
 	return FrameAttribution{SessionID: sessionID}
@@ -93,8 +93,8 @@ func (t *Translator) placeStep(attr *FrameAttribution, wf *ACPWorkflowMeta) {
 	attr.NodePath, attr.NodeID = ref.NodePath, ref.NodeID
 }
 
-func runStepOf(attr *FrameAttribution) RunStep {
-	return RunStep{RunID: attr.RunID, NodePath: attr.NodePath, NodeID: attr.NodeID, SessionID: attr.SessionID}
+func runStepOf(attr *FrameAttribution) *RunStep {
+	return &RunStep{RunID: attr.RunID, NodePath: attr.NodePath, NodeID: attr.NodeID, SessionID: attr.SessionID}
 }
 
 // runNodePath is the step's run-log turn key. The PATH, because a repeat's iterations share
@@ -120,17 +120,16 @@ func nodePathOf(path []string, nodeID string) []string {
 	return path
 }
 
-// stepRegistry maps a step's ACP session id to its run and node. One Translator serves
-// many chats' forward goroutines, hence the mutex.
+// One Translator serves many chats' forward goroutines, hence the mutex.
 type stepRegistry struct {
-	byID  map[string]StepRef
+	byID  map[string]stepRef
 	byRun map[string]map[string]struct{}
 	mu    sync.RWMutex
 }
 
-// StepRef names the run and node a step session is executing. NodePath, recorded at
+// stepRef names the run and node a step session is executing. NodePath, recorded at
 // node_start, lets a frame with no workflow meta still find its turn.
-type StepRef struct {
+type stepRef struct {
 	WorkflowID string
 	NodeID     string
 	NodePath   string
@@ -138,16 +137,15 @@ type StepRef struct {
 
 func newStepRegistry() *stepRegistry {
 	return &stepRegistry{
-		byID:  make(map[string]StepRef),
+		byID:  make(map[string]stepRef),
 		byRun: make(map[string]map[string]struct{}),
 	}
 }
 
-// record notes that sessionID is executing node nodeID of run workflowID at nodePath.
 func (s *stepRegistry) record(sessionID, workflowID, nodeID, nodePath string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.byID[sessionID] = StepRef{WorkflowID: workflowID, NodeID: nodeID, NodePath: nodePath}
+	s.byID[sessionID] = stepRef{WorkflowID: workflowID, NodeID: nodeID, NodePath: nodePath}
 	ids, ok := s.byRun[workflowID]
 	if !ok {
 		ids = make(map[string]struct{})
@@ -156,19 +154,17 @@ func (s *stepRegistry) record(sessionID, workflowID, nodeID, nodePath string) {
 	ids[sessionID] = struct{}{}
 }
 
-// lookup resolves a session id to its step, if it is one.
-func (s *stepRegistry) lookup(sessionID string) (StepRef, bool) {
+func (s *stepRegistry) lookup(sessionID string) (stepRef, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ref, ok := s.byID[sessionID]
 	return ref, ok
 }
 
-// refFor resolves a frame's session id to its run and node when it is a step's; the empty
-// StepRef otherwise is harmless (omitempty), so an ask handler stamps unconditionally.
-func (s *stepRegistry) refFor(sessionID string) StepRef {
+// The empty stepRef otherwise is harmless (omitempty), so an ask handler stamps unconditionally.
+func (s *stepRegistry) refFor(sessionID string) stepRef {
 	if sessionID == "" {
-		return StepRef{}
+		return stepRef{}
 	}
 	ref, _ := s.lookup(sessionID)
 	return ref
@@ -215,27 +211,27 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 	}
 }
 
-// ClassifyFrame decides who a frame belongs to from its chat and session id; the single
+// classifyFrame decides who a frame belongs to from its chat and session id; the single
 // classifier. `workflowMarked` is the frame's own answer, which works with a cold registry.
-func (t *Translator) ClassifyFrame(chatID marotte.ChatID, sessionID string, workflowMarked bool) FrameOwner {
+func (t *Translator) classifyFrame(chatID marotte.ChatID, sessionID string, workflowMarked bool) frameOwner {
 	parent := t.sessions.ParentACPSession(chatID)
 	if sessionID == "" || parent == "" || sessionID == parent {
-		return OwnerChat
+		return ownerChat
 	}
 	if workflowMarked {
-		return OwnerStep
+		return ownerStep
 	}
 	if _, ok := t.steps.lookup(sessionID); ok {
-		return OwnerStep
+		return ownerStep
 	}
-	return OwnerSubagent
+	return ownerSubagent
 }
 
 // foreignSession reports whether a frame belongs to something OTHER than its chat, subagent
 // or step alike. Dedup guards (code_references, governance, safety) drop such frames;
 // labelled asks use deriveSubSession instead, where a step must answer no.
 func (t *Translator) foreignSession(chatID marotte.ChatID, sessionID string) bool {
-	return t.ClassifyFrame(chatID, sessionID, false) != OwnerChat
+	return t.classifyFrame(chatID, sessionID, false) != ownerChat
 }
 
 // ReportStepProgress tells the host a run's step produced a frame, rolling its idle window

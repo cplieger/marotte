@@ -10,10 +10,10 @@ const INSET_BOTTOM = 34;
  *  48rem)` phone block stops matching (844px on an iPhone 15), so the base `.bottom-bar` rule
  *  governs alone. */
 const INSET_SIDE = 59;
-/** An iPad's own home-indicator band. Chosen against two BOUNDS rather than a datasheet, because
- *  every assertion below reads the constant and a retune moves the whole block: above `--sp-2`
- *  (8px), or a case cannot tell an inset-reading rule from its house value, and under
- *  `--composer-inset-cap` (24px), so no case is accidentally measuring the cap. */
+/** Chosen against two BOUNDS rather than a datasheet, because every assertion below reads the
+ *  constant and a retune moves the whole block: above `--sp-2` (8px), or a case cannot tell an
+ *  inset-reading rule from its house value, and under `--composer-inset-cap` (24px), so no case is
+ *  accidentally measuring the cap. */
 const INSET_BOTTOM_IPAD = 20;
 
 let style: HTMLStyleElement;
@@ -318,7 +318,6 @@ function inlinePadding(el: Element): { start: number; end: number } {
   return { start: parseFloat(cs.paddingInlineStart), end: parseFloat(cs.paddingInlineEnd) };
 }
 
-/** Mount one element into a frame and return it. */
 function mountBare(d: Document, html: string, selector: string): Element {
   d.body.innerHTML = html;
   const el = d.body.querySelector(selector);

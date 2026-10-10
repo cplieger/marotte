@@ -35,9 +35,9 @@ interface KindRow {
   input: HTMLInputElement;
 }
 
-/** The rows to drive, derived from the keyed kinds. A kind with no markup yet is skipped rather
- *  than throwing: the server's registry is the source of truth for which kinds exist, and a kind
- *  that has not grown its row is a missing row, not a broken settings page. */
+/** A kind with no markup yet is skipped rather than throwing: the server's registry is the source of
+ *  truth for which kinds exist, and a kind that has not grown its row is a missing row, not a broken
+ *  settings page. */
 function kindRows(): KindRow[] {
   const rows: KindRow[] = [];
   for (const [kind, settingsKey] of Object.entries(KEYED_PUSH_KINDS)) {
@@ -203,7 +203,6 @@ async function enableEverything(
   }
 }
 
-/** One sub-toggle changed. */
 async function applyKindChange(
   rows: readonly KindRow[],
   changed: KindRow,

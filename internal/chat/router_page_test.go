@@ -12,7 +12,6 @@ import (
 
 // chatPage is the transcript GET as the client decodes it, spelled by hand so a renamed json tag fails here.
 type chatPage struct {
-	Chat        map[string]any         `json:"chat"`
 	Entries     []marotte.Entry        `json:"entries"`
 	OpenEntries []marotte.OpenEntry    `json:"open_entries"`
 	Subject     []marotte.SubjectStamp `json:"subject"`
@@ -20,7 +19,6 @@ type chatPage struct {
 	Live        bool                   `json:"live"`
 }
 
-// pageStore is a store whose registry answers `live` and `tails` for every chat.
 func pageStore(t *testing.T, live bool, tails []OpenTurnTail) *Store {
 	t.Helper()
 	s, err := NewStore(t.TempDir(),
@@ -32,7 +30,6 @@ func pageStore(t *testing.T, live bool, tails []OpenTurnTail) *Store {
 	return s
 }
 
-// openPromptTurn opens one prompt-class turn and returns its id.
 func openPromptTurn(t *testing.T, s *Store, id marotte.ChatID, promptID string) string {
 	t.Helper()
 	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
@@ -57,7 +54,7 @@ func getPage(t *testing.T, s *Store, id marotte.ChatID, query string) chatPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+query, nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/chats/%s%s = %d, want 200; body = %s", id, query, rec.Code, rec.Body.String())
 	}
@@ -74,12 +71,11 @@ func seedMidTurn(t *testing.T, s *Store, id marotte.ChatID) {
 	openPromptTurn(t, s, id, "m-"+string(id))
 }
 
-// getChat drives the transcript GET and returns the raw envelope.
 func getChat(t *testing.T, s *Store, id marotte.ChatID) map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
@@ -90,7 +86,7 @@ func getChat(t *testing.T, s *Store, id marotte.ChatID) map[string]any {
 	return envelope
 }
 
-// chatStampOf returns the page's `chat` stamp; the subject is a list with the chat stamp first.
+// The subject is a list with the chat stamp first.
 func chatStampOf(t *testing.T, envelope map[string]any) any {
 	t.Helper()
 	stamps, ok := envelope["subject"].([]any)
@@ -178,12 +174,11 @@ func TestChatGet_OlderPageCarriesTheChatStampAlone(t *testing.T) {
 	}
 }
 
-// railRows drives GET /api/chats/{id}/turns and returns the decoded rows.
 func railRows(t *testing.T, s *Store, id marotte.ChatID) []marotte.TurnSummary {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET turns = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
@@ -221,7 +216,6 @@ func turnsOfPage(entries []marotte.Entry) string {
 	return strings.Join(out, " ")
 }
 
-// fourClosedTurns seeds four closed prompt turns with one text entry each and returns their ids in order.
 func fourClosedTurns(t *testing.T, s *Store, id marotte.ChatID) []string {
 	t.Helper()
 	turns := make([]string, 0, 4)
@@ -275,7 +269,7 @@ func TestChatGet_ABadBeforeCursorIs400(t *testing.T) {
 	for _, query := range []string{"?before=t-nosuchturn", "?before=not%20an%20id"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+query, nil)
 		rec := httptest.NewRecorder()
-		NewRouter(s).handleOne(rec, req)
+		newRouter(s).handleOne(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("GET /api/chats/c1%s = %d, want 400; body = %s", query, rec.Code, rec.Body.String())
 		}
@@ -293,7 +287,7 @@ func TestChatGet_EmptyPageIsAnArrayNotNull(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}

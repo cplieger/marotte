@@ -12,7 +12,7 @@ import type {
   InventoryList,
 } from "./wire/types.gen.js";
 
-export interface PRRemoveResult {
+interface PRRemoveResult {
   group: RepoGroup;
   pr: PR;
 }
@@ -21,15 +21,11 @@ export interface PRRemoveResult {
  *  owners hold: the tab lists it read only, as a link to the forge. */
 export interface ElsewherePR {
   forge_id: string;
-  forge_kind: ConfiguredForge["kind"];
-  forge_host: string;
   pr: PR;
 }
 
-/**
- * A hidden row's connection and the cycle its mutation named. An entry from that cycle or later is the forge's answer
- * about the row; an earlier one may predate the mutation.
- */
+/** An entry from that cycle or later is the forge's answer about the row; an earlier one may predate
+ *  the mutation. */
 interface Mark {
   forgeId: string;
   floor: string | undefined;
@@ -196,7 +192,7 @@ function derive(e: InventoryEntry, f: ConfiguredForge): Derived {
       }
       seen.add(key);
       if (s.scope === "authored" && !underOwner(owners, pr.repo)) {
-        elsewhere.push({ forge_id: f.id, forge_kind: f.kind, forge_host: f.host, pr });
+        elsewhere.push({ forge_id: f.id, pr });
         continue;
       }
       let g = byRepo.get(pr.repo_id);
@@ -205,7 +201,6 @@ function derive(e: InventoryEntry, f: ConfiguredForge): Derived {
         g = {
           forge_id: f.id,
           forge_kind: f.kind,
-          forge_host: f.host,
           repo_id: pr.repo_id,
           owner: cut < 0 ? "" : pr.repo.slice(0, cut),
           name: pr.repo.slice(cut + 1),
@@ -292,6 +287,7 @@ export function reinsertPRInGroups(result: PRRemoveResult): void {
 }
 
 /** Forget everything held, for a suite's next case. */
+// deadset:ignore DS1004 -- test seam: resets the held PR entries, hidden set and forges
 export function _resetForTest(): void {
   entries.clear();
   hidden.clear();

@@ -8,8 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// setKiroSettings writes a kiro-cli settings file under a throwaway HOME, returned for extension.
-func setKiroSettings(t *testing.T, body string) string {
+func setKiroSettings(t *testing.T, body string) {
 	t.Helper()
 	home := t.TempDir()
 	dir := filepath.Join(home, ".kiro", "settings")
@@ -25,7 +24,6 @@ func setKiroSettings(t *testing.T, body string) string {
 	t.Setenv("HOME", home)
 	// Some CI shells let USERPROFILE shadow HOME.
 	t.Setenv("USERPROFILE", home)
-	return home
 }
 
 func TestIsHookStatusEnabled_fileMissing(t *testing.T) {
@@ -81,7 +79,7 @@ func TestTranslateV3_HookUpdateFollowsKiroCliHookStatus(t *testing.T) {
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 			before := h.bus.fanout.Position().Head
 
-			h.translateACPEvent("c1", newSessionInfoMsg(map[string]any{
+			h.translateACPEvent("c1", h.originOf("c1"), newSessionInfoMsg(map[string]any{
 				"kind": "hook_update",
 				"hook": map[string]any{
 					"hookId": "h1", "operationId": "op-1", "name": "probe-save",

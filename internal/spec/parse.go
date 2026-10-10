@@ -21,8 +21,8 @@ var (
 	nearMissRe    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+\[[^\]]*\]`)
 )
 
-// Parsed is what Parse reads out of one tasks.md.
-type Parsed struct {
+// parsed is what Parse reads out of one tasks.md.
+type parsed struct {
 	// Truncated is set when the tree was cut.
 	Truncated *marotte.SpecTruncated
 	// Tasks is the tree in the order Kiro walks it, never nil, cut at maxNodes.
@@ -33,7 +33,6 @@ type Parsed struct {
 	UnreadableLines int
 }
 
-// task is one parsed task line with the content and children the walk gave it.
 type task struct {
 	text     string
 	number   string
@@ -46,17 +45,17 @@ type task struct {
 	optional bool
 }
 
-// Parse reads src as Kiro's tasks.md parser does: CRLF normalised, the KAS
+// parse reads src as Kiro's tasks.md parser does: CRLF normalised, the KAS
 // line regex, the per-task walk, the number re-parenting, then the three
 // additions the goldens model (detail cut at the first heading, U+2028 and
 // U+2029 rejected from a task text, widened near-miss count). The wave id is
 // outside that contract: KAS's task parser never reads the dependency-graph
 // section, so no golden states one.
-func Parse(src []byte) Parsed {
+func parse(src []byte) parsed {
 	lines := splitLines(src)
 	roots := walk(lines)
 	budget := maxNodes
-	p := Parsed{
+	p := parsed{
 		Tasks:           toNodes(roots, &budget, parseWaves(lines)),
 		UnreadableLines: countNearMisses(lines),
 	}
@@ -73,8 +72,8 @@ func splitLines(src []byte) []string {
 	return strings.Split(s, "\n")
 }
 
-// matchTaskLine is jTr. A match whose text carries U+2028 or U+2029 is not a
-// task: JavaScript's `.` never matched it, so Kiro reads the line as content.
+// matchTaskLine is jTr. A match whose text carries U+2028 or U+2029 is not a task: JavaScript's `.`
+// never matched it, so Kiro reads the line as content.
 func matchTaskLine(line string) (*task, bool) {
 	m := taskLineRe.FindStringSubmatch(line)
 	if len(m) == 0 || strings.ContainsAny(m[5], "\u2028\u2029") {
@@ -222,7 +221,6 @@ func depth(number string) int {
 	return strings.Count(number, ".") + 1
 }
 
-// detail is the task's content cut at the first heading line, joined.
 func (t *task) detail() string {
 	lines := t.content
 	for i, l := range lines {
@@ -255,8 +253,7 @@ func (t *task) node(waves map[string]int) marotte.SpecTaskNode {
 	}
 }
 
-// toNodes converts in walk order, spending one budget unit per node; a
-// parent whose children did not all fit says so.
+// A parent whose children did not all fit says so.
 func toNodes(ts []*task, budget *int, waves map[string]int) []marotte.SpecTaskNode {
 	out := make([]marotte.SpecTaskNode, 0, len(ts))
 	for _, t := range ts {
@@ -306,7 +303,7 @@ func tally(ts []*task, p *marotte.SpecProgress) {
 }
 
 // countNearMisses counts lines shaped like a task under the widened grammar
-// that the line regex refuses. A line the regex matches but Parse rejects for
+// that the line regex refuses. A line the regex matches but parse rejects for
 // a line separator is neither.
 func countNearMisses(lines []string) int {
 	n := 0

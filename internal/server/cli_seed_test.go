@@ -19,7 +19,7 @@ type seedStoreCLI struct {
 	listFails bool
 }
 
-var _ CLIRunner = (*seedStoreCLI)(nil)
+var _ cliRunner = (*seedStoreCLI)(nil)
 
 func (f *seedStoreCLI) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()

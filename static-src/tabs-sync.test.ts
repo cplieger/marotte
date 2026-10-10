@@ -2,7 +2,8 @@
 // stale-snapshot guard, each defending a real defect.
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
-import type { TabList, TabSubject, TabsChangedPayload } from "./types.js";
+import type { TabSubject, TabsChangedPayload } from "./types.js";
+import type { TabList } from "./wire/types.gen.js";
 
 /** The collection GET's answers, queued so a test can arrange a stale one behind
  *  a fresh one. `null` is the unreachable-endpoint case. */
@@ -86,9 +87,8 @@ function list(version: number, ...ids: string[]): TabList {
   return { tabs: ids.map((id) => subject(id)), version };
 }
 
-/** Let the drain's microtasks run. Every path through it is either synchronous or
- *  a single awaited fetch, so one macrotask turn is enough and a fixed sleep would
- *  only make the suite slower. */
+/** Every path through it is either synchronous or a single awaited fetch, so one macrotask turn is
+ *  enough and a fixed sleep would only make the suite slower. */
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -328,8 +328,8 @@ describe("order is a permutation, never a membership statement", () => {
 
 // --- The pending-op machine ---
 
-/** A remove op's callbacks, spied. The capture itself is the caller's business
- *  (task: the optimistic close), so the machine sees ids and closures only. */
+/** The capture itself is the caller's business (task: the optimistic close), so the machine sees ids
+ *  and closures only. */
 function removeSpies(): { onConfirm: Mock<() => void>; rollback: Mock<() => void> } {
   return { onConfirm: vi.fn<() => void>(), rollback: vi.fn<() => void>() };
 }

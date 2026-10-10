@@ -10,7 +10,7 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: vi.fn(),
   fetchGitDiffSources: vi.fn(),
   activateFile: vi.fn(),
-  refreshFile: vi.fn(),
+  refreshEditorFile: vi.fn(),
   closeEditorFile: vi.fn(),
 }));
 // `tools.ts` also reaches the tab store; cut there too, since no case navigates.

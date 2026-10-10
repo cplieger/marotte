@@ -10,8 +10,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// tabReader is the open-tab set as this endpoint uses it. Read-only: every tab mutation
-// rides POST /api/command (invariant 1).
+// Read-only: every tab mutation rides POST /api/command (invariant 1).
 type tabReader interface {
 	// List returns the set in order plus the version it reflects, captured in ONE
 	// critical section. That pairing is the contract, not an implementation
@@ -20,7 +19,7 @@ type tabReader interface {
 }
 
 // handleTabs serves GET /api/tabs -> {"tabs": [TabSubject], "version": N}, read-only.
-// The set and the version come from ONE Store.List call: read separately, a mutation landing
+// The set and the version come from ONE Store.list call: read separately, a mutation landing
 // between them stamps old tabs with a newer version, and the client discards the event the
 // snapshot omitted. The version rules are on marotte.TabsChangedPayload.Version.
 func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {

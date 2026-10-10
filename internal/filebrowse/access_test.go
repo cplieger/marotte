@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// with answers s plus extra entries ahead of its own, for tests that block a
-// path inside a temp-dir mount.
 func (s Sensitive) with(extra ...sensitivePath) Sensitive {
 	return Sensitive{list: append(slices.Clone(extra), s.entries()...)}
 }
@@ -120,6 +118,28 @@ func TestSensitive_NonDefaultConfigRootBlocksTheStoreAndTheRecord(t *testing.T) 
 	}
 	if sens.Blocks("/config/forge-connections.json") {
 		t.Error("a non-default root still blocks the /config spelling; the list did not move")
+	}
+}
+
+func TestSensitive_ExposedByFollowsANonDefaultRoot(t *testing.T) {
+	sens := NewSensitive("/cfg")
+	cases := []struct {
+		dir  string
+		want bool
+	}{
+		{"/cfg/home", true},
+		{"/cfg/home/.kiro", true},
+		{"/cfg", true},
+		{"/", true},
+		{"/cfg/forge-connections.json", true},
+		{"/cfg/workspace/.kiro", false},
+		{"/cfg/homework", false},
+		{"/workspace/.kiro", false},
+	}
+	for _, tc := range cases {
+		if got := sens.ExposedBy(tc.dir); got != tc.want {
+			t.Errorf("ExposedBy(%q) = %v, want %v", tc.dir, got, tc.want)
+		}
 	}
 }
 

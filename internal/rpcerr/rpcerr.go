@@ -84,7 +84,7 @@ func Text(err error) string {
 			}
 		}
 	}
-	return Sanitize(text, maxTextBytes)
+	return sanitize(text, maxTextBytes)
 }
 
 // Mapped is KAS's typed-error envelope, `error.data` = {errorType,
@@ -172,12 +172,12 @@ func Account(m Mapped, message string) string {
 		// KAS's own sentence names a setting the reader cannot reach.
 		return withRequestID(contextLimitSentence, m.RequestID)
 	}
-	msg := strings.TrimSpace(Sanitize(message, mappedProseCap))
+	msg := strings.TrimSpace(sanitize(message, mappedProseCap))
 	if m.ErrorType == modelRegistryUnavailableError {
 		return msg + modelRegistryUnavailableRemedy
 	}
 	if msg == "" {
-		msg = strings.TrimSpace(Sanitize(m.ErrorType, mappedProseCap))
+		msg = strings.TrimSpace(sanitize(m.ErrorType, mappedProseCap))
 		if msg == "" {
 			msg = mappedFallbackProse
 		}
@@ -189,15 +189,15 @@ func Account(m Mapped, message string) string {
 }
 
 func withRequestID(msg, id string) string {
-	if id = strings.TrimSpace(Sanitize(id, mappedRequestIDCap)); id != "" {
+	if id = strings.TrimSpace(sanitize(id, mappedRequestIDCap)); id != "" {
 		msg += " (request " + id + ")"
 	}
 	return msg
 }
 
-// Sanitize is Text's treatment without the compose: one upstream string made safe for a
+// sanitize is Text's treatment without the compose: one upstream string made safe for a
 // user surface and bounded to maxBytes (a parameter so a caller can leave room for a remedy).
-func Sanitize(s string, maxBytes int) string {
+func sanitize(s string, maxBytes int) string {
 	if s == "" {
 		return ""
 	}

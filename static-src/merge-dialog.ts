@@ -10,7 +10,7 @@ import { readAffordances } from "./actions/git-prs.js";
 
 /** What the caller renders into the dialog chrome, and the repository whose
  *  merge methods it offers. */
-export interface MergeDialogOpts {
+interface MergeDialogOpts {
   title: string;
   message: string;
   confirmLabel: string;

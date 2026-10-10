@@ -38,8 +38,8 @@ import {
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
-  type ReadingState,
 } from "./scroll.js";
+import type { ReadingState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -170,10 +170,8 @@ interface ChatView {
   reachableEntries: number;
   lastNewestTurnID: string | undefined;
   resumeLabel: string;
-  /**
-   * Turn ids still being written into at park. Resume rebuilds them even if closed since: their binding effects were
-   * disposed, so they missed every update while parked.
-   */
+  /** Resume rebuilds them even if closed since: their binding effects were disposed, so they missed
+   *  every update while parked. */
   pausedStreaming: Set<string>;
 }
 
@@ -217,7 +215,6 @@ function paintRoot(): HTMLElement {
   return activeView?.el ?? messagesEl;
 }
 
-/** The turn bodies this view has mounted, as `(turn id, body)`, found by walking cards. */
 function mountedBodies(view: ChatView): [string, HTMLElement][] {
   const out: [string, HTMLElement][] = [];
   for (const card of view.el.querySelectorAll<HTMLElement>(".turn")) {
@@ -311,7 +308,6 @@ function activateView(chatID: string): boolean {
   return unparking;
 }
 
-/** Dispose least-recently-used parked views past the budget. */
 function evictParkedViews(): void {
   const parked = [...views.values()].filter((v) => v.parked);
   for (let i = 0; i <= parked.length - 1 - PARKED_VIEWS; i++) {
@@ -322,7 +318,6 @@ function evictParkedViews(): void {
   }
 }
 
-/** Dispose views whose chat left the store (close, delete, mass removal). */
 function pruneDeadViews(): void {
   for (const chatID of [...views.keys()]) {
     if (get(chatID) === undefined) {
@@ -365,7 +360,7 @@ export function disposeChatView(chatID: string): void {
  * render, DOM and card stay.
  */
 function pauseTurnBody(view: ChatView, turnID: string): void {
-  disposeStreamingEffect(turnID);
+  disposeTurnEffects(turnID);
   pauseAssistantBody(turnID);
   suspendToolEffectsFor(
     view.chatID,
@@ -398,7 +393,7 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   const want = mountedWindow(t.id) ?? bodyRange(t, wantedWindow.get(t.id) ?? EMPTY_RANGE);
   // Before the render's own disposers, which would drop the terminal links.
   const reattach = detachToolEffectsForRebuild(session.id, body);
-  disposeStreamingEffect(t.id);
+  disposeTurnEffects(t.id);
   finalizeAssistantBody(t.id);
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
@@ -434,27 +429,8 @@ function pushBind(key: string, unbind: () => void): void {
   arr.push(unbind);
 }
 
-/**
- * Per-turn streaming cleanups, disposed on turn end and on unmount; separate so a tool card's loading binding
- * survives turn end.
- */
-const streamingEffects = new Map<string, (() => void)[]>();
-function pushStreamingEffect(turnID: string, fn: () => void): void {
-  const arr = streamingEffects.get(turnID);
-  if (arr === undefined) {
-    streamingEffects.set(turnID, [fn]);
-  } else {
-    arr.push(fn);
-  }
-}
-function disposeStreamingEffect(turnID: string): void {
-  const arr = streamingEffects.get(turnID);
-  if (arr !== undefined) {
-    for (const fn of arr) {
-      fn();
-    }
-    streamingEffects.delete(turnID);
-  }
+/** Dispose one turn's per-entry effects, on turn end and on unmount. */
+function disposeTurnEffects(turnID: string): void {
   const per = entryEffects.get(turnID);
   if (per !== undefined) {
     disposeEntryEffects(turnID, [...per.keys()]);
@@ -532,7 +508,6 @@ initToolCallbacks({
 });
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
-  pushStreamingEffect,
   pushEntryEffect,
   disposeEntryEffects,
   makeRow,
@@ -619,10 +594,7 @@ function entryCount(turns: readonly Turn[]): number {
 /** Reachable entries present when the reader last entered Reading. */
 let followBaseline = 0;
 
-/**
- * The last full pass's reachable-entry count. Chunk and tool paints cannot add a reachable entry, so the walk runs
- * once per full pass.
- */
+/** Chunk and tool paints cannot add a reachable entry, so the walk runs once per full pass. */
 let reachableEntries = 0;
 
 function initFollowModel(): void {
@@ -661,10 +633,8 @@ function refreshResumeLabel(): void {
 interface FoldPlan {
   open: boolean;
   mounted: boolean;
-  /**
-   * Whether the header offers the fold. False for the newest turn, a running turn and one whose fold hides nothing;
-   * true for every stub, where the toggle is the only way to a body.
-   */
+  /** False for the newest turn, a running turn and one whose fold hides nothing; true for every
+   *  stub, where the toggle is the only way to a body. */
   canFold: boolean;
 }
 const foldPlan = new Map<string, FoldPlan>();
@@ -681,7 +651,6 @@ const EMPTY_RANGE: EntryRange = { from: 0, to: 0 };
 /** Every ordinal a turn could have, for a caller with no range to name. */
 const WHOLE_TURN: EntryRange = { from: 0, to: Number.MAX_SAFE_INTEGER };
 
-/** Whether `outer` holds every ordinal of `inner`. */
 function covers(outer: EntryRange, inner: EntryRange): boolean {
   return outer.from <= inner.from && outer.to >= inner.to;
 }
@@ -1044,7 +1013,6 @@ function paint(): void {
   }
 }
 
-/** The turn cards of `root` in document order, filtering out unkeyed furniture. */
 function turnCards(root: HTMLElement): HTMLElement[] {
   const out: HTMLElement[] = [];
   for (const child of root.children) {
@@ -1193,10 +1161,8 @@ function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): str
   return lines.join("\n");
 }
 
-/**
- * Confirm and dispatch the rewind. Refused mid-turn: KAS throws on a session with a live abortController.
- * `mountRewind` disables the button; this is the second gate.
- */
+/** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
+ *  button; this is the second gate. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getActive();
   if (session === undefined) {
@@ -1257,9 +1223,6 @@ export function teardownAll(): void {
     }
   }
   bindUnbinds.clear();
-  for (const id of [...streamingEffects.keys()]) {
-    disposeStreamingEffect(id);
-  }
   disposeAllToolEffects();
   resetBlockRenders();
   resetScrollState();
@@ -1303,13 +1266,12 @@ function bodyRange(t: Turn, range: EntryRange): EntryRange {
   return sliceTurn(t, range);
 }
 
-/** Which end of a body's window a spacer stands at. */
 type SpacerSide = "head" | "tail";
 
 /**
- * Price both spacers against the range the body now holds. An element, not `padding-block`, which transitions.
- * The head spacer is the body's first child, so the body's top edge, a scroll-anchor candidate, holds still while
- * the head moves; the tail is the body's next sibling, since the renderer appends streamed entries to the body.
+ * An element, not `padding-block`, which transitions. The head spacer is the body's first child, so the body's top
+ * edge, a scroll-anchor candidate, holds still while the head moves; the tail is the body's next sibling, since the
+ * renderer appends streamed entries to the body.
  */
 function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
   // `seq` space: a rendered count reads short and withdraws a tail spacer the window still owes.
@@ -1909,10 +1871,8 @@ function hasPendingBuild(turnID: string): boolean {
   return coldBuilds.has(turnID) || turnBodyBuilds.has(turnID);
 }
 
-/**
- * Take a cold build's first slice and queue the rest. Once the pass's allowance is spent, build over an empty
- * range so `drainColdBuilds` mounts it off the frame.
- */
+/** Once the pass's allowance is spent, build over an empty range so `drainColdBuilds` mounts it off
+ *  the frame. */
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
   const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
   const to = Math.min(range.to, range.from + take);
@@ -2119,6 +2079,7 @@ function headerData(t: Turn): TurnHeaderData {
     ts: t.ts,
     // An empty prompt is not a request; fall through to the system-trigger rendering.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
+    label: t.trigger?.label,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
   };
@@ -2194,6 +2155,7 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     recoveries: led.recoveries,
     steering: led.steering,
     engineErrorClass: led.engineErrorClass,
+    contextBreakdown: led.contextBreakdown,
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
   // One predicate, `earnsTurnFooter`; the markdown join is ordered last, so it runs only for a ledger-less turn.
@@ -2245,16 +2207,14 @@ function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
       continue;
     }
     finalizeTurn(id);
-    disposeStreamingEffect(id);
+    disposeTurnEffects(id);
   }
 }
 
 // --- Helpers ---
 
-/**
- * The row wrapper for a top-level assistant bubble. No avatar, since the card establishes identity; the row stays
- * because the dispatcher mounts into it.
- */
+/** No avatar, since the card establishes identity; the row stays because the dispatcher mounts into
+ *  it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;
 }

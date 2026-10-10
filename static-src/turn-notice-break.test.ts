@@ -35,7 +35,6 @@ interface CardOpts {
   /** Whether the body ENDS with a divider, which opens the frame. False is the differential control:
    *  a reason from the carrier, after ordinary prose. */
   readonly dividerLast?: boolean;
-  /** Fold the card, which puts `.turn-face` between the body and the notice. */
   readonly folded?: boolean;
 }
 

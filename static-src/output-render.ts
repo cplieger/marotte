@@ -101,7 +101,6 @@ function rgb(r: number | undefined, g: number | undefined, b: number | undefined
   return `rgb(${String(r ?? 0)} ${String(g ?? 0)} ${String(b ?? 0)})`;
 }
 
-/** Build the class list and inline colour styles for one span. */
 function applySpan(node: HTMLElement, span: TextSpan): void {
   const classes: string[] = [];
   const { attrs } = span;

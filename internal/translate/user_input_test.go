@@ -9,14 +9,32 @@ import (
 )
 
 // pendingCaptureDeps augments baseDeps with a PendingPermsAdd capture so
-// the reconnect-replay registration is observable.
+// the reconnect-replay registration is observable. It answers the event under
+// ask id capturedAskBase+n for the nth add, as the tracker mints its own.
 type pendingCaptureDeps struct {
 	*baseDeps
-	pendingAdds []int64
+	pendingAdds    []int64
+	pendingOrigins []AskOrigin
 }
 
-func (d *pendingCaptureDeps) PendingPermsAdd(id int64, _ marotte.ServerEvent) {
+const capturedAskBase = 9000
+
+func (d *pendingCaptureDeps) PendingPermsAdd(id int64, evt marotte.ServerEvent, origin AskOrigin) marotte.ServerEvent {
 	d.pendingAdds = append(d.pendingAdds, id)
+	d.pendingOrigins = append(d.pendingOrigins, origin)
+	askID := int64(capturedAskBase + len(d.pendingAdds))
+	switch p := evt.Payload.(type) {
+	case marotte.PermissionNeededPayload:
+		p.RequestID = askID
+		evt.Payload = p
+	case marotte.ElicitationNeededPayload:
+		p.RequestID = askID
+		evt.Payload = p
+	case marotte.UserInputNeededPayload:
+		p.RequestID = askID
+		evt.Payload = p
+	}
+	return evt
 }
 
 func userInputMsg(t *testing.T, id *int64, params map[string]any) *marotte.RPCResponse {
@@ -35,7 +53,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(rolesOf(deps))
-		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, &reqID, map[string]any{
 			"sessionId":  "sess_1",
 			"toolCallId": "tc-9",
 			"question":   "Which approach?",
@@ -59,7 +77,8 @@ func TestHandleUserInput(t *testing.T) {
 		if got == nil {
 			t.Fatal("no user_input_needed event broadcast")
 		}
-		if got.RequestID != reqID || got.Question != "Which approach?" || got.ToolCallID != "tc-9" {
+		// The broadcast is the registered event, under the id the registry answered.
+		if got.RequestID != capturedAskBase+1 || got.Question != "Which approach?" || got.ToolCallID != "tc-9" {
 			t.Errorf("payload envelope wrong: %+v", got)
 		}
 		if len(got.Options) != 2 {
@@ -81,7 +100,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(rolesOf(deps))
-		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, &reqID, map[string]any{
 			"sessionId": "sess_1",
 			"question":  "Describe the goal",
 		}))
@@ -100,7 +119,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(rolesOf(deps))
-		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, nil, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, nil, map[string]any{
 			"question": "unanswerable",
 		}))
 		if len(*events) != 0 || len(deps.pendingAdds) != 0 {

@@ -59,8 +59,6 @@ func TestStatusFor_EveryKindAndEveryListedCode(t *testing.T) {
 	}
 }
 
-// writeError drives writeOpsError for one error on a live request and decodes
-// the envelope it wrote.
 func writeError(t *testing.T, err error) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/forges/github:github.com/repos", nil)
@@ -153,7 +151,6 @@ func TestErrorEnvelope_BoundsUpstreamText(t *testing.T) {
 	}
 }
 
-// listErrCore answers every pull-request listing with err.
 type listErrCore struct {
 	forgeapi.Core
 	err error

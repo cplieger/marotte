@@ -16,7 +16,6 @@ import { $ } from "./dom.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 const { loadAccountUsage } = await import("./account-usage.js");
 
-/** Flush the fetch().then(render).finally() microtask chain. */
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();

@@ -24,7 +24,7 @@ func writeRawChat(t *testing.T, dir string, chatID marotte.ChatID, body string) 
 	}
 }
 
-// readRawChat returns a chat file's bytes; compared raw, since a round-tripping rewrite would hide in a decode.
+// Compared raw, since a round-tripping rewrite would hide in a decode.
 func readRawChat(t *testing.T, dir string, chatID marotte.ChatID) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, string(chatID), headerFileName))

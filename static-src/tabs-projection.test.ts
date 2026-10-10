@@ -109,8 +109,8 @@ vi.mock("./composer-state.js", () => ({
   _resetComposerStateForTest: vi.fn(),
 }));
 vi.mock("./run-store.js", () => ({
-  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
-  // real ESM, so a name any module in the graph reaches has to exist on it.
+  // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
+  // reaches has to exist on it.
   runLabelOf: vi.fn(() => ""),
 }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
@@ -177,7 +177,6 @@ const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 interface Shown {
   kind: TabKind;
   ref: string;
-  /** Whether the projection held the row at the moment the hook fired. */
   rowPresent: boolean;
 }
 
@@ -225,8 +224,8 @@ function registerOpeners(): void {
   });
 }
 
-/** Assert the activation hook ran against a row the projection already holds. Two channels:
- *  injected openers, or the singletons' lazy loaders (for settings, its REFRESH via the gate). */
+/** Two channels: injected openers, or the singletons' lazy loaders (for settings, its REFRESH via
+ *  the gate). */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });

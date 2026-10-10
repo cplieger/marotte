@@ -5,8 +5,6 @@
 import { pollAction } from "./actions/index.js";
 import { listForges, type ForgesListResponse } from "./actions/forge-list.js";
 import { onSSE } from "./bus.js";
-import { signal } from "@cplieger/reactive";
-import type { ForgeKind } from "./wire/types.gen.js";
 
 /** Re-exported so consumers import the payload shape from the store that owns it. */
 export type { ForgesListResponse };
@@ -14,11 +12,8 @@ export type { ForgesListResponse };
 /** pollAction pauses while the document is hidden and refreshes on focus, so this is a ceiling, not a floor. */
 const POLL_INTERVAL_MS = 15_000;
 
-/** The last successful payload, or null before the first lands. */
-const state = signal<ForgesListResponse | null>(null);
-
-/** True when the most recent fetch failed, which a null payload (nothing yet) cannot say. */
-const failed = signal(false);
+/** The last successful payload, or null before the first lands. A failed fetch keeps it. */
+let state: ForgesListResponse | null = null;
 
 let started = false;
 
@@ -40,12 +35,9 @@ export function initForgeStore(): void {
 }
 
 function apply(d: ForgesListResponse | null): void {
-  if (d === null) {
-    failed.value = true;
-    return;
+  if (d !== null) {
+    state = d;
   }
-  failed.value = false;
-  state.value = d;
 }
 
 /**
@@ -63,20 +55,8 @@ export async function refreshForges(): Promise<ForgesListResponse | null> {
  * empty answer would read as "no connected forges"). A payload in hand is returned as-is, with no round trip.
  */
 export async function ensureForges(): Promise<ForgesListResponse | null> {
-  const current = state.peek();
-  if (current !== null) {
-    return current;
+  if (state !== null) {
+    return state;
   }
   return refreshForges();
-}
-
-/** Which forge kinds offer the browser-based device flow. */
-export function oauthByKind(): Partial<Record<ForgeKind, boolean>> {
-  return state.value?.oauth ?? {};
-}
-
-/** True when the last fetch failed. See the `failed` signal for why this is not
- *  the same question as an empty list. */
-export function forgeLoadFailed(): boolean {
-  return failed.value;
 }

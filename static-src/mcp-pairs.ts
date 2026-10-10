@@ -4,7 +4,7 @@ import { el } from "@cplieger/reactive";
 import { type KeyPair, SECRET_MASK } from "./mcp-state.js";
 import { ICON_CLOSE } from "./icons.js";
 
-export type PairKind = "env" | "header";
+type PairKind = "env" | "header";
 
 /**
  * What the publisher declared about a field (why it exists, required, credential), from a registry hit. Disclosure
@@ -35,7 +35,6 @@ export function renderKeyPairList(
   }
 }
 
-// Secret inputs the user typed into.
 const touchedInputs = new WeakSet<HTMLInputElement>();
 
 // Module-scoped id source for aria-describedby, so two lists in one modal cannot collide.

@@ -149,7 +149,6 @@ function repo(files: GitFileEntry[], over: Partial<GitRepoStatus> = {}): GitRepo
     repo: "demo",
     is_repo: true,
     branch: "main",
-    remote: "https://example.invalid/demo.git",
     ahead: 0,
     behind: 0,
     files,

@@ -109,7 +109,7 @@ Files you attach to a message, by drag and drop, paste or the `+` menu, are writ
 | `/config/chats/` | Chat history, one folder per chat |
 | `/config/home/` | The container's home folder: sign-ins, SSH keys, git settings, build caches |
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
-| `/config/tools/` | Installed tools. `bin/` is on `PATH` |
+| `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on `PATH`, so link any other binary into `bin/` |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
 
 ## OS packages

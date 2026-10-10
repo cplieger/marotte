@@ -23,7 +23,6 @@ const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("./tool-group.js");
 const { buildToolCard } = await import("./tool-card.js");
 
-/** A transcript-width column, off-screen. */
 const host = document.createElement("div");
 host.style.cssText = "position:fixed;top:-9999px;left:0;inline-size:760px;";
 document.body.appendChild(host);

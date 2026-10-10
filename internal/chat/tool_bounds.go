@@ -120,7 +120,6 @@ func previewEntry(e *marotte.Entry) {
 	}
 }
 
-// previewEntries is previewEntry over a page, in place.
 func previewEntries(entries []marotte.Entry) []marotte.Entry {
 	for i := range entries {
 		previewEntry(&entries[i])
@@ -178,8 +177,6 @@ func boundToolCall(tc *marotte.EntryToolCall, b toolBudget) (marotte.EntryToolCa
 	return out, cut
 }
 
-// boundToolResult is boundToolCall for the settled payload, which carries the
-// output and the diffs and no input.
 func boundToolResult(res *marotte.EntryToolResult, b toolBudget) (marotte.EntryToolResult, marotte.ToolTruncation) {
 	out := *res
 	var cut marotte.ToolTruncation
@@ -219,8 +216,6 @@ func boundOutput(s string, b toolBudget) (text string, cut bool) {
 	return cutRunes(s[:half]) + "\n" + cutRunesFront(s[len(s)-half:]), true
 }
 
-// nthIndex returns the index of the nth occurrence of b, or len(s) when there
-// are fewer than n.
 func nthIndex(s string, b byte, n int) int {
 	for i := range len(s) {
 		if s[i] != b {
@@ -234,8 +229,6 @@ func nthIndex(s string, b byte, n int) int {
 	return len(s)
 }
 
-// lastNthIndex returns the index of the nth occurrence of b counting from the
-// end, or -1 when there are fewer than n.
 func lastNthIndex(s string, b byte, n int) int {
 	for i := len(s) - 1; i >= 0; i-- {
 		if s[i] != b {
@@ -271,7 +264,6 @@ func cutRunesFront(s string) string {
 	return s
 }
 
-// diffsBytes is what a diff slice costs in content, the measure boundDiffs spends.
 func diffsBytes(diffs []marotte.ToolDiff) int {
 	total := 0
 	for i := range diffs {

@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// plansOf decodes every plan entry in entries, in file order, with its turn.
 func plansOf(t *testing.T, entries []marotte.Entry) (turns []string, plans []marotte.EntryPlan) {
 	t.Helper()
 	for i := range entries {

@@ -5,7 +5,7 @@
 import type { PlanStatus } from "../types.js";
 
 /** The class hook and the announced word for one status. */
-export interface StatusLook {
+interface StatusLook {
   readonly className: string;
   readonly word: string;
 }
@@ -24,7 +24,7 @@ export const STATUS: Readonly<Record<PlanStatus, StatusLook>> = {
 };
 
 /** Paint options for `paintStatus`. */
-export interface PaintStatusOpts {
+interface PaintStatusOpts {
   readonly queued?: boolean;
 }
 

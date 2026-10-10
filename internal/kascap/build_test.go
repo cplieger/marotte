@@ -17,11 +17,11 @@ const (
 	initializeGoldenPath  = "testdata/initialize.golden"
 	sessionGoldenPath     = "testdata/session.golden"
 	environmentGoldenPath = "testdata/environment.golden"
-	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly'"
+	promptGoldenPath      = "testdata/prompt.golden"
+	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly|TestPromptDoorDeclaresExactly'"
 )
 
-// spawnMatrix is the COMPLETE set of runtime inputs to either projection; exhaustive is what makes
-// the golden a contract rather than a sample.
+// Exhaustive is what makes the golden a contract rather than a sample.
 var spawnMatrix = []struct {
 	name  string
 	spawn Spawn
@@ -52,9 +52,12 @@ var spawnMatrix = []struct {
 	{"inline agents and steering reminders on", Spawn{InlineAgents: true, SteeringReminders: true}},
 	{"work validation and safety check on", Spawn{WorkValidation: "on", InfraSafetyMonitor: "on"}},
 	{"work validation and safety check off", Spawn{WorkValidation: "off", InfraSafetyMonitor: "off"}},
+	{"auto routing and smart helpers on", Spawn{AutoRouting: "on", AutoDelegation: "on"}},
+	{"auto routing and smart helpers off", Spawn{AutoRouting: "off", AutoDelegation: "off"}},
 	{"shell timeout set", Spawn{TerminalCommandTimeoutMs: 300000}},
 	{"workflows on", Spawn{Workflows: true}},
 	{"telemetry off", Spawn{DisableTelemetry: true}},
+	{"utility bridge configuration state", Spawn{ConfigurationState: true}},
 	{"every gate on", Spawn{
 		SecretStorage: true, Hooks: true,
 		Presets:   []string{"read-workspace"},
@@ -62,10 +65,19 @@ var spawnMatrix = []struct {
 		DisableAutoCompaction: true, ToolLoad: true, DisableSessionTitles: true,
 		SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", InfraSafetyMonitor: "on",
+		AutoRouting: "on", AutoDelegation: "on",
 		TerminalCommandTimeoutMs: 300000,
 		InlineAgents:             true, SteeringReminders: true,
-		Workflows: true, DisableTelemetry: true,
+		Workflows: true, DisableTelemetry: true, ConfigurationState: true,
 	}},
+}
+
+func spawnNames() []string {
+	names := make([]string, len(spawnMatrix))
+	for i := range spawnMatrix {
+		names[i] = spawnMatrix[i].name
+	}
+	return names
 }
 
 // renderMatrix marshals one projection across the matrix, one compact JSON object per line;
@@ -86,8 +98,8 @@ func renderMatrix[T any](t *testing.T, build func(*Spawn) T) string {
 }
 
 // checkGolden writes the fixture under UPDATE_GOLDEN=1 and compares in every
-// case, so one code path both regenerates and asserts.
-func checkGolden(t *testing.T, path, got string) {
+// case, so one code path both regenerates and asserts; `names` labels each line.
+func checkGolden(t *testing.T, path, got string, names []string) {
 	t.Helper()
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -117,8 +129,8 @@ A row or a spawnMatrix case changed. Regenerate with: %s`,
 			continue
 		}
 		name := "case " + strconv.Itoa(i)
-		if i < len(spawnMatrix) {
-			name = spawnMatrix[i].name
+		if i < len(names) {
+			name = names[i]
 		}
 		t.Errorf(`%s changed for %q.
 A capability was added, removed, renamed, or reshaped. If that is deliberate,
@@ -134,19 +146,61 @@ regenerate with:
 // TestInitializeDeclaresExactly pins the exact _meta.kiro payload of the initialize handshake for
 // every spawn combination.
 func TestInitializeDeclaresExactly(t *testing.T) {
-	checkGolden(t, initializeGoldenPath, renderMatrix(t, Capabilities))
+	checkGolden(t, initializeGoldenPath, renderMatrix(t, Capabilities), spawnNames())
 }
 
 // TestSessionDoorDeclaresExactly pins the payload session/new and session/load carry for every
 // spawn combination.
 func TestSessionDoorDeclaresExactly(t *testing.T) {
-	checkGolden(t, sessionGoldenPath, renderMatrix(t, SessionMeta))
+	checkGolden(t, sessionGoldenPath, renderMatrix(t, SessionMeta), spawnNames())
 }
 
 // TestEnvironmentDoorDeclaresExactly pins the KIRO_* assignments ChildEnv hands
 // the bridge for every spawn combination, one JSON array per line.
 func TestEnvironmentDoorDeclaresExactly(t *testing.T) {
-	checkGolden(t, environmentGoldenPath, renderMatrix(t, ChildEnv))
+	checkGolden(t, environmentGoldenPath, renderMatrix(t, ChildEnv), spawnNames())
+}
+
+// promptMatrix is every per-prompt state; its order is prompt.golden's line order.
+var promptMatrix = []struct {
+	name   string
+	prompt Prompt
+}{
+	{"default style", Prompt{}},
+	{"concise", Prompt{OutputStyle: "concise"}},
+	{"step message", Prompt{StepMessage: "continue with the plan"}},
+	{"labelled chat prompt", Prompt{Label: "Merging findings from a tangent"}},
+}
+
+// TestPromptDoorDeclaresExactly pins the _meta.kiro payload session/prompt carries for every
+// per-prompt state, one JSON object per line.
+func TestPromptDoorDeclaresExactly(t *testing.T) {
+	var out strings.Builder
+	names := make([]string, len(promptMatrix))
+	for i, tc := range promptMatrix {
+		raw, err := json.Marshal(PromptMeta(&tc.prompt))
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", tc.name, err)
+		}
+		out.Write(raw)
+		out.WriteString("\n")
+		names[i] = tc.name
+	}
+	checkGolden(t, promptGoldenPath, out.String(), names)
+}
+
+// TestInitialize_ConfigurationStateOnlyWhereDeclared pins the capability to the spawn that asks for
+// it: a chat spawn carries no configurationState key at all.
+func TestInitialize_ConfigurationStateOnlyWhereDeclared(t *testing.T) {
+	if got, present := Capabilities(&Spawn{ConfigurationState: true})["configurationState"]; !present || got != true {
+		t.Errorf("Capabilities(ConfigurationState) = %#v (present %v), want true", got, present)
+	}
+	if got, present := Capabilities(&Spawn{})["configurationState"]; present {
+		t.Errorf("Capabilities(chat spawn) carries configurationState = %#v, want the key absent", got)
+	}
+	if _, onSession := SessionMeta(&Spawn{ConfigurationState: true})["configurationState"]; onSession {
+		t.Error("SessionMeta carries configurationState; KAS reads it at initialize only")
+	}
 }
 
 // TestMemoryRow_FailsClosedAndNeverVetoes pins the memory preference's two
@@ -187,6 +241,38 @@ func TestChildEnv_WritesToolLoadInBothStates(t *testing.T) {
 	want := []string{"KIRO_DISABLE_SESSION_TITLE_LLM=true", "KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ChildEnv(DisableSessionTitles) = %q, want %q", got, want)
+	}
+}
+
+// TestChildEnv_AutoModelChoicesFollowTheirSwitches pins the two _CONFIG arms: unset withholds the
+// variable so the experiment decides, and each explicit choice writes the JSON KAS parses.
+func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
+	for _, tc := range []struct {
+		choice string
+		want   []string
+	}{
+		{"", []string{"KIRO_FEATURE_TOOL_LOAD_ENABLED=false"}},
+		{"on", []string{
+			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}`,
+			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
+			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
+		}},
+		{"off", []string{
+			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":false}`,
+			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
+			"KIRO_FEATURE_TOOL_LOAD_ENABLED=false",
+		}},
+	} {
+		got := ChildEnv(&Spawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
+		}
+	}
+	if got := ChildEnv(&Spawn{AutoRouting: "on"}); len(got) != 2 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want only the cascade arm beside tool_load", got)
+	}
+	if settings, _ := SessionMeta(&Spawn{AutoRouting: "on"})[settingsKey].(map[string]any); settings["cascade"] != nil {
+		t.Errorf("SessionMeta(AutoRouting=on) sends settings.cascade = %#v; the env arm carries the choice", settings["cascade"])
 	}
 }
 

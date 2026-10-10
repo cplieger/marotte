@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// mustStore opens a store in a temp dir.
 func mustStore(t *testing.T) *Store {
 	t.Helper()
 	s, err := NewStore(t.TempDir())
@@ -61,7 +60,6 @@ func (f *fakeLauncher) snap() (sources, schedules []string, slots []time.Time) {
 	return slices.Clone(f.sources), slices.Clone(f.schedules), slices.Clone(f.deadlines)
 }
 
-// launched is the count, which is what most assertions want.
 func (f *fakeLauncher) launched() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -112,8 +110,8 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor must advance to the DUE time (not now) to prevent drift: got %v want %v", got.Anchor, due)
 	}
-	if got.LastStatus != StatusStarted || got.LastReason != "" {
-		t.Errorf("last outcome = (%q, %q), want (%q, \"\")", got.LastStatus, got.LastReason, StatusStarted)
+	if got.LastStatus != statusStarted || got.LastReason != "" {
+		t.Errorf("last outcome = (%q, %q), want (%q, \"\")", got.LastStatus, got.LastReason, statusStarted)
 	}
 	// The schedule's id must travel with the launch, or an unattended denial has
 	// no row to report itself on.
@@ -122,7 +120,7 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	}
 }
 
-// TestSweep_BoundsTheRunByItsOwnInterval pins the run bound to NextRun's own answer for the
+// TestSweep_BoundsTheRunByItsOwnInterval pins the run bound to nextRun's own answer for the
 // spec, measured from DUE (the fire is 30s late inside the grace window), not from now.
 func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
@@ -133,7 +131,7 @@ func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	if len(slots) != 1 {
 		t.Fatalf("expected one launch, got %d", len(slots))
 	}
-	want, err := NextRun(st.List()[0].Spec, due)
+	want, err := nextRun(st.List()[0].Spec, due)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -162,7 +160,7 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 	if !got.LastRunAt.IsZero() {
 		t.Errorf("a skip must not record a run: LastRunAt = %v", got.LastRunAt)
 	}
-	next, err := NextRun(got.Spec, got.Anchor)
+	next, err := nextRun(got.Spec, got.Anchor)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -230,28 +228,28 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	}
 }
 
-// TestSweep_FiresASlotExactlyAtTheGraceEdge pins that a slot exactly MissGrace late still
+// TestSweep_FiresASlotExactlyAtTheGraceEdge pins that a slot exactly missGrace late still
 // fires; the other branch advances the anchor and loses the occurrence.
 func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
-	st, l, r := newFixture(t, due.Add(MissGrace))
+	st, l, r := newFixture(t, due.Add(missGrace))
 	r.sweep(t.Context())
 
 	if got := l.launched(); got != 1 {
-		t.Fatalf("a slot exactly %v late launched %d times, want 1", MissGrace, got)
+		t.Fatalf("a slot exactly %v late launched %d times, want 1", missGrace, got)
 	}
 	got := st.List()[0]
 	if !got.Anchor.Equal(due) {
 		t.Errorf("anchor = %v, want the due time %v", got.Anchor, due)
 	}
-	if got.LastStatus != StatusStarted {
-		t.Errorf("LastStatus = %q, want %q", got.LastStatus, StatusStarted)
+	if got.LastStatus != statusStarted {
+		t.Errorf("LastStatus = %q, want %q", got.LastStatus, statusStarted)
 	}
 
-	_, late, lateRunner := newFixture(t, due.Add(MissGrace+time.Second))
+	_, late, lateRunner := newFixture(t, due.Add(missGrace+time.Second))
 	lateRunner.sweep(t.Context())
 	if n := late.launched(); n != 0 {
-		t.Errorf("a slot %v late launched %d times, want 0 (missed while offline)", MissGrace+time.Second, n)
+		t.Errorf("a slot %v late launched %d times, want 0 (missed while offline)", missGrace+time.Second, n)
 	}
 }
 
@@ -286,8 +284,6 @@ func TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths(t *testing.T) {
 	})
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
-// along with the log package's writer and flags, which slog.SetDefault also redirects.
 // The handler is global, so this package's tests never run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
@@ -306,9 +302,9 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 // were the grace shorter than the tick, a slot landing between ticks would be
 // called missed and never run.
 func TestMissGraceExceedsTick(t *testing.T) {
-	if MissGrace <= TickInterval {
+	if missGrace <= tickInterval {
 		t.Errorf("MissGrace (%v) must exceed TickInterval (%v) or in-window slots are misclassified as missed",
-			MissGrace, TickInterval)
+			missGrace, tickInterval)
 	}
 }
 
@@ -366,7 +362,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 1, 0)
-	if err := st.recordFire(ctx, "a", due, Outcome{Status: StatusStarted}); err != nil {
+	if err := st.recordFire(ctx, "a", due, Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
@@ -378,7 +374,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 	if got.Spec.Hour != 5 {
 		t.Errorf("edit did not apply: hour = %d", got.Spec.Hour)
 	}
-	if got.LastStatus != StatusStarted || got.LastRunAt.IsZero() {
+	if got.LastStatus != statusStarted || got.LastRunAt.IsZero() {
 		t.Errorf("edit dropped run history: %+v", got)
 	}
 }
@@ -395,9 +391,8 @@ func TestNewStore_RefusesAMalformedFile(t *testing.T) {
 	}
 }
 
-// writeFile seeds a raw store file for the malformed-input test.
 func writeFile(dir, body string) error {
-	return os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600)
+	return os.WriteFile(filepath.Join(dir, fileName), []byte(body), 0o600)
 }
 
 // TestRecordOutcome_DoesNotMoveTheAnchor pins that a late outcome leaves the anchor, or the
@@ -410,7 +405,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := st.recordFire(ctx, "s1", due, Outcome{Status: StatusStarted}); err != nil {
+	if err := st.recordFire(ctx, "s1", due, Outcome{Status: statusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
@@ -429,7 +424,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(t.Context(), "gone", Outcome{Status: StatusFailed}); !errors.Is(err, ErrNotFound) {
+	if err := st.RecordOutcome(t.Context(), "gone", Outcome{Status: StatusFailed}); !errors.Is(err, errNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

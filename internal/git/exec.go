@@ -41,7 +41,6 @@ type gitTimeouts struct {
 	Push time.Duration
 }
 
-// defaultTimeouts returns the production timeout policy.
 func defaultTimeouts() gitTimeouts {
 	return gitTimeouts{
 		Fetch: 5 * time.Second,
@@ -57,11 +56,9 @@ func defaultTimeouts() gitTimeouts {
 // rewrites are also scrubbed.
 var urlCredPattern = regexp.MustCompile(`(://)[^/]*@`)
 
-// urlQueryTokenPattern matches secret-bearing query parameters
-// (?token=, ?access_token=, ?private_token=, ?api_key=, ?apikey=)
-// that self-hosted Gitea/Forgejo and GitHub's legacy OAuth app flow
-// sometimes emit. The replacement keeps the key name so debug
-// context survives.
+// urlQueryTokenPattern matches secret-bearing query parameters (?token=, ?access_token=,
+// ?private_token=, ?api_key=, ?apikey=) that self-hosted Gitea/Forgejo and GitHub's legacy OAuth
+// app flow sometimes emit. The replacement keeps the key name so debug context survives.
 var urlQueryTokenPattern = regexp.MustCompile(`([?&](?:token|access_token|private_token|api_key|apikey)=)[^&\s]+`)
 
 // authHeaderPattern matches Authorization: Bearer/Token/Basic
@@ -74,9 +71,8 @@ var authHeaderPattern = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|toke
 // redactor can defeat it. Redaction stays at the EMIT site because `git remote get-url` output is
 // also parsed (commitURLPrefix, prRemoteHost).
 
-// maxClientOutputBytes bounds a multi-line git output block sent to a client.
-// Generous: it is a transcript a human reads, and git's own failure messages
-// carry the diagnosis in the last lines.
+// Generous: it is a transcript a human reads, and git's own failure messages carry the diagnosis in
+// the last lines.
 const maxClientOutputBytes = 64 * 1024
 
 // maxRemoteURLBytes bounds a single-line value a human makes a decision from —
@@ -259,10 +255,8 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// gitCmd executes a git subprocess and returns trimmed combined output.
-// allowedSubcommand reports the subcommand `args` names and whether it is
-// allowlisted. Shared by gitExec (which refuses to launch) and gitCmd (which
-// reports WHY), so the two can never disagree about what is permitted.
+// Shared by gitExec (which refuses to launch) and gitCmd (which reports WHY), so the two can never
+// disagree about what is permitted.
 func allowedSubcommand(args []string) (string, bool) {
 	sub := firstSubcommand(args)
 	_, ok := allowedSubcommands[sub]

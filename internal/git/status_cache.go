@@ -19,7 +19,6 @@ const (
 	statusKeyFetch = "status-all-fetch"
 )
 
-// statusSnapshot is one completed scan and the instant it completed.
 type statusSnapshot struct {
 	at    time.Time
 	repos []allRepoStatus
@@ -33,7 +32,6 @@ type statusCache struct {
 	mu    sync.Mutex
 }
 
-// statusSlot is one variant's snapshot plus the refresh in flight for it.
 type statusSlot struct {
 	snap *statusSnapshot
 	// done is closed when the refresh in flight publishes, nil when none is. A fresh
@@ -58,7 +56,7 @@ type statusSlot struct {
 	full bool
 }
 
-// slot returns key's slot, creating it. Callers hold c.mu.
+// Callers hold c.mu.
 func (c *statusCache) slot(key string) *statusSlot {
 	if c.slots == nil {
 		c.slots = make(map[string]*statusSlot, 2)
@@ -173,7 +171,6 @@ func (s *statusSlot) mergeRows(rows []allRepoStatus) {
 	s.snap = &statusSnapshot{at: s.snap.at, repos: merged}
 }
 
-// stale reports whether a snapshot is old enough to refresh behind the answer.
 // A missing snapshot is stale by definition.
 func (s *statusSnapshot) stale(maxAge time.Duration) bool {
 	return s == nil || time.Since(s.at) > maxAge

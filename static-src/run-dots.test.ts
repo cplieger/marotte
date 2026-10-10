@@ -60,7 +60,7 @@ vi.mock("./decision-dock.js", () => ({
     void queueVersion.value;
     const runKey = `run:${workflowID}`;
     const mine = m.asks.filter((a) => a.runID === workflowID || a.chatID === runKey);
-    return { count: mine.length, nodes: new Set<string>(), label: "" };
+    return { count: mine.length, asked: [], label: "" };
   }),
 }));
 
@@ -84,8 +84,8 @@ vi.mock("./run-store.js", () => ({
   registerLiveRunObserver: vi.fn((fn: (workflowID: string) => void) => {
     observer = fn;
   }),
-  // The fetch the seed asks for. Recorded rather than resolved: a case drives the cell write
-  // itself, so the request and its answer are separately assertable.
+  // Recorded rather than resolved: a case drives the cell write itself, so the request and its
+  // answer are separately assertable.
   invalidateRun: vi.fn((id: string) => {
     m.invalidated.push(id);
   }),
@@ -123,12 +123,10 @@ function dockChanged(): void {
   queueVersion.value = queueVersion.value + 1;
 }
 
-/** Bump the mocked tab set the way a committed tab mutation does. */
 function tabsChanged(): void {
   tabsVersion.value = tabsVersion.value + 1;
 }
 
-/** Bump the mocked run store the way a resolved fetch's cell write does. */
 function storeChanged(): void {
   statesVersion.value = statesVersion.value + 1;
 }
@@ -430,7 +428,8 @@ describe("an open run tab seeds its own run state, with no activation", () => {
 
 // The dot's status vocabulary, read against the REAL `store.js`.
 
-const { RUN_STATUSES } = await import("./run-controls.js");
+/** KAS's WorkflowStatusSchema, so the cases are exhaustive over it rather than over whatever subset a table names. */
+const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborted"] as const;
 const { runStatusFor } = await import("./store.js");
 const { classifyRunStatus } = await import("./run-status.js");
 

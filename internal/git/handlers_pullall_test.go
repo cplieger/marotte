@@ -33,11 +33,9 @@ func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
 	return out
 }
 
-// behindClone builds a workspace holding one repo named `work` one commit behind
-// its origin. The remote is dumb HTTP rather than a local path because the pull
-// runs through the production exec path, which sets GIT_PROTOCOL_FROM_USER=0 and
-// so makes git refuse the `file` transport. The seed and the served bare repo
-// live OUTSIDE workDir, so discovery finds exactly one repo.
+// The remote is dumb HTTP rather than a local path because the pull runs through the production
+// exec path, which sets GIT_PROTOCOL_FROM_USER=0 and so makes git refuse the `file` transport. The
+// seed and the served bare repo live OUTSIDE workDir, so discovery finds exactly one repo.
 func behindClone(t *testing.T) (workDir, repoDir string) {
 	t.Helper()
 	skipNoGit(t)

@@ -100,9 +100,8 @@ function customizeBtn(): HTMLButtonElement {
 function statusText(): string {
   return byId("security-profile-status").textContent ?? "";
 }
-/** The description rendered under one profile's radio. Read out of the DOM rather than imported,
- *  because profileDescription is module-private and what a reader actually sees is the rendered
- *  row. */
+/** Read out of the DOM rather than imported, because profileDescription is module-private and what a
+ *  reader actually sees is the rendered row. */
 function descriptionFor(id: string): string {
   return radioFor(id).closest("label")?.querySelector(".profile-desc")?.textContent ?? "";
 }
@@ -118,7 +117,6 @@ function addRuleBtn(): HTMLButtonElement {
   return byId<HTMLButtonElement>("native-rule-add");
 }
 
-/** init + the lazy first load, as wired in production. */
 async function mount(v: PolicyView): Promise<void> {
   mocks.apiGet.mockResolvedValue(v);
   initNativePolicyUI();
@@ -135,7 +133,6 @@ async function pick(id: string): Promise<void> {
   await flush();
 }
 
-/** Every profile dispatch the picker issued. */
 function profileCalls(): Record<string, unknown>[] {
   return mocks.profileDispatch.mock.calls.map((c) => c[0]);
 }

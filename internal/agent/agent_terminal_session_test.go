@@ -30,7 +30,7 @@ func TestTermCreate_RecordsTheRequestsOwnSession(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			id := int64(5001)
 
-			h.translateACPEvent("c1", &marotte.RPCResponse{
+			h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 				ID: &id, Method: methodTermCreate, Params: mustJSON(t, tc.params),
 			})
 
@@ -61,7 +61,7 @@ func TestTermCreate_TheRecordedSessionIsVerbatim(t *testing.T) {
 	id := int64(5002)
 	const weird = "  step/../session with spaces\tand a tab  "
 
-	h.translateACPEvent("c1", &marotte.RPCResponse{
+	h.translateACPEvent("c1", h.originOf("c1"), &marotte.RPCResponse{
 		ID: &id, Method: methodTermCreate,
 		Params: mustJSON(t, map[string]any{"command": "true", "sessionId": weird}),
 	})

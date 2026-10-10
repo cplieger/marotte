@@ -27,21 +27,21 @@ import (
 )
 
 const (
-	// MaxMentionChars caps the text one `#` reference contributes, in runes,
+	// maxMentionChars caps the text one `#` reference contributes, in runes,
 	// matching KAS's own cap on a steering reference.
-	MaxMentionChars = 50_000
-	// MaxMentionsPerPrompt caps how many distinct references one prompt resolves,
+	maxMentionChars = 50_000
+	// maxMentionsPerPrompt caps how many distinct references one prompt resolves,
 	// matching KAS's cap on steering references per prompt.
-	MaxMentionsPerPrompt = 32
+	maxMentionsPerPrompt = 32
 	maxFolderEntries     = 1000
 	// maxMentionReadBytes bounds the bytes read for one item: four bytes per
-	// rune covers MaxMentionChars of any text.
-	maxMentionReadBytes = 4*MaxMentionChars + 4
+	// rune covers maxMentionChars of any text.
+	maxMentionReadBytes = 4*maxMentionChars + 4
 	// maxLineRangeScanBytes bounds what a line range scans to reach its start,
 	// the per-attachment file cap.
 	maxLineRangeScanBytes = MaxDocumentBytes
-	// maxFenceLen bounds a code fence. A body holding a backtick run this long
-	// is cut before that run, so the fence never grows with the body.
+	// A body holding a backtick run this long is cut before that run, so the fence never grows with
+	// the body.
 	maxFenceLen = 32
 )
 
@@ -65,10 +65,9 @@ var mentionRe = regexp.MustCompile(`#\[\[([a-z]+):([^\]\r\n]*)\]\]`)
 // written with one more ":", so every file name has a whole-file query.
 var lineRangeRe = regexp.MustCompile(`^(.+):(\d+)-(\d+)$`)
 
-// mentionBlocks answers one text resource block per distinct token, uri the
-// token. A reference that fails to resolve still sends a block carrying its
-// reason, so the prompt never fails on one. Each item is rendered as soon as it
-// resolves, so at most one unbounded body is held at a time.
+// A reference that fails to resolve still sends a block carrying its reason, so the prompt never
+// fails on one. Each item is rendered as soon as it resolves, so at most one unbounded body is held
+// at a time.
 func mentionBlocks(ctx context.Context, text string, ws Workspace, mcp bridgeCaller) []map[string]any {
 	matches := mentionRe.FindAllStringSubmatch(text, -1)
 	var resolve [][]string
@@ -79,7 +78,7 @@ func mentionBlocks(ctx context.Context, text string, ws Workspace, mcp bridgeCal
 			continue
 		}
 		seen[m[0]] = struct{}{}
-		if len(resolve) == MaxMentionsPerPrompt {
+		if len(resolve) == maxMentionsPerPrompt {
 			skipped++
 			continue
 		}
@@ -103,7 +102,7 @@ func mentionBlocks(ctx context.Context, text string, ws Workspace, mcp bridgeCal
 		if skipped > 0 && i == len(resolve)-1 {
 			parts = append(parts, fixedText(fmt.Sprintf(
 				"\n[%d more context references were not resolved: a prompt resolves at most %d]",
-				skipped, MaxMentionsPerPrompt,
+				skipped, maxMentionsPerPrompt,
 			)))
 		}
 		blocks = append(blocks, textResourceBlock(m[0], renderMention(parts)))
@@ -168,9 +167,8 @@ func resolveMention(ctx context.Context, provider, query string, ws Workspace, m
 	return nil, fmt.Errorf("unknown provider %q", provider)
 }
 
-// mentionPart is one piece of a reference's text. A fixed piece is written
-// whole; any other piece may be cut to keep the item within MaxMentionChars,
-// and a fenced one is cut inside its fence, so the fence always closes.
+// A fixed piece is written whole; any other piece may be cut to keep the item within
+// maxMentionChars, and a fenced one is cut inside its fence, so the fence always closes.
 type mentionPart struct {
 	text   string
 	lang   string
@@ -186,12 +184,11 @@ func fencedText(lang, body string) mentionPart {
 	return mentionPart{text: strings.TrimSuffix(body, "\n"), lang: lang, fenced: true}
 }
 
-var truncationMarker = fmt.Sprintf("\n[truncated at %d characters]", MaxMentionChars)
+var truncationMarker = fmt.Sprintf("\n[truncated at %d characters]", maxMentionChars)
 
-// renderMention writes parts in at most MaxMentionChars runes. When they do not
-// fit, or a fenced body had to be cut before an over-long backtick run, the
-// fixed pieces, every fence and the truncation marker are reserved first, and
-// the other pieces share what is left, earliest first.
+// When they do not fit, or a fenced body had to be cut before an over-long backtick run, the fixed
+// pieces, every fence and the truncation marker are reserved first, and the other pieces share what
+// is left, earliest first.
 func renderMention(parts []mentionPart) string {
 	texts, fences, cut := fenceParts(parts)
 	reserved, flexible := 0, 0
@@ -206,8 +203,8 @@ func renderMention(parts []mentionPart) string {
 		}
 	}
 	room := -1
-	if cut || reserved+flexible > MaxMentionChars {
-		room = max(MaxMentionChars-reserved-utf8.RuneCountInString(truncationMarker), 0)
+	if cut || reserved+flexible > maxMentionChars {
+		room = max(maxMentionChars-reserved-utf8.RuneCountInString(truncationMarker), 0)
 	}
 	var b strings.Builder
 	for i, p := range parts {
@@ -227,8 +224,7 @@ func renderMention(parts []mentionPart) string {
 	return b.String()
 }
 
-// fenceParts picks each fenced part's fence and cuts a body that holds a run of
-// maxFenceLen backticks; cut reports whether any body was cut.
+// cut reports whether any body was cut.
 func fenceParts(parts []mentionPart) (texts, fences []string, cut bool) {
 	texts = make([]string, len(parts))
 	fences = make([]string, len(parts))
@@ -408,8 +404,6 @@ func openMentionDir(query string, ws Workspace) (*os.File, string, error) {
 	return d, displayRel(name), nil
 }
 
-// openMentionRoot opens the workspace root a confined query lives under and
-// returns the query's root-relative name.
 func openMentionRoot(query string, ws Workspace) (*os.Root, string, error) {
 	root, name, err := confineMention(query, ws)
 	if err != nil {
@@ -575,8 +569,7 @@ func mentionMCP(ctx context.Context, query string, mcp bridgeCaller) ([]mentionP
 	return []mentionPart{flexText(b.String())}, nil
 }
 
-// writeCapped stops b at maxMentionReadBytes on a rune boundary. A body cut there
-// still holds more than MaxMentionChars runes, so renderMention marks the cut.
+// A body cut there still holds more than maxMentionChars runes, so renderMention marks the cut.
 func writeCapped(b *strings.Builder, s string) {
 	room := maxMentionReadBytes - b.Len()
 	if room <= 0 {

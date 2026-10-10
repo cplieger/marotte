@@ -6,6 +6,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -63,12 +64,13 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.PendingPerms.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		r.PendingPerms.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
 	})
 
-	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
+	t.Run("Notify_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.Push.NotifyPush(t.Context(), "test body", marotte.PushKindPermission, "")
+		n := notice.Question(r.Push.NoticeTarget(t.Context(), "", ""), "", "test body")
+		r.Push.Notify(t.Context(), "", &n)
 	})
 
 	t.Run("turns_runs_and_lines_are_wired", func(t *testing.T) {

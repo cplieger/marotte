@@ -31,10 +31,10 @@ type settingsCLI struct {
 	deadlines []time.Time
 }
 
-var _ CLIRunner = (*settingsCLI)(nil)
+var _ cliRunner = (*settingsCLI)(nil)
 
-// recordDeadline notes what the spawn's context bounds it to. A context with none
-// records the zero time, which no test expects, so an unbounded spawn is visible.
+// A context with none records the zero time, which no test expects, so an unbounded spawn is
+// visible.
 func (f *settingsCLI) recordDeadline(ctx context.Context) {
 	dl, _ := ctx.Deadline()
 	f.deadlines = append(f.deadlines, dl)
@@ -75,8 +75,7 @@ const settingsListFixture = `{"app.disableAutoupdates":true,` +
 	`"chat.enableTodoList":true,"cleanup.periodDays":0,"hooks.showStatus":true,` +
 	`"telemetry.enabled":false,"toolSearch.enabled":false}`
 
-// getKiroSettings drives the read handler and decodes its answer.
-func getKiroSettings(t *testing.T, runner CLIRunner, query string) (int, map[string]string) {
+func getKiroSettings(t *testing.T, runner cliRunner, query string) (int, map[string]string) {
 	t.Helper()
 	s := &Server{cliRunner: runner, cliTimeouts: defaultCLITimeouts()}
 	req := httptest.NewRequest(http.MethodGet, "/api/kiro-settings"+query, nil)

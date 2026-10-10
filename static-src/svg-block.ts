@@ -9,7 +9,7 @@
 import { el } from "@cplieger/reactive";
 import { extractLang } from "./code-blocks.js";
 
-/** Fence languages this module renders. Deliberately one member. */
+/** Deliberately one member. */
 const SVG_FENCE_LANGS: ReadonlySet<string> = new Set(["svg"]);
 
 /** Convert a closed ```svg fence into an inert diagram. Returns the `<figure>` standing where the

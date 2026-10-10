@@ -22,7 +22,7 @@ vi.mock("../push-util.js", () => ({
 import { unsubscribePush, registerPush } from "./notify.js";
 import { apiGet } from "../api-client.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
+import { getActionLog as recentLog } from "@cplieger/actions";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();

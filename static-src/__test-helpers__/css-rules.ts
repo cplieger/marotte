@@ -18,7 +18,6 @@ const vendor = import.meta.glob<string>("../node_modules/@cplieger/ui-primitives
   eager: true,
 });
 
-/** One stylesheet from css/, by filename. */
 export function loadCSS(name: string): string {
   const hit = sheets[`../css/${name}`];
   if (hit === undefined) {
@@ -96,7 +95,6 @@ export function allRules(css: string): { selector: string; body: string }[] {
   return out;
 }
 
-/** The body of a top-level rule by its exact selector line, nested `&` blocks included. */
 export function ruleBody(css: string, selector: string): string {
   const at = css.indexOf(`\n${selector} {`);
   expect(at, `rule not found: ${selector}`).toBeGreaterThan(-1);

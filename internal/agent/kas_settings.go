@@ -32,8 +32,7 @@ func knowledgeEnabled(ctx context.Context, configDir string) bool {
 	return b
 }
 
-// memoryPreference resolves the Memory dropdown for a spawn. An absent,
-// unreadable or unrecognised value takes settings.DefaultMemoryMode.
+// An absent, unreadable or unrecognised value takes settings.DefaultMemoryMode.
 func memoryPreference(ctx context.Context, configDir string) marotte.MemoryPreference {
 	mode := settings.DefaultMemoryMode
 	var v string
@@ -61,6 +60,8 @@ func agentFeatures(ctx context.Context, configDir string, locks map[string]marot
 	f.Workflows = lockedBool(locks, marotte.LockWorkflows, f.Workflows)
 	f.WorkValidation = settingString(ctx, configDir, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	f.InfraSafetyMonitor = settingString(ctx, configDir, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice)
+	f.AutoRouting = settingString(ctx, configDir, settings.KeyAutoRouting, settings.ValidFeatureChoice)
+	f.AutoDelegation = settingString(ctx, configDir, settings.KeyAutoDelegation, settings.ValidFeatureChoice)
 	f.TerminalCommandTimeoutMs = terminalCommandTimeoutMs(ctx, configDir)
 	return f
 }
@@ -90,8 +91,7 @@ func settingString(ctx context.Context, configDir, key string, valid func(string
 	return ""
 }
 
-// autoCompactionPolicy reads whether marotte may compact a chat and at what percentage;
-// invalid values read as the defaults (on, 80).
+// Invalid values read as the defaults (on, 80).
 func autoCompactionPolicy(ctx context.Context, configDir string) (enabled bool, pct int) {
 	enabled, pct = settings.DefaultAutoCompactionEnabled, settings.DefaultAutoCompactPct
 	var b bool

@@ -34,14 +34,14 @@ func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 		hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 		s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-		s.Send(t.Context(), "t", "b", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "t", Body: "b"})
 
 		got, ok := rec.AttrValue("push: send failed", "tag")
 		if !ok {
 			t.Fatalf("no tag attr on the send-failed warn; logs = %q", rec.Messages())
 		}
-		if got != TagOf(hostile) {
-			t.Errorf("tag attr = %q, want TagOf(endpoint) %q", got, TagOf(hostile))
+		if got != tagOf(hostile) {
+			t.Errorf("tag attr = %q, want TagOf(endpoint) %q", got, tagOf(hostile))
 		}
 		if _, leaked := rec.AttrValue("push: send failed", "endpoint"); leaked {
 			t.Error("the send-failed warn carries an endpoint attr; the tag is the only key")
@@ -65,7 +65,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 	// The permission leg reaches the fan-out, so the client is in-memory and the
 	// subscription carries real keys (see newServiceOnTestServer).
 	rec := &recordingHandler{}
-	s, _ := newServiceOnTestServer(t, rec)
+	s := newServiceOnTestServer(t, rec)
 	// Subscribe so Send reaches the preflight stage rather than the empty-subs early exit.
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/pref-test"))
 
@@ -74,7 +74,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 	s.mu.Lock()
 	_, afRecorded := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -88,7 +88,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -116,7 +116,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 
 func TestSend_Debounce(t *testing.T) {
 	// In-memory client: otherwise a debounce regression would deliver over the real network.
-	s, _ := newServiceOnTestServer(t, &recordingHandler{})
+	s := newServiceOnTestServer(t, &recordingHandler{})
 
 	s.mu.Lock()
 	s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})] = time.Now()
@@ -128,7 +128,7 @@ func TestSend_Debounce(t *testing.T) {
 	before := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 	s.mu.Lock()
 	after := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
@@ -143,14 +143,14 @@ func TestSend_Debounce(t *testing.T) {
 // permission push: the windows are keyed per kind.
 func TestSend_DebouncePerType(t *testing.T) {
 	rec := &recordingHandler{}
-	s, _ := newServiceOnTestServer(t, rec)
+	s := newServiceOnTestServer(t, rec)
 
 	s.mu.Lock()
 	s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})] = time.Now()
 	s.mu.Unlock()
 
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://push.example.com/x"))
-	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	s.mu.Lock()
 	permTimestamp := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
@@ -167,9 +167,9 @@ func TestSend_DebouncePerType(t *testing.T) {
 // and with no debounce side effect.
 func TestSend_UnknownKindRejected(t *testing.T) {
 	rec := &recordingHandler{}
-	s, _ := newServiceOnTestServer(t, rec)
+	s := newServiceOnTestServer(t, rec)
 	s.Subscribe(marotte.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", "what-is-this", marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: "what-is-this", Title: "title", Body: "body"})
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Errorf("an unknown kind attempted %d deliveries, want 0", len(got))
 	}
@@ -187,7 +187,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 	s.healthy = false
 	s.mu.Unlock()
 
-	s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -212,7 +212,7 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+			s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 			if tt.wantPruned && s.HasSubscribers() {
 				t.Errorf("Send did not prune subscription after %d", tt.status)
@@ -254,11 +254,11 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	}
 
 	t.Run("refused_with_no_witness_keeps_the_subscription", func(t *testing.T) {
-		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
+		s := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP}) {
 			t.Errorf("subs after a 403 with nothing delivered = %v, want the subscription kept", got)
@@ -276,12 +276,12 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	})
 
 	t.Run("a_delivery_licenses_pruning_the_refused_one", func(t *testing.T) {
-		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
+		s := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
 		s.Subscribe(pushSubscriptionWithValidKeys(t, witnessEP))
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{witnessEP}) {
 			t.Errorf("subs after one 201 and one 403 = %v, want only the delivering endpoint", got)
@@ -295,12 +295,12 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	})
 
 	t.Run("a_401_across_the_whole_store_deletes_nothing", func(t *testing.T) {
-		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusUnauthorized))
+		s := newServiceOnTestServer(t, answerByPath(http.StatusUnauthorized))
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refused2))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP, refused2}) {
 			t.Errorf("subs after a store-wide 401 = %v, want both kept", got)
@@ -311,7 +311,6 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 	})
 }
 
-// perKindHeaderRecorder answers every push 201 and keeps the headers each request carried.
 type perKindHeaderRecorder struct {
 	mu  sync.Mutex
 	got []deliveryHeaders
@@ -339,16 +338,15 @@ func (u *perKindHeaderRecorder) snapshot() []deliveryHeaders {
 	return slices.Clone(u.got)
 }
 
-// sendOneAndRecordHeaders delivers one notification of kind and returns the headers the
-// push service saw. The kind is switched on explicitly because pr_status defaults off.
+// The kind is switched on explicitly because pr_status defaults off.
 func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeaders {
 	t.Helper()
 	rec := &perKindHeaderRecorder{}
-	s, _ := newServiceOnTestServer(t, rec)
+	s := newServiceOnTestServer(t, rec)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/headers"))
 	s.SetPreferences(map[marotte.PushKind]bool{kind: true})
 
-	s.Send(t.Context(), "title", "body", kind, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: kind, Title: "title", Body: "body"})
 
 	got := rec.snapshot()
 	if len(got) != 1 {
@@ -416,7 +414,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	title := "Marotte"
 	body := strings.Repeat("x", 4000)
 
-	s.Send(t.Context(), title, body, marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: title, Body: body})
 
 	if !s.HasSubscribers() {
 		t.Error("subscriber was pruned after successful oversize send")
@@ -424,11 +422,12 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 
 	// After truncation the MARSHALED payload (envelope and escaping included) fits pushBodyCap;
 	// sizing on raw title+body leaves the envelope over the cap and push() drops it.
-	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{}, "")
+	fit, truncated := fitToCap(&marotte.NotificationPayload{Title: title, Body: body})
+	gotTitle, gotBody := fit.Title, fit.Body
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
+	if n := marshaledLen(&marotte.NotificationPayload{Title: gotTitle, Body: gotBody}); n > pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, "...") {
@@ -448,7 +447,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "aa", "bb", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "aa", Body: "bb"})
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
@@ -458,8 +457,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
-			marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: strings.Repeat("a", 10), Body: strings.Repeat("b", 4000)})
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
@@ -470,12 +468,16 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 	})
 
 	t.Run("marshaled_at_cap_does_not_warn", func(t *testing.T) {
-		// title=978 + body=2000 marshals to exactly pushBodyCap: not over, so no warn.
+		// The title is sized so the envelope marshals to exactly pushBodyCap: not over, so no warn.
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
-			marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		n := marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Body: strings.Repeat("b", 2000)}
+		n.Title = strings.Repeat("a", pushBodyCap-marshaledLen(&n))
+		if got := marshaledLen(&n); got != pushBodyCap {
+			t.Fatalf("Setup: envelope = %d bytes, want exactly %d", got, pushBodyCap)
+		}
+		s.Send(t.Context(), &n)
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
@@ -583,7 +585,7 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+			s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 			if capLog.CountExact(tc.want) == 0 {
 				t.Errorf("status %d: did not log %q", tc.status, tc.want)
@@ -629,7 +631,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 2 {
 			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
@@ -652,7 +654,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != int32(pushMaxAttempts) {
 			t.Errorf("attempts = %d, want pushMaxAttempts (%d)", got, pushMaxAttempts)
@@ -677,7 +679,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 1 {
 			t.Errorf("attempts = %d, want 1 (the retry lands past the budget)", got)
@@ -700,7 +702,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "title", "body", marotte.PushKindAgentFinished, marotte.PushSubject{}, "")
+		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 1 {
 			t.Fatalf("attempts = %d, want 1: this case has to deliver first try", got)
@@ -795,11 +797,12 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 	title := "Marotte"
 	body := strings.Repeat("x", 4000)
 
-	gotTitle, gotBody, truncated := fitToCap(title, body, marotte.PushSubject{}, "")
+	fit, truncated := fitToCap(&marotte.NotificationPayload{Title: title, Body: body})
+	gotTitle, gotBody := fit.Title, fit.Body
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n != pushBodyCap {
+	if n := marshaledLen(&marotte.NotificationPayload{Title: gotTitle, Body: gotBody}); n != pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, want exactly %d: the trim must spend the whole budget, marker included", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, pushTruncMarker) {
@@ -816,7 +819,8 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 	t.Run("body keeps newlines, loses other control runes", func(t *testing.T) {
 		body := "a\x1bb\nc" + strings.Repeat("x", 4000)
-		gotTitle, gotBody, truncated := fitToCap("Marotte", body, marotte.PushSubject{}, "")
+		fit, truncated := fitToCap(&marotte.NotificationPayload{Title: "Marotte", Body: body})
+		gotTitle, gotBody := fit.Title, fit.Body
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 		}
@@ -826,21 +830,22 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		if strings.Contains(gotBody, "\x1b") {
 			t.Error("body kept a raw ESC; the sanitize half of the trim did not run")
 		}
-		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
+		if n := marshaledLen(&marotte.NotificationPayload{Title: gotTitle, Body: gotBody}); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})
 
 	t.Run("title loses newlines", func(t *testing.T) {
 		title := "a\x1bb\nc" + strings.Repeat("y", 4000)
-		gotTitle, gotBody, truncated := fitToCap(title, "", marotte.PushSubject{}, "")
+		fit, truncated := fitToCap(&marotte.NotificationPayload{Title: title, Body: ""})
+		gotTitle, gotBody := fit.Title, fit.Body
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte title", len(title))
 		}
 		if strings.ContainsAny(gotTitle, "\n\r\x1b") {
 			t.Errorf("title kept a record-forging rune: %q", gotTitle[:min(len(gotTitle), 10)])
 		}
-		if n := marshaledLen(gotTitle, gotBody, marotte.PushSubject{}, ""); n > pushBodyCap {
+		if n := marshaledLen(&marotte.NotificationPayload{Title: gotTitle, Body: gotBody}); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})

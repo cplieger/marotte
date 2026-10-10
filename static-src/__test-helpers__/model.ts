@@ -16,9 +16,8 @@ interface TurnOverrides extends Omit<Partial<Turn>, "body"> {
 }
 
 export interface SessionOverrides extends Omit<Partial<Session>, "turns" | "turn_order"> {
-  /** The resident turns in any order. The factory keys the map by each turn's own id
-   *  and orders `turn_order` by `turn_open.n`, because a map and an array a caller
-   *  states separately can disagree about one window. */
+  /** The factory keys the map by each turn's own id and orders `turn_order` by `turn_open.n`,
+   *  because a map and an array a caller states separately can disagree about one window. */
   readonly turns?: readonly Turn[];
 }
 

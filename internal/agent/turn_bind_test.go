@@ -28,7 +28,6 @@ func pendingID(h *Runtime, chatID marotte.ChatID) (string, bool) {
 	return lc.pending.ID, true
 }
 
-// ownSource is the source of the chat's own open turn.
 func ownSource(h *Runtime, chatID marotte.ChatID) marotte.TurnOpenSource {
 	lc := h.coord.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -36,7 +35,6 @@ func ownSource(h *Runtime, chatID marotte.ChatID) marotte.TurnOpenSource {
 	return lc.own.Source
 }
 
-// openText is the text still coalescing in the own turn's agent lane.
 func openText(h *Runtime, chatID marotte.ChatID) string {
 	log := h.liveTurn(chatID)
 	if log == nil {
@@ -53,7 +51,7 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	id, _ := h.stagePromptTurn(t, chatID)
 	defer h.coord.ReleaseTurn(chatID, id)
 
-	h.translateACPEvent(chatID, newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
 	if h.coord.TurnOpenedAfter(chatID, id) {
 		t.Error("the bracket opened a SECOND turn instead of binding to the prompt's")
@@ -76,9 +74,9 @@ func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	first, _ := streamingPromptTurn(t, h, chatID, "the first turn's reply")
 	// Acknowledge it, so the next bracket finds nothing pending.
-	h.translateACPEvent(chatID, newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
-	h.translateACPEvent(chatID, newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
 	closes := closesOf(t, logOf(t, cs, chatID))
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeUnknown || closes[0].StopReasonRaw != string(marotte.StopReasonUnknown) {
@@ -102,9 +100,9 @@ func TestReviseTurnBinding_HandsTheLogToTheAgentsTurn(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.coord.ReleaseTurn(chatID, preOpen)
-	h.translateACPEvent(chatID, newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
-	h.translateACPEvent(chatID, newAgentInitiatedChunkMsg("the agent woke itself"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newAgentInitiatedChunkMsg("the agent woke itself"))
 
 	agentTurn, open := ownID(h, chatID)
 	if !open {
@@ -140,9 +138,9 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	// The next prompt gets its own bracket and outcome.
 	next, _ := h.stagePromptTurn(t, chatID)
 	defer h.coord.ReleaseTurn(chatID, next)
-	h.translateACPEvent(chatID, newTurnStartMsg())
-	h.translateACPEvent(chatID, newChunkMsg("the second answer"))
-	h.translateACPEvent(chatID, newTurnEndMsg("refusal"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("the second answer"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("refusal"))
 
 	result, err := h.coord.AwaitTurn(t.Context(), chatID, next)
 	if err != nil {
@@ -159,7 +157,7 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 
-	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
 
 	if got := logOf(t, cs, chatID); len(got) != 0 {
 		t.Errorf("entries = %+v, want none: a bracket for a turn nobody opened is a no-op", got)
@@ -178,7 +176,7 @@ func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	id, _ := streamingPromptTurn(t, h, chatID, "a live reply")
 
-	h.translateACPEvent(chatID, newReplayedTurnEndMsg("end_turn"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newReplayedTurnEndMsg("end_turn"))
 
 	if own, open := ownID(h, chatID); !open || own != id {
 		t.Errorf("own turn = (%q, %v), want the live turn %q still open", own, open, id)
@@ -194,7 +192,7 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 
-	h.translateACPEvent(chatID, newChunkMsg("nobody prompted this"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("nobody prompted this"))
 
 	id, open := ownID(h, chatID)
 	if !open {
@@ -217,7 +215,7 @@ func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
-	h.translateACPEvent(chatID, newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 
 	if id, err := h.coord.OpenTurn(t.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourceLocalShell, Prompt: &marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
@@ -225,7 +223,7 @@ func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 		t.Errorf("OpenTurn(local_shell) = %q, want a refusal while an agent turn is open", id)
 	}
 
-	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
 	id := shellTurn(t, h, chatID)
 	h.coord.ReleaseTurn(chatID, id)
 }
@@ -237,12 +235,12 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.coord.ReleaseTurn(chatID, preOpen)
-	h.translateACPEvent(chatID, newTurnStartMsg())
-	h.translateACPEvent(chatID, newAgentInitiatedChunkMsg("the agent woke itself"))
-	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newAgentInitiatedChunkMsg("the agent woke itself"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
 
-	h.translateACPEvent(chatID, newTurnStartMsg())
-	h.translateACPEvent(chatID, newChunkMsg("the answer to the prompt"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
+	h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("the answer to the prompt"))
 
 	if own, open := ownID(h, chatID); !open || own != preOpen {
 		t.Fatalf("own turn = (%q, %v), want the prompt's %q: its bracket bound a turn nothing can reach, so the fold opened a third one", own, open, preOpen)
@@ -251,7 +249,7 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 		t.Errorf("the prompt's turn holds %q, want the prompt's reply", got)
 	}
 
-	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
+	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
 	result, err := h.coord.AwaitTurn(t.Context(), chatID, preOpen)
 	if err != nil {
 		t.Fatalf("AwaitTurn on the turn this caller opened: %v; a handle holder can never be told its own turn does not exist", err)

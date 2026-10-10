@@ -23,7 +23,6 @@ func repoIDOf(selector string) string {
 	return forgeapi.RepoIDPrefix + hex.EncodeToString([]byte(strings.ToLower(selector)))
 }
 
-// prIn is an open pull request in the repository selector names.
 func prIn(family forgeapi.Family, selector string, number int, check forgeapi.CheckState) forgeapi.PullRequest {
 	return forgeapi.PullRequest{
 		Ref:    forgeapi.PRRef{Number: number},
@@ -66,8 +65,6 @@ func (c *myPRsCore) ListPRs(context.Context, forgeapi.RepoRef, ...forgeapi.ListO
 	return forgeapi.Page[forgeapi.PullRequest]{}, nil
 }
 
-// sourceManager is a manager over recs, each connected as bob with the client
-// cores names for its id.
 func sourceManager(t *testing.T, cores map[string]forgeapi.Core, recs ...connectionRecord) *Manager {
 	t.Helper()
 	// The boot Refresh registers a helper for every record in the global git
@@ -107,7 +104,6 @@ func fixedOrigins(origins ...RepoOrigin) func(context.Context) []RepoOrigin {
 	return func(context.Context) []RepoOrigin { return origins }
 }
 
-// errNoClient is the failure of a connection sourceManager names no core for.
 var errNoClient = errors.New("no client for this connection")
 
 // firstPage is the cursor of a walk that has not started.
@@ -151,7 +147,7 @@ func TestCloneRepos_AnswersDirForgeAndCanonicalRepoID(t *testing.T) {
 		{Dir: "upper", ForgeID: "github:github.com", RepoID: repoIDOf("bob/app")},
 		{Dir: "local", ForgeID: "gitea:127.0.0.1:3000", RepoID: repoIDOf("alice/app")},
 	}
-	if got := CloneRepos(rows, origins); !slices.Equal(got, want) {
+	if got := cloneRepos(rows, origins); !slices.Equal(got, want) {
 		t.Errorf("CloneRepos() =\n%+v\nwant\n%+v\n(an ssh remote, another port, another forge's origin, another scheme and a path the family refuses join nothing)",
 			got, want)
 	}
@@ -220,7 +216,7 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 	if err := m.store.Delete(codebergRec.ID); err != nil {
 		t.Fatalf("Setup: delete the codeberg credential: %v", err)
 	}
-	m.Invalidate()
+	m.invalidate()
 	src := NewManagerPRSource(m, fixedOrigins(
 		RepoOrigin{Dir: "one", WebBase: "https://github.com", Slug: "bob/one"},
 		RepoOrigin{Dir: "two", WebBase: "https://github.com", Slug: "bob/two"},
@@ -256,7 +252,7 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 func TestSource_APresentCycleHealsATemporaryProbeFailure(t *testing.T) {
 	core := &whoamiCore{err: &forgeapi.Error{Op: "Whoami", Kind: forgeapi.KindTransient, Message: "no route to host"}}
 	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": core}, githubRecord())
-	if err := m.Probe(t.Context(), "github:github.com"); err == nil {
+	if err := m.probeConnection(t.Context(), "github:github.com"); err == nil {
 		t.Fatal("Setup: Probe() over a dead network = nil, want the failure")
 	}
 	core.err = nil
@@ -264,7 +260,7 @@ func TestSource_APresentCycleHealsATemporaryProbeFailure(t *testing.T) {
 
 	p.sweep(t.Context())
 
-	if f := m.Get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
+	if f := m.get("github:github.com"); f == nil || !f.Connected || f.LastError != "" {
 		t.Errorf("row after a present cycle once the network is back = %+v, want connected with the error cleared", f)
 	}
 }

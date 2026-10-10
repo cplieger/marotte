@@ -70,8 +70,8 @@ func (c *identityCache) snapshot() WhoamiResponse {
 	return c.resp
 }
 
-// publish records an identity marotte decided and marks it fresh. The generation bump beats an in-flight read, or
-// a fork started before a logout republishes signed_in.
+// The generation bump beats an in-flight read, or a fork started before a logout republishes
+// signed_in.
 func (c *identityCache) publish(resp *WhoamiResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -100,9 +100,9 @@ func (c *identityCache) refresh() {
 	c.rebuild()
 }
 
-// rebuild performs one read and publishes it, clearing busy; entered with busy claimed. Its context is detached so
-// a page-load refresh outlives the request; the budget and boundChild's group kill bound it. A read predating a
-// publish is discarded, and busy is cleared either way.
+// Entered with busy claimed. Its context is detached so a page-load refresh outlives the request;
+// the budget and boundChild's group kill bound it. A read predating a publish is discarded, and
+// busy is cleared either way.
 func (c *identityCache) rebuild() {
 	c.mu.Lock()
 	gen := c.gen
@@ -164,7 +164,7 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 	}
 	// Unread identities are withheld from the registrar, or a whoami timeout would retire every live bridge. Signed out
 	// is an answer, so it is observed.
-	h.registrar.Observe(identityFingerprint(&info))
+	h.registrar.observe(identityFingerprint(&info))
 	return info
 }
 
@@ -178,8 +178,6 @@ func cliMissing(err error, cliPath string) bool {
 	return errors.Is(pe, fs.ErrNotExist) && pe.Path == cliPath
 }
 
-// identityReadFailure classifies a failed identity read, logs it, and returns
-// the `unavailable` arm carrying the matching reason.
 func (h *Handler) identityReadFailure(
 	ctx context.Context, err error, stderr *procout.Buffer, outBytes int,
 ) WhoamiResponse {

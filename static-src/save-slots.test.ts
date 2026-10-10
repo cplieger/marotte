@@ -33,6 +33,8 @@ const EXPECTED_KEYS = [
   "steering_reminders_enabled",
   "workflows_enabled",
   "work_validation",
+  "auto_routing",
+  "auto_delegation",
   "cloudformation_safety_check",
   "output_style",
   "terminal_command_timeout_ms",

@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// saveExisting writes name at perm, saves new content over it through
-// PUT /api/file, and returns the mode the saved file carries.
 func saveExisting(t *testing.T, perm os.FileMode) os.FileMode {
 	t.Helper()
 	h, dir, prefix := testDir(t)

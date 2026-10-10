@@ -21,7 +21,6 @@ export interface GitRepoStatus {
   repo: string;
   is_repo: boolean;
   branch: string;
-  remote: string;
   ahead: number;
   behind: number;
   files: GitFileEntry[];
@@ -88,11 +87,7 @@ export interface GitPRAction {
   mergeable: string;
   /** "unknown" | "passing" | "failing" | "pending" | "neutral". */
   checks: string;
-  checks_passing: number;
   checks_failing: number;
-  checks_pending: number;
-  checks_neutral: number;
-  checks_unknown: number;
   checks_total: number;
   /** "yes" | "no" | "unknown": the forge will merge this itself once its
    *  requirements are met. */
@@ -120,7 +115,6 @@ export interface GitPR {
   target_branch: string;
   url?: string;
   author?: string;
-  created_at?: number;
   updated_at?: number;
   /** Head commit of the source branch; the merge pins itself to this. */
   head_sha?: string;
@@ -135,7 +129,6 @@ export interface GitPR {
 export interface GitRepoGroup {
   forge_id: string;
   forge_kind: ForgeKind;
-  forge_host: string;
   /** The repository's id, the segment its routes take. */
   repo_id: string;
   /** The display path before its last `/` (a GitLab namespace path). */

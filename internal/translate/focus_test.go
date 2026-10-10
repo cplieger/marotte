@@ -10,8 +10,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// promptStore is an InMemoryChatStore whose PromptTexts answers staged texts, the
-// prompt-class user rows an entry log would hold; the records are the store's own.
+// The records are the store's own.
 type promptStore struct {
 	*testsupport.InMemoryChatStore
 	prompts map[marotte.ChatID][]string
@@ -41,8 +40,6 @@ func focusFrame(t *testing.T, focus map[string]any) []byte {
 	})
 }
 
-// chatStatusPayloads filters the captured events down to chat_status
-// payloads.
 func chatStatusPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.ChatStatusPayload {
 	t.Helper()
 	var out []marotte.ChatStatusPayload

@@ -36,7 +36,6 @@ import {
   getToolsJobs,
   cancelToolJob,
   runDiagnostics,
-  seedMcp,
   getToolsStatus,
 } from "./tools.js";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
@@ -192,7 +191,7 @@ describe("tools.delete", () => {
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools/gh");
     expect(opts.method).toBe("DELETE");
-    expect(d?.job?.id).toBe("tj-1");
+    expect(d).toEqual(JSON.parse(jobBody));
   });
 
   it("returns the 409 has_dependents envelope instead of failing", async () => {
@@ -341,44 +340,6 @@ describe("tools.run_diagnostics", () => {
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("tools.seed_mcp", () => {
-  it("POSTs to /api/mcp with correct body shape", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    await seedMcp.dispatch({ name: "my-server", install: "npm install" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/mcp");
-    expect(opts.method).toBe("POST");
-    const body = JSON.parse(opts.body as string);
-    expect(body.name).toBe("my-server");
-    expect(body.transport).toBe("stdio");
-    expect(body.install).toBe("npm install");
-  });
-
-  it("omits install field when not provided", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    await seedMcp.dispatch({ name: "srv" });
-    const body = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
-    expect(body).not.toHaveProperty("install");
-  });
-
-  it("serializes with other tools actions via shared scope", async () => {
-    const log: number[] = [];
-    mockFetch.mockImplementation(async () => {
-      log.push(Date.now());
-      await new Promise<void>((r) => setTimeout(r, 50));
-      return new Response(jobBody, { status: 202 });
-    });
-
-    const p1 = createTool.dispatch({ name: "x" });
-    const p2 = seedMcp.dispatch({ name: "x" });
-    await vi.advanceTimersByTimeAsync(50);
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.all([p1, p2]);
-    // Second call starts after first finishes (serialized via scope "tools")
-    expect(log[1]! - log[0]!).toBeGreaterThanOrEqual(50);
   });
 });
 

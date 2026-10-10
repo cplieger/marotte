@@ -17,7 +17,6 @@ type searchFixture struct {
 	Queries []searchQueryCase `json:"queries"`
 }
 
-// searchQueryCase is one query's pinned reply.
 type searchQueryCase struct {
 	Name          string       `json:"name"`
 	Query         string       `json:"query"`
@@ -106,7 +105,7 @@ func TestSearchWireContract(t *testing.T) {
 	kinds := make(map[SegmentKind]int)
 	for i := range fx.Queries {
 		q := &fx.Queries[i]
-		q.Result = Search(entries, drawn, q.Query, q.CaseSensitive)
+		q.Result = search(entries, drawn, q.Query, q.CaseSensitive)
 		if len(q.Result.Matches) == 0 {
 			t.Fatalf("Search(%q) found nothing; an empty fixture would pin nothing", q.Query)
 		}
@@ -167,7 +166,7 @@ func TestSearchAllWireContract(t *testing.T) {
 		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}))
 
 	fx := searchAllFixture{Comment: searchAllFixtureComment, Query: "redis"}
-	fx.Result = s.SearchAll(t.Context(), fx.Query)
+	fx.Result = s.searchAll(t.Context(), fx.Query)
 	if len(fx.Result.Matches) != 2 {
 		t.Fatalf("SearchAll(%q) matched %d chats, want 2: %+v", fx.Query, len(fx.Result.Matches), fx.Result.Matches)
 	}

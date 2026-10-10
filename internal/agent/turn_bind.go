@@ -22,9 +22,8 @@ func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID,
 	return fn(lc)
 }
 
-// bindPending binds an unacknowledged turn_start to the pending turn, which becomes own, reporting whether it did;
-// if not, it returns the id of a bracketed own turn whose turn_end was lost, for the caller to close. Neither
-// means open a turn. It waits out finalizing; false on both when ctx died.
+// If not, it returns the id of a bracketed own turn whose turn_end was lost, for the caller to
+// close. Neither means open a turn. It waits out finalizing; false on both when ctx died.
 func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound bool, lost string) {
 	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		p := lc.pending
@@ -62,7 +61,6 @@ func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return lc.own.Log, true
 }
 
-// promptTurn is the prompt-class turn awaiting or holding its bracket, which a turn_bind joins.
 func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
@@ -78,7 +76,7 @@ func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 
 // revisableLocked reports the provisionally bound prompt turn a frame carrying
 // agentInitiated re-targets, nil when the chat holds none. Caller holds mu.
-func (lc *chatLifecycle) revisableLocked() *Turn {
+func (lc *chatLifecycle) revisableLocked() *activeTurn {
 	pre := lc.own
 	if pre == nil || !pre.acked || !pre.Source.Acknowledgeable() || pre.finalizing {
 		return nil
@@ -88,7 +86,7 @@ func (lc *chatLifecycle) revisableLocked() *Turn {
 
 // reviseLocked re-targets routing after the agent turn's turn_open was appended and opened as own: the prompt's
 // turn drops back to pending, owed its bracket. Sealed entries stay. Caller holds mu.
-func (lc *chatLifecycle) reviseLocked(pre, agent *Turn) {
+func (lc *chatLifecycle) reviseLocked(pre, agent *activeTurn) {
 	agent.acked = true
 	agent.Opened = pre.Opened
 	pre.acked = false

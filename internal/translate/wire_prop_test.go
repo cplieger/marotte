@@ -13,7 +13,7 @@ import (
 func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 	t.Run("ACPChunkWire", func(t *testing.T) {
 		rapid.Check(t, func(rt *rapid.T) {
-			orig := ACPChunkWire{}
+			orig := acpChunkWire{}
 			orig.Content.Type = rapid.StringMatching(`[a-z]+`).Draw(rt, "type")
 			orig.Content.Text = rapid.String().Draw(rt, "text")
 
@@ -21,7 +21,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 			if err != nil {
 				rt.Fatal(err)
 			}
-			var decoded ACPChunkWire
+			var decoded acpChunkWire
 			if err := json.Unmarshal(data, &decoded); err != nil {
 				rt.Fatal(err)
 			}
@@ -33,7 +33,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 
 	t.Run("ACPToolCallWire", func(t *testing.T) {
 		rapid.Check(t, func(rt *rapid.T) {
-			orig := ACPToolCallWire{
+			orig := acpToolCallWire{
 				ToolCallID: rapid.StringMatching(`[a-z0-9]{4,12}`).Draw(rt, "id"),
 				Title:      rapid.String().Draw(rt, "title"),
 				Kind:       "shell",
@@ -45,7 +45,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 			if err != nil {
 				rt.Fatal(err)
 			}
-			var decoded ACPToolCallWire
+			var decoded acpToolCallWire
 			if err := json.Unmarshal(data, &decoded); err != nil {
 				rt.Fatal(err)
 			}
@@ -58,7 +58,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 
 	t.Run("ACPToolCallUpdateWire", func(t *testing.T) {
 		rapid.Check(t, func(rt *rapid.T) {
-			orig := ACPToolCallUpdateWire{
+			orig := acpToolCallUpdateWire{
 				ToolCallID: rapid.StringMatching(`[a-z0-9]{4,12}`).Draw(rt, "id"),
 				Status:     "completed",
 				// Set explicitly: a nil json.RawMessage round-trips as the bytes `null`, which DeepEqual
@@ -70,7 +70,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 			if err != nil {
 				rt.Fatal(err)
 			}
-			var decoded ACPToolCallUpdateWire
+			var decoded acpToolCallUpdateWire
 			if err := json.Unmarshal(data, &decoded); err != nil {
 				rt.Fatal(err)
 			}
@@ -82,12 +82,12 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 
 	t.Run("ACPPlanWire", func(t *testing.T) {
 		rapid.Check(t, func(rt *rapid.T) {
-			orig := ACPPlanWire{}
+			orig := acpPlanWire{}
 			data, err := json.Marshal(orig)
 			if err != nil {
 				rt.Fatal(err)
 			}
-			var decoded ACPPlanWire
+			var decoded acpPlanWire
 			if err := json.Unmarshal(data, &decoded); err != nil {
 				rt.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 
 	t.Run("ACPModeUpdateWire", func(t *testing.T) {
 		rapid.Check(t, func(rt *rapid.T) {
-			orig := ACPModeUpdateWire{
+			orig := acpModeUpdateWire{
 				ModeID: rapid.StringMatching(`[a-z_]+`).Draw(rt, "modeId"),
 			}
 
@@ -111,7 +111,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 			if err != nil {
 				rt.Fatal(err)
 			}
-			var decoded ACPModeUpdateWire
+			var decoded acpModeUpdateWire
 			if err := json.Unmarshal(data, &decoded); err != nil {
 				rt.Fatal(err)
 			}

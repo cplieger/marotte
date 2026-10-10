@@ -30,8 +30,8 @@ const FORCE = "subagent-metrics-force-render";
  *  can prove the estimate is what the first reading is made of. */
 const PROBE = "subagent-metrics-probe-estimate";
 
-/** The probe's content height. Far from every real box height, so the shift it
- *  produces cannot be confused with a rounding difference. */
+/** Far from every real box height, so the shift it produces cannot be confused with a rounding
+ *  difference. */
 const PROBE_PX = 400;
 
 /** Per-case timeout: six rAF turns, which a loaded full run prices at hundreds of ms each. Nothing
@@ -149,12 +149,10 @@ function finishAnimations(root: Element): void {
 }
 
 interface Metrics {
-  /** The container's height with every off-screen box on the estimate. */
   readonly listSkipped: number;
   /** The same, with the estimate replaced by `PROBE_PX`. The harness's own
    *  sensitivity check -- see `expectPremise`. */
   readonly listProbe: number;
-  /** Its height with every box genuinely rendered. */
   readonly listRendered: number;
 }
 
@@ -183,7 +181,6 @@ async function measure(build: Build): Promise<Metrics> {
   return { listSkipped, listProbe, listRendered: list.scrollHeight };
 }
 
-/** Set the pointer tier the way `pointer-tier.ts` does. */
 function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }

@@ -38,7 +38,8 @@ scrollerEl.appendChild(messagesEl);
 const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolProgress } =
   await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
-const { scrollToBottom, readingState, setPinSettleMs } = await import("./scroll.js");
+const { scrollToBottom, readingState } = await import("./scroll.js");
+const { setPinSettleMs } = await import("./scroll-controller.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { forgetHeights } = await import("./block-heights.js");

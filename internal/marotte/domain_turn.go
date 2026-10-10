@@ -55,15 +55,12 @@ const (
 	// TurnSourceEmptyRetry is the empty-turn recovery's second session/prompt: its
 	// own turn, so the retry's reply does not extend a closed turn's.
 	TurnSourceEmptyRetry
-	// TurnSourceWorkflowStep names a workflow STEP's turn, which belongs to the
+	// turnSourceWorkflowStep names a workflow STEP's turn, which belongs to the
 	// RUN's log rather than to any chat: no production path opens a chat turn with
-	// it, and runLog.Open writes TurnOpenNameWorkflowStep on the run's own turns
+	// it, and runLog.open writes TurnOpenNameWorkflowStep on the run's own turns
 	// directly. The member serves Name() and the source predicates; closeRun ends
 	// those turns at the run's terminal transition.
-	TurnSourceWorkflowStep
-	// turnSourceCount bounds the enum and is not a source: a member added above it
-	// fails TestTurnSourcePredicates's completeness check.
-	turnSourceCount
+	turnSourceWorkflowStep
 )
 
 // PromptClass reports whether a turn opened by this source is a user prompt

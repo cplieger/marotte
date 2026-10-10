@@ -51,7 +51,7 @@ afterAll(() => {
   host.remove();
 });
 
-function mount(levels: readonly SessionEffortLevel[], active: string): EffortSliderHandle {
+function mount(levels: readonly SessionEffortLevel[], active: string): void {
   picks = [];
   mounted = levels;
   slider = buildEffortSlider({
@@ -74,7 +74,6 @@ function mount(levels: readonly SessionEffortLevel[], active: string): EffortSli
   slider.setActive(active);
   // A rect mid-transition is interpolated, and Playwright refuses a moving box. The declaration is asserted below.
   knob().style.transition = "none";
-  return slider;
 }
 
 function card(): HTMLElement {

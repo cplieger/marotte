@@ -1,9 +1,8 @@
 // The exec view's tree pane: the execution's structure (a loop ran twice, three ran at once).
-// A container is a ROW with its kind glyph, rolled-up state (no in-flight ring: only a step or
-// watch is work, `31-exec-view.css`) and one `nodePlan` fact. Hierarchy is a BOX: a top-level
-// container is a bordered `.ev-group`; only depth >= 2 indents (with `↳`).
-// SELECTION, not disclosure, so live rows never move; a work node never collapses. ONE FOLD PER
-// BOX: only a top-level container discloses, and `applyCollapse` is the one writer that honours it.
+// A container's rolled-up state draws no in-flight ring: only a step or watch is work
+// (`31-exec-view.css`). SELECTION, not disclosure, so live rows never move; a work node never
+// collapses. ONE FOLD PER BOX: only a top-level container discloses, and `applyCollapse` is the one
+// writer that honours it.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -15,7 +14,6 @@ import {
   ICON_EXEC_WATCH,
   ICON_REFRESH,
   ICON_TAB_AGENT,
-  ICON_TAB_SUBTAB,
 } from "../icons.js";
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
@@ -58,14 +56,12 @@ interface Row {
   dur: HTMLElement;
   glyph: HTMLElement;
   kindSlot: HTMLElement;
-  nest: HTMLElement;
   chevron: HTMLElement;
   kids: HTMLElement | null;
   start?: string;
   end?: string;
   collapsed: boolean;
-  /** Whether this row's children may be folded away at all. Top-level only — see
-   *  the ONE FOLD PER BOX note at the top of this file. */
+  /** Top-level only — see the ONE FOLD PER BOX note at the top of this file. */
   collapsible: boolean;
 }
 
@@ -90,20 +86,11 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     // an element carrying `role="treeitem"` plus a click handler is axe's
     // `nested-interactive`, and `aria-hidden` does not clear it.
     const chevron = el("span", { className: "ev-twist", "aria-hidden": "true" }, chevronEl());
-    // The tab strip's nesting glyph in its carrier shape; `aria-hidden` since the row's `aria-label`
-    // states the structure.
-    const nest = el(
-      "span",
-      { className: "ev-nest", "aria-hidden": "true" },
-      iconEl(ICON_TAB_SUBTAB),
-    );
-    nest.hidden = depth < 2;
 
     const head = el(
       "div",
       { className: "ev-row-main" },
       chevron,
-      nest,
       glyph,
       kindSlot,
       el("span", { className: "ev-text" }, label, sub),
@@ -115,10 +102,13 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       tabindex: "-1",
       "data-path": node.path,
     });
-    // Depth 0 and depth 1 both indent by ZERO: a top-level container is a bordered
-    // box (`.ev-group`) and its direct children sit inside it, so the box carries the
-    // hierarchy. A sub-sub-item gets one `--sp-3` step per level past 1.
-    rowRoot.style.setProperty("--ev-depth", String(depth >= 2 ? depth - 1 : 0));
+    // One indent step per level: a top-level group's twist is one step wide, so a direct child's
+    // dot lands in its parent's dot column, and each deeper level moves one more step.
+    rowRoot.style.setProperty("--ev-depth", String(depth));
+    if (depth >= 1) {
+      // A direct child's dot sits in its parent's column, so its one guide runs through that dot.
+      rowRoot.dataset["guides"] = depth === 1 ? "through-dot" : "";
+    }
     rowRoot.appendChild(head);
 
     const row: Row = {
@@ -128,7 +118,6 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       dur,
       glyph,
       kindSlot,
-      nest,
       chevron,
       kids: null,
       collapsed: false,

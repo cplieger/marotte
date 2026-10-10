@@ -22,7 +22,6 @@ import (
 
 // The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and `_TITLE_BOOST`, values included.
 const (
-	// maxChatResults caps the returned list.
 	maxChatResults = 50
 	// titleBoost multiplies title hits: titles are short and intentional, stronger evidence than a body mention.
 	titleBoost = 10.0
@@ -52,8 +51,8 @@ type SearchAllResult struct {
 	textsearch.Tally
 }
 
-// SearchAll runs the per-chat search across every chat the index admits.
-func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
+// searchAll runs the per-chat search across every chat the index admits.
+func (s *Store) searchAll(ctx context.Context, query string) SearchAllResult {
 	if strings.TrimSpace(query) == "" {
 		return SearchAllResult{Matches: []Match{}}
 	}
@@ -99,8 +98,8 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	}
 }
 
-// chatScan is one chat's fan-out verdict. Whether a chat was read travels on the result, since Bounded reports only
-// dispatches. The zero value is a scanned chat with no match, read or answered by its filter.
+// Whether a chat was read travels on the result, since Bounded reports only dispatches. The zero
+// value is a scanned chat with no match, read or answered by its filter.
 type chatScan struct {
 	match Match
 	// unread marks an existing chat that could not be read: not scanned, and it truncates the reply.

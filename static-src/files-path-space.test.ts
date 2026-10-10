@@ -15,7 +15,6 @@ function repo(name: string, files: { path: string; status: string }[]): GitRepoS
     repo: name,
     is_repo: true,
     branch: "main",
-    remote: "origin",
     ahead: 0,
     behind: 0,
     has_dirty: files.length > 0,
@@ -29,7 +28,6 @@ function repo(name: string, files: { path: string; status: string }[]): GitRepoS
   };
 }
 
-/** Walks down through the real state object, the way name clicks compose paths. */
 function walk(...names: string[]): string {
   const state = new FileBrowserState();
   for (const name of names) {

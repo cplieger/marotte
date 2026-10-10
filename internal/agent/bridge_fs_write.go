@@ -52,19 +52,19 @@ func (rt *Runtime) SetWriteHook(path string, hook WriteHook) {
 // A write here is already authorized by KAS, including the revert of a rejected action:
 // never stage or attribute it, or the changed-files ledger double-counts. The one refusal
 // is a write hook's Check, which lets a restore through (WriteHook.Check).
-func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	p, err := parseFSWriteParams(msg)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	root, rel, err := in.lifetime.confineInWorkDir(p.Path)
 	if err != nil {
-		in.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
 	hook := in.writeHookFor(root, rel)
-	if in.refusedByWriteHook(ctx, chatID, msg, hook, &p, rel) {
+	if in.refusedByWriteHook(ctx, chatID, origin, msg, hook, &p, rel) {
 		return
 	}
 
@@ -77,7 +77,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	// Missing parents are created through the root, so they stay confined.
 	if dir := filepath.Dir(rel); dir != "." {
 		if mkErr := root.MkdirAll(dir, 0o755); mkErr != nil {
-			in.respondFSError(ctx, chatID, msg, mkErr)
+			in.respondFSError(ctx, chatID, origin, msg, mkErr)
 			return
 		}
 	}
@@ -85,7 +85,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	// One confined atomic write: either the old bytes or all the new ones. A directory, FIFO,
 	// device or socket at the target is refused up front.
 	if _, wErr := atomicfile.WriteFileInRoot(ctx, root, rel, []byte(p.Content), opts...); wErr != nil {
-		in.respondFSError(ctx, chatID, msg, wErr)
+		in.respondFSError(ctx, chatID, origin, msg, wErr)
 		return
 	}
 	if restore != 0 {
@@ -101,7 +101,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	if dir, ok := spec.DirOf(rel); ok {
 		in.specs.Mark(dir)
 	}
-	in.respondBridge(ctx, chatID, msg, map[string]any{}, nil)
+	in.respondBridge(ctx, chatID, origin, msg, map[string]any{}, nil)
 }
 
 type fsWriteParams struct {
@@ -124,7 +124,7 @@ func parseFSWriteParams(msg *marotte.RPCResponse) (fsWriteParams, error) {
 	return p, nil
 }
 
-func (in *inbound) refusedByWriteHook(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse,
+func (in *inbound) refusedByWriteHook(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse,
 	hook WriteHook, p *fsWriteParams, rel string,
 ) bool {
 	if hook.Check == nil {
@@ -141,7 +141,7 @@ func (in *inbound) refusedByWriteHook(ctx context.Context, chatID marotte.ChatID
 	}
 	slog.Info("fs/write_text_file refused by its write hook",
 		"chat_id", chatID, "path", logsafe.Field(rel), "reason", logsafe.Field(err.Error()))
-	in.respondBridge(ctx, chatID, msg, nil, err)
+	in.respondBridge(ctx, chatID, origin, msg, nil, err)
 	return true
 }
 

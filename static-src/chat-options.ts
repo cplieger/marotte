@@ -22,19 +22,22 @@ import { ICON_EXPORT, ICON_LINK } from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
+import { mergeTangentChat } from "./tangent-merge.js";
 import { submitPrompt } from "./submit.js";
 import * as toast from "./toast.js";
 import { chatNotice } from "./notice-subject.js";
 import type { InterruptMode, Session } from "./types.js";
 
-// Row glyphs. Local constants rather than icons.ts entries: each is used once,
-// by this module, and `icons.ts` is the shared vocabulary.
+// Local constants rather than icons.ts entries: each is used once, by this module, and `icons.ts`
+// is the shared vocabulary.
 const ICON_ATTACH =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
 const ICON_GOAL =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>';
 const ICON_TANGENT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>';
+const ICON_MERGE =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>';
 const ICON_SESSION =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>';
 const ICON_RENAME =
@@ -67,6 +70,7 @@ export function initChatOptions(): void {
     attachRow(),
     goalRow(),
     tangentRow(),
+    mergeRow(),
     compactRow(),
     renameRow(),
     interruptRow(),
@@ -173,11 +177,9 @@ function actionRow(opts: {
   return { row, btn, hint };
 }
 
-/**
- * Attach a file. Collapse FIRST, so the card is not left under the picker's modal. Both
- * calls stay SYNCHRONOUS: an `await` here would move the picker's open off the user's
- * gesture, whose activation window a file input cannot ask for again.
- */
+/** Collapse FIRST, so the card is not left under the picker's modal. Both calls stay SYNCHRONOUS: an
+ *  `await` here would move the picker's open off the user's gesture, whose activation window a file
+ *  input cannot ask for again. */
 function attachRow(): HTMLElement {
   return actionRow({
     icon: ICON_ATTACH,
@@ -195,11 +197,8 @@ function attachRow(): HTMLElement {
 const TANGENT_HINT = "Branch this conversation into a sub-chat that keeps its context";
 const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the conversation";
 
-/**
- * Start a tangent off the active chat. Disabled until the chat holds a conversation: a
- * brand-new chat has nothing to fork server-side (`errForkParentUnknown`), and the failure
- * would arrive after the sub-tab opened.
- */
+/** Disabled until the chat holds a conversation: a brand-new chat has nothing to fork server-side
+ *  (`errForkParentUnknown`), and the failure would arrive after the sub-tab opened. */
 function tangentRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
     icon: ICON_TANGENT,
@@ -232,6 +231,49 @@ function tangentRow(): HTMLElement {
     }
     btn.disabled = empty;
     hint.textContent = empty ? TANGENT_HINT_EMPTY : TANGENT_HINT;
+  });
+
+  return row;
+}
+
+const MERGE_HINT = "Summarize this tangent and send its findings to the chat it came from";
+const MERGE_HINT_BUSY = "Wait for this turn to finish, then merge";
+
+/** Shown only on a tangent; disabled mid-turn, since the summary has to be the tangent's next
+ *  answer (the server refuses a busy tangent too). */
+function mergeRow(): HTMLElement {
+  const { row, btn, hint } = actionRow({
+    icon: ICON_MERGE,
+    name: "Merge into parent chat",
+    hint: MERGE_HINT,
+    onClick: () => {
+      // Re-read at CLICK time: the card outlives every chat switch.
+      const session = activeSession.peek();
+      if (session?.tangent !== true) {
+        return;
+      }
+      if (isThinking(session.id)) {
+        chatNotice(session.id, MERGE_HINT_BUSY, "error");
+        return;
+      }
+      collapseAll();
+      void mergeTangentChat(session.id);
+    },
+  });
+
+  // Guarded on the values because `activeSession` re-derives on every streaming chunk.
+  effect(() => {
+    const session = activeSession.value;
+    const shown = session?.tangent === true;
+    const busy = session !== undefined && isThinking(session.id);
+    const nextHint = busy ? MERGE_HINT_BUSY : MERGE_HINT;
+    if (row.classList.contains("hidden") !== !shown) {
+      row.classList.toggle("hidden", !shown);
+    }
+    if (hint.textContent !== nextHint) {
+      btn.disabled = busy;
+      hint.textContent = nextHint;
+    }
   });
 
   return row;
@@ -309,7 +351,6 @@ function goalRow(): HTMLElement {
   }).row;
 }
 
-/** Toggle the inline goal form on the row. */
 function openGoalForm(row: HTMLElement): void {
   const existing = row.querySelector(".chat-opt-form");
   if (existing !== null) {
@@ -400,8 +441,8 @@ function goalCommand(objective: string, cap: string): string {
   return `${command} --max ${bounded}`;
 }
 
-/** Rename the active chat. The same command as the tab row's in-place field;
- *  this door exists because on a phone the strip is a closed drawer. */
+/** The same command as the tab row's in-place field; this door exists because on a phone the strip
+ *  is a closed drawer. */
 function renameRow(): HTMLElement {
   return actionRow({
     icon: ICON_RENAME,

@@ -134,9 +134,8 @@ func uploadErrorJSON(msg string, uploaded []string) map[string]any {
 // produce a confusing `uploaded: []` subset response.
 var errInvalidFilename = errors.New("invalid filename")
 
-// writeUploads writes each multipart file atomically into the target directory and returns the
-// names written and total bytes. A failed file leaves no temp; earlier files stay and are named in
-// the error response. ctx aborts the rest of the batch.
+// A failed file leaves no temp; earlier files stay and are named in the error response. ctx aborts
+// the rest of the batch.
 func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader, sensitive Sensitive) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
@@ -167,7 +166,6 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 	return uploaded, total, nil
 }
 
-// countingReader counts the bytes read through it.
 type countingReader struct {
 	r io.Reader
 	n int64

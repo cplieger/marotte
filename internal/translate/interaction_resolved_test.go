@@ -66,7 +66,7 @@ func TestHandlePermissionRequest_DecodesLocationsRoundAndWatch(t *testing.T) {
 	tr := New(roles)
 
 	id := int64(7)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
 		"sessionId": "sess_parent",
 		"toolCall": map[string]any{
 			"toolCallId": "tc-9",
@@ -104,7 +104,7 @@ func TestHandlePermissionRequest_NoWatchNoRoundNoLocations(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	id := int64(8)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
 		"sessionId": "s", "toolCall": map[string]any{"toolCallId": "tc", "title": "t"},
 		"options": []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
 	})})

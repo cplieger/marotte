@@ -163,13 +163,18 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 func TestOriginValid(t *testing.T) {
 	t.Parallel()
 	for _, o := range []Origin{OriginScheduled, OriginManual, OriginAgent} {
-		if !o.Valid() {
+		if !o.valid() {
 			t.Errorf("%q rejected", o)
 		}
 	}
 	for _, o := range []Origin{"", "tui", "Scheduled", "manual "} {
-		if o.Valid() {
+		if o.valid() {
 			t.Errorf("%q accepted", o)
 		}
 	}
+}
+
+// expired reports whether the lease's deadline has passed at now; a parked lease never expires.
+func (l *Lease) expired(now time.Time) bool {
+	return l.Bounded() && !now.Before(l.Deadline)
 }

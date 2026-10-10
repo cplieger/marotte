@@ -119,8 +119,8 @@ vi.mock("./store.js", () =>
   import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
 );
 vi.mock("./run-store.js", () => ({
-  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
-  // real ESM, so a name any module in the graph reaches has to exist on it.
+  // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
+  // reaches has to exist on it.
   runLabelOf: vi.fn(() => ""),
 }));
 // The composer half of the close gesture: retargeting and the failed-send
@@ -291,7 +291,6 @@ function chatID(ref: string): string {
   return tabIdFor("chat", ref);
 }
 
-/** Open several chats in order, and answer with their minted ids by ref. */
 async function openChats(...refs: string[]): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   for (const ref of refs) {

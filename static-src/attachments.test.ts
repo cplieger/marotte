@@ -33,7 +33,6 @@ import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 
 const opened: string[] = [];
 
-/** The path lists handed to the persist action, in order. */
 function saved(): string[][] {
   return mockDispatch.mock.calls.map((c) => (c[0] as { paths: string[] }).paths);
 }

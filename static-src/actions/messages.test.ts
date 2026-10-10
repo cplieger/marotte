@@ -16,7 +16,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
+import { getActionLog as recentLog } from "@cplieger/actions";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();

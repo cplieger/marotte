@@ -27,14 +27,6 @@ func NewInMemoryChatStore() *InMemoryChatStore {
 	return &InMemoryChatStore{chats: make(map[marotte.ChatID]*marotte.Chat)}
 }
 
-// Exists reports whether the fake holds id.
-func (s *InMemoryChatStore) Exists(id marotte.ChatID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.chats[id]
-	return ok
-}
-
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *InMemoryChatStore) Get(_ context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.mu.Lock()
@@ -134,16 +126,18 @@ func (s *InMemoryChatStore) SetAttachments(_ context.Context, id marotte.ChatID,
 	return &state, nil
 }
 
-// Delete removes the chat with the given id and broadcasts a chat_deleted event.
-func (s *InMemoryChatStore) Delete(_ context.Context, id marotte.ChatID) error {
+// Delete removes the chat with the given id, broadcasts a chat_deleted event and answers the
+// removed record's session chain.
+func (s *InMemoryChatStore) Delete(_ context.Context, id marotte.ChatID) ([]string, error) {
 	s.mu.Lock()
+	var chain []string
+	if c, ok := s.chats[id]; ok {
+		chain = c.SessionChain()
+	}
 	delete(s.chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
 		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: marotte.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
-	return nil
+	return chain, nil
 }
-
-// Compile-time assertion.
-var _ chatStoreUnion = (*InMemoryChatStore)(nil)

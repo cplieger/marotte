@@ -65,7 +65,7 @@ func TestManagerList_ServesTheSecondCallFromCache(t *testing.T) {
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Setup: the boot Refresh() = %v", err)
 	}
-	m.Invalidate()
+	m.invalidate()
 	reads := 0
 	real := enforceFileMode
 	t.Cleanup(func() { enforceFileMode = real })
@@ -134,8 +134,6 @@ func TestManagerList_RecordRowsNeedNoCLI(t *testing.T) {
 	}
 }
 
-// connectedGitHub connects github.com through the manager's connect path with
-// no forge CLI on PATH, the client being core.
 func connectedGitHub(t *testing.T, core forgeapi.Core) (*Manager, string) {
 	t.Helper()
 	isolateGit(t)
@@ -155,11 +153,11 @@ func TestGitHubConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
 	core := &fakeCore{}
 	m, cfg := connectedGitHub(t, core)
 
-	m.Invalidate()
+	m.invalidate()
 	if err := m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Refresh() = %v", err)
 	}
-	if got := m.Get("github:github.com"); got == nil || !got.Connected || got.Username != "bob" {
+	if got := m.get("github:github.com"); got == nil || !got.Connected || got.Username != "bob" {
 		t.Errorf("row after a refresh with no CLI on PATH = %+v, want connected as bob", got)
 	}
 
@@ -182,8 +180,6 @@ func minePRs(family forgeapi.Family, check forgeapi.CheckState) []forgeapi.PullR
 	return []forgeapi.PullRequest{mine, prIn(family, "bob/elsewhere", 10, forgeapi.CheckFailing)}
 }
 
-// pollerView is the poller's read of webBase's authored pull requests through m,
-// and the source the read came from.
 func pollerView(ctx context.Context, m *Manager, webBase string) ([]ConnectionRead, PRSource) {
 	src := NewManagerPRSource(m, fixedOrigins(RepoOrigin{Dir: "app", WebBase: webBase, Slug: "bob/app"}))
 	return src.Read(ctx, false, firstPage), src
@@ -214,7 +210,6 @@ func TestGitHubConnection_IsVisibleToThePollerWithNoCLI(t *testing.T) {
 	}
 }
 
-// connectGitLabByPAT connects gitlab.com through the PAT route.
 func connectGitLabByPAT(t *testing.T, h *connectHarness) {
 	t.Helper()
 	rec := h.do(t, http.MethodPost, gitlabPATPath, `{"token":"glpat-secret"}`)
@@ -235,11 +230,11 @@ func TestGitLabConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
 		t.Errorf("credential.https://gitlab.com.helper = %q, want the reset then Marotte's value", got)
 	}
 
-	h.m.Invalidate()
+	h.m.invalidate()
 	if err := h.m.Refresh(t.Context()); err != nil {
 		t.Fatalf("Refresh() = %v", err)
 	}
-	if got := h.m.Get("gitlab:gitlab.com"); got == nil || !got.Connected || got.Username != "alice" {
+	if got := h.m.get("gitlab:gitlab.com"); got == nil || !got.Connected || got.Username != "alice" {
 		t.Errorf("row after a refresh = %+v, want connected as alice", got)
 	}
 
@@ -270,13 +265,10 @@ func TestGitLabConnection_IsVisibleToThePollerWithNoCLI(t *testing.T) {
 	}
 }
 
-// patPath is the PAT route of connection id.
 func patPath(id string) string {
 	return "/api/forges/" + strings.ReplaceAll(id, ":", "%3A") + "/login/pat"
 }
 
-// connectGiteaKindByPAT connects the Gitea-family connection id through the PAT
-// route.
 func connectGiteaKindByPAT(t *testing.T, h *connectHarness, id string) {
 	t.Helper()
 	rec := h.do(t, http.MethodPost, patPath(id), `{"token":"gitea-secret"}`)
@@ -303,11 +295,11 @@ func TestGiteaFamilyConnection_SurvivesRefreshWithNoCLI(t *testing.T) {
 				t.Errorf("credential.%s.helper = %q, want the reset then Marotte's value", tc.origin, got)
 			}
 
-			h.m.Invalidate()
+			h.m.invalidate()
 			if err := h.m.Refresh(t.Context()); err != nil {
 				t.Fatalf("Refresh() = %v", err)
 			}
-			if got := h.m.Get(tc.id); got == nil || !got.Connected || got.Username != "alice" {
+			if got := h.m.get(tc.id); got == nil || !got.Connected || got.Username != "alice" {
 				t.Errorf("row after a refresh = %+v, want connected as alice", got)
 			}
 

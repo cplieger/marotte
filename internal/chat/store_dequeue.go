@@ -41,7 +41,6 @@ func (d *dequeues) isOpened(chatID marotte.ChatID, id string) bool {
 	return slices.Contains(d.opened[chatID], id)
 }
 
-// strip removes the chat's pending rows from c and reports whether any was listed.
 func (d *dequeues) strip(chatID marotte.ChatID, c *marotte.Chat) bool {
 	d.mu.Lock()
 	pending := d.pending[chatID]

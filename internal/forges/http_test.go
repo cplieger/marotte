@@ -25,8 +25,6 @@ const (
 	testHelperBin = "/opt/marotte/marotte"
 )
 
-// pathWire answers each request with the body registered for its URL path, a
-// 404 for any other path, and records the method and path of every request.
 type pathWire struct {
 	bodies map[string]string
 	// key names the body a request is answered with, its URL path when nil.
@@ -60,8 +58,6 @@ func (w *pathWire) requests() []string {
 	return slices.Clone(w.seen)
 }
 
-// userWire answers GitHub's identity read with status and records every
-// request it saw.
 type userWire struct {
 	body   string
 	seen   []*http.Request
@@ -101,7 +97,6 @@ type connectHarness struct {
 	cfgDir  string
 }
 
-// writeFixture writes a file creating parents.
 func writeFixture(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -204,7 +199,7 @@ func TestPATLogin_SavesAStaticRecordAndRegistersTheHelper(t *testing.T) {
 		t.Errorf("the forge saw %d requests, want the one identity read carrying the pasted token", len(seen))
 	}
 
-	row := h.m.Get("github:github.com")
+	row := h.m.get("github:github.com")
 	if row == nil || !row.Connected || row.Username != "alice" {
 		t.Errorf("row after connect = %+v, want github.com connected as alice with no CLI on PATH", row)
 	}
@@ -241,7 +236,7 @@ func TestPATLogin_StoresNothingWhenWhoamiFails(t *testing.T) {
 		t.Errorf("a refused token answered complete: %v", body)
 	}
 	h.assertNothingStored(t, "github:github.com", githubOrigin)
-	if row := h.m.Get("github:github.com"); row != nil {
+	if row := h.m.get("github:github.com"); row != nil {
 		t.Errorf("row after a refused connect = %+v, want none", row)
 	}
 }
@@ -501,7 +496,7 @@ func TestDisconnect_DeletesRecordStoreEntryAndHelperPair(t *testing.T) {
 	if data, err := os.ReadFile(creds); err != nil || strings.Contains(string(data), "github.com") {
 		t.Errorf("~/.git-credentials after disconnect = %q, %v; want the github.com line scrubbed", data, err)
 	}
-	if row := h.m.Get("github:github.com"); row != nil {
+	if row := h.m.get("github:github.com"); row != nil {
 		t.Errorf("row after disconnect = %+v, want none", row)
 	}
 }
@@ -531,8 +526,7 @@ func TestDisconnect_DegradedStoreAnswers503AndRemovesNothing(t *testing.T) {
 
 const githubCapsPath = "/api/forges/github%3Agithub.com/capabilities"
 
-// capsCore answers the two capability scopes with fixed values and counts the
-// reads. The embedded Core is nil, so any other method panics.
+// The embedded Core is nil, so any other method panics.
 type capsCore struct {
 	forgeapi.Core
 	connErr  error

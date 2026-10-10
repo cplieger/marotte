@@ -14,7 +14,7 @@ func TestByteRing_Empty(t *testing.T) {
 
 func TestByteRing_PartialFill(t *testing.T) {
 	r := newByteRing(64)
-	r.Write([]byte("hello"))
+	r.write([]byte("hello"))
 	got := r.Bytes()
 	if string(got) != "hello" {
 		t.Errorf("got %q, want %q", got, "hello")
@@ -23,8 +23,8 @@ func TestByteRing_PartialFill(t *testing.T) {
 
 func TestByteRing_Wrap(t *testing.T) {
 	r := newByteRing(8)
-	r.Write([]byte("ABCDEFGH")) // fills exactly
-	r.Write([]byte("IJ"))       // wraps: overwrites A,B
+	r.write([]byte("ABCDEFGH")) // fills exactly
+	r.write([]byte("IJ"))       // wraps: overwrites A,B
 	got := r.Bytes()
 	if string(got) != "CDEFGHIJ" {
 		t.Errorf("got %q, want %q", got, "CDEFGHIJ")
@@ -34,7 +34,7 @@ func TestByteRing_Wrap(t *testing.T) {
 func TestByteRing_MultiWrap(t *testing.T) {
 	r := newByteRing(4)
 	// More than twice the buffer.
-	r.Write([]byte("ABCDEFGHIJ"))
+	r.write([]byte("ABCDEFGHIJ"))
 	got := r.Bytes()
 	if string(got) != "GHIJ" {
 		t.Errorf("got %q, want %q", got, "GHIJ")
@@ -59,7 +59,7 @@ func FuzzByteRing(f *testing.F) {
 		var totalWritten []byte
 		for i := 0; i < len(data); i += chunkSize {
 			end := min(i+chunkSize, len(data))
-			r.Write(data[i:end])
+			r.write(data[i:end])
 			totalWritten = append(totalWritten, data[i:end]...)
 		}
 

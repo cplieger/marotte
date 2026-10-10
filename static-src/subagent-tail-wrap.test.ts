@@ -1,11 +1,6 @@
-// A DELEGATE'S TAIL READS AS PROSE: it wraps, and it shows the LAST lines written.
-//
-// Reported on the workflow creator's card: every tail line ended in an ellipsis and
-// the next line did not follow from it, because each source line was one nowrap row
-// cut at the card's width — the reader saw the start of three paragraphs and the end
-// of none. The fixture is that card's shape: a delegate streaming paragraphs much
-// wider than the card, driven through the real store, the real lane read and the
-// real stylesheet.
+// A DELEGATE'S TAIL READS AS PROSE: it wraps, and it shows the LAST lines written. The
+// fixture streams paragraphs much wider than the card through the real store, lane read
+// and stylesheet.
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
@@ -20,8 +15,6 @@ const CHAT = "c-creator";
 const SUB = "u-creator";
 const TURN = "t1";
 
-// Paragraphs in the creator's own register (taken from a real wf-workflow-creator
-// stage), each several times wider than the card.
 const FIRST =
   "I need to read the brief first so every step prompt can point at it, then check which agents exist in this workspace before I commit to a shape for the implement-and-review loop.";
 const SECOND =
@@ -176,8 +169,7 @@ describe("the workflow creator's tail on paragraphs wider than the card", () => 
     const window = tail.querySelector<HTMLElement>(".subagent-tail-window") ?? tail;
     const lh = lineHeightOf(tail);
     expect(window.getBoundingClientRect().height).toBeLessThanOrEqual(TAIL_LINES * lh + 0.5);
-    // Whole lines only: a window that cut a line through its middle would show a
-    // half-painted row at the top.
+    // Whole lines only, so no half-painted row shows at the top.
     expect(window.getBoundingClientRect().height / lh).toBeCloseTo(TAIL_LINES, 1);
   });
 

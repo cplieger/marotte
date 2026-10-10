@@ -1,7 +1,7 @@
 // A per-chat localStorage map, bounded by chat count with oldest-first eviction.
 
 /** How many chats one of these maps tracks. */
-const MAX_CHATS = 100;
+export const MAX_CHATS = 100;
 
 /** Read the whole map, dropping anything that is not the expected shape. Validated per ENTRY
  *  rather than as a document, for the reason the server-side sanitizer did it that way:
@@ -60,7 +60,3 @@ export function writePerChat<T>(
     // ignore quota / disabled storage
   }
 }
-
-/** @internal Test seam: the cap, so a test states it in the unit production uses
- *  rather than restating the number. */
-export const MAX_TRACKED_CHATS = MAX_CHATS;

@@ -14,23 +14,19 @@ import (
 // newWithin runs New on its own goroutine and fails if it has not returned inside budget:
 // the defect this pins HANGS rather than fails. A parked goroutine is abandoned (blocked
 // in open(2)).
-func newWithin(t *testing.T, budget time.Duration, configDir string) (*Store, error) {
+func newWithin(t *testing.T, budget time.Duration, configDir string) error {
 	t.Helper()
-	type res struct {
-		s   *Store
-		err error
-	}
-	out := make(chan res, 1)
+	out := make(chan error, 1)
 	go func() {
-		s, err := New(configDir)
-		out <- res{s, err}
+		_, err := New(configDir)
+		out <- err
 	}()
 	select {
-	case r := <-out:
-		return r.s, r.err
+	case err := <-out:
+		return err
 	case <-time.After(budget):
 		t.Fatalf("New still blocked after %v: the credential read followed a non-regular file into open(2)", budget)
-		return nil, nil
+		return nil
 	}
 }
 
@@ -40,7 +36,7 @@ func TestNew_RefusesAFifoInsteadOfBlockingTheBoot(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(dir, fileName), fileMode); err != nil {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
-	_, err := newWithin(t, 3*time.Second, dir)
+	err := newWithin(t, 3*time.Second, dir)
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
 		t.Errorf("New over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 	}

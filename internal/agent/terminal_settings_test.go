@@ -27,6 +27,8 @@ func TestAgentFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 		"inline_agents_enabled": true,
 		"work_validation": "off",
 		"cloudformation_safety_check": "enforce",
+		"auto_routing": "on",
+		"auto_delegation": true,
 		"terminal_command_timeout_ms": 500
 	}`)
 
@@ -37,6 +39,7 @@ func TestAgentFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 		SpecAskClarification: true,
 		InlineAgents:         true,
 		WorkValidation:       settings.FeatureOff,
+		AutoRouting:          settings.FeatureOn,
 		// Absent: workflows default on.
 		Workflows: true,
 		// Invalid values fall back, so KAS's own experiment and 120 s decide.
@@ -72,8 +75,7 @@ func TestAgentFeatures_SpecPlanningOffSendsNoWorkflow(t *testing.T) {
 	}
 }
 
-// timeoutSpawnProbe parks in Start like initialize, then reads StartOpts.TerminalTimeout where the
-// post-initialize re-read would; Notify counts a write before Start returns.
+// Notify counts a write before Start returns.
 type timeoutSpawnProbe struct {
 	*fakeBridge
 	arrival chan struct{}
@@ -134,7 +136,7 @@ func TestSpawnTerminalTimeout_ConcurrentSaveReachesASpawningBridge(t *testing.T)
 	}
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.OpenBridge(ctx, "c1", "")
+		_, err := h.coord.openBridge(ctx, "c1", "")
 		opened <- err
 	}()
 
@@ -157,7 +159,6 @@ func TestSpawnTerminalTimeout_ConcurrentSaveReachesASpawningBridge(t *testing.T)
 	}
 }
 
-// terminalProbeBridge records the terminal-settings frames one bridge received.
 type terminalProbeBridge struct {
 	*fakeBridge
 
@@ -205,7 +206,7 @@ func TestSettingsWrite_PushesTheShellTimeoutToEveryLiveBridge(t *testing.T) {
 		if _, err := cs.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = string(id); return true }); err != nil {
 			t.Fatalf("seed chat %s: %v", id, err)
 		}
-		if _, err := h.coord.OpenBridge(t.Context(), id, ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), id, ""); err != nil {
 			t.Fatalf("OpenBridge %s: %v", id, err)
 		}
 	}

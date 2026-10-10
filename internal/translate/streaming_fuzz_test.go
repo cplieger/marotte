@@ -13,7 +13,7 @@ func FuzzACPPlanWireRoundTrip(f *testing.F) {
 	f.Add([]byte(`{"entries":[{"title":"","status":"completed"},{"title":"y","status":""}]}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var p ACPPlanWire
+		var p acpPlanWire
 		if json.Unmarshal(data, &p) != nil {
 			return
 		}
@@ -21,7 +21,7 @@ func FuzzACPPlanWireRoundTrip(f *testing.F) {
 		if err != nil {
 			t.Fatalf("re-marshal: %v", err)
 		}
-		var p2 ACPPlanWire
+		var p2 acpPlanWire
 		if json.Unmarshal(b, &p2) != nil {
 			t.Fatal("round-trip decode failed")
 		}
@@ -39,7 +39,7 @@ func FuzzACPModeUpdateWireRoundTrip(f *testing.F) {
 	f.Add([]byte(`{"currentModeId":"architect"}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var m ACPModeUpdateWire
+		var m acpModeUpdateWire
 		if json.Unmarshal(data, &m) != nil {
 			return
 		}
@@ -47,7 +47,7 @@ func FuzzACPModeUpdateWireRoundTrip(f *testing.F) {
 		if err != nil {
 			t.Fatalf("re-marshal: %v", err)
 		}
-		var m2 ACPModeUpdateWire
+		var m2 acpModeUpdateWire
 		if json.Unmarshal(b, &m2) != nil {
 			t.Fatal("round-trip decode failed")
 		}

@@ -5,10 +5,8 @@ import (
 	"strings"
 )
 
-// maxMessageIDBytes caps the length of client-supplied message ids.
 const maxMessageIDBytes = 128
 
-// validMessageIDRe restricts client-supplied ids to a safe character set.
 var validMessageIDRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
 
 // ValidMessageID reports whether id is safe to echo on SSE and store
@@ -42,7 +40,6 @@ func ValidChatID(id string) bool {
 	return true
 }
 
-// identRe is the character set for agent and model identifiers.
 var identRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 
 // ValidIdent reports whether s is safe to use as an agent or model

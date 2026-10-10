@@ -17,7 +17,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok",
 				Command: "bash", Args: []string{"-c", "echo"},
-				Env: []KeyPair{{Name: "FOO", Value: "bar"}},
+				Env: []keyPair{{Name: "FOO", Value: "bar"}},
 			},
 			wantErr: false,
 		},
@@ -35,7 +35,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "RemoteHTTP",
 			srv: &Server{
 				Transport: TransportHTTP, Name: "ok", URL: "https://x.example/mcp",
-				Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
+				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
@@ -64,7 +64,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "EnvValueAllowsSymbols",
 			srv: &Server{
 				Transport: TransportStdio, Name: "x", Command: "bash",
-				Env: []KeyPair{{Name: "KEY", Value: `{"nested":"json"}`}},
+				Env: []keyPair{{Name: "KEY", Value: `{"nested":"json"}`}},
 			},
 			wantErr: false,
 		},
@@ -72,7 +72,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "HeaderRejectControlChars",
 			srv: &Server{
 				Transport: TransportHTTP, Name: "x", URL: "https://x.example",
-				Headers: []KeyPair{{Name: "X-Foo", Value: "line1\rline2"}},
+				Headers: []keyPair{{Name: "X-Foo", Value: "line1\rline2"}},
 			},
 			wantErr: true,
 		},
@@ -85,7 +85,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "SSEAccepted",
 			srv: &Server{
 				Transport: TransportSSE, Name: "ok", URL: "https://x.example/sse",
-				Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
+				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
@@ -105,7 +105,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(tc.srv)
+			err := validate(tc.srv)
 			gotErr := err != nil
 			if gotErr != tc.wantErr {
 				t.Errorf("Validate(%s) err = %v, wantErr = %v", tc.name, err, tc.wantErr)
@@ -122,12 +122,12 @@ func TestValidate_TimeoutRange(t *testing.T) {
 		{-1, true}, {0, false}, {600_000, false}, {600_001, true},
 	} {
 		srv := &Server{Transport: TransportStdio, Name: "ok", Command: "npx", TimeoutMS: tc.timeout}
-		err := Validate(srv)
+		err := validate(srv)
 		if (err != nil) != tc.wantErr {
 			t.Errorf("Validate(timeout_ms %d) = %v, want error %t", tc.timeout, err, tc.wantErr)
 		}
-		if err != nil && (len(FieldErrors(err)) != 1 || FieldErrors(err)[0].Field != fieldTimeoutMS) {
-			t.Errorf("Validate(timeout_ms %d) fields = %+v, want one %q error", tc.timeout, FieldErrors(err), fieldTimeoutMS)
+		if err != nil && (len(fieldErrors(err)) != 1 || fieldErrors(err)[0].Field != fieldTimeoutMS) {
+			t.Errorf("Validate(timeout_ms %d) fields = %+v, want one %q error", tc.timeout, fieldErrors(err), fieldTimeoutMS)
 		}
 	}
 }
@@ -135,7 +135,7 @@ func TestValidate_TimeoutRange(t *testing.T) {
 func TestValidate_BadName(t *testing.T) {
 	cases := []string{"", "1leading-digit", "has space", "with/slash", "dot.separated"}
 	for _, n := range cases {
-		if err := Validate(&Server{Transport: TransportStdio, Name: n, Command: "bash"}); err == nil {
+		if err := validate(&Server{Transport: TransportStdio, Name: n, Command: "bash"}); err == nil {
 			t.Errorf("expected error for name %q", n)
 		}
 	}
@@ -144,13 +144,13 @@ func TestValidate_BadName(t *testing.T) {
 func TestValidate_GoodName(t *testing.T) {
 	cases := []string{"a", "foo", "Foo", "my_server", "my-server", "s1"}
 	for _, n := range cases {
-		if err := Validate(&Server{Transport: TransportStdio, Name: n, Command: "bash"}); err != nil {
+		if err := validate(&Server{Transport: TransportStdio, Name: n, Command: "bash"}); err != nil {
 			t.Errorf("unexpected error for name %q: %v", n, err)
 		}
 	}
 }
 
-// Name length boundaries (NameMaxLen, 64 bytes).
+// Name length boundaries (nameMaxLen, 64 bytes).
 func TestValidate_NameLengthBoundaries(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -162,7 +162,7 @@ func TestValidate_NameLengthBoundaries(t *testing.T) {
 		{"", true},                       // empty
 	}
 	for _, tc := range cases {
-		err := Validate(&Server{Transport: TransportStdio, Name: tc.name, Command: "bash"})
+		err := validate(&Server{Transport: TransportStdio, Name: tc.name, Command: "bash"})
 		gotErr := err != nil
 		if gotErr != tc.wantErr {
 			t.Errorf("Validate(name len=%d) err = %v, wantErr = %v", len(tc.name), err, tc.wantErr)
@@ -180,9 +180,9 @@ func TestValidate_EnvHeaderKeyLengthBoundary(t *testing.T) {
 		{strings.Repeat("K", 129), true},
 	}
 	for _, tc := range cases {
-		err := Validate(&Server{
+		err := validate(&Server{
 			Transport: TransportStdio, Name: "ok", Command: "bash",
-			Env: []KeyPair{{Name: tc.keyName, Value: "v"}},
+			Env: []keyPair{{Name: tc.keyName, Value: "v"}},
 		})
 		gotErr := err != nil
 		if gotErr != tc.wantErr {
@@ -208,7 +208,7 @@ func TestValidate_RemoteURLShapes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(&Server{
+			err := validate(&Server{
 				Transport: TransportHTTP, Name: "ok", URL: tc.url,
 			})
 			gotErr := err != nil
@@ -227,7 +227,7 @@ func TestValidate_RejectsURLUserinfo(t *testing.T) {
 		"https://user:pass@mcp.example.com/v1",
 	}
 	for _, u := range cases {
-		err := Validate(&Server{Transport: TransportHTTP, Name: "x", URL: u})
+		err := validate(&Server{Transport: TransportHTTP, Name: "x", URL: u})
 		if err == nil {
 			t.Errorf("Validate(URL=%q) = nil, want userinfo error", u)
 		}
@@ -237,7 +237,7 @@ func TestValidate_RejectsURLUserinfo(t *testing.T) {
 // Command must reject control characters.
 func TestValidate_CommandRejectsControlChars(t *testing.T) {
 	for _, c := range []string{"bash\nrogue", "bash\rfoo", "bash\x00"} {
-		err := Validate(&Server{Transport: TransportStdio, Name: "x", Command: c})
+		err := validate(&Server{Transport: TransportStdio, Name: "x", Command: c})
 		if err == nil {
 			t.Errorf("Validate(Command=%q) = nil, want control-char error", c)
 		}
@@ -247,9 +247,9 @@ func TestValidate_CommandRejectsControlChars(t *testing.T) {
 // Env value length cap.
 func TestValidate_EnvValueLengthCap(t *testing.T) {
 	big := strings.Repeat("x", envValueMax+1)
-	err := Validate(&Server{
+	err := validate(&Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
-		Env: []KeyPair{{Name: "K", Value: big}},
+		Env: []keyPair{{Name: "K", Value: big}},
 	})
 	if err == nil {
 		t.Error("Validate accepted oversized env value")
@@ -257,11 +257,11 @@ func TestValidate_EnvValueLengthCap(t *testing.T) {
 }
 
 // Duplicate env names must be rejected: mergeSecrets's map-based lookup
-// cannot honour the KeyPair ordered contract otherwise.
+// cannot honour the keyPair ordered contract otherwise.
 func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
-	err := Validate(&Server{
+	err := validate(&Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
-		Env: []KeyPair{
+		Env: []keyPair{
 			{Name: "FOO", Value: "a"},
 			{Name: "FOO", Value: "b"},
 		},
@@ -273,9 +273,9 @@ func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 
 // Duplicate header names (case-insensitive) must be rejected.
 func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
-	err := Validate(&Server{
+	err := validate(&Server{
 		Transport: TransportHTTP, Name: "x", URL: "https://x.example",
-		Headers: []KeyPair{
+		Headers: []keyPair{
 			{Name: "Authorization", Value: "Bearer a"},
 			{Name: "authorization", Value: "Bearer b"},
 		},
@@ -297,7 +297,7 @@ func TestValidate_DisabledToolsRejectsBadEntries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(&Server{
+			err := validate(&Server{
 				Transport: TransportStdio, Name: "x", Command: "bash",
 				DisabledTools: tc.tools,
 			})
@@ -342,7 +342,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "stdio_with_headers_rejected",
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok", Command: "bash",
-				Headers: []KeyPair{{Name: "X-Foo", Value: "bar"}},
+				Headers: []keyPair{{Name: "X-Foo", Value: "bar"}},
 			},
 			wantSubstr: "stdio transport cannot have headers",
 		},
@@ -374,7 +374,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "remote_with_env_rejected",
 			srv: &Server{
 				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
-				Env: []KeyPair{{Name: "LEAK", Value: "v"}},
+				Env: []keyPair{{Name: "LEAK", Value: "v"}},
 			},
 			wantSubstr: "remote transport cannot have env",
 		},
@@ -398,7 +398,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "remote_header_value_too_long",
 			srv: &Server{
 				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
-				Headers: []KeyPair{{
+				Headers: []keyPair{{
 					Name:  "Authorization",
 					Value: strings.Repeat("x", headerValueMax+1),
 				}},
@@ -408,7 +408,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(tc.srv)
+			err := validate(tc.srv)
 			if err == nil {
 				t.Fatalf("Validate(%s) = nil, want error containing %q",
 					tc.name, tc.wantSubstr)
@@ -425,17 +425,17 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 func TestValidate_MoreErrorBranches(t *testing.T) {
 	// Helpers build N unique KeyPairs so the length cap fires before
 	// the duplicate-name detection inside the shared helper.
-	envN := func(n int) []KeyPair {
-		out := make([]KeyPair, n)
+	envN := func(n int) []keyPair {
+		out := make([]keyPair, n)
 		for i := range out {
-			out[i] = KeyPair{Name: fmt.Sprintf("K%d", i), Value: "v"}
+			out[i] = keyPair{Name: fmt.Sprintf("K%d", i), Value: "v"}
 		}
 		return out
 	}
-	headerN := func(n int) []KeyPair {
-		out := make([]KeyPair, n)
+	headerN := func(n int) []keyPair {
+		out := make([]keyPair, n)
 		for i := range out {
-			out[i] = KeyPair{Name: fmt.Sprintf("H%d", i), Value: "v"}
+			out[i] = keyPair{Name: fmt.Sprintf("H%d", i), Value: "v"}
 		}
 		return out
 	}
@@ -457,7 +457,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 			name: "stdio_env_value_control_char",
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok", Command: "bash",
-				Env: []KeyPair{{Name: "K", Value: "line1\nline2"}},
+				Env: []keyPair{{Name: "K", Value: "line1\nline2"}},
 			},
 			wantSubstr: "env[0]: value contains a control character",
 		},
@@ -483,14 +483,14 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 			srv: &Server{
 				Transport: TransportHTTP, Name: "ok",
 				URL:     "https://x.example",
-				Headers: []KeyPair{{Name: "bad header!", Value: "v"}},
+				Headers: []keyPair{{Name: "bad header!", Value: "v"}},
 			},
 			wantSubstr: "headers[0]: bad name",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(tc.srv)
+			err := validate(tc.srv)
 			if err == nil {
 				t.Fatalf("Validate(%s) = nil, want error containing %q",
 					tc.name, tc.wantSubstr)
@@ -503,11 +503,11 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 	}
 }
 
-// FuzzValidate exercises Validate with random Server structs. Asserts:
-// (1) Validate never panics, (2) if Validate returns nil the Server
-// satisfies basic invariants (ValidateName accepts the name, transport is known,
+// FuzzValidate exercises validate with random Server structs. Asserts:
+// (1) validate never panics, (2) if validate returns nil the Server
+// satisfies basic invariants (validateName accepts the name, transport is known,
 // transport-specific fields are consistent), (3) idempotent — a second
-// Validate call on the same struct returns the same result.
+// validate call on the same struct returns the same result.
 func FuzzValidate(f *testing.F) {
 	// Seed corpus with representative valid/invalid inputs.
 	f.Add("ok", "stdio", "bash", "", "arg1", "KEY", "val", "", "", false)
@@ -531,17 +531,17 @@ func FuzzValidate(f *testing.F) {
 			s.Args = []string{arg}
 		}
 		if envKey != "" {
-			s.Env = []KeyPair{{Name: envKey, Value: envVal}}
+			s.Env = []keyPair{{Name: envKey, Value: envVal}}
 		}
 		if hdrKey != "" {
-			s.Headers = []KeyPair{{Name: hdrKey, Value: hdrVal}}
+			s.Headers = []keyPair{{Name: hdrKey, Value: hdrVal}}
 		}
 
-		err1 := Validate(s)
+		err1 := validate(s)
 
-		// Invariant: if Validate accepts, basic structural properties hold.
+		// Invariant: if validate accepts, basic structural properties hold.
 		if err1 == nil {
-			if err := ValidateName(s.Name); err != nil {
+			if err := validateName(s.Name); err != nil {
 				t.Fatalf("Validate returned nil but ValidateName rejects the name: %v", err)
 			}
 			if _, ok := transportValidators[s.Transport]; !ok {
@@ -562,9 +562,9 @@ func FuzzValidate(f *testing.F) {
 			}
 		}
 
-		// Idempotency: calling Validate again on the same struct yields
+		// Idempotency: calling validate again on the same struct yields
 		// the same pass/fail outcome.
-		err2 := Validate(s)
+		err2 := validate(s)
 		if (err1 == nil) != (err2 == nil) {
 			t.Fatalf("Validate not idempotent: first=%v second=%v", err1, err2)
 		}
@@ -572,7 +572,7 @@ func FuzzValidate(f *testing.F) {
 }
 
 // TestValidate_AcceptsValuesAtCap pins the upper boundary of every
-// length/count cap Validate enforces: a value of exactly the cap must be
+// length/count cap validate enforces: a value of exactly the cap must be
 // accepted (the checks are len > cap, not >=). A boundary mutation
 // (> to >=) on any of these would reject the at-cap value.
 func TestValidate_AcceptsValuesAtCap(t *testing.T) {
@@ -610,7 +610,7 @@ func TestValidate_AcceptsValuesAtCap(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := Validate(tc.srv); err != nil {
+			if err := validate(tc.srv); err != nil {
 				t.Errorf("Validate(%s) = %v, want nil (at-cap value must be accepted)", tc.name, err)
 			}
 		})
@@ -627,7 +627,7 @@ func TestValidate_OAuthClientIDLengthBoundary(t *testing.T) {
 		URL:           "https://x.example/mcp",
 		OAuthClientID: strings.Repeat("a", oauthClientIDMax),
 	}
-	if err := Validate(atMax); err != nil {
+	if err := validate(atMax); err != nil {
 		t.Errorf("Validate(OAuthClientID len=%d) = %v, want nil", oauthClientIDMax, err)
 	}
 
@@ -637,7 +637,7 @@ func TestValidate_OAuthClientIDLengthBoundary(t *testing.T) {
 		URL:           "https://x.example/mcp",
 		OAuthClientID: strings.Repeat("a", oauthClientIDMax+1),
 	}
-	err := Validate(over)
+	err := validate(over)
 	if err == nil {
 		t.Fatalf("Validate(OAuthClientID len=%d) = nil, want too-long error", oauthClientIDMax+1)
 	}
@@ -655,12 +655,12 @@ func TestValidateKeyPairs_entryCountBoundary(t *testing.T) {
 	const maxEntries = 2
 	const maxValue = 1024
 
-	atMax := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}}
+	atMax := []keyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}}
 	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
 		t.Errorf("validateKeyPairs(%d pairs, max %d) = %v, want nil", len(atMax), maxEntries, err)
 	}
 
-	over := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}, {Name: "Gc", Value: "v"}}
+	over := []keyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}, {Name: "Gc", Value: "v"}}
 	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
 	if err == nil {
 		t.Fatalf("validateKeyPairs(%d pairs, max %d) = nil, want too-many-entries error",
@@ -680,12 +680,12 @@ func TestValidateKeyPairs_valueLengthBoundary(t *testing.T) {
 	const maxEntries = 8
 	const maxValue = 4
 
-	atMax := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue)}}
+	atMax := []keyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue)}}
 	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
 		t.Errorf("validateKeyPairs(value len=%d, max %d) = %v, want nil", maxValue, maxValue, err)
 	}
 
-	over := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue+1)}}
+	over := []keyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue+1)}}
 	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
 	if err == nil {
 		t.Fatalf("validateKeyPairs(value len=%d, max %d) = nil, want value-too-long error",

@@ -1,6 +1,6 @@
 // Language definitions for the highlighter: static data, one site per language.
 
-export interface LangDef {
+interface LangDef {
   keywords: Set<string>;
   aliases: string[];
 }

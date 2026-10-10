@@ -7,9 +7,8 @@ import (
 	"context"
 )
 
-// gitFile is one row the git panel renders for one path, built from a porcelain status
-// entry. OrigPath is set only on a rename or copy entry, carrying the path the content came
-// FROM; every other field describes the path it is at now.
+// OrigPath is set only on a rename or copy entry, carrying the path the content came FROM; every
+// other field describes the path it is at now.
 type gitFile struct {
 	Path     string `json:"path"`
 	Display  string `json:"display"`
@@ -40,9 +39,8 @@ func statusLabel(c byte) string {
 	return "Unknown"
 }
 
-// appendStatusEntries appends the gitFile rows for one porcelain XY pair and path. A path both
-// staged and changed yields two rows, one per side, so counting changed FILES means counting
-// distinct paths. orig is the rename/copy origin, empty otherwise.
+// A path both staged and changed yields two rows, one per side, so counting changed FILES means
+// counting distinct paths. orig is the rename/copy origin, empty otherwise.
 func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFile {
 	f := gitFile{Path: path}
 	switch {

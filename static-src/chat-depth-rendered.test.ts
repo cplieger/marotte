@@ -90,7 +90,6 @@ function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-/** A settled read card, as `messages-tools.ts` builds one. */
 function card(i: number): HTMLElement {
   return buildToolCard({
     id: `t${String(i)}`,
@@ -102,7 +101,6 @@ function card(i: number): HTMLElement {
   });
 }
 
-/** A real group with two real members, header refreshed, mounted in the host. */
 function group(): HTMLElement {
   const shell = buildToolGroupShell();
   const body = groupBody(shell);

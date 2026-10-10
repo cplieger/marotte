@@ -7,7 +7,6 @@ import (
 	"sync"
 )
 
-// kiroHome is the cached kiro home, resolved once via kiroHomeOnce.
 var kiroHome string
 
 var kiroHomeOnce sync.Once
@@ -39,28 +38,6 @@ func KiroHome() string {
 		return ".kiro"
 	}
 	return filepath.Join(home, ".kiro")
-}
-
-// SetKiroHomeForTest overrides the kiro home for a test and restores it on cleanup. It
-// installs a RESOLVER too: KiroHome consults the cache only when one is present, so
-// seeding the cache alone would let a test write the real ~/.kiro.
-func SetKiroHomeForTest(t interface {
-	Helper()
-	Cleanup(func())
-}, path string,
-) {
-	t.Helper()
-	oldHome, oldResolver := kiroHome, kiroHomeResolver
-	// Replace the sync.Once to invalidate the cache; a Once cannot be copied.
-	kiroHome = path
-	kiroHomeResolver = func() string { return path }
-	kiroHomeOnce = sync.Once{}
-	kiroHomeOnce.Do(func() {}) // mark as done so KiroHome() returns the override
-	t.Cleanup(func() {
-		kiroHome, kiroHomeResolver = oldHome, oldResolver
-		kiroHomeOnce = sync.Once{}
-		kiroHomeOnce.Do(func() {})
-	})
 }
 
 // KiroSteeringPath returns the path to a file under KiroHome()/steering/.

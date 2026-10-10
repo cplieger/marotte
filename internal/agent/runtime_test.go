@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -205,9 +206,7 @@ func TestShutdown_BoundsAStallingUtilityStop(t *testing.T) {
 	br := &stallingStopBridge{fakeBridge: newFakeBridge(), release: make(chan struct{})}
 	t.Cleanup(func() { close(br.release) })
 	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: br}
-	h.lifecycle.mu.Lock()
 	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
-	h.lifecycle.mu.Unlock()
 
 	const budget = 150 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
@@ -378,7 +377,6 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	shutdownHub(t, h)
 }
 
-// lifetimeWatchingBridge records the lifetime's state when its Stop landed.
 type lifetimeWatchingBridge struct {
 	*fakeBridge
 
@@ -422,5 +420,30 @@ func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
 	// The cancel still happens.
 	if h.lifecycle.shutdownCtx.Err() == nil {
 		t.Error("the lifetime is still live after Shutdown returned")
+	}
+}
+
+// A notification about no chat (a pull request's CI flip) reaches the page as well as the push,
+// so a reader with the app open sees it the way they see a turn's.
+func TestNotify_AChatlessNoticeReachesThePageAndThePush(t *testing.T) {
+	h, fp := newRunPushHub(t)
+	n := marotte.NotificationPayload{
+		Key:  "pr:github:github.com:a/b#7",
+		Kind: marotte.PushKindPRStatus, Title: "a/b #7", Body: "Checks passed · Fix it",
+	}
+	h.Notify(t.Context(), &n)
+	if got := awaitRunPush(t, fp); got.subject != n.PushSubject || got.body != n.Body {
+		t.Errorf("Notify pushed %+v, want %q under %+v", got, n.Body, n.PushSubject)
+	}
+	frames := eventsOfType(h, marotte.EventNotification)
+	if len(frames) != 1 {
+		t.Fatalf("Notify broadcast %d notification frames, want 1", len(frames))
+	}
+	var got marotte.NotificationPayload
+	if err := json.Unmarshal(frames[0].Payload, &got); err != nil {
+		t.Fatalf("decoding the frame: %v", err)
+	}
+	if got != n {
+		t.Errorf("the page's frame = %+v, want %+v", got, n)
 	}
 }

@@ -10,9 +10,8 @@ import * as decoders from "./decoders.gen.js";
 // Register all decoders so lookupSSEDecoder works.
 registerAllSSEDecoders();
 
-// Every event the client decodes. A registration removed from both the Go
-// binding and registry.gen.ts passes the drift gate, so this list is what
-// notices it.
+// A registration removed from both the Go binding and registry.gen.ts passes the drift gate, so
+// this list is what notices it.
 const registeredEvents = [
   "agent_notice",
   "chat_created",
@@ -34,6 +33,7 @@ const registeredEvents = [
   "mcp_disconnected",
   "mcp_failed",
   "mcp_oauth_needed",
+  "notification",
   "open_external_url",
   "pending_snapshot",
   "permission_needed",

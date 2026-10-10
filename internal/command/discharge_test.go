@@ -77,7 +77,6 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSetDraft:            "CmdSetDraft",
 		marotte.CmdSetAttachments:      "CmdSetAttachments",
 		marotte.CmdSetMode:             "CmdSetMode",
-		marotte.CmdCreateHook:          "CmdCreateHook",
 		marotte.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
 		marotte.CmdSteer:               "CmdSteer",
 		marotte.CmdSteerClear:          "CmdSteerClear",
@@ -92,6 +91,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdPinTab:              "CmdPinTab",
 		marotte.CmdReparentTab:         "CmdReparentTab",
 		marotte.CmdApproveSpecPhase:    "CmdApproveSpecPhase",
+		marotte.CmdMergeTangent:        "CmdMergeTangent",
 	}
 	classified := make(map[string]bool, len(commandDischarges))
 	for value := range commandDischarges {
@@ -109,7 +109,6 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 	}
 }
 
-// fakeChatStatus records the chats a discharge reached.
 type fakeChatStatus struct{ discharged []marotte.ChatID }
 
 func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID marotte.ChatID) {

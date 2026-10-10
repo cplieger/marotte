@@ -40,7 +40,6 @@ func newNSEnv(t *testing.T) *nsEnv {
 	return &nsEnv{t: t, tools: tools, witness: filepath.Join(tools, "foreign-was-run")}
 }
 
-// config is marotte's real install configuration for this volume.
 func (e *nsEnv) config() *pinstall.Config {
 	return kiroInstallConfig(&Config{
 		KiroCLIVersion:     nsVersion,
@@ -50,7 +49,6 @@ func (e *nsEnv) config() *pinstall.Config {
 	})
 }
 
-// manager builds a manager from that configuration, as startKiroCLI does.
 func (e *nsEnv) manager() *pinstall.Manager {
 	e.t.Helper()
 	mgr, err := pinstall.New(e.config())
@@ -312,10 +310,9 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	}
 }
 
-// shellQuote wraps s in single quotes for the fake dispatcher's script body. The
-// only inputs are t.TempDir paths, so escaping an embedded quote would be dead
-// code; a path that somehow held one would break the script loudly rather than
-// silently misdirect the witness write.
+// The only inputs are t.TempDir paths, so escaping an embedded quote would be dead code; a path
+// that somehow held one would break the script loudly rather than silently misdirect the witness
+// write.
 func shellQuote(s string) string {
 	return "'" + s + "'"
 }

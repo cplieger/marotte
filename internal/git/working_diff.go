@@ -92,10 +92,8 @@ func openRepo(root *os.Root, name string) (*pinnedRepo, error) {
 	return repo, nil
 }
 
-// openGitDir opens the git directory of the work tree wt (at name in root) and
-// returns it with its root-relative path, which a commondir is resolved from.
-// The root-relative paths are joined without cleaning so os.Root resolves each
-// ".." after following the symlinks before it, as git does.
+// The root-relative paths are joined without cleaning so os.Root resolves each ".." after following
+// the symlinks before it, as git does.
 func openGitDir(root *os.Root, wt *os.File, name string) (*os.File, string, error) {
 	rel := name + "/" + gitDirName
 	g, err := openNoFollow(wt, gitDirName)
@@ -142,8 +140,6 @@ func openCommonDir(root *os.Root, gitDir *os.File, gitRel string) (*os.File, err
 	return common, err
 }
 
-// openInRoot opens target, absolute or relative to the root-relative base, as
-// a directory confined to root.
 func openInRoot(root *os.Root, base, target string) (*os.File, string, error) {
 	rel := base + "/" + target
 	if filepath.IsAbs(target) {

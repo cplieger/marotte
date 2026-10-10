@@ -12,10 +12,9 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// capturingBus records what a handler broadcast. Its own type rather than a
-// method on the host double, because these two handlers take the store and the
-// bus as separate parameters and the point of several cases is that ONE of them
-// was reached.
+// Its own type rather than a method on the host double, because these two handlers take the store
+// and the bus as separate parameters and the point of several cases is that ONE of them was
+// reached.
 type capturingBus struct {
 	events []marotte.ServerEvent
 }
@@ -24,7 +23,6 @@ func (b *capturingBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.events = append(b.events, evt)
 }
 
-// draftFrames returns the draft_changed payloads the bus saw, in order.
 func (b *capturingBus) draftFrames(t *testing.T) []marotte.DraftChangedPayload {
 	t.Helper()
 	var out []marotte.DraftChangedPayload
@@ -77,7 +75,7 @@ func TestCmdSetAttachments(t *testing.T) {
 			host := newBridgeHost(store, b)
 			bus := &capturingBus{}
 
-			_, err := CmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", tc.paths))
+			_, err := cmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", tc.paths))
 
 			if statusOf(err) != tc.wantStatus {
 				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.wantStatus, errText(err))
@@ -105,7 +103,7 @@ func TestCmdSetAttachments_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
+	_, err := cmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
 		Type:    marotte.CmdSetAttachments,
 		ChatID:  "c1",
 		Payload: append(append([]byte(`{"paths":["`), 0xff, 0xfe), []byte(`"]}`)...),
@@ -127,7 +125,7 @@ func TestCmdSetAttachments_RefusesAMissingChatID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, attachmentsReq(t, "", []string{"a.txt"}))
+	_, err := cmdSetAttachments(t.Context(), host, &capturingBus{}, attachmentsReq(t, "", []string{"a.txt"}))
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
@@ -139,7 +137,7 @@ func TestCmdSetAttachments_RejectsAMalformedPayload(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
+	_, err := cmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
 		Type:    marotte.CmdSetAttachments,
 		ChatID:  "c1",
 		Payload: json.RawMessage(`{"paths":"one.txt"}`),
@@ -159,7 +157,7 @@ func TestCmdSetAttachments_DoesNotCreateAChat(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{})
 	bus := &capturingBus{}
 
-	_, err := CmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c-never-prompted", []string{"a.txt"}))
+	_, err := cmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c-never-prompted", []string{"a.txt"}))
 
 	if statusOf(err) != http.StatusOK {
 		t.Errorf("status = %d, want 200: staging a file on an unsaved chat is a no-op, not an error", statusOf(err))
@@ -181,10 +179,10 @@ func TestComposerCommands_BroadcastDraftChanged(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{})
 	bus := &capturingBus{}
 
-	if _, err := CmdSetDraft(t.Context(), host, bus, draftReq(t, "c1", "half a question")); err != nil {
+	if _, err := cmdSetDraft(t.Context(), host, bus, draftReq(t, "c1", "half a question")); err != nil {
 		t.Fatalf("CmdSetDraft: %v", err)
 	}
-	if _, err := CmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", []string{"docs/spec.pdf"})); err != nil {
+	if _, err := cmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", []string{"docs/spec.pdf"})); err != nil {
 		t.Fatalf("CmdSetAttachments: %v", err)
 	}
 
@@ -221,10 +219,10 @@ func TestComposerCommands_NoBroadcastWhenNothingChanged(t *testing.T) {
 	bus := &capturingBus{}
 
 	for range 3 {
-		if _, err := CmdSetDraft(t.Context(), host, bus, draftReq(t, "c1", "same text")); err != nil {
+		if _, err := cmdSetDraft(t.Context(), host, bus, draftReq(t, "c1", "same text")); err != nil {
 			t.Fatalf("CmdSetDraft: %v", err)
 		}
-		if _, err := CmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", []string{"a.txt"})); err != nil {
+		if _, err := cmdSetAttachments(t.Context(), host, bus, attachmentsReq(t, "c1", []string{"a.txt"})); err != nil {
 			t.Fatalf("CmdSetAttachments: %v", err)
 		}
 	}
@@ -259,7 +257,6 @@ func TestSettleComposerOnPrompt_ClearsTheStagedAttachments(t *testing.T) {
 	}
 }
 
-// manyReqPaths builds n distinct workspace paths, for the cap cases.
 func manyReqPaths(n int) []string {
 	out := make([]string, n)
 	for i := range out {

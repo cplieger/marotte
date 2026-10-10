@@ -3,10 +3,12 @@
 
 import { createBus } from "@cplieger/reactive";
 
+import type { NotificationPayload } from "./wire/types.gen.js";
 import type {
   ServerEvent,
   ChatHeader,
   SteerQueuedPayload,
+  TangentMergedPayload,
   AgentNoticePayload,
   KnowledgeIndexingPayload,
   SystemNoticePayload,
@@ -77,6 +79,7 @@ export interface SSEPayloads {
   readonly code_references: CodeReferencesPayload;
   // One event: the steer reached KAS's buffer. Read or dropped is the `steer` entry's `state`.
   readonly steer_queued: SteerQueuedPayload;
+  readonly tangent_merged: TangentMergedPayload;
   // A workflow step or subagent reporting into the launching session, as its own event.
   readonly agent_notice: AgentNoticePayload;
   // KAS's `_kiro/system/notify`: a toast at its own level, keyed by the bridge that
@@ -143,6 +146,8 @@ export interface SSEPayloads {
   readonly run_input_needed: RunInputNeededPayload;
   // Its twin, separate from decision_settled: a run ask is keyed by string, not int64.
   readonly run_input_settled: RunInputSettledPayload;
+  // internal/notice's notification: the page shows it while its chat or run is off screen.
+  readonly notification: NotificationPayload;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
@@ -242,11 +247,11 @@ export const BUS_RUNS_CHANGED = "runs:changed" as const;
  */
 export const BUS_TAB_CHANGED = "tabs:changed" as const;
 /**
- * An editor buffer's first read settled. `FileState.loaded` is a plain field and its writes
- * flush one at a time, so the in-file find re-runs on this event. On the bus so the loader
- * knows no find bar.
+ * An editor file's buffer or view settled: its first read, a failed read, a git diff's answer, or
+ * a live refresh's adoption or reclassification. `FileState.loaded` is a plain field, so the
+ * in-file find re-runs or closes on this event. On the bus so the loader knows no find bar.
  */
-export const BUS_EDITOR_FILE_LOADED = "editor:loaded" as const;
+export const BUS_EDITOR_VIEW_CHANGED = "editor:view-changed" as const;
 /**
  * A command POST failed and the user must see it: the chat (empty for workspace-global) and
  * the server's prose. On the bus: `failure-notice.ts` reaches the tab store, which reaches
@@ -269,7 +274,7 @@ interface BusPayloads {
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
   readonly [BUS_RUNS_CHANGED]: undefined;
   readonly [BUS_TAB_CHANGED]: { to: string; kind: string | null };
-  readonly [BUS_EDITOR_FILE_LOADED]: { path: string };
+  readonly [BUS_EDITOR_VIEW_CHANGED]: { path: string };
   readonly [BUS_COMMAND_FAILED]: {
     readonly chatID: string;
     readonly chatName: string;

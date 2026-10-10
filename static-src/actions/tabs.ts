@@ -16,7 +16,7 @@ import { decodeTabSubject } from "../wire/decoders.gen.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
  *  singleton, whose identity is its kind. */
-export interface OpenTabArgs {
+interface OpenTabArgs {
   kind: TabKind;
   ref: string;
   /** An already-open tab to nest under. Empty for top level. A parent that
@@ -29,7 +29,7 @@ export interface OpenTabArgs {
 
 /** What the server committed for an open. `created: false` commits nothing and emits no event, so
  *  the pending-op machine retires such an op on the spot. */
-export interface OpenTabReply {
+interface OpenTabReply {
   subject: TabSubject;
   created: boolean;
   version: number;
@@ -80,7 +80,7 @@ export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
       : "Could not open that tab",
 });
 
-export interface CloseTabArgs {
+interface CloseTabArgs {
   id: string;
   opID: string;
 }
@@ -91,7 +91,7 @@ const CLOSE_CONFIRM_MS = 5000;
 
 /** What the server committed for a close: a list (a parent and children close together); empty
  *  is normal, since two devices can close one tab. */
-export interface CloseTabReply {
+interface CloseTabReply {
   closed: string[];
   version: number;
 }
@@ -130,7 +130,7 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
   error: false,
 });
 
-export interface ReorderTabsArgs {
+interface ReorderTabsArgs {
   order: readonly string[];
   opID: string;
 }
@@ -176,7 +176,7 @@ export const reorderTabsCommand = defineAction<
   error: "Could not reorder the tabs",
 });
 
-export interface PinTabArgs {
+interface PinTabArgs {
   id: string;
   pinned: boolean;
   opID: string;
@@ -208,7 +208,7 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
   error: "Could not pin that tab",
 });
 
-export interface ReparentTabArgs {
+interface ReparentTabArgs {
   id: string;
   parent: string;
   opID: string;

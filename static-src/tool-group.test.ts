@@ -229,7 +229,6 @@ describe("summarize", () => {
 // Grouping: collapsing hides individually uninteresting items, and a FAILURE is the opposite.
 // ---------------------------------------------------------------------------
 
-/** A settled card, as the group's DOM sees it. */
 function card(
   kind: string,
   outcome: "ok" | "fail" | "warn" | "declined" | "running",

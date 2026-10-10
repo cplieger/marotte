@@ -19,7 +19,7 @@ var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
 // AppendIfLive applies fn to the record while the chat holds a live turn, in the lifecycle section
 // (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn.
-func (bc *BridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
+func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		if !lc.liveLockedState() {
@@ -43,11 +43,11 @@ func (bc *BridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.Ch
 	return live, err
 }
 
-var _ command.QueueAccess = (*BridgeCoordinator)(nil)
+var _ command.QueueAccess = (*bridgeCoordinator)(nil)
 
 // NextUserRow answers the first unheld queued user row whose turn this process has not opened, via
 // the mutate path so a pending removal applies first.
-func (bc *BridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
+func (bc *bridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.ChatID) (marotte.QueuedPrompt, bool, error) {
 	var row marotte.QueuedPrompt
 	found := false
 	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
@@ -67,13 +67,13 @@ func (bc *BridgeCoordinator) NextUserRow(ctx context.Context, chatID marotte.Cha
 }
 
 // Dequeue takes a sent row off the header, after its turn_opened frame.
-func (bc *BridgeCoordinator) Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error {
+func (bc *bridgeCoordinator) Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error {
 	return bc.chatStore.Dequeue(durable.Context(ctx), chatID, id)
 }
 
 // Unqueue removes one queued row; an id whose turn this process opened answers sending. The caller
 // holds the steer lock.
-func (bc *BridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) (bool, error) {
+func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) (bool, error) {
 	if bc.chatStore.Opened(chatID, id) {
 		return true, nil
 	}
@@ -88,9 +88,9 @@ func (bc *BridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID,
 	return false, err
 }
 
-// HoldUnread joins the unread steers a shutdown took into the chat's Held row (created if absent),
+// holdUnread joins the unread steers a shutdown took into the chat's Held row (created if absent),
 // which the next process shows but never sends. A failed write is logged: each steer's restart entry keeps its words.
-func (bc *BridgeCoordinator) HoldUnread(ctx context.Context, chatID marotte.ChatID, rows []shutdownRow) {
+func (bc *bridgeCoordinator) holdUnread(ctx context.Context, chatID marotte.ChatID, rows []shutdownRow) {
 	if len(rows) == 0 {
 		return
 	}
@@ -125,7 +125,7 @@ func (bc *BridgeCoordinator) HoldUnread(ctx context.Context, chatID marotte.Chat
 
 // settleAfterClose waits for the chat to idle after a close; a bare reservation is usually the
 // closing prompt's. False once a turn opens, or on budget or ctx expiry.
-func (bc *BridgeCoordinator) settleAfterClose(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
+func (bc *bridgeCoordinator) settleAfterClose(ctx context.Context, chatID marotte.ChatID, budget time.Duration) bool {
 	lc, ok := bc.turns.lookup(chatID)
 	if !ok {
 		return true

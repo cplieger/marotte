@@ -16,22 +16,24 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// Node is one node of a run's state tree; a step node is a leaf and the only kind with a
+// node is one node of a run's state tree; a step node is a leaf and the only kind with a
 // session. Other fields stay on the wire, passed through by the read endpoint.
-type Node struct {
+type node struct {
 	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
 	Iteration *int   `json:"iteration"`
 	NodeID    string `json:"nodeId"`
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
-	Children  []Node `json:"children"`
+	Status    string `json:"status"`
+	Children  []node `json:"children"`
 }
 
 // State is the run state `inspect` returns, decoded only as far as step identification
 // needs.
 type State struct {
-	Root       *Node  `json:"root"`
+	Root       *node  `json:"root"`
 	WorkflowID string `json:"workflowId"`
+	Status     string `json:"status"`
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
@@ -45,6 +47,8 @@ type InspectResult struct {
 type StepSession struct {
 	NodeID    string
 	SessionID string
+	// Status is KAS's node status word, verbatim.
+	Status string
 	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
 }
@@ -81,14 +85,14 @@ func Steps(s *State) []StepSession {
 	return out
 }
 
-// walk visits the tree depth-first. Each level allocates its path at EXACT capacity, or a
-// child's append writes into a sibling's backing array.
-func walk(n, parent *Node, trail []string, out *[]StepSession) {
+// Each level allocates its path at EXACT capacity, or a child's append writes into a sibling's
+// backing array.
+func walk(n, parent *node, trail []string, out *[]StepSession) {
 	path := make([]string, 0, len(trail)+1)
 	path = append(path, trail...)
 	path = append(path, pathSegment(n, parent))
 	if n.Type == "step" {
-		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID, Path: path})
+		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID, Status: n.Status, Path: path})
 	}
 	for i := range n.Children {
 		walk(&n.Children[i], n, path, out)
@@ -99,7 +103,7 @@ func walk(n, parent *Node, trail []string, out *[]StepSession) {
 // is `<repeatId>#<n>` in the tree and `iter-<n>` on the wire, derived from its
 // `iteration`; with none it falls back to the node id. Siblings holding the same
 // translation: translate.runNodePath and run-store.ts.
-func pathSegment(n, parent *Node) string {
+func pathSegment(n, parent *node) string {
 	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
 		return "iter-" + strconv.Itoa(*n.Iteration)
 	}

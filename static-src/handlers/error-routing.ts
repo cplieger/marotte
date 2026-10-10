@@ -11,7 +11,7 @@ export type ErrorAction =
   | { kind: "setting"; tab: SettingsTab; control: string; label: string }
   | { kind: "sign-in"; label: string };
 
-export interface ErrorRoute {
+interface ErrorRoute {
   /** Where this error is reported. `toast`: bottom-right beside the turn's own divider, raised for
    *  EVERY chat and named when its tab is not on screen. `agent-down`: the send button's alert face,
    *  only for "no agent to send to" (see send-state.ts). */
@@ -58,6 +58,8 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   recovery_failed: { surface: "toast" },
   switch_failed: { surface: "toast" },
   model_not_served: { surface: "toast" },
+  // A merge stopped after it was accepted; the tangent keeps its summary and the toast says why.
+  tangent_merge_failed: { surface: "toast" },
   // The ONE code that earns the send button's alert face: kiro-cli could not be
   // spawned, so this chat has no ACP connection behind it. Every other failure
   // here happened to a live agent.

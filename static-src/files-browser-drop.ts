@@ -6,7 +6,7 @@ import { upload } from "./actions/files.js";
 import { screenUploads } from "./upload-policy.js";
 import * as toast from "./toast.js";
 
-export interface DragDropContext {
+interface DragDropContext {
   getCurrentPath: () => string;
   getEntryMap: () => Map<string, FileEntry>;
   reload: () => void;

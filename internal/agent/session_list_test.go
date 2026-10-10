@@ -12,7 +12,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// row builds a session/list row in the measured wire shape.
 func row(id, title, updated string, workflow bool) kasSessionRow {
 	var r kasSessionRow
 	r.SessionID = id
@@ -32,7 +31,6 @@ func rowCreated(id, title, updated, created string) kasSessionRow {
 	return r
 }
 
-// ownedBy seeds a store where each chat owns its listed session ids in order, the last being current.
 func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
 	store := newTestChatStore()
@@ -312,7 +310,6 @@ func TestStepSessionsAreNotRuns(t *testing.T) {
 	}
 }
 
-// wfRun builds a _kiro/workflow/list row.
 func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 	return kasWorkflowRun{
 		WorkflowID:      id,

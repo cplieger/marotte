@@ -22,6 +22,7 @@ const (
 	methodV3ProgressiveContext   = "_kiro/progressive_context/items_changed" // recognised-ignored (skills/steering list; REST-sourced)
 	methodV3Powers               = "_kiro/powers/items_changed"              // installed Powers moved: re-render the legacy block, broadcast powers_changed
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
+	methodKiroConfigurationState = "_kiro/configuration/state"               // utility bridge only (configurationState declared): Settings' kiro_defaults
 )
 
 // KAS native Cedar policy methods: list/explain are utility-bridge requests for the read-only
@@ -143,10 +144,9 @@ const (
 	methodKiroHooksDidChange  = "_kiro/hooks/didChange"  // A→C notification: {hooks[]}
 )
 
-// KAS Infrastructure-Safety methods: getProperties returns [] by default; the two notifications
-// fire only with the infrastructureSafety capability and an AWS governance flag. No set RPC exists.
+// KAS Infrastructure-Safety notifications fire only with the infrastructureSafety capability and
+// an AWS governance flag. No set RPC exists.
 const (
-	methodV3SafetyGetProperties = "_kiro/safety/getProperties"     // C→A request (reachable; not wired — inert by default)
 	methodV3SafetyPropertiesChg = "_kiro/safety/propertiesChanged" // A→C notification → safety_properties SSE
 	methodV3SafetyStatusChanged = "_kiro/safety/statusChanged"     // A→C notification → safety_status SSE
 )

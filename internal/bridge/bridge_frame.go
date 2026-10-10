@@ -22,7 +22,7 @@ const oversizeDrainCap = 16 * scannerLineCap
 // boundary to resynchronise on. Distinct from a read error for the log line.
 var errFrameDrainExhausted = errors.New("oversize ACP frame did not terminate within the drain budget")
 
-// frameReader reads newline-delimited frames off one io.Reader. Not safe for concurrent use: readLoop alone owns it.
+// Not safe for concurrent use: readLoop alone owns it.
 type frameReader struct {
 	r   *bufio.Reader
 	buf []byte

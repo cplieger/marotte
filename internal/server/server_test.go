@@ -622,7 +622,6 @@ func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 	}
 }
 
-// hasKiroConfigItem reports whether items contains an entry of the given Type and Name.
 func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
 	for _, it := range items {
 		if it.Type == typ && it.Name == name {
@@ -657,8 +656,6 @@ func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 	}
 }
 
-// captureLogs swaps the slog default to a buffer-backed debug handler and restores it,
-// along with the log package's writer and flags, which slog.SetDefault also redirects.
 // The default is process-wide, so a test using it must not run in parallel.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()

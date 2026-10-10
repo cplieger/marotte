@@ -83,7 +83,6 @@ let lastLocalNames = new Set<string>();
  */
 const expandOnNextPaint = new Set<string>();
 
-/** OAuth availability per kind, populated from the forges list response. */
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
 /**

@@ -83,17 +83,13 @@ registerCleanup(() => {
   diffAbortCtrl.abort();
 });
 
-/** Repos just pushed, for a transient "Open PR" hint in their section header. */
 const recentlyPushed = new Set<string>();
 const RECENTLY_PUSHED_TTL_MS = 60_000;
 
-// Typed commit messages, kept across repaints.
 const commitMessages = new Map<string, string>();
 
-/**
- * The press each repository runs. Its actions share one `git:<repo>` queue, so the section's other controls wait,
- * and a repaint shows the press on the control that started it.
- */
+/** Its actions share one `git:<repo>` queue, so the section's other controls wait, and a repaint
+ *  shows the press on the control that started it. */
 const repoPresses = new Map<string, { key: string; done: Promise<void> }>();
 
 /** A second press while a confirm is open would confirm and send twice. */
@@ -102,7 +98,6 @@ const confirmingRepos = new Set<string>();
 /** Why a repository's last press did not land, said at the top of its section until its next press. */
 const pressNotes = new Map<string, Refusal>();
 
-// Repos the user collapsed by hand.
 const userCollapsedRepos = new Set<string>();
 const userExpandedRepos = new Set<string>();
 
@@ -247,7 +242,6 @@ export async function refreshChanges(
   }
 }
 
-/** Returns the teardown `skeletonTiming` calls. */
 function gitChangesSkeleton(): () => void {
   // No `label`: this tab issues one request.
   return paintPlaceholder(document.getElementById("git-changes-mount"), () =>
@@ -766,10 +760,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   return bar;
 }
 
-/**
- * Split into Staged and Changes groups, each owning the bulk action for exactly what its header counts. A group
- * renders only with members.
- */
+/** A group renders only with members. */
 function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
   const wrap = el("div", { className: "git-file-groups" });
   const partial = partiallyStagedPaths(files);

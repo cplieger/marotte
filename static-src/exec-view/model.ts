@@ -3,6 +3,7 @@
 // held by nobody, and the wire shape of nothing.
 
 import { inFlight, type ExecState } from "./status.js";
+import type { RunStepMessageVerb } from "../wire/types.gen.js";
 
 /** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
 export type ExecKind = "step" | "sequence" | "repeat" | "parallel" | "watch" | "group";
@@ -25,9 +26,13 @@ export interface ExecNode {
   kind: ExecKind;
   state: ExecState;
   children: ExecNode[];
-  /** ISO timestamps, when the source has them. */
+  /** ISO timestamps, when the source has them. For display: two sources can time one start
+   *  differently, so `startGen` orders starts. */
   start?: string;
   end?: string;
+  /** Orders this node's current start against the run's others: larger is later, and one start
+   *  keeps its value however its time is re-read. Absent before it starts. */
+  startGen?: number;
   /** The one-line summary under the label, pre-joined by the adapter. */
   subtitle?: string;
   /** The identity facts, for the detail pane. */
@@ -36,8 +41,14 @@ export interface ExecNode {
   failure?: string;
   /** What the node produced, as markdown. */
   output?: string;
+  /** The card's result text: the capture verbatim, or a decoded watch's last output line (its
+   *  subtitle says how it ended). */
+  capture?: string;
   /** Named artifacts the node published. */
   artifacts?: Record<string, string>;
+  /** What words sent to this execution do now, as the server decides it from the raw state that
+   *  `state` folds an ask into; absent where the server would refuse them. */
+  verb?: RunStepMessageVerb;
   /** Whether this node can host a live transcript, so the pane can say "none here" rather than
    *  "none yet". */
   transcript?: boolean;
@@ -72,6 +83,8 @@ export interface ExecRun {
   inputs?: Record<string, string>;
   /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
+  /** A standing line about the execution's plan, beside the alert. */
+  notice?: { text: string; failed: boolean };
   /** The node to open on before a click. A subagent expansion has one door PER delegate, so a
    *  stage's link opens THAT stage; naming a node stops the auto-follow like a click. Absent for
    *  a workflow run. */
@@ -189,7 +202,7 @@ export function elapsed(start: string | undefined, end: string | undefined): num
 
 /** The execution's window, earliest start to latest end (or now). From the WORK nodes: a source
  *  may not stamp its containers. */
-export interface ExecWindow {
+interface ExecWindow {
   from: number;
   to: number;
   span: number;

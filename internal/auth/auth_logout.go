@@ -67,7 +67,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Published, not re-read: a clean logout exit is the answer, and a second fork only prolongs the old identity.
 	signedOut := signedOutIdentity()
 	h.identity.publish(&signedOut)
-	h.registrar.SignedOut()
+	h.registrar.signedOut()
 	webhttp.WriteJSON(w, result)
 }
 

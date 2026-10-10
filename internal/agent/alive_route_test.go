@@ -12,7 +12,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// recordingPresence records what reached the table.
 type recordingPresence struct {
 	mu     sync.Mutex
 	events []sse.PresenceEvent

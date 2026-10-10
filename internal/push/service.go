@@ -19,9 +19,6 @@ import (
 	"github.com/cplieger/ssrf/v4"
 )
 
-// DefaultTitle is the notification title used for all Web Push messages.
-const DefaultTitle = "Marotte"
-
 // pushDebounce is the per-subject quiet window; pushBodyCap caps title+body so an
 // oversize send is not silently rejected by the vendor.
 const (
@@ -37,8 +34,7 @@ const (
 	debounceHighWater = 64
 )
 
-// pushSubjectGlobal is the debounce subject for a notification with nothing single behind
-// it. Not a legal subject spelling (chat ids have no space, PR keys start `pr:`).
+// Not a legal subject spelling (chat ids have no space, PR keys start `pr:`).
 const pushSubjectGlobal = "<workspace global>"
 
 // pushDebounceKey is what a quiet window belongs to: one KIND about one SUBJECT. A
@@ -49,7 +45,6 @@ type pushDebounceKey struct {
 	subject string
 }
 
-// debounceKey builds the window key for one send.
 func debounceKey(kind marotte.PushKind, subject marotte.PushSubject) pushDebounceKey {
 	switch {
 	case subject.ChatID != "":
@@ -186,8 +181,8 @@ func (s *Service) Close() {
 	<-s.writeLoopDone
 }
 
-// PublicKey returns the VAPID public key used for push subscription registration.
-func (s *Service) PublicKey() string { return s.keys.PublicKey }
+// publicKey returns the VAPID public key used for push subscription registration.
+func (s *Service) publicKey() string { return s.keys.PublicKey }
 
 // SetPreferences sets the enabled flag of each kind prefs names; a kind it omits keeps its flag.
 func (s *Service) SetPreferences(prefs map[marotte.PushKind]bool) {
@@ -217,8 +212,8 @@ func (s *Service) Subscribe(sub marotte.PushSubscription) {
 	slog.Info("push: subscribed", "host", host)
 }
 
-// Unsubscribe removes the subscription for the given push endpoint.
-func (s *Service) Unsubscribe(endpoint string) {
+// unsubscribe removes the subscription for the given push endpoint.
+func (s *Service) unsubscribe(endpoint string) {
 	s.mu.Lock()
 	delete(s.subs, endpoint)
 	s.mu.Unlock()
@@ -297,7 +292,7 @@ func validateKindRegistry(entries []KindPref) error {
 	return nil
 }
 
-// writeLoop drains saveCh and writes the latest snapshot; the single writer goroutine.
+// The single writer goroutine.
 func (s *Service) writeLoop() {
 	defer close(s.writeLoopDone)
 	for {

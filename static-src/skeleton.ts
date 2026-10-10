@@ -40,7 +40,7 @@ export function paintPlaceholder(
  *  is a DETERMINISTIC per-surface array (never random): the shape of the text is what makes a
  *  block read as prose rather than as a grey box, and a random shape means the placeholder for
  *  one surface looks different on every load. */
-export function skeletonText(opts: {
+function skeletonText(opts: {
   readonly widths: readonly string[];
   readonly lineClass?: string;
 }): HTMLDivElement {
@@ -54,63 +54,6 @@ export function skeletonText(opts: {
     wrap.appendChild(skelBar(lineClass, width));
   }
   return wrap;
-}
-
-/** One cell of a ROW LIST row. `w` absent RESERVES the cell empty — a placeholder control says
- *  nothing, and dropping the column instead moves every cell after it when the real row lands. */
-export interface SkelCell {
-  /** Class on the CELL WRAPPER. Wear the real cell's class when it is layout-only; declare a
-   *  `-skel-` class beside it when the real one carries content styling (`fileRowsSkeleton` is
-   *  the reference for the second case). Omit for a bare cell — a grid track the template
-   *  already sized, a reserved control column, or a row whose single bar is a direct child. */
-  readonly cls?: string;
-  /** Class on the BAR ITSELF, beside `.skeleton`. This is what a site passes whose existing
-   *  class IS the bar's own height (`docs-skel-name` is `height: 0.875rem`); omitted, the bar
-   *  takes `.skeleton-line`'s `0.75rem`. */
-  readonly bar?: string;
-  /** The bar's width. Absent = a reserved empty cell, no bar, no shimmer. */
-  readonly w?: string;
-}
-
-/** ROW LIST — N rows wearing `rowClass`, one entry per row. */
-export function skeletonRows(
-  rowClass: string,
-  rows: readonly (readonly SkelCell[])[],
-): HTMLDivElement {
-  const wrap = el("div", {
-    className: "skeleton-rows",
-    "aria-hidden": "true",
-  }) as HTMLDivElement;
-  for (const cells of rows) {
-    const row = el("div", { className: rowClass });
-    for (const cell of cells) {
-      if (cell.cls !== undefined) {
-        const wrapper = el("div", { className: cell.cls });
-        if (cell.w !== undefined) {
-          wrapper.appendChild(skelBar(cell.bar ?? "skeleton-line", cell.w));
-        }
-        row.appendChild(wrapper);
-        continue;
-      }
-      if (cell.w !== undefined) {
-        row.appendChild(skelBar(cell.bar ?? "skeleton-line", cell.w));
-        continue;
-      }
-      row.appendChild(el("div"));
-    }
-    wrap.appendChild(row);
-  }
-  return wrap;
-}
-
-/** INLINE FIELD — one bar standing in for a single value, `aria-hidden` so the HOST carries the
- *  accessible name and the busy state. Insert it INTO the element whose width it is holding
- *  open; never class that element itself. It takes no arguments and never will. */
-export function skeletonField(): HTMLSpanElement {
-  return el("span", {
-    className: "skeleton skeleton-field",
-    "aria-hidden": "true",
-  });
 }
 
 /** The transcript placeholder's element id. The renderer drops it by this id when real turns
@@ -131,10 +74,9 @@ const CHAT_SKELETON: readonly SkeletonTurnShape[] = [
   { prompt: ["82%", "37%"], reply: ["96%", "89%", "84%", "41%"] },
 ];
 
-/** The top-of-transcript placeholder while an older page loads. The transcript's own card shape,
- *  two cards deep: the reader sees the top edge of the incoming page and nothing more, and
- *  `scroll.ts` corrects the reader's drift again AFTER this comes down, so its height is not a
- *  term in that arithmetic. */
+/** The transcript's own card shape, two cards deep: the reader sees the top edge of the incoming
+ *  page and nothing more, and `scroll.ts` corrects the reader's drift again AFTER this comes down,
+ *  so its height is not a term in that arithmetic. */
 const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
   { prompt: ["54%"], reply: ["92%", "61%"] },
   { prompt: ["73%"], reply: ["95%", "87%", "48%"] },

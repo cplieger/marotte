@@ -12,14 +12,14 @@ export function isDeviceKind(kind: ForgeKind): kind is DeviceKind {
   return kind === "github" || kind === "gitlab";
 }
 
-export interface DeviceSignInTarget {
+interface DeviceSignInTarget {
   readonly kind: DeviceKind;
   /** The pane's host field; another host than the public one asks for a client id. */
   readonly hostInput: HTMLInputElement;
   readonly options: () => ConnectionOptions;
 }
 
-export interface OAuthFlowDeps {
+interface OAuthFlowDeps {
   /** The grant completed and connected the account `id`. Called after the grant
    *  is forgotten, so closing the pane cancels nothing on the server. */
   connected: (id: string) => void;

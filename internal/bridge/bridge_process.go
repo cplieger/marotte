@@ -35,6 +35,7 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	// read it lock-free.
 	b.enableHooks = opts.EnableHooks
 	b.secretStorage = opts.SecretStorage
+	b.configurationState = opts.ConfigurationState
 	b.presets = opts.Presets
 	b.toolSearch = opts.ToolSearch
 	b.knowledge = opts.Knowledge
@@ -55,7 +56,7 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 		return err
 	}
 	// A turn may run for hours, a handshake may not. Call has no deadline, so an unanswered initialize or session/new
-	// blocks until the process dies, while the chat answers 409 and singleflight folds callers onto the wedge. Bounded per
+	// blocks until the process dies, while the chat answers 409 and every opener waits on the wedge. Bounded per
 	// phase: a resume replays the whole transcript before the load response.
 	budget, phase := handshakeBudget, "session start"
 	if opts.SessionID != "" {
@@ -94,7 +95,7 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 		// initialize answered, so the log directory is known, exactly when an operator needs it.
 		slog.Warn("bridge handshake failed",
 			"phase", phase,
-			"kas_log_dir", logsafe.Field(b.KASLogDir()),
+			"kas_log_dir", logsafe.Field(b.kasLogDir()),
 			"error", err,
 		)
 		b.Stop()
@@ -106,7 +107,7 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 		"model", b.ModelID(),
 		"work_dir", b.workDir,
 		"acp_session_id", opts.SessionID,
-		"kas_log_dir", logsafe.Field(b.KASLogDir()),
+		"kas_log_dir", logsafe.Field(b.kasLogDir()),
 		// phase keeps a resume's replay time apart from fresh sessions'.
 		"phase", phase,
 		"elapsed_ms", time.Since(handshakeStart).Milliseconds(),
@@ -114,14 +115,13 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	return nil
 }
 
-// bridgeGroupGrace bounds Stop's confirmation that the killed group emptied.
 const bridgeGroupGrace = 2 * time.Second
 
 // bridgeTeardownGrace is how long a SIGTERMed tree gets before SIGKILL: KAS tears sessions down (SessionEnd hooks
 // included) under its own 4 s cap, so one second more. A var for tests.
 var bridgeTeardownGrace = 5 * time.Second
 
-// waitStatus renders cmd.Wait's error for a log line. nil is a clean exit(0), itself the finding for a relay that
+// waitStatus renders cmd.Wait's error for a log line. nil is a clean exit(0), itself the anomaly for a relay that
 // should outlive the session.
 func waitStatus(err error) string {
 	if err == nil {
@@ -130,9 +130,8 @@ func waitStatus(err error) string {
 	return err.Error()
 }
 
-// reapProcess SIGTERMs the tree, escalates to SIGKILL past bridgeTeardownGrace, reaps it and reports what it found;
-// Stop's caller already closed stdin. The group, not the head: on 2.18.0 a head-only kill left kiro-cli-chat and its
-// node child alive at about 250 MB (procgroup.Kill).
+// Stop's caller already closed stdin. The group, not the head: on 2.18.0 a head-only kill left
+// kiro-cli-chat and its node child alive at about 250 MB (procgroup.Kill).
 func (b *Bridge) reapProcess() {
 	sessionID := b.SessionID()
 	// Before the signal empties it (procgroup.GroupOf).
@@ -171,8 +170,8 @@ func (b *Bridge) reapProcess() {
 }
 
 // Stop shuts the subprocess down (reapProcess) and closes NotifCh. Safe to call repeatedly: shutdown, tab close,
-// model switch and load recovery can race, and sync.Once prevents a double close of b.done. NotifCh also closes here
-// when no read loop started, so a consumer of a failed Start still ends.
+// model switch and load recovery can race, and sync.Once prevents a double close of b.done. When no read loop
+// started, Stop runs its exit drain, so a consumer of a failed Start still ends and a pending Call still settles.
 func (b *Bridge) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.done)
@@ -184,7 +183,7 @@ func (b *Bridge) Stop() {
 		}
 		b.readMu.Lock()
 		if !b.notifClaimed {
-			close(b.notifCh)
+			b.drainPendingAndClose()
 		}
 		b.readMu.Unlock()
 	})
@@ -203,9 +202,9 @@ func (b *Bridge) claimNotifClose() bool {
 	return true
 }
 
-// handshakeBudget bounds a session start (initialize, session/new, the config appliers). A backstop, so not a
-// setting; a var for tests. Sized for the first chat after a version change, when KAS unpacks its runtime. MCP
-// initialization runs inside session/prompt. It stays under the client's command timeout.
+// A backstop, so not a setting; a var for tests. Sized for the first chat after a version change,
+// when KAS unpacks its runtime. MCP initialization runs inside session/prompt. It stays under the
+// client's command timeout.
 var handshakeBudget = 120 * time.Second
 
 // replayBudget bounds a resume: KAS streams the whole transcript before the load response, a length nothing here
@@ -370,7 +369,6 @@ func readStderrLine(r *bufio.Reader) (line string, ok bool, err error) {
 	}
 }
 
-// jsonLevelMap maps structured JSON "level" field values to slog levels.
 var jsonLevelMap = map[string]slog.Level{
 	"ERROR":   slog.LevelError,
 	"WARN":    slog.LevelWarn,
@@ -378,13 +376,12 @@ var jsonLevelMap = map[string]slog.Level{
 	"DEBUG":   slog.LevelDebug,
 }
 
-// stderrKeywordRule maps an unstructured keyword to a slog level.
 type stderrKeywordRule struct {
 	Keyword string
 	Level   slog.Level
 }
 
-// stderrKeywordRules maps keywords to levels for unstructured stderr lines; first match wins.
+// First match wins.
 var stderrKeywordRules = []stderrKeywordRule{
 	{"panic", slog.LevelError},
 	{"fatal", slog.LevelError},
@@ -392,7 +389,6 @@ var stderrKeywordRules = []stderrKeywordRule{
 	{"warn", slog.LevelWarn},
 }
 
-// classifyStderrLevel determines the slog level for a kiro-cli stderr line.
 func classifyStderrLevel(line string) slog.Level {
 	// A structured line with a "level" field.
 	if line != "" && line[0] == '{' {

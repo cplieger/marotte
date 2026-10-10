@@ -19,34 +19,29 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// JSONKeyError is the standard JSON error response key.
-const JSONKeyError = "error"
+// jsonKeyError is the standard JSON error response key.
+const jsonKeyError = "error"
 
 // ErrorJSON returns the canonical error response map for JSON encoding.
 // Use with webhttp.WriteJSONStatus to write error responses consistently.
 func ErrorJSON(msg string) map[string]string {
-	return map[string]string{JSONKeyError: msg}
+	return map[string]string{jsonKeyError: msg}
 }
 
 // ErrorJSONWithCode returns an error response map with an additional
 // machine-readable "code" field. Used by forge handlers that surface
 // a stable error code alongside the human-readable message.
 func ErrorJSONWithCode(msg, code string) map[string]string {
-	return map[string]string{JSONKeyError: msg, "code": code}
+	return map[string]string{jsonKeyError: msg, "code": code}
 }
 
 // JSONKeyOutput is the standard JSON response key for successful
 // command output. Used by git/ and server/ packages.
 const JSONKeyOutput = "output"
 
-// JSONKeyName is the standard JSON field name for "name" in ACP wire
-// format. Used in content blocks, command descriptors, and MCP entries.
-const JSONKeyName = "name"
-
 // MIMETypeJSON is the standard MIME type for JSON content.
 const MIMETypeJSON = "application/json"
 
-// msgInternalError is the standard client-facing message for 500 responses.
 const msgInternalError = "internal error"
 
 // WriteRawJSON writes pre-marshalled JSON bytes with the standard

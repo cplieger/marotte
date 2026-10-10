@@ -20,8 +20,6 @@ const (
 	deceptiveOption = "Reject" + rlo + "wollA" + pdf
 )
 
-// assertNeutralizedOnTheWire asserts that the JSON the browser receives carries no direction
-// override, marshalled as the SSE writer does.
 func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 	t.Helper()
 	wire, err := json.Marshal(payload)
@@ -43,7 +41,6 @@ func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 	}
 }
 
-// flatten returns every rune of every string in a decoded JSON value, keys included.
 func flatten(v any) []rune {
 	var out []rune
 	switch t := v.(type) {
@@ -69,7 +66,7 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(9001)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -129,7 +126,7 @@ func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		tr := New(rolesOf(deps))
 		id := int64(1)
-		tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+		tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 			ID: &id,
 			Params: mustJSON(t, map[string]any{
 				"sessionId": "s",
@@ -156,7 +153,7 @@ func TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost(t *testing.T)
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	id := int64(1)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",
@@ -178,7 +175,7 @@ func TestUserInputCard_NeutralizesEveryLabelOnTheWire(t *testing.T) {
 	tr := New(rolesOf(deps))
 	reqID := int64(42)
 
-	tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
+	tr.HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, &reqID, map[string]any{
 		"sessionId": "s",
 		"question":  "Apply " + rlo + "?sehctap 41 lla" + pdf,
 		"options": []map[string]any{{
@@ -216,7 +213,7 @@ func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) 
 	tr := New(rolesOf(deps))
 	reqID := int64(43)
 
-	tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
+	tr.HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, &reqID, map[string]any{
 		"sessionId": "s",
 		"question":  "Pick one",
 		"options": []map[string]any{
@@ -268,7 +265,7 @@ func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(77)
 
-	tr.HandleElicitationCreate(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandleElicitationCreate(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId":  "s",
@@ -291,6 +288,10 @@ func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 		t.Fatal("no elicitation_needed event broadcast")
 	}
 	assertNeutralizedOnTheWire(t, "elicitation_needed", *got)
+	if len(deps.pendingAdds) != 1 || deps.pendingAdds[0] != id || got.RequestID != capturedAskBase+1 {
+		t.Errorf("registered ACP ids %v, broadcast RequestID %d; want [%d] and the registry's ask id %d",
+			deps.pendingAdds, got.RequestID, id, capturedAskBase+1)
+	}
 }
 
 // TestDisplayText_BoundsAnUnboundedUpstreamString pins the cap on upstream text.
@@ -325,7 +326,7 @@ func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(9101)
-	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",

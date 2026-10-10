@@ -6,8 +6,6 @@ import type { TransportSendResult } from "@cplieger/actions";
 import { error as toastError, success as toastSuccess } from "../../toast.js";
 import { send as transportSend } from "../../transport.js";
 
-/** Resets the action framework and wires its notifier and transport to the (mocked) toast.js and
- *  transport.js. */
 export function resetActionFramework(): void {
   resetFramework();
   configure({

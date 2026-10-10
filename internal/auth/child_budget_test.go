@@ -12,7 +12,6 @@ import (
 // fixture under 50ms, Run took 10.001s by default and with Setpgid alone. The assertion is on time because a cap
 // bound to the child returns the right status after the wrong duration.
 const (
-	// budget is the per-handler timeout the fixture configures.
 	budget = 50 * time.Millisecond
 	// childLife is how long the fake CLI lives, two orders of magnitude above the budget.
 	childLife = 10 * time.Second

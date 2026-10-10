@@ -27,9 +27,8 @@ func createReq(t *testing.T, chatID marotte.ChatID, p marotte.CreateChatCommand)
 	return &marotte.ClientCommand{Type: marotte.CmdCreateChat, ChatID: chatID, Payload: payload}
 }
 
-// chatIDOfResponse reads the id out of a create's reply. The reply is what makes
-// server minting workable at all, so a test that only inspected the store would
-// pass with the chat returned to nobody.
+// The reply is what makes server minting workable at all, so a test that only inspected the store
+// would pass with the chat returned to nobody.
 func chatIDOfResponse(t *testing.T, body any) marotte.ChatID {
 	t.Helper()
 	m, ok := body.(map[string]any)
@@ -58,7 +57,7 @@ func TestCmdCreateChat_MintsAndReturns(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
 
-	body, err := CmdCreateChat(t.Context(), newTestMembership(t, host),
+	body, err := cmdCreateChat(t.Context(), newTestMembership(t, host),
 		createReq(t, "", marotte.CreateChatCommand{OpID: "op-1", Name: "Tangent notes", Model: "claude-opus-5"}))
 
 	if statusOf(err) != http.StatusOK {
@@ -89,11 +88,11 @@ func TestCmdCreateChat_RepeatOpReturnsOneChat(t *testing.T) {
 		return createReq(t, "", marotte.CreateChatCommand{OpID: "op-retry"})
 	}
 
-	first, err := CmdCreateChat(t.Context(), ops, req())
+	first, err := cmdCreateChat(t.Context(), ops, req())
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("first attempt: status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
-	second, err := CmdCreateChat(t.Context(), ops, req())
+	second, err := cmdCreateChat(t.Context(), ops, req())
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("retry: status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
@@ -116,7 +115,7 @@ func TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats(t *testing.T) {
 	ops := newTestMembership(t, host)
 
 	for _, op := range []string{"op-attempt-1", "op-attempt-2"} {
-		if _, err := CmdCreateChat(t.Context(), ops,
+		if _, err := cmdCreateChat(t.Context(), ops,
 			createReq(t, "", marotte.CreateChatCommand{OpID: op})); err != nil {
 			t.Fatalf("attempt %s: %v", op, err)
 		}
@@ -138,7 +137,7 @@ func TestCmdCreateChat_NoOpIDMintsEveryTime(t *testing.T) {
 	ops := newTestMembership(t, host)
 
 	for range 2 {
-		if _, err := CmdCreateChat(t.Context(), ops,
+		if _, err := cmdCreateChat(t.Context(), ops,
 			createReq(t, "", marotte.CreateChatCommand{})); err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -155,7 +154,7 @@ func TestCmdCreateChat_AcceptsAnExplicitID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
 
-	body, err := CmdCreateChat(t.Context(), newTestMembership(t, host),
+	body, err := cmdCreateChat(t.Context(), newTestMembership(t, host),
 		createReq(t, "c-chosen", marotte.CreateChatCommand{}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -184,7 +183,7 @@ func TestCmdCreateChat_Refusals(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			host := newTestHost(t, store)
 
-			_, err := CmdCreateChat(t.Context(), newTestMembership(t, host), createReq(t, "", tc.payload))
+			_, err := cmdCreateChat(t.Context(), newTestMembership(t, host), createReq(t, "", tc.payload))
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400 for %s", statusOf(err), tc.desc)

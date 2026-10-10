@@ -16,10 +16,10 @@ func TestNew_GeneratesKeys(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, "mailto:test@example.com")
 
-	if s.PublicKey() == "" {
+	if s.publicKey() == "" {
 		t.Fatal("public key is empty")
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(s.PublicKey())
+	raw, err := base64.RawURLEncoding.DecodeString(s.publicKey())
 	if err != nil {
 		t.Fatalf("decode public key: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestSubscribeUnsubscribe(t *testing.T) {
 		t.Error("expected subscribers after subscribe")
 	}
 
-	s.Unsubscribe("https://push.example.com/1")
+	s.unsubscribe("https://push.example.com/1")
 	if s.HasSubscribers() {
 		t.Error("expected no subscribers after unsubscribe")
 	}
@@ -177,7 +177,7 @@ func TestService_WantsNeedsKindEnabledAndASubscription(t *testing.T) {
 		defer s.Close()
 		s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindPRStatus: true})
 		s.Subscribe(sub)
-		s.Unsubscribe(sub.Endpoint)
+		s.unsubscribe(sub.Endpoint)
 		if s.Wants(marotte.PushKindPRStatus) {
 			t.Error("Wants(pr_status) after the last subscription left = true, want false")
 		}

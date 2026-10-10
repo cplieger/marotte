@@ -80,8 +80,7 @@ func decodeBigInt(b []byte) *big.Int {
 	return new(big.Int).SetBytes(b)
 }
 
-// TestVAPIDHeader_ExpWithin12h pins the 12h window so a future tweak
-// back toward RFC's 24h ceiling doesn't slip past review.
+// TestVAPIDHeader_ExpWithin12h pins exp inside the 12h window, below RFC 8292's 24h ceiling.
 func TestVAPIDHeader_ExpWithin12h(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, testSubject)

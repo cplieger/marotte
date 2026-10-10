@@ -208,8 +208,8 @@ func TestUpdate_SizeCapIsInclusive(t *testing.T) {
 		size    int
 		wantErr bool
 	}{
-		{name: "at_the_cap", size: MaxBytes},
-		{name: "one_past_the_cap", size: MaxBytes + 1, wantErr: true},
+		{name: "at_the_cap", size: maxBytes},
+		{name: "one_past_the_cap", size: maxBytes + 1, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

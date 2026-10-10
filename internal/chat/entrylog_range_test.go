@@ -18,26 +18,26 @@ func TestEntryLog_TurnRangeTakesAnInclusiveLowerBound(t *testing.T) {
 	f.append(turn, "", "say-2", marotte.EntryKindText, marotte.EntryText{Text: "two"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	whole, err := f.log.TurnRange(turn, 0)
+	whole, err := turnRange(f.log, turn, 0)
 	if err != nil {
 		t.Fatalf("Setup: TurnRange(%q, 0): %v", turn, err)
 	}
 	wantShapes(t, whole, []string{"0:/turn_open", "1:/text", "2:/text", "3:/turn_close"},
 		"TurnRange(turn, 0)")
 
-	tail, err := f.log.TurnRange(turn, 2)
+	tail, err := turnRange(f.log, turn, 2)
 	if err != nil {
 		t.Fatalf("TurnRange(%q, 2): %v", turn, err)
 	}
 	wantShapes(t, tail, []string{"2:/text", "3:/turn_close"}, "TurnRange(turn, 2)")
 
-	last, err := f.log.TurnRange(turn, 3)
+	last, err := turnRange(f.log, turn, 3)
 	if err != nil {
 		t.Fatalf("TurnRange(%q, 3): %v", turn, err)
 	}
 	wantShapes(t, last, []string{"3:/turn_close"}, "TurnRange(turn, 3) — the bound's own entry")
 
-	past, err := f.log.TurnRange(turn, 4)
+	past, err := turnRange(f.log, turn, 4)
 	if err != nil {
 		t.Fatalf("TurnRange(%q, 4): %v", turn, err)
 	}
@@ -53,7 +53,7 @@ func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 	turn := f.prompt("hello")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "one"})
 
-	newest, ok := f.log.NewestSeq(turn)
+	newest, ok := f.log.newestSeq(turn)
 	if !ok || newest != 1 {
 		t.Fatalf("Setup: NewestSeq(%q) = %d, %v; want 1, true", turn, newest, ok)
 	}
@@ -86,11 +86,10 @@ func TestEntryLog_TurnPageStampsThePageRatherThanTheLog(t *testing.T) {
 	}
 }
 
-// turnRangePage is the range route's body: the three keys a client reads.
+// turnRangePage is the range route's body: the keys these tests read.
 type turnRangePage struct {
-	Entries     []marotte.Entry        `json:"entries"`
-	OpenEntries []marotte.OpenEntry    `json:"open_entries"`
-	Subject     []marotte.SubjectStamp `json:"subject"`
+	Entries []marotte.Entry        `json:"entries"`
+	Subject []marotte.SubjectStamp `json:"subject"`
 }
 
 func decodeTurnRange(t *testing.T, rec *httptest.ResponseRecorder) turnRangePage {
@@ -114,7 +113,7 @@ func getTurnRangeQuery(t *testing.T, s *Store, id marotte.ChatID, turn, query st
 	}
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
+	newRouter(s).handleOne(rec, req)
 	return rec
 }
 

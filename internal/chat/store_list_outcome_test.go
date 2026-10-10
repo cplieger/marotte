@@ -35,7 +35,7 @@ func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
-	NewRouter(s).handleList(rec, req)
+	newRouter(s).handleList(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}

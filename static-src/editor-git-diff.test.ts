@@ -59,6 +59,7 @@ vi.mock("./dom.js", () => ({
 // asserts about the click is which DIRECTION it took.
 vi.mock("./editor-openers.js", () => ({
   fetchGitDiffSources: vi.fn(),
+  startGitDiffLoad: vi.fn(),
   openFileGitDiff: vi.fn(),
   // Present-but-inert for the same real-ESM-linking reason as dom.js above.
   openFile: vi.fn(),
@@ -73,7 +74,7 @@ vi.mock("./web-open.js", () => ({ openWebPreview: vi.fn() }));
 const { initEditor } = await import("./editor-core.js");
 const { renderDiffModeUI } = await import("./editor-diff.js");
 const { openFileGitDiff } = await import("./editor-openers.js");
-const { fileStates, freshState, setActiveFilePath, gitDiffSource, unsavedDiffSource } =
+const { fileStates, freshState, setActiveFilePath, gitDiffSource, bufferDiffSource } =
   await import("./editor-types.js");
 const { _setReposForTest, refreshGitStatus } = await import("./git-status-store.js");
 const { setWorkspaceRoot, _resetForTest: resetWorkspace } = await import("./workspace.js");
@@ -93,7 +94,6 @@ function repos(entries: Record<string, string>): GitRepoStatus[] {
       repo: ".",
       is_repo: true,
       branch: "main",
-      remote: "origin",
       ahead: 0,
       behind: 0,
       has_dirty: Object.keys(entries).length > 0,
@@ -116,6 +116,14 @@ function stage(
 ): ReturnType<typeof freshState> {
   const state = freshState(path);
   state.loaded = true;
+  state.facts.value = {
+    kind: "small",
+    binary: false,
+    utf8: true,
+    conflict: false,
+    readOnly: false,
+    size: 1,
+  };
   state.error.value = opts.error ?? "";
   if (opts.mode !== undefined) {
     state.mode.value = opts.mode;
@@ -127,6 +135,11 @@ function stage(
 
 function shown(): boolean {
   return !$.editorGitDiffBtn.classList.contains("hidden");
+}
+
+/** A git diff against HEAD as its load leaves it. */
+function settledGitDiff(): ReturnType<typeof gitDiffSource> {
+  return { ...gitDiffSource("HEAD"), oldText: "old", newText: "new", pending: false };
 }
 
 let wired = false;
@@ -199,12 +212,12 @@ describe("when the control is offered", () => {
     // The case the extension test is the ONLY guard for, and it is reachable:
     // the file browser's status letter calls openFileGitDiff on whatever it is
     // sitting on, a .png included, so between that click and the load resolving
-    // the file is in a fromGit diff with no error yet. Image mode covers the
+    // the file is in a git diff with no error yet. Image mode covers the
     // ordinary route and the error state covers a settled binary; neither
     // reaches this window.
     expect.assertions(1);
     _setReposForTest(repos({ "logo.png": "M" }));
-    stage(IMAGE, { mode: { kind: "diff", diffSource: gitDiffSource("HEAD", "", "") } });
+    stage(IMAGE, { mode: { kind: "diff", diffSource: gitDiffSource("HEAD") } });
     expect(shown()).toBe(false);
   });
 
@@ -235,14 +248,13 @@ describe("when the control is offered", () => {
     _setReposForTest(repos({ "hello.ts": "M" }));
     const state = stage(PATH);
     expect(shown()).toBe(true);
-    state.mode.value = { kind: "edit", editing: true };
+    state.mode.value = { kind: "text", editing: true };
     expect(shown()).toBe(false);
   });
 
   it("stays hidden in the error state, which is also what covers a binary", () => {
-    // Verified rather than assumed: /api/file answers 415 for a binary, apiGet
-    // collapses every non-2xx to null, and loadFile's null branch sets the
-    // error — so a git-dirty .zip lands here and needs no clause of its own.
+    // A load failure sets the error; a binary file opens the binary view, which the mode clause
+    // already hides it from.
     expect.assertions(1);
     _setReposForTest(repos({ "hello.ts": "M" }));
     stage(PATH, { error: "Failed to load file" });
@@ -276,7 +288,7 @@ describe("the two triggers", () => {
     // commit landing underneath them must not withdraw it.
     expect.assertions(2);
     _setReposForTest(repos({ "hello.ts": "M" }));
-    stage(PATH, { mode: { kind: "diff", diffSource: gitDiffSource("HEAD", "old", "new") } });
+    stage(PATH, { mode: { kind: "diff", diffSource: settledGitDiff() } });
     expect(shown()).toBe(true);
     _setReposForTest(repos({}));
     expect(shown()).toBe(true);
@@ -329,7 +341,7 @@ describe("the toggle's two states", () => {
     // The MODE signal of the already-active file, not a re-stage: re-staging the
     // same path leaves the active-path signal unmoved, so the effect would not
     // re-run and every assertion below would read the resting state.
-    state.mode.value = { kind: "diff", diffSource: gitDiffSource("HEAD", "old", "new") };
+    state.mode.value = { kind: "diff", diffSource: settledGitDiff() };
     expect($.editorGitDiffBtn.getAttribute("aria-label")).toBe(restingName);
     expect($.editorGitDiffBtn.getAttribute("aria-pressed")).toBe("true");
     expect($.editorGitDiffBtn.getAttribute("data-tooltip")).not.toBe(restingTip);
@@ -343,10 +355,10 @@ describe("the toggle's two states", () => {
     $.editorGitDiffBtn.click();
     expect(vi.mocked(openFileGitDiff)).toHaveBeenCalledWith(PATH, "HEAD");
 
-    state.mode.value = { kind: "diff", diffSource: gitDiffSource("HEAD", "old", "new") };
+    state.mode.value = { kind: "diff", diffSource: settledGitDiff() };
     $.editorGitDiffBtn.click();
     // The same exit `toggleDiffMode` takes, so the two cannot diverge.
-    expect(state.mode.value.kind).toBe("edit");
+    expect(state.mode.value.kind).toBe("text");
     expect(vi.mocked(openFileGitDiff)).toHaveBeenCalledTimes(1);
   });
 });
@@ -354,13 +366,13 @@ describe("the toggle's two states", () => {
 describe("which button exits which diff", () => {
   it("hides #editor-diff-btn for a git diff, so there is one way out", () => {
     // Both visible would make "enter with B, exit with A" spellable. The add is
-    // not redundant: renderEditModeUI un-hides that button whenever the buffer
+    // not redundant: renderTextModeUI un-hides that button whenever the buffer
     // is dirty, so a dirty file entering a git diff arrives with it visible.
     expect.assertions(2);
     _setReposForTest(repos({ "hello.ts": "M" }));
     const state = stage(PATH);
     $.editorDiffBtn.classList.remove("hidden");
-    state.mode.value = { kind: "diff", diffSource: gitDiffSource("HEAD", "old", "new") };
+    state.mode.value = { kind: "diff", diffSource: settledGitDiff() };
     renderDiffModeUI(state);
     expect($.editorDiffBtn.classList.contains("hidden")).toBe(true);
     expect(shown()).toBe(true);
@@ -371,7 +383,7 @@ describe("which button exits which diff", () => {
     _setReposForTest(repos({}));
     const state = stage(PATH);
     $.editorDiffBtn.classList.add("hidden");
-    state.mode.value = { kind: "diff", diffSource: unsavedDiffSource("saved", "unsaved") };
+    state.mode.value = { kind: "diff", diffSource: bufferDiffSource() };
     renderDiffModeUI(state);
     expect($.editorDiffBtn.classList.contains("hidden")).toBe(false);
     // A buffer-vs-saved diff is not a git diff, so the git control has no part
@@ -383,14 +395,23 @@ describe("which button exits which diff", () => {
 // Editing needs the file's own text, so `loaded` decides. Both diffs staged above
 // arrive with a buffer; a card's `+N -M` pair arrives without one, and the read
 // that fetches it can fail for a file the agent has since deleted. An enabled Edit
-// there opens an empty box over real content, and `loadedHash` is empty too, so a
+// there opens an empty box over real content, and the buffer has no identity either, so a
 // save would write the emptiness rather than being refused.
+/** A tool card's `+N -M` pair, as `openFileDiff` routes it. */
+const cardPair = {
+  kind: "pair",
+  oldText: "before",
+  newText: "after",
+  oldLabel: "before",
+  newLabel: "after",
+} as const;
+
 describe("the Edit button in a diff", () => {
   it("offers Edit when the buffer is loaded", () => {
     expect.assertions(2);
     _setReposForTest(repos({}));
     const state = stage(PATH);
-    state.mode.value = { kind: "diff", diffSource: unsavedDiffSource("before", "after") };
+    state.mode.value = { kind: "diff", diffSource: cardPair };
     renderDiffModeUI(state);
     expect($.editorEditBtn.classList.contains("hidden")).toBe(false);
     expect($.editorEditBtn.disabled).toBe(false);
@@ -401,7 +422,7 @@ describe("the Edit button in a diff", () => {
     _setReposForTest(repos({}));
     const state = stage(PATH);
     state.loaded = false;
-    state.mode.value = { kind: "diff", diffSource: unsavedDiffSource("before", "after") };
+    state.mode.value = { kind: "diff", diffSource: cardPair };
     renderDiffModeUI(state);
     expect($.editorEditBtn.classList.contains("hidden")).toBe(true);
     expect($.editorEditBtn.disabled).toBe(true);

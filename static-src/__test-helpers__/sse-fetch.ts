@@ -1,19 +1,14 @@
 // A scripted `fetch`: each `/api/events` GET is a stream the test writes frames into, every other
 // request goes to an installed handler. Install with `vi.stubGlobal("fetch", scripted.fetch)`.
 
-/** One open `/api/events` connection, driven frame by frame. */
 interface SSEConnection {
   readonly url: string;
   readonly headers: Headers;
-  /** Write the hello that opens the stream. Defaults spell a fresh hello at offset 0. */
   hello(over?: Partial<HelloFields>): void;
   /** Write one application frame: the envelope as JSON, unnamed, with an optional id. */
   frame(envelope: unknown, id?: string): void;
-  /** Write one named frame verbatim (the keepalive, a reset). */
   named(event: string, data: string): void;
-  /** End the body, as a server dropping the connection would. */
   close(): void;
-  /** Whether the client aborted this request. */
   aborted(): boolean;
 }
 
@@ -28,7 +23,6 @@ interface HelloFields {
   keepalive_event: string;
 }
 
-/** One request the scripted fetch answered from a handler. */
 interface ScriptedRequest {
   readonly url: string;
   readonly method: string;
@@ -41,9 +35,7 @@ type Responder = (req: ScriptedRequest) => Response | Promise<Response>;
 
 export interface ScriptedFetch {
   readonly fetch: typeof fetch;
-  /** Every `/api/events` connection, oldest first. */
   readonly connections: SSEConnection[];
-  /** Every non-stream request, oldest first. */
   readonly requests: ScriptedRequest[];
   /** Answer requests whose URL starts with `prefix`. Later installs win. */
   respond(prefix: string, responder: Responder): void;
@@ -84,7 +76,6 @@ async function requestBody(
   return null;
 }
 
-/** A JSON 200 for a responder. */
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,

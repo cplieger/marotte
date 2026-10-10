@@ -19,7 +19,7 @@ import (
 func fieldsOf(t *testing.T, err error) []string {
 	t.Helper()
 	seen := map[string]struct{}{}
-	for _, fe := range FieldErrors(err) {
+	for _, fe := range fieldErrors(err) {
 		seen[fe.Field] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))
@@ -47,7 +47,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Transport: TransportHTTP,
 				Name:      "1bad name",
 				URL:       "ftp://example.test/mcp",
-				Headers:   []KeyPair{{Name: "bad header", Value: "x"}},
+				Headers:   []keyPair{{Name: "bad header", Value: "x"}},
 			},
 			wantFields: []string{"headers", "name", "url"},
 			wantMsgs: []string{
@@ -65,7 +65,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Name:      "ok",
 				Command:   "bash",
 				URL:       "https://leaked.example/mcp",
-				Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer t"}},
+				Headers:   []keyPair{{Name: "Authorization", Value: "Bearer t"}},
 			},
 			wantFields: []string{"headers", "url"},
 			wantMsgs: []string{
@@ -84,7 +84,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				URL:       "https://x.example/mcp",
 				Command:   "npx",
 				Args:      []string{"-y", "server"},
-				Env:       []KeyPair{{Name: "TOKEN", Value: "t"}},
+				Env:       []keyPair{{Name: "TOKEN", Value: "t"}},
 			},
 			wantFields: []string{"args", "command", "env"},
 			wantMsgs: []string{
@@ -117,7 +117,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Transport: TransportHTTP,
 				Name:      "ok",
 				URL:       "https://example.test/mcp",
-				Headers: []KeyPair{
+				Headers: []keyPair{
 					{Name: "Authorization", Value: "a"},
 					{Name: "authorization", Value: "b"},
 					{Name: "X-Other", Value: "c\x00d"},
@@ -146,7 +146,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(tc.srv)
+			err := validate(tc.srv)
 			if err == nil {
 				t.Fatal("Validate accepted a record with several bad fields")
 			}
@@ -199,7 +199,7 @@ func TestValidate_TransportChainShortCircuits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(tc.srv)
+			err := validate(tc.srv)
 			if err == nil {
 				t.Fatal("Validate accepted an unusable transport")
 			}
@@ -218,7 +218,7 @@ func TestValidate_TransportChainShortCircuits(t *testing.T) {
 // not there.
 func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 	t.Run("MissingCommandIsTheOnlyCommandError", func(t *testing.T) {
-		err := Validate(&Server{Name: "ok", Transport: TransportStdio, Command: "   "})
+		err := validate(&Server{Name: "ok", Transport: TransportStdio, Command: "   "})
 		if err == nil {
 			t.Fatal("Validate accepted an empty stdio command")
 		}
@@ -230,7 +230,7 @@ func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 		}
 	})
 	t.Run("UnparseableURLIsTheOnlyURLError", func(t *testing.T) {
-		err := Validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "not a url"})
+		err := validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "not a url"})
 		if err == nil {
 			t.Fatal("Validate accepted an unparseable url")
 		}
@@ -239,7 +239,7 @@ func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 		}
 	})
 	t.Run("ControlCharInURLIsNotReportedAsSyntax", func(t *testing.T) {
-		err := Validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "https://ex\x01.test/"})
+		err := validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "https://ex\x01.test/"})
 		if err == nil {
 			t.Fatal("Validate accepted a control character in a url")
 		}
@@ -258,13 +258,13 @@ func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 func TestValidate_SentinelsSurviveTheJoin(t *testing.T) {
 	var errs fieldErrs
 	errs.addf("name", "something about the name")
-	errs.merge(ErrNameConflict)
+	errs.merge(errNameConflict)
 	joined := errs.join()
-	if !errors.Is(joined, ErrNameConflict) {
+	if !errors.Is(joined, errNameConflict) {
 		t.Error("errors.Is cannot reach a sentinel through errors.Join")
 	}
-	if len(FieldErrors(joined)) != 1 {
-		t.Errorf("FieldErrors found %d entries in a join holding one", len(FieldErrors(joined)))
+	if len(fieldErrors(joined)) != 1 {
+		t.Errorf("FieldErrors found %d entries in a join holding one", len(fieldErrors(joined)))
 	}
 }
 
@@ -273,7 +273,7 @@ func TestValidate_SentinelsSurviveTheJoin(t *testing.T) {
 // so the walk has to descend through fmt.Errorf's single-error unwrap as well as
 // through the join.
 func TestFieldErrors_WalksAWrappedJoin(t *testing.T) {
-	inner := Validate(&Server{
+	inner := validate(&Server{
 		Transport: TransportHTTP, Name: "1bad", URL: "ftp://x.test/",
 	})
 	if inner == nil {
@@ -300,13 +300,13 @@ func TestFieldErrors_Bounded(t *testing.T) {
 		for range 400 {
 			tools = append(tools, "bad\x01name")
 		}
-		env := make([]KeyPair, 0, 64)
+		env := make([]keyPair, 0, 64)
 		for range 64 {
-			env = append(env, KeyPair{Name: "bad name", Value: "x"})
+			env = append(env, keyPair{Name: "bad name", Value: "x"})
 		}
 		// Two sub-validators, so more failures arrive at the outer accumulator
 		// than one of them can hand it.
-		err := Validate(&Server{
+		err := validate(&Server{
 			Name: "ok", Transport: TransportStdio, Command: "bash",
 			DisabledTools: tools, Env: env,
 		})
@@ -320,19 +320,19 @@ func TestFieldErrors_Bounded(t *testing.T) {
 		if n := len(joined.Unwrap()); n != maxFieldErrors {
 			t.Errorf("Validate accumulated %d failures, want exactly the %d cap", n, maxFieldErrors)
 		}
-		if n := len(FieldErrors(err)); n != maxFieldErrors {
+		if n := len(fieldErrors(err)); n != maxFieldErrors {
 			t.Errorf("FieldErrors returned %d entries, want exactly the %d cap", n, maxFieldErrors)
 		}
 	})
 
 	t.Run("flattening_an_oversized_tree", func(t *testing.T) {
-		// FieldErrors is exported and walks whatever it is handed, so its own
+		// fieldErrors is exported and walks whatever it is handed, so its own
 		// bound has to hold for a tree larger than any this package builds.
 		leaves := make([]error, 0, maxFieldErrors*2)
 		for i := range maxFieldErrors * 2 {
-			leaves = append(leaves, &FieldError{Field: "name", Msg: fmt.Sprintf("bad %d", i)})
+			leaves = append(leaves, &fieldError{Field: "name", Msg: fmt.Sprintf("bad %d", i)})
 		}
-		if n := len(FieldErrors(errors.Join(leaves...))); n != maxFieldErrors {
+		if n := len(fieldErrors(errors.Join(leaves...))); n != maxFieldErrors {
 			t.Errorf("FieldErrors of a %d-leaf tree returned %d entries, want exactly the %d cap",
 				len(leaves), n, maxFieldErrors)
 		}
@@ -346,11 +346,11 @@ func TestValidate_CleanRecordsStayClean(t *testing.T) {
 	cases := []*Server{
 		{
 			Name: "ok", Transport: TransportStdio, Command: "bash", Args: []string{"-c", "echo"},
-			Env: []KeyPair{{Name: "FOO", Value: "bar"}},
+			Env: []keyPair{{Name: "FOO", Value: "bar"}},
 		},
 		{
 			Name: "ok", Transport: TransportHTTP, URL: "https://x.test/mcp",
-			Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
+			Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 		},
 		{Name: "ok", Transport: TransportSSE, URL: "http://x.test/sse"},
 		{
@@ -359,8 +359,8 @@ func TestValidate_CleanRecordsStayClean(t *testing.T) {
 		},
 	}
 	for _, srv := range cases {
-		t.Run(string(srv.Transport)+"/"+srv.Name, func(t *testing.T) {
-			if err := Validate(srv); err != nil {
+		t.Run(string(srv.Transport)+"_"+srv.Name, func(t *testing.T) {
+			if err := validate(srv); err != nil {
 				t.Errorf("Validate rejected a clean record: %v", err)
 			}
 		})

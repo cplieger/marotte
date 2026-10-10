@@ -10,11 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// v3PolicyChanged mirrors _kiro/policy/changed.
 type v3PolicyChanged struct {
-	SessionID string                    `json:"sessionId"`
-	Status    string                    `json:"status"`
-	Errors    []marotte.PolicyErrorItem `json:"errors"`
+	Status string                    `json:"status"`
+	Errors []marotte.PolicyErrorItem `json:"errors"`
 }
 
 // HandlePolicyChanged translates _kiro/policy/changed → the
@@ -33,8 +31,7 @@ func (t *Translator) HandlePolicyChanged(ctx context.Context, _ marotte.ChatID, 
 
 // v3PolicyError mirrors _kiro/policy/error.
 type v3PolicyError struct {
-	SessionID string                    `json:"sessionId"`
-	Errors    []marotte.PolicyErrorItem `json:"errors"`
+	Errors []marotte.PolicyErrorItem `json:"errors"`
 }
 
 // HandlePolicyError translates _kiro/policy/error → the policy_error SSE, which

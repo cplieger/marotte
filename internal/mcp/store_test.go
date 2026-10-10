@@ -15,10 +15,16 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
+// withKASConfigPath renders KAS's config file at path: the default resolves under $HOME, so a
+// store built without it writes the developer's own ~/.kiro/settings/mcp.json.
+func withKASConfigPath(path string) Option {
+	return func(s *Store) { s.kasPath = path }
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -32,7 +38,7 @@ func TestCreate_ValidStdio(t *testing.T) {
 		Name:      "github",
 		Command:   "npx",
 		Args:      []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:       []KeyPair{{Name: "GITHUB_TOKEN", Value: "ghp_abc"}},
+		Env:       []keyPair{{Name: "GITHUB_TOKEN", Value: "ghp_abc"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -45,11 +51,11 @@ func TestCreate_ValidStdio(t *testing.T) {
 		t.Error("expected timestamps")
 	}
 	// List returns masked.
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("List len = %d", len(list))
 	}
-	if list[0].Env[0].Value != SecretMask {
+	if list[0].Env[0].Value != secretMask {
 		t.Errorf("secret not masked: %q", list[0].Env[0].Value)
 	}
 }
@@ -69,10 +75,10 @@ func TestCreate_NameConflict(t *testing.T) {
 	_, err = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "FOO", Command: "zsh", Enabled: true,
 	})
-	if !errors.Is(err, ErrNameConflict) {
+	if !errors.Is(err, errNameConflict) {
 		t.Errorf("expected ErrNameConflict, got %v", err)
 	}
-	if got := len(s.List(t.Context())); got != 1 {
+	if got := len(s.list(t.Context())); got != 1 {
 		t.Errorf("stored servers = %d, want 1 (the conflict must not append)", got)
 	}
 }
@@ -86,7 +92,7 @@ func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
 		return &Server{
 			Transport: TransportStdio, Name: "github", Command: "npx",
 			Args:    []string{"-y", "@modelcontextprotocol/server-github"},
-			Env:     []KeyPair{{Name: "TOKEN", Value: "<YOUR_TOKEN>"}},
+			Env:     []keyPair{{Name: "TOKEN", Value: "<YOUR_TOKEN>"}},
 			Enabled: true,
 		}
 	}
@@ -95,10 +101,10 @@ func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
 		t.Fatalf("first create: %v", err)
 	}
 	// The user replaces the placeholder with the real key.
-	if _, err := s.Update(t.Context(), first.ID, &Server{
+	if _, err := s.update(t.Context(), first.ID, &Server{
 		Transport: TransportStdio, Name: "github", Command: "npx",
 		Args:    []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:     []KeyPair{{Name: "TOKEN", Value: "ghp_real"}},
+		Env:     []keyPair{{Name: "TOKEN", Value: "ghp_real"}},
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("fill token: %v", err)
@@ -111,7 +117,7 @@ func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
 	if again.ID != first.ID {
 		t.Errorf("reinstall returned a new record: %q vs %q", again.ID, first.ID)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("stored = %d, want 1 (no duplicate)", len(raw))
 	}
@@ -131,7 +137,7 @@ func TestCreate_IdenticalSpecKeepsUserPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.SetEnabled(t.Context(), created.ID, false); err != nil {
+	if _, err := s.setEnabled(t.Context(), created.ID, false); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 
@@ -141,7 +147,7 @@ func TestCreate_IdenticalSpecKeepsUserPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("reinstall: %v", err)
 	}
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("stored = %d", len(list))
 	}
@@ -157,20 +163,20 @@ func TestUpdate_PreservesSecretsWithMask(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []KeyPair{{Name: "TOKEN", Value: "real-secret"}},
+		Env:     []keyPair{{Name: "TOKEN", Value: "real-secret"}},
 		Enabled: true,
 	})
 
 	// PUT with the mask as the value — should preserve the stored secret.
-	_, err := s.Update(t.Context(), orig.ID, &Server{
+	_, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []KeyPair{{Name: "TOKEN", Value: SecretMask}},
+		Env:     []keyPair{{Name: "TOKEN", Value: secretMask}},
 		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("expected 1 enabled, got %d", len(raw))
 	}
@@ -183,18 +189,18 @@ func TestUpdate_ReplacesSecretWithNewValue(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []KeyPair{{Name: "TOKEN", Value: "old-secret"}},
+		Env:     []keyPair{{Name: "TOKEN", Value: "old-secret"}},
 		Enabled: true,
 	})
-	_, err := s.Update(t.Context(), orig.ID, &Server{
+	_, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []KeyPair{{Name: "TOKEN", Value: "new-secret"}},
+		Env:     []keyPair{{Name: "TOKEN", Value: "new-secret"}},
 		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if raw[0].Env[0].Value != "new-secret" {
 		t.Errorf("secret not replaced; got %q", raw[0].Env[0].Value)
 	}
@@ -205,19 +211,19 @@ func TestSetEnabled_TogglesAndPersists(t *testing.T) {
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash", Enabled: true,
 	})
-	got, err := s.SetEnabled(t.Context(), orig.ID, false)
+	got, err := s.setEnabled(t.Context(), orig.ID, false)
 	if err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 	if got.Enabled {
 		t.Error("expected disabled")
 	}
-	if len(s.EnabledRaw(t.Context())) != 0 {
+	if len(s.enabledRaw(t.Context())) != 0 {
 		t.Error("disabled server leaked into EnabledRaw")
 	}
 	// Second set to same value is a true no-op: the idempotent branch
 	// returns early before persist or timestamp updates.
-	_, err = s.SetEnabled(t.Context(), orig.ID, false)
+	_, err = s.setEnabled(t.Context(), orig.ID, false)
 	if err != nil {
 		t.Errorf("idempotent set: %v", err)
 	}
@@ -228,14 +234,14 @@ func TestDelete_RemovesAndIsIdempotent(t *testing.T) {
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
-	if err := s.Delete(t.Context(), orig.ID); err != nil {
+	if err := s.delete(t.Context(), orig.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if len(s.List(t.Context())) != 0 {
+	if len(s.list(t.Context())) != 0 {
 		t.Error("server not removed")
 	}
 	// Second delete is a no-op.
-	if err := s.Delete(t.Context(), orig.ID); err != nil {
+	if err := s.delete(t.Context(), orig.ID); err != nil {
 		t.Errorf("idempotent delete: %v", err)
 	}
 }
@@ -257,7 +263,7 @@ func TestPersist_FileIs0600(t *testing.T) {
 func TestOnChangeFires(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -279,20 +285,20 @@ func TestLoad_ReadsExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 || list[0].Name != "x" {
 		t.Fatalf("unexpected list: %#v", list)
 	}
 	// Secret is masked.
-	if list[0].Env[0].Value != SecretMask {
+	if list[0].Env[0].Value != secretMask {
 		t.Error("env not masked on load")
 	}
 	// Raw value is preserved on disk.
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if raw[0].Env[0].Value != "v" {
 		t.Errorf("raw value lost; got %q", raw[0].Env[0].Value)
 	}
@@ -305,11 +311,11 @@ func TestLoad_CorruptFileStartsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
-	if len(s.List(t.Context())) != 0 {
+	if len(s.list(t.Context())) != 0 {
 		t.Error("corrupt file should load empty")
 	}
 }
@@ -327,7 +333,7 @@ func TestParseTransport(t *testing.T) {
 		{"sse", TransportSSE},
 	}
 	for _, tc := range ok {
-		got, err := ParseTransport(tc.in)
+		got, err := parseTransport(tc.in)
 		if err != nil {
 			t.Errorf("ParseTransport(%q) unexpected error: %v", tc.in, err)
 		}
@@ -336,7 +342,7 @@ func TestParseTransport(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"", "SSE", "grpc", "websocket", "streamable-http"} {
-		if _, err := ParseTransport(bad); err == nil {
+		if _, err := parseTransport(bad); err == nil {
 			t.Errorf("ParseTransport(%q) = nil error, want unknown-transport error", bad)
 		}
 	}
@@ -347,7 +353,7 @@ func TestParseTransport(t *testing.T) {
 // backward-compat guarantee that adding sse doesn't rewrite stored entries.
 func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -358,11 +364,11 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 		t.Fatalf("Create sse: %v", err)
 	}
 	// Reload from the same directory: the transport must stay "sse".
-	reloaded, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	reloaded, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("reload New: %v", err)
 	}
-	list := reloaded.List(t.Context())
+	list := reloaded.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("reloaded list len = %d, want 1", len(list))
 	}
@@ -382,7 +388,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 		Transport: TransportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
-		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer real-token"}},
+		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer real-token"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -390,25 +396,25 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}
 
 	// Read is masked.
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
-	if got.Headers[0].Value != SecretMask {
+	if got.Headers[0].Value != secretMask {
 		t.Errorf("header secret not masked on read: %q", got.Headers[0].Value)
 	}
 
 	// Update resubmitting the mask preserves the stored secret.
-	if _, err := s.Update(t.Context(), orig.ID, &Server{
+	if _, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
-		Headers:   []KeyPair{{Name: "Authorization", Value: SecretMask}},
+		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
 		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("EnabledRaw len = %d, want 1", len(raw))
 	}
@@ -450,7 +456,6 @@ func TestCreate_IDNotNameCollides(t *testing.T) {
 	}
 }
 
-// waitForCounter polls an atomic counter up to 2s for the target value.
 func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -468,7 +473,7 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { firstCalls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, func(context.Context) { firstCalls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -502,7 +507,7 @@ func TestSetOnChange_NilIsNoop(t *testing.T) {
 	// blocked, so a spawned callback has necessarily run by then.
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+		s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -536,7 +541,7 @@ func TestCreate_PersistsDisabledTools(t *testing.T) {
 	if len(got.DisabledTools) != 1 || got.DisabledTools[0] != "delete_repo" {
 		t.Errorf("Create dropped DisabledTools: got %+v, want [delete_repo]", got.DisabledTools)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("EnabledRaw len = %d, want 1", len(raw))
 	}
@@ -553,7 +558,7 @@ func TestUpdate_PersistsDisabledTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.Update(t.Context(), orig.ID, &Server{
+	if _, err := s.update(t.Context(), orig.ID, &Server{
 		Transport:     TransportStdio,
 		Name:          "gh",
 		Command:       "npx",
@@ -562,7 +567,7 @@ func TestUpdate_PersistsDisabledTools(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw[0].DisabledTools) != 2 {
 		t.Errorf("Update dropped DisabledTools: got %+v", raw[0].DisabledTools)
 	}
@@ -575,13 +580,13 @@ func TestUpdate_ReplacesWaitForReadyAndTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.Update(t.Context(), orig.ID, &Server{
+	if _, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
 		WaitForReady: true, TimeoutMS: 90_000,
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil || !got.WaitForReady || got.TimeoutMS != 90_000 {
 		t.Errorf("after Update, record = %+v, want wait_for_ready true and timeout_ms 90000", got)
 	}
@@ -589,10 +594,10 @@ func TestUpdate_ReplacesWaitForReadyAndTimeout(t *testing.T) {
 
 func TestUpdate_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Update(t.Context(), "does-not-exist", &Server{
+	_, err := s.update(t.Context(), "does-not-exist", &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
-	if err != ErrNotFound {
+	if err != errNotFound {
 		t.Errorf("Update(unknown) = %v, want ErrNotFound", err)
 	}
 }
@@ -605,14 +610,14 @@ func TestUpdate_RejectsInvalidShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	// Change to HTTP without URL — must fail Validate.
-	if _, err := s.Update(t.Context(), orig.ID, &Server{
+	// Change to HTTP without URL — must fail validate.
+	if _, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportHTTP, Name: "ok", URL: "",
 	}); err == nil {
 		t.Errorf("Update(invalid) = nil, want validation error")
 	}
 	// Original record must be untouched on validation failure.
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Command != "bash" {
 		t.Errorf("Update rollback failed on validation error: %+v", raw)
 	}
@@ -628,9 +633,9 @@ func TestUpdate_RejectsRenameToExistingName(t *testing.T) {
 		t.Fatalf("Create beta: %v", err)
 	}
 	// Rename alpha → BETA (case-insensitive collision).
-	if _, err := s.Update(t.Context(), a.ID, &Server{
+	if _, err := s.update(t.Context(), a.ID, &Server{
 		Transport: TransportStdio, Name: "BETA", Command: "bash",
-	}); err != ErrNameConflict {
+	}); err != errNameConflict {
 		t.Errorf("Update rename-to-conflict = %v, want ErrNameConflict", err)
 	}
 }
@@ -641,7 +646,7 @@ func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 	// ignoreID).
 	s := newTestStore(t)
 	a, _ := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
-	if _, err := s.Update(t.Context(), a.ID, &Server{
+	if _, err := s.update(t.Context(), a.ID, &Server{
 		Transport: TransportStdio, Name: "alpha", Command: "zsh",
 	}); err != nil {
 		t.Errorf("Update same-name rename = %v, want nil", err)
@@ -652,14 +657,14 @@ func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 func TestGet_ReturnsNilForUnknownID(t *testing.T) {
 	s := newTestStore(t)
 	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
-	if got := s.Get(t.Context(), "does-not-exist"); got != nil {
+	if got := s.get(t.Context(), "does-not-exist"); got != nil {
 		t.Errorf("Get(unknown) = %+v, want nil", got)
 	}
 }
 
 func TestSetEnabled_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.SetEnabled(t.Context(), "does-not-exist", true); err != ErrNotFound {
+	if _, err := s.setEnabled(t.Context(), "does-not-exist", true); err != errNotFound {
 		t.Errorf("SetEnabled(unknown) = %v, want ErrNotFound", err)
 	}
 }
@@ -667,7 +672,7 @@ func TestSetEnabled_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 func TestDelete_UnknownIDReturnsNoError(t *testing.T) {
 	// Documented behaviour: "No-op if not found." Make it explicit.
 	s := newTestStore(t)
-	if err := s.Delete(t.Context(), "does-not-exist"); err != nil {
+	if err := s.delete(t.Context(), "does-not-exist"); err != nil {
 		t.Errorf("Delete(unknown) = %v, want nil", err)
 	}
 }
@@ -678,10 +683,10 @@ func TestList_ReturnsDeepCopy(t *testing.T) {
 	_, _ = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
 		Args:    []string{"-c", "echo"},
-		Env:     []KeyPair{{Name: "K", Value: "v"}},
+		Env:     []keyPair{{Name: "K", Value: "v"}},
 		Enabled: true,
 	})
-	list := s.List(t.Context())
+	list := s.list(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("List len = %d", len(list))
 	}
@@ -692,7 +697,7 @@ func TestList_ReturnsDeepCopy(t *testing.T) {
 	list[0].Env[0].Name = "HIJACKED"
 
 	// Re-read and verify the store is untouched.
-	refresh := s.List(t.Context())
+	refresh := s.list(t.Context())
 	if refresh[0].Name != "a" {
 		t.Errorf("List returned shallow copy (Name mutated): %q", refresh[0].Name)
 	}
@@ -708,15 +713,15 @@ func TestGet_ReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
-		Env: []KeyPair{{Name: "K", Value: "v"}},
+		Env: []keyPair{{Name: "K", Value: "v"}},
 	})
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
 	got.Env[0].Name = "HIJACKED"
 
-	refresh := s.Get(t.Context(), orig.ID)
+	refresh := s.get(t.Context(), orig.ID)
 	if refresh.Env[0].Name != "K" {
 		t.Errorf("Get returned shallow Env: %q", refresh.Env[0].Name)
 	}
@@ -732,11 +737,11 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
-	if len(s.List(t.Context())) != 0 {
+	if len(s.list(t.Context())) != 0 {
 		t.Error("corrupt file should load empty")
 	}
 	// The original file should have been moved to a .corrupt.<ts> sibling.
@@ -781,7 +786,7 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+	if _, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -808,7 +813,7 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"servers":null}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -853,7 +858,7 @@ func TestCreate_RollsBackOnPersistFailure(t *testing.T) {
 	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err == nil {
 		t.Fatal("Create against read-only dir succeeded; expected persist error")
 	}
-	if got := len(s.List(t.Context())); got != 1 {
+	if got := len(s.list(t.Context())); got != 1 {
 		t.Errorf("Create rollback failed: len(List) = %d, want 1", got)
 	}
 }
@@ -866,17 +871,17 @@ func TestUpdate_RollsBackOnPersistFailure(t *testing.T) {
 	}
 	breakPersist(t, s)
 
-	if _, err := s.Update(t.Context(), orig.ID, &Server{
+	if _, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "a", Command: "zsh", Enabled: true,
 	}); err == nil {
 		t.Fatal("Update succeeded on read-only dir")
 	}
 	// In-memory record must still show the original command.
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil after rollback; record disappeared")
 	}
-	raw := s.EnabledRaw(t.Context())
+	raw := s.enabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Command != "bash" {
 		t.Errorf("Update rollback: EnabledRaw[0].Command = %q, want %q", raw[0].Command, "bash")
 	}
@@ -890,10 +895,10 @@ func TestSetEnabled_RollsBackOnPersistFailure(t *testing.T) {
 	}
 	breakPersist(t, s)
 
-	if _, err := s.SetEnabled(t.Context(), orig.ID, false); err == nil {
+	if _, err := s.setEnabled(t.Context(), orig.ID, false); err == nil {
 		t.Fatal("SetEnabled succeeded on read-only dir")
 	}
-	got := s.Get(t.Context(), orig.ID)
+	got := s.get(t.Context(), orig.ID)
 	if got == nil || !got.Enabled {
 		t.Errorf("SetEnabled rollback failed: Get(%s).Enabled = %v, want true", orig.ID, got.Enabled)
 	}
@@ -907,10 +912,10 @@ func TestDelete_RollsBackOnPersistFailure(t *testing.T) {
 	}
 	breakPersist(t, s)
 
-	if err := s.Delete(t.Context(), orig.ID); err == nil {
+	if err := s.delete(t.Context(), orig.ID); err == nil {
 		t.Fatal("Delete succeeded on read-only dir")
 	}
-	if s.Get(t.Context(), orig.ID) == nil {
+	if s.get(t.Context(), orig.ID) == nil {
 		t.Error("Delete rollback failed: record disappeared despite persist error")
 	}
 }
@@ -934,11 +939,11 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New must tolerate rename failure, got: %v", err)
 	}
-	if got := len(s.List(t.Context())); got != 0 {
+	if got := len(s.list(t.Context())); got != 0 {
 		t.Errorf("corrupt file with failed rename still loaded %d servers, want 0", got)
 	}
 	// The corrupt file should remain (rename failed), not vanish.
@@ -962,8 +967,8 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	// Update keeps the OAuthClientID — it's a non-secret config value
-	// that round-trips verbatim (no SecretMask treatment).
-	updated, err := s.Update(t.Context(), created.ID, &Server{
+	// that round-trips verbatim (no secretMask treatment).
+	updated, err := s.update(t.Context(), created.ID, &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
@@ -981,7 +986,7 @@ func TestUpdate_ChangesOAuthClientID(t *testing.T) {
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "old-id", Enabled: true,
 	})
-	updated, err := s.Update(t.Context(), created.ID, &Server{
+	updated, err := s.update(t.Context(), created.ID, &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "new-id", Enabled: true,
 	})
@@ -1056,7 +1061,7 @@ func TestNew_RefusesNilContext(t *testing.T) {
 
 	dir := t.TempDir()
 	//nolint:staticcheck // SA1012: passing nil is the whole point of this test.
-	s, err := New(nil, dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(nil, dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err == nil {
 		t.Fatal("New(nil ctx) returned no error; a nil store ctx must be refused at " +
 			"construction rather than substituted with context.Background() at the " +
@@ -1076,7 +1081,7 @@ func TestNew_RefusesNilContext(t *testing.T) {
 func TestNew_CleanBootIsSilent(t *testing.T) {
 	logs := captureSlog(t)
 	dir := t.TempDir()
-	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+	if _, err := New(t.Context(), dir, nil, withKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if strings.Contains(logs.String(), "initial kas config write failed") {
@@ -1095,7 +1100,7 @@ func TestImportServers_LogsTheCreatedCount(t *testing.T) {
 		{Name: "one", Transport: TransportStdio, Command: "x"},
 		{Name: "two", Transport: TransportStdio, Command: "y"},
 	}
-	if _, err := s.ImportServers(t.Context(), in); err != nil {
+	if _, err := s.importServers(t.Context(), in); err != nil {
 		t.Fatalf("ImportServers: %v", err)
 	}
 	if !strings.Contains(logs.String(), "created=2") {
@@ -1115,7 +1120,7 @@ func TestImportServers_AcceptsExactlyTheCap(t *testing.T) {
 			Command:   "x",
 		})
 	}
-	results, err := s.ImportServers(t.Context(), in)
+	results, err := s.importServers(t.Context(), in)
 	if err != nil {
 		t.Fatalf("ImportServers(%d servers): %v", maxImportServers, err)
 	}

@@ -58,7 +58,6 @@ func (r *recorder) ids() []string {
 	return out
 }
 
-// text is the coalesced text of the k-th entry, for a kind that carries one.
 func (r *recorder) text(k int) string {
 	var payload marotte.EntryText
 	if err := json.Unmarshal(r.entries[k].Payload, &payload); err != nil {
@@ -67,7 +66,6 @@ func (r *recorder) text(k int) string {
 	return payload.Text
 }
 
-// open starts a prompt turn over a fresh recorder.
 func open(t *testing.T) (*Turn, *recorder) {
 	t.Helper()
 	r := &recorder{t: t, seq: make(map[string]uint64)}
@@ -593,5 +591,27 @@ func TestCloseCarriesAnUnknownRawStopReasonVerbatim(t *testing.T) {
 	}
 	if got, ok := wire["stop_reason_raw"].(string); !ok || got != "pause_turn" {
 		t.Errorf("stop_reason_raw on the wire = %#v, want the string pause_turn", wire["stop_reason_raw"])
+	}
+}
+
+func TestTurnBind_ClosesBoundOnlyOnceTheBindIsOnDisk(t *testing.T) {
+	ctx := t.Context()
+	turn, rec := open(t)
+	rec.fail = errors.New("disk full")
+	if _, err := turn.TurnBind(ctx, marotte.EntryTurnBind{KASMessageID: "kas-1"}); err == nil {
+		t.Fatal("TurnBind on a failing sink = nil, want its error")
+	}
+	select {
+	case <-turn.Bound():
+		t.Fatal("Bound() closed after a bind that never reached the sink")
+	default:
+	}
+	rec.fail = nil
+	rec.seal(turn.TurnBind(ctx, marotte.EntryTurnBind{KASMessageID: "kas-1"}))
+	rec.seal(turn.TurnBind(ctx, marotte.EntryTurnBind{KASMessageID: "kas-2"}))
+	select {
+	case <-turn.Bound():
+	default:
+		t.Error("Bound() still open after a bind reached the sink")
 	}
 }

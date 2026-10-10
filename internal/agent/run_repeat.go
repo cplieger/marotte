@@ -9,8 +9,8 @@ import (
 // maxExtendIterations caps one extend request; KAS caps a repeat's total at 1000 and refuses beyond.
 const maxExtendIterations = 1000
 
-// ExtendRepeat gives a repeat paused at its cap n more iterations and re-drives the run; KAS validates nodeID.
-func (rs *Runs) ExtendRepeat(ctx context.Context, workflowID, nodeID string, n int) (err error) {
+// extendRepeat gives a repeat paused at its cap n more iterations and re-drives the run; KAS validates nodeID.
+func (rs *Runs) extendRepeat(ctx context.Context, workflowID, nodeID string, n int) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
@@ -35,9 +35,9 @@ func (rs *Runs) ExtendRepeat(ctx context.Context, workflowID, nodeID string, n i
 	return nil
 }
 
-// FinishRepeat ends a repeat paused at its cap and lets the run continue. Separate from SetStepStatus:
+// finishRepeat ends a repeat paused at its cap and lets the run continue. Separate from SetStepStatus:
 // KAS refuses `nodeId` on an ordinary step write.
-func (rs *Runs) FinishRepeat(ctx context.Context, workflowID, nodeID string) (err error) {
+func (rs *Runs) finishRepeat(ctx context.Context, workflowID, nodeID string) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}

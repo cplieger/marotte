@@ -8,7 +8,7 @@ import (
 
 // replayPendingSteers emits the steer record's frames, so a reconnecting legacy client's dock keeps the unread messages.
 func (rt *Runtime) replayPendingSteers(writeFn func(marotte.ServerEvent) error) error {
-	events := rt.bus.steers.List("")
+	events := rt.bus.steers.list("")
 	for _, evt := range events {
 		if err := writeFn(evt); err != nil {
 			return err

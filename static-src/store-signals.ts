@@ -12,7 +12,7 @@ import { join } from "@cplieger/keyenc";
  *  `full`. INVARIANT: the pair is meaningful only under @cplieger/reactive's synchronous flush
  *  contract — a write re-runs every subscribed effect before the setter returns, so a consumer
  *  observes one value per delta with none skipped. */
-export interface EntrySignalValue {
+interface EntrySignalValue {
   readonly full: string;
   readonly delta: string;
 }
@@ -95,6 +95,7 @@ export function ensureEntryTextSig(
 }
 
 /** The open entry's streaming signal, or undefined when nothing minted one. */
+// deadset:ignore DS1004 -- test seam: observes the open entry streaming signals
 export function entryTextSig(
   turnID: string,
   entryID: string,
@@ -158,8 +159,9 @@ export function clearTurnSigs(turnID: string): void {
   sigKeysByTurn.delete(turnID);
 }
 
-/** Drop every streaming and lane signal. Called on full teardown (last chat closed); per-turn
- *  disposal goes through `clearTurnSigs`. */
+/** Drop every streaming and lane signal between cases; production disposes per turn through
+ *  `clearTurnSigs`. */
+// deadset:ignore DS1004 -- test seam: resets the streaming and lane signals and the per-turn keys
 export function clearAllEntrySigs(): void {
   entryTextSigs.clearAll();
   laneSigs.clearAll();

@@ -29,14 +29,16 @@ vi.mock("./api-client.js", () => ({
 // runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async () => ({
+  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   openRunTab: vi.fn((id: string) => {
     m.opened.push(id);
     return Promise.resolve();
   }),
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
-  // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
+  // Empty keeps the seed inert.
   openRunRefs: vi.fn(() => []),
   // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here for `tabIdFor`'s
   // reason: with no tab id to resolve there is no row to rename.
@@ -57,7 +59,7 @@ vi.mock("./decision-dock.js", () => ({
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
-  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
+  runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
 }));
 
 // REAL actions, deliberately: `bindLoadingState` reads the registry's pending signal for the action
@@ -84,6 +86,12 @@ vi.mock("./actions/runs.js", async () => {
     // Linked by run-view's repeat controls; no case here offers them.
     extendRunRepeat: verb("extend"),
     finishRunRepeat: verb("finish_loop"),
+    // Linked by the run composer and the step's pending-message stack; no case here sends.
+    messageRunStep: verb("message"),
+    removeRunStepSteer: verb("steer_remove"),
+    clearRunStepSteers: verb("steer_clear"),
+    // Linked by the step transcript read; no case here reads a step.
+    runStepURL: undefined,
   };
 });
 
@@ -91,7 +99,6 @@ import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { invalidateRun, invalidateRunControls } from "./run-store.js";
 
-/** Drain enough microtasks for the store's two fetches and the render they wake. */
 async function drain(): Promise<void> {
   for (let i = 0; i < 12; i++) {
     await Promise.resolve();

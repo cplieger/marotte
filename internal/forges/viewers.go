@@ -2,14 +2,11 @@ package forges
 
 import "sync"
 
-// presenceReader is the push presence table's verdict on one client tag.
-// *push.Presence satisfies it.
 type presenceReader interface {
 	Gone(tag string) bool
 }
 
-// viewer is one page showing the pull-request view. Pages of one browser
-// profile share the stream tag the presence table keys on, so the page names
+// Pages of one browser profile share the stream tag the presence table keys on, so the page names
 // itself; an empty page is a client that does not.
 type viewer struct {
 	tag, page string
@@ -41,8 +38,7 @@ func WithViewers(presence presenceReader) PollerOption {
 	}
 }
 
-// watch records what one page of tag says about the view. Every watch drops the
-// pages whose tag went, so the set holds the live pages and the newest one
+// Every watch drops the pages whose tag went, so the set holds the live pages and the newest one
 // whatever is posted.
 func (v *viewers) watch(tag, page string, watching bool) {
 	v.mu.Lock()
@@ -60,7 +56,6 @@ func (v *viewers) watch(tag, page string, watching bool) {
 	}
 }
 
-// any reports whether a client shows the view.
 func (v *viewers) any() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()

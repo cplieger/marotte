@@ -25,7 +25,7 @@ func TestTruncateRunes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := TruncateRunes(tc.s, tc.n)
+			got := truncateRunes(tc.s, tc.n)
 			if got != tc.want {
 				t.Errorf("TruncateRunes(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
 			}
@@ -39,7 +39,7 @@ func FuzzTruncateRunes(f *testing.F) {
 	f.Add("🎉🎊🎈", uint8(2))
 	f.Add(strings.Repeat("x", 200), uint8(100))
 	f.Fuzz(func(t *testing.T, s string, n uint8) {
-		result := TruncateRunes(s, int(n))
+		result := truncateRunes(s, int(n))
 		runes := []rune(result)
 		if n > 0 && len(runes) > int(n) {
 			t.Errorf("len([]rune(result))=%d > n=%d", len(runes), n)

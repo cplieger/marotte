@@ -88,7 +88,6 @@ function toolCallEntry(turnID: string, seq: number, callID: string): Entry {
   return { id: callID, turn: turnID, kind: "tool_call", seq, ts: 2, payload: call };
 }
 
-/** Seed a chat holding one turn with one sealed text entry. */
 function resident(id: string): Session {
   const s = session(id);
   s.turns.set(`t-${id}`, {

@@ -190,7 +190,6 @@ func TestToHookInfo_MatcherWarning(t *testing.T) {
 		{"pre tool use with no matcher is badged", "PreToolUse", "", "missing_tool_matcher"},
 		{"post tool use with no matcher is badged", "PostToolUse", "", "missing_tool_matcher"},
 		{"a tool matcher clears it", "PreToolUse", "fsWrite", ""},
-		// Reported even though create_hook refuses it: files can be hand-written.
 		{"a matcher on a none-subject trigger is badged", "SessionStart", `\.go$`, "ineffective"},
 		{"an alias spelling is badged too", "userTriggered", "x", "ineffective"},
 		// A path matcher is effective, and a path trigger without one means every file.

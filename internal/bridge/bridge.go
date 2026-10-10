@@ -2,14 +2,12 @@
 package bridge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,8 +33,7 @@ const stderrLineCap = 64 * 1024
 // alias, so errors.Is holds and the retry loop does not spin on a dead bridge.
 var errBridgeExited = marotte.ErrBridgeExited
 
-// errBridgeNotStarted aliases the exported sentinel a write returns with no stdin handle; an alias so errors.Is
-// holds at the call sites.
+// An alias so errors.Is holds at the call sites.
 var errBridgeNotStarted = marotte.ErrBridgeNotStarted
 
 // ACP RPC method names, re-exported for package-local use; marotte/methods.go is canonical.
@@ -44,11 +41,9 @@ const (
 	methodInitialize  = marotte.MethodInitialize
 	methodSessionNew  = marotte.MethodSessionNew
 	methodSessionLoad = marotte.MethodSessionLoad
-	methodSetMode     = marotte.MethodSetMode
 )
 
-// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. KAS ignores, rather than rejects, a block one
-// level off.
+// KAS ignores, rather than rejects, a block one level off.
 const metaKeyKiro = "kiro"
 
 // The per-session keys marotte adds inside _meta.kiro beside kascap's: the composer choices on session/new
@@ -66,16 +61,15 @@ const (
 	keyConfigValue = "value"
 )
 
-// AgentKiroCapabilities is the backend capability advertisement from initialize. Raw keeps keys not modelled yet.
-type AgentKiroCapabilities struct {
-	Raw              map[string]json.RawMessage
-	Logging          KASLogging
+// agentKiroCapabilities is the part of the backend's initialize advertisement marotte reads.
+type agentKiroCapabilities struct {
+	Logging          kasLogging
 	ExtensionMethods []string
 	ReplayMarking    bool
 }
 
-// KASLogging is initialize's logging block. Only the log directory is read; Raw keeps the rest.
-type KASLogging struct {
+// kasLogging is initialize's logging block. Only the log directory is read.
+type kasLogging struct {
 	LogDir string `json:"logDir"`
 }
 
@@ -99,7 +93,7 @@ type Bridge struct {
 	// catalog is the unfiltered advertised set: Models and ApplyServedModels derive from it, so a deprecated model the
 	// account holds still counts for entitlement.
 	catalog   atomic.Pointer[[]marotte.SessionModel]
-	agentKiro atomic.Pointer[AgentKiroCapabilities]
+	agentKiro atomic.Pointer[agentKiroCapabilities]
 	cmd       *exec.Cmd
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow map[string]struct{}
@@ -150,10 +144,14 @@ type Bridge struct {
 	// readMu decides whether a read loop or Stop closes notifCh (claimNotifClose).
 	readMu              sync.Mutex
 	contentCollectionMu sync.Mutex
-	notifClaimed        bool
-	enableHooks         bool
+	// readerExited is the exit drain's first act, taking no lock: once set, writeFrame (which loads it under writeMu)
+	// writes nothing.
+	readerExited atomic.Bool
+	notifClaimed bool
+	enableHooks  bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
-	secretStorage bool
+	secretStorage      bool
+	configurationState bool
 	// toolSearch is "Load MCP tools on demand", driving kascap's KIRO_FEATURE_TOOL_LOAD_ENABLED row. knowledge gates the
 	// two knowledge rows. Both immutable after Start: KAS freezes them at session creation.
 	toolSearch bool
@@ -172,7 +170,6 @@ type Bridge struct {
 	// disableAutoCompaction is the value this bridge sent on the session door, immutable after Start. KAS froze it, so
 	// it, not the current setting, says whether KAS still compacts this chat.
 	disableAutoCompaction bool
-	// sessionTitleSetByUser is the session result's titleSetByUser latch.
 	sessionTitleSetByUser bool
 }
 
@@ -247,9 +244,9 @@ func (b *Bridge) SupervisedApplied() bool {
 	return b.supervised
 }
 
-// ContentCollectionApplied reports the content-collection value KAS last confirmed on this process; known is false
+// contentCollectionState reports the content-collection value KAS last confirmed on this process; known is false
 // until an assert lands and after one fails, so a caller re-asserts.
-func (b *Bridge) ContentCollectionApplied() (enabled, known bool) {
+func (b *Bridge) contentCollectionState() (enabled, known bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.contentCollectionApplied, b.contentCollectionKnown
@@ -287,26 +284,8 @@ func (b *Bridge) SummarizationThreshold() float64 {
 	return b.summarizationPct
 }
 
-// AgentKiroCapabilities returns the backend's initialize advertisement.
-func (b *Bridge) AgentKiroCapabilities() AgentKiroCapabilities {
-	p := b.agentKiro.Load()
-	if p == nil {
-		return AgentKiroCapabilities{}
-	}
-	raw := make(map[string]json.RawMessage, len(p.Raw))
-	for key, value := range p.Raw {
-		raw[key] = bytes.Clone(value)
-	}
-	return AgentKiroCapabilities{
-		Raw:              raw,
-		Logging:          p.Logging,
-		ExtensionMethods: slices.Clone(p.ExtensionMethods),
-		ReplayMarking:    p.ReplayMarking,
-	}
-}
-
-// KASLogDir returns the log directory the backend advertised at initialize, or "".
-func (b *Bridge) KASLogDir() string {
+// kasLogDir returns the log directory the backend advertised at initialize, or "".
+func (b *Bridge) kasLogDir() string {
 	if p := b.agentKiro.Load(); p != nil {
 		return p.Logging.LogDir
 	}
@@ -463,11 +442,12 @@ func (b *Bridge) ObserveEffort(level string) {
 	b.mu.Unlock()
 }
 
-// spawn packages this spawn's facts for kascap's gated rows, which gate by presence, value and emptiness. Immutable
-// after Start, so read without the mutex; one method because both doors must describe the same spawn.
+// Immutable after Start, so read without the mutex; one method because both doors must describe the
+// same spawn.
 func (b *Bridge) spawn() *kascap.Spawn {
 	return &kascap.Spawn{
 		SecretStorage:            b.secretStorage,
+		ConfigurationState:       b.configurationState,
 		Hooks:                    b.enableHooks,
 		Presets:                  b.presets,
 		Knowledge:                b.knowledge,
@@ -480,6 +460,8 @@ func (b *Bridge) spawn() *kascap.Spawn {
 		SpecAskClarification:     b.features.SpecAskClarification,
 		WorkValidation:           b.features.WorkValidation,
 		InfraSafetyMonitor:       b.features.InfraSafetyMonitor,
+		AutoRouting:              b.features.AutoRouting,
+		AutoDelegation:           b.features.AutoDelegation,
 		TerminalCommandTimeoutMs: b.features.TerminalCommandTimeoutMs,
 		InlineAgents:             b.features.InlineAgents,
 		SteeringReminders:        b.features.SteeringReminders,
@@ -488,7 +470,7 @@ func (b *Bridge) spawn() *kascap.Spawn {
 	}
 }
 
-func decodeAgentKiroCapabilities(result json.RawMessage) (AgentKiroCapabilities, error) {
+func decodeAgentKiroCapabilities(result json.RawMessage) (agentKiroCapabilities, error) {
 	var envelope struct {
 		AgentCapabilities struct {
 			Meta struct {
@@ -497,30 +479,26 @@ func decodeAgentKiroCapabilities(result json.RawMessage) (AgentKiroCapabilities,
 		} `json:"agentCapabilities"`
 	}
 	if err := json.Unmarshal(result, &envelope); err != nil {
-		return AgentKiroCapabilities{}, err
+		return agentKiroCapabilities{}, err
 	}
 	kiro := envelope.AgentCapabilities.Meta.Kiro
 	if len(kiro) == 0 || string(kiro) == "null" {
-		return AgentKiroCapabilities{}, nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(kiro, &raw); err != nil {
-		return AgentKiroCapabilities{}, err
+		return agentKiroCapabilities{}, nil
 	}
 	var typed struct {
-		ExtensionMethods []string `json:"extensionMethods"`
-		ReplayMarking    bool     `json:"replayMarking"`
+		Logging          json.RawMessage `json:"logging"`
+		ExtensionMethods []string        `json:"extensionMethods"`
+		ReplayMarking    bool            `json:"replayMarking"`
 	}
 	if err := json.Unmarshal(kiro, &typed); err != nil {
-		return AgentKiroCapabilities{}, err
+		return agentKiroCapabilities{}, err
 	}
 	// Diagnostic only: a malformed block must not fail the handshake.
-	var logging KASLogging
-	if block, ok := raw["logging"]; ok && json.Unmarshal(block, &logging) != nil {
-		logging = KASLogging{}
+	var logging kasLogging
+	if len(typed.Logging) > 0 && json.Unmarshal(typed.Logging, &logging) != nil {
+		logging = kasLogging{}
 	}
-	return AgentKiroCapabilities{
-		Raw:              raw,
+	return agentKiroCapabilities{
 		Logging:          logging,
 		ExtensionMethods: typed.ExtensionMethods,
 		ReplayMarking:    typed.ReplayMarking,

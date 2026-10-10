@@ -4,18 +4,13 @@ import "context"
 
 // --- Persistence ---
 
-// There is no ChatStore interface here. Each consumer (internal/translate,
-// internal/agent, internal/command) declares the narrow interface it needs of
-// *chat.Store, and RegisterRoutes is reached only through internal/server's own
-// routeHandler, never through a chat-store interface.
+// No ChatStore interface: internal/translate, internal/agent and internal/command each declare
+// the narrow interface they need of *chat.Store.
 
 // --- Communication ---
 
-// There is no Broadcaster interface here. Sending an event to every connected
-// SSE client is ONE method, and its two consumers declare it themselves:
-// internal/chat (chat and message lifecycle) and internal/forges (a forge
-// connection change). internal/command declares the same method as a member of
-// its ChatAccess role. *agent.Runtime satisfies all three.
+// No Broadcaster interface: the one method is declared by internal/chat, internal/forges and
+// internal/command's ChatAccess; *agent.Runtime satisfies all three.
 
 // StartOpts collects the parameters for ACPBridge.Start. Lifetime is
 // REQUIRED; every other field is optional, so a StartOpts carrying nothing but
@@ -65,11 +60,9 @@ type StartOpts struct {
 	// neither. EMPTY is the Custom profile and withholds the key. Per session: KAS cannot change a
 	// running session's policy. Set on the utility bridge too, which answers GET /api/permissions.
 	Presets []string
-	// ExtraArgs are operator-supplied kiro-cli launch flags
-	// (MAROTTE_KIRO_ACP_ARGS), already filtered, appended after the args
-	// marotte derives itself. Set on CHAT bridges only — never on the utility
-	// bridge, where an `--effort max` would spend real credits generating a
-	// two-word title. See bridge.FilterACPArgs.
+	// ExtraArgs are operator kiro-cli flags (MAROTTE_KIRO_ACP_ARGS, bridge.filterACPArgs), appended
+	// after marotte's own. CHAT bridges only: on the utility bridge an `--effort max` would spend
+	// real credits generating a two-word title.
 	ExtraArgs []string
 	// Steering is the session door's client steering, sent on session/new and
 	// session/load alike (KAS persists none of it); nil sends no key. Chat
@@ -91,24 +84,21 @@ type StartOpts struct {
 	// bridges (workspace .kiro/hooks/*.json autofire during a turn or a step).
 	// In v2 mode KAS runs the hooks itself and never calls the client back.
 	EnableHooks bool
-	// Supervised requests KAS's turn-approval gate for this session, by setting
-	// the `autopilot` config option to FALSE at session/new.
-	//
-	// A value passed once at creation, not a flag marotte enforces: it persists
-	// into KAS's own session metadata, so it survives session/load and never needs
-	// re-asserting. Holding writes back is KAS's job, not marotte's.
+	// Supervised sets `autopilot` FALSE at session/new, requesting KAS's turn-approval gate; KAS
+	// persists it (ConfigOptionAutopilot) and holds the writes back itself.
 	Supervised bool
 	// SecretStorage declares `_meta.kiro.secretStorage` at initialize, so KAS asks this client to
 	// hold its MCP OAuth credentials. A COMMITMENT: KAS rethrows a store failure into the MCP
 	// connect path, so it is set only when the runtime opened a store (internal/secretstore);
 	// undeclared, KAS re-registers per spawn. Set on chat and utility bridges alike.
 	SecretStorage bool
-	// ToolSearch ("Load MCP tools on demand") reaches KAS through the child
-	// environment, not the wire: kascap's environment door writes
-	// KIRO_FEATURE_TOOL_LOAD_ENABLED (kascap.ChildEnv), whose arm
-	// keeps the tools array fixed. The `_meta.kiro.settings.toolSearch` mode
-	// grew the array on every load and is withheld (see the kascap row).
-	// Resolved per spawn; KAS freezes it at session creation.
+	// ConfigurationState declares `_meta.kiro.configurationState` at initialize, so KAS pushes
+	// _kiro/configuration/state. Set on the utility bridge only, whose connection view is what a
+	// new chat resolves before marotte states anything.
+	ConfigurationState bool
+	// ToolSearch ("Load MCP tools on demand") reaches KAS as KIRO_FEATURE_TOOL_LOAD_ENABLED in the
+	// child environment (kascap.ChildEnv), not the wire: `_meta.kiro.settings.toolSearch` grew the
+	// tools array on every load. Resolved per spawn; KAS freezes it at session creation.
 	ToolSearch bool
 	// Knowledge gates BOTH knowledge rows, the capability that lists the bases
 	// in msg0 and the setting that builds the Knowledge tool: gating one alone
@@ -132,13 +122,15 @@ type StartOpts struct {
 }
 
 // AgentFeatures carries the Agent-capabilities settings a spawn sends KAS.
-// WorkValidation and InfraSafetyMonitor are "" (send nothing, kiro-cli's
-// experiment decides), "on" or "off".
+// WorkValidation, InfraSafetyMonitor, AutoRouting and AutoDelegation are ""
+// (send nothing, kiro-cli's experiment decides), "on" or "off".
 type AgentFeatures struct {
 	// SpecPlan is "" (off), "quick" or "full"; it only changes Autonomous mode.
 	SpecPlan           string
 	WorkValidation     string
 	InfraSafetyMonitor string
+	AutoRouting        string
+	AutoDelegation     string
 	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 is unset.
 	TerminalCommandTimeoutMs int
 	SpecAskClarification     bool
@@ -165,17 +157,10 @@ type MemoryPreference struct {
 // No RouteHandler interface: only internal/server consumes it, so it is declared there as
 // routeHandler; internal/agent exports RouteRegistrar for the one value it hands out.
 
-// There is no PushService interface here. Its consumers declare what they use:
-// internal/agent 4 of the 8 methods (send, ask, reload, close), internal/server 2
-// (mount the routes, write the toggles), internal/forges 2 (its PRNotifier).
-//
-// Subscribe and Unsubscribe were members no consumer ever reached through an
-// interface — *push.Service's own HTTP handlers call them on itself — so they
-// are simply methods on the concrete type now.
+// No PushService interface: internal/agent and internal/server each declare the methods they use;
+// internal/forges notifies through *agent.Runtime (PRNotifier).
 
 // --- AI Utilities ---
 
-// There is no UtilityPrompter interface here. AI-backed prompt generation is a
-// single method, and its two consumers declare it themselves: internal/server
-// (explain-error, explain-diff) and internal/git (commit message, PR
-// description, branch name). *agent.Runtime satisfies both.
+// No UtilityPrompter interface: internal/server and internal/git each declare the one method;
+// *agent.Runtime satisfies both.

@@ -12,7 +12,7 @@ func FuzzParseErrTracker(f *testing.F) {
 		var tr parseErrTracker
 		for _, op := range ops {
 			if op%2 == 0 {
-				action := tr.Record()
+				action := tr.record()
 				// consecutive <= total; total never decreases.
 				if tr.consecutive > tr.total {
 					t.Fatalf("consecutive (%d) > total (%d)", tr.consecutive, tr.total)

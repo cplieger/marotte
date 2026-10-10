@@ -65,7 +65,7 @@ vi.mock("./tool-card.js", () => ({
 
 import {
   mountToolCallCard,
-  updateToolCall,
+  applyToolCallUpdate,
   appendTerminalChunk,
   forgetTerminal,
   disposeAllToolEffects,
@@ -136,7 +136,7 @@ describe("a completion snapshot supersedes the hold", () => {
     const card = mount(tc);
     expect(pre(card)).toBe("a\n");
     // The link arrives on every later update, so the discard must be permanent.
-    updateToolCall(card, tc, "c-terminal");
+    applyToolCallUpdate(card, tc, "c-terminal");
     expect(pre(card)).toBe("a\n");
   });
 
@@ -182,7 +182,7 @@ describe("a settled call's opening lines reach a card that was parked", () => {
 
   it("writes the prefix into the parked card at unpark, and the live card once", () => {
     const { view, parkedCard, liveCard } = twoSurfaces();
-    updateToolCall(
+    applyToolCallUpdate(
       liveCard,
       toolCall({ id: "tc-p", terminal_id: "term-p", status: "completed" }),
       "c-terminal",
@@ -201,13 +201,13 @@ describe("a settled call's opening lines reach a card that was parked", () => {
 
   it("leaves a parked card alone when a snapshot reached it meanwhile", () => {
     const { view, parkedCard, liveCard } = twoSurfaces();
-    updateToolCall(
+    applyToolCallUpdate(
       liveCard,
       toolCall({ id: "tc-p", terminal_id: "term-p", status: "completed" }),
       "c-terminal",
     );
     parkedCards.delete(parkedCard);
-    updateToolCall(
+    applyToolCallUpdate(
       parkedCard,
       toolCall({
         id: "tc-p",
@@ -245,7 +245,7 @@ describe("only an in-flight card is a terminal's live sink", () => {
     const tc = toolCall({ id: "tc-e", terminal_id: "term-z" });
     const card = mount(tc);
     appendTerminalChunk("term-z", "one\n", [], 0);
-    updateToolCall(card, { ...tc, status: "completed" }, "c-terminal");
+    applyToolCallUpdate(card, { ...tc, status: "completed" }, "c-terminal");
     appendTerminalChunk("term-z", "two\n", [], 4);
     expect(pre(card)).toBe("one\n");
   });

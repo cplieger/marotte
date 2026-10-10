@@ -14,9 +14,9 @@ const LAG_SECS = 0.4;
  *  fast per-word cascade rather than a blur. */
 const MAX_CPS = 600;
 
-/** Bounded-drain escape hatch. The rate ceiling is max(MAX_CPS, backlog/MAX_DRAIN_SECS), which
- *  makes a large backlog drain with a time constant of MAX_DRAIN_SECS rather than LAG_SECS, so
- *  the clearing time grows sub-linearly with the size of the dump. */
+/** The rate ceiling is max(MAX_CPS, backlog/MAX_DRAIN_SECS), which makes a large backlog drain with
+ *  a time constant of MAX_DRAIN_SECS rather than LAG_SECS, so the clearing time grows sub-linearly
+ *  with the size of the dump. */
 const MAX_DRAIN_SECS = 2.5;
 
 /** Slew time constant (seconds) for the APPLIED rate. The desired rate steps discontinuously
@@ -53,7 +53,7 @@ export interface Reveal {
   finishNow(): void;
 }
 
-export interface RevealOptions {
+interface RevealOptions {
   /** Receives each newly revealed slice, in order. Concatenating every slice reproduces the
    *  target exactly. */
   onWrite: (delta: string) => void;

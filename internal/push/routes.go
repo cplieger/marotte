@@ -18,13 +18,12 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/push/unsubscribe", s.handleUnsubscribe)
 }
 
-// vapidKeyResponse is the typed wire shape for the VAPID public key endpoint.
 type vapidKeyResponse struct {
 	PublicKey string `json:"publicKey"`
 }
 
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	webhttp.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
+	webhttp.WriteJSON(w, vapidKeyResponse{PublicKey: s.publicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +70,6 @@ func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid endpoint")
 		return
 	}
-	s.Unsubscribe(body.Endpoint)
+	s.unsubscribe(body.Endpoint)
 	webhttp.Ok(w)
 }

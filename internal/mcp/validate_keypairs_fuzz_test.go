@@ -11,7 +11,7 @@ func FuzzValidateKeyPairs(f *testing.F) {
 	f.Add("env", "", "", "OK", "x", false)
 
 	f.Fuzz(func(t *testing.T, kind, name1, val1, name2, val2 string, caseInsensitive bool) {
-		pairs := []KeyPair{
+		pairs := []keyPair{
 			{Name: name1, Value: val1},
 			{Name: name2, Value: val2},
 		}

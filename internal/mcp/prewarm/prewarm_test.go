@@ -148,20 +148,20 @@ func FuzzExtractNpxPackage(f *testing.F) {
 		if got == "" {
 			return
 		}
-		if !NpmPkgSpecRe.MatchString(got) {
+		if !npmPkgSpecRe.MatchString(got) {
 			t.Errorf("ExtractNpxPackage returned %q which does not match NpmPkgSpecRe", got)
 		}
 	})
 }
 
 func TestTailOutput_ShortStays(t *testing.T) {
-	if got := TailOutput([]byte("short"), 1024); got != "short" {
+	if got := tailOutput([]byte("short"), 1024); got != "short" {
 		t.Errorf("got %q, want 'short'", got)
 	}
 }
 
 func TestTailOutput_LongTruncated(t *testing.T) {
-	got := TailOutput([]byte("0123456789"), 4)
+	got := tailOutput([]byte("0123456789"), 4)
 	if got != "…6789" {
 		t.Errorf("got %q, want '…6789'", got)
 	}
@@ -169,7 +169,7 @@ func TestTailOutput_LongTruncated(t *testing.T) {
 
 func TestTailOutput_AdvancesPastUTF8ContinuationBytes(t *testing.T) {
 	in := []byte("αβγ")
-	got := TailOutput(in, 5)
+	got := tailOutput(in, 5)
 	rest := strings.TrimPrefix(got, "…")
 	if !utf8.ValidString(rest) {
 		t.Errorf("tail not valid UTF-8 after ellipsis: %q", got)
@@ -277,7 +277,7 @@ func TestRingBuffer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &RingBuffer{Cap: tc.cap}
+			r := &ringBuffer{Cap: tc.cap}
 			var lastN int
 			for _, w := range tc.writes {
 				n, err := r.Write([]byte(w))
@@ -301,7 +301,7 @@ func TestRingBuffer_Property(t *testing.T) {
 		cap := rapid.IntRange(1, 256).Draw(t, "cap")
 		nWrites := rapid.IntRange(0, 20).Draw(t, "nWrites")
 
-		r := &RingBuffer{Cap: cap}
+		r := &ringBuffer{Cap: cap}
 		var concat []byte
 
 		for range nWrites {

@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// switchesOf decodes every model_switched entry in entries, in file order.
 func switchesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryModelSwitched {
 	t.Helper()
 	var out []marotte.EntryModelSwitched
@@ -88,7 +87,7 @@ func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
 	if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 0 {
 		t.Errorf("model_switched entries = %+v, want none: no session was switched", switches)
 	}
-	if sb := h.coord.Bridge("c1"); sb != nil {
+	if sb := h.coord.bridgeFor("c1"); sb != nil {
 		t.Error("a bridge was spawned for a pick on an idle bridgeless chat")
 	}
 }
@@ -128,7 +127,7 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 		}
 		return true
 	})
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", "m-old"); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", "m-old"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// The spawn records the fake's model, so re-seed m-old after it.
@@ -160,7 +159,7 @@ func TestApplyPendingModel_ConcurrentAppliersRecordOneSwitch(t *testing.T) {
 	for range 50 {
 		h, cs, _ := newTestHub()
 		finishedTurn(t, h, "c1")
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", "m-old"); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", "m-old"); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -250,7 +249,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		c.Model = "old-model"
 		return true
 	})
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "old-model")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	}
 
 	// Same instance: no restart.
-	sb2 := h.coord.Bridge("c1")
+	sb2 := h.coord.bridgeFor("c1")
 	if sb2 == nil {
 		t.Fatal("bridge gone after fast-path switch")
 	}
@@ -317,7 +316,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
 	}
-	if sb := h.coord.Bridge("c1"); sb != nil {
+	if sb := h.coord.bridgeFor("c1"); sb != nil {
 		t.Error("a bridge was created for a refused switch")
 	}
 }
@@ -426,7 +425,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 		c.Model = "m-old"
 		return true
 	})
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// The spawn records the fake's model, so re-seed m-old after it.
@@ -539,7 +538,7 @@ func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
 		return true
 	})
 
-	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 

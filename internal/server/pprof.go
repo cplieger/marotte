@@ -15,16 +15,15 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// pprofPath is the subtree pattern. The trailing slash is load-bearing: ServeMux needs it to
-// match a subtree, and pprof.Index trims exactly this prefix to derive a profile name.
+// The trailing slash is load-bearing: ServeMux needs it to match a subtree, and pprof.Index trims
+// exactly this prefix to derive a profile name.
 const pprofPath = "/debug/pprof/"
 
 // pprofSurface is what a refused caller is told declined the request (this endpoint, not
 // the repair hook sharing the middleware).
 const pprofSurface = "the runtime profile endpoint"
 
-// pprofHandler returns the gated profile handler. A goroutine dump and heap profile are a map
-// of the process, hence the repair hook's gate.
+// A goroutine dump and heap profile are a map of the process, hence the repair hook's gate.
 func pprofHandler() http.Handler {
 	return loopbackOnly(pprofSurface, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// pprof.Index answers any method, so the gate is ours, inside the loopback wrapper and not

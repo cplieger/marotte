@@ -11,9 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// fakeRunOwner answers which chat launched a run, as *agent.Runs does off the
-// lease. `ok` and an empty chat id are DIFFERENT answers — a parentless run has a
-// lease and no chat, a released one has neither — so both are expressible.
+// `ok` and an empty chat id are DIFFERENT answers — a parentless run has a lease and no chat, a
+// released one has neither — so both are expressible.
 type fakeRunOwner struct {
 	chats map[string]marotte.ChatID
 	// known is the lease's existence, independent of the chat id.
@@ -31,19 +30,16 @@ func (f *fakeRunOwner) RunChat(workflowID string) (marotte.ChatID, bool) {
 	return chatID, true
 }
 
-// newRunTabMembership builds a coordinator over a real tab store with a run
-// owner wired, which is the production shape.
-func newRunTabMembership(t *testing.T, chats ChatStore, runs RunOwner) (*Membership, *tabs.Store, *tabBus) {
+func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Membership, *tabs.Store) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st, bus
+	return newMembership(&membershipDeps{Chats: chats, Tabs: st, Bus: bus, Runs: runs}), st
 }
 
-// runTabParent is the Parent the store holds for a run's tab.
 func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
 	t.Helper()
 	open, _ := st.List()
@@ -62,7 +58,7 @@ func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
 func TestOpenTab_FillsARunsParentFromItsLease(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}}
-	mem, st, _ := newRunTabMembership(t, store, runs)
+	mem, st := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-launcher")
 	chatTab, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-launcher"}, "op-chat")
 	if err != nil {
@@ -90,7 +86,7 @@ func TestOpenTab_FillsARunsParentFromItsLease(t *testing.T) {
 func TestOpenTab_AClientSuppliedParentWins(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-lease"}}
-	mem, st, _ := newRunTabMembership(t, store, runs)
+	mem, st := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-lease")
 	seedRecord(t, store, "c-explicit")
 	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-lease"}, "op-a"); err != nil {
@@ -118,7 +114,7 @@ func TestOpenTab_AClientSuppliedParentWins(t *testing.T) {
 // and no launching chat, so it belongs at the top of the strip.
 func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	for name, runs := range map[string]RunOwner{
+	for name, runs := range map[string]runOwner{
 		"a parentless run's lease carries no chat": &fakeRunOwner{
 			chats: map[string]marotte.ChatID{"wf_1": ""},
 			known: map[string]bool{"wf_1": true},
@@ -127,7 +123,7 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 		"no run owner is wired":              nil,
 	} {
 		t.Run(name, func(t *testing.T) {
-			mem, st, _ := newRunTabMembership(t, store, runs)
+			mem, st := newRunTabMembership(t, store, runs)
 			if _, err := mem.OpenTab(t.Context(),
 				marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run"); err != nil {
 				t.Fatalf("OpenTab(run) = %v", err)
@@ -145,7 +141,7 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 func TestOpenTab_FillsNoParentForAnyOtherKind(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"/workspace/a.go": "c-launcher", "c-other": "c-launcher"}}
-	mem, st, _ := newRunTabMembership(t, store, runs)
+	mem, st := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-launcher")
 	seedRecord(t, store, "c-other")
 	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-launcher"}, "op-a"); err != nil {

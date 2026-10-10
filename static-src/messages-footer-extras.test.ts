@@ -6,7 +6,6 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
-// The page's nesting, as messages-turn-number.test.ts's harness minus pagination.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";

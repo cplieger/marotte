@@ -35,7 +35,6 @@ interface Footer {
   logout: HTMLElement;
 }
 
-/** The footer as `static/index.html` authors it. */
 function mountFooter(email = "someone@example.invalid"): Footer {
   const sidebar = document.createElement("nav");
   sidebar.id = "sidebar";
@@ -96,10 +95,7 @@ function tokenPx(name: string): number {
   return v;
 }
 
-/**
- * The three tiers. `coarse-wide` is reachable ONLY through the attribute, so a
- * width-keyed rule cannot see it.
- */
+/** `coarse-wide` is reachable ONLY through the attribute, so a width-keyed rule cannot see it. */
 const TIERS: readonly (readonly [name: string, apply: () => void])[] = [
   ["fine", () => (document.documentElement.dataset["pointer"] = "fine")],
   ["coarse-wide", () => (document.documentElement.dataset["pointer"] = "coarse")],

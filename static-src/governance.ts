@@ -11,6 +11,7 @@ let current: GovernanceStatePayload | null = null;
 const listeners = new Set<(g: GovernanceStatePayload) => void>();
 
 /** The latest known governance state, or null before the first read. */
+// deadset:ignore DS1004 -- test seam: observes the held governance snapshot
 export function currentGovernance(): GovernanceStatePayload | null {
   return current;
 }
@@ -24,7 +25,7 @@ export function featureDisabled(key: keyof GovernanceFeatures): boolean {
  * The lock an administrator places on a setting, by the server's Lock* constants, or undefined. Not gated on
  * `known`: the machine administrator's rules lock settings on any account.
  */
-export function settingLock(key: string): GovernanceLock | undefined {
+function settingLock(key: string): GovernanceLock | undefined {
   return current?.locks?.[key];
 }
 
@@ -33,7 +34,7 @@ export function settingLock(key: string): GovernanceLock | undefined {
  * or unknown. `unavailable`: KAS failed closed reading the organization's settings, which must not read as an
  * administrator decision. The raw token is never shown.
  */
-export type GovernanceReasonKind = "admin" | "unavailable";
+type GovernanceReasonKind = "admin" | "unavailable";
 
 export function governanceReasonKind(reason: string | undefined): GovernanceReasonKind {
   return reason === "api_failure" || reason === "no_endpoint" ? "unavailable" : "admin";

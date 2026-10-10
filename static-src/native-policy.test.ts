@@ -36,7 +36,6 @@ vi.mock("./actions/permissions.js", () => ({
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
 
-/** init + lazy first load, as settings-tabs wires it in production. */
 function initAndLoad(): void {
   initNativePolicyUI();
   loadNativePolicy();

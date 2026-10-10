@@ -2,11 +2,12 @@
 // stay two rows and one selection marks one of them.
 import { describe, expect, it, vi } from "vitest";
 import { buildExecTree } from "./tree.js";
-import { runToExec, type RunAsks } from "../run-exec-source.js";
+import type { RunAsks } from "../run-asks.js";
+import { runToExec } from "../run-exec-source.js";
 import { makeRunState } from "../__test-helpers__/model.js";
 import type { RunNode, RunState } from "../run-store.js";
 
-const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
+const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
 function seq(nodeId: string, children: RunNode[]): RunNode {
   return { nodeId, type: "sequence", status: "running", children };

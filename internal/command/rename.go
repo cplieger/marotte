@@ -24,14 +24,14 @@ var (
 	errRenameRefused = errors.New("_kiro/session/rename refused")
 )
 
-// CmdRenameChat records the user's own name for a chat and latches it on every KAS session in its
+// cmdRenameChat records the user's own name for a chat and latches it on every KAS session in its
 // chain, so every surface reads the same name and agent titles stop. The record is canonical: a
 // failed rename RPC still answers success, and the session door reconcile repairs KAS on the next
 // open.
-func CmdRenameChat(
+func cmdRenameChat(
 	ctx context.Context,
-	bridges BridgeAccess,
-	chats ChatStore,
+	bridges bridgeAccess,
+	chats chatStore,
 	renamer SessionRenamer,
 	cmd *marotte.ClientCommand,
 ) (any, error) {

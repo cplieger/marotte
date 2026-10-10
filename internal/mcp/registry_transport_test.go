@@ -23,12 +23,12 @@ func TestRenderKASServers_RegistryEntry(t *testing.T) {
 }
 
 func TestValidate_RegistryRefusesCatalogFields(t *testing.T) {
-	if err := Validate(&Server{Name: "github", Transport: TransportRegistry}); err != nil {
+	if err := validate(&Server{Name: "github", Transport: TransportRegistry}); err != nil {
 		t.Errorf("Validate(bare registry entry) = %v, want nil", err)
 	}
-	err := Validate(&Server{Name: "github", Transport: TransportRegistry, URL: "https://x.example/mcp", Command: "npx"})
+	err := validate(&Server{Name: "github", Transport: TransportRegistry, URL: "https://x.example/mcp", Command: "npx"})
 	fields := map[string]bool{}
-	for _, fe := range FieldErrors(err) {
+	for _, fe := range fieldErrors(err) {
 		fields[fe.Field] = true
 	}
 	if !fields[fieldURL] || !fields[fieldCommand] {

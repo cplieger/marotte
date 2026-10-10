@@ -153,7 +153,7 @@ func TestNeedsReconcile_TheRunRootIsNotReconcilable(t *testing.T) {
 // wantUnterminated fails unless turn's newest entry is the store-open closer's turn_close, condition (ii)'s signal.
 func wantUnterminated(t *testing.T, lg *EntryLog, turn string) {
 	t.Helper()
-	entries, err := lg.TurnRange(turn, 0)
+	entries, err := turnRange(lg, turn, 0)
 	if err != nil {
 		t.Fatalf("read turn %q: %v", turn, err)
 	}

@@ -96,8 +96,9 @@ import {
   openTurn,
   appendEntry,
 } from "./store.js";
-import { initPendingSteers } from "./pending-steers.js";
-import type { Entry, QueuedPrompt, Session } from "./types.js";
+import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
+import { signal } from "@cplieger/reactive";
+import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 function makeSession(chatID: string): Session {
@@ -127,7 +128,6 @@ function makeSession(chatID: string): Session {
 /** The seq the next entry of the fixture turn takes; `appendEntry` refuses any other. */
 let seq = 0;
 
-/** Land the `steer` entry a read or a drop produces, opening the turn on first use. */
 function landSteerEntry(
   chatID: string,
   steerID: string,
@@ -698,6 +698,23 @@ describe("the steer stack", () => {
     expect(labelOf(rows()[1] as HTMLElement)).toBe("After this turn");
   });
 
+  it("shows a labelled follow-up's label, keeping its text in the tooltip", () => {
+    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]);
+
+    expect(textOf(firstRow())).toBe("Merging findings");
+    expect(firstRow().dataset["tooltip"]).toBe("the whole findings");
+  });
+
+  it("repaints a follow-up whose label alone changed under the same id", () => {
+    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]);
+    const before = firstRow();
+    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merged findings" }]);
+
+    expect(firstRow()).toBe(before);
+    expect(textOf(firstRow())).toBe("Merged findings");
+    expect(firstRow().getAttribute("aria-label")).toBe("After this turn: Merged findings");
+  });
+
   it("labels a carried row and a held row by what will happen to them", () => {
     withQueued([
       { id: "m-c", text: "unread one", resends: ["steer-1"] },
@@ -1060,5 +1077,39 @@ describe("the row's clamp", () => {
         row.getBoundingClientRect().right + 1,
       );
     }
+  });
+});
+
+// The run tab mounts the same stack over a step's rows, with the chat's Edit and Delete and no
+// Send now: nothing stops a step's turn for a reader.
+describe("a stack over a run step's rows", () => {
+  it("offers Edit and Delete and no Send now, and hands each to its source", () => {
+    const steers = signal<PendingSteer[]>([
+      { id: "steer-s1", text: "check the tests", origin: "user" },
+    ]);
+    const edit = vi.fn((_steer: PendingSteer) => Promise.resolve());
+    const remove = vi.fn((_id: string) => Promise.resolve());
+    const src: SteerStackSource = {
+      read: () => ({ id: "wf_1|root/review", steers: steers.value, queued: [] }),
+      edit,
+      editByClear: () => Promise.resolve(),
+      remove,
+      discard: () => Promise.resolve(),
+      waitingFor: "the step",
+    };
+    const stack = document.createElement("ul");
+    stack.className = "steer-stack hidden";
+    document.body.appendChild(stack);
+    mountSteerStack(stack, src);
+    const row = stack.querySelector<HTMLElement>(".steer-row")!;
+    expect(actions(row)).toEqual(["Edit this message", 'Delete "check the tests"']);
+    clickAction(row, "Edit");
+    expect(edit).toHaveBeenCalledWith({ id: "steer-s1", text: "check the tests", origin: "user" });
+    clickAction(row, "Delete");
+    expect(remove).toHaveBeenCalledWith("steer-s1");
+    expect(cancelDispatch).not.toHaveBeenCalled();
+    steers.value = [];
+    expect(stack.classList.contains("hidden")).toBe(true);
+    stack.remove();
   });
 });

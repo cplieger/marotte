@@ -22,6 +22,7 @@ import {
   runStatusFor,
   defaultUsage,
   get,
+  setActive,
 } from "./store.js";
 import type {
   ChatHeader,
@@ -107,7 +108,6 @@ function sealed(
   };
 }
 
-/** Open a turn on `chatID` through the real store operation. */
 function openTurnIn(chatID: string, turnID: string, n = 1): void {
   openTurn(chatID, turnOpenEntry(turnID, n));
 }
@@ -286,8 +286,8 @@ vi.mock("./device-view.js", () => {
   };
 });
 vi.mock("./run-store.js", () => ({
-  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
-  // real ESM, so a name any module in the graph reaches has to exist on it.
+  // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
+  // reaches has to exist on it.
   runLabelOf: vi.fn(() => ""),
 }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
@@ -423,7 +423,6 @@ async function resetProjection(): Promise<void> {
   document.body.innerHTML = '<div id="tab-list"></div>';
 }
 
-/** Open a tab of any kind and answer with its minted id. */
 async function openSubject(
   kind: TabKind,
   ref = "",
@@ -1391,8 +1390,7 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
   });
 
   it("resolves the same radius as the workflow mark on its parent's row", async () => {
-    // The consistency claim the change is about, measured rather than transcribed:
-    // one token, two elements, so a retune moves both or fails here.
+    // Measured rather than transcribed: one token, two elements, so a retune moves both or fails here.
     const { setTabStatus, setTabRunStatus } = await import("./tabs.js");
     const { id, parent } = await runSubTab();
     setTabStatus(id, "working");
@@ -1929,9 +1927,21 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     return el;
   }
 
-  /** Answer the card on screen in the run's dock. `:scope >` skips an answered
-   *  card still on screen for the length of its phase. */
-  function answerInRunHost(hostEl: HTMLElement, text: string): void {
+  /** The parent tab's composer dock, showing the active chat's queue. */
+  async function mountChatHost(): Promise<HTMLElement> {
+    const { mountDecisionDock } = await import("./decision-dock.js");
+    const el = document.createElement("div");
+    el.id = "decision-dock";
+    el.className = "hidden";
+    document.body.appendChild(el);
+    setActive(PARENT);
+    mountDecisionDock(el);
+    return el;
+  }
+
+  /** Answer the card on screen in a dock. `:scope >` skips an answered card still on screen for the
+   *  length of its phase. */
+  function answerIn(hostEl: HTMLElement, text: string): void {
     const card = hostEl.querySelector<HTMLElement>(":scope > .dock-card");
     const box = card?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
     if (box !== null) {
@@ -1952,15 +1962,19 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     setSessions([settledChat(PARENT)]);
   });
 
-  it("clears the parent when the sub-tab answers the step's question", async () => {
+  // The sub-tab answers through its composer (run-composer.ts), so its dock draws no card; the
+  // parent tab's card is the one a click settles.
+  it("clears the parent when the parent tab answers the step's question", async () => {
     const { pushDecision, hasPendingDecision, runPendingAsks } = await import("./decision-dock.js");
     const runHost = await mountRunHost();
+    const chatHost = await mountChatHost();
     pushDecision(runAsk());
 
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
     expect(runPendingAsks(RUN).count).toBe(1);
+    expect(runHost.querySelector(":scope > .dock-card")).toBeNull();
 
-    answerInRunHost(runHost, "yes, ship it");
+    answerIn(chatHost, "yes, ship it");
 
     expect(runPendingAsks(RUN).count).toBe(0);
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("done");
@@ -2039,13 +2053,14 @@ describe("a run's wait ending releases the launching chat's dot", () => {
   it("holds the parent on input for a step question that carries NO run id", async () => {
     const { pushDecision, hasPendingDecision, runPendingAsks, dropTurnDecisions } =
       await import("./decision-dock.js");
-    const runHost = await mountRunHost();
     // The orphan, and the run's own answerable ask, both under the launching chat.
     pushDecision({ ...stepQuestion(1), runID: "" });
     pushDecision(runAsk());
     expect(runPendingAsks(RUN).count).toBe(1);
 
-    answerInRunHost(runHost, "yes, ship it");
+    // The run's own ask settles where the run tab answers it; the orphan stays queued.
+    const { collapseSettledRunInput } = await import("./decision-dock.js");
+    collapseSettledRunInput(RUN, "ask-1", "user");
 
     // Every run surface goes quiet — the sub-tab's dock, the run card's `needs
     // input`, the exec page's alert all read this count — while the parent's dot

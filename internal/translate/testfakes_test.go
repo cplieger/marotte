@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// nopChatRecords is a ChatRecords whose every method is a no-op, for embedding in a double
+// nopChatRecords is a chatRecords whose every method is a no-op, for embedding in a double
 // that overrides only the calls its test observes.
 type nopChatRecords struct{}
 
@@ -25,9 +25,13 @@ func (nopChatRecords) EmptyCompactions(context.Context, marotte.ChatID) (int, er
 
 func (nopChatRecords) DepartedName(marotte.ChatID) (string, bool) { return "", false }
 
-var _ ChatRecords = nopChatRecords{}
+func (nopChatRecords) WaitingWorkflowMessages(context.Context, marotte.ChatID) ([]marotte.WorkflowMessage, error) {
+	return nil, nil
+}
 
-// recStore is a ChatRecords whose every call answers err, counting header writes, so a
+var _ chatRecords = nopChatRecords{}
+
+// recStore is a chatRecords whose every call answers err, counting header writes, so a
 // test can stage a chat the store refuses and observe each write site's report.
 type recStore struct {
 	nopChatRecords
@@ -54,9 +58,9 @@ func (s *recStore) EmptyCompactions(context.Context, marotte.ChatID) (int, error
 	return 0, s.err
 }
 
-var _ ChatRecords = (*recStore)(nil)
+var _ chatRecords = (*recStore)(nil)
 
-// nopMCPRecorder is a no-op MCPRecorder for the handler benchmarks, which drive frames
+// nopMCPRecorder is a no-op mcpRecorder for the handler benchmarks, which drive frames
 // whose MCP side effects they do not assert on.
 type nopMCPRecorder struct{}
 
@@ -69,33 +73,32 @@ func (nopMCPRecorder) RecordInitFailure(context.Context, string, marotte.MCPSour
 
 func (nopMCPRecorder) RecordDisabled(context.Context, string, marotte.MCPSource) {}
 
-var _ MCPRecorder = nopMCPRecorder{}
+var _ mcpRecorder = nopMCPRecorder{}
 
 // hostDouble names every role a Translator takes, so one value fills every slot of Roles.
 // Test-only: production wires each role to its own owner.
 type hostDouble interface {
 	Broadcaster
-	PendingPermAdder
-	Pusher
-	SessionResolver
-	TerminalReader
-	HookStatusReader
-	ModelCatalog
-	RunOriginAccess
-	RunBoundsAccess
-	TurnInterruptAccess
-	TurnMetering
-	ChatRecords
-	Responder
-	TurnAccess
+	pendingPermAdder
+	pusher
+	sessionResolver
+	terminalReader
+	hookStatusReader
+	modelCatalog
+	runOriginAccess
+	runBoundsAccess
+	turnInterruptAccess
+	turnMetering
+	chatRecords
+	turnAccess
 	RunAppender
-	TurnBoundary
+	turnBoundary
 	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
-	SentSteers
-	SteerBuffer
-	MCPRecorder() MCPRecorder
-	GovernanceAccess
-	// WorkDir is a Roles FIELD in production; a method here so rolesOf fills it per fixture.
+	sentSteers
+	steerBuffer
+	MCPRecorder() mcpRecorder
+	governanceAccess
+	// A method here so rolesOf fills it per fixture.
 	WorkDir() string
 }
 
@@ -110,7 +113,6 @@ func rolesOf(d hostDouble) *Roles {
 		Steers:        d,
 		SteerBuffer:   d,
 		PendingPerms:  d,
-		Respond:       d,
 		Push:          d,
 		Sessions:      d,
 		Terminals:     d,

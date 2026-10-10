@@ -23,15 +23,15 @@ const keyVersion = "version"
 // bound is refused before it reaches the store.
 var errTooManyOrderIDs = errors.New("order names more ids than the store can hold")
 
-// CmdOpenTab opens a tab for something that already exists; it never mints a chat. `created` is
+// cmdOpenTab opens a tab for something that already exists; it never mints a chat. `created` is
 // load-bearing: an already-open (kind, ref) emits no event, so the client resolves on this
 // response.
-func CmdOpenTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdOpenTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.OpenTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !p.Kind.Valid() || !ValidIdent(p.OpID) || !validTabID(p.Parent) {
+	if !p.Kind.Valid() || !validIdent(p.OpID) || !validTabID(p.Parent) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// A chat ref is validated as a chat id here rather than in the store,
@@ -55,17 +55,17 @@ func CmdOpenTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand
 	}), nil
 }
 
-// CmdCloseTab closes a tab and its children (one mutation, hence a list). For a chat tab it runs
+// cmdCloseTab closes a tab and its children (one mutation, hence a list). For a chat tab it runs
 // the teardown; the record survives. An id that is not open closes nothing and is not an error.
-func CmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.CloseTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !validTabID(p.ID) || p.ID == "" || !ValidIdent(p.OpID) {
+	if !validTabID(p.ID) || p.ID == "" || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	closed, version, err := mem.CloseTab(ctx, p.ID, p.OpID)
+	closed, version, err := mem.closeTab(ctx, p.ID, p.OpID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,15 +75,15 @@ func CmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientComman
 	}), nil
 }
 
-// CmdReorderTabs replaces the order with the arrangement a drag committed. The exact-set check is
+// cmdReorderTabs replaces the order with the arrangement a drag committed. The exact-set check is
 // the whole precondition (no base version, which would discard a valid drag after an unrelated
 // pin). A mismatch is a 409: re-list, never re-send.
-func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdReorderTabs(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.ReorderTabsCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ValidIdent(p.OpID) {
+	if !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if len(p.Order) > tabs.MaxTabs {
@@ -94,41 +94,41 @@ func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *marotte.ClientCom
 			return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 		}
 	}
-	version, err := mem.ReorderTabs(ctx, p.Order, p.OpID)
+	version, err := mem.reorderTabs(ctx, p.Order, p.OpID)
 	if err != nil {
 		return nil, err
 	}
 	return responseWith(map[string]any{keyVersion: version}), nil
 }
 
-// CmdPinTab pins or unpins one tab, idempotent in both directions.
-func CmdPinTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+// cmdPinTab pins or unpins one tab, idempotent in both directions.
+func cmdPinTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.PinTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !validTabID(p.ID) || p.ID == "" || !ValidIdent(p.OpID) {
+	if !validTabID(p.ID) || p.ID == "" || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	version, err := mem.SetPinned(ctx, p.ID, p.Pinned, p.OpID)
+	version, err := mem.setPinned(ctx, p.ID, p.Pinned, p.OpID)
 	if err != nil {
 		return nil, err
 	}
 	return responseWith(map[string]any{keyVersion: version}), nil
 }
 
-// CmdReparentTab hangs an open tab under an open chat tab. Idempotent when
+// cmdReparentTab hangs an open tab under an open chat tab. Idempotent when
 // the parent is unchanged. The response carries the subject as it now reads,
 // because an unchanged parent emits no event for the client to adopt from.
-func CmdReparentTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+func cmdReparentTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.ReparentTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !validTabID(p.ID) || p.ID == "" || !validTabID(p.Parent) || p.Parent == "" || !ValidIdent(p.OpID) {
+	if !validTabID(p.ID) || p.ID == "" || !validTabID(p.Parent) || p.Parent == "" || !validIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	subject, version, err := mem.Reparent(ctx, p.ID, p.Parent, p.OpID)
+	subject, version, err := mem.reparent(ctx, p.ID, p.Parent, p.OpID)
 	if err != nil {
 		return nil, err
 	}

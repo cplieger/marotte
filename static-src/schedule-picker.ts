@@ -20,7 +20,6 @@ export function defaultSpec(): ScheduleSpec {
   return { freq: "daily", hour: 2, minute: 0, interval: 6, weekdays: [1], month_day: 1 };
 }
 
-/** two pads a clock component. */
 function two(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -47,7 +46,6 @@ export function clampInterval(spec: ScheduleSpec): void {
  *  TestUnattendedBudget_MatchesTheDisclaimer fails if the two drift; change both together. */
 const UNATTENDED_BUDGET_MINUTES = 3;
 
-/** ordinal renders a month day the way a person says it. */
 function ordinal(n: number): string {
   if (n === LAST_DAY) {
     return "the last day";
@@ -224,9 +222,8 @@ interface PickerOptions {
   onSave: (spec: ScheduleSpec, enabled: boolean) => void;
   onRemove: () => void;
   onClose: () => void;
-  /** Open Settings → Permissions, where the auto-approve choice lives. Injected
-   *  rather than imported: it keeps this module out of the tab/router graph, which
-   *  is what lets it be unit-tested as a form instead of as an app. */
+  /** Injected rather than imported: it keeps this module out of the tab/router graph, which is what
+   *  lets it be unit-tested as a form instead of as an app. */
   onOpenPermissions: () => void;
 }
 

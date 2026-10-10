@@ -65,8 +65,9 @@ func TestEntryIDHelpers(t *testing.T) {
 // the int enum without a wire spelling fails here rather than opening a turn whose
 // turn_open carries "".
 func TestTurnOpenSource_NameIsTotal(t *testing.T) {
-	seen := make(map[TurnOpenSourceName]TurnOpenSource, int(turnSourceCount))
-	for s := range turnSourceCount {
+	count := turnSourceCount(t)
+	seen := make(map[TurnOpenSourceName]TurnOpenSource, int(count))
+	for s := range count {
 		name := s.Name()
 		if name == "" {
 			t.Errorf("TurnOpenSource(%d).Name() is empty", s)
@@ -77,7 +78,7 @@ func TestTurnOpenSource_NameIsTotal(t *testing.T) {
 		}
 		seen[name] = s
 	}
-	if got := turnSourceCount.Name(); got != "" {
-		t.Errorf("turnSourceCount.Name() = %q, want empty for an out-of-range value", got)
+	if got := count.Name(); got != "" {
+		t.Errorf("TurnOpenSource(%d).Name() = %q, want empty for an out-of-range value", count, got)
 	}
 }

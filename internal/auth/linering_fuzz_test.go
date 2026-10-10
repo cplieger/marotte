@@ -18,10 +18,10 @@ func FuzzLineRingPushSample(f *testing.F) {
 		r := newLineRing(halfCap, perLineCap)
 		var pushed int
 		for _, line := range splitLines(lines) {
-			r.Push(line)
+			r.push(line)
 			pushed++
 		}
-		sample := r.Sample()
+		sample := r.sample()
 		if len(sample) > 2*halfCap {
 			t.Errorf("sample length %d exceeds 2*halfCap=%d", len(sample), 2*halfCap)
 		}

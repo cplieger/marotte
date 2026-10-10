@@ -18,8 +18,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// uploadsHandler grants one mount claiming marotte.DefaultUploadDir itself, backed by a throwaway
-// directory.
 func uploadsHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	backingDir := t.TempDir()
@@ -71,7 +69,6 @@ func serveUpload(t *testing.T, h *Handler, req *http.Request) *httptest.Response
 	return rec
 }
 
-// uploadBody decodes an upload response body's error + uploaded keys.
 func uploadBody(t *testing.T, rec *httptest.ResponseRecorder) (errMsg string, uploaded []string) {
 	t.Helper()
 	var body struct {
@@ -120,7 +117,7 @@ func TestHandleUpload_ExplicitDirStillWins(t *testing.T) {
 	}
 }
 
-// TestHandleUpload_DotDirIsRefused guards a fixed bug: dir="." from drop and paste resolved to the
+// TestHandleUpload_DotDirIsRefused: a "." dir, as drop and paste send it, must not resolve to the
 // workspace root.
 func TestHandleUpload_DotDirIsRefused(t *testing.T) {
 	for _, dir := range []string{".", "/", "./", "/."} {

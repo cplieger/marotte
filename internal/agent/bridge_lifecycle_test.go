@@ -9,7 +9,7 @@ import (
 
 func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 	h, _, _ := newTestHub()
-	if sb := h.coord.Bridge("no-such-chat"); sb != nil {
+	if sb := h.coord.bridgeFor("no-such-chat"); sb != nil {
 		t.Errorf("getBridge returned %+v for missing chat", sb)
 	}
 }
@@ -18,11 +18,11 @@ func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb1, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb1, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("first create error = %v", err)
 	}
-	sb2, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb2, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
@@ -33,7 +33,7 @@ func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 
 func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
 	h, _, _ := newTestHub()
-	_, err := h.coord.OpenBridge(t.Context(), "no-chat", "")
+	_, err := h.coord.openBridge(t.Context(), "no-chat", "")
 	if err == nil {
 		t.Fatal("expected error for missing chat")
 	}
@@ -46,15 +46,15 @@ func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fb := sb.bridge.(*fakeBridge)
 
-	h.coord.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 
-	if h.coord.Bridge("c1") != nil {
+	if h.coord.bridgeFor("c1") != nil {
 		t.Error("bridge still in map after closeBridge")
 	}
 	if !fb.stopped {

@@ -189,6 +189,7 @@ describe("what one entry is worth", () => {
     "compaction_failed",
     "safety_blocked",
     "model_switched",
+    "model_routed",
     "mode_switched",
   ] as const)("prices the %s event at one row", (kind) => {
     expect(stood(turn("t", [entry(1, kind, {})]))).toBe(48 + GAP_PX);

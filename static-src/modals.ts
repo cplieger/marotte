@@ -111,10 +111,6 @@ export class RollingOutput {
     this.bar.classList.remove("hidden");
   }
 
-  getText(): string {
-    return this.full;
-  }
-
   private openModal(): void {
     const modal = byId<HTMLDivElement>(this.modalId);
     const body = modal.querySelector(".subagent-modal-body, pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion

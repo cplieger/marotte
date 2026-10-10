@@ -12,7 +12,6 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
-// pendingCall registers one pending request id and returns its channel, as Call does.
 func pendingCall(b *Bridge, id int64) chan pendingReply {
 	ch := make(chan pendingReply, 1)
 	b.pendingMu.Lock()

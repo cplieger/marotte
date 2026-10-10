@@ -16,14 +16,21 @@ import type {
   CodeReference,
   InterruptMode,
   PendingSteer,
-  SteerOrigin,
   ToolStatus,
 } from "./types.js";
 // From the generated wire rather than turns.ts, for one spelling of the enum.
-import type { RefusalInfo, SteerRowState, TurnOutcome } from "./wire/types.gen.js";
+import type { RefusalInfo, TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 // turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
 import { payloadOf } from "./turns.js";
+import {
+  foldSteerFrame,
+  pendingSteerRow,
+  retireSettledSteers,
+  steerEntrySettles,
+  upsertSteerRow,
+  type SteerFrame,
+} from "./steer-rows.js";
 import { callIDOfToolResult } from "./entry-ids.js";
 import { interactionFact } from "./interaction.js";
 import { severityOf } from "./turn-severity.js";
@@ -48,6 +55,7 @@ import {
   writeEntryText,
 } from "./store-signals.js";
 import { noteToolActivity } from "./tool-silence.js";
+import { releaseWorkflowTakeUps, settleWorkflowMessages } from "./workflow-delivery.js";
 
 // One version signal per chat, so a background chat's stream cannot repaint the visible transcript.
 // Every bump carries a RenderCause, declared at the branch that knows what changed; causes merge
@@ -105,8 +113,8 @@ export function renderCauseOf(chatID: string): { cause: RenderCause; turnID?: st
   return flushedCause.get(chatID) ?? { cause: "shape" };
 }
 
-/** Flush the accumulator into a version bump. The SYNC path paints the MERGED cause and clears
- *  it, so a pending chunk flush never inherits a later shape. */
+/** The SYNC path paints the MERGED cause and clears it, so a pending chunk flush never inherits a
+ *  later shape. */
 function flushCause(chatID: string): void {
   const merged = pendingCause.get(chatID);
   if (merged === undefined) {
@@ -128,8 +136,8 @@ export function bumpMessages(chatID: string, cause: RenderCause = "shape"): void
   flushCause(chatID);
 }
 
-/** Chats with a bump parked on the next microtask. `removeChat` deletes its id here, so a
- *  pending flush cannot re-mint the version signal it just cleared. */
+/** `removeChat` deletes its id here, so a pending flush cannot re-mint the version signal it just
+ *  cleared. */
 const messagesScheduled = new Set<string>();
 
 /** Coalesce one chat's per-delta bumps into a single repaint per microtask. */
@@ -151,7 +159,7 @@ function entryCause(lane: string | undefined): RenderCause {
   return (lane ?? "") === "" ? "shape" : "chunk";
 }
 
-export const MODEL_CONTEXT_SIZES: Record<string, number> = {};
+export const MODEL_CONTEXT_SIZES = new Map<string, number>();
 
 export function parseContextSize(description: string): number | undefined {
   const m = /(\d+)\s*[Kk]\s*context/i.exec(description);
@@ -168,11 +176,9 @@ export function parseContextSize(description: string): number | undefined {
   return undefined;
 }
 
-/** Ordered keyed collection of sessions. Structure ops fire `sessions.ids`; per-session field
- *  writes fire `signalFor(id)`. Module-private: consumers go through the typed accessors below
- *  and the `activeSession` computed. */
+/** Structure ops fire `sessions.ids`; per-session field writes fire `signalFor(id)`. Module-private:
+ *  consumers go through the typed accessors below and the `activeSession` computed. */
 const sessions = createCollection<Session>((s) => s.id);
-/** The active chat id. */
 const activeId = signal("");
 /** Active session, tracking the active id AND the active session's signal, so subscribers
  *  re-render only when that session or which session is active changes. */
@@ -251,9 +257,8 @@ export const EVICT_SWEEP_MS = 5 * 60 * 1000;
 /** How long a chat must sit without activity before its window is evictable. */
 export const EVICT_IDLE_MS = 30 * 60 * 1000;
 
-/** When each chat last did anything a reader could be following. A side table rather than a
- *  Session field so a per-chunk stamp never churns the session signal; a chat with NO entry is
- *  treated as active. */
+/** A side table rather than a Session field so a per-chunk stamp never churns the session signal; a
+ *  chat with NO entry is treated as active. */
 const lastActivity = new Map<string, number>();
 
 function stampActivity(chatID: string): void {
@@ -278,9 +283,8 @@ export function registerEvictionExemption(fn: (chatID: string) => boolean): () =
   };
 }
 
-/** Whether the sweep may evict this chat's window. Five exemptions, each alone decisive: the
- *  active chat, a busy chat, a chat with an EXECUTING run, a parked view, and an open subagent
- *  tab projecting the chat. */
+/** Five exemptions, each alone decisive: the active chat, a busy chat, a chat with an EXECUTING run,
+ *  a parked view, and an open subagent tab projecting the chat. */
 function evictable(s: Session, now: number): boolean {
   if (s.turn_order.length === 0) {
     return false; // nothing resident to reclaim
@@ -336,9 +340,8 @@ export function derivedHasMore(turnCount: number, residentCount: number): boolea
   return turnCount > residentCount;
 }
 
-/** Drop every signal a chat's resident turns minted. Covers a chat leaving WHOLE (removal,
- *  eviction), where no reconcile ever runs for background rows; the renderer's own dispose
- *  covers rows that unmount. */
+/** Covers a chat leaving WHOLE (removal, eviction), where no reconcile ever runs for background
+ *  rows; the renderer's own dispose covers rows that unmount. */
 function clearEntrySignals(chatID: string, turns: ReadonlyMap<string, TurnState>): void {
   for (const [turnID, state] of turns) {
     clearTurnSigs(turnID);
@@ -442,7 +445,6 @@ function statesNoLiveness(s: Session): boolean {
   return s.provisional === true;
 }
 
-/** Does this chat hold a resident turn with no `turn_close`? */
 function hasOpenTurn(s: Session): boolean {
   for (const state of s.turns.values()) {
     if (state.closeAt === undefined) {
@@ -634,6 +636,19 @@ export function steerIDFor(messageID: string): string {
   return `steer-${messageID}`;
 }
 
+/** Whether the server holds this send's steer: a frame confirmed its row, or the log read it. */
+export function holdsSteer(chatID: string, messageID: string): boolean {
+  const s = get(chatID);
+  if (s === undefined) {
+    return false;
+  }
+  const steerID = steerIDFor(messageID);
+  return (
+    s.steers?.some((e) => e.id === steerID && e.pending !== true) === true ||
+    holdsSteerEntry(s, steerID)
+  );
+}
+
 /** Number of steers waiting for the agent, confirmed or still in flight. */
 export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
@@ -647,30 +662,21 @@ export function recordSteerSent(id: string, messageID: string, text: string): vo
   if (s === undefined || messageID === "") {
     return;
   }
-  // `user` is a FACT here, not a guess: this row is this device's own POST.
-  const entry: PendingSteer = {
-    id: steerIDFor(messageID),
-    text,
-    origin: "user",
-    pending: true,
-  };
-  const existing = s.steers ?? [];
   // Idempotent by id: submit.ts reuses one message id when retrying a failed attempt, and that
   // retry must refresh the row rather than add a second.
-  const at = existing.findIndex((e) => e.id === entry.id);
-  const next = at >= 0 ? existing.map((e, i) => (i === at ? entry : e)) : [...existing, entry];
-  sessions.update(id, (cur) => ({ ...cur, steers: next }));
+  const next = upsertSteerRow(s.steers ?? [], pendingSteerRow(steerIDFor(messageID), text));
+  sessions.update(id, (cur) => ({ ...cur, steers: [...next] }));
   scheduleMessages(id, "fact"); // the dock row is transcript-adjacent state
 }
 
-/** Un-draw one steer row; the rollback half of `recordSteerSent`. Removes by id and leaves
- *  everything else alone, so a 409 cannot take a sibling still waiting with it. */
+/** Un-draw one steer row; the rollback half of `recordSteerSent`. Removes only that row, and only
+ *  while it is still pending: a row a frame confirmed is the server's, whatever the reply said. */
 export function forgetSteer(id: string, steerID: string): void {
   const s = get(id);
   if (s?.steers === undefined) {
     return;
   }
-  const rest = s.steers.filter((e) => e.id !== steerID);
+  const rest = s.steers.filter((e) => e.id !== steerID || e.pending !== true);
   if (rest.length === s.steers.length) {
     return;
   }
@@ -678,80 +684,20 @@ export function forgetSteer(id: string, steerID: string): void {
   scheduleMessages(id, "fact");
 }
 
-/** Adopt one `steer_queued` frame. A ROW frame upserts the row its id names, exactly one row per
- *  message: the id matches (adopt the text and state, clear `pending`); no id match but the
- *  OLDEST pending row carries the same text (adopt the server's id, the fallback if the prefix
- *  convention drifts); neither (append it — another device, or this one before a reload). */
-export function recordSteerQueued(
-  id: string,
-  steer: {
-    id: string;
-    text: string;
-    origin: SteerOrigin;
-    replaces?: readonly string[] | undefined;
-    /** Absent reads as `queued`, the plain row a direct POST reply describes. */
-    state?: SteerRowState | undefined;
-  },
-): void {
+/** Adopt one `steer_queued` frame (`steer-rows.ts` `foldSteerFrame` owns the rules). */
+export function recordSteerQueued(id: string, frame: SteerFrame): void {
   const s = get(id);
-  if (s === undefined || steer.id === "") {
+  if (s === undefined || frame.id === "") {
     return;
   }
-  if (steer.replaces !== undefined && steer.replaces.length > 0) {
-    adoptSteerBatch(id, s, steer.id, steer.replaces);
+  const fold = foldSteerFrame(s.steers ?? [], frame, (steerID) => holdsSteerEntry(s, steerID));
+  if (fold === null) {
     return;
   }
-  if (steer.state === "removed" || holdsSteerEntry(s, steer.id)) {
-    forgetSteer(id, steer.id);
-    return;
+  sessions.update(id, (cur) => withSteers(cur, fold.rows));
+  if (fold.repaint) {
+    scheduleMessages(id, "fact");
   }
-  const existing = s.steers ?? [];
-  const at = existing.findIndex((e) => e.id === steer.id);
-  const adoptAt =
-    at >= 0 ? at : existing.findIndex((e) => e.pending === true && e.text === steer.text);
-  const prev = adoptAt >= 0 ? existing[adoptAt] : undefined;
-  // The frame's origin wins in every branch: the server resolved it against the ledger of what it
-  // sent, where the optimistic row's `user` was this device's claim.
-  const entry: PendingSteer = {
-    id: steer.id,
-    text: steer.text,
-    origin: steer.origin,
-    ...(prev?.kas !== undefined && { kas: prev.kas }),
-    ...(prev?.compacted === true && { compacted: true as const }),
-    ...(steer.state === "unsent" && { unsent: true as const }),
-  };
-  const next =
-    adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
-  sessions.update(id, (cur) => ({ ...cur, steers: next }));
-  scheduleMessages(id, "fact");
-}
-
-/** Record that KAS holds `keys` under `batchID`. The rows keep their element and their words;
- *  only the id their read will arrive under moves. A batch the log already shows read retires
- *  its members instead. */
-function adoptSteerBatch(
-  chatID: string,
-  s: Session,
-  batchID: string,
-  keys: readonly string[],
-): void {
-  if (s.steers === undefined) {
-    return;
-  }
-  const members = new Set(keys);
-  if (holdsSteerEntry(s, batchID)) {
-    const rest = s.steers.filter((e) => !members.has(e.id));
-    if (rest.length !== s.steers.length) {
-      sessions.update(chatID, (cur) => withSteers(cur, rest));
-      scheduleMessages(chatID, "fact");
-    }
-    return;
-  }
-  if (!s.steers.some((e) => members.has(e.id) && e.kas !== batchID)) {
-    return;
-  }
-  const next = s.steers.map((e) => (members.has(e.id) ? { ...e, kas: batchID } : e));
-  sessions.update(chatID, (cur) => withSteers(cur, next));
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The optimistic
@@ -856,6 +802,7 @@ export function upsertHeader(h: ChatHeader): void {
         // Both are header-authoritative: an absent field is steer and no follow-ups.
         interrupt_mode: h.interrupt_mode ?? "steer",
         queued: h.queued_prompts ?? [],
+        tangent: h.tangent ?? false,
       };
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
@@ -892,6 +839,7 @@ export function upsertHeader(h: ChatHeader): void {
     pending_model: h.pending_model ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",
     queued: h.queued_prompts ?? [],
+    tangent: h.tangent ?? false,
     turns: new Map(),
     turn_order: [],
     // A header carries no window, so this is the DERIVATION and not an answer.
@@ -994,8 +942,7 @@ export function markWindowStale(chatID: string): void {
   }
 }
 
-/** Mark the gap and ask for the range read that closes it. `afterSeq` is omitted for a turn the
- *  store does not hold at all, which asks for the whole turn. */
+/** `afterSeq` is omitted for a turn the store does not hold at all, which asks for the whole turn. */
 function markHole(chatID: string, turnID: string, afterSeq?: number): void {
   markWindowStale(chatID);
   repairTurn?.(chatID, turnID, afterSeq);
@@ -1066,6 +1013,7 @@ function applyRevert(chatID: string, s: Session, entry: Entry): void {
     for (const id of dropped.keys()) {
       s.turns.delete(id);
     }
+    releaseWorkflowTakeUps(dropped.values(), s.turns.values());
     s.turn_order = s.turn_order.filter((id) => !dropped.has(id));
     // The window's own record of what the revert took, read by the range read's seat as the abort's
     // belt. Extended rather than replaced: a second rewind's window does not un-revert the first
@@ -1115,6 +1063,9 @@ export function appendEntry(chatID: string, entry: Entry): void {
     // exists in which the steer is in neither place.
     retireSteerRows(chatID, entry);
   }
+  if (entry.kind === "steer" || entry.kind === "steer_delivered") {
+    settleWorkflowMessages(s.turns.values());
+  }
   if (entry.kind === "tool_result") {
     publishSettledCall(chatID, state, entry);
   }
@@ -1152,17 +1103,10 @@ function retireSteerRows(chatID: string, entry: Entry): void {
   if (s?.steers === undefined) {
     return;
   }
-  const rest = s.steers.filter((e) => !steerEntrySettles(entry, e.id, e.kas));
-  if (rest.length !== s.steers.length) {
+  const rest = retireSettledSteers(s.steers, entry);
+  if (rest !== null) {
     sessions.update(chatID, (cur) => withSteers(cur, rest));
   }
-}
-
-function steerEntrySettles(entry: Entry, rowID: string, kas: string | undefined): boolean {
-  if (entry.id === rowID || (kas !== undefined && entry.id === kas)) {
-    return true;
-  }
-  return payloadOf(entry, "steer")?.resends?.includes(rowID) === true;
 }
 
 /** Whether a resident turn already holds a `steer` entry settling this id. What a reconnect
@@ -1556,7 +1500,7 @@ export function settledToolCall(
  *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the title, the
  *  output and the spans that style it, the diffs, the status with its duration, the terminal id
  *  `linkTerminal` claims, the offload link and the answered fact. */
-function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
+export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
   return (
     shown.title === next.title &&
     shown.status === next.status &&
@@ -1574,8 +1518,8 @@ function factOf(tc: ToolCall): string {
   return tc.interaction === undefined ? "" : interactionFact(tc.interaction);
 }
 
-/** Element-wise equality for two style-span lists. Both sides are freshly decoded objects on the
- *  fetch path, so identity answers nothing and the fields are the comparison. */
+/** Both sides are freshly decoded objects on the fetch path, so identity answers nothing and the
+ *  fields are the comparison. */
 function sameSpans(a: ToolCall["output_spans"], b: ToolCall["output_spans"]): boolean {
   const x = a ?? [];
   const y = b ?? [];
@@ -1597,7 +1541,6 @@ function sameSpans(a: ToolCall["output_spans"], b: ToolCall["output_spans"]): bo
   );
 }
 
-/** Element-wise equality for two diff lists. */
 function sameDiffs(a: ToolCall["diffs"], b: ToolCall["diffs"]): boolean {
   const x = a ?? [];
   const y = b ?? [];
@@ -1631,7 +1574,7 @@ function republishToolCall(chatID: string, turnID: string, call: ToolCall): void
 }
 
 export function contextSizeFor(modelID: string): number {
-  return MODEL_CONTEXT_SIZES[modelID] ?? 0;
+  return MODEL_CONTEXT_SIZES.get(modelID) ?? 0;
 }
 
 export function defaultUsage(): Usage {

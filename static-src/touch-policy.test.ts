@@ -250,9 +250,9 @@ const LETTERED_ROW = `<div class="fb-row" role="listitem">
   ><span class="fb-meta">1.2 KB   ·   2026-09-01   ·   -rw-r--r--</span>
 </div>`;
 
-/** Mount that row and return its letter. `content-visibility: auto` is overridden: a SKIPPED
- *  subtree is not hit-testable (Chromium 151: every `elementFromPoint` answered `.fb-row`) while
- *  rect queries force layout. Stated, not awaited, since relevance is the renderer's and load-bound. */
+/** `content-visibility: auto` is overridden: a SKIPPED subtree is not hit-testable (Chromium 151:
+ *  every `elementFromPoint` answered `.fb-row`) while rect queries force layout. Stated, not
+ *  awaited, since relevance is the renderer's and load-bound. */
 function mountLetteredRow(): Element {
   mount(LETTERED_ROW);
   const row = boxHost.firstElementChild;

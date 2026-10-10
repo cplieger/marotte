@@ -67,8 +67,7 @@ func (l *censusLedger) disabled() bool {
 	return l.off
 }
 
-// knownKeys returns the cached lowercased member-name set for a type; cached because
-// censusMeta runs on every frame. The map is shared: read-only.
+// cached because censusMeta runs on every frame. The map is shared: read-only.
 func knownKeys(t reflect.Type) map[string]struct{} {
 	if cached, ok := knownKeyCache.Load(t); ok {
 		if set, isSet := cached.(map[string]struct{}); isSet {
@@ -84,9 +83,9 @@ func knownKeys(t reflect.Type) map[string]struct{} {
 // shape sync.Map is for.
 var knownKeyCache sync.Map
 
-// knownKeysOf returns the lowercased JSON member names a struct type consumes, including
-// embedded and untagged nested structs. Derived from the tags so it cannot drift;
-// lowercased because encoding/json matches members case-insensitively.
+// knownKeysOf returns the lowercased JSON member names a struct type consumes, including embedded
+// and untagged nested structs. Derived from the tags so it cannot drift; lowercased because
+// encoding/json matches members case-insensitively.
 func knownKeysOf(t reflect.Type) map[string]struct{} {
 	out := make(map[string]struct{})
 	collectKnownKeys(t, out, 0)

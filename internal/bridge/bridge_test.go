@@ -262,47 +262,6 @@ func TestStop_Idempotent(t *testing.T) {
 	b.Stop()
 }
 
-// TestCall_ReturnsBridgeExitedAfterStop pins that a Call parked on the select returns errBridgeExited when Stop
-// closes b.done, rather than hanging.
-func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
-	b := New("/nonexistent", "/work")
-	// A pipe so writeFrame succeeds; nothing plays readLoop, so Call parks on select{ch, b.done}.
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = pr.Close()
-	})
-	b.stdin.Store(&stdinPipe{w: pw})
-
-	type result struct {
-		resp *marotte.RPCResponse
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		r, e := b.Call(t.Context(), "x", nil)
-		done <- result{r, e}
-	}()
-	waitPending(t, b, 1)
-	// Read the frame first: Call registers before writing, and Stop closing stdin in that window would fail the write
-	// instead of reaching the select under test.
-	readFrame(t, pr)
-	b.Stop()
-	select {
-	case r := <-done:
-		if !errors.Is(r.err, errBridgeExited) {
-			t.Errorf("err = %v, want errBridgeExited", r.err)
-		}
-		if r.resp != nil {
-			t.Errorf("resp = %+v, want nil", r.resp)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Call did not unblock after Stop")
-	}
-}
-
 // respondBridge returns a Bridge wired to a pipe so Respond output can be read back. Close pr when done.
 func respondBridge(t *testing.T) (*Bridge, *os.File) {
 	t.Helper()
@@ -837,7 +796,7 @@ func TestParseErrTracker(t *testing.T) {
 			name: "suppress after burst within window",
 			setup: func(tr *parseErrTracker) {
 				for range parseErrBurst {
-					tr.Record()
+					tr.record()
 				}
 			},
 			calls:      1,
@@ -853,7 +812,7 @@ func TestParseErrTracker(t *testing.T) {
 			name: "reset clears consecutive counter",
 			setup: func(tr *parseErrTracker) {
 				for range 5 {
-					tr.Record()
+					tr.record()
 				}
 				tr.Reset()
 			},
@@ -868,7 +827,7 @@ func TestParseErrTracker(t *testing.T) {
 			tc.setup(&tr)
 			var action parseErrAction
 			for range tc.calls {
-				action = tr.Record()
+				action = tr.record()
 			}
 			if action != tc.wantAction {
 				t.Errorf("after %d Record() calls: got %d, want %d", tc.calls, action, tc.wantAction)
@@ -879,13 +838,13 @@ func TestParseErrTracker(t *testing.T) {
 	t.Run("summary count tracks suppressed errors", func(t *testing.T) {
 		var tr parseErrTracker
 		for range parseErrBurst {
-			tr.Record()
+			tr.record()
 		}
 		extra := 7
 		for range extra {
-			tr.Record()
+			tr.record()
 		}
-		if got := tr.SummaryCount(); got != extra {
+		if got := tr.summaryCount(); got != extra {
 			t.Errorf("SummaryCount() = %d, want %d", got, extra)
 		}
 	})
@@ -897,31 +856,31 @@ func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
 		for range parseErrBurst {
-			if got := tr.Record(); got != parseErrLog {
+			if got := tr.record(); got != parseErrLog {
 				t.Fatalf("burst Record() = %v, want parseErrLog", got)
 			}
 		}
 		// Inside the window: suppressed.
 		synctest.Sleep(parseErrWindow / 2)
-		if got := tr.Record(); got != parseErrSuppress {
+		if got := tr.record(); got != parseErrSuppress {
 			t.Errorf("Record() inside the window = %v, want parseErrSuppress", got)
 		}
 		// Past it: one summary, then suppressed again as the window restarts.
 		synctest.Sleep(parseErrWindow)
-		if got := tr.Record(); got != parseErrSummarize {
+		if got := tr.record(); got != parseErrSummarize {
 			t.Errorf("Record() past the window = %v, want parseErrSummarize", got)
 		}
-		if got := tr.Record(); got != parseErrSuppress {
+		if got := tr.record(); got != parseErrSuppress {
 			t.Errorf("Record() straight after a summary = %v, want parseErrSuppress: "+
 				"the window must restart at the summary, or a storm emits one line per frame", got)
 		}
 		// The edge belongs to the window it closes: the comparison is strict, so the cadence is a floor.
 		synctest.Sleep(parseErrWindow)
-		if got := tr.Record(); got != parseErrSuppress {
+		if got := tr.record(); got != parseErrSuppress {
 			t.Errorf("Record() exactly %v after the summary = %v, want parseErrSuppress", parseErrWindow, got)
 		}
 		synctest.Sleep(time.Nanosecond)
-		if got := tr.Record(); got != parseErrSummarize {
+		if got := tr.record(); got != parseErrSummarize {
 			t.Errorf("Record() a nanosecond past the cadence = %v, want parseErrSummarize", got)
 		}
 	})
@@ -932,16 +891,16 @@ func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
 		for range parseErrBurst - 1 {
-			if got := tr.Record(); got != parseErrLog {
+			if got := tr.record(); got != parseErrLog {
 				t.Fatalf("burst Record() = %v, want parseErrLog", got)
 			}
 		}
 		// Long enough to stale a window anchored at the start, short of decay.
 		synctest.Sleep(parseErrWindow + time.Second)
-		if got := tr.Record(); got != parseErrLog {
+		if got := tr.record(); got != parseErrLog {
 			t.Fatalf("the last verbatim Record() = %v, want parseErrLog", got)
 		}
-		if got := tr.Record(); got != parseErrSuppress {
+		if got := tr.record(); got != parseErrSuppress {
 			t.Errorf("Record() straight after the burst = %v, want parseErrSuppress: "+
 				"nothing is due to be summarized until a window has passed since the burst ended", got)
 		}
@@ -954,15 +913,15 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
 		for range parseErrBurst + 5 {
-			tr.Record()
+			tr.record()
 		}
-		if got := tr.Record(); got != parseErrSuppress {
+		if got := tr.record(); got != parseErrSuppress {
 			t.Fatalf("Record() past the burst = %v, want parseErrSuppress", got)
 		}
 
 		// Quiet for exactly parseErrDecay is not yet decayed: this line is summarized.
 		synctest.Sleep(parseErrDecay)
-		if got := tr.Record(); got != parseErrSummarize {
+		if got := tr.record(); got != parseErrSummarize {
 			t.Errorf("Record() after exactly %v of quiet = %v, want parseErrSummarize: "+
 				"the burst must not restart until the decay is exceeded", parseErrDecay, got)
 		}
@@ -970,7 +929,7 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 		synctest.Sleep(parseErrDecay + time.Second)
 
 		// The burst is back: emitted verbatim.
-		if got := tr.Record(); got != parseErrLog {
+		if got := tr.record(); got != parseErrLog {
 			t.Errorf("Record() after %v of quiet = %v, want parseErrLog: "+
 				"decay must restart the burst", parseErrDecay, got)
 		}
@@ -984,9 +943,9 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 				tr.consecutive, parseErrBurst+8)
 		}
 		for range parseErrMaxConsecutive - tr.consecutive - 1 {
-			tr.Record()
+			tr.record()
 		}
-		if got := tr.Record(); got != parseErrCircuitBreak {
+		if got := tr.record(); got != parseErrCircuitBreak {
 			t.Errorf("Record() at consecutive=%d = %v, want parseErrCircuitBreak: "+
 				"decay must not spare a stream that fails totally but slowly",
 				tr.consecutive, got)
@@ -1211,7 +1170,7 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
-func (w *captureWriter) Close() error { return nil }
+func (*captureWriter) Close() error { return nil }
 
 func (w *captureWriter) wrote() bool {
 	w.mu.Lock()
@@ -1219,12 +1178,11 @@ func (w *captureWriter) wrote() bool {
 	return w.writes > 0
 }
 
-// errReader yields its error on the first Read; non-EOF is logged by logReadError, io.EOF ends the loop quietly.
+// non-EOF is logged by logReadError, io.EOF ends the loop quietly.
 type errReader struct{ failErr error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
 
-// readLoopBridge builds the minimal Bridge that readLoop needs.
 func readLoopBridge(r io.Reader) *Bridge {
 	return &Bridge{
 		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
@@ -1236,16 +1194,14 @@ func readLoopBridge(r io.Reader) *Bridge {
 
 // readFrame reads one frame the bridge wrote, so a test syncs on the write itself; bounded, failing with a
 // diagnostic.
-func readFrame(t *testing.T, pr *os.File) []byte {
+func readFrame(t *testing.T, pr *os.File) {
 	t.Helper()
 	if err := pr.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("set read deadline on the bridge pipe: %v", err)
 	}
-	line, err := bufio.NewReader(pr).ReadBytes('\n')
-	if err != nil {
+	if line, err := bufio.NewReader(pr).ReadBytes('\n'); err != nil {
 		t.Fatalf("read the framed request from the bridge pipe: %v (read %q)", err, line)
 	}
-	return line
 }
 
 // waitPending polls until Call has registered n pending requests; injecting earlier blocks on a nil channel.
@@ -1266,7 +1222,6 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 	}
 }
 
-// runLoadSession drives loadSession against an injected response and returns its error.
 func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *marotte.RPCResponse) error {
 	t.Helper()
 	_, err := runLoadSessionOpts(t, b,
@@ -1285,7 +1240,6 @@ func runNewSession(
 	})
 }
 
-// runLoadSessionOpts is runLoadSession with the whole StartOpts, returning every frame written.
 func runLoadSessionOpts(
 	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
 ) ([]byte, error) {
@@ -1350,7 +1304,7 @@ func TestParseErrTracker_WindowStartSetAtBurst(t *testing.T) {
 	var tr parseErrTracker
 	var got parseErrAction
 	for range parseErrBurst + 1 {
-		got = tr.Record()
+		got = tr.record()
 	}
 	if got != parseErrSuppress {
 		t.Errorf("Record() call #%d = %v, want parseErrSuppress (%v)", parseErrBurst+1, got, parseErrSuppress)
@@ -2186,8 +2140,7 @@ while IFS= read -r line; do
 done
 `
 
-// captureRequest starts a bridge against sessionDoorScript and returns one method's raw request line, failing on a
-// miss. alsoContains narrows a repeated method (set_config_option carries model, effort and autopilot).
+// alsoContains narrows a repeated method (set_config_option carries model, effort and autopilot).
 func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoContains ...string) string {
 	t.Helper()
 	data := captureRequests(t, opts)
@@ -2253,7 +2206,6 @@ func digObject(t *testing.T, what, line string, levels ...string) map[string]any
 	return node
 }
 
-// metaKiroSettings digs _meta.kiro.settings out of a captured session request.
 func metaKiroSettings(t *testing.T, line string) map[string]any {
 	t.Helper()
 	return digObject(t, "the session door's block", line, "params", "_meta", "kiro", "settings")
@@ -2690,9 +2642,9 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	}
 }
 
-// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat. kill(pid, 0) calls a
-// zombie alive, adding the shell's reaping latency, and a zombie already proves the EOF. The state follows the last
-// ')' because comm may contain parens.
+// processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat. kill(pid,
+// 0) calls a zombie alive, adding the shell's reaping latency, and a zombie already proves the EOF.
+// The state follows the last ')' because comm may contain parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {
@@ -2706,7 +2658,6 @@ func processAlive(pid int) bool {
 	return s[i+2] != 'Z'
 }
 
-// waitForBridgePID polls for the bait script's pid file and returns the pid.
 func waitForBridgePID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -2872,7 +2823,6 @@ initialize was:
 // initializeGoldenPath is the committed byte-for-byte capture of every initialize request marotte can send.
 const initializeGoldenPath = "testdata/initialize.golden"
 
-// initializeGoldenCmd is the regeneration command quoted in this fixture's failure messages.
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
 // initGateCases is the complete matrix of _meta.kiro runtime gates: SecretStorage and DisableTelemetry set a value,
@@ -3010,23 +2960,19 @@ func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
 	resp := &marotte.RPCResponse{Result: json.RawMessage(`{
 		"agentCapabilities":{"_meta":{"kiro":{
 			"extensionMethods":["_kiro/one","_kiro/two"],
-			"replayMarking":true,
-			"futureCapability":{"enabled":true}
+			"replayMarking":true
 		}}}
 	}`)}
 	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
-	got := b.AgentKiroCapabilities()
+	got := b.agentKiro.Load()
 	if !slices.Equal(got.ExtensionMethods, []string{"_kiro/one", "_kiro/two"}) {
-		t.Errorf("AgentKiroCapabilities().ExtensionMethods = %v, want [_kiro/one _kiro/two]", got.ExtensionMethods)
+		t.Errorf("ExtensionMethods = %v, want [_kiro/one _kiro/two]", got.ExtensionMethods)
 	}
 	if !got.ReplayMarking {
-		t.Error("AgentKiroCapabilities().ReplayMarking = false, want true")
-	}
-	if string(got.Raw["futureCapability"]) != `{"enabled":true}` {
-		t.Errorf("AgentKiroCapabilities().Raw[futureCapability] = %s, want retained JSON", got.Raw["futureCapability"])
+		t.Error("ReplayMarking = false, want true")
 	}
 }
 
@@ -3037,9 +2983,9 @@ func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
 
-	got := b.AgentKiroCapabilities()
-	if len(got.ExtensionMethods) != 0 || got.ReplayMarking || len(got.Raw) != 0 {
-		t.Errorf("AgentKiroCapabilities() = %+v, want zero value", got)
+	got := b.agentKiro.Load()
+	if len(got.ExtensionMethods) != 0 || got.ReplayMarking {
+		t.Errorf("capabilities = %+v, want zero value", got)
 	}
 }
 

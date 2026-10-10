@@ -1,44 +1,40 @@
 import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { routeForPath } from "../editor-types.js";
+import { statIdentity } from "../file-identity.js";
+import type { DiffBase } from "../viewer-rules.js";
+import type { ShowAnswer } from "../viewer-reads.js";
+import type { FileRead, FileRefusal, FileStat, FileWriteResult } from "../wire/types.gen.js";
+import { decodeFileRefusal, decodeFileStat, decodeFileWriteResult } from "../wire/decoders.gen.js";
 
-/** `internal/git.KindNotInRepo`: no repository owns the path, so there is no "before" and an
+/** `internal/git.kindNotInRepo`: no repository owns the path, so there is no "before" and an
  *  all-add diff is correct. */
 const GIT_ERR_NOT_IN_REPO = "not_in_repo";
 
-/** `/api/file` statuses that answer about a changed file: 404 is a deleted working copy, 415 is
- *  binary (no text diff). */
 const HTTP_NOT_FOUND = 404;
-const HTTP_BINARY = 415;
+const HTTP_CONFLICT = 409;
+
+/** A save's answer: written, or refused because the file moved under the buffer. */
+export type SaveOutcome =
+  | { readonly kind: "saved"; readonly result: FileWriteResult }
+  | { readonly kind: "stale"; readonly refusal: FileRefusal };
 
 /** Saves the active editor file (PUT). No auto-retry: a retry after further edits would overwrite
- *  them with the dispatch-time snapshot. */
-export interface SaveFileResult {
-  ok?: boolean;
-  error?: string;
-  /** Present only on a refused stale write: the file's current content, so
-   *  the caller can show the diff rather than telling the user to reload. */
-  content?: string;
-  content_hash?: string;
-}
-
-export const saveFile = apiAction<
-  { path: string; content: string; expectedHash?: string },
-  SaveFileResult
->({
+ *  them with the dispatch-time snapshot. `fileId` absent writes unconditionally (Overwrite). */
+export const saveFile = apiAction<{ path: string; content: string; fileId?: string }, SaveOutcome>({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
   retryable: retryNetwork,
-  request: ({ path, content, expectedHash }) => ({
+  request: ({ path, content, fileId }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
-    // expected_hash is the digest the file had when this buffer loaded it;
-    // the server refuses with 409 when it has changed since.
-    body: expectedHash === undefined ? { content } : { content, expected_hash: expectedHash },
+    body: fileId === undefined ? { content } : { content, file_id: fileId },
   }),
-  // A 409 carries the current content, recovered as a success payload so the caller shows the diff.
+  decode: (data) => ({ kind: "saved", result: decodeFileWriteResult(data) }),
   decodeError: (info) =>
-    info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
+    info.status === HTTP_CONFLICT && info.body !== undefined
+      ? { kind: "success", value: { kind: "stale", refusal: decodeFileRefusal(info.body) } }
+      : undefined,
   error: false,
 });
 
@@ -68,6 +64,37 @@ export const fetchAgentLines = apiAction<
   error: false,
 });
 
+/** A live check's answer. `skipped` is a tick that found the tab hidden and asked nothing. */
+export type StatAnswer =
+  | { readonly kind: "stat"; readonly stat: FileStat }
+  | { readonly kind: "gone" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "skipped" };
+
+/** One live-refresh check of a file's facts. A failed request resolves null, which the poller
+ *  counts as a miss; every answer the server gave resolves. */
+export const statFile = defineAction<{ path: string; shown: () => boolean }, StatAnswer>({
+  name: "editor.stat_file",
+  run: async ({ path, shown }, signal) => {
+    if (!shown()) {
+      return { kind: "skipped" };
+    }
+    const { apiGetTypedOrError } = await import("../api-client.js");
+    const r = await apiGetTypedOrError(routeForPath(path).statURL, decodeFileStat, signal);
+    if (r.ok && r.data !== null) {
+      return statIdentity(r.data) === null ? { kind: "refused" } : { kind: "stat", stat: r.data };
+    }
+    if (r.status === HTTP_NOT_FOUND) {
+      return { kind: "gone" };
+    }
+    if (r.status === 0) {
+      throw new ActionError(r.error, { code: "network" });
+    }
+    return { kind: "refused" };
+  },
+  error: false,
+});
+
 /** The base pane's caption: "not in git" (no repo owns the path), "not in <ref>" (untracked or
  *  staged-new, signalled by `handleShow`'s `absent` marker because its content is legitimately
  *  empty), or the ref itself. */
@@ -78,59 +105,89 @@ function baseLabelFor(ref: string, gitErr: string, absentAtRef: boolean): string
   return absentAtRef ? `not in ${ref}` : ref;
 }
 
+/** The diff's two sides, or the file's own view when either side is over the cap or the working
+ *  copy is binary. The working side IS the read, null when the working copy is deleted, so the
+ *  buffer and the diff can only be taken from the same bytes. */
+type DiffSources =
+  | {
+      readonly kind: "diff";
+      readonly oldContent: string;
+      readonly base: DiffBase;
+      readonly baseLabel: string;
+      readonly workingLabel: string;
+      readonly read: FileRead | null;
+    }
+  | { readonly kind: "too_large" }
+  | { readonly kind: "binary" };
+
+type BaseSide = Pick<Extract<DiffSources, { kind: "diff" }>, "oldContent" | "base" | "baseLabel">;
+
+/** The base pane from git's answer, or the error that fails the diff. */
+function baseSide(
+  old: Exclude<ShowAnswer, { kind: "too_large" }>,
+  ref: string,
+  gitPath: string,
+): BaseSide {
+  switch (old.kind) {
+    case "refused":
+      return { oldContent: "", base: old.code, baseLabel: ref };
+    case "failed":
+      throw new ActionError(old.error !== "" ? old.error : `Could not read ${ref} for ${gitPath}`, {
+        code: "network",
+      });
+    case "git_error":
+      if (old.error !== GIT_ERR_NOT_IN_REPO) {
+        const detail = old.detail !== "" ? old.detail : old.error;
+        throw new ActionError(`git could not read ${ref} for ${gitPath}: ${detail}`, {
+          code: "network",
+        });
+      }
+      return { oldContent: "", base: "text", baseLabel: baseLabelFor(ref, old.error, false) };
+    case "blob":
+      return {
+        oldContent: old.show.content,
+        base: "text",
+        baseLabel: baseLabelFor(ref, "", old.show.absent === true),
+      };
+  }
+}
+
 /** Fetches git diff sources for the editor diff view. `path` arrives absolute; `/api/file` gets it
- *  container-absolute and `/api/git/show` repo- or workspace-relative. The labels are claims about
- *  what each pane holds (see `baseLabelFor`; "deleted" vs "working tree" on the right). */
-export const loadDiff = defineAction<
-  { path: string; repo: string; ref: string },
-  { oldContent: string; newContent: string; error: string; baseLabel: string; workingLabel: string }
->({
+ *  container-absolute and `/api/git/show` repo- or workspace-relative. */
+export const loadDiff = defineAction<{ path: string; repo: string; ref: string }, DiffSources>({
   name: "editor.load_diff",
   retryable: retryNetwork,
   run: async ({ path, repo, ref }, signal) => {
-    const { apiGet, apiGetOrError } = await import("../api-client.js");
+    const { readFile, showRevision } = await import("../viewer-reads.js");
     const { relToWorkspace } = await import("../workspace.js");
-    const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
     // With an explicit repo the path is already repo-relative; with none,
     // the server resolves the owner from a workspace-relative path.
     const gitPath = repo !== "" ? path : relToWorkspace(path);
-    // apiGetOrError: two working-copy statuses are answers (HTTP_NOT_FOUND / HTTP_BINARY).
-    const [oldD, newD] = await Promise.all([
-      apiGet<{ content?: string; error?: string; detail?: string; absent?: boolean }>(
-        `/api/git/show?path=${encodeURIComponent(gitPath)}&ref=${encodeURIComponent(ref)}${repoParam}`,
-        signal,
-      ),
-      apiGetOrError<{ content?: string; error?: string }>(
-        `/api/file?path=${encodeURIComponent(path)}`,
-        signal,
-      ),
+    const [old, work] = await Promise.all([
+      showRevision({ path: gitPath, ref, repo }, signal),
+      readFile(path, signal),
     ]);
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    const deleted = newD.status === HTTP_NOT_FOUND;
-    const binary = newD.status === HTTP_BINARY;
-    // Each side is named — "one of them failed" is not actionable.
-    if (!newD.ok && !deleted && !binary) {
-      throw new ActionError(`Could not read the working copy of ${gitPath}`, { code: "network" });
+    if (work.kind === "too_large" || old.kind === "too_large") {
+      return { kind: "too_large" };
     }
-    if (oldD === null) {
-      throw new ActionError(`Could not read ${ref} for ${gitPath}`, { code: "network" });
+    if (work.kind === "binary") {
+      return { kind: "binary" };
     }
-    const gitErr = oldD.error ?? "";
-    if (gitErr !== "" && gitErr !== GIT_ERR_NOT_IN_REPO) {
-      throw new ActionError(`git could not read ${ref} for ${gitPath}: ${oldD.detail ?? gitErr}`, {
-        code: "network",
-      });
+    const deleted = work.kind === "failed" && work.status === HTTP_NOT_FOUND;
+    if (work.kind === "failed" && !deleted) {
+      throw new ActionError(
+        work.error !== "" ? work.error : `Could not read the working copy of ${gitPath}`,
+        { code: "network" },
+      );
     }
     return {
-      oldContent: oldD.content ?? "",
-      newContent: newD.data?.content ?? "",
-      error: binary
-        ? `${gitPath} is a binary file, so there is no text diff to show.`
-        : (newD.data?.error ?? ""),
-      baseLabel: baseLabelFor(ref, gitErr, oldD.absent === true),
+      kind: "diff",
+      ...baseSide(old, ref, gitPath),
       workingLabel: deleted ? "deleted" : "working tree",
+      read: work.kind === "read" ? work.read : null,
     };
   },
   error: "Could not load diff",

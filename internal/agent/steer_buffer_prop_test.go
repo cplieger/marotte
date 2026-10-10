@@ -27,7 +27,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				}
 			},
 			"end": func(rt *rapid.T) {
-				s.recs.TurnEnded(chat, command.SteerTurnEnd{
+				s.recs.turnEnded(chat, command.SteerTurnEnd{
 					TurnID: s.turnID(), Source: marotte.TurnSourcePrompt, BridgeDeath: rapid.Bool().Draw(rt, "death"),
 				})
 			},
@@ -76,7 +76,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 					}
 				}
 				if rapid.Bool().Draw(rt, "turnEndsMidOp") {
-					s.recs.TurnEnded(chat, command.SteerTurnEnd{TurnID: s.turnID(), Source: marotte.TurnSourcePrompt})
+					s.recs.turnEnded(chat, command.SteerTurnEnd{TurnID: s.turnID(), Source: marotte.TurnSourcePrompt})
 				}
 				landed := rapid.Bool().Draw(rt, "landed")
 				var cleared []string
@@ -101,7 +101,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				}
 				s.q.DiscardCleared(chat, "op-d", landed)
 			},
-			"bridgeGone": func(*rapid.T) { s.recs.BridgeGone(chat) },
+			"bridgeGone": func(*rapid.T) { s.recs.bridgeGone(chat) },
 			"nextParked": func(*rapid.T) { s.q.NextParked(chat, s.turnID()) },
 			"jobs": func(rt *rapid.T) {
 				for _, j := range s.spy.takeJobs() {

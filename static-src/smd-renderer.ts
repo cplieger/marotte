@@ -60,9 +60,7 @@ import { followRoot } from "./workspace.js";
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 
-export type { Renderer } from "./smd-parser-types.js";
-
-export interface DomRendererData {
+interface DomRendererData {
   nodes: (Element | null)[];
   index: number;
   onBlockComplete: ((block: HTMLElement) => void) | undefined;
@@ -123,7 +121,6 @@ const MATH_ATTR = "data-math";
 const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
 const MATH_RAW_ATTR = "data-math-raw";
 
-/** Turn a closed equation host's LaTeX into MathML in place. */
 function finalizeMath(host: Element): void {
   const src = host.textContent;
   const math = latexToMathML(src, host.getAttribute(MATH_ATTR) === "block");
@@ -214,6 +211,20 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     return;
   }
   data.nodes[++data.index] = parent.appendChild(makeEl(tag));
+  if (type === LIST_ITEM && parent.tagName === "OL") {
+    fitMarkerGutter(parent as HTMLOListElement);
+  }
+}
+
+/** Publishes the digit count of the list's widest marker as `--marker-digits`, which sizes the
+ *  start padding in 13-messages.css; unset means one digit. CSS cannot read `start` as a number
+ *  in every engine, so the renderer, which sees each item arrive, owns the count. */
+function fitMarkerGutter(ol: HTMLOListElement): void {
+  const start = Number.parseInt(ol.getAttribute("start") ?? "1", 10);
+  const digits = String(start + ol.children.length - 1).length;
+  if (digits > 1) {
+    ol.style.setProperty("--marker-digits", String(digits));
+  }
 }
 
 /** Marks a per-chunk span whose fade has already played, so the CSS rule that animates one on

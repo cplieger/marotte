@@ -56,7 +56,6 @@ done
 // budgetProbe is the handshake's budget in tests: long enough for the fake to answer the requests before the stall.
 const budgetProbe = 750 * time.Millisecond
 
-// shortenBudgets sets both shipped budgets to budgetProbe for one test, restored via t.Cleanup.
 func shortenBudgets(t *testing.T) {
 	t.Helper()
 	origHandshake, origReplay := handshakeBudget, replayBudget

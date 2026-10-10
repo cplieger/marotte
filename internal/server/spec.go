@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -18,7 +17,6 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// headerIfNoneMatch is the request header carrying the ETag a client holds.
 const headerIfNoneMatch = "If-None-Match"
 
 // specApprovalReader is the approval record as this endpoint uses it: stored approvals with
@@ -38,7 +36,7 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "spec not found")
 		return
 	}
-	sp, err := spec.Load(r.Context(), root, name, filebrowse.MaxFileSize)
+	sp, err := spec.Load(r.Context(), root, name, spec.MaxFileBytes)
 	switch {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, spec.ErrNoDocs):
 		httpreply.NotFound(w, "spec not found")
@@ -63,10 +61,10 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, sp)
 }
 
-// specETag is the quoted hex sha256 over each doc's NAME and hash, then the approvals. The
-// name is needed because an over-size doc's hash is empty. Approvals contribute phase, hash,
-// derived Stale (a doc disappearing would otherwise cancel), At and User (the badge renders
-// them), iterated over specapproval.Phases() for a stable order. NUL separates fields.
+// specETag is the quoted hex sha256 over each doc's NAME and hash, then the approvals. The name is
+// needed because an over-size doc's hash is empty. Approvals contribute phase, hash, derived Stale
+// (a doc disappearing would otherwise cancel), At and User (the badge renders them), iterated over
+// specapproval.Phases() for a stable order. NUL separates fields.
 func specETag(docs []marotte.SpecDoc, approvals map[string]marotte.SpecApproval) string {
 	h := sha256.New()
 	for _, d := range docs {

@@ -37,26 +37,22 @@ type ServerLister interface {
 	EnabledServers(ctx context.Context) []ServerInfo
 }
 
-// npxCommand is the command name for npx-based MCP servers.
 const npxCommand = "npx"
 
-// maxConcurrentInstalls caps how many `npm install -g` can run in parallel.
 const maxConcurrentInstalls = 3
 
-// tailLogBytes caps how many bytes of `npm install` output we keep in memory.
 const tailLogBytes = buffer.DefaultOutputCap
 
-// supportedPackageTransports defines which transport types are valid for prewarm.
 var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 
 // State describes the phase of a prewarm install for UI surfacing.
 type State string
 
-// Installing and the following constants define the valid State values for a prewarm install lifecycle.
+// installing and the following constants define the valid State values for a prewarm install lifecycle.
 const (
-	Installing State = "installing"
-	Done       State = "done"
-	Failed     State = "failed"
+	installing State = "installing"
+	done       State = "done"
+	failed     State = "failed"
 )
 
 // Runner owns the lifecycle of npx pre-installs.
@@ -177,13 +173,13 @@ func (p *Runner) release(pkg string) {
 	delete(p.running, pkg)
 }
 
-// RingBuffer keeps the last Cap bytes of a stream.
-type RingBuffer struct {
+// ringBuffer keeps the last Cap bytes of a stream.
+type ringBuffer struct {
 	buf []byte
 	Cap int // exported for test construction
 }
 
-func (r *RingBuffer) Write(p []byte) (int, error) {
+func (r *ringBuffer) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
 	if len(r.buf) > r.Cap {
 		r.buf = r.buf[len(r.buf)-r.Cap:]
@@ -192,12 +188,11 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 }
 
 // Bytes returns the buffered content, up to Cap bytes (the most recent tail).
-func (r *RingBuffer) Bytes() []byte { return r.buf }
+func (r *ringBuffer) Bytes() []byte { return r.buf }
 
-// installOne warms the npm cache for pkg; ctx must already carry both the pass and the runner
-// lifetime (queue merges them). The install goes into a per-install THROWAWAY tree with
-// --ignore-scripts: concurrent installs into one node_modules would race, while the shared cache
-// underneath is built for it.
+// ctx must already carry both the pass and the runner lifetime (queue merges them). The install
+// goes into a per-install THROWAWAY tree with --ignore-scripts: concurrent installs into one
+// node_modules would race, while the shared cache underneath is built for it.
 func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	defer p.release(pkg)
 
@@ -207,16 +202,16 @@ func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	start := time.Now()
 	slog.Info("mcp: prewarm install", "package", pkg)
 	if p.OnStatus != nil {
-		p.OnStatus(pkg, Installing)
+		p.OnStatus(pkg, installing)
 	}
 	fail := func(err error, out []byte) {
 		slog.Warn("mcp: prewarm failed",
 			"package", pkg,
 			"error", err,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"output", TailOutput(out, 1024))
+			"output", tailOutput(out, 1024))
 		if p.OnStatus != nil {
-			p.OnStatus(pkg, Failed)
+			p.OnStatus(pkg, failed)
 		}
 	}
 
@@ -233,7 +228,7 @@ func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	// resolves nothing from above it: --prefix alone leaves npm free to find an
 	// ancestor manifest and install against somebody else's tree.
 	cmd.Dir = tree
-	ring := &RingBuffer{Cap: tailLogBytes}
+	ring := &ringBuffer{Cap: tailLogBytes}
 	cmd.Stdout = ring
 	cmd.Stderr = ring
 	if err := cmd.Run(); err != nil {
@@ -243,16 +238,14 @@ func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	slog.Info("mcp: prewarm done",
 		"package", pkg, "duration_ms", time.Since(start).Milliseconds())
 	if p.OnStatus != nil {
-		p.OnStatus(pkg, Done)
+		p.OnStatus(pkg, done)
 	}
 }
 
-// stagingManifest is the throwaway tree's own package.json. Private and
-// unversioned, so nothing about it can be mistaken for a publishable package.
+// Private and unversioned, so nothing about it can be mistaken for a publishable package.
 const stagingManifest = `{"name":"marotte-prewarm","version":"0.0.0","private":true}` + "\n"
 
-// stageTree makes one install's throwaway tree and returns its path; the caller
-// removes it. A tree that cannot be given its manifest is removed HERE rather than
+// The caller removes it. A tree that cannot be given its manifest is removed HERE rather than
 // handed back, so no caller's failure path has to clean up a partial one.
 func stageTree() (string, error) {
 	tree, err := os.MkdirTemp("", "marotte-prewarm-")
@@ -276,8 +269,8 @@ func removeTree(tree string) {
 	}
 }
 
-// NpmPkgSpecRe accepts conservative npm package specs.
-var NpmPkgSpecRe = regexp.MustCompile(
+// npmPkgSpecRe accepts conservative npm package specs.
+var npmPkgSpecRe = regexp.MustCompile(
 	`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*` +
 		`(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$`,
 )
@@ -302,7 +295,7 @@ func ExtractNpxPackage(s ServerInfo) string {
 		if strings.HasPrefix(a, "-") {
 			return ""
 		}
-		if !NpmPkgSpecRe.MatchString(a) {
+		if !npmPkgSpecRe.MatchString(a) {
 			return ""
 		}
 		return a
@@ -310,8 +303,8 @@ func ExtractNpxPackage(s ServerInfo) string {
 	return ""
 }
 
-// TailOutput returns the last n bytes of output for a log line.
-func TailOutput(b []byte, n int) string {
+// tailOutput returns the last n bytes of output for a log line.
+func tailOutput(b []byte, n int) string {
 	if len(b) <= n {
 		return string(b)
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// outcomeBridge records the result each Respond carried.
 type outcomeBridge struct {
 	recordingBridge
 	results []any
@@ -58,7 +57,7 @@ func TestCmdPermission_RejectionReason(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, tc.payload)
 
-			_, err := CmdPermission(t.Context(), deps, deps, deps, cmd)
+			_, err := cmdPermission(t.Context(), deps, deps, cmd)
 
 			if got := statusOf(err); got != tc.wantStatus {
 				t.Fatalf("CmdPermission(%+v) status = %d, want %d (err %v)", tc.payload, got, tc.wantStatus, err)

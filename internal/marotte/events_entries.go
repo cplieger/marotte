@@ -56,7 +56,7 @@ type EntrySealedPayload struct {
 
 // EntryAppendedPayload is the payload for type="entry_appended": a born-sealed
 // entry (turn_bind, tool_call, tool_result, steer, steer_ack, plan, compaction,
-// compaction_failed, safety_blocked, model_switched), or a text entry opened and
+// compaction_failed, safety_blocked, model_switched, model_routed), or a text entry opened and
 // sealed in one step, which never had an entry_opened and so travels as one frame.
 type EntryAppendedPayload struct {
 	WorkflowID string `json:"workflow_id,omitempty"`

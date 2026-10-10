@@ -7,12 +7,12 @@ import { get, isEmptyChat, isThinking, setThinking } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
 import { loadSettings } from "./persist.js";
 
-/** Handles a typed command. Returns true when it consumed the input, so the
- *  caller must NOT also send it as a prompt. */
+/** Returns true when it consumed the input, so the caller must NOT also send it as a prompt. */
 type TypedHandler = (chatID: string) => boolean;
 
-/** The table: the bare verb, case-insensitive after the slash, matched only when the input is the
- *  verb ALONE (`/compact this file` is a sentence). */
+/** The table: the verb, case-insensitive after the slash, matched only when the input is the verb
+ *  ALONE (`/compact this file` is a sentence). A two-word verb (`/tangent merge`) matches with any
+ *  run of spaces between its words. */
 interface Verb {
   readonly description: string;
   readonly run: TypedHandler;
@@ -47,10 +47,28 @@ const HANDLERS: Readonly<Record<string, Verb>> = {
       return true;
     },
   },
+  "tangent merge": {
+    description: "Merge this tangent into the chat it came from",
+    run: (chatID) => {
+      if (get(chatID)?.tangent !== true) {
+        chatNotice(
+          chatID,
+          "This chat has no parent chat to merge into. Start a tangent with /tangent.",
+        );
+        return true;
+      }
+      if (isThinking(chatID)) {
+        chatNotice(chatID, "Wait for this turn to finish, then merge.");
+        return true;
+      }
+      void import("./tangent-merge.js").then(({ mergeTangentChat }) => mergeTangentChat(chatID));
+      return true;
+    },
+  },
 };
 
 /** One marotte verb as the `/` menu lists it. */
-export interface MarotteCommand {
+interface MarotteCommand {
   readonly name: string;
   readonly description: string;
 }
@@ -120,8 +138,8 @@ export function handleTypedCommand(chatID: string, text: string): boolean {
   if (!trimmed.startsWith("/")) {
     return false;
   }
-  const verb = trimmed.slice(1).toLowerCase();
-  if (verb === "" || /\s/.test(verb)) {
+  const verb = trimmed.slice(1).toLowerCase().replace(/\s+/g, " ");
+  if (verb === "") {
     return false;
   }
   if (!Object.hasOwn(HANDLERS, verb)) {

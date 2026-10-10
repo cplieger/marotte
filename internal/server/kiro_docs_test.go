@@ -11,9 +11,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/cplieger/marotte/internal/steering"
 )
 
-// writeFile creates dir/rel with its parents, for the real-filesystem cases.
 func writeFile(t *testing.T, dir, rel, body string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
@@ -443,7 +444,7 @@ func TestScanKiroDocs_CancelledContextStops(t *testing.T) {
 // guard: the read is bounded, not skipped, so a huge file keeps its row.
 func TestScanKiroDocs_OversizeReadStillClassifies(t *testing.T) {
 	head := "---\ninclusion: manual\ndescription: Head still parses\n---\n"
-	big := strings.Repeat("x", int(steeringReadCap)+(1<<20))
+	big := strings.Repeat("x", int(steering.FrontMatterReadCap)+(1<<20))
 	fsys := fstest.MapFS{"steering/huge.md": {Data: []byte(head + big)}}
 	steer := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catSteering)
 	if len(steer) != 1 {

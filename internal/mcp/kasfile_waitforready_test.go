@@ -61,7 +61,7 @@ func TestRenderKASConfig_ResolvesWaitForReadyPerWrite(t *testing.T) {
 	dir := t.TempDir()
 	kasPath := filepath.Join(dir, "kas", "mcp.json")
 	var on atomic.Bool
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath),
 		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -92,7 +92,7 @@ func TestRenderedWaitForReady_IsUnknownUntilAWriteLands(t *testing.T) {
 	}
 	kasPath := filepath.Join(blocker, "mcp.json")
 	var on atomic.Bool
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath),
 		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -135,7 +135,7 @@ func TestNew_UnwiredWaitForReadyRendersNoWait(t *testing.T) {
 func TestWriteKASConfig_PerServerWaitForReadySurvivesReRender(t *testing.T) {
 	dir := t.TempDir()
 	kasPath := filepath.Join(dir, "kas", "mcp.json")
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestWriteKASConfig_PerServerWaitForReadySurvivesReRender(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath)); err != nil {
+	if _, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath)); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	entry := readKASServers(t, kasPath)["pasted"]
@@ -162,7 +162,7 @@ func TestRenderedWaitForReady_FollowsAPowersWriteThatReplacedAnUnreadableFile(t 
 		t.Fatalf("Setup: %v", err)
 	}
 	var on atomic.Bool
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath),
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath),
 		WithWaitForReady(func(context.Context) (bool, bool) { return on.Load(), true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -203,7 +203,7 @@ func TestRenderKASConfig_AnUnreadableSettingWritesNothing(t *testing.T) {
 	kasPath := filepath.Join(dir, "kas", "mcp.json")
 	var setting waitSetting
 	setting.on.Store(true)
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestWriteKASConfig_AnUnreadableSettingKeepsTheRenderedWait(t *testing.T) {
 	kasPath := filepath.Join(dir, "kas", "mcp.json")
 	var setting waitSetting
 	setting.on.Store(true)
-	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kasPath), WithWaitForReady(setting.resolve))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

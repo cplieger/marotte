@@ -13,11 +13,8 @@ interface Override {
 interface Popup {
   /** The modifier class on the card, "" for the task-list card which has none. */
   readonly cls: string;
-  /** What the reader calls it. */
   readonly name: string;
-  /** Markup that makes the card's own rows measurable. */
   readonly rows: () => HTMLElement[];
-  /** The element whose text is the card's BODY rung. */
   readonly bodyRow: string;
   readonly overrides?: Partial<Record<Prop, Override>>;
 }

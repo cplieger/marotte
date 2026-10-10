@@ -25,11 +25,10 @@ func (t terminalsBySession) LiveTerminalForSession(chatID marotte.ChatID, sessio
 	})
 }
 
-// openStep opens one step turn on its own session, as node_start leaves it.
 func openStep(t *testing.T, h *Runtime, workflowID string, path []string, sessionID string) {
 	t.Helper()
-	step := translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), NodeID: path[len(path)-1], SessionID: sessionID}
-	if _, _, err := h.runs.log.Open(t.Context(), step, runChatID(workflowID)); err != nil {
+	step := &translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), NodeID: path[len(path)-1], SessionID: sessionID}
+	if _, _, err := h.runs.log.open(t.Context(), step, runChatID(workflowID)); err != nil {
 		t.Fatalf("open step %q on %s: %v", path, sessionID, err)
 	}
 }

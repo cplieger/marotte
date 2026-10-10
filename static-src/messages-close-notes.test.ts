@@ -5,7 +5,6 @@ import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import { makeSession } from "./__test-helpers__/model.js";
 
-// The DOM the import graph resolves at load, nested as the page nests it.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
 outer.style.cssText = "position:relative;";
@@ -94,7 +93,6 @@ function stage(chatID: string, turnID: string, close?: Record<string, unknown>):
   store.setActive(chatID);
 }
 
-/** Seat the close on a turn already on screen, the way `turn_closed` does. */
 function close(chatID: string, turnID: string, payload: Record<string, unknown>): void {
   store.appendEntry(chatID, sealed(turnID, 2, "turn_close", { outcome: "refused", ...payload }));
 }

@@ -193,8 +193,7 @@ class ModelSwitchController {
     this.modelNav?.refresh();
   }
 
-  /** Say something when there is no model list. The listbox role goes with the
-   *  OPTIONS; the copy is picker.ts's. */
+  /** The listbox role goes with the OPTIONS; the copy is picker.ts's. */
   private syncCatalogNotice(scroll: HTMLElement): void {
     this.noticeRow?.remove();
     this.noticeRow = null;
@@ -309,10 +308,9 @@ class ModelSwitchController {
     this.effortSlider?.setActive(this.effortActive);
   }
 
-  /** Apply an effort level to the active chat. The command writes the seed
-   *  (`last_effort_by_model`), so a refused level is never remembered. A repeat of
-   *  the chat's OWN choice is dropped (a fast triple click sent three POSTs); the
-   *  guard ignores the marked tier, because pinning a default must reach the server. */
+  /** The command writes the seed (`last_effort_by_model`), so a refused level is never remembered. A
+   *  repeat of the chat's OWN choice is dropped (a fast triple click sent three POSTs); the guard
+   *  ignores the marked tier, because pinning a default must reach the server. */
   private setEffort(level: string): void {
     const session = getActive();
     if (session === undefined) {

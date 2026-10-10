@@ -27,7 +27,8 @@ scrollerEl.appendChild(messagesEl);
 
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
-const { scrollToBottom, setPinSettleMs } = await import("./scroll.js");
+const { scrollToBottom } = await import("./scroll.js");
+const { setPinSettleMs } = await import("./scroll-controller.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { RESIDENT_ENTRIES } = await import("./block-window.js");
@@ -49,10 +50,10 @@ const RUNS = 10;
 const SMALL_PER_RUN = 8;
 const BIG_PER_RUN = Math.ceil((2 * RESIDENT_ENTRIES) / RUNS);
 
-/** One reader gesture. Bounded ABOVE by the shortest card the walk has to land in: `.msg-row`
- *  carries `content-visibility: auto`, so an off-screen turn stands at its intrinsic estimate
- *  (about a kilopixel here) rather than at its rendered height, and a gesture wider than that
- *  steps over whole turns without ever being inside one. */
+/** Bounded ABOVE by the shortest card the walk has to land in: `.msg-row` carries
+ *  `content-visibility: auto`, so an off-screen turn stands at its intrinsic estimate (about a
+ *  kilopixel here) rather than at its rendered height, and a gesture wider than that steps over
+ *  whole turns without ever being inside one. */
 const STEP_PX = 800;
 
 let seq = 0;
@@ -206,7 +207,6 @@ function cardAtViewportTop(): HTMLElement | null {
   return found;
 }
 
-/** The turn whose card the viewport top sits in. */
 function turnAtViewportTop(): string {
   return cardAtViewportTop()?.getAttribute(KEY_ATTR) ?? "";
 }

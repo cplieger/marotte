@@ -37,8 +37,7 @@ func drainOne(t *testing.T, ch <-chan map[string]string) map[string]string {
 	}
 }
 
-// writeFakeCLI writes an executable /bin/sh script to t.TempDir that emits stdout and exits with code, returning its
-// path for NewHandler. Unix-only.
+// Unix-only.
 func writeFakeCLI(t *testing.T, stdout string, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -63,8 +62,7 @@ func writeExecutable(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o755)
 }
 
-// writeFakeCLIScript writes an executable /bin/sh script with the given body to t.TempDir and returns its path, for
-// hang, sleep and multi-line shapes. Unix-only.
+// Unix-only.
 func writeFakeCLIScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-kiro-cli")
@@ -1409,7 +1407,6 @@ func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any
 	return recs
 }
 
-// findLogRec returns the first captured record whose "msg" equals msg, or nil.
 func findLogRec(recs []map[string]any, msg string) map[string]any {
 	for _, r := range recs {
 		if m, _ := r["msg"].(string); m == msg {
@@ -1435,7 +1432,7 @@ func (r *drainErrReader) Read(p []byte) (int, error) {
 	return 0, r.err
 }
 
-func (r *drainErrReader) Close() error { return nil }
+func (*drainErrReader) Close() error { return nil }
 
 // stderrAttr returns nil for empty stderr and a ["stderr", text] pair otherwise.
 func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
@@ -1531,7 +1528,7 @@ func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 	}
 }
 
-// fixedPath adapts a static path to NewHandler's resolver; production passes the install manager's CLIPath.
+// Production passes the install manager's CLIPath.
 func fixedPath(p string) func() string {
 	return func() string { return p }
 }

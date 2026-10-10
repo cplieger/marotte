@@ -17,7 +17,6 @@ import (
 
 const testMaxBytes = 1 << 16
 
-// specFixture builds <work>/.kiro/specs/<name> and returns its Root and path.
 func specFixture(t *testing.T, name string) (Root, string) {
 	t.Helper()
 	work := t.TempDir()

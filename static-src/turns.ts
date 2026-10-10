@@ -22,7 +22,7 @@ import type {
   TurnState,
   TurnThroughput,
 } from "./types.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+import type { ContextBreakdown, TurnOutcome } from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript. Re-exported from the generated wire
  *  types (the rule exists in both languages). `running` is the member no `turn_close` carries: a
@@ -242,7 +242,7 @@ function nextTrigger(src: TurnSource, at: number): EntryPrompt | undefined {
 
 /** Per-turn ledger inputs: what `turn_close` carries plus the turn's tool totals. `changedFiles` is
  *  the close's cumulative map verbatim; one turn has one close, so nothing merges. */
-export interface TurnLedger {
+interface TurnLedger {
   credits: number;
   elapsedMs: number;
   changedFiles: Record<string, FileChange>;
@@ -280,6 +280,7 @@ export interface TurnLedger {
   recoveries: string[];
   steering: string[];
   engineErrorClass: string;
+  contextBreakdown: ContextBreakdown | undefined;
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -312,6 +313,7 @@ export function turnLedger(t: Turn): TurnLedger {
     recoveries: close?.recoveries ?? [],
     steering: close?.steering ?? [],
     engineErrorClass: close?.engine_error_class ?? "",
+    contextBreakdown: close?.context_breakdown,
   };
   const delegateCalls = new Set<string>();
   const noteModel = (m: string): void => {
@@ -394,6 +396,7 @@ export function turnFoldHides(t: Turn): boolean {
       case "compaction_failed":
       case "safety_blocked":
       case "model_switched":
+      case "model_routed":
       case "mode_switched":
         return true;
       case "text":

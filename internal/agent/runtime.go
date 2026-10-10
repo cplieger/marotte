@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/chatlock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -33,11 +34,10 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// keepaliveInterval is the per-connection keepalive cadence; the client watchdog is three of them and
-// liveness.AliveWindow two. A var only for tests.
+// The client watchdog is three of them and liveness.AliveWindow two. A var only for tests.
 var keepaliveInterval = liveness.Keepalive
 
-// keepaliveEventName is pinned by every bundle's SSE_HEARTBEAT_EVENT listener; renaming it silences their watchdog.
+// Renaming it silences their watchdog.
 const keepaliveEventName = "heartbeat"
 
 // specChangedWindow is the spec_changed coalescing window: marks inside it
@@ -55,7 +55,6 @@ const (
 	outputBufferLimit = buffer.DefaultOutputCap
 )
 
-// lifetime groups process lifecycle, shutdown and workspace paths.
 type lifetime struct {
 	// shutdownCtx is the runtime's own child of New's lifetime context, so Shutdown ends the runtime without ending the app.
 	shutdownCtx    context.Context
@@ -72,7 +71,6 @@ type lifetime struct {
 	inflight   sync.WaitGroup
 	// loops covers background goroutines exiting on done, separate from inflight so a timed-out shutdown names which wedged.
 	loops sync.WaitGroup
-	mu    sync.Mutex
 	// drainGate orders each goClaimed claim and its Add before Shutdown's draining flip: what a claim takes is waited
 	// for through inflight, and what a refused claim leaves is still there for Shutdown's own teardown.
 	drainGate sync.RWMutex
@@ -133,7 +131,6 @@ func (lt *lifetime) Draining() bool {
 	return lt.draining.Load()
 }
 
-// bridges groups Runtime fields related to ACP bridge management.
 type bridges struct {
 	factory ACPBridgeFactory
 	mgr     *bridgeManager
@@ -151,7 +148,7 @@ type bus struct {
 	chatStatus *chatStatusCache
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
-	// retractPush drops a held push whose ask was settled (BridgeCoordinator.RetractPush).
+	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
 	retractPush func(marotte.PushSubject)
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.
@@ -163,7 +160,6 @@ type bus struct {
 
 // Runtime is the central coordinator.
 type Runtime struct {
-	// steerQueue is the steer record as the steer commands and their jobs drive it.
 	steerQueue steerQueue
 
 	push      pushService
@@ -177,7 +173,7 @@ type Runtime struct {
 	lifecycle    *lifetime
 	bridge       *bridges
 	bus          *bus
-	coord        *BridgeCoordinator
+	coord        *bridgeCoordinator
 	// versions is the digest registry: workspace stores and the chat store mint into it, the resolver and REST envelopes read it.
 	versions *subject.Versions
 	// digestSlots bounds concurrent digest resolutions (digestConcurrency).
@@ -185,16 +181,16 @@ type Runtime struct {
 	// digestHook runs inside a held slot; nil in production.
 	digestHook func()
 
-	// catalog is the workspace's one mode and model vocabulary (Catalog).
-	catalog *Catalog
+	catalog *catalog
 	// slash is the workspace slash menu, steeringIssues KAS's steering issues; both re-sent by KAS every session.
 	slash          *slashCatalog
 	steeringIssues *steeringIssues
 	mcpRegistry    *mcpRegistry
-	shellMgr       *ShellManager
+	shellMgr       *shellManager
 	// authReadiness carries the command layer's account of a failed sign-in, which readiness reports.
 	authReadiness      *command.AuthReadiness
 	chatHandlers       map[string]chatHandler
+	askHandlers        map[string]askHandler
 	sessUpdateHandlers map[marotte.ACPUpdateKind]sessionUpdateHandler
 	runStepHandlers    map[marotte.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
@@ -404,7 +400,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		runs:           runs,
 		config:         configP,
 		chatStore:      chatStore,
-		catalog:        &Catalog{},
+		catalog:        &catalog{},
 		slash:          &slashCatalog{},
 		steeringIssues: &steeringIssues{},
 		versions:       &subject.Versions{},
@@ -431,7 +427,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.powers = &powersSurface{
 		backend: h.powersBackend, utility: h.utility.get,
 		bridges: bridgeP.mgr, broadcast: sseP.Broadcast,
-		locks: configP.GovernanceLocks, adminKnown: configP.AdminPolicyKnown,
+		locks: configP.GovernanceLocks, adminKnown: configP.adminPolicyKnown,
 		refreshAdmin: configP.refreshAdminPolicy,
 		detach:       lc.TurnContext, wake: make(chan struct{}, 1),
 	}
@@ -457,17 +453,17 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
-	sseP.retractPush = h.coord.RetractPush
+	sseP.retractPush = h.coord.retractPush
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
 		sseP.Broadcast(context.Background(), marotte.NewEvent(marotte.EventSpecChanged, "", marotte.SpecChangedPayload{Dir: dir}))
 	})
 	h.inbound = &inbound{
-		lifetime: lc, coord: h.coord, chats: chatStore,
+		lifetime: lc, coord: h.coord,
 		bus: sseP, specs: h.specs,
 	}
-	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
+	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentTurn)
 	runs.terminals = h.agentTerms
@@ -487,7 +483,10 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 
 	// Before both consumers.
 	h.steerLedger = command.NewSteerLedger()
-	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: newChatLocks()}
+	runs.steers = newStepSteers(sseP.steers, h.steerLedger)
+	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: chatlock.New(), steps: runs.steers}
+	// After the literal: steerQueue is a value, so the copy the step side holds must carry steps.
+	runs.steers.queue = h.steerQueue
 	h.wireSteerRecords()
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
@@ -522,7 +521,7 @@ func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
 // MCPSnapshot returns a stable-ordered snapshot of connected MCP servers only.
 func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
-	snap := rt.mcpRegistry.Snapshot()
+	snap := rt.mcpRegistry.snapshot()
 	out := make([]marotte.MCPSnapshotServer, 0, len(snap))
 	for i := range snap {
 		if snap[i].State != mcpStateConnected {
@@ -534,7 +533,7 @@ func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
 }
 
 // SetMCPOnChange wires a callback fired on every MCP registry change (main.go regenerates environment.md).
-func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
+func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.setOnChange(fn) }
 
 // SetPreBridgeSpawn wires a callback run synchronously before any bridge starts (refreshing `environment.md`),
 // so it must be fast. It lives on the coordinator, which would otherwise capture a nil at construction.
@@ -554,7 +553,7 @@ func (rt *Runtime) SetIdentityCheck(check func(context.Context)) {
 }
 
 // RetireBridges applies an observed identity change to chat and utility sessions without interrupting runs.
-func (rt *Runtime) RetireBridges(reason string) { rt.coord.RetireBridges(reason) }
+func (rt *Runtime) RetireBridges(reason string) { rt.coord.retireBridges(reason) }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST) and /api/shell/ws (WebSocket PTY).
 func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
@@ -580,6 +579,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)
 	mux.HandleFunc("GET /api/chats/{id}/kiro-session", rt.handleKiroSessionExport)
+	mux.HandleFunc("GET /api/chats/{id}/merges/{op}", rt.dispatcher.ServeMergeStatus)
 	mux.HandleFunc("GET /api/slash-commands", rt.handleSlashCommands)
 	mux.HandleFunc("GET /api/steering/issues", rt.handleSteeringIssues)
 }
@@ -660,9 +660,9 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// holdUnreadSteers hands off one drained chat's steers. The lifecycle is re-fenced first; a row an opened
-// resend carried gets no entry; the forward exit is awaited within ctx. Every other live row gets one
-// dropped/restart entry (textless when KAS may hold it), and record-only rows join the Held row.
+// The lifecycle is re-fenced first; a row an opened resend carried gets no entry; the forward exit
+// is awaited within ctx. Every other live row gets one dropped/restart entry (textless when KAS may
+// hold it), and record-only rows join the Held row.
 func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
 	rt.coord.turns.refence(chatID)
 	if exit := rt.coord.turns.forwardExit(chatID); exit != nil {
@@ -680,7 +680,7 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 		defer unlock()
 	}
 	durableCtx := durable.Context(ctx)
-	rows := rt.bus.steers.ShutdownTake(chatID)
+	rows := rt.bus.steers.shutdownTake(chatID)
 	if len(rows) == 0 {
 		return
 	}
@@ -702,10 +702,10 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 		}
 		rt.coord.recordSteer(durableCtx, chatID, r.Key, steer)
 	}
-	rt.coord.HoldUnread(durableCtx, chatID, held)
+	rt.coord.holdUnread(durableCtx, chatID, held)
 }
 
-// resentKeys answers the steer keys a turn_open in the log carries; an unreadable log answers none.
+// An unreadable log answers none.
 func (rt *Runtime) resentKeys(ctx context.Context, chatID marotte.ChatID) map[string]bool {
 	entries, err := rt.coord.chatStore.All(ctx, chatID)
 	if err != nil {
@@ -749,6 +749,11 @@ const bridgeIdleTimeout = 30 * time.Minute
 // Broadcast sends a ServerEvent to every SSE client: the app-facing door; in-package code uses h.bus.Broadcast.
 func (rt *Runtime) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	rt.bus.emit(evt)
+}
+
+// Notify shows n on the page and as a Web Push, as every notification in the app is shown.
+func (rt *Runtime) Notify(ctx context.Context, n *marotte.NotificationPayload) {
+	rt.coord.Notify(ctx, n.ChatID, n)
 }
 
 // Epoch is the hub's current epoch, stamped on every REST envelope so a client refuses a previous epoch's response.
@@ -809,9 +814,8 @@ func (rt *Runtime) awaitSweepGate() bool {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every chat's chain plus every live
-// session (age is no evidence), or a live subprocess loses its state past the 10-minute guard. An
-// incomplete keep-list skips the sweep.
+// The keep-list is every chat's chain plus every live session (age is no evidence), or a live
+// subprocess loses its state past the 10-minute guard. An incomplete keep-list skips the sweep.
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
@@ -829,7 +833,6 @@ func (rt *Runtime) sweepSessionsOnce() {
 	rt.sessionReaper.Sweep(refs)
 }
 
-// liveSessionIDs returns every held bridge's ACP session id, chat bridges and the utility session.
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
@@ -852,7 +855,7 @@ func (rt *Runtime) utilityLiveSessionID() string {
 	return u.session.liveID()
 }
 
-// stopUtilityBridge stops the utility session if built; take clears and stops it in one step.
+// take clears and stops it in one step.
 func (rt *Runtime) stopUtilityBridge() {
 	if u := rt.utility.take(); u != nil {
 		u.session.Stop()
@@ -874,7 +877,7 @@ func (rt *Runtime) cullIdleUtilityBridge() {
 	}
 }
 
-// cullIdleUtilityBridgeOnce runs one sweep; peek, since building a bridge to check idleness creates work.
+// peek, since building a bridge to check idleness creates work.
 func (rt *Runtime) cullIdleUtilityBridgeOnce() {
 	u := rt.utility.peek()
 	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {

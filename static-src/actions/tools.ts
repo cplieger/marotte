@@ -21,23 +21,12 @@ import type {
   SearchResponse,
 } from "../types.js";
 
-import { MCP_API } from "./mcp.js";
 import { RATE_LIMITED } from "../tool-rate-limit.js";
 
 /** POST /api/tools fields. Only the name is required; the server fills the rest from the catalog. */
 export interface CreateToolRequest {
   name: string;
   source?: string;
-  version?: string;
-  pin?: boolean;
-  /** Add as a disabled template: recorded, not installed, no job. */
-  disabled?: boolean;
-  requires?: string[];
-  description?: string;
-  origin?: string;
-  install?: string;
-  uninstall?: string;
-  probe?: string;
 }
 
 /** The code an /api/tools answer carries while the tools engine is down; a retry cannot change it. */
@@ -95,13 +84,11 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, JobRespon
   error: "Could not start update",
 });
 
-/** PATCH result: 202 + job (null when no work was needed); a 409 has_dependents envelope resolves
- *  as a success payload for the force-confirm flow. */
-export interface PatchToolResult {
-  job?: { id: string } | null;
+/** PATCH result: a 409 has_dependents envelope resolves as a success payload for the
+ *  force-confirm flow. */
+interface PatchToolResult {
   code?: string;
   dependents?: string[];
-  error?: string;
 }
 
 /** PATCH fields. `disabled` false→true uninstalls (may 409 with dependents unless force),
@@ -137,11 +124,9 @@ export const patchTool = apiAction<
 
 // decodeError resolves the 409 has_dependents envelope as a success payload for the cascade
 // confirm; every other failure keeps the default mapping.
-export interface DeleteToolResult {
-  job?: { id: string };
+interface DeleteToolResult {
   code?: string;
   dependents?: string[];
-  error?: string;
 }
 
 const DELETE_TIMEOUT_MS = 30_000;
@@ -310,29 +295,6 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
   retry: RETRY_STANDARD,
   request: () => ({ method: "POST", path: "/api/diagnostics", body: {} }),
   error: false,
-});
-
-export const seedMcp = apiAction<{ name: string; install?: string }>({
-  name: "tools.seed_mcp",
-  scope: "tools",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ name, install }) => ({
-    method: "POST",
-    path: MCP_API,
-    body: {
-      name,
-      transport: "stdio",
-      enabled: false,
-      prewarm: false,
-      command: name,
-      args: [],
-      env: [],
-      ...(install !== undefined ? { install } : {}),
-    },
-  }),
-  error: "Could not create MCP entry",
 });
 
 // Which well-known binaries exist on PATH, for the inline "Setting up <feature>..." banners.

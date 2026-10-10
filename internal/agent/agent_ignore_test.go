@@ -17,7 +17,6 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// notifyProbeBridge records the ignore-list notifications one bridge received.
 type notifyProbeBridge struct {
 	*fakeBridge
 
@@ -47,14 +46,12 @@ func (b *notifyProbeBridge) Notify(_ context.Context, method string, params any)
 	return nil
 }
 
-// ignoreFrames returns the lists this bridge was sent, oldest first.
 func (b *notifyProbeBridge) ignoreFrames() [][]string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.sent)
 }
 
-// twoLiveBridges stands up two open chat bridges and returns each one's probe.
 func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatID]*notifyProbeBridge) {
 	t.Helper()
 	var mu sync.Mutex
@@ -81,7 +78,7 @@ func twoLiveBridges(t *testing.T, configDir string) (*Runtime, map[marotte.ChatI
 		mu.Lock()
 		before := len(made)
 		mu.Unlock()
-		if _, err := h.coord.OpenBridge(ctx, id, ""); err != nil {
+		if _, err := h.coord.openBridge(ctx, id, ""); err != nil {
 			t.Fatalf("OpenBridge %s: %v", id, err)
 		}
 		mu.Lock()
@@ -247,7 +244,6 @@ func TestStartOptsLiterals_AllCarryIgnoreFiles(t *testing.T) {
 	}
 }
 
-// isStartOptsType reports whether expr names marotte.StartOpts.
 func isStartOptsType(expr ast.Expr) bool {
 	sel, ok := expr.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "StartOpts" {
@@ -257,7 +253,6 @@ func isStartOptsType(expr ast.Expr) bool {
 	return ok && pkg.Name == "marotte"
 }
 
-// hasKey reports whether a keyed composite literal sets the named field.
 func hasKey(lit *ast.CompositeLit, field string) bool {
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)

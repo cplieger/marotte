@@ -20,6 +20,11 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "validation on", key: KeyWorkValidation, raw: `"on"`},
 		{name: "validation bool", key: KeyWorkValidation, raw: `true`, wantErr: true},
 		{name: "cfn off", key: KeyCloudFormationSafety, raw: `"off"`},
+		{name: "auto routing follow kiro", key: KeyAutoRouting, raw: `""`},
+		{name: "auto routing on", key: KeyAutoRouting, raw: `"on"`},
+		{name: "auto routing bool", key: KeyAutoRouting, raw: `true`, wantErr: true},
+		{name: "smart helpers off", key: KeyAutoDelegation, raw: `"off"`},
+		{name: "smart helpers unknown", key: KeyAutoDelegation, raw: `"auto"`, wantErr: true},
 		{name: "cfn enforce", key: KeyCloudFormationSafety, raw: `"enforce"`, wantErr: true},
 		{name: "style concise", key: KeyOutputStyle, raw: `"concise"`},
 		{name: "style verbose", key: KeyOutputStyle, raw: `"verbose"`, wantErr: true},
@@ -57,15 +62,17 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		field     string
 		got, want any
 	}{
-		{"SpecPlanning", d.SpecPlanning, DefaultSpecPlanning},
-		{"SpecPlanningAskFirst", d.SpecPlanningAskFirst, DefaultSpecPlanningAskFirst},
-		{"InlineAgents", d.InlineAgents, DefaultInlineAgents},
-		{"SteeringReminders", d.SteeringReminders, DefaultSteeringReminders},
+		{"SpecPlanning", d.SpecPlanning, defaultSpecPlanning},
+		{"SpecPlanningAskFirst", d.SpecPlanningAskFirst, defaultSpecPlanningAskFirst},
+		{"InlineAgents", d.InlineAgents, defaultInlineAgents},
+		{"SteeringReminders", d.SteeringReminders, defaultSteeringReminders},
 		{"WorkflowsEnabled", d.WorkflowsEnabled, DefaultWorkflowsEnabled},
-		{"WorkValidation", d.WorkValidation, DefaultWorkValidation},
-		{"CloudFormationSafetyCheck", d.CloudFormationSafetyCheck, DefaultCloudFormationSafety},
-		{"OutputStyle", d.OutputStyle, DefaultOutputStyle},
-		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, DefaultTerminalCommandTimeoutMs},
+		{"WorkValidation", d.WorkValidation, defaultWorkValidation},
+		{"CloudFormationSafetyCheck", d.CloudFormationSafetyCheck, defaultCloudFormationSafety},
+		{"AutoRouting", d.AutoRouting, FeatureFollowKiro},
+		{"AutoDelegation", d.AutoDelegation, FeatureFollowKiro},
+		{"OutputStyle", d.OutputStyle, defaultOutputStyle},
+		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -76,18 +83,18 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 
 func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	// kiro-cli's own spec planning skips the clarifying questions by default.
-	if DefaultSpecPlanning != SpecPlanningOff || DefaultSpecPlanningAskFirst {
-		t.Errorf("spec planning defaults = (%q, ask %v), want (off, false)", DefaultSpecPlanning, DefaultSpecPlanningAskFirst)
+	if defaultSpecPlanning != SpecPlanningOff || defaultSpecPlanningAskFirst {
+		t.Errorf("spec planning defaults = (%q, ask %v), want (off, false)", defaultSpecPlanning, defaultSpecPlanningAskFirst)
 	}
-	if DefaultWorkValidation != FeatureFollowKiro || DefaultCloudFormationSafety != FeatureFollowKiro {
-		t.Errorf("follow-kiro defaults = (%q, %q), want both empty", DefaultWorkValidation, DefaultCloudFormationSafety)
+	if defaultWorkValidation != FeatureFollowKiro || defaultCloudFormationSafety != FeatureFollowKiro {
+		t.Errorf("follow-kiro defaults = (%q, %q), want both empty", defaultWorkValidation, defaultCloudFormationSafety)
 	}
 	// Workflows is the one departure from kiro-cli: on, by the user's choice.
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
 	}
-	if DefaultOutputStyle != OutputStyleDefault || DefaultTerminalCommandTimeoutMs != 0 {
-		t.Errorf("style/timeout defaults = (%q, %d), want (default, 0)", DefaultOutputStyle, DefaultTerminalCommandTimeoutMs)
+	if defaultOutputStyle != OutputStyleDefault || defaultTerminalCommandTimeoutMs != 0 {
+		t.Errorf("style/timeout defaults = (%q, %d), want (default, 0)", defaultOutputStyle, defaultTerminalCommandTimeoutMs)
 	}
 }
 
@@ -95,6 +102,8 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	got, rejected := EffectiveFrom(map[string]json.RawMessage{
 		KeySpecPlanning:             json.RawMessage(`"deep"`),
 		KeyWorkValidation:           json.RawMessage(`"maybe"`),
+		KeyAutoRouting:              json.RawMessage(`true`),
+		KeyAutoDelegation:           json.RawMessage(`"on"`),
 		KeyOutputStyle:              json.RawMessage(`"concise"`),
 		KeyTerminalCommandTimeoutMs: json.RawMessage(`500`),
 	})
@@ -104,13 +113,19 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	if got.WorkValidation != FeatureFollowKiro {
 		t.Errorf("WorkValidation = %q, want the follow-kiro default", got.WorkValidation)
 	}
+	if got.AutoRouting != FeatureFollowKiro {
+		t.Errorf("AutoRouting = %q, want the follow-kiro default for a bool", got.AutoRouting)
+	}
+	if got.AutoDelegation != FeatureOn {
+		t.Errorf("AutoDelegation = %q, want the stored on", got.AutoDelegation)
+	}
 	if got.OutputStyle != OutputStyleConcise {
 		t.Errorf("OutputStyle = %q, want the stored concise", got.OutputStyle)
 	}
 	if got.TerminalCommandTimeoutMs != 0 {
 		t.Errorf("TerminalCommandTimeoutMs = %d, want 0 for a value under KAS's floor", got.TerminalCommandTimeoutMs)
 	}
-	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyTerminalCommandTimeoutMs} {
+	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyAutoRouting, KeyTerminalCommandTimeoutMs} {
 		if !slices.Contains(rejected, k) {
 			t.Errorf("rejected = %v, want it to name %s", rejected, k)
 		}

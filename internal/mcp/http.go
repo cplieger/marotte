@@ -43,7 +43,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeValidationErr(w, err)
 		return
 	}
-	results, err := s.ImportServers(r.Context(), req.servers)
+	results, err := s.importServers(r.Context(), req.servers)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -54,7 +54,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
+		webhttp.WriteJSON(w, map[string]any{"servers": s.list(r.Context())})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {
@@ -81,7 +81,7 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "server not found")
 		return
 	}
-	id, err := ParseServerID(raw)
+	id, err := parseServerID(raw)
 	if err != nil {
 		httpreply.BadRequest(w, "invalid server id")
 		return
@@ -101,8 +101,8 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
-func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id ServerID) {
-	got := s.Get(r.Context(), id)
+func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id serverID) {
+	got := s.get(r.Context(), id)
 	if got == nil {
 		httpreply.NotFound(w, "server not found")
 		return
@@ -112,12 +112,12 @@ func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 
 // putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
 // secret values), or map the store error to its status via writeErr.
-func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id serverID) {
 	var in Server
 	if !httpreply.DecodeJSON(w, r, &in) {
 		return
 	}
-	updated, err := s.Update(r.Context(), id, &in)
+	updated, err := s.update(r.Context(), id, &in)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -127,7 +127,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
 // missing enabled field is a 400; otherwise toggle and return the record.
-func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id serverID) {
 	var patch struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -140,7 +140,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		httpreply.BadRequest(w, "enabled required")
 		return
 	}
-	updated, err := s.SetEnabled(r.Context(), id, *patch.Enabled)
+	updated, err := s.setEnabled(r.Context(), id, *patch.Enabled)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -150,8 +150,8 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 
 // deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
 // to its status via writeErr.
-func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
-	if err := s.Delete(r.Context(), id); err != nil {
+func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id serverID) {
+	if err := s.delete(r.Context(), id); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -159,19 +159,19 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
-// ErrPersist (filesystem failure) becomes 500 with a generic body so
+// errPersist (filesystem failure) becomes 500 with a generic body so
 // the browser never sees raw filesystem paths / errnos; full detail
 // lands in slog at Error level for ops.
 func (*Store) writeErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, errNotFound):
 		slog.Debug("mcp: http not found", "error", err)
 		httpreply.NotFound(w, err.Error())
-	case errors.Is(err, ErrNameConflict):
+	case errors.Is(err, errNameConflict):
 		slog.Debug("mcp: http name conflict", "error", err)
 		httpreply.Conflict(w, err.Error())
-	case errors.Is(err, ErrPersist):
-		if errors.Is(err, ErrPersistMarshal) {
+	case errors.Is(err, errPersist):
+		if errors.Is(err, errPersistMarshal) {
 			slog.Error("mcp: http persist marshal failure (programmer bug)", "error", err)
 		} else {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
@@ -184,7 +184,7 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// validationErrorBody is the 400 a failed Validate produces.
+// validationErrorBody is the 400 a failed validate produces.
 //
 // `error` is the joined message text, so a client reading only that field
 // keeps working unchanged. `fields` is the addition: one entry per
@@ -192,7 +192,7 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 // individually.
 type validationErrorBody struct {
 	Error  string       `json:"error"`
-	Fields []FieldError `json:"fields,omitempty"`
+	Fields []fieldError `json:"fields,omitempty"`
 }
 
 // writeValidationErr answers a 400, carrying the per-field breakdown when the
@@ -200,7 +200,7 @@ type validationErrorBody struct {
 // store precondition) gets the plain envelope, so a field list on the wire always
 // means "these inputs are wrong" rather than "here is an empty array".
 func writeValidationErr(w http.ResponseWriter, err error) {
-	fields := FieldErrors(err)
+	fields := fieldErrors(err)
 	if len(fields) == 0 {
 		httpreply.BadRequest(w, err.Error())
 		return

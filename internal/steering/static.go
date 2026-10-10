@@ -8,7 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// lookupEnv is the environment seam the runtime section reads through.
 var lookupEnv = os.LookupEnv
 
 func writeIntro(b *strings.Builder, workDir string) {
@@ -217,8 +216,11 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("\"Download\", \"New file\", \"New folder\", \"Rename (F2)\", \"Delete\"; a search mode; a git ")
 	b.WriteString("status letter per row that opens the change; drag files onto it to upload. Opening a file ")
 	b.WriteString("gives the editor (`/file/<path>#L<line>`; a page in its own workspace folder opens its Preview ")
-	b.WriteString("tab instead): \"Edit\" / \"Save\" / \"Stop editing\", \"View as ")
-	b.WriteString("diff (vs saved)\", \"View diff vs HEAD\", markdown rendered until Edit, merge markers get ")
+	b.WriteString("tab instead): \"Edit\" / \"Save\" / \"Stop editing\", ")
+	b.WriteString("\"View diff vs saved\", \"View diff vs HEAD\" (headed \"Git revision\"), \"Go to line\" (Ctrl+G), \"Download\", ")
+	b.WriteString("and \"Switch to live refresh\" / \"Pause live refresh\" once the file changes on disk; ")
+	b.WriteString("markdown rendered until Edit; a file over 2 MiB shows only \"File is too large to display. ")
+	b.WriteString("Download it to view.\" and \"Download\"; merge markers get ")
 	b.WriteString("per-hunk \"Ours\" / \"Theirs\" / \"Both\" plus \"Suggest\"\n")
 	b.WriteString("- \"Toggle shell\" (Ctrl+/): one bottom-docked `bash --login` for the whole workspace, ")
 	b.WriteString("shared by every tab and kept across reloads; header \"Key toolbar\", \"Restart shell\", ")

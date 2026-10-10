@@ -29,53 +29,31 @@ export function transportAction<TArgs, TOp = unknown>(
 }
 
 export {
-  configure,
-  configureApi,
-  configureTransport,
   ActionError,
   hasErrorString,
   classifyFetchError,
   retryNetwork,
   subscribeToActions,
   subscribeByName,
-  pendingCount,
   isPending,
   bindLoadingState,
   registerCleanup,
   debouncedDispatch,
   pollAction,
   pollUntil,
-  getActionLog,
   RETRY_STANDARD,
   IDEMPOTENCY_HEADER,
   IDEMPOTENCY_COMMAND_FIELD,
 } from "@cplieger/actions";
 
-// Timeout composition lives in @cplieger/fetch (actions v3 no longer re-exports it).
+// Timeout composition lives in @cplieger/fetch.
 export { withTimeout, API_TIMEOUT_MS } from "@cplieger/fetch";
 
 export type {
-  Action,
-  ActionDefinition,
   ActionContext,
   ActionErrorLike,
-  ActionInstance,
-  ActionLifecycleStatus,
   ActionOutcome,
-  DispatchOptions,
-  DispatchHandle,
   DebouncedDispatch,
-  PollOptions,
-  RetryConfig,
-  RequestSpec,
-  Notifier,
-  NotifierRetry,
-  NotificationSpec,
-  RegistryListener,
-  TransportCommand,
-  TransportSendFn,
-  TransportSendResult,
-  ApiConfig,
   ApiErrorInfo,
   ApiErrorDecision,
 } from "@cplieger/actions";

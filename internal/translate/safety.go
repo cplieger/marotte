@@ -22,9 +22,8 @@ var knownSafetyStatuses = map[marotte.SafetyStatus]struct{}{
 	marotte.SafetyStatusError:       {},
 }
 
-// v3SafetyStatusChanged is the _kiro/safety/statusChanged wire shape. It carries no sessionId
-// (KAS routes per-session on the outbound, not in params), so it is broadcast chat-scoped from
-// the delivering bridge.
+// It carries no sessionId (KAS routes per-session on the outbound, not in params), so it is
+// broadcast chat-scoped from the delivering bridge.
 type v3SafetyStatusChanged struct {
 	Status            string   `json:"status"`
 	Detail            string   `json:"detail"`

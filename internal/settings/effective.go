@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
-	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -17,18 +15,18 @@ import (
 // and why that key was refused is the same answer either way.
 var errStoredNull = errors.New("settings: stored value is null")
 
-// DefaultKnowledgeEnabled is TRUE, shared with internal/agent's knowledgeEnabled: the
+// defaultKnowledgeEnabled is TRUE, shared with internal/agent's knowledgeEnabled: the
 // knowledge tool predates the switch, so absent must not read as off.
-const DefaultKnowledgeEnabled = true
+const defaultKnowledgeEnabled = true
 
 // DefaultContentCollectionEnabled is the content-collection switch's default: off,
 // so nothing is offered for service improvement until the user opts in.
 const DefaultContentCollectionEnabled = false
 
-// DefaultGuardPayloadLinks is TRUE because the guard closes the one channel that
+// defaultGuardPayloadLinks is TRUE because the guard closes the one channel that
 // moves workspace data off the box on a single click with no ask; off is a choice
 // the user makes, never the reading of an absent key.
-const DefaultGuardPayloadLinks = true
+const defaultGuardPayloadLinks = true
 
 // DefaultAutoCompactPct is the point at which marotte adds nothing to KAS's own 80/95, which
 // is why an invalid stored value reads as it.
@@ -60,23 +58,26 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
-		GuardPayloadLinks:     DefaultGuardPayloadLinks,
-		KnowledgeEnabled:      DefaultKnowledgeEnabled,
+		GuardPayloadLinks:     defaultGuardPayloadLinks,
+		KnowledgeEnabled:      defaultKnowledgeEnabled,
 		ContentCollection:     DefaultContentCollectionEnabled,
 		MemoryMode:            DefaultMemoryMode,
-		// The agent-capability defaults are kiro-cli's own; "" on the two
-		// follow-kiro choices sends nothing, so kiro-cli's experiment decides.
-		SpecPlanning:              DefaultSpecPlanning,
-		SpecPlanningAskFirst:      DefaultSpecPlanningAskFirst,
-		InlineAgents:              DefaultInlineAgents,
-		SteeringReminders:         DefaultSteeringReminders,
+		// The agent-capability defaults are kiro-cli's own; "" on a follow-kiro
+		// choice sends nothing, so kiro-cli's experiment decides.
+		SpecPlanning:              defaultSpecPlanning,
+		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
+		InlineAgents:              defaultInlineAgents,
+		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
-		WorkValidation:            DefaultWorkValidation,
-		CloudFormationSafetyCheck: DefaultCloudFormationSafety,
-		OutputStyle:               DefaultOutputStyle,
-		TerminalCommandTimeoutMs:  DefaultTerminalCommandTimeoutMs,
-		// An empty object, not nil: nil marshals as null and no field here is optional.
+		WorkValidation:            defaultWorkValidation,
+		CloudFormationSafetyCheck: defaultCloudFormationSafety,
+		AutoRouting:               defaultAutoRouting,
+		AutoDelegation:            defaultAutoDelegation,
+		OutputStyle:               defaultOutputStyle,
+		TerminalCommandTimeoutMs:  defaultTerminalCommandTimeoutMs,
+		// Empty objects, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
+		KiroDefaults:      map[string]marotte.KiroDefault{},
 		// The per-kind push defaults are not uniform; no polarity is safe for a client to guess.
 		NotifyAgentFinished: DefaultNotifyAgentFinished,
 		NotifyPRStatus:      DefaultNotifyPRStatus,
@@ -131,13 +132,6 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.Effecti
 	return out, rejected
 }
 
-// effectiveKeys is every config.json key the effective view can carry (checked against
-// KnownKeys and against the struct's fields).
-func effectiveKeys() []string {
-	var out marotte.EffectiveSettings
-	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
-}
-
 // effectiveSetters maps each key to the one decode-and-assign for its field, bound to the
 // caller's struct.
 func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMessage) error {
@@ -178,6 +172,12 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		},
 		KeyCloudFormationSafety: func(r json.RawMessage) error {
 			return decodeChecked(&out.CloudFormationSafetyCheck, r, KeyCloudFormationSafety, ValidFeatureChoice)
+		},
+		KeyAutoRouting: func(r json.RawMessage) error {
+			return decodeChecked(&out.AutoRouting, r, KeyAutoRouting, ValidFeatureChoice)
+		},
+		KeyAutoDelegation: func(r json.RawMessage) error {
+			return decodeChecked(&out.AutoDelegation, r, KeyAutoDelegation, ValidFeatureChoice)
 		},
 		KeyOutputStyle: func(r json.RawMessage) error {
 			return decodeChecked(&out.OutputStyle, r, KeyOutputStyle, ValidOutputStyle)

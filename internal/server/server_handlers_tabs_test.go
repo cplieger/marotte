@@ -23,7 +23,6 @@ func newTabsServer(t *testing.T) (*Server, *tabs.Store) {
 	return &Server{tabs: st}, st
 }
 
-// getTabs drives the handler and decodes its body.
 func getTabs(t *testing.T, s *Server) (marotte.TabList, int) {
 	t.Helper()
 	rec := httptest.NewRecorder()

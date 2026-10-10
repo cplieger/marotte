@@ -286,7 +286,6 @@ func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 	sched.Stop()
 }
 
-// recvWithin receives one chat ID from ch or fails after d.
 func recvWithin(t *testing.T, ch <-chan marotte.ChatID, d time.Duration) marotte.ChatID {
 	t.Helper()
 	select {

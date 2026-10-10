@@ -36,11 +36,9 @@ func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	return h, dir, prefix
 }
 
-// testHandlerAt builds a handler whose single mount claims policyDir
-// (e.g. "/config") while its os.Root is backed by a throwaway temp
-// dir. Lexical-layer tests exercise the REAL sensitive prefixes
-// without touching (or requiring) the actual policy path on the host;
-// no filesystem op ever reaches the backing dir in these tests.
+// "/config") while its os.Root is backed by a throwaway temp dir. Lexical-layer tests exercise the
+// REAL sensitive prefixes without touching (or requiring) the actual policy path on the host; no
+// filesystem op ever reaches the backing dir in these tests.
 func testHandlerAt(t *testing.T, policyDir string) *Handler {
 	t.Helper()
 	backing, err := os.OpenRoot(t.TempDir())
@@ -92,10 +90,8 @@ func putReq(t *testing.T, h *Handler, path, body string) *httptest.ResponseRecor
 	return rec
 }
 
-// multipartUpload builds an /api/file/upload multipart body targeting
-// dir. Returns the request ready to ServeHTTP against the handler's
-// mux. Files map order is non-deterministic; callers that care about
-// upload order should assert on set membership.
+// Returns the request ready to ServeHTTP against the handler's mux. Files map order is
+// non-deterministic; callers that care about upload order should assert on set membership.
 func multipartUpload(t *testing.T, targetDir string, files map[string][]byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
@@ -398,7 +394,7 @@ func TestReadFile_IsDirectory(t *testing.T) {
 
 func TestReadFile_TooLarge(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	big := bytes.Repeat([]byte("a"), MaxFileSize+1)
+	big := bytes.Repeat([]byte("a"), WholeFileMax+1)
 	if err := os.WriteFile(filepath.Join(dir, "big.txt"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1472,7 +1468,6 @@ func TestAction_Mkdir_ThroughSymlinkedAncestor_Rejected(t *testing.T) {
 // Direct ctxReader coverage: writeUploads exercises the cancellation branch only indirectly, where
 // a successful upload masks a regression.
 
-// errReader always returns its configured error on Read.
 type errReader struct{ err error }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
@@ -1953,18 +1948,16 @@ func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 	}
 }
 
-// Reading a file whose size exactly equals MaxFileSize returns 200 with
-// the full content: the size guard and the post-read length check are
-// both strictly-greater-than, and the LimitReader reads MaxFileSize+1.
+// A file of exactly WholeFileMax bytes is readable whole: the cap is strictly-greater-than.
 func TestReadFile_AtExactMaxSize(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	content := bytes.Repeat([]byte("a"), MaxFileSize)
+	content := bytes.Repeat([]byte("a"), WholeFileMax)
 	if err := os.WriteFile(filepath.Join(dir, "big.txt"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec := getReq(t, h, "/api/file?path="+prefix+"/big.txt")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET big.txt (size == MaxFileSize) status = %d, want 200 (a file exactly at the cap is readable)", rec.Code)
+		t.Fatalf("GET big.txt (size == WholeFileMax) status = %d, want 200 (a file exactly at the cap is readable)", rec.Code)
 	}
 	var resp struct {
 		Content string `json:"content"`
@@ -1973,9 +1966,9 @@ func TestReadFile_AtExactMaxSize(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal read response: %v", err)
 	}
-	if len(resp.Content) != MaxFileSize {
+	if len(resp.Content) != WholeFileMax {
 		t.Errorf("read content length = %d, want %d (the full file must be returned, not truncated)",
-			len(resp.Content), MaxFileSize)
+			len(resp.Content), WholeFileMax)
 	}
 }
 
@@ -2244,19 +2237,16 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	}
 
 	rec := getReq(t, h, "/api/file?path="+target)
-	var read struct {
-		Content     string `json:"content"`
-		ContentHash string `json:"content_hash"`
-	}
+	var read FileRead
 	if err := json.Unmarshal(rec.Body.Bytes(), &read); err != nil {
 		t.Fatalf("decode read: %v", err)
 	}
-	if read.ContentHash == "" {
-		t.Fatal("read returned no content_hash, so a client has nothing to send back")
+	if read.FileID == "" {
+		t.Fatal("read returned no file_id, so a client has nothing to send back")
 	}
 
-	t.Run("matching hash writes", func(t *testing.T) {
-		body := `{"content":"mine\n","expected_hash":"` + read.ContentHash + `"}`
+	t.Run("matching identity writes", func(t *testing.T) {
+		body := `{"content":"mine\n","file_id":"` + read.FileID + `"}`
 		rec := putReq(t, h, "/api/file?path="+target, body)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -2267,32 +2257,28 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 		}
 	})
 
-	t.Run("stale hash is refused and returns the current content", func(t *testing.T) {
-		body := `{"content":"clobber\n","expected_hash":"` + read.ContentHash + `"}`
+	t.Run("stale identity is refused and returns the current content", func(t *testing.T) {
+		body := `{"content":"clobber\n","file_id":"` + read.FileID + `"}`
 		rec := putReq(t, h, "/api/file?path="+target, body)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409", rec.Code)
 		}
-		var out struct {
-			Error       string `json:"error"`
-			Content     string `json:"content"`
-			ContentHash string `json:"content_hash"`
-		}
+		var out FileRefusal
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode conflict: %v", err)
 		}
-		if out.Content != "mine\n" {
-			t.Errorf("conflict content = %q, want the on-disk bytes", out.Content)
+		if out.Content == nil || *out.Content != "mine\n" || out.ContentKind != ContentText {
+			t.Errorf("conflict = %+v, want content_kind text with the on-disk bytes", out)
 		}
-		if out.ContentHash == "" || out.ContentHash == read.ContentHash {
-			t.Error("conflict must carry the NEW hash so the next save can succeed")
+		if out.FileID == "" || out.FileID == read.FileID {
+			t.Error("conflict must carry the NEW identity so the next save can succeed")
 		}
 		if got, _ := os.ReadFile(target); string(got) != "mine\n" {
 			t.Errorf("file = %q, the refused write must not have landed", got)
 		}
 	})
 
-	t.Run("omitted hash still writes", func(t *testing.T) {
+	t.Run("omitted identity still writes", func(t *testing.T) {
 		rec := putReq(t, h, "/api/file?path="+target, `{"content":"unguarded\n"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())

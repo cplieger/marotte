@@ -29,7 +29,6 @@ func notifyAsk(workflowID, nodeID, message, notifyID string) *marotte.RPCRespons
 	})
 }
 
-// askOf builds a recorded ask directly, by pointer like the registry.
 func askOf(chatID marotte.ChatID, workflowID, askID, nodeID string) *runAsk {
 	return &runAsk{
 		chatID: chatID,
@@ -44,18 +43,18 @@ func askOf(chatID marotte.ChatID, workflowID, askID, nodeID string) *runAsk {
 func TestPendingRunAsks_AddReportsNewOnly(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	if !r.Add(askOf("c1", "wf_1", "a1", "review")) {
+	if !r.add(askOf("c1", "wf_1", "a1", "review")) {
 		t.Error("Add(a fresh ask) = false, want true")
 	}
 	// A redelivered frame must not re-broadcast.
-	if r.Add(askOf("c1", "wf_1", "a1", "review")) {
+	if r.add(askOf("c1", "wf_1", "a1", "review")) {
 		t.Error("Add(the same ask twice) = true, want false")
 	}
 	// Missing identity is not an ask.
-	if r.Add(askOf("c1", "", "a1", "review")) {
+	if r.add(askOf("c1", "", "a1", "review")) {
 		t.Error("Add(no workflow id) = true, want false")
 	}
-	if r.Add(askOf("c1", "wf_1", "", "review")) {
+	if r.add(askOf("c1", "wf_1", "", "review")) {
 		t.Error("Add(no ask id) = true, want false")
 	}
 }
@@ -63,9 +62,9 @@ func TestPendingRunAsks_AddReportsNewOnly(t *testing.T) {
 func TestPendingRunAsks_TakeIsOncePerAsk(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	r.Add(askOf("c1", "wf_1", "a1", "review"))
+	r.add(askOf("c1", "wf_1", "a1", "review"))
 
-	got, ok := r.TakeIfPresent("wf_1", "a1")
+	got, ok := r.takeIfPresent("wf_1", "a1")
 	if !ok {
 		t.Fatal("TakeIfPresent(the recorded ask) ok = false, want true")
 	}
@@ -73,7 +72,7 @@ func TestPendingRunAsks_TakeIsOncePerAsk(t *testing.T) {
 		t.Errorf("the claimed ask's node = %q, want review", got.payload.NodeID)
 	}
 	// KAS accepts one answer; a loser's session/prompt would become an ordinary prompt.
-	if _, second := r.TakeIfPresent("wf_1", "a1"); second {
+	if _, second := r.takeIfPresent("wf_1", "a1"); second {
 		t.Error("TakeIfPresent twice ok = true, want false on the second claim")
 	}
 }
@@ -82,17 +81,17 @@ func TestPendingRunAsks_TakeIsKeyedOnThePair(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
 	// Two runs of one recipe share a synthesised ask id, so the key must include the run.
-	r.Add(askOf("c1", "wf_1", "reconciled:root/review", "review"))
-	r.Add(askOf("c2", "wf_2", "reconciled:root/review", "review"))
+	r.add(askOf("c1", "wf_1", "reconciled:root/review", "review"))
+	r.add(askOf("c2", "wf_2", "reconciled:root/review", "review"))
 
-	a, ok := r.TakeIfPresent("wf_1", "reconciled:root/review")
+	a, ok := r.takeIfPresent("wf_1", "reconciled:root/review")
 	if !ok {
 		t.Fatal("TakeIfPresent(wf_1) ok = false, want true")
 	}
 	if a.chatID != "c1" {
 		t.Errorf("claimed the ask of chat %q, want c1", a.chatID)
 	}
-	if _, still := r.TakeIfPresent("wf_2", "reconciled:root/review"); !still {
+	if _, still := r.takeIfPresent("wf_2", "reconciled:root/review"); !still {
 		t.Error("the OTHER run's ask was taken too, want it left in place")
 	}
 }
@@ -101,11 +100,11 @@ func TestPendingRunAsks_RestorePutsAClaimBack(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
 	a := askOf("c1", "wf_1", "a1", "review")
-	r.Add(a)
-	claimed, _ := r.TakeIfPresent("wf_1", "a1")
-	r.Restore(claimed)
+	r.add(a)
+	claimed, _ := r.takeIfPresent("wf_1", "a1")
+	r.restore(claimed)
 	// Without the restore, a failed answer leaves the run parked with its card gone everywhere.
-	if _, ok := r.TakeIfPresent("wf_1", "a1"); !ok {
+	if _, ok := r.takeIfPresent("wf_1", "a1"); !ok {
 		t.Error("Restore then TakeIfPresent ok = false, want the ask answerable again")
 	}
 }
@@ -113,20 +112,20 @@ func TestPendingRunAsks_RestorePutsAClaimBack(t *testing.T) {
 func TestPendingRunAsks_TakeNodeIsNodeScoped(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	r.Add(askOf("c1", "wf_1", "a1", "review"))
-	r.Add(askOf("c1", "wf_1", "a2", "build"))
+	r.add(askOf("c1", "wf_1", "a1", "review"))
+	r.add(askOf("c1", "wf_1", "a2", "build"))
 	// An ask with no node is collected by the terminal clear.
-	r.Add(askOf("c1", "wf_1", "a3", ""))
+	r.add(askOf("c1", "wf_1", "a3", ""))
 
-	got := r.TakeNode("wf_1", "review")
+	got := r.takeNode("wf_1", "review")
 	if len(got) != 1 || got[0].payload.AskID != "a1" {
 		t.Fatalf("TakeNode(review) = %+v, want just a1", got)
 	}
 	// A parallel branch's node can complete while a sibling's step is parked.
-	if _, ok := r.TakeIfPresent("wf_1", "a2"); !ok {
+	if _, ok := r.takeIfPresent("wf_1", "a2"); !ok {
 		t.Error("the sibling node's ask was dropped, want it left in place")
 	}
-	if _, ok := r.TakeIfPresent("wf_1", "a3"); !ok {
+	if _, ok := r.takeIfPresent("wf_1", "a3"); !ok {
 		t.Error("the node-less ask was dropped, want it left for the terminal clear")
 	}
 }
@@ -134,28 +133,28 @@ func TestPendingRunAsks_TakeNodeIsNodeScoped(t *testing.T) {
 func TestPendingRunAsks_TakeRunAndClearChat(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	r.Add(askOf("c1", "wf_1", "a1", "review"))
-	r.Add(askOf("c1", "wf_1", "a2", "build"))
-	r.Add(askOf("c2", "wf_2", "a3", "review"))
+	r.add(askOf("c1", "wf_1", "a1", "review"))
+	r.add(askOf("c1", "wf_1", "a2", "build"))
+	r.add(askOf("c2", "wf_2", "a3", "review"))
 
 	// Returned rather than dropped: the caller announces each.
-	got := r.TakeRun("wf_1")
+	got := r.takeRun("wf_1")
 	if len(got) != 2 {
 		t.Fatalf("TakeRun(wf_1) returned %d asks, want 2", len(got))
 	}
-	if r.HasRun("wf_1") {
+	if r.hasRun("wf_1") {
 		t.Error("HasRun(wf_1) after TakeRun = true, want false")
 	}
-	if !r.HasRun("wf_2") {
+	if !r.hasRun("wf_2") {
 		t.Error("TakeRun(wf_1) also dropped wf_2's ask")
 	}
 	// Idempotent: the answer and lifecycle paths both run for one ask.
-	if again := r.TakeRun("wf_1"); len(again) != 0 {
+	if again := r.takeRun("wf_1"); len(again) != 0 {
 		t.Errorf("TakeRun(wf_1) a second time returned %d asks, want 0", len(again))
 	}
 
-	r.ClearChat("c2")
-	if r.HasRun("wf_2") {
+	r.clearChat("c2")
+	if r.hasRun("wf_2") {
 		t.Error("HasRun(wf_2) after ClearChat(c2) = true, want false")
 	}
 }
@@ -163,17 +162,17 @@ func TestPendingRunAsks_TakeRunAndClearChat(t *testing.T) {
 func TestPendingRunAsks_ListFiltersByChatButKeepsRunKeyedAsks(t *testing.T) {
 	t.Parallel()
 	r := &pendingRunAsks{}
-	r.Add(askOf("c1", "wf_1", "a1", "review"))
-	r.Add(askOf("run:wf_2", "wf_2", "a2", "review"))
-	r.Add(askOf("", "wf_3", "a3", "review"))
+	r.add(askOf("c1", "wf_1", "a1", "review"))
+	r.add(askOf("run:wf_2", "wf_2", "a2", "review"))
+	r.add(askOf("", "wf_3", "a3", "review"))
 
 	// `run:<id>` is not a chat, so a parentless run's ask stays off chat streams.
-	got := r.List("c1")
+	got := r.list("c1")
 	if len(got) != 2 {
 		t.Fatalf("List(c1) returned %d events, want 2 (c1's ask and the topicless one)", len(got))
 	}
 	// An unfiltered connection (the run tab) gets everything.
-	if all := r.List(""); len(all) != 3 {
+	if all := r.list(""); len(all) != 3 {
 		t.Errorf("List(\"\") returned %d events, want 3", len(all))
 	}
 	for _, evt := range got {
@@ -188,11 +187,11 @@ func TestPendingRunAsks_ListFiltersByChatButKeepsRunKeyedAsks(t *testing.T) {
 func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.dispatch(t.Context(), "run:wf_1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+	h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 
-	events := bufferedEvents(h)
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1: %+v", len(events), events)
+	events, notices := withoutNotifications(bufferedEvents(h))
+	if len(events) != 1 || notices != 1 {
+		t.Fatalf("got %d events and %d notifications, want 1 of each: %+v", len(events), notices, events)
 	}
 	if events[0].Type != string(marotte.EventRunInputNeeded) {
 		t.Fatalf("type = %q, want run_input_needed", events[0].Type)
@@ -208,7 +207,7 @@ func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 		t.Errorf("question = %q, want the message verbatim", p["question"])
 	}
 	// The registry holds it too: the event does not re-fire for a later connect.
-	if !h.runs.asks.HasRun("wf_1") {
+	if !h.runs.asks.hasRun("wf_1") {
 		t.Error("the ask was broadcast but not recorded, so a reconnect would lose it")
 	}
 }
@@ -220,7 +219,7 @@ func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 	cs.seed(t, "c1", nil)
 	seeded := h.bus.fanout.Position().Head
 
-	h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+	h.translateACPEvent("c1", h.originOf("c1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 	var events []bufferedEvent
 	for _, e := range bufferedSince(h, seeded) {
@@ -229,8 +228,9 @@ func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 			events = append(events, evt)
 		}
 	}
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1: %+v", len(events), events)
+	events, notices := withoutNotifications(events)
+	if len(events) != 1 || notices != 1 {
+		t.Fatalf("got %d events and %d notifications, want 1 of each: %+v", len(events), notices, events)
 	}
 	if events[0].ChatID != "c1" {
 		t.Errorf("chat_id = %q, want c1 (the launching chat's dock key)", events[0].ChatID)
@@ -242,7 +242,7 @@ func TestRunDispatch_SessionNotifyDropsNonWarnings(t *testing.T) {
 	for _, severity := range []string{"info", "success", "error"} {
 		t.Run(severity, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			h.dispatch(t.Context(), "run:wf_1", runNotif(methodKiroSessionNotify, map[string]any{
+			h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
 				"callerSessionId": "sess_step",
 				"message":         "something happened",
 				"severity":        severity,
@@ -251,7 +251,7 @@ func TestRunDispatch_SessionNotifyDropsNonWarnings(t *testing.T) {
 			if events := bufferedEvents(h); len(events) != 0 {
 				t.Errorf("severity %q produced %+v, want no event", severity, events)
 			}
-			if h.runs.asks.HasRun("wf_1") {
+			if h.runs.asks.hasRun("wf_1") {
 				t.Errorf("severity %q recorded an ask, want none", severity)
 			}
 		})
@@ -262,21 +262,21 @@ func TestRunDispatch_SessionNotifyDropsNonWarnings(t *testing.T) {
 func TestRunAskCleared(t *testing.T) {
 	t.Run("a terminal run_complete clears the run", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.dispatch(t.Context(), "run:wf_1", notifyAsk("wf_1", "review", "which branch?", "n1"))
-		if !h.runs.asks.HasRun("wf_1") {
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Fatal("Setup: the ask was not recorded")
 		}
-		h.dispatch(t.Context(), "run:wf_1", runNotif(methodWFRunComplete,
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(methodWFRunComplete,
 			map[string]any{"workflowId": "wf_1", "status": "completed"}))
-		if h.runs.asks.HasRun("wf_1") {
+		if h.runs.asks.hasRun("wf_1") {
 			t.Error("a completed run still holds an ask, want it cleared")
 		}
 	})
 
 	t.Run("a terminal run_complete announces what it retired", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.dispatch(t.Context(), "run:wf_1", notifyAsk("wf_1", "review", "which branch?", "n1"))
-		h.dispatch(t.Context(), "run:wf_1", runNotif(methodWFRunComplete,
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(methodWFRunComplete,
 			map[string]any{"workflowId": "wf_1", "status": "failed"}))
 
 		// Dropping the entry takes no card off any screen, and a stale head card hides the chat's later asks.
@@ -292,11 +292,11 @@ func TestRunAskCleared(t *testing.T) {
 
 	t.Run("a non-terminal run_complete keeps it", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.dispatch(t.Context(), "run:wf_1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 		// An onMaxIterations stop arrives on this frame and is still resumable, so its ask is live.
-		h.dispatch(t.Context(), "run:wf_1", runNotif(methodWFRunComplete,
+		h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"), runNotif(methodWFRunComplete,
 			map[string]any{"workflowId": "wf_1", "status": "paused"}))
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Error("a paused run lost its ask, want it kept")
 		}
 	})
@@ -304,12 +304,12 @@ func TestRunAskCleared(t *testing.T) {
 	t.Run("the asking node completing retires it and says so", func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		cs.seed(t, "c1", nil)
-		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+		h.translateACPEvent("c1", h.originOf("c1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 
-		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
+		h.translateACPEvent("c1", h.originOf("c1"), runNotif(methodWFNodeComplete, map[string]any{
 			"workflowId": "wf_1", "nodeId": "review", "status": "completed",
 		}))
-		if h.runs.asks.HasRun("wf_1") {
+		if h.runs.asks.hasRun("wf_1") {
 			t.Error("the asking node completed and its ask survived")
 		}
 		// The announcement is what takes the card down.
@@ -326,9 +326,9 @@ func TestRunAskCleared(t *testing.T) {
 	t.Run("a node that FAILED still does not claim an answer", func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		cs.seed(t, "c1", nil)
-		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+		h.translateACPEvent("c1", h.originOf("c1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 
-		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
+		h.translateACPEvent("c1", h.originOf("c1"), runNotif(methodWFNodeComplete, map[string]any{
 			"workflowId": "wf_1", "nodeId": "review", "status": "failed",
 		}))
 		settled := settledPayloads(t, h)
@@ -344,12 +344,12 @@ func TestRunAskCleared(t *testing.T) {
 	t.Run("a sibling node completing leaves it alone", func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		cs.seed(t, "c1", nil)
-		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
+		h.translateACPEvent("c1", h.originOf("c1"), notifyAsk("wf_1", "review", "which branch?", "n1"))
 
-		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
+		h.translateACPEvent("c1", h.originOf("c1"), runNotif(methodWFNodeComplete, map[string]any{
 			"workflowId": "wf_1", "nodeId": "build", "status": "completed",
 		}))
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Error("a sibling node's completion dropped a live ask")
 		}
 	})
@@ -364,7 +364,7 @@ func hasEventType(events []bufferedEvent, want string) bool {
 	return false
 }
 
-// settledPayloads decodes every `run_input_settled` payload; the attribution is what the cases assert.
+// The attribution is what the cases assert.
 func settledPayloads(t *testing.T, h *Runtime) []map[string]string {
 	t.Helper()
 	var out []map[string]string
@@ -462,8 +462,8 @@ func TestPausedLeaf(t *testing.T) {
 	}
 }
 
-// parkedInspect builds an inspect reply for a run parked at its `review` leaf, whose session is the
-// answer address. One builder for the reconcile and the answer path's fallback.
+// The run's session is the answer address. One builder for the reconcile and the answer path's
+// fallback.
 func parkedInspect(t *testing.T, status marotte.RunStatus, pauseReason, stepSession string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -486,7 +486,6 @@ func parkedInspect(t *testing.T, status marotte.RunStatus, pauseReason, stepSess
 	return raw
 }
 
-// eventOfType returns the first buffered event of a type.
 func eventOfType(t *testing.T, h *Runtime, want string) bufferedEvent {
 	t.Helper()
 	for _, e := range bufferedEvents(h) {
@@ -509,9 +508,9 @@ func TestReconcileNeedInput(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
 
-		events := bufferedEvents(h)
-		if len(events) != 1 || events[0].Type != string(marotte.EventRunInputNeeded) {
-			t.Fatalf("got %+v, want one run_input_needed", events)
+		events, notices := withoutNotifications(bufferedEvents(h))
+		if len(events) != 1 || events[0].Type != string(marotte.EventRunInputNeeded) || notices != 1 {
+			t.Fatalf("got %+v and %d notifications, want one run_input_needed and its notification", events, notices)
 		}
 		p := marshalPayload(t, events[0].Payload)
 		if p["step_session_id"] != "sess_step" {
@@ -529,8 +528,8 @@ func TestReconcileNeedInput(t *testing.T) {
 		// Run on every refetch, so a fresh id per read would stack duplicates.
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", raw)
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", raw)
-		if n := len(bufferedEvents(h)); n != 1 {
-			t.Errorf("two reads produced %d events, want 1", n)
+		if events, notices := withoutNotifications(bufferedEvents(h)); len(events) != 1 || notices != 1 {
+			t.Errorf("two reads produced %d events and %d notifications, want 1 of each", len(events), notices)
 		}
 	})
 
@@ -550,7 +549,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Setup: seeding the launching chat: %s", err)
 		}
-		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: opening the launching chat's bridge: %s", err)
 		}
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
@@ -718,7 +717,7 @@ func TestAnswerInput(t *testing.T) {
 		t.Helper()
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
@@ -729,7 +728,7 @@ func TestAnswerInput(t *testing.T) {
 
 	t.Run("it prompts the paused step's own session", func(t *testing.T) {
 		h, br := setup(t)
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("AnswerInput = %v, want nil", err)
 		}
 		// A plain session/prompt to the step's own session, which KAS reroutes into the run (tryResumeStepWithMessage).
@@ -755,11 +754,11 @@ func TestAnswerInput(t *testing.T) {
 
 	t.Run("only one surface may answer", func(t *testing.T) {
 		h, _ := setup(t)
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("Setup: the first answer failed: %v", err)
 		}
 		// KAS accepts one answer, so the claim is decided here.
-		err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "no, the release branch")
+		err := h.runs.answerInput(t.Context(), "wf_1", "a1", "no, the release branch")
 		if !errors.Is(err, errAskAlreadySettled) {
 			t.Errorf("the second answer = %v, want errAskAlreadySettled", err)
 		}
@@ -768,11 +767,11 @@ func TestAnswerInput(t *testing.T) {
 	t.Run("a failed send hands the ask back AND re-offers it", func(t *testing.T) {
 		h, br := setup(t)
 		br.callErrs = map[string]error{marotte.MethodPrompt: errors.New("bridge died")}
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
 			t.Fatal("AnswerInput = nil, want the transport error")
 		}
 		// Without the restore, a blip loses the card for good.
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Error("the ask was lost on a failed send, want it restored")
 		}
 		// The entry and a re-offered frame both: the click already spliced the card from every dock. Not a settle: still open.
@@ -793,13 +792,13 @@ func TestAnswerInput(t *testing.T) {
 				t, marotte.RunStatusPaused, needInputPauseReason, "sess_from_inspect",
 			),
 		}
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: runChatID("wf_1"),
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "reconciled:root/review", NodeID: "review",
 			},
 		})
-		if err := h.runs.AnswerInput(
+		if err := h.runs.answerInput(
 			t.Context(), "wf_1", "reconciled:root/review", "the main branch",
 		); err != nil {
 			t.Fatalf("AnswerInput = %v, want nil", err)
@@ -813,7 +812,7 @@ func TestAnswerInput(t *testing.T) {
 			t.Errorf("sessionId = %v, want sess_from_inspect (resolved from inspect)",
 				params["sessionId"])
 		}
-		if h.runs.asks.HasRun("wf_1") {
+		if h.runs.asks.hasRun("wf_1") {
 			t.Error("the ask survived a successful answer, so its card is offered again")
 		}
 	})
@@ -822,14 +821,14 @@ func TestAnswerInput(t *testing.T) {
 		// No step session and no fresh inspect, so the claim goes back.
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID:  "run:wf_1",
 			payload: marotte.RunInputNeededPayload{WorkflowID: "wf_1", AskID: "a1"},
 		})
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
 			t.Fatal("AnswerInput with no answer address = nil, want a refusal")
 		}
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Fatal("the ask was consumed by a refusal, want it left answerable")
 		}
 		if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputNeeded)) {
@@ -840,10 +839,10 @@ func TestAnswerInput(t *testing.T) {
 	t.Run("an empty answer is refused", func(t *testing.T) {
 		h, _ := setup(t)
 		// Continue-without-answering is a different verb; an empty box must not reach it.
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "   "); err == nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "   "); err == nil {
 			t.Error("AnswerInput(whitespace) = nil, want a refusal")
 		}
-		if !h.runs.asks.HasRun("wf_1") {
+		if !h.runs.asks.hasRun("wf_1") {
 			t.Error("a refused empty answer consumed the ask")
 		}
 	})
@@ -852,7 +851,7 @@ func TestAnswerInput(t *testing.T) {
 	t.Run("a run nothing hosts is re-hosted and the answer lands", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
-		h.runs.asks.Add(&runAsk{
+		h.runs.asks.add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
@@ -861,7 +860,7 @@ func TestAnswerInput(t *testing.T) {
 		if h.bridge.mgr.get(runChatID("wf_1")) != nil {
 			t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 		}
-		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+		if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("AnswerInput on an unhosted run = %v, want nil", err)
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -871,8 +870,20 @@ func TestAnswerInput(t *testing.T) {
 		if !slices.Contains(br.callLog(), marotte.MethodPrompt) {
 			t.Errorf("the answer never reached KAS; calls were %v", br.callLog())
 		}
-		if h.runs.asks.HasRun("wf_1") {
+		if h.runs.asks.hasRun("wf_1") {
 			t.Error("the answered ask is still offered, so the card outlives its answer")
 		}
 	})
+}
+
+// withoutNotifications splits off the `notification` frames, which ride beside the event they announce.
+func withoutNotifications(in []bufferedEvent) (out []bufferedEvent, notices int) {
+	for _, e := range in {
+		if e.Type == string(marotte.EventNotification) {
+			notices++
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, notices
 }
